@@ -1064,6 +1064,27 @@ pub enum MergeFn {
     /// [`MergeFn::OldCol`] / [`MergeFn::NewCol`]. The length determines the number of value
     /// columns of the function.
     Columns(Vec<MergeFn>),
+    /// Insert a full row (the `args` evaluate to keys + values) into the given function's table,
+    /// respecting that table's own merge. Returns this column's old value (meant to be discarded
+    /// inside a [`MergeFn::Seq`]); declares the target as a write-dependency so the side write is
+    /// safe during batched merges. Models a `(set (f ...) v)` action inside a merge.
+    TableInsert(FunctionId, Vec<MergeFn>),
+    /// Evaluate each merge function in order for its effects and return the value of the last.
+    /// Models an action-block merge: leading entries are effects (e.g. [`MergeFn::TableInsert`] /
+    /// [`MergeFn::Construct`]) and the last is the value.
+    Seq(Vec<MergeFn>),
+    /// Mint a value-tuple constructor inside a merge and return its (freshly minted) output column.
+    /// `args` evaluate to the key columns; the first value column (the output) is minted from the
+    /// table's `FreshId` default and the remaining value columns are written from `value_args`.
+    Construct(FunctionId, Vec<MergeFn>, Vec<MergeFn>),
+    /// If `a` and `b` evaluate equal, run and return `then`, otherwise run and return `els`.
+    /// General conditional for guarding merge-action bodies.
+    IfEq {
+        a: Box<MergeFn>,
+        b: Box<MergeFn>,
+        then: Box<MergeFn>,
+        els: Box<MergeFn>,
+    },
 }
 
 impl MergeFn {
@@ -1092,6 +1113,29 @@ impl MergeFn {
             Columns(cols) => {
                 cols.iter()
                     .for_each(|col| col.fill_deps(egraph, read_deps, write_deps));
+            }
+            TableInsert(func, args) => {
+                write_deps.insert(egraph.funcs[*func].table);
+                args.iter()
+                    .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
+            }
+            Seq(items) => {
+                items
+                    .iter()
+                    .for_each(|item| item.fill_deps(egraph, read_deps, write_deps));
+            }
+            Construct(func, args, value_args) => {
+                read_deps.insert(egraph.funcs[*func].table);
+                write_deps.insert(egraph.funcs[*func].table);
+                args.iter()
+                    .chain(value_args.iter())
+                    .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
+            }
+            IfEq { a, b, then, els } => {
+                a.fill_deps(egraph, read_deps, write_deps);
+                b.fill_deps(egraph, read_deps, write_deps);
+                then.fill_deps(egraph, read_deps, write_deps);
+                els.fill_deps(egraph, read_deps, write_deps);
             }
             AssertEq | Old | New | OldCol(..) | NewCol(..) | Const(..) => {}
         }
@@ -1215,6 +1259,53 @@ impl MergeFn {
                         .collect::<Vec<_>>(),
                 }
             }
+            MergeFn::TableInsert(func, args) => ResolvedMergeFn::TableInsert {
+                table: TableAction::new(egraph, *func),
+                args: args
+                    .iter()
+                    .map(|arg| arg.resolve(function_name, egraph))
+                    .collect::<Vec<_>>(),
+            },
+            MergeFn::Seq(items) => ResolvedMergeFn::Seq(
+                items
+                    .iter()
+                    .map(|item| item.resolve(function_name, egraph))
+                    .collect::<Vec<_>>(),
+            ),
+            MergeFn::Construct(func, args, value_args) => {
+                let func_info = &egraph.funcs[*func];
+                let num_values = func_info.schema.len() - func_info.n_keys;
+                debug_assert_eq!(
+                    func_info.schema.len(),
+                    args.len() + num_values,
+                    "Construct for {function_name}: key arity must be schema minus value columns for {}",
+                    func_info.name
+                );
+                debug_assert_eq!(
+                    value_args.len() + 1,
+                    num_values,
+                    "Construct for {function_name}: value_args must fill every value column \
+                     except the minted output for {}",
+                    func_info.name
+                );
+                ResolvedMergeFn::Construct {
+                    table: TableAction::new(egraph, *func),
+                    args: args
+                        .iter()
+                        .map(|arg| arg.resolve(function_name, egraph))
+                        .collect::<Vec<_>>(),
+                    value_args: value_args
+                        .iter()
+                        .map(|arg| arg.resolve(function_name, egraph))
+                        .collect::<Vec<_>>(),
+                }
+            }
+            MergeFn::IfEq { a, b, then, els } => ResolvedMergeFn::IfEq {
+                a: Box::new(a.resolve(function_name, egraph)),
+                b: Box::new(b.resolve(function_name, egraph)),
+                then: Box::new(then.resolve(function_name, egraph)),
+                els: Box::new(els.resolve(function_name, egraph)),
+            },
         }
     }
 }
@@ -1244,6 +1335,27 @@ enum ResolvedMergeFn {
         func: TableAction,
         args: Vec<ResolvedMergeFn>,
         panic: ExternalFunctionId,
+    },
+    /// `(set (f ...) v)` inside a merge: insert a full row into `table`, respecting its own merge.
+    TableInsert {
+        table: TableAction,
+        args: Vec<ResolvedMergeFn>,
+    },
+    /// Run each item in order for its effects; return the value of the last.
+    Seq(Vec<ResolvedMergeFn>),
+    /// Mint a value-tuple constructor inside a merge (first value column minted via `FreshId`,
+    /// `value_args` for the remaining value columns) and return its minted output.
+    Construct {
+        table: TableAction,
+        args: Vec<ResolvedMergeFn>,
+        value_args: Vec<ResolvedMergeFn>,
+    },
+    /// If `a == b` run `then`, otherwise run `els`.
+    IfEq {
+        a: Box<ResolvedMergeFn>,
+        b: Box<ResolvedMergeFn>,
+        then: Box<ResolvedMergeFn>,
+        els: Box<ResolvedMergeFn>,
     },
 }
 
@@ -1328,6 +1440,51 @@ impl ResolvedMergeFn {
                     assert_eq!(res, None);
                     cur[n_keys + self_col]
                 })
+            }
+            ResolvedMergeFn::TableInsert { table, args } => {
+                let row = args
+                    .iter()
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .collect::<Vec<_>>();
+                // Insert respects the target table's own merge; `TableAction::insert` appends the
+                // timestamp/subsume columns.
+                table.insert(state, row.into_iter());
+                // Return value is discarded by the enclosing `Seq`.
+                cur[n_keys + self_col]
+            }
+            ResolvedMergeFn::Seq(items) => {
+                let mut result = cur[n_keys + self_col];
+                for item in items {
+                    result = item.run(state, cur, new, n_keys, self_col, ts);
+                }
+                result
+            }
+            ResolvedMergeFn::Construct {
+                table,
+                args,
+                value_args,
+            } => {
+                let key = args
+                    .iter()
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .collect::<SmallVec<[Value; 4]>>();
+                let vals = value_args
+                    .iter()
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .collect::<SmallVec<[Value; 4]>>();
+                // Constructor: always mints on miss, so this is `Some`.
+                table
+                    .lookup_or_insert_multi(state, &key, &vals)
+                    .unwrap_or(cur[n_keys + self_col])
+            }
+            ResolvedMergeFn::IfEq { a, b, then, els } => {
+                let av = a.run(state, cur, new, n_keys, self_col, ts);
+                let bv = b.run(state, cur, new, n_keys, self_col, ts);
+                if av == bv {
+                    then.run(state, cur, new, n_keys, self_col, ts)
+                } else {
+                    els.run(state, cur, new, n_keys, self_col, ts)
+                }
             }
         }
     }
@@ -1478,6 +1635,47 @@ impl TableAction {
                         ret_val: Some(default),
                     },
                 );
+                Some(
+                    state.predict_val(self.table, key, merge_vals.iter().copied())
+                        [self.table_math.ret_val_col()],
+                )
+            }
+            None => self.lookup(state, key),
+        }
+    }
+
+    /// Multi-value variant of [`TableAction::lookup_or_insert`] for a value-tuple constructor
+    /// `(children) -> (output, extra...)`: the first value column (`output`) is minted (the
+    /// configured `FreshId` default) and the rest are written from `provided_vals` (e.g. a proof).
+    /// Returns the minted `output`.
+    ///
+    /// Idempotent: an already-present key returns its existing `output` and writes nothing. Write
+    /// operation, only safe in action/merge contexts.
+    pub fn lookup_or_insert_multi(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        provided_vals: &[Value],
+    ) -> Option<Value> {
+        match self.default {
+            Some(default) => {
+                debug_assert_eq!(
+                    self.table_math.n_vals(),
+                    1 + provided_vals.len(),
+                    "lookup_or_insert_multi: provided_vals must fill every value \
+                     column except the minted first one"
+                );
+                let timestamp =
+                    MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
+                // Non-key columns, in order: [output (minted), provided.., ts, subsume?].
+                let mut merge_vals = SmallVec::<[MergeVal; 4]>::new();
+                merge_vals.push(default);
+                merge_vals.extend(provided_vals.iter().map(|v| MergeVal::Constant(*v)));
+                merge_vals.push(timestamp);
+                if self.table_math.subsume {
+                    merge_vals.push(MergeVal::Constant(NOT_SUBSUMED));
+                }
+                // The first value column (the minted output) is at `ret_val_col()`.
                 Some(
                     state.predict_val(self.table, key, merge_vals.iter().copied())
                         [self.table_math.ret_val_col()],
