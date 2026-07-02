@@ -471,8 +471,8 @@ impl RuleBuilder<'_> {
     ///
     /// `entries` should match the number of keys to the function.
     pub fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        // First, insert a subsumed value if the tuple is new.
-        let ret = self.lookup_with_subsumed(
+        // Ensure the row exists (panics otherwise); its value is re-read per column below.
+        let _ret = self.lookup_with_subsumed(
             func,
             entries,
             QueryEntry::Const {
@@ -484,26 +484,32 @@ impl RuleBuilder<'_> {
         let info = &self.egraph.funcs[func];
         let schema_math = info.schema_math();
         assert!(info.can_subsume);
-        assert_eq!(entries.len() + 1, info.schema.len());
+        assert_eq!(entries.len(), schema_math.num_keys());
+        let n_vals = schema_math.n_vals();
         let entries = entries.to_vec();
         let table = info.table;
 
-        let ret: QueryEntry = ret.into();
         self.add_callback(move |inner, rb| {
             // Then, add a tuple subsuming the entry, but only if the entry isn't already subsumed.
-            // Look up the current subsume value.
-            let mut dst_entries = inner.convert_all(&entries);
+            let keys = inner.convert_all(&entries);
             let cur_subsume_val = rb.lookup(
                 table,
-                &dst_entries,
+                &keys,
                 ColumnId::from_usize(schema_math.subsume_col()),
             )?;
+            // Re-read every value column so subsumption preserves the whole row (tuple-output views
+            // carry more than one value, e.g. the e-class and its proof).
+            let mut dst_entries = keys.clone();
+            for i in 0..n_vals {
+                let v = rb.lookup(table, &keys, ColumnId::from_usize(schema_math.val_col(i)))?;
+                dst_entries.push(v.into());
+            }
             schema_math.write_table_row(
                 &mut dst_entries,
                 RowVals {
                     timestamp: inner.next_ts(),
                     subsume: Some(SUBSUMED.into()),
-                    ret_val: Some(inner.convert(&ret)),
+                    ret_val: None,
                 },
             );
             rb.insert_if_eq(

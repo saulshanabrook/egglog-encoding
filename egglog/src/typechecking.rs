@@ -760,8 +760,13 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
-        // View tables (with term_constructor) must have at least one input (the e-class)
-        if fdecl.term_constructor.is_some() && fdecl.schema.input.is_empty() {
+        // View tables (with term_constructor) must have at least one input (the e-class), except the
+        // proof-mode functional-dependency tuple view `(children) -> (eclass, proof)`, which keys on
+        // children only (a 0-arg constructor's view then has no inputs).
+        if fdecl.term_constructor.is_some()
+            && fdecl.schema.input.is_empty()
+            && !fdecl.schema.is_tuple_output()
+        {
             return Err(TypeError::TermConstructorNoInputs(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
@@ -782,11 +787,11 @@ impl TypeInfo {
         let is_tuple = fdecl.schema.is_tuple_output();
 
         // Tuple outputs are only meaningful for custom functions (which carry a functional
-        // dependency from keys to a tuple of values). Constructors and view tables mint/track a
-        // single e-class id.
-        if is_tuple
-            && (fdecl.subtype == FunctionSubtype::Constructor || fdecl.term_constructor.is_some())
-        {
+        // dependency from keys to a tuple of values). Constructors mint a single e-class id, so they
+        // may not be tuple-output. Term-constructor *views* may be tuple-output: the proof-mode
+        // encoder emits `(children) -> (eclass, proof)` views (an internal-only annotation, so this
+        // can't be reached by user input).
+        if is_tuple && fdecl.subtype == FunctionSubtype::Constructor {
             return Err(TypeError::TupleOutputNotAllowed(
                 fdecl.name.clone(),
                 fdecl.span.clone(),

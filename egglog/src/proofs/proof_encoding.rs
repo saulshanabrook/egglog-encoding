@@ -228,6 +228,31 @@ impl<'a> ProofInstrumentor<'a> {
         let delete_subsume_ruleset = self.proof_names().delete_subsume_ruleset_name.clone();
         let fresh_name = self.egraph.parser.symbol_gen.fresh("delete_rule");
 
+        // The FD tuple view is keyed by children only; match its value tuple to delete by key.
+        // Subsumption is not supported on a multi-output view (the bridge subsume path is
+        // single-output), and no proof workload subsumes constructor terms, so it is omitted.
+        if self.native_merge_view(fdecl) {
+            let e = self.fresh_var();
+            let pf = self.fresh_var();
+            let e2 = self.fresh_var();
+            let pf2 = self.fresh_var();
+            // Deletion removes the row by key; subsumption marks it subsumed (kept for size/proofs
+            // but excluded from matching).
+            return format!(
+                "(rule (({to_delete_name} {child_names})
+                        (= (values {e} {pf}) ({view_name} {child_names})))
+                       ((delete ({view_name} {child_names}))
+                        (delete ({to_delete_name} {child_names})))
+                        :ruleset {delete_subsume_ruleset}
+                        :name \"{fresh_name}\")
+                 (rule (({subsumed_name} {child_names})
+                        (= (values {e2} {pf2}) ({view_name} {child_names})))
+                       ((subsume ({view_name} {child_names})))
+                        :ruleset {delete_subsume_ruleset}
+                        :name \"{fresh_name}_subsume\")"
+            );
+        }
+
         format!(
             "(rule (({to_delete_name} {child_names})
                     ({view_name} {child_names} out))
@@ -433,6 +458,9 @@ impl<'a> ProofInstrumentor<'a> {
                 &view_name,
                 &rebuilding_ruleset,
             )
+        } else if self.native_merge_view(fdecl) {
+            // Congruence is resolved by the view's native `:merge`; no rule needed.
+            String::new()
         } else {
             self.handle_congruence(fdecl, &child_names, &rebuilding_ruleset)
         }
@@ -443,6 +471,12 @@ impl<'a> ProofInstrumentor<'a> {
     /// The view table stores child terms and their eclass.
     /// The view table is mutated using delete, but we never delete from term tables.
     /// We re-use the original name of the function for the term table.
+    /// Whether this function's view is the proof-mode functional-dependency tuple view
+    /// `(children) -> (eclass, proof)` whose native `:merge` resolves congruence.
+    fn native_merge_view(&self, fdecl: &ResolvedFunctionDecl) -> bool {
+        fdecl.subtype == FunctionSubtype::Constructor && self.egraph.proof_state.proofs_enabled
+    }
+
     fn term_and_view(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
         let schema = &fdecl.schema;
         let out_type = schema.output.clone();
@@ -499,9 +533,20 @@ impl<'a> ProofInstrumentor<'a> {
         if fdecl.internal_let {
             view_flags.push_str(" :internal-let");
         }
-        let view_decl = format!(
-            "(function {view_name} ({view_sorts}) {proof_type} :merge old :internal-term-constructor {name}{view_flags})"
-        );
+        // In proof mode, a constructor's view is a functional-dependency tuple
+        // `(children) -> (eclass, proof)` whose native `:merge` resolves congruence (see
+        // `EGraph::native_congruence_merge`). Other functions keep the `(children eclass) -> proof`
+        // form with a congruence/merge rule.
+        let fd_view = self.native_merge_view(fdecl);
+        let view_decl = if fd_view {
+            format!(
+                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge (values old0 old1) :internal-term-constructor {name}{view_flags})"
+            )
+        } else {
+            format!(
+                "(function {view_name} ({view_sorts}) {proof_type} :merge old :internal-term-constructor {name}{view_flags})"
+            )
+        };
         self.parse_program(&format!(
             "
             (sort {fresh_sort})
@@ -523,6 +568,9 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// Rules that update the views when children change.
     fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
+        if self.native_merge_view(fdecl) {
+            return self.rebuilding_rules_fd(fdecl);
+        }
         let types = fdecl.resolved_schema.view_types();
 
         // Check if there are any eq-sort columns at all; if not, no rebuild rule needed.
@@ -640,6 +688,99 @@ impl<'a> ProofInstrumentor<'a> {
                   {pf_code}
                   {updated_view}
                   (delete ({view_name} {children}))
+                 )
+                  :ruleset {} :name \"{fresh_name}\" :internal-include-subsumed)",
+            self.proof_names().rebuilding_ruleset_name
+        );
+        self.parse_program(&rule)
+    }
+
+    /// Rebuild rule for a proof-mode functional-dependency constructor view
+    /// `(children) -> (eclass, proof)`: canonicalize the child keys and the eclass value through the
+    /// UF, re-`set` at the canonical children (which triggers the congruence `:merge` on collision),
+    /// and delete the stale row.
+    fn rebuilding_rules_fd(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
+        let types = fdecl.resolved_schema.view_types();
+        // The last column is the eclass (output); the rest are children (keys).
+        let n = types.len();
+        let child = |i: usize| format!("c{i}_");
+        let children_vars: Vec<String> = (0..n - 1).map(child).collect();
+        let child_types = &types[..n - 1];
+        let eclass_type = &types[n - 1];
+
+        let view_name = self.view_name(&fdecl.name);
+        let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &children_vars);
+
+        // UF lookups for eq-sort children (keys) and the eclass (value).
+        let mut uf_queries: Vec<String> = vec![];
+        let mut child_leaders: Vec<String> = vec![];
+        let mut bool_neq: Vec<String> = vec![];
+        let mut child_uf_proofs: Vec<Option<String>> = vec![];
+        for (i, ty) in child_types.iter().enumerate() {
+            if ty.is_eq_sort() {
+                let leader = format!("c{i}_leader_");
+                let uf_fn = self.uf_function_name(ty.name());
+                let ci = child(i);
+                let pair = self.fresh_var();
+                uf_queries.push(format!(
+                    "(= {pair} ({uf_fn} {ci}))
+                     (= {leader} (pair-first {pair}))"
+                ));
+                child_uf_proofs.push(Some(format!("(pair-second {pair})")));
+                bool_neq.push(format!("(bool-!= {ci} {leader})"));
+                child_leaders.push(leader);
+            } else {
+                child_leaders.push(child(i));
+                child_uf_proofs.push(None);
+            }
+        }
+        // eclass leader (the value column; always eq-sort for a constructor).
+        let eclass_leader = self.fresh_var();
+        let eclass_uf_fn = self.uf_function_name(eclass_type.name());
+        let eclass_pair = self.fresh_var();
+        uf_queries.push(format!(
+            "(= {eclass_pair} ({eclass_uf_fn} {eclass_var}))
+             (= {eclass_leader} (pair-first {eclass_pair}))"
+        ));
+        let eclass_uf_prf = format!("(pair-second {eclass_pair})");
+        bool_neq.push(format!("(bool-!= {eclass_var} {eclass_leader})"));
+
+        // Proof chain: congruence for each eq-sort child, then transitivity for the eclass update.
+        // `view_prf : eclass = f(children)`; after congruence, `eclass = f(child_leaders)`; and
+        // `eclass_uf_prf : eclass = eclass_leader`, so `final_pf : eclass_leader = f(child_leaders)`.
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        let congr = self.proof_names().congr_constructor.clone();
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let mut current_proof = view_prf.clone();
+        let mut proof_parts: Vec<String> = vec![];
+        for (i, ty) in child_types.iter().enumerate() {
+            if !ty.is_eq_sort() {
+                continue;
+            }
+            let uf_prf = child_uf_proofs[i].as_ref().unwrap();
+            let np = self.fresh_var();
+            proof_parts.push(format!("(let {np} ({congr} {current_proof} {i} {uf_prf}))"));
+            current_proof = np;
+        }
+        let final_pf = self.fresh_var();
+        proof_parts.push(format!(
+            "(let {final_pf} ({trans} ({sym} {eclass_uf_prf}) {current_proof}))"
+        ));
+
+        let uf_query_str = uf_queries.join("\n       ");
+        let filter = format!("(guard (or {}))", bool_neq.join(" "));
+        let proof_code = proof_parts.join("\n");
+        let updated = self.update_fd_view(&fdecl.name, &child_leaders, &eclass_leader, &final_pf);
+        let children_str = ListDisplay(&children_vars, " ");
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+        let rule = format!(
+            "(rule ({query_view}
+                    {uf_query_str}
+                    {filter})
+                 (
+                  {proof_code}
+                  {updated}
+                  (delete ({view_name} {children_str}))
                  )
                   :ruleset {} :name \"{fresh_name}\" :internal-include-subsumed)",
             self.proof_names().rebuilding_ruleset_name
@@ -883,11 +1024,19 @@ impl<'a> ProofInstrumentor<'a> {
                         let args_str = ListDisplay(new_args, " ");
 
                         let proof = {
-                            // View is always a function; query it and bind the output
                             let view_proof_var = self.fresh_var();
-                            res.push(format!(
-                                "(= {view_proof_var} ({view_name} {args_str} {fv}))"
-                            ));
+                            // In proof mode a constructor view is the FD tuple
+                            // `(children) -> (eclass, proof)`: bind the eclass (`fv`) and proof from
+                            // the tuple. Without proofs it's the `(children eclass) -> Unit` form.
+                            if self.egraph.proof_state.proofs_enabled {
+                                res.push(format!(
+                                    "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
+                                ));
+                            } else {
+                                res.push(format!(
+                                    "(= {view_proof_var} ({view_name} {args_str} {fv}))"
+                                ));
+                            }
                             if self.proofs_enabled() {
                                 let mut proof = view_proof_var;
                                 for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
@@ -1049,6 +1198,23 @@ impl<'a> ProofInstrumentor<'a> {
         view_update
     }
 
+    /// Write a row into the proof-mode functional-dependency view
+    /// `(set (@FView children) (values eclass proof))`. Re-setting an existing `children` key with a
+    /// different `eclass` triggers the view's native congruence `:merge`.
+    fn update_fd_view(
+        &mut self,
+        fname: &str,
+        children: &[String],
+        eclass: &str,
+        proof: &str,
+    ) -> String {
+        let view_name = self.view_name(fname);
+        format!(
+            "(set ({view_name} {}) (values {eclass} {proof}))",
+            ListDisplay(children, " ")
+        )
+    }
+
     /// Return some code adding to the view and term tables.
     /// For constructors, `args` should not include the eclass of the resulting term (since it may not exist yet).
     /// For custom functions, `args` should include all arguments (including the output for the function).
@@ -1121,7 +1287,14 @@ impl<'a> ProofInstrumentor<'a> {
         };
 
         res.push(proof_str);
-        res.push(self.update_view(&func_type.name, &args_with_fv, &view_proof_var));
+        if func_type.subtype == FunctionSubtype::Constructor
+            && self.egraph.proof_state.proofs_enabled
+        {
+            // FD view: children are the key, the fresh term is the eclass value.
+            res.push(self.update_fd_view(&func_type.name, args, &fv, &view_proof_var));
+        } else {
+            res.push(self.update_view(&func_type.name, &args_with_fv, &view_proof_var));
+        }
 
         // add to uf table to initialize eclass for constructors
         if func_type.subtype == FunctionSubtype::Constructor {
@@ -1143,6 +1316,20 @@ impl<'a> ProofInstrumentor<'a> {
         let pf_var = self.fresh_var();
         let query = format!("(= {pf_var} ({view_name} {}))", ListDisplay(args, " "));
         (query, pf_var)
+    }
+
+    /// Query the proof-mode functional-dependency view by its `children` key, binding fresh
+    /// variables for the `eclass` and `proof` output columns: `(= (values e pf) (@FView children))`.
+    /// Returns `(query, eclass_var, proof_var)`.
+    fn query_fd_view(&mut self, fname: &str, children: &[String]) -> (String, String, String) {
+        let view_name = self.view_name(fname);
+        let eclass_var = self.fresh_var();
+        let pf_var = self.fresh_var();
+        let query = format!(
+            "(= (values {eclass_var} {pf_var}) ({view_name} {}))",
+            ListDisplay(children, " ")
+        );
+        (query, eclass_var, pf_var)
     }
 
     // Add to view and term tables, returning a variable for the created term.

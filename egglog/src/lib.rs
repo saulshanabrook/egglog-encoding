@@ -872,10 +872,7 @@ impl EGraph {
             b: Box::new(MergeFn::NewCol(0)),
             then: Box::new(MergeFn::OldCol(0)),
             els: Box::new(MergeFn::Seq(vec![
-                MergeFn::TableInsert(
-                    uf_id,
-                    vec![MergeFn::NewCol(0), MergeFn::OldCol(0), trans],
-                ),
+                MergeFn::TableInsert(uf_id, vec![MergeFn::NewCol(0), MergeFn::OldCol(0), trans]),
                 MergeFn::OldCol(0),
             ])),
         };
@@ -921,22 +918,22 @@ impl EGraph {
             m
         } else {
             match decl.subtype {
-            FunctionSubtype::Constructor => MergeFn::UnionId,
-            FunctionSubtype::Custom => match &decl.merge {
-                // A tuple-output merge is a `(values e0 e1 ...)` form: each `ei` becomes the merge
-                // for output column `i`.
-                Some(GenericExpr::Call(_, ResolvedCall::Values(_), cols)) => MergeFn::Columns(
-                    cols.iter()
-                        .map(|e| self.translate_expr_to_mergefn(e))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-                Some(expr) => self.translate_expr_to_mergefn(expr)?,
-                // No merge clause: assert equality per output column.
-                None if num_outputs > 1 => {
-                    MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
-                }
-                None => MergeFn::AssertEq,
-            },
+                FunctionSubtype::Constructor => MergeFn::UnionId,
+                FunctionSubtype::Custom => match &decl.merge {
+                    // A tuple-output merge is a `(values e0 e1 ...)` form: each `ei` becomes the merge
+                    // for output column `i`.
+                    Some(GenericExpr::Call(_, ResolvedCall::Values(_), cols)) => MergeFn::Columns(
+                        cols.iter()
+                            .map(|e| self.translate_expr_to_mergefn(e))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    Some(expr) => self.translate_expr_to_mergefn(expr)?,
+                    // No merge clause: assert equality per output column.
+                    None if num_outputs > 1 => {
+                        MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
+                    }
+                    None => MergeFn::AssertEq,
+                },
             }
         };
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {

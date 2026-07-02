@@ -871,9 +871,16 @@ impl CoreAction {
             }
             CoreAction::Change(span, _change, head, args) => {
                 let mut args = args.clone();
-                // Add a dummy last output argument
-                let var = symbol_gen.fresh(head);
-                args.push(AtomTerm::Var(span.clone(), var));
+                // Add a dummy output argument per output column (tuple-output views have more than
+                // one), so the atom matches the function's full arity for constraint solving.
+                let num_outputs = typeinfo
+                    .get_func_type(head)
+                    .map(|t| t.num_outputs())
+                    .unwrap_or(1);
+                for _ in 0..num_outputs {
+                    let var = symbol_gen.fresh(head);
+                    args.push(AtomTerm::Var(span.clone(), var));
+                }
 
                 Ok(get_literal_and_global_constraints(&args, typeinfo)
                     .chain(get_atom_application_constraints(
