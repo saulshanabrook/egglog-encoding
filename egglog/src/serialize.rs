@@ -148,7 +148,13 @@ impl EGraph {
                     truncated_functions.push(name.clone());
                     return false;
                 }
-                let (out, inps) = row.vals.split_last().unwrap();
+                // Split the row into key columns and value columns by the function's input arity.
+                // Tuple-output functions (e.g. the proof-mode `(children) -> (eclass, proof)` view)
+                // have more than one value column; the first value column is the e-class / output
+                // that serialization tracks, and any extra columns (a proof) are not serialized.
+                let n_keys = function.schema.input.len();
+                let inps = &row.vals[..n_keys];
+                let out = &row.vals[n_keys];
                 let class_id = self.value_to_class_id(&function.schema.output, *out);
                 if function.decl.internal_let {
                     let_bindings

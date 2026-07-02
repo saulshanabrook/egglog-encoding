@@ -715,11 +715,19 @@ impl Function {
         }
     }
 
-    /// For view tables (with term_constructor), the effective output sort is the last input column.
-    /// For regular tables, it's the output sort.
+    /// Whether this is the proof-mode functional-dependency view `(children) -> (eclass, proof)`,
+    /// where the e-class is the first output column rather than the last input column.
+    fn is_fd_view(&self) -> bool {
+        self.decl.term_constructor.is_some() && !self.schema.extra_outputs.is_empty()
+    }
+
+    /// For view tables (with term_constructor), the effective output sort is the last input column
+    /// (old form) or the first output column (FD tuple view). For regular tables, it's the output.
     /// This is used by extraction to determine which sort a table produces values for.
     pub(crate) fn extraction_output_sort(&self) -> &ArcSort {
-        if self.decl.term_constructor.is_some() {
+        if self.is_fd_view() {
+            &self.schema.output
+        } else if self.decl.term_constructor.is_some() {
             self.schema.input.last().unwrap()
         } else {
             &self.schema.output
@@ -727,9 +735,10 @@ impl Function {
     }
 
     /// Returns the number of children for extraction purposes.
-    /// For view tables, this excludes the last column (the e-class).
+    /// For old-form view tables, this excludes the last input column (the e-class); FD tuple views
+    /// key on children only, so all inputs are children.
     pub(crate) fn extraction_num_children(&self) -> usize {
-        if self.decl.term_constructor.is_some() {
+        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
             self.schema.input.len() - 1
         } else {
             self.schema.input.len()
@@ -749,13 +758,12 @@ impl Function {
     /// For view tables, the e-class is the last input column (second-to-last in the row).
     /// For regular tables, it's the last column (the actual output).
     pub(crate) fn extraction_output_index(&self) -> usize {
-        if self.decl.term_constructor.is_some() {
-            // For view tables: input is [children..., eclass], output is view_sort
-            // Row is [children..., eclass, view_sort]
-            // We want eclass which is at index input.len() - 1
+        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
+            // Old-form view: row is [children..., eclass, view_sort]; eclass at input.len() - 1.
             self.schema.input.len() - 1
         } else {
-            // For regular tables: row is [inputs..., output]
+            // Regular table: [inputs..., output]. FD view: [children..., eclass, proof]; the eclass
+            // is the first output column, at index input.len().
             self.schema.input.len()
         }
     }
