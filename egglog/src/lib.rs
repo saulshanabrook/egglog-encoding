@@ -830,6 +830,59 @@ impl EGraph {
         }
     }
 
+    /// Build the native congruence `:merge` for a term-encoding constructor view
+    /// `(children) -> (eclass, proof)` (proof mode). Returns `None` for any function that isn't such
+    /// a view, leaving the ordinary merge lowering in place.
+    ///
+    /// On an FD conflict (two congruent terms share the same canonical children) the merge keeps the
+    /// current `(eclass, proof)` and stages the congruence edge `(@UF_S new_eclass old_eclass) =
+    /// (Trans new_proof (Sym old_proof))` — the exact edge and proof the rule-encoded congruence
+    /// would produce — so the existing UF/path-compression/rebuild machinery is unchanged.
+    fn native_congruence_merge(
+        &self,
+        decl: &ResolvedFunctionDecl,
+        output: &ArcSort,
+        num_outputs: usize,
+    ) -> Option<egglog_bridge::MergeFn> {
+        use egglog_bridge::MergeFn;
+        if !(self.proof_state.proofs_enabled
+            && decl.term_constructor.is_some()
+            && num_outputs == 2
+            && output.is_eq_sort())
+        {
+            return None;
+        }
+        let uf_name = self.proof_state.uf_parent.get(&decl.schema.output)?;
+        let uf_id = self.functions.get(uf_name)?.backend_id;
+        let trans_id = self
+            .functions
+            .get(&self.proof_state.proof_names.eq_trans_constructor)?
+            .backend_id;
+        let sym_id = self
+            .functions
+            .get(&self.proof_state.proof_names.eq_sym_constructor)?
+            .backend_id;
+        // (Sym old_proof) then (Trans new_proof (Sym old_proof)), proving new_eclass = old_eclass.
+        let sym = MergeFn::Construct(sym_id, vec![MergeFn::OldCol(1)], vec![]);
+        let trans = MergeFn::Construct(trans_id, vec![MergeFn::NewCol(1), sym], vec![]);
+        // Column 0 (eclass): keep the old eclass; when it differs from the new one, stage the union
+        // edge into @UF_S first.
+        let eclass_col = MergeFn::IfEq {
+            a: Box::new(MergeFn::OldCol(0)),
+            b: Box::new(MergeFn::NewCol(0)),
+            then: Box::new(MergeFn::OldCol(0)),
+            els: Box::new(MergeFn::Seq(vec![
+                MergeFn::TableInsert(
+                    uf_id,
+                    vec![MergeFn::NewCol(0), MergeFn::OldCol(0), trans],
+                ),
+                MergeFn::OldCol(0),
+            ])),
+        };
+        // Column 1 (proof): keep the old proof.
+        Some(MergeFn::Columns(vec![eclass_col, MergeFn::Old]))
+    }
+
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
         let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
             Some(sort) => Ok(sort.clone()),
@@ -861,7 +914,13 @@ impl EGraph {
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
-        let merge = match decl.subtype {
+        let merge = if let Some(m) = self.native_congruence_merge(decl, &output, num_outputs) {
+            // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
+            // a native :merge that stages the congruence edge into the per-sort UF table, instead of
+            // a rule-encoded self-join.
+            m
+        } else {
+            match decl.subtype {
             FunctionSubtype::Constructor => MergeFn::UnionId,
             FunctionSubtype::Custom => match &decl.merge {
                 // A tuple-output merge is a `(values e0 e1 ...)` form: each `ei` becomes the merge
@@ -878,6 +937,7 @@ impl EGraph {
                 }
                 None => MergeFn::AssertEq,
             },
+            }
         };
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
             schema: input
