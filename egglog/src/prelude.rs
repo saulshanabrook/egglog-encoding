@@ -758,6 +758,7 @@ pub fn add_sort(egraph: &mut EGraph, name: &str) -> Result<Vec<CommandOutput>, E
         presort_and_args: None,
         uf: None,
         proof_func: None,
+        proof_ctors: None,
         unionable: true,
     }])
 }

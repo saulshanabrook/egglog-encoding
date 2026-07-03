@@ -1536,6 +1536,7 @@ impl<'a> ProofInstrumentor<'a> {
                     presort_and_args: presort_and_args.clone(),
                     uf: Some(uf_name),
                     proof_func,
+                    proof_ctors: None,
                     unionable: *unionable,
                 });
                 res.extend(self.declare_sort(name));

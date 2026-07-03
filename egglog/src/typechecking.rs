@@ -441,6 +441,7 @@ impl EGraph {
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             } => {
                 // Note this is bad since typechecking should be pure and idempotent
@@ -456,6 +457,7 @@ impl EGraph {
                     presort_and_args: presort_and_args.clone(),
                     uf: uf.clone(),
                     proof_func: proof_func.clone(),
+                    proof_ctors: proof_ctors.clone(),
                     unionable: *unionable,
                 }
             }

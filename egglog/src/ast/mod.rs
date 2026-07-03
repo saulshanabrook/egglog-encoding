@@ -63,6 +63,10 @@ where
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
+        /// The global proof-constructor names `(congr, trans, sym)`, recorded once on the `Proof`
+        /// sort by proof desugaring so a desugared program re-parses self-contained (the native
+        /// congruence merge needs them). See `:internal-proof-names`.
+        proof_ctors: Option<(String, String, String)>,
         /// Whether values of this sort can be unioned.
         /// Defaults to true for user-defined sorts.
         /// Set to false for relations and term tables that should not allow union.
@@ -117,6 +121,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             } => GenericCommand::Sort {
                 span: span.clone(),
@@ -124,6 +129,7 @@ where
                 presort_and_args: presort_and_args.clone(),
                 uf: uf.clone(),
                 proof_func: proof_func.clone(),
+                proof_ctors: proof_ctors.clone(),
                 unionable: *unionable,
             },
             GenericNCommand::Function(f) => match f.subtype {
@@ -243,6 +249,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             } => GenericNCommand::Sort {
                 span,
@@ -250,6 +257,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             },
             GenericNCommand::Function(func) => GenericNCommand::Function(func.visit_exprs(f)),
@@ -559,6 +567,10 @@ where
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
+        /// The global proof-constructor names `(congr, trans, sym)`, recorded once on the `Proof`
+        /// sort by proof desugaring so a desugared program re-parses self-contained. See
+        /// `:internal-proof-names`.
+        proof_ctors: Option<(String, String, String)>,
         /// Whether values of this sort can be unioned.
         /// Defaults to true for user-defined sorts.
         /// Set to false for relations and term tables that should not allow union.
@@ -964,6 +976,7 @@ where
                 presort_and_args: None,
                 uf,
                 proof_func,
+                proof_ctors,
                 ..
             } => {
                 write!(f, "(sort {name}")?;
@@ -972,6 +985,9 @@ where
                 }
                 if let Some(pf) = proof_func {
                     write!(f, " :internal-proof-func {pf}")?;
+                }
+                if let Some((congr, trans, sym)) = proof_ctors {
+                    write!(f, " :internal-proof-names {congr} {trans} {sym}")?;
                 }
                 write!(f, ")")
             }
@@ -1740,6 +1756,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             } => GenericCommand::Sort {
                 span,
@@ -1747,6 +1764,7 @@ where
                 presort_and_args,
                 uf: uf.map(&mut *fun),
                 proof_func: proof_func.map(&mut *fun),
+                proof_ctors: proof_ctors.map(|(c, t, s)| (fun(c), fun(t), fun(s))),
                 unionable,
             },
             GenericCommand::Datatype {
@@ -2019,6 +2037,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             } => GenericCommand::Sort {
                 span,
@@ -2026,6 +2045,7 @@ where
                 presort_and_args,
                 uf,
                 proof_func,
+                proof_ctors,
                 unionable,
             },
             GenericCommand::Datatype {
