@@ -362,6 +362,7 @@ impl Parser {
                         presort_and_args: None,
                         uf: None,
                         proof_func: None,
+                        proof_ctors: None,
                         unionable: true,
                     }],
                     [name, call @ Sexp::List(..)] => {
@@ -375,13 +376,15 @@ impl Parser {
                             )),
                             uf: None,
                             proof_func: None,
+                            proof_ctors: None,
                             unionable: true,
                         }]
                     }
                     [name, rest @ ..] => {
-                        // Parse :internal-uf and :internal-proof-func annotations
+                        // Parse :internal-uf, :internal-proof-func, and :internal-proof-names annotations
                         let mut uf = None;
                         let mut proof_func = None;
+                        let mut proof_ctors = None;
                         for (key, val) in self.parse_options(rest)? {
                             match (key, val) {
                                 (":internal-uf", [uf_func]) => {
@@ -391,10 +394,17 @@ impl Parser {
                                     proof_func =
                                         Some(pf.expect_atom("internal-proof-func function name")?);
                                 }
+                                (":internal-proof-names", [congr, trans, sym]) => {
+                                    proof_ctors = Some((
+                                        congr.expect_atom("congruence constructor name")?,
+                                        trans.expect_atom("transitivity constructor name")?,
+                                        sym.expect_atom("symmetry constructor name")?,
+                                    ));
+                                }
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-function>)\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-function>)\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }
@@ -405,6 +415,7 @@ impl Parser {
                             presort_and_args: None,
                             uf,
                             proof_func,
+                            proof_ctors,
                             unionable: true,
                         }]
                     }

@@ -845,11 +845,11 @@ impl EGraph {
         num_outputs: usize,
     ) -> Option<egglog_bridge::MergeFn> {
         use egglog_bridge::MergeFn;
-        if !(self.proof_state.proofs_enabled
-            && decl.term_constructor.is_some()
-            && num_outputs == 2
-            && output.is_eq_sort())
-        {
+        // Detected purely by shape: a term-constructor view with an eq-sort first output and a
+        // second (proof) output. This shape is only ever emitted by the proof encoder, so we don't
+        // gate on `proofs_enabled` — that lets a re-parsed desugared program (run in a fresh, non-
+        // proof egraph) rebuild the same merge, which is what makes the encoding self-contained.
+        if !(decl.term_constructor.is_some() && num_outputs == 2 && output.is_eq_sort()) {
             return None;
         }
         let uf_name = self.proof_state.uf_parent.get(&decl.schema.output)?;
@@ -1701,6 +1701,7 @@ impl EGraph {
                 name,
                 uf,
                 proof_func,
+                proof_ctors,
                 ..
             } => {
                 // If the sort has a :internal-uf field, store the mapping for extraction
@@ -1713,6 +1714,15 @@ impl EGraph {
                     self.proof_state
                         .proof_func_parent
                         .insert(name.clone(), proof_func_name);
+                }
+                // The Proof sort's :internal-proof-names records the global proof-constructor names.
+                // Repopulating them makes a re-parsed desugared program self-contained (the native
+                // congruence merge looks Trans/Sym up by name).
+                if let Some((congr, trans, sym)) = proof_ctors {
+                    let names = &mut self.proof_state.proof_names;
+                    names.congr_constructor = congr;
+                    names.eq_trans_constructor = trans;
+                    names.eq_sym_constructor = sym;
                 }
                 log::info!("Declared sort {name}.")
             }

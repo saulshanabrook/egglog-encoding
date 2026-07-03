@@ -373,7 +373,7 @@ impl ProofInstrumentor<'_> {
             "
 (sort {proof_list_sort})
 (sort {ast_sort}) ;; wrap sorts in this for proofs
-(sort {proof_datatype})
+(sort {proof_datatype} :internal-proof-names {congr_constructor} {eq_trans_constructor} {eq_sym_constructor})
 
 (constructor {pcons} ({proof_datatype} {proof_list_sort}) {proof_list_sort} :internal-hidden)
 (constructor {pnil} () {proof_list_sort} :internal-hidden)
