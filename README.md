@@ -446,9 +446,10 @@ CI runs four jobs:
 - `rust`: workspace tests, proof-focused tests, and clippy.
 - `benchmark-smoke`: a one-round `./bench.py` run on
   `egglog/tests/integer_math.egg`.
-- `codspeed`: an in-process `egglog-experimental` benchmark harness over the
-  default benchmark files. CodSpeed measures the same workloads as the CLI
-  suite without invoking `./bench.py`.
+- `codspeed`: an in-process, proofs-only `egglog-experimental` benchmark
+  harness over a smaller representative file set. CodSpeed tracks proof-mode
+  movement without invoking `./bench.py`; the CLI benchmark report remains the
+  source for the full off/term/proofs comparison.
 
 Python checks are run as separate commands:
 

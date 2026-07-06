@@ -3,42 +3,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use egglog_experimental::{
-    EGraph, new_experimental_egraph, new_experimental_egraph_with_proofs,
-    new_experimental_egraph_with_term_encoding,
-};
+use egglog_experimental::{EGraph, new_experimental_egraph_with_proofs};
 
-const DEFAULT_FILES: &[&str] = &[
-    "egglog/tests/math-microbenchmark.egg",
+const CODSPEED_FILES: &[&str] = &[
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
 ];
-
-#[derive(Clone, Copy)]
-enum Treatment {
-    Off,
-    Term,
-    Proofs,
-}
-
-impl Treatment {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Term => "term",
-            Self::Proofs => "proofs",
-        }
-    }
-
-    fn egraph(self) -> EGraph {
-        match self {
-            Self::Off => new_experimental_egraph(),
-            Self::Term => new_experimental_egraph_with_term_encoding(),
-            Self::Proofs => new_experimental_egraph_with_proofs(),
-        }
-    }
-}
 
 #[derive(Clone)]
 struct BenchCase {
@@ -46,7 +17,6 @@ struct BenchCase {
     filename: String,
     path: PathBuf,
     program: String,
-    treatment: Treatment,
 }
 
 impl fmt::Display for BenchCase {
@@ -61,10 +31,9 @@ fn benchmark_cases() -> Vec<BenchCase> {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("egglog-experimental should live under the workspace root");
-    let treatments = [Treatment::Off, Treatment::Term, Treatment::Proofs];
     let mut cases = Vec::new();
 
-    for file in DEFAULT_FILES {
+    for file in CODSPEED_FILES {
         let path = workspace_root.join(file);
         let program = std::fs::read_to_string(&path)
             .unwrap_or_else(|err| panic!("could not read {path:?}: {err}"));
@@ -73,22 +42,19 @@ fn benchmark_cases() -> Vec<BenchCase> {
             .expect("benchmark file should have a stem")
             .to_string_lossy()
             .replace(['.', '-', ' '], "_");
-        for treatment in treatments {
-            cases.push(BenchCase {
-                name: format!("{}_{}", stem, treatment.name()),
-                filename: path.to_string_lossy().into_owned(),
-                path: path.clone(),
-                program: program.clone(),
-                treatment,
-            });
-        }
+        cases.push(BenchCase {
+            name: format!("{stem}_proofs"),
+            filename: path.to_string_lossy().into_owned(),
+            path: path.clone(),
+            program,
+        });
     }
     cases
 }
 
-#[divan::bench(args = benchmark_cases(), sample_count = 10)]
+#[divan::bench(args = benchmark_cases())]
 fn files(case: &BenchCase) {
-    let mut egraph = case.treatment.egraph();
+    let mut egraph = new_experimental_egraph_with_proofs();
     egraph
         .parse_and_run_program(Some(case.filename.clone()), &case.program)
         .unwrap_or_else(|err| panic!("{} failed: {err}", case.path.display()));
