@@ -24,7 +24,6 @@ def make_record(
     binary_sha256: str = "sha256:bin",
     file_sha256: str = "sha256:file",
     treatment: bench.Treatment = "off",
-    warmup_rounds: int = 1,
     timeout_sec: int = 120,
     target_label: str | None = None,
 ) -> dict[str, Any]:
@@ -42,7 +41,6 @@ def make_record(
         "file_path": "file.egg",
         "file_sha256": file_sha256,
         "treatment": treatment,
-        "warmup_rounds": warmup_rounds,
         "timeout_sec": timeout_sec,
         "wall_sec": None if status == "timed-out" else wall_sec,
         "user_sec": None,
@@ -60,7 +58,7 @@ def make_rows(*records: dict[str, Any]) -> bench.DataFrame[bench.ReportFrame]:
 
 
 def make_spec(file_spec: bench.FileSpec) -> bench.BenchmarkSpec:
-    return bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=2, warmup_rounds=1, timeout_sec=120)
+    return bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=2, timeout_sec=120)
 
 
 def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
@@ -70,7 +68,7 @@ def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
         make_record(2, started_at="2026-07-04T12:00:01Z", wall_sec=3.0),
     )
 
-    selected = bench.selected_rows(rows, bench.EstimateKey("sha256:bin", "sha256:file", "off", 1, 120), 2)
+    selected = bench.selected_rows(rows, bench.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
 
     assert selected["row_index"].tolist() == [1, 2]
 
@@ -81,7 +79,7 @@ def test_timeout_counts_for_cache_but_invalidates_stats() -> None:
         make_record(1, started_at="2026-07-04T12:00:01Z", wall_sec=1.0),
     )
 
-    selected = bench.selected_rows(rows, bench.EstimateKey("sha256:bin", "sha256:file", "off", 1, 120), 2)
+    selected = bench.selected_rows(rows, bench.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
     summary = bench.summarize_cell(selected, 2)
 
     assert len(selected) == 2
@@ -166,12 +164,12 @@ def test_estimate_model_is_exact_only_and_updates_from_successful_processes() ->
         make_record(2, started_at="2026-07-04T12:00:02Z", status="timed-out", wall_sec=None),
     )
     model = bench.EstimateModel.from_rows(rows)
-    exact_key = bench.EstimateKey("sha256:bin", "sha256:file", "off", 1, 120)
-    other_warmup_key = bench.EstimateKey("sha256:bin", "sha256:file", "off", 0, 120)
+    exact_key = bench.EstimateKey("sha256:bin", "sha256:file", "off", 120)
+    other_timeout_key = bench.EstimateKey("sha256:bin", "sha256:file", "off", 60)
 
     assert model.process_mean(exact_key) == pytest.approx(2.0)
     assert model.estimate_processes(exact_key, 3) == bench.DurationEstimate(seconds=6.0, unknown_processes=0)
-    assert model.estimate_processes(other_warmup_key, 3) == bench.DurationEstimate(seconds=None, unknown_processes=3)
+    assert model.estimate_processes(other_timeout_key, 3) == bench.DurationEstimate(seconds=None, unknown_processes=3)
 
     model.record_process(exact_key, bench.TimingResult("success", bench.TimingRow(wall_sec=4.0), None))
 
@@ -200,12 +198,19 @@ def test_collection_plan_counts_cache_and_missing_rows() -> None:
 
     assert plan.cells[0].selected_cached_rows["row_index"].tolist() == [0]
     assert plan.cells[0].missing_observations == 1
+    assert plan.total_planned_processes == 2
     assert force_plan.cells[0].missing_observations == 2
+    assert force_plan.total_planned_processes == 3
 
 
 def test_parse_args_rejects_removed_output_mode() -> None:
     with pytest.raises(SystemExit):
         bench.parse_args(["--output", "jsonl"])
+
+
+def test_parse_args_rejects_removed_warmup_mode() -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["--warmup", "0"])
 
 
 def test_collection_plan_writes_human_output_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,7 +265,7 @@ def test_render_report_omits_empty_issue_column() -> None:
         bench.ReportDestination(path=None, stream=io.StringIO()),
         rows,
         [target],
-        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, warmup_rounds=1, timeout_sec=120),
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
         fresh_indices=set(),
     )
 
@@ -283,6 +288,7 @@ def test_report_dash_writes_rows_to_stream_and_does_not_load_cache() -> None:
     assert records[0]["target_source"] == "."
     assert records[0]["file_path"] == "file.egg"
     assert "row_index" not in records[0]
+    assert "warmup_rounds" not in records[0]
     assert "target" not in records[0]
     assert "timing" not in records[0]
 
@@ -299,6 +305,7 @@ def test_flat_jsonl_roundtrips_through_report_frame(tmp_path: Path) -> None:
     assert raw_record["target_label"] == "mine"
     assert raw_record["wall_sec"] == 1.0
     assert "row_index" not in raw_record
+    assert "warmup_rounds" not in raw_record
     assert "target" not in raw_record
 
     assert loaded["row_index"].tolist() == [0]

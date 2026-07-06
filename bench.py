@@ -10,7 +10,7 @@ import resource
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,8 +37,8 @@ Treatment = Literal["off", "term", "proofs"]
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
-DEFAULT_WARMUP = 1
 DEFAULT_TIMEOUT_SEC = 120
+TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
     "egglog/tests/math-microbenchmark.egg",
@@ -92,7 +92,6 @@ class ReportFrame(pa.DataFrameModel):
     file_path: Series[str]
     file_sha256: Series[str]
     treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
-    warmup_rounds: Series[int] = pa.Field(ge=0)
     timeout_sec: Series[int] = pa.Field(gt=0)
     wall_sec: Series[float] = pa.Field(nullable=True, ge=0)
     user_sec: Series[float] = pa.Field(nullable=True, ge=0)
@@ -133,7 +132,6 @@ class BenchmarkSpec:
     files: tuple[FileSpec, ...]
     treatments: tuple[Treatment, ...]
     rounds: int
-    warmup_rounds: int
     timeout_sec: int
 
 
@@ -188,7 +186,6 @@ class EstimateKey:
     binary_sha256: str
     file_sha256: str
     treatment: Treatment
-    warmup_rounds: int
     timeout_sec: int
 
 
@@ -204,7 +201,7 @@ class CellPlan:
 
     @property
     def planned_processes(self) -> int:
-        return self.missing_observations * (self.estimate_key.warmup_rounds + 1)
+        return self.missing_observations
 
 
 @dataclass(frozen=True)
@@ -218,7 +215,10 @@ class CollectionPlan:
 
     @property
     def total_planned_processes(self) -> int:
-        return sum(cell.planned_processes for cell in self.cells)
+        measured = sum(cell.planned_processes for cell in self.cells)
+        if measured == 0:
+            return 0
+        return TARGET_STARTUP_WARMUP_SUBPROCESSES + measured
 
 
 @dataclass(frozen=True)
@@ -295,12 +295,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=f"rows required per cache cell (default: {DEFAULT_ROUNDS})",
     )
     parser.add_argument(
-        "--warmup",
-        type=nonnegative_int,
-        default=DEFAULT_WARMUP,
-        help=f"untimed warmup runs per cell (default: {DEFAULT_WARMUP})",
-    )
-    parser.add_argument(
         "--timeout-sec",
         type=positive_int,
         default=DEFAULT_TIMEOUT_SEC,
@@ -323,13 +317,6 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
-    return parsed
-
-
-def nonnegative_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("must be non-negative")
     return parsed
 
 
@@ -530,7 +517,6 @@ class EstimateModel:
                 binary_sha256=str(record["binary_sha256"]),
                 file_sha256=str(record["file_sha256"]),
                 treatment=cast(Treatment, str(record["treatment"])),
-                warmup_rounds=int(record["warmup_rounds"]),
                 timeout_sec=int(record["timeout_sec"]),
             )
             samples.setdefault(key, []).append(float(record["wall_sec"]))
@@ -586,7 +572,6 @@ def selected_rows(
         rows["binary_sha256"].eq(key.binary_sha256)
         & rows["file_sha256"].eq(key.file_sha256)
         & rows["treatment"].eq(key.treatment)
-        & rows["warmup_rounds"].eq(key.warmup_rounds)
         & rows["timeout_sec"].eq(key.timeout_sec)
     ]
     latest = matches.sort_values(["started_at", "row_index"], ascending=[False, False], kind="mergesort").head(rounds)
@@ -602,14 +587,12 @@ def estimate_key_for(
     target: ResolvedTarget,
     file_spec: FileSpec,
     treatment: Treatment,
-    warmup_rounds: int,
     timeout_sec: int,
 ) -> EstimateKey:
     return EstimateKey(
         binary_sha256=target.binary_sha256,
         file_sha256=file_spec.sha256,
         treatment=treatment,
-        warmup_rounds=warmup_rounds,
         timeout_sec=timeout_sec,
     )
 
@@ -623,7 +606,7 @@ def build_collection_plan(
     cells: list[CellPlan] = []
     for file_spec in spec.files:
         for treatment in spec.treatments:
-            estimate_key = estimate_key_for(target, file_spec, treatment, spec.warmup_rounds, spec.timeout_sec)
+            estimate_key = estimate_key_for(target, file_spec, treatment, spec.timeout_sec)
             cached = selected_rows(
                 rows,
                 estimate_key,
@@ -656,7 +639,7 @@ def selected_observations(
             for treatment in spec.treatments:
                 selected = selected_rows(
                     rows,
-                    estimate_key_for(target, file_spec, treatment, spec.warmup_rounds, spec.timeout_sec),
+                    estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
                     spec.rounds,
                 )
                 for _, item in selected.iterrows():
@@ -831,7 +814,7 @@ def label_has_enough_rows(
         for treatment in spec.treatments:
             matches = selected_rows(
                 rows,
-                EstimateKey(binary_sha256, file_spec.sha256, treatment, spec.warmup_rounds, spec.timeout_sec),
+                EstimateKey(binary_sha256, file_spec.sha256, treatment, spec.timeout_sec),
                 spec.rounds,
             )
             if len(matches) < spec.rounds:
@@ -900,6 +883,14 @@ def run_process(
         *treatment_flags(treatment),
         str(file_spec.absolute_path),
     ]
+    return run_command(command, checkout_path, timeout_sec)
+
+
+def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
+    return run_command([str(binary_path), "--help"], checkout_path, timeout_sec)
+
+
+def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -> TimingResult:
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     before = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -1066,7 +1057,6 @@ def flat_report_record(
         "file_path": cell.file.display_path,
         "file_sha256": cell.file.sha256,
         "treatment": cell.treatment,
-        "warmup_rounds": spec.warmup_rounds,
         "timeout_sec": spec.timeout_sec,
         "wall_sec": result.timing.wall_sec,
         "user_sec": result.timing.user_sec,
@@ -1130,7 +1120,6 @@ def collect_rows(
                 required_rounds = cell.missing_observations
                 observation_number = completed_observations + 1
                 label = collection_label(cell_file, cell_treatment, round_index, required_rounds)
-                completed_processes = 0
 
                 def update_progress(current: str, advance: int = 0) -> None:
                     if progress is None or process_task is None:
@@ -1142,46 +1131,15 @@ def collect_rows(
                         current=current,
                     )
 
-                def on_process_start(
-                    phase: str,
-                    observation_number: int = observation_number,
-                ) -> None:
-                    update_progress(f"row {observation_number}/{total_observations} {phase}")
-
-                def on_process_complete(
-                    phase: str,
-                    process_result: TimingResult,
-                    cell_key: EstimateKey = cell_key,
-                    observation_number: int = observation_number,
-                ) -> None:
-                    nonlocal completed_processes
-                    completed_processes += 1
-                    estimate_model.record_process(cell_key, process_result)
-                    decrement_remaining(cell_key)
-                    update_progress(
-                        f"row {observation_number}/{total_observations} {phase}; "
-                        f"last {format_timing_result(process_result)}",
-                        advance=1,
-                    )
-
+                update_progress(f"row {observation_number}/{total_observations} timed")
                 started_at = now_iso()
-                result = run_with_warmup(
-                    binary_path,
-                    Path(target.row.path),
-                    cell_file,
-                    cell_treatment,
-                    spec.warmup_rounds,
-                    spec.timeout_sec,
-                    on_process_start,
-                    on_process_complete,
+                result = run_process(binary_path, Path(target.row.path), cell_file, cell_treatment, spec.timeout_sec)
+                estimate_model.record_process(cell_key, result)
+                decrement_remaining(cell_key)
+                update_progress(
+                    f"row {observation_number}/{total_observations} timed; last {format_timing_result(result)}",
+                    advance=1,
                 )
-                skipped_processes = spec.warmup_rounds + 1 - completed_processes
-                if skipped_processes > 0:
-                    decrement_remaining(cell_key, skipped_processes)
-                    update_progress(
-                        f"row {observation_number}/{total_observations}; warmup stopped early",
-                        advance=skipped_processes,
-                    )
                 record = flat_report_record(
                     row_index=next_index,
                     started_at=started_at,
@@ -1219,46 +1177,27 @@ def collect_rows(
             eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
             current=f"rows 0/{total_observations}",
         )
+        progress.update(
+            process_task,
+            current="startup warmup",
+            eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
+        )
+        startup_warmup = run_startup_warmup(binary_path, Path(target.row.path), spec.timeout_sec)
+        progress.update(
+            process_task,
+            advance=TARGET_STARTUP_WARMUP_SUBPROCESSES,
+            current=f"startup warmup; last {format_timing_result(startup_warmup)}",
+            eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
+        )
+        progress.console.print(f"  startup warmup: {format_timing_result(startup_warmup)}")
+        if startup_warmup.status != "success":
+            message = "startup warmup did not complete successfully"
+            if startup_warmup.error is not None:
+                message = f"{message}: {startup_warmup.error.message}"
+            raise ValueError(message)
         run_loop(progress, process_task)
     fresh_rows = concat_report_frames(fresh_frames)
     return CollectionResult(rows=concat_report_frames([rows, fresh_rows]), fresh_rows=fresh_rows)
-
-
-def run_with_warmup(
-    binary_path: Path,
-    checkout_path: Path,
-    file_spec: FileSpec,
-    treatment: Treatment,
-    warmup_rounds: int,
-    timeout_sec: int,
-    on_process_start: Callable[[str], None] | None = None,
-    on_process_complete: Callable[[str, TimingResult], None] | None = None,
-) -> TimingResult:
-    for warmup_index in range(warmup_rounds):
-        if on_process_start is not None:
-            on_process_start(f"warmup {warmup_index + 1}/{warmup_rounds}")
-        warmup = run_process(binary_path, checkout_path, file_spec, treatment, timeout_sec)
-        if on_process_complete is not None:
-            on_process_complete(f"warmup {warmup_index + 1}/{warmup_rounds}", warmup)
-        if warmup.status != "success":
-            message = "warmup did not complete successfully"
-            if warmup.error is not None:
-                message = f"{message}: {warmup.error.message}"
-            return TimingResult(
-                status=warmup.status,
-                timing=TimingRow(),
-                error=ErrorRow(
-                    exit_code=warmup.error.exit_code if warmup.error is not None else None,
-                    signal=warmup.error.signal if warmup.error is not None else None,
-                    message=message,
-                ),
-            )
-    if on_process_start is not None:
-        on_process_start("timed")
-    result = run_process(binary_path, checkout_path, file_spec, treatment, timeout_sec)
-    if on_process_complete is not None:
-        on_process_complete("timed", result)
-    return result
 
 
 def summarize_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
@@ -1421,7 +1360,7 @@ def target_cell_summaries(
         (file_spec.sha256, treatment): summarize_cell(
             selected_rows(
                 rows,
-                estimate_key_for(target, file_spec, treatment, spec.warmup_rounds, spec.timeout_sec),
+                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
                 spec.rounds,
             ),
             spec.rounds,
@@ -1663,7 +1602,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             files=files,
             treatments=treatments,
             rounds=args.rounds,
-            warmup_rounds=args.warmup,
             timeout_sec=args.timeout_sec,
         )
         target_specs = args.target if args.target is not None else ["."]

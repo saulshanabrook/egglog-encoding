@@ -33,7 +33,7 @@ uv run --locked pytest -q
 For benchmark-runner changes, also smoke the CLI with a temporary report:
 
 ```bash
-uv run --locked ./bench.py --rounds 1 --warmup 0 --treatments off --report .reports.smoke.jsonl \
+uv run --locked ./bench.py --rounds 1 --treatments off --report .reports.smoke.jsonl \
   egglog/tests/integer_math.egg
 ```
 
@@ -41,7 +41,7 @@ For agent-readable benchmark smoke output, pipe report rows from stdout and keep
 runner status and build diagnostics on stderr:
 
 ```bash
-uv run --locked ./bench.py --rounds 1 --warmup 0 --treatments off --report - \
+uv run --locked ./bench.py --rounds 1 --treatments off --report - \
   egglog/tests/integer_math.egg > /tmp/egglog-encoding-bench-smoke.jsonl
 ```
 
@@ -57,5 +57,5 @@ uv run --locked ./bench.py --rounds 1 --warmup 0 --treatments off --report - \
   summary tables.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
-- Cache reuse is decided by binary SHA-256, file SHA-256, treatment, warmup
-  count, and timeout.
+- Cache reuse is decided by binary SHA-256, file SHA-256, treatment, and
+  timeout.

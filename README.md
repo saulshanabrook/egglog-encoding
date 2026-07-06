@@ -131,8 +131,6 @@ The benchmark CLI exposes the routine collection and reporting options:
   in that mode no cache file is loaded.
 - `--rounds <n>`: fresh collection rounds per file and target, and matching
   report rows required per cache cell. Default: `6`.
-- `--warmup <n>`: untimed warmup runs per target, file, and treatment. Default:
-  `1`.
 - `--timeout-sec <n>`: per-process timeout. Default: `120`.
 - `--treatments <list>`: comma-separated treatments. Default:
   `off,term,proofs`.
@@ -183,8 +181,6 @@ Row fields:
 - `binary_sha256`: SHA-256 of the built `target/release/egglog-experimental`
   binary.
 - `treatment`: `off`, `term`, or `proofs`.
-- `warmup_rounds`: number of untimed warmup runs used for this
-  target/file/treatment.
 - `timeout_sec`: per-process timeout.
 
 Target fields:
@@ -240,7 +236,6 @@ Example row:
   "file_path": "egglog/tests/foo.egg",
   "file_sha256": "sha256:...",
   "treatment": "proofs",
-  "warmup_rounds": 1,
   "timeout_sec": 120,
   "wall_sec": 1.23,
   "user_sec": 1.18,
@@ -266,8 +261,11 @@ The stderr output shows the cache plan and final selected observations.
 The cache plan reports cached rows, missing rows, selected cached statuses,
 exact-cell duration estimates, and estimated fresh collection time. Estimates
 use only successful rows with the same binary SHA-256, file SHA-256, treatment,
-warmup count, and timeout; if no exact successful rows exist, the estimate is
-reported as unknown rather than borrowing data from another target or binary.
+and timeout; if no exact successful rows exist, the estimate is reported as
+unknown rather than borrowing data from another target or binary.
+During fresh collection, `observations` are measured report rows and
+`subprocesses` are child process launches, including the one target startup
+warmup when fresh rows are needed.
 
 ## Statistics
 
@@ -281,14 +279,15 @@ Collection and analysis behavior:
   same target/file across all selected treatments in a balanced order.
   Cached analysis uses the selected rows as unpaired independent samples rather
   than recovering persisted round groups.
-- The runner uses a small fixed warmup. It does not use best-of-N or discard
-  runs by folklore.
+- When fresh rows are needed for a target, the runner starts with one untimed
+  executable startup warmup. It does not use best-of-N or discard runs by
+  folklore.
 - The runner builds each target with `cargo build --release` before deciding
   whether cached timing rows can be reused.
 - Cache identity comes from persisted fields: binary SHA-256, file SHA-256,
-  treatment, warmup count, and timeout. Target source, path, git ref, git SHA,
-  and dirty flag are provenance/display fields; they do not prevent reuse when
-  the binary SHA-256 matches.
+  treatment, and timeout. Target source, path, git ref, git SHA, and dirty flag
+  are provenance/display fields; they do not prevent reuse when the binary
+  SHA-256 matches.
 - Timeouts are incomplete cells. The report shows where timeouts happened, but
   does not compute percent improvement, ratio confidence intervals, suite-pass
   overhead, or geometric-mean overhead for comparisons that include timed-out
@@ -389,7 +388,7 @@ Methodology references:
   Evaluation" (OOPSLA 2007): report repeated-run means with uncertainty, not
   informal best/average/worst tables.
 - Barrett, Bolz-Tereick, Killick, Mount, and Tratt, "Virtual Machine Warmup
-  Blows Hot and Cold" (OOPSLA 2017): make warmup policy explicit and fixed.
+  Blows Hot and Cold" (OOPSLA 2017): make the startup warmup policy explicit.
 - Oleksenko, Kuvaiskii, Bhatotia, and Fetzer, "FEX: A Software Systems
   Evaluator" (DSN 2017): make the build-run-collect-report pipeline
   reproducible.
