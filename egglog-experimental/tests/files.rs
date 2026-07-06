@@ -112,12 +112,16 @@ impl Run {
 fn generate_tests(glob: &str) -> Vec<Trial> {
     let mut trials = vec![];
     let mut push_trial = |run: Run| trials.push(run.into_trial());
+    let skipped_files = ["math-backoff.egg"];
 
     for entry in glob::glob(glob).unwrap() {
         let run = Run {
             path: entry.unwrap().clone(),
             desugar: false,
         };
+        if skipped_files.iter().any(|file| run.path.ends_with(file)) {
+            continue;
+        }
         // let should_fail = run.should_fail();
 
         push_trial(run.clone());

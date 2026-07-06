@@ -320,6 +320,7 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             "math-microbenchmark.egg",
             "rectangle.egg",
             "eggcc-2mm.egg",
+            "eqsolve.egg",
             "subsume.egg",
             "subsume-relation.egg",
         ];

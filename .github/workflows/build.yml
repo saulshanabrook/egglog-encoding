@@ -1,0 +1,55 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv lock --check
+      - run: uv run --locked ruff format --check bench.py test_bench.py
+      - run: uv run --locked ruff check bench.py test_bench.py
+      - run: uv run --locked mypy bench.py test_bench.py
+      - run: uv run --locked pytest -q
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: cargo test --workspace proof
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  benchmark-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: Swatinem/rust-cache@v2
+      - run: uv run --locked ./bench.py --rounds 1 --warmup 0 --treatments off --timeout-sec 120 --report .reports.ci.jsonl egglog/tests/integer_math.egg
+
+  codspeed:
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-codspeed@4.0.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo codspeed build -p egglog-experimental --bench files
+      - uses: CodSpeedHQ/action@v4
+        with:
+          run: cargo codspeed run files
+          mode: simulation

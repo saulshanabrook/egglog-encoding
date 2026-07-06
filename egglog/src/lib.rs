@@ -348,6 +348,11 @@ impl Function {
         self.can_subsume
     }
 
+    /// Whether this table is a constructor/relation or a function.
+    pub fn subtype(&self) -> FunctionSubtype {
+        self.decl.subtype
+    }
+
     /// Whether this is a let binding
     pub fn is_let_binding(&self) -> bool {
         self.decl.internal_let

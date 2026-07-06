@@ -1,7 +1,7 @@
 # Egglog encoding
 
-This repository is the target workspace for iterating on proof and term
-encoding changes across `egglog` and `egglog-experimental`.
+This repository is a workspace for iterating on proof and term encoding changes
+across `egglog` and `egglog-experimental`.
 
 The goal is to make proof generation work with a reasonable slowdown before
 porting the winning strategy back upstream. The current success target is:
@@ -12,7 +12,7 @@ porting the winning strategy back upstream. The current success target is:
 
 ## Daily workflow
 
-The target development loop is:
+The development loop is:
 
 ```bash
 # Run all egglog and egglog-experimental tests.
@@ -31,10 +31,9 @@ cargo build --release --workspace
 ./bench.py
 ```
 
-The root workspace should include both `egglog` and `egglog-experimental`, and
-`egglog-experimental` should depend on the local `egglog` path while developing
-this repo. That keeps proof changes and downstream experimental behavior in the
-same reviewable unit.
+The root workspace includes both `egglog` and `egglog-experimental`.
+`egglog-experimental` depends on the workspace `egglog` crate, which keeps proof
+changes and downstream experimental behavior in the same reviewable unit.
 
 ## Benchmarking
 
@@ -44,19 +43,10 @@ The public benchmark entrypoint is an executable Python script:
 ./bench.py [FILE ...] [OPTIONS]
 ```
 
-`./bench.py` must use a uv script shebang so users can run it directly:
+Python dependencies and tool configuration live in `pyproject.toml`; `uv.lock`
+pins the environment used by CI and local checks.
 
-```python
-#!/usr/bin/env -S uv run --script
-```
-
-The default command:
-
-```bash
-./bench.py
-```
-
-is equivalent to:
+The default command is equivalent to:
 
 ```bash
 ./bench.py --target .
@@ -64,7 +54,9 @@ is equivalent to:
 
 It builds the current checkout, runs the default representative benchmark
 files, appends any missing observations to `.reports.jsonl`, and prints a
-Markdown report to stdout.
+Rich terminal report to stderr. Use `--report -` to stream newly measured
+report rows to stdout while keeping progress, summaries, build diagnostics, and
+errors on stderr.
 
 ### Targets
 
@@ -88,9 +80,9 @@ Target syntax:
 - `--target label=` reuses the latest cached target identity with that label
   from `--report`.
 
-Rules:
+Behavior:
 
-- Git refs must use the `@` prefix. Paths must not.
+- Git refs use the `@` prefix. Paths do not.
 - If no target is provided, the only target is `.`.
 - If any target is provided, the target list is exactly what was specified.
 - The first target is the comparison baseline.
@@ -99,15 +91,14 @@ Rules:
 - `label=` lookup only considers rows that were written with explicit
   `target.label`. If the same label appears for multiple binary hashes, the
   row with the latest `started_at` timestamp for that label is the definitive
-  label pointer, with ties broken by later JSONL file order. If that pointer
-  refers to a clean git SHA, the runner may rebuild that SHA in an isolated
-  worktree to collect more samples. If it points to a dirty checkout, it is
+  label pointer, with ties broken by later JSONL file order. When that pointer
+  refers to a clean git SHA, the runner rebuilds that SHA in an isolated
+  worktree to collect more samples. When it points to a dirty checkout, it is
   report-only unless the user supplies a new `label=SOURCE`.
 - Targets are built and measured sequentially. Path targets use the provided
-  checkout directly. Git-ref targets should use an existing worktree at the
-  resolved commit when one exists, otherwise the runner should create or reuse
-  an isolated temporary worktree instead of stashing local changes in the main
-  checkout.
+  checkout directly. Git-ref targets use an existing worktree at the resolved
+  commit when one exists; otherwise the runner creates or reuses an isolated
+  temporary worktree instead of stashing local changes in the main checkout.
 
 ### Files
 
@@ -119,22 +110,25 @@ Positional arguments are benchmark files:
 
 If no files are provided, the default target benchmark suite is:
 
-- `egglog/tests/web-demo/unification-points-to.egg`
+- `egglog/tests/math-microbenchmark.egg`
 - `egglog/tests/web-demo/rw-analysis.egg`
 - `egglog/tests/integer_math.egg`
-- `egglog/tests/proof-extract-cost.egg`
+- `egglog/tests/web-demo/resolution.egg`
 
-These four files are proof-compatible representative examples. The runner should
-validate default files against `off`, `term`, and `proofs` before timing them.
+These four files are proof-compatible representative examples under the current
+`egglog-experimental` CLI and run under the default `off`, `term`, and `proofs`
+treatment matrix.
 Relative file paths are resolved relative to the directory where `./bench.py`
 was invoked, not relative to each target checkout. The same file contents are
 used for every target, and `file.sha256` records the exact benchmark input.
 
 ### Options
 
-The benchmark CLI should expose only the options users need routinely:
+The benchmark CLI exposes the routine collection and reporting options:
 
-- `--report <path>`: JSONL report/cache path. Default: `.reports.jsonl`.
+- `--report <path|->`: JSONL report/cache path. Default:
+  `.reports.jsonl`. Use `--report -` to stream measured report rows to stdout;
+  in that mode no cache file is loaded.
 - `--rounds <n>`: fresh collection rounds per file and target, and matching
   report rows required per cache cell. Default: `6`.
 - `--warmup <n>`: untimed warmup runs per target, file, and treatment. Default:
@@ -153,8 +147,8 @@ The default treatment matrix is:
 - `term`: run with `--term-encoding`.
 - `proofs`: run with `--proofs`.
 
-`--proof-testing` is a correctness mode, not a benchmark treatment, and should
-not appear in performance headlines.
+`--proof-testing` is a correctness mode, not a benchmark treatment, and does not
+appear in performance headlines.
 
 The measured command shape is:
 
@@ -170,48 +164,47 @@ Benchmarking is single-threaded by default.
 
 ## Reports
 
-`.reports.jsonl` is the canonical benchmark artifact and must be ignored by git.
-Use `--report <path>` to choose a different report file.
+`.reports.jsonl` is the canonical benchmark artifact and is ignored by git.
+Use `--report <path>` to choose a different report file. Use `--report -` to
+write newly measured report rows to stdout instead of a file. All progress,
+summary, and diagnostic output always goes to stderr, so stdout can be
+piped as report JSONL whenever `--report -` is used.
 
 The report file is append-only JSONL. Each line records one process execution
-and is a measured timing observation, not a derived summary. The row should
-contain the fields needed to recompute cache identity.
+and is a measured timing observation, not a derived summary. The row contains
+the flat fields needed to recompute cache identity. The report does not store
+`row_index`; the runner derives row order from the JSONL file order when it
+loads the report.
 
-Required row fields:
+Row fields:
 
 - `started_at`: ISO timestamp for the measured child process start.
 - `status`: `success`, `timed-out`, or `failure`.
-- `target`: object describing the benchmarked source tree.
 - `binary_sha256`: SHA-256 of the built `target/release/egglog-experimental`
   binary.
-- `file`: object describing the `.egg` input.
 - `treatment`: `off`, `term`, or `proofs`.
 - `warmup_rounds`: number of untimed warmup runs used for this
   target/file/treatment.
 - `timeout_sec`: per-process timeout.
-- `timing`: measured child-process timing and resource data.
 
-Required `target` fields:
+Target fields:
 
-- `source`: original `--target` source string, such as `.`, `/path/to/repo`, or
-  `@main`.
-- `path`: absolute checkout path used for the build.
-- `git_ref`: git ref used for the checkout, or `HEAD` for path targets.
-- `git_sha`: resolved HEAD commit used for the build.
-- `is_dirty`: whether the checkout had relevant local changes when built.
+- `target_label`: explicit display label, present only when the target was
+  passed as `label=SOURCE`; otherwise `null`.
+- `target_source`: original `--target` source string, such as `.`,
+  `/path/to/repo`, or `@main`.
+- `target_path`: absolute checkout path used for the build.
+- `target_git_ref`: git ref used for the checkout, or `HEAD` for path targets.
+- `target_git_sha`: resolved HEAD commit used for the build.
+- `target_is_dirty`: whether the checkout had relevant local changes when
+  built.
 
-Optional `target` fields:
+File fields:
 
-- `label`: explicit display label, present only when the target was passed as
-  `label=SOURCE`. If absent, report output should infer a label from `git_ref`,
-  `git_sha`, or `path`.
+- `file_path`: benchmark file path as invoked.
+- `file_sha256`: SHA-256 of the file contents.
 
-Required `file` fields:
-
-- `path`: benchmark file path as invoked.
-- `sha256`: SHA-256 of the file contents.
-
-Required `timing` fields:
+Timing fields:
 
 - `wall_sec`: measured child-process wall time.
 - `user_sec`: child-process user CPU time when available, otherwise `null`.
@@ -225,11 +218,11 @@ For `status: timed-out`, `wall_sec`, `user_sec`, `system_sec`,
 run did not complete before `timeout_sec`, so the true runtime is greater than
 the timeout.
 
-Rows with `status: timed-out` or `status: failure` may include:
+Rows with `status: timed-out` or `status: failure` can include:
 
-- `error.exit_code`: process exit code when available.
-- `error.signal`: terminating signal when available.
-- `error.message`: short runner-generated error message.
+- `error_exit_code`: process exit code when available.
+- `error_signal`: terminating signal when available.
+- `error_message`: short runner-generated error message.
 
 Example row:
 
@@ -237,39 +230,44 @@ Example row:
 {
   "started_at": "2026-07-04T12:34:56Z",
   "status": "success",
-  "target": {
-    "source": ".",
-    "path": "/Users/saul/p/egglog-encoding",
-    "git_ref": "HEAD",
-    "git_sha": "abc123...",
-    "is_dirty": true
-  },
+  "target_label": null,
+  "target_source": ".",
+  "target_path": "/Users/saul/p/egglog-encoding",
+  "target_git_ref": "HEAD",
+  "target_git_sha": "abc123...",
+  "target_is_dirty": true,
   "binary_sha256": "sha256:...",
-  "file": {
-    "path": "egglog/tests/foo.egg",
-    "sha256": "sha256:..."
-  },
+  "file_path": "egglog/tests/foo.egg",
+  "file_sha256": "sha256:...",
   "treatment": "proofs",
   "warmup_rounds": 1,
   "timeout_sec": 120,
-  "timing": {
-    "wall_sec": 1.23,
-    "user_sec": 1.18,
-    "system_sec": 0.04,
-    "cpu_wall_ratio": 0.99,
-    "max_rss_bytes": 123456789
-  }
+  "wall_sec": 1.23,
+  "user_sec": 1.18,
+  "system_sec": 0.04,
+  "cpu_wall_ratio": 0.99,
+  "max_rss_bytes": 123456789,
+  "error_exit_code": null,
+  "error_signal": null,
+  "error_message": null
 }
 ```
 
-Running `./bench.py` should always print the report. For each
-target/file/treatment cell, cache sufficiency is at least `--rounds` matching
-rows of any status. If enough matching rows exist, the script should take the
-`--rounds` most recent rows by `started_at`, breaking timestamp ties by later
-JSONL file order, analyze them, and print. If observations are missing, it
-should collect only the missing rows, append them, then print. With
-`--force-run`, the script always appends new rows first and then analyzes the
-`--rounds` most recent matching rows by `started_at` and JSONL file order.
+Running `./bench.py` always prints the report. For each target/file/treatment
+cell, cache sufficiency is at least `--rounds` matching rows of any status. If
+enough matching rows exist, the script takes the `--rounds` most recent rows by
+`started_at`, breaking timestamp ties by later JSONL file order, analyzes them,
+and prints. If observations are missing, it collects only the missing rows,
+appends them, then prints. With `--force-run`, the script always appends new
+rows first and then analyzes the `--rounds` most recent matching rows by
+`started_at` and JSONL file order.
+
+The stderr output shows the cache plan and final selected observations.
+The cache plan reports cached rows, missing rows, selected cached statuses,
+exact-cell duration estimates, and estimated fresh collection time. Estimates
+use only successful rows with the same binary SHA-256, file SHA-256, treatment,
+warmup count, and timeout; if no exact successful rows exist, the estimate is
+reported as unknown rather than borrowing data from another target or binary.
 
 ## Statistics
 
@@ -277,48 +275,51 @@ The benchmark unit is a full process execution of `egglog-experimental` on one
 `.egg` file under one treatment. Python orchestration overhead is outside the
 measured child process.
 
-Required defaults:
+Collection and analysis behavior:
 
-- When collecting a fresh complete set, use paired execution rounds: each round
-  runs the same target/file across all selected treatments in a balanced order.
-  Cached analysis does not require recovering persisted round groups; it may use
-  the selected rows as unpaired independent samples.
-- Use a small fixed warmup. Do not use best-of-N or discard runs by folklore.
-- Run `cargo build --release` for each target before deciding whether cached
-  timing rows can be reused.
-- Derive cache identity from persisted fields: binary SHA-256, file SHA-256,
+- Fresh complete collection uses paired execution rounds: each round runs the
+  same target/file across all selected treatments in a balanced order.
+  Cached analysis uses the selected rows as unpaired independent samples rather
+  than recovering persisted round groups.
+- The runner uses a small fixed warmup. It does not use best-of-N or discard
+  runs by folklore.
+- The runner builds each target with `cargo build --release` before deciding
+  whether cached timing rows can be reused.
+- Cache identity comes from persisted fields: binary SHA-256, file SHA-256,
   treatment, warmup count, and timeout. Target source, path, git ref, git SHA,
   and dirty flag are provenance/display fields; they do not prevent reuse when
   the binary SHA-256 matches.
-- Treat timeouts as incomplete cells. The report should show where timeouts
-  happened, but should not compute percent improvement, ratio confidence
-  intervals, suite-pass overhead, or geometric-mean overhead for comparisons
-  that include timed-out cells.
-- Treat failures as invalid cells. Any target/file/treatment failure invalidates
+- Timeouts are incomplete cells. The report shows where timeouts happened, but
+  does not compute percent improvement, ratio confidence intervals, suite-pass
+  overhead, or geometric-mean overhead for comparisons that include timed-out
+  cells.
+- Failures are invalid cells. Any target/file/treatment failure invalidates
   comparisons that depend on that cell until replacement observations are
   appended, for example with `--force-run`, and the selected latest rows for the
   cell are successful.
 
-For a successful one-system target/file/treatment cell, report the arithmetic
-mean and the one-system t interval from "Quantifying Performance Changes with
-Effect Size Confidence Intervals", Section 6.2. With `n` selected successful
-`wall_sec` samples, sample mean `m`, unbiased sample variance `s^2`, and 95% t
-critical value `t` with `n - 1` degrees of freedom:
+For a successful one-system target/file/treatment cell, the analysis computes
+the arithmetic mean and the one-system t interval from "Quantifying Performance
+Changes with Effect Size Confidence Intervals", Section 6.2. With `n` selected
+successful `wall_sec` samples, sample mean `m`, unbiased sample variance `s^2`,
+and 95% t critical value `t` with `n - 1` degrees of freedom:
 
 ```text
 ci = [m - t * sqrt(s^2 / n), m + t * sqrt(s^2 / n)]
 ```
 
-If `n < 2`, report the mean and mark the interval as undefined.
+If `n < 2`, the printed report shows the mean because the interval is
+undefined. When a confidence interval is defined, the printed report shows the
+range, such as `[0.0183s, 0.0251s]`.
 
-For a successful pairwise comparison, use the one-level Kalibera/Jones
-ratio-of-means confidence interval from "Quantifying Performance Changes with
-Effect Size Confidence Intervals", Section 6.2.[^benchmark-provenance]
+For a successful pairwise comparison, the analysis uses the one-level
+Kalibera/Jones ratio-of-means confidence interval from "Quantifying Performance
+Changes with Effect Size Confidence Intervals", Section
+6.2.[^benchmark-provenance]
 
 For baseline samples `B` and candidate samples `C`, with sample means `b` and
 `c`, unbiased sample variances `s_b^2` and `s_c^2`, equal sample count `n`, and
-95% t critical value `t` with `n - 1` degrees of freedom, report the point
-overhead as:
+95% t critical value `t` with `n - 1` degrees of freedom, the point overhead is:
 
 ```text
 ratio = c / b
@@ -334,36 +335,41 @@ half_width = sqrt((b * c)^2 - a * d) / a
 ci = [center - half_width, center + half_width]
 ```
 
-If `a <= 0` or the radicand is negative, mark the interval as undefined and the
-comparison as inconclusive rather than substituting a different interval method.
-Do not use arithmetic averages of percentages.
+If `a <= 0` or the radicand is negative, the interval is undefined and the
+comparison is inconclusive rather than using a different interval method. The
+runner does not use arithmetic averages of percentages.
 
-Treat the benchmark files as the workload suite under evaluation. This follows
-the Kalibera/Jones experiment-design framing: define the systems, workload set,
+The benchmark files are the workload suite under evaluation. This follows the
+Kalibera/Jones experiment-design framing: define the systems, workload set,
 treatments, and repetition policy, then quantify uncertainty in the measured
-means for that experiment. For `suite-pass` overhead, sum the per-file means for
-the candidate treatment and divide by the summed per-file baseline means. For
-its confidence interval, apply the same Fieller-style ratio interval to the
-summed means, propagating run-to-run timing variance for the specified suite.
+means for that experiment. For `suite-pass` overhead, the runner sums the
+per-file means for the candidate treatment and divides by the summed per-file
+baseline means. Its confidence interval applies the same Fieller-style ratio
+interval to the summed means, propagating run-to-run timing variance for the
+specified suite.
 
-The report should include:
+The report includes:
 
-- per-file means and confidence intervals for each treatment;
+- per-file wall-time estimates for each treatment;
 - `term / off` overhead;
 - `proofs / off` total proof overhead;
 - `proofs / term` marginal proof-generation overhead;
-- suite-pass proof overhead: summed mean proof time divided by summed mean
-  baseline time, with a fixed-suite confidence interval;
-- equal-file geometric-mean proof overhead, which gives each benchmark file
-  equal weight in the summary;
-- for multiple targets, commit deltas within each treatment and a
-  ratio-of-ratios for proof overhead changes.
+- total suite time ratio (`proofs/off`): summed mean proof time divided by
+  summed mean baseline time, with a fixed-suite confidence interval;
+- equal-file geometric mean ratio (`proofs/off`), which gives each benchmark
+  file equal weight in the summary;
+- for multiple targets, suite proof overhead and change relative to the first
+  target.
 
-The `<2x` target passes only when the suite-pass proof overhead has a 95%
-confidence interval upper bound below `2x`. This gate matches the stated goal:
-proof mode should keep total execution time for the specified benchmark suite
-below `2x` the non-proof baseline, with uncertainty from repeated executions
-accounted for.
+When a confidence interval is defined, printed estimate cells show the interval
+range. When it is undefined, they show the point estimate.
+
+The `<2x` goal is established only when the suite-pass proof overhead has a 95%
+confidence interval upper bound below `2x`. This gate matches the project goal:
+proof mode keeps total execution time for the specified benchmark suite below
+`2x` the non-proof baseline, with uncertainty from repeated executions
+accounted for. The printed suite summary has no separate status column; the gate
+comes from the suite-pass confidence interval upper bound.
 
 Methodology references:
 
@@ -393,50 +399,66 @@ Methodology references:
     and
     [discussion #15](https://github.com/saulshanabrook/saulshanabrook/discussions/15)
     helped identify this method, but they are provenance only. The statistics
-    specification above should be implemented from the cited papers.
+    implementation comes from the cited papers.
 
 ## Repository layout
 
-Target layout:
+Layout:
 
 - `egglog/`: subtree of `https://github.com/egraphs-good/egglog`.
 - `egglog-experimental/`: subtree of
   `https://github.com/egraphs-good/egglog-experimental`.
 - `Cargo.toml`: root workspace that includes both subtrees and any benchmark
   helper crates.
-- `bench.py`: executable uv script for benchmark collection and reporting.
+- `bench.py`: executable uv entrypoint for benchmark collection and reporting.
+- `test_bench.py`: top-level pytest coverage for benchmark-runner logic.
+- `pyproject.toml`: Python dependencies plus mypy, pytest, and ruff config.
+- `uv.lock`: locked Python environment for benchmark-runner dependencies and
+  developer tools.
 - `.reports.jsonl`: ignored local benchmark report/cache.
 - `AGENTS.md`: guidance for authors and LLMs on test order, benchmark
   expectations, and upstream/subtree hygiene.
 - `.github/`: CI workflows.
 
-The root README is the orientation and workflow contract. Detailed design notes
-belong in focused docs or ADRs once implementation decisions stabilize.
+The root README is the orientation and workflow reference.
 
 ## Profiles
 
-Target profiles:
+Configured profiles:
 
-- `dev`: optimized enough for realistic local testing, with useful debug info.
-- `test`: same optimization expectations as `dev`.
-- `release`: full optimization for benchmark binaries.
-- `bench`: same codegen expectations as `release`.
-- `profile`: release-like optimization with debug symbols for profilers and
+- `dev`: `opt-level = 3`, which Cargo defines as all optimizations, with
+  `line-tables-only` debug info for tracebacks.
+- `test`: Cargo's built-in test profile inherits `dev`, so `cargo test` uses
+  the same optimized build settings.
+- `release`: Cargo's built-in optimized release profile for benchmark binaries.
+- `profiling`: inherits `release` and adds debug symbols for profilers and
   samplers.
 
-Benchmark reports must record the binary hash used for each observation.
+Cargo's profile behavior is documented in the
+[Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
+Each benchmark report row records the binary hash used for that observation.
 
 ## CI
 
-Target CI should run:
+CI runs four jobs:
 
-- workspace tests;
-- proof-focused tests;
-- clippy;
-- benchmark script smoke tests;
-- statistical fixture tests for the reporter;
-- advisory performance checks on PRs;
-- CodSpeed timing and memory benchmarks on the default benchmark files. These
-  should use an in-process benchmark harness, such as a `benches/files.rs`
-  equivalent of the CLI file runner, so CodSpeed measures the same workloads
-  even though it does not invoke `./bench.py`.
+- `python`: `uv lock --check`, ruff formatting, ruff linting, mypy, and pytest.
+- `rust`: workspace tests, proof-focused tests, and clippy.
+- `benchmark-smoke`: a one-round `./bench.py` run on
+  `egglog/tests/integer_math.egg`.
+- `codspeed`: an in-process `egglog-experimental` benchmark harness over the
+  default benchmark files. CodSpeed measures the same workloads as the CLI
+  suite without invoking `./bench.py`.
+
+Python checks are run as separate commands:
+
+```bash
+uv lock --check
+uv run --locked ruff format --check bench.py test_bench.py
+uv run --locked ruff check bench.py test_bench.py
+uv run --locked mypy bench.py test_bench.py
+uv run --locked pytest -q
+```
+
+Use `uv run ruff format bench.py test_bench.py` to apply formatting locally.

@@ -15,7 +15,8 @@
 //! function is reported.
 
 use egglog::{
-    CommandOutput, EGraph, Error, FunctionRow, TypeError, UserDefinedCommand, Value, ast::Expr,
+    CommandOutput, EGraph, Error, TypeError, UserDefinedCommand, Value,
+    ast::{Expr, FunctionSubtype},
     prelude::Span,
 };
 use egglog_ast::generic_ast::GenericExpr;
@@ -235,9 +236,8 @@ fn compute_table_stats(egraph: &EGraph, func_name: &str) -> Result<TableStats, E
     }
     let mut output_to_inputs_map: HashMap<Value, HashSet<Vec<Value>>> = HashMap::default();
 
-    egraph.function_for_each(func_name, |row: FunctionRow<'_>| {
+    let mut visit_row = |vals: Vec<Value>| {
         size += 1;
-        let vals = row.vals;
         debug_assert_eq!(vals.len(), n_cols);
         for (i, v) in vals.iter().enumerate() {
             distinct[i].insert(*v);
@@ -261,7 +261,34 @@ fn compute_table_stats(egraph: &EGraph, func_name: &str) -> Result<TableStats, E
                 .or_default()
                 .insert(inputs);
         }
-    })?;
+    };
+
+    match func.subtype() {
+        FunctionSubtype::Custom => {
+            egraph.function_entries(func_name, |entry| {
+                visit_row(
+                    entry
+                        .inputs
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(entry.output))
+                        .collect(),
+                );
+            })?;
+        }
+        FunctionSubtype::Constructor => {
+            egraph.constructor_enodes(func_name, |enode| {
+                visit_row(
+                    enode
+                        .children
+                        .iter()
+                        .copied()
+                        .chain(std::iter::once(enode.eclass))
+                        .collect(),
+                );
+            })?;
+        }
+    }
 
     let distinct_counts: Vec<usize> = distinct.iter().map(|s| s.len()).collect();
 
