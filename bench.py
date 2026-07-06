@@ -20,7 +20,10 @@ import numpy as np
 import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import DataFrame, Series
+from rich import box
 from rich.console import Console
+from rich.markup import escape
+from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -30,6 +33,8 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
+from rich.tree import Tree
 from scipy import stats
 
 Status = Literal["success", "timed-out", "failure"]
@@ -46,6 +51,21 @@ DEFAULT_FILES = (
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
 )
+TARGET_SPEED_CAPTION = (
+    "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs."
+)
+TARGET_SPEED_SUBTITLE = "target / baseline; <1x faster, >1x slower"
+PROOF_OVERHEAD_CAPTION = "Within-target proof overhead. This is separate from target-vs-baseline speed."
+RESULT_STYLES = {
+    "descriptive": "dim",
+    "established": "green",
+    "faster": "green",
+    "invalid": "bold red",
+    "not established": "red",
+    "point only": "dim",
+    "slower": "red",
+    "unclear": "yellow",
+}
 
 
 @dataclass(frozen=True)
@@ -228,15 +248,6 @@ class DurationEstimate:
 
 
 @dataclass(frozen=True)
-class SelectedObservation:
-    target: ResolvedTarget
-    file: FileSpec
-    treatment: Treatment
-    row: pd.Series[Any]
-    origin: str
-
-
-@dataclass(frozen=True)
 class CellSummary:
     rows: DataFrame[ReportFrame]
     samples: tuple[float, ...]
@@ -252,6 +263,7 @@ class CellSummary:
 
 
 CellMap = dict[tuple[str, Treatment], CellSummary]
+TargetCellMaps = dict[ResolvedTarget, CellMap]
 
 
 @dataclass(frozen=True)
@@ -281,7 +293,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--target",
         action="append",
         default=None,
-        help="target source: ., /path, @git-ref, label=source, or label=",
+        help="target source: ., /path, @git-ref, #pr, label=source, or label=",
     )
     parser.add_argument(
         "--report",
@@ -343,8 +355,20 @@ def parse_target(raw: str) -> TargetRequest:
         label, source = raw.split("=", 1)
         if not label:
             raise ValueError(f"target label cannot be empty: {raw}")
+        parse_pr_number(source)
         return TargetRequest(raw=raw, source=source, label=label)
+    if parse_pr_number(raw) is not None:
+        return TargetRequest(raw=raw, source=raw, label=raw)
     return TargetRequest(raw=raw, source=raw, label=None)
+
+
+def parse_pr_number(source: str) -> int | None:
+    if not source.startswith("#"):
+        return None
+    match = re.fullmatch(r"#([1-9][0-9]*)", source)
+    if match is None:
+        raise ValueError(f"invalid PR target {source!r}: use #<positive-number>")
+    return int(match.group(1))
 
 
 def parse_iso_time(value: str) -> datetime:
@@ -631,34 +655,6 @@ def build_collection_plan(
     return CollectionPlan(target=target, cells=tuple(cells))
 
 
-def selected_observations(
-    rows: DataFrame[ReportFrame],
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-    fresh_indices: set[int],
-) -> tuple[SelectedObservation, ...]:
-    observations: list[SelectedObservation] = []
-    for target in targets:
-        for file_spec in spec.files:
-            for treatment in spec.treatments:
-                selected = selected_rows(
-                    rows,
-                    estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
-                    spec.rounds,
-                )
-                for _, item in selected.iterrows():
-                    observations.append(
-                        SelectedObservation(
-                            target=target,
-                            file=file_spec,
-                            treatment=treatment,
-                            row=item,
-                            origin="fresh" if int(item["row_index"]) in fresh_indices else "cache",
-                        )
-                    )
-    return tuple(observations)
-
-
 def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel) -> DurationEstimate:
     seconds = 0.0
     unknown_processes = 0
@@ -714,8 +710,30 @@ def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[P
         ["git", "worktree", "add", "--detach", str(path), sha],
         cwd=repo,
         check=True,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
     )
     return (path, sha)
+
+
+def fetch_pr_ref(repo: Path, number: int) -> str:
+    ref = f"refs/remotes/origin/pr/{number}"
+    subprocess.run(
+        ["git", "fetch", "origin", f"+refs/pull/{number}/head:{ref}"],
+        cwd=repo,
+        check=True,
+        stdout=sys.stderr,
+        stderr=sys.stderr,
+    )
+    return ref
+
+
+def materialize_pr_target(repo: Path, source: str, label_hint: str | None) -> tuple[Path, str]:
+    number = parse_pr_number(source)
+    if number is None:
+        raise ValueError(f"not a PR target: {source}")
+    ref = fetch_pr_ref(repo, number)
+    return materialize_git_ref(repo, ref, label_hint or source)
 
 
 def resolve_path_target(source: str, invocation_cwd: Path) -> tuple[Path, str]:
@@ -799,6 +817,9 @@ def resolve_target(
         if not ref:
             raise ValueError(f"git target is missing a ref: {request.raw}")
         checkout_path, resolved_sha = materialize_git_ref(repo_root, ref, request.label or ref)
+        row = target_row_for_request(request, checkout_path, resolved_sha)
+    elif parse_pr_number(request.source) is not None:
+        checkout_path, resolved_sha = materialize_pr_target(repo_root, request.source, request.label)
         row = target_row_for_request(request, checkout_path, resolved_sha)
     else:
         checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
@@ -1165,7 +1186,7 @@ def collect_rows(
         TextColumn("{task.fields[eta]}"),
         TextColumn("{task.fields[current]}"),
         console=output.console,
-        transient=False,
+        transient=True,
     ) as progress:
         process_task = progress.add_task(
             "runs",
@@ -1377,19 +1398,21 @@ def proof_cells_from_summaries(
     return [(cell_map[(file_spec.sha256, "off")], cell_map[(file_spec.sha256, "proofs")]) for file_spec in spec.files]
 
 
-def target_proof_summary(
-    rows: DataFrame[ReportFrame],
-    target: ResolvedTarget,
+def target_suite_treatment_ratio(
+    baseline_cells: CellMap,
+    candidate_cells: CellMap,
     spec: BenchmarkSpec,
+    treatment: Treatment,
 ) -> RatioSummary:
-    cell_map = target_cell_summaries(rows, target, spec, ("off", "proofs"))
-    return suite_ratio(proof_cells_from_summaries(cell_map, spec, ("off", "proofs")))
-
-
-def format_seconds(value: float | None) -> str:
-    if value is None:
-        return "-"
-    return f"{value:.4f}s"
+    return suite_ratio(
+        [
+            (
+                baseline_cells[(file_spec.sha256, treatment)],
+                candidate_cells[(file_spec.sha256, treatment)],
+            )
+            for file_spec in spec.files
+        ]
+    )
 
 
 def format_estimate_or_interval(
@@ -1411,41 +1434,63 @@ def format_seconds_summary(summary: CellSummary) -> str:
     return format_estimate_or_interval(summary.mean, summary.ci_low, summary.ci_high, "s", 4)
 
 
-def format_ratio(value: float | None) -> str:
-    if value is None:
-        return "-"
-    return f"{value:.3f}x"
-
-
 def format_ratio_summary(summary: RatioSummary) -> str:
     return format_estimate_or_interval(summary.point, summary.ci_low, summary.ci_high, "x", 3)
 
 
-def render_selected_observations(
-    console: Console,
-    observations: Sequence[SelectedObservation],
-) -> None:
-    table = Table(title="Selected observations")
-    table.add_column("Target")
-    table.add_column("File")
-    table.add_column("Treatment")
-    table.add_column("Origin")
-    table.add_column("Row")
-    table.add_column("Started")
-    table.add_column("Status")
-    table.add_column("Wall")
-    for observation in observations:
-        table.add_row(
-            observation.target.display_label,
-            observation.file.display_path,
-            observation.treatment,
-            observation.origin,
-            str(int(observation.row["row_index"])),
-            isoformat_started_at(observation.row["started_at"]),
-            str(observation.row["status"]),
-            format_seconds(cast(float | None, clean_optional(observation.row["wall_sec"]))),
-        )
-    console.print(table)
+def result_style(status: str) -> str:
+    return RESULT_STYLES.get(status, "")
+
+
+def styled_status(status: str, text: str | None = None) -> Text:
+    return Text(text or status, style=result_style(status))
+
+
+def comparison_result(summary: RatioSummary) -> str:
+    if summary.point is None:
+        return "invalid"
+    if summary.ci_low is None or summary.ci_high is None:
+        return "point only"
+    if summary.ci_high < 1:
+        return "faster"
+    if summary.ci_low > 1:
+        return "slower"
+    return "unclear"
+
+
+def format_comparison_result(summary: RatioSummary) -> Text:
+    result = comparison_result(summary)
+    if result == "invalid" and summary.issue is not None:
+        return styled_status(result, f"invalid: {summary.issue}")
+    return styled_status(result)
+
+
+def proof_gate_result(summary: RatioSummary) -> tuple[str, str]:
+    if summary.point is None:
+        return ("invalid", f"invalid: {summary.issue or 'unavailable'}")
+    if summary.ci_high is None:
+        return ("point only", "point only")
+    if summary.ci_high < 2:
+        return ("established", "<2x established")
+    return ("not established", "<2x not established")
+
+
+def format_proof_gate_result(summary: RatioSummary) -> Text:
+    status, text = proof_gate_result(summary)
+    return styled_status(status, text)
+
+
+def report_table(title: str, *, caption: str | None = None, show_lines: bool = False) -> Table:
+    return Table(
+        title=title,
+        title_style="bold",
+        caption=caption,
+        caption_style="dim",
+        caption_justify="left",
+        header_style="bold",
+        box=box.SIMPLE_HEAVY,
+        show_lines=show_lines,
+    )
 
 
 def render_report(
@@ -1454,96 +1499,257 @@ def render_report(
     rows: DataFrame[ReportFrame],
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-    fresh_indices: set[int],
 ) -> None:
     console.rule("[bold]Benchmark report[/bold]")
-    console.print(f"Report: [bold]{report_destination.display_path}[/bold]")
+    console.print(f"Report: [bold]{escape(report_destination.display_path)}[/bold]")
     console.print(f"Selected rows per cell: [bold]{spec.rounds}[/bold]")
 
-    target_table = Table(title="Targets")
-    target_table.add_column("Label")
-    target_table.add_column("Git")
-    target_table.add_column("Dirty")
-    target_table.add_column("Binary")
-    target_table.add_column("Path")
+    render_targets_tree(console, targets)
+
+    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
+    if len(targets) == 1:
+        render_single_target_headline(console, cell_maps[targets[0]], targets[0], spec)
+    else:
+        render_multi_target_headline(console, cell_maps, targets, spec)
+
     for target in targets:
-        target_table.add_row(
-            target.display_label,
-            target.row.git_sha[:12],
-            "yes" if target.row.is_dirty else "no",
-            target.binary_sha256.removeprefix("sha256:")[:12],
-            target.row.path,
+        render_target_diagnostics(console, cell_maps[target], target, spec)
+
+
+def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> None:
+    tree = Tree("[bold]Targets[/bold]", guide_style="dim")
+    for index, target in enumerate(targets):
+        role = "target"
+        if len(targets) > 1:
+            role = "baseline" if index == 0 else "candidate"
+        dirty = "dirty" if target.row.is_dirty else "clean"
+        binary = target.binary_sha256.removeprefix("sha256:")[:12]
+        branch = tree.add(f"[bold]{role}[/bold] {escape(target.display_label)}")
+        branch.add(f"source: {escape(target.row.source)}")
+        branch.add(f"git: {target.row.git_sha[:12]} ({dirty})")
+        if target.row.git_ref != "HEAD":
+            branch.add(f"ref: {escape(target.row.git_ref)}")
+        branch.add(f"binary: {binary}")
+        branch.add(f"path: {escape(target.row.path)}")
+    console.print(tree)
+
+
+def render_single_target_headline(
+    console: Console,
+    cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> None:
+    proof_cells = proof_cells_from_summaries(cell_map, spec)
+    if not proof_cells:
+        return
+    suite = suite_ratio(proof_cells)
+    geometric = geometric_mean_ratio(proof_cells)
+    summary_grid = Table.grid(padding=(0, 2))
+    summary_grid.add_column("Metric", style="bold")
+    summary_grid.add_column("Estimate", justify="right")
+    summary_grid.add_column("Outcome")
+    summary_grid.add_row("<2x proof gate", format_ratio_summary(suite), format_proof_gate_result(suite))
+    summary_grid.add_row(
+        "equal-file geom mean",
+        format_ratio_summary(geometric),
+        styled_status("descriptive", "descriptive"),
+    )
+    console.print(
+        Panel(
+            summary_grid,
+            title=f"Outcome: {escape(target.display_label)}",
+            subtitle=PROOF_OVERHEAD_CAPTION,
+            border_style=result_style(proof_gate_result(suite)[0]),
         )
-    console.print(target_table)
-    render_selected_observations(
-        console,
-        selected_observations(rows, targets, spec, fresh_indices),
     )
 
-    for target in targets:
-        cell_map = target_cell_summaries(rows, target, spec)
 
-        means_table = Table(title=f"{target.display_label}: per-file wall time")
-        means_table.add_column("File")
+def render_multi_target_headline(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    render_multi_target_outcome_panel(console, cell_maps, targets, spec)
+    render_suite_speed_change(console, cell_maps, targets, spec)
+    render_per_file_speed_change(console, cell_maps, targets, spec)
+    render_proof_overhead_by_target(console, cell_maps, targets, spec)
+
+
+def render_multi_target_outcome_panel(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline = targets[0]
+    outcome_grid = Table.grid(padding=(0, 2))
+    outcome_grid.add_column("Target", style="bold")
+    outcome_grid.add_column("Metric")
+    outcome_grid.add_column("Estimate", justify="right")
+    outcome_grid.add_column("Outcome")
+    outcome_grid.add_row("[bold]Target[/bold]", "[bold]Metric[/bold]", "[bold]Estimate[/bold]", "[bold]Outcome[/bold]")
+    for target in targets[1:]:
         for treatment in spec.treatments:
-            means_table.add_column(treatment, no_wrap=True)
-        means_rows: list[tuple[list[str], str]] = []
-        has_mean_issues = False
-        for file_spec in spec.files:
-            issue_parts: list[str] = []
-            row_values = [file_spec.display_path]
-            for treatment in spec.treatments:
-                cell = cell_map[(file_spec.sha256, treatment)]
-                row_values.append(format_seconds_summary(cell))
-                if cell.issue is not None:
-                    issue_parts.append(f"{treatment}: {cell.issue}")
-            issue_text = "; ".join(issue_parts)
-            has_mean_issues = has_mean_issues or bool(issue_text)
-            means_rows.append((row_values, issue_text))
-        if has_mean_issues:
-            means_table.add_column("Issue")
-        for row_values, issue_text in means_rows:
-            if has_mean_issues:
-                row_values.append(issue_text)
-            means_table.add_row(*row_values)
-        console.print(means_table)
-
-        ratio_columns = ratio_specs(spec.treatments)
-        if ratio_columns:
-            ratio_table = Table(title=f"{target.display_label}: overhead ratios")
-            ratio_table.add_column("File")
-            for _, _, ratio_name in ratio_columns:
-                ratio_table.add_column(ratio_name, no_wrap=True)
-            for file_spec in spec.files:
-                row_values = [file_spec.display_path]
-                for baseline_treatment, candidate_treatment, _ in ratio_columns:
-                    ratio = ratio_summary(
-                        cell_map[(file_spec.sha256, baseline_treatment)],
-                        cell_map[(file_spec.sha256, candidate_treatment)],
-                    )
-                    row_values.append(format_ratio_summary(ratio))
-                ratio_table.add_row(*row_values)
-            console.print(ratio_table)
-
-        proof_cells = proof_cells_from_summaries(cell_map, spec)
+            ratio = target_suite_treatment_ratio(cell_maps[baseline], cell_maps[target], spec, treatment)
+            outcome_grid.add_row(
+                target.display_label,
+                f"suite {treatment}",
+                format_ratio_summary(ratio),
+                format_comparison_result(ratio),
+            )
+        proof_cells = proof_cells_from_summaries(cell_maps[target], spec)
         if proof_cells:
             suite = suite_ratio(proof_cells)
-            geometric = geometric_mean_ratio(proof_cells)
-            summary_table = Table(title=f"{target.display_label}: suite summary")
-            summary_table.add_column("Metric")
-            summary_table.add_column("Estimate", no_wrap=True)
-            summary_table.add_row(
-                "total suite time ratio (proofs/off, gate)",
+            outcome_grid.add_row(
+                target.display_label,
+                "<2x proof gate",
                 format_ratio_summary(suite),
+                format_proof_gate_result(suite),
             )
-            summary_table.add_row(
-                "equal-file geometric mean ratio (proofs/off)",
-                format_ratio_summary(geometric),
-            )
-            console.print(summary_table)
+    console.print(
+        Panel(
+            outcome_grid,
+            title=f"Outcome vs {escape(baseline.display_label)}",
+            subtitle=TARGET_SPEED_SUBTITLE,
+            border_style="cyan",
+        )
+    )
 
-    if len(targets) > 1:
-        render_multi_target_summary(console, rows, targets, spec)
+
+def render_suite_speed_change(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline = targets[0]
+    table = report_table(f"Suite speed change vs {baseline.display_label}", caption=TARGET_SPEED_CAPTION)
+    table.add_column("Target")
+    table.add_column("Treatment")
+    table.add_column("Time ratio", no_wrap=True)
+    table.add_column("Result")
+    for target in targets[1:]:
+        for treatment in spec.treatments:
+            ratio = target_suite_treatment_ratio(cell_maps[baseline], cell_maps[target], spec, treatment)
+            table.add_row(
+                target.display_label,
+                treatment,
+                format_ratio_summary(ratio),
+                format_comparison_result(ratio),
+            )
+    console.print(table)
+
+
+def render_per_file_speed_change(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline = targets[0]
+    for target in targets[1:]:
+        table = report_table(
+            f"Per-file speed change vs {baseline.display_label}: {target.display_label}",
+            caption=TARGET_SPEED_CAPTION,
+        )
+        table.add_column("File")
+        table.add_column("Treatment")
+        table.add_column("Time ratio", no_wrap=True)
+        table.add_column("Result")
+        for file_spec in spec.files:
+            for treatment_index, treatment in enumerate(spec.treatments):
+                ratio = ratio_summary(
+                    cell_maps[baseline][(file_spec.sha256, treatment)],
+                    cell_maps[target][(file_spec.sha256, treatment)],
+                )
+                table.add_row(
+                    file_spec.display_path if treatment_index == 0 else "",
+                    treatment,
+                    format_ratio_summary(ratio),
+                    format_comparison_result(ratio),
+                    end_section=treatment_index == len(spec.treatments) - 1,
+                )
+        console.print(table)
+
+
+def render_proof_overhead_by_target(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    if "off" not in spec.treatments or "proofs" not in spec.treatments:
+        return
+    table = report_table("Proof overhead by target", caption=PROOF_OVERHEAD_CAPTION)
+    table.add_column("Target")
+    table.add_column("suite proofs/off", no_wrap=True)
+    table.add_column("equal-file geom mean", no_wrap=True)
+    for target in targets:
+        proof_cells = proof_cells_from_summaries(cell_maps[target], spec)
+        table.add_row(
+            target.display_label,
+            format_ratio_summary(suite_ratio(proof_cells)),
+            format_ratio_summary(geometric_mean_ratio(proof_cells)),
+        )
+    console.print(table)
+
+
+def render_target_diagnostics(
+    console: Console,
+    cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> None:
+    means_table = report_table(
+        f"{target.display_label}: per-file wall time",
+        caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
+    )
+    means_table.add_column("File")
+    for treatment in spec.treatments:
+        means_table.add_column(treatment, no_wrap=True)
+    means_rows: list[tuple[list[str], str]] = []
+    has_mean_issues = False
+    for file_spec in spec.files:
+        issue_parts: list[str] = []
+        row_values = [file_spec.display_path]
+        for treatment in spec.treatments:
+            cell = cell_map[(file_spec.sha256, treatment)]
+            row_values.append(format_seconds_summary(cell))
+            if cell.issue is not None:
+                issue_parts.append(f"{treatment}: {cell.issue}")
+        issue_text = "; ".join(issue_parts)
+        has_mean_issues = has_mean_issues or bool(issue_text)
+        means_rows.append((row_values, issue_text))
+    if has_mean_issues:
+        means_table.add_column("Issue")
+    for row_values, issue_text in means_rows:
+        if has_mean_issues:
+            row_values.append(issue_text)
+        means_table.add_row(*row_values)
+    console.print(means_table)
+
+    ratio_columns = ratio_specs(spec.treatments)
+    if not ratio_columns:
+        return
+    ratio_table = report_table(
+        f"{target.display_label}: overhead ratios",
+        caption="Within-target treatment ratios. These are not target-vs-baseline speed.",
+    )
+    ratio_table.add_column("File")
+    for _, _, ratio_name in ratio_columns:
+        ratio_table.add_column(ratio_name, no_wrap=True)
+    for file_spec in spec.files:
+        row_values = [file_spec.display_path]
+        for baseline_treatment, candidate_treatment, _ in ratio_columns:
+            ratio = ratio_summary(
+                cell_map[(file_spec.sha256, baseline_treatment)],
+                cell_map[(file_spec.sha256, candidate_treatment)],
+            )
+            row_values.append(format_ratio_summary(ratio))
+        ratio_table.add_row(*row_values)
+    console.print(ratio_table)
 
 
 def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treatment, str], ...]:
@@ -1555,33 +1761,6 @@ def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treat
     if "term" in treatments and "proofs" in treatments:
         specs.append(("term", "proofs", "proofs/term"))
     return tuple(specs)
-
-
-def render_multi_target_summary(
-    console: Console,
-    rows: DataFrame[ReportFrame],
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    if "off" not in spec.treatments or "proofs" not in spec.treatments:
-        return
-
-    proof_summaries = [(target, target_proof_summary(rows, target, spec)) for target in targets]
-
-    baseline_target, baseline_summary = proof_summaries[0]
-    table = Table(title="Target comparison")
-    table.add_column("Target")
-    table.add_column("suite proofs/off")
-    table.add_column(f"change vs {baseline_target.display_label}")
-    for target, summary in proof_summaries:
-        if target == baseline_target or not summary.ok or not baseline_summary.ok:
-            change = "-"
-        else:
-            assert summary.point is not None
-            assert baseline_summary.point is not None
-            change = format_ratio(summary.point / baseline_summary.point)
-        table.add_row(target.display_label, format_ratio(summary.point), change)
-    console.print(table)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1604,7 +1783,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         target_requests = tuple(parse_target(raw) for raw in target_specs)
         rows = load_report(report_destination)
         estimate_model = EstimateModel.from_rows(rows)
-        fresh_indices: set[int] = set()
         targets = [
             resolve_target(
                 request,
@@ -1627,14 +1805,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             emit_collection_plan(output, plan, estimate_model)
             collection = collect_rows(rows, report_destination, plan, spec, output, estimate_model)
             rows = collection.rows
-            fresh_indices.update(int(value) for value in collection.fresh_rows["row_index"].tolist())
         render_report(
             output.console,
             report_destination,
             rows,
             targets,
             spec,
-            fresh_indices,
         )
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
         output.print_error(error)

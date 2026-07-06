@@ -63,6 +63,10 @@ def make_spec(file_spec: bench.FileSpec) -> bench.BenchmarkSpec:
     return bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=2, timeout_sec=120)
 
 
+def make_full_spec(file_spec: bench.FileSpec) -> bench.BenchmarkSpec:
+    return bench.BenchmarkSpec(files=(file_spec,), treatments=("off", "term", "proofs"), rounds=2, timeout_sec=120)
+
+
 def make_target(
     *,
     target_label: str | None = None,
@@ -158,6 +162,48 @@ def test_suite_ratio_sums_fixed_files() -> None:
     assert summary.point == pytest.approx((2.1 + 4.1) / (1.1 + 3.1))
 
 
+def test_target_suite_treatment_ratio_compares_same_treatment_between_targets() -> None:
+    base = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_a = bench.FileSpec("a.egg", ROOT / "a.egg", "sha256:a")
+    file_b = bench.FileSpec("b.egg", ROOT / "b.egg", "sha256:b")
+    spec = bench.BenchmarkSpec(files=(file_a, file_b), treatments=("off",), rounds=2, timeout_sec=120)
+    rows = make_rows(
+        make_record(
+            0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", file_sha256="sha256:a", wall_sec=1.0
+        ),
+        make_record(
+            1, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", file_sha256="sha256:a", wall_sec=1.2
+        ),
+        make_record(
+            2, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", file_sha256="sha256:a", wall_sec=0.8
+        ),
+        make_record(
+            3, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", file_sha256="sha256:a", wall_sec=0.9
+        ),
+        make_record(
+            4, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", file_sha256="sha256:b", wall_sec=3.0
+        ),
+        make_record(
+            5, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", file_sha256="sha256:b", wall_sec=3.2
+        ),
+        make_record(
+            6, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", file_sha256="sha256:b", wall_sec=2.4
+        ),
+        make_record(
+            7, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", file_sha256="sha256:b", wall_sec=2.5
+        ),
+    )
+    base_cells = bench.target_cell_summaries(rows, base, spec)
+    candidate_cells = bench.target_cell_summaries(rows, candidate, spec)
+
+    ratio = bench.target_suite_treatment_ratio(base_cells, candidate_cells, spec, "off")
+
+    assert ratio.point == pytest.approx((0.85 + 2.45) / (1.1 + 3.1))
+    assert ratio.ci_low is not None
+    assert ratio.ci_high is not None
+
+
 def test_summary_formatters_show_ranges_when_defined_and_points_otherwise() -> None:
     empty_rows = bench.empty_report_frame()
 
@@ -178,6 +224,16 @@ def test_parse_target_variants() -> None:
     assert bench.parse_target(".") == bench.TargetRequest(raw=".", source=".", label=None)
     assert bench.parse_target("main=@main") == bench.TargetRequest(raw="main=@main", source="@main", label="main")
     assert bench.parse_target("prev-run=") == bench.TargetRequest(raw="prev-run=", source="", label="prev-run")
+    assert bench.parse_target("#33") == bench.TargetRequest(raw="#33", source="#33", label="#33")
+    assert bench.parse_target("candidate=#33") == bench.TargetRequest(
+        raw="candidate=#33", source="#33", label="candidate"
+    )
+
+
+@pytest.mark.parametrize("raw", ["#", "#0", "#abc", "candidate=#0"])
+def test_parse_target_rejects_invalid_pr_targets(raw: str) -> None:
+    with pytest.raises(ValueError, match="invalid PR target"):
+        bench.parse_target(raw)
 
 
 def test_parse_treatments_rejects_duplicates() -> None:
@@ -202,6 +258,48 @@ def test_estimate_model_is_exact_only_and_updates_from_successful_processes() ->
     model.record_process(exact_key, bench.TimingResult("success", bench.TimingRow(wall_sec=4.0), None))
 
     assert model.process_mean(exact_key) == pytest.approx(3.0)
+
+
+def test_materialize_pr_target_fetches_origin_pull_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(
+        args: list[str],
+        *,
+        cwd: Path,
+        check: bool,
+        stdout: Any | None = None,
+        stderr: Any | None = None,
+    ) -> None:
+        calls.append(args)
+        assert cwd == tmp_path
+        assert check
+        assert stdout is sys.stderr
+        assert stderr is sys.stderr
+
+    def fake_git_sha(cwd: Path, ref: str = "HEAD") -> str:
+        assert cwd in {tmp_path, tmp_path / ".bench-worktrees" / "33"}
+        if ref == "refs/remotes/origin/pr/33":
+            return "abc123"
+        if ref == "HEAD":
+            return "abc123"
+        raise AssertionError(f"unexpected ref: {ref}")
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    monkeypatch.setattr(bench, "git_sha", fake_git_sha)
+    monkeypatch.setattr(bench, "find_worktree_for_sha", lambda repo, sha: None)
+
+    checkout_path, sha = bench.materialize_pr_target(tmp_path, "#33", "#33")
+
+    assert checkout_path == tmp_path / ".bench-worktrees" / "33"
+    assert sha == "abc123"
+    assert calls == [
+        ["git", "fetch", "origin", "+refs/pull/33/head:refs/remotes/origin/pr/33"],
+        ["git", "worktree", "add", "--detach", str(tmp_path / ".bench-worktrees" / "33"), "abc123"],
+    ]
 
 
 def test_collection_plan_counts_cache_and_missing_rows() -> None:
@@ -261,10 +359,115 @@ def test_render_report_omits_empty_issue_column() -> None:
         rows,
         [target],
         bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
-        fresh_indices=set(),
     )
 
     assert "Issue" not in stream.getvalue()
+
+
+def test_render_report_orients_single_target_summary_before_diagnostics() -> None:
+    rows = make_rows(
+        make_record(0, started_at="2026-07-04T12:00:00Z", treatment="off", wall_sec=1.0),
+        make_record(1, started_at="2026-07-04T12:00:01Z", treatment="off", wall_sec=1.1),
+        make_record(2, started_at="2026-07-04T12:00:00Z", treatment="proofs", wall_sec=2.0),
+        make_record(3, started_at="2026-07-04T12:00:01Z", treatment="proofs", wall_sec=2.1),
+    )
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=200, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off", "proofs"), rounds=2, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert output.index("Outcome") < output.index("per-file wall time")
+
+
+def test_render_report_compares_multiple_targets_before_diagnostics() -> None:
+    rows = make_rows(
+        make_record(0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", treatment="off", wall_sec=1.0),
+        make_record(1, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", treatment="off", wall_sec=1.1),
+        make_record(2, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", treatment="term", wall_sec=1.5),
+        make_record(3, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", treatment="term", wall_sec=1.6),
+        make_record(
+            4, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", treatment="proofs", wall_sec=2.0
+        ),
+        make_record(
+            5, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", treatment="proofs", wall_sec=2.1
+        ),
+        make_record(
+            6, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", treatment="off", wall_sec=0.8
+        ),
+        make_record(
+            7, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", treatment="off", wall_sec=0.9
+        ),
+        make_record(
+            8, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", treatment="term", wall_sec=1.2
+        ),
+        make_record(
+            9, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", treatment="term", wall_sec=1.3
+        ),
+        make_record(
+            10, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", treatment="proofs", wall_sec=1.7
+        ),
+        make_record(
+            11, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", treatment="proofs", wall_sec=1.8
+        ),
+    )
+    baseline = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=220, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [baseline, candidate],
+        make_full_spec(file_spec),
+    )
+
+    output = stream.getvalue()
+    assert "target / base" in output
+    assert "Suite speed change vs base" in output
+    assert "Per-file speed change vs base" in output
+    assert "Proof overhead by target" in output
+    assert "Target comparison" not in output
+    assert output.index("Suite speed change vs base") < output.index("base: per-file wall time")
+
+
+def test_render_report_marks_invalid_multi_target_speed_cells() -> None:
+    rows = make_rows(
+        make_record(0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", wall_sec=1.0),
+        make_record(1, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", wall_sec=1.1),
+        make_record(
+            2, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", status="timed-out", wall_sec=None
+        ),
+        make_record(3, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", wall_sec=1.2),
+    )
+    baseline = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=220, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [baseline, candidate],
+        make_spec(file_spec),
+    )
+
+    output = stream.getvalue()
+    assert "invalid: timeout row selected" in output
+    assert "off" in output
 
 
 def test_report_dash_writes_rows_to_stream_and_does_not_load_cache() -> None:

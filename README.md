@@ -64,6 +64,7 @@ Targets describe the builds being compared. Use one `--target` per build:
 
 ```bash
 ./bench.py --target @origin/main --target .
+./bench.py --target @origin/main --target '#33'
 ./bench.py --target main=@origin/main --target mine=.
 ./bench.py --target before=@abc123 --target after=@HEAD
 ./bench.py --target old=/tmp/egglog-old --target new=/tmp/egglog-new
@@ -76,18 +77,22 @@ Target syntax:
 - `--target /path/to/repo` uses another local checkout.
 - `--target @main`, `--target @origin/main`, or `--target @abc123` uses a git
   ref, branch, tag, or commit from this repo.
+- `--target '#33'` fetches PR 33 from `origin` and uses the latest PR head
+  commit. Quote or escape the `#` so your shell does not treat it as a comment.
 - `--target label=SOURCE` gives the target an explicit report label.
 - `--target label=` reuses the latest cached target identity with that label
   from `--report`.
 
 Behavior:
 
-- Git refs use the `@` prefix. Paths do not.
+- Git refs use the `@` prefix. PR targets use the `#` prefix. Paths do not.
 - If no target is provided, the only target is `.`.
 - If any target is provided, the target list is exactly what was specified.
 - The first target is the comparison baseline.
 - Explicit labels are display names. Cache identity is derived from the
   persisted report fields described below.
+- PR targets get labels like `#33` by default. Use `--target label='#33'` to
+  choose a different display/report label.
 - `label=` lookup only considers rows that were written with explicit
   `target.label`. If the same label appears for multiple binary hashes, the
   row with the latest `started_at` timestamp for that label is the definitive
@@ -96,9 +101,10 @@ Behavior:
   worktree to collect more samples. When it points to a dirty checkout, it is
   report-only unless the user supplies a new `label=SOURCE`.
 - Targets are built and measured sequentially. Path targets use the provided
-  checkout directly. Git-ref targets use an existing worktree at the resolved
-  commit when one exists; otherwise the runner creates or reuses an isolated
-  temporary worktree instead of stashing local changes in the main checkout.
+  checkout directly. Git-ref and PR targets use an existing worktree at the
+  resolved commit when one exists; otherwise the runner creates or reuses an
+  isolated temporary worktree instead of stashing local changes in the main
+  checkout.
 
 ### Files
 
@@ -188,7 +194,7 @@ Target fields:
 - `target_label`: explicit display label, present only when the target was
   passed as `label=SOURCE`; otherwise `null`.
 - `target_source`: original `--target` source string, such as `.`,
-  `/path/to/repo`, or `@main`.
+  `/path/to/repo`, `@main`, or `#33`.
 - `target_path`: absolute checkout path used for the build.
 - `target_git_ref`: git ref used for the checkout, or `HEAD` for path targets.
 - `target_git_sha`: resolved HEAD commit used for the build.
@@ -267,6 +273,18 @@ During fresh collection, `observations` are measured report rows and
 `subprocesses` are child process launches, including the one target startup
 warmup when fresh rows are needed.
 
+The printed report is ordered so the decision summaries come before diagnostic
+tables. It starts with a target tree showing source, git revision, binary hash,
+and checkout path. A one-target report then prints an outcome panel for the
+`<2x` proof-overhead gate. A multi-target report treats the first target as the
+baseline, prints an outcome panel with same-treatment speed changes for each
+later target, then prints suite speed changes, per-file speed changes, proof
+overhead by target, and per-target diagnostics. Multi-target speed ratios are
+`target / baseline`: values below `1x` are faster than the baseline, and values
+above `1x` are slower. Ratio tables include captions with this orientation, and
+result cells are labeled `faster`, `slower`, `unclear`, `point only`, or
+`invalid`.
+
 ## Statistics
 
 The benchmark unit is a full process execution of `egglog-experimental` on one
@@ -318,7 +336,7 @@ Changes with Effect Size Confidence Intervals", Section
 
 For baseline samples `B` and candidate samples `C`, with sample means `b` and
 `c`, unbiased sample variances `s_b^2` and `s_c^2`, equal sample count `n`, and
-95% t critical value `t` with `n - 1` degrees of freedom, the point overhead is:
+95% t critical value `t` with `n - 1` degrees of freedom, the point ratio is:
 
 ```text
 ratio = c / b
@@ -347,6 +365,13 @@ baseline means. Its confidence interval applies the same Fieller-style ratio
 interval to the summed means, propagating run-to-run timing variance for the
 specified suite.
 
+For multi-target speed comparisons, the runner uses the same ratio-of-means
+method with the first target as the baseline. It compares the same treatment
+between targets, for example `candidate proofs / baseline proofs`, and prints a
+fixed-suite ratio for each treatment plus per-file ratios for diagnostics. This
+is separate from proof overhead, which remains a within-target ratio such as
+`proofs / off`.
+
 The report includes:
 
 - per-file wall-time estimates for each treatment;
@@ -357,8 +382,8 @@ The report includes:
   summed mean baseline time, with a fixed-suite confidence interval;
 - equal-file geometric mean ratio (`proofs/off`), which gives each benchmark
   file equal weight in the summary;
-- for multiple targets, suite proof overhead and change relative to the first
-  target.
+- for multiple targets, suite and per-file same-treatment speed changes
+  relative to the first target, plus proof overhead by target.
 
 When a confidence interval is defined, printed estimate cells show the interval
 range. When it is undefined, they show the point estimate.
