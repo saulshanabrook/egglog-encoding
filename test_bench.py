@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import json
+import resource
+import signal
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,6 +61,27 @@ def make_rows(*records: dict[str, Any]) -> bench.DataFrame[bench.ReportFrame]:
 
 def make_spec(file_spec: bench.FileSpec) -> bench.BenchmarkSpec:
     return bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=2, timeout_sec=120)
+
+
+def make_target(
+    *,
+    target_label: str | None = None,
+    binary_sha256: str = "sha256:bin",
+    binary_path: Path | None = None,
+) -> bench.ResolvedTarget:
+    return bench.ResolvedTarget(
+        request=bench.TargetRequest(raw=".", source=".", label=target_label),
+        row=bench.TargetRow(
+            source=".",
+            path=str(ROOT),
+            git_ref="HEAD",
+            git_sha="abc123",
+            is_dirty=False,
+            label=target_label,
+        ),
+        binary_sha256=binary_sha256,
+        binary_path=binary_path,
+    )
 
 
 def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
@@ -157,6 +180,11 @@ def test_parse_target_variants() -> None:
     assert bench.parse_target("prev-run=") == bench.TargetRequest(raw="prev-run=", source="", label="prev-run")
 
 
+def test_parse_treatments_rejects_duplicates() -> None:
+    with pytest.raises(ValueError, match="duplicate treatment: off"):
+        bench.parse_treatments("off,term,off")
+
+
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=2.0),
@@ -178,18 +206,7 @@ def test_estimate_model_is_exact_only_and_updates_from_successful_processes() ->
 
 def test_collection_plan_counts_cache_and_missing_rows() -> None:
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    target = bench.ResolvedTarget(
-        request=bench.TargetRequest(raw=".", source=".", label=None),
-        row=bench.TargetRow(
-            source=".",
-            path=str(ROOT),
-            git_ref="HEAD",
-            git_sha="abc123",
-            is_dirty=False,
-        ),
-        binary_sha256="sha256:bin",
-        binary_path=None,
-    )
+    target = make_target()
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     spec = make_spec(file_spec)
 
@@ -215,18 +232,7 @@ def test_parse_args_rejects_removed_warmup_mode() -> None:
 
 def test_collection_plan_writes_human_output_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    target = bench.ResolvedTarget(
-        request=bench.TargetRequest(raw=".", source=".", label=None),
-        row=bench.TargetRow(
-            source=".",
-            path=str(ROOT),
-            git_ref="HEAD",
-            git_sha="abc123",
-            is_dirty=False,
-        ),
-        binary_sha256="sha256:bin",
-        binary_path=None,
-    )
+    target = make_target()
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     plan = bench.build_collection_plan(rows, target, make_spec(file_spec), False)
     stream = io.StringIO()
@@ -244,18 +250,7 @@ def test_collection_plan_writes_human_output_to_stderr(monkeypatch: pytest.Monke
 
 def test_render_report_omits_empty_issue_column() -> None:
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    target = bench.ResolvedTarget(
-        request=bench.TargetRequest(raw=".", source=".", label=None),
-        row=bench.TargetRow(
-            source=".",
-            path=str(ROOT),
-            git_ref="HEAD",
-            git_sha="abc123",
-            is_dirty=False,
-        ),
-        binary_sha256="sha256:bin",
-        binary_path=None,
-    )
+    target = make_target()
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     stream = io.StringIO()
     console = Console(file=stream, width=200, color_system=None)
@@ -334,6 +329,28 @@ def test_report_frame_rejects_extra_columns() -> None:
 
     with pytest.raises(ValueError, match="unexpected report column"):
         bench.report_frame_from_records([record])
+
+
+def test_run_command_records_signal_separately_from_exit_code() -> None:
+    result = bench.run_command(
+        [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"],
+        ROOT,
+        120,
+    )
+
+    assert result.status == "failure"
+    assert result.error is not None
+    assert result.error.exit_code is None
+    assert result.error.signal == signal.SIGTERM
+
+
+def test_timing_from_usage_leaves_rss_unset() -> None:
+    before = resource.getrusage(resource.RUSAGE_CHILDREN)
+    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+
+    timing = bench.timing_from_usage(before, after, 1.0)
+
+    assert timing.max_rss_bytes is None
 
 
 def test_runner_output_routes_status_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:

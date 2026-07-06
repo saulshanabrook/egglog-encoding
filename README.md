@@ -421,6 +421,54 @@ Layout:
 
 The root README is the orientation and workflow reference.
 
+## Upstream subtrees
+
+`egglog/` and `egglog-experimental/` are git subtrees, not submodules. The root
+workspace owns integration, CI, benchmarking, and local documentation, while
+subtree-local source changes can be synced with or proposed back to the
+upstream repositories.
+
+To pull new upstream `egglog` changes into this repo:
+
+```bash
+git remote add upstream-egglog https://github.com/egraphs-good/egglog.git
+git fetch upstream-egglog main
+git subtree pull --prefix=egglog upstream-egglog main --squash
+```
+
+To pull new upstream `egglog-experimental` changes:
+
+```bash
+git remote add upstream-egglog-experimental \
+  https://github.com/egraphs-good/egglog-experimental.git
+git fetch upstream-egglog-experimental main
+git subtree pull --prefix=egglog-experimental upstream-egglog-experimental main --squash
+```
+
+If the remotes already exist, skip the `git remote add` command. Commit or
+stash local subtree edits before pulling, then run the root workspace checks
+after resolving any conflicts.
+
+To propose subtree-local changes upstream, split the subtree history into a
+normal branch and push that branch to a fork or upstream branch:
+
+```bash
+git subtree split --prefix=egglog -b split/egglog
+git push https://github.com/<you>/egglog.git split/egglog:<branch-name>
+```
+
+For `egglog-experimental`:
+
+```bash
+git subtree split --prefix=egglog-experimental -b split/egglog-experimental
+git push https://github.com/<you>/egglog-experimental.git \
+  split/egglog-experimental:<branch-name>
+```
+
+Open the upstream PR from the pushed branch. Root-only files such as
+`bench.py`, this README, and `.github/workflows/build.yml` are not included in
+the split branch.
+
 ## Profiles
 
 Configured profiles:
@@ -440,7 +488,8 @@ Each benchmark report row records the binary hash used for that observation.
 
 ## CI
 
-CI runs four jobs:
+CI runs on pull requests, manual dispatch, and pushes to `main`. It runs four
+jobs:
 
 - `python`: `uv lock --check`, ruff formatting, ruff linting, mypy, and pytest.
 - `rust`: workspace tests, proof-focused tests, and clippy.

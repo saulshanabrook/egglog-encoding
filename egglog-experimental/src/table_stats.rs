@@ -15,9 +15,7 @@
 //! function is reported.
 
 use egglog::{
-    CommandOutput, EGraph, Error, TypeError, UserDefinedCommand, Value,
-    ast::{Expr, FunctionSubtype},
-    prelude::Span,
+    CommandOutput, EGraph, Error, TypeError, UserDefinedCommand, Value, ast::Expr, prelude::Span,
 };
 use egglog_ast::generic_ast::GenericExpr;
 use std::{
@@ -25,6 +23,8 @@ use std::{
     fmt::{Display, Formatter},
     sync::Arc,
 };
+
+use crate::table_rows::{for_each_table_row, table_layout};
 
 /// Min/max/mean and 25th/50th/75th percentile statistics over the out-degrees
 /// of a (set of) source column(s) with respect to a (set of) target column(s).
@@ -213,14 +213,10 @@ impl Display for TableStatsOutput {
 /// Compute per-column statistics for a single function table identified by
 /// its internal name.
 fn compute_table_stats(egraph: &EGraph, func_name: &str) -> Result<TableStats, Error> {
-    let func = egraph
-        .get_function(func_name)
-        .ok_or_else(|| TypeError::UnboundFunction(func_name.to_owned(), Span::Panic))?;
-    let schema = func.schema();
-    let mut column_types: Vec<String> = schema.input.iter().map(|s| s.name().to_owned()).collect();
-    column_types.push(schema.output.name().to_owned());
+    let layout = table_layout(egraph, func_name, Span::Panic)?;
+    let column_types = layout.column_type_names();
     let n_cols = column_types.len();
-    let n_inputs = schema.input.len();
+    let n_inputs = layout.input_count();
     let output_col = n_cols - 1;
     let track_combined = n_inputs >= 2;
 
@@ -263,32 +259,7 @@ fn compute_table_stats(egraph: &EGraph, func_name: &str) -> Result<TableStats, E
         }
     };
 
-    match func.subtype() {
-        FunctionSubtype::Custom => {
-            egraph.function_entries(func_name, |entry| {
-                visit_row(
-                    entry
-                        .inputs
-                        .iter()
-                        .copied()
-                        .chain(std::iter::once(entry.output))
-                        .collect(),
-                );
-            })?;
-        }
-        FunctionSubtype::Constructor => {
-            egraph.constructor_enodes(func_name, |enode| {
-                visit_row(
-                    enode
-                        .children
-                        .iter()
-                        .copied()
-                        .chain(std::iter::once(enode.eclass))
-                        .collect(),
-                );
-            })?;
-        }
-    }
+    for_each_table_row(egraph, func_name, &layout, true, &mut visit_row)?;
 
     let distinct_counts: Vec<usize> = distinct.iter().map(|s| s.len()).collect();
 

@@ -8,13 +8,14 @@
 //! Each argument must evaluate to a `String` that names an existing function.
 
 use egglog::{
-    ArcSort, CommandOutput, EGraph, Error, RawValues, TermDag, TermId, TypeError,
-    UserDefinedCommand, Value, Write,
+    CommandOutput, EGraph, Error, RawValues, TermDag, TermId, UserDefinedCommand, Value, Write,
     ast::{Expr, FunctionSubtype},
     extract::{Extractor, TreeAdditiveCostModel},
     sort::S,
     span,
 };
+
+use crate::table_rows::{for_each_table_row, table_layout};
 
 pub struct KeepBestCommand;
 
@@ -88,42 +89,12 @@ fn collect_and_extract(
     let mut result = Vec::new();
 
     for table_name in table_names {
-        let func = egraph
-            .get_function(table_name)
-            .ok_or_else(|| TypeError::UnboundFunction(table_name.clone(), span!()))?;
-
-        let subtype = func.subtype();
-        let all_sorts: Vec<ArcSort> = match subtype {
-            FunctionSubtype::Custom => func
-                .schema()
-                .input
-                .iter()
-                .chain(std::iter::once(&func.schema().output))
-                .cloned()
-                .collect(),
-            FunctionSubtype::Constructor => func.schema().input.clone(),
-        };
+        let layout = table_layout(egraph, table_name, span!())?;
+        let subtype = layout.subtype;
+        let all_sorts = layout.extraction_sorts();
 
         let mut raw_rows: Vec<Vec<Value>> = Vec::new();
-        match subtype {
-            FunctionSubtype::Custom => {
-                egraph.function_entries(table_name, |entry| {
-                    raw_rows.push(
-                        entry
-                            .inputs
-                            .iter()
-                            .copied()
-                            .chain(std::iter::once(entry.output))
-                            .collect(),
-                    );
-                })?;
-            }
-            FunctionSubtype::Constructor => {
-                egraph.constructor_enodes(table_name, |enode| {
-                    raw_rows.push(enode.children.to_vec());
-                })?;
-            }
-        }
+        for_each_table_row(egraph, table_name, &layout, false, |row| raw_rows.push(row))?;
 
         let extractor = Extractor::compute_costs_from_rootsorts(
             Some(all_sorts.clone()),

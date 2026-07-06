@@ -26,8 +26,6 @@ impl fmt::Display for BenchCase {
 }
 
 fn benchmark_cases() -> Vec<BenchCase> {
-    EGraph::set_num_threads(1);
-
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("egglog-experimental should live under the workspace root");
@@ -62,5 +60,6 @@ fn files(case: &BenchCase) {
 }
 
 fn main() {
+    EGraph::set_num_threads(1);
     divan::main();
 }

@@ -322,12 +322,16 @@ def positive_int(value: str) -> int:
 
 def parse_treatments(value: str) -> tuple[Treatment, ...]:
     treatments: list[Treatment] = []
+    seen: set[str] = set()
     for raw in value.split(","):
         item = raw.strip()
         if not item:
             continue
         if item not in {"off", "term", "proofs"}:
             raise ValueError(f"unknown treatment: {item}")
+        if item in seen:
+            raise ValueError(f"duplicate treatment: {item}")
+        seen.add(item)
         treatments.append(cast(Treatment, item))
     if not treatments:
         raise ValueError("at least one treatment is required")
@@ -916,10 +920,12 @@ def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -
     if completed.returncode == 0:
         return TimingResult(status="success", timing=timing, error=None)
     message = completed.stderr.strip() or completed.stdout.strip() or "process exited with non-zero status"
+    exit_code = completed.returncode if completed.returncode >= 0 else None
+    signal = -completed.returncode if completed.returncode < 0 else None
     return TimingResult(
         status="failure",
         timing=timing,
-        error=ErrorRow(exit_code=completed.returncode, message=message[-1000:]),
+        error=ErrorRow(exit_code=exit_code, signal=signal, message=message[-1000:]),
     )
 
 
@@ -931,22 +937,12 @@ def timing_from_usage(
     user_sec = max(0.0, after.ru_utime - before.ru_utime)
     system_sec = max(0.0, after.ru_stime - before.ru_stime)
     cpu_wall_ratio = (user_sec + system_sec) / wall_sec if wall_sec > 0 else None
-    max_rss_bytes = rss_to_bytes(after.ru_maxrss)
     return TimingRow(
         wall_sec=wall_sec,
         user_sec=user_sec,
         system_sec=system_sec,
         cpu_wall_ratio=cpu_wall_ratio,
-        max_rss_bytes=max_rss_bytes,
     )
-
-
-def rss_to_bytes(raw_rss: int) -> int | None:
-    if raw_rss <= 0:
-        return None
-    if sys.platform == "darwin":
-        return raw_rss
-    return raw_rss * 1024
 
 
 def collection_label(

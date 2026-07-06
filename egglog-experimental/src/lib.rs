@@ -52,6 +52,7 @@ pub use size::*;
 mod primitive;
 mod table_stats;
 pub use table_stats::*;
+mod table_rows;
 
 // Sugar modules using parse-time macros
 mod sugar;
