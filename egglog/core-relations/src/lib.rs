@@ -40,7 +40,7 @@ pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};
 pub use table_spec::{
     ColumnId, Constraint, MutationBuffer, Offset, Rebuilder, Row, Table, TableChange, TableSpec,
-    TableVersion, ValueRebuilder, WrappedTable,
+    TableVersion, WrappedTable,
 };
 pub use uf::DisplacedTable;
 
