@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Fix user-defined primitives (registered through the Rust API after construction) being reported as unbound under term encoding / proofs: primitive registration now also reaches the term-encoding typechecker, so the encoder can typecheck the encoded program. Previously callers had to manually register the primitive on `proof_state.original_typechecking` as well.
 - **Pluggable backend SPI.** `EGraph::with_backend(Box<dyn Backend>)` lets a third party drive the egglog frontend with their own backend (see the `egglog-backend-trait` crate and the `egglog-experimental-flowlog` example). A backend without a native union-find declares `Backend::requires_term_encoding()`; `EGraph::with_term_encoding()` opts such an e-graph into the term-encoding pipeline (congruence and rebuild lower to rules over `@uf` tables), and running a term-encoding-only backend without it now errors with `Error::BackendRequiresTermEncoding` instead of silently dropping `union`s.
 - Add typed `EGraph` extension state that clones with `EGraph` and is restored by `push`/`pop`.
 - Report full source file paths in egglog span and error messages.
