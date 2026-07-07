@@ -734,7 +734,6 @@ dependencies = [
  "egglog-core-relations",
  "egglog-numeric-id",
  "hashbrown 0.16.1",
- "insta",
  "libtest-mimic",
  "log",
  "serde",

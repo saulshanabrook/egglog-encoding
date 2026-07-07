@@ -36,8 +36,9 @@ differential-dogs3 = { git = "https://github.com/oflatt/differential-dataflow", 
 serde = { version = "1", features = ["derive", "rc"] }
 
 [[test]]
-# Snapshot + cross-backend parity harness over egglog's .egg corpus, mirroring
-# egglog's own `tests/files.rs` (custom libtest-mimic main, insta snapshots).
+# Parity harness over egglog's .egg corpus: checks FlowLog's output against
+# egglog's OWN shared snapshots (`egglog/tests/snapshots/files__shared_snapshot_
+# *.snap`), so egglog is the single source of truth. Custom libtest-mimic main.
 name = "files"
 harness = false
 
@@ -45,5 +46,4 @@ harness = false
 # The frontend, so the integration tests can run real `.egg` files on the
 # FlowLog backend via `egglog::EGraph::with_backend(..)`.
 egglog = { path = "../../egglog", default-features = false }
-insta = "1.40"
 libtest-mimic = "0.8"
