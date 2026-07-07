@@ -3,8 +3,6 @@ source: src/proofs/proof_tests.rs
 expression: snapshot
 ---
 (ruleset __parent)
-(ruleset __single_parent)
-(ruleset __uf_function_index)
 (ruleset __rebuilding)
 (ruleset __rebuilding_cleanup)
 (ruleset __delete_subsume_ruleset)
