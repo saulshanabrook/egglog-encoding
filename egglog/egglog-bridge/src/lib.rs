@@ -492,6 +492,13 @@ impl EGraph {
     }
 
     /// Register a function in this EGraph.
+    /// The [`FunctionId`] the next [`EGraph::add_table`] will assign. Lets a caller build a
+    /// self-referential merge (one that names the table it is about to create) before calling
+    /// `add_table`; the id is deterministic as long as no other function is added in between.
+    pub fn peek_next_function_id(&self) -> FunctionId {
+        self.funcs.next_id()
+    }
+
     pub fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
         let FunctionConfig {
             schema,
@@ -530,6 +537,27 @@ impl EGraph {
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
         let next_func_id = self.funcs.next_id();
+        let name: Arc<str> = name.into();
+        // Knot-tying for a self-referential merge (the single-table UF `@UF_S`, whose `:merge` does a
+        // `TableInsert` into its OWN table for the recursive parent-union): merge resolution
+        // (`fill_deps` / `to_callback` -> `TableAction::new`) reads `self.funcs[self_id].table`, so
+        // the new `FunctionInfo` must already be in `self.funcs` before the merge is built. Reserve
+        // the table id (the next `add_table_named` assigns exactly this id) and push the
+        // `FunctionInfo` up front, then build the merge and the backing table. Non-self-referential
+        // merges resolve identically either way — this ordering is a strict superset.
+        let table_id = self.db.next_table_id();
+        let res = self.funcs.push(FunctionInfo {
+            table: table_id,
+            schema: schema.clone(),
+            n_keys,
+            incremental_rebuild_rules: Default::default(),
+            nonincremental_rebuild_rule: RuleId::new(!0),
+            default_val: default,
+            can_subsume,
+            name: name.clone(),
+        });
+        debug_assert_eq!(res, next_func_id);
+
         let mut read_deps = IndexSet::<TableId>::new();
         let mut write_deps = IndexSet::<TableId>::new();
         merge.fill_deps(self, &mut read_deps, &mut write_deps);
@@ -541,25 +569,13 @@ impl EGraph {
             to_rebuild,
             merge_fn,
         );
-        let name: Arc<str> = name.into();
-        let table_id = self.db.add_table_named(
+        let assigned_table_id = self.db.add_table_named(
             table,
             name.clone(),
             read_deps.iter().copied(),
             write_deps.iter().copied(),
         );
-
-        let res = self.funcs.push(FunctionInfo {
-            table: table_id,
-            schema: schema.clone(),
-            n_keys,
-            incremental_rebuild_rules: Default::default(),
-            nonincremental_rebuild_rule: RuleId::new(!0),
-            default_val: default,
-            can_subsume,
-            name,
-        });
-        debug_assert_eq!(res, next_func_id);
+        debug_assert_eq!(assigned_table_id, table_id);
         let incremental_rebuild_rules = self.incremental_rebuild_rules(res, &schema);
         let nonincremental_rebuild_rule = self.nonincremental_rebuild(res, &schema);
         let info = &mut self.funcs[res];
