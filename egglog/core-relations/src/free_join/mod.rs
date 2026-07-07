@@ -608,7 +608,7 @@ impl Database {
             for table_id in to_merge.iter().copied() {
                 let mut info = self.tables.unwrap_val(table_id);
                 // Pre-seed the table's OWN buffer so a self-referential merge — one that stages a
-                // write back into its own table (e.g. the term-encoder's `@UF_S` recursive
+                // write back into its own table (e.g. the term encoder's `@UF` recursive
                 // parent-union) — can stage it. The table has been `unwrap_val`'d out of
                 // `self.tables`, so the lazy `new_buffer()` path (which indexes `self.tables`) would
                 // fail for the self id. Staged rows land in `pending_state` and are picked up on the

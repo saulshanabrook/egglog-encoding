@@ -538,13 +538,13 @@ impl EGraph {
         let n_cols = schema_math.table_columns();
         let next_func_id = self.funcs.next_id();
         let name: Arc<str> = name.into();
-        // Knot-tying for a self-referential merge (the single-table UF `@UF_S`, whose `:merge` does a
-        // `TableInsert` into its OWN table for the recursive parent-union): merge resolution
-        // (`fill_deps` / `to_callback` -> `TableAction::new`) reads `self.funcs[self_id].table`, so
-        // the new `FunctionInfo` must already be in `self.funcs` before the merge is built. Reserve
-        // the table id (the next `add_table_named` assigns exactly this id) and push the
-        // `FunctionInfo` up front, then build the merge and the backing table. Non-self-referential
-        // merges resolve identically either way — this ordering is a strict superset.
+        // Knot-tying for a self-referential merge (e.g. the term encoder's single-table UF `@UF`,
+        // whose `:merge` does a `TableInsert` into its OWN table): merge resolution (`fill_deps` /
+        // `to_callback` -> `TableAction::new`) reads `self.funcs[self_id].table`, so the new
+        // `FunctionInfo` must already be in `self.funcs` before the merge is built. Reserve the
+        // table id (the next `add_table_named` assigns exactly this id) and push the `FunctionInfo`
+        // up front, then build the merge and the backing table. Non-self-referential merges resolve
+        // the same either way.
         let table_id = self.db.next_table_id();
         let res = self.funcs.push(FunctionInfo {
             table: table_id,

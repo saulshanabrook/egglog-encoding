@@ -573,12 +573,12 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
             return value;
         };
 
-        // The non-proof union-find is a single self-referential function
-        // `@UF : (S) -> S` (one key column, identity-on-miss). Chase single-key
-        // lookups to a fixpoint; a miss means the value is its own leader. The
-        // proof-mode `@UF_S` relation has two key columns (handled below); keying
-        // off the schema keeps this correct even when a proof-encoded program is
-        // re-run in a non-proof egraph.
+        // A single-key union-find is a self-referential function keyed by the element (the
+        // encoding's `UF_<Sort>`: `(S) -> S` in term mode, `(S) -> (S, Proof)` in proof mode), so
+        // `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
+        // leader. A two-key union-find is a `(child, parent)` relation (e.g. a user-provided
+        // `:internal-uf`), resolved with a one-hop scan. Dispatching on the key arity keeps both
+        // correct.
         if uf_func.schema.input.len() == 1 {
             let mut canonical = value;
             loop {
@@ -590,7 +590,7 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
             return canonical;
         }
 
-        // Proof mode: walk the `@UF_S` relation `(child, parent)` - one hop lookup.
+        // Two-key `(child, parent)` relation: one-hop lookup.
         let mut canonical = value;
         egraph
             .backend
