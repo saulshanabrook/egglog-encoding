@@ -657,8 +657,8 @@ where
         inputs: Vec<String>,
     },
 
-    /// The `function` command declare an egglog custom function, which is a database table with a
-    /// a functional dependency (also called a primary key) on its inputs to its output(s).
+    /// The `function` command declares an egglog custom function, which is a database table with a
+    /// functional dependency (also called a primary key) on its inputs to its output(s).
     ///
     /// ```text
     /// (function <name:Ident> <schema:Schema> <cost:Cost>
@@ -1301,8 +1301,6 @@ pub struct Schema {
     pub output: String,
     /// Additional output sorts for tuple-output functions (declared with a parenthesized list of
     /// output sorts, e.g. `(function f (Math) (i64 i64) ...)`). Empty for ordinary functions.
-    /// Together with [`Schema::output`], `output` followed by `extra_outputs` gives all of a
-    /// function's value columns (see [`Schema::outputs`]).
     pub extra_outputs: Vec<String>,
 }
 
