@@ -263,6 +263,8 @@ fn required_context(egraph: &mut EGraph, expr: &ResolvedExpr) -> Context {
                     }
                 }
                 ResolvedCall::Primitive(_) => Context::Pure,
+                // `values` builds/destructures a tuple value; it reads or writes no tables.
+                ResolvedCall::Values(_) => Context::Pure,
                 ResolvedCall::Func(func) => match func.subtype {
                     FunctionSubtype::Constructor => Context::Write,
                     FunctionSubtype::Custom => Context::Read,

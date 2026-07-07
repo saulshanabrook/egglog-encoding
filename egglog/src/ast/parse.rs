@@ -1013,7 +1013,13 @@ impl Parser {
                 if *symbol == "_" {
                     self.symbol_gen.fresh(symbol)
                 } else {
-                    self.ensure_symbol_not_reserved(symbol, span)?;
+                    // `:`-prefixed atoms are option-keyword markers (e.g. `:until` in a custom
+                    // run-schedule) that command macros consume as `Expr::Var`s; allow them here.
+                    // User variables never start with `:`, so this doesn't weaken the reserved-name
+                    // guarantee for identifiers.
+                    if !symbol.starts_with(':') {
+                        self.ensure_symbol_not_reserved(symbol, span)?;
+                    }
                     symbol.clone()
                 },
             ),
