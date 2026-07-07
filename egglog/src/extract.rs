@@ -562,7 +562,6 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 
     /// Find the canonical representative of a value using the union-find table.
     /// If no UF is registered for this sort, returns the original value.
-    /// The UF table stores (value, canonical) pairs - one hop lookup.
     fn find_canonical(&self, egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
         // Check if there's a UF registered for this sort
         let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
@@ -574,12 +573,28 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
             return value;
         };
 
-        // Single lookup in UF table - it's guaranteed to be one hop to canonical
+        // The non-proof union-find is a single self-referential function
+        // `@UF : (S) -> S` (one key column, identity-on-miss). Chase single-key
+        // lookups to a fixpoint; a miss means the value is its own leader. The
+        // proof-mode `@UF_S` relation has two key columns (handled below); keying
+        // off the schema keeps this correct even when a proof-encoded program is
+        // re-run in a non-proof egraph.
+        if uf_func.schema.input.len() == 1 {
+            let mut canonical = value;
+            loop {
+                match egraph.backend.lookup_id(uf_func.backend_id, &[canonical]) {
+                    Some(next) if next != canonical => canonical = next,
+                    _ => break,
+                }
+            }
+            return canonical;
+        }
+
+        // Proof mode: walk the `@UF_S` relation `(child, parent)` - one hop lookup.
         let mut canonical = value;
         egraph
             .backend
             .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-                // UF table has (child, parent) as inputs
                 if row.vals[0] == value {
                     canonical = row.vals[1];
                 }

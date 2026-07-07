@@ -885,6 +885,45 @@ impl EGraph {
         Some(MergeFn::Columns(vec![eclass_col, MergeFn::Old]))
     }
 
+    /// Build the self-referential union-find `:merge` for the non-proof term
+    /// encoding's single per-sort UF function `@UF : (S) -> S` (the whole
+    /// union-find). To union `a, b`: `(set (@UF (ordering-max a b)) (ordering-min
+    /// a b))`. On an FD conflict — `@UF k` is `old`, a new write proposes `new` —
+    /// the merge keeps `ordering-min(old, new)` AND writes `(set (@UF
+    /// ordering-max(old, new)) ordering-min(old, new))` into ITS OWN table
+    /// (recording the displaced edge; strictly decreasing, hence finite). `uf_id`
+    /// is the function's own backend id (see [`EGraph::peek_next_function_id`]).
+    fn build_uf_self_merge(
+        &self,
+        uf_id: egglog_bridge::FunctionId,
+    ) -> Result<egglog_bridge::MergeFn, Error> {
+        use egglog_bridge::MergeFn;
+        let resolve = |name: &str| -> Result<ExternalFunctionId, Error> {
+            self.type_info
+                .get_prims(name)
+                .and_then(|p| p.first())
+                .and_then(|p| p.context_ids[crate::Context::Write])
+                .ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "UF self-merge: primitive `{name}` not resolvable in write context"
+                    ))
+                })
+        };
+        let min_id = resolve("ordering-min")?;
+        let max_id = resolve("ordering-max")?;
+        let min = || MergeFn::Primitive(min_id, vec![MergeFn::Old, MergeFn::New]);
+        let max = MergeFn::Primitive(max_id, vec![MergeFn::Old, MergeFn::New]);
+        Ok(MergeFn::IfEq {
+            a: Box::new(MergeFn::Old),
+            b: Box::new(MergeFn::New),
+            then: Box::new(MergeFn::Old),
+            els: Box::new(MergeFn::Seq(vec![
+                MergeFn::TableInsert(uf_id, vec![max, min()]),
+                min(),
+            ])),
+        })
+    }
+
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
         let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
             Some(sort) => Ok(sort.clone()),
@@ -916,7 +955,18 @@ impl EGraph {
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
-        let merge = if let Some(m) = self.native_congruence_merge(decl, &output, num_outputs) {
+        let merge = if self
+            .proof_state
+            .self_merge_uf_functions
+            .contains(&*decl.name)
+        {
+            // Non-proof single self-referential UF `@UF : (S) -> S`: override the
+            // placeholder source `:merge (ordering-min old new)` with the native
+            // self-referential merge. Its own backend id is the id `add_table`
+            // (below) will assign, peeked deterministically.
+            let uf_id = self.backend.peek_next_function_id();
+            self.build_uf_self_merge(uf_id)?
+        } else if let Some(m) = self.native_congruence_merge(decl, &output, num_outputs) {
             // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
             // a native :merge that stages the congruence edge into the per-sort UF table, instead of
             // a rule-encoded self-join.
