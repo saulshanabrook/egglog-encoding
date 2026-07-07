@@ -2,6 +2,13 @@
 
 ## [Unreleased] - ReleaseDate
 
+- **Single self-referential union-find (proof mode).** The proof term encoding now
+  represents each sort's union-find as one native-tuple function `@UF : (S) -> (S, Proof)`
+  (parent + a proof `key = parent`) with a self-referential `:merge`, replacing the former
+  two-table `@UF_S (S S) -> Proof` relation plus `@UF_Sf` index. Constructor-view congruence
+  and the UF self-merge both keep the smaller e-class and stage an oriented displaced edge,
+  so the `single_parent`/`uf_function_index` rules and per-term self-loop seeds are gone. This
+  mirrors the term (non-proof) encoding's single-table `@UF : (S) -> S`.
 - **Tuple-output functions.** A function may declare more than one output sort, e.g.
   `(function interval (Math) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))`. Such a
   function stores its outputs as separate value columns (no boxing); the functional dependency is

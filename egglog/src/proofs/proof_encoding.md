@@ -302,31 +302,30 @@ The proof proves a proposition `t = t` for
   input term `t`.
 We store the oldest proof currently.
 
-When proof tracking is enabled, the union-find table's output type is `Proof` instead of `Unit`:
+When proof tracking is enabled, the single self-referential union-find carries a
+proof in a second value column:
 
 ```text
-(function UF_Math (Math Math) Proof :merge old :internal-hidden)
+(function UF_Math (Math) (Math Proof) :merge (values old0 old1) :internal-hidden)
 ```
 
-If term `a` has parent `b`, `(UF_Math a b)` returns a 
-  proof of `a = b`.
-The path compression and single-parent rules are instrumented to produce
-  proofs using symmetry (`Sym`) and transitivity (`Trans`) as needed.
+If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
+proves `k = p` (the key on the LEFT). The native self-referential `:merge` (built in
+`EGraph::build_uf_self_merge`) keeps the smaller parent on a conflict and stages the
+oriented displaced edge back into `@UF`, composing proofs with `Trans`/`Sym`. Path
+compression flattens cross-key chains via `Trans`.
 
 
-Similarly, the view table's output type is `Proof` instead of `Unit`:
+Similarly, the constructor view is a functional-dependency tuple carrying a proof:
 
 ```text
-(function AddView (i64 i64 Math) Proof :merge old :internal-term-constructor Add)
+(function AddView (i64 i64) (Math Proof) :merge (values old0 old1) :internal-term-constructor Add)
 ```
 
-Recall that view tables store a term
-  along with the e-class representative.
-For a term `t` with representative `r`,
-  the proof (output of the view function) proves that `r = t`.
-The direction is important, making
-  proof production easier later.
-We store the earliest proof (`:merge old`).
+The view maps a term's canonicalized children to `(eclass, proof)`, where `proof`
+proves `eclass = f(children)` (the eclass on the LEFT). Its native congruence `:merge`
+(built in `EGraph::native_congruence_merge`) keeps the smaller eclass on a
+functional-dependency conflict and stages the oriented union edge into `@UF`.
 
 
 ```text
