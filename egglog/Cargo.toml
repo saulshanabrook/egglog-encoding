@@ -68,6 +68,7 @@ egglog-bridge = { workspace = true }
 egglog-numeric-id = { workspace = true }
 egglog-add-primitive = { workspace = true }
 egglog-reports = { workspace = true }
+egglog-backend-trait = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
 

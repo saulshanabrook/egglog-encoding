@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use core_relations::{ExecutionState, ExternalFunction, Value};
+use egglog_backend_trait::BackendExt;
 use egglog_bridge::{
     ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, TableAction,
 };
@@ -233,7 +234,12 @@ impl EGraph {
                     record
                         .scheduler
                         .filter_matches(rule_id, ruleset, &mut matches);
-                let table_action = TableAction::new(&self.backend, rule_info.decided);
+                let bridge = self
+                    .backend
+                    .as_any()
+                    .downcast_ref::<egglog_bridge::EGraph>()
+                    .expect("scheduler match instantiation requires the reference bridge backend");
+                let table_action = TableAction::new(bridge, rule_info.decided);
                 *rule_info.matches.lock().unwrap() = matches.instantiate(state, &table_action);
             }
         });
@@ -333,7 +339,7 @@ impl SchedulerRuleInfo {
             .register_external_func(Box::new(CollectMatches::new(matches.clone())));
         let schema = free_vars
             .iter()
-            .map(|v| v.sort.column_ty(&egraph.backend))
+            .map(|v| v.sort.column_ty(egraph.backend.base_values()))
             .chain(std::iter::once(ColumnTy::Base(unit_type)))
             .collect();
         let decided = egraph.backend.add_table(FunctionConfig {
@@ -360,7 +366,7 @@ impl SchedulerRuleInfo {
             collect_matches,
             &entries,
             ColumnTy::Base(unit_type),
-            || "collect_matches".to_string(),
+            Box::new(|| "collect_matches".to_string()),
         );
         let qrule_id = qrule_builder.build();
 

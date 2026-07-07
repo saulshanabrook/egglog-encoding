@@ -5,6 +5,7 @@ members = [
   "egglog/concurrency",
   "egglog/core-relations",
   "egglog/egglog-ast",
+  "egglog/egglog-backend-trait",
   "egglog/egglog-bridge",
   "egglog/egglog-reports",
   "egglog/numeric-id",
@@ -12,6 +13,7 @@ members = [
   "egglog/src/sort/add_primitive",
   "egglog/wasm-example",
   "egglog-experimental",
+  "egglog-experimental/flowlog",
 ]
 
 [workspace.package]
@@ -81,6 +83,7 @@ egglog-numeric-id = { path = "egglog/numeric-id", version = "2.0.0" }
 egglog-union-find = { path = "egglog/union-find", version = "2.0.0" }
 egglog-add-primitive = { path = "egglog/src/sort/add_primitive", version = "2.0.0" }
 egglog-reports = { path = "egglog/egglog-reports", version = "2.0.0" }
+egglog-backend-trait = { path = "egglog/egglog-backend-trait", version = "2.0.0" }
 egglog = { path = "egglog", default-features = false, version = "2.0.0" }
 
 ######################
@@ -88,6 +91,14 @@ egglog = { path = "egglog", default-features = false, version = "2.0.0" }
 ######################
 wasm-bindgen = "0.2"
 
+
+# The FlowLog backend (egglog-experimental/flowlog) uses a `differential-dogs3`
+# (dogsdogsdogs) that path-deps its own differential-dataflow; redirect the
+# crates.io differential-dataflow to the same git source so the workspace shares
+# a single dd 0.24.0. Only FlowLog pulls these in. A `[patch]` is only honored at
+# the workspace root, so it lives here rather than in the FlowLog crate.
+[patch.crates-io]
+differential-dataflow = { git = "https://github.com/oflatt/differential-dataflow", rev = "f8d47afb6996942358d36f0ca5796412caf3fe94" }
 
 [profile.dev]
 opt-level = 3

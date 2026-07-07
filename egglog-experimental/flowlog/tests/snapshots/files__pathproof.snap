@@ -1,0 +1,5 @@
+---
+source: tests/files.rs
+expression: out
+---
+

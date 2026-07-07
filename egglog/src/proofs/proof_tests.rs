@@ -188,11 +188,14 @@ mod tests {
             &self.name
         }
 
-        fn column_ty(&self, _backend: &egglog_bridge::EGraph) -> egglog_bridge::ColumnTy {
+        fn column_ty(
+            &self,
+            _base_values: &egglog_core_relations::BaseValues,
+        ) -> egglog_bridge::ColumnTy {
             egglog_bridge::ColumnTy::Id
         }
 
-        fn register_type(&self, _backend: &mut egglog_bridge::EGraph) {}
+        fn register_type(&self, _backend: &mut dyn egglog_backend_trait::Backend) {}
 
         fn as_arc_any(
             self: std::sync::Arc<Self>,

@@ -1,0 +1,49 @@
+# A FlowLog (differential-dataflow) backend for egglog — it depends only on the
+# public `egglog-backend-trait` SPI plus the neutral `egglog-core-relations`.
+# This is the worked example that a third party can implement their own egglog
+# backend against the `Backend` trait.
+#
+# It stays on edition 2021 (its differential-dataflow / timely dependency tree is
+# edition 2021); the workspace `resolver = "3"` supports the mixed edition. The
+# `[patch.crates-io]` that pins differential-dataflow lives in the workspace-root
+# Cargo.toml (a patch is only honored there).
+[package]
+name = "egglog-experimental-flowlog"
+version = "0.1.0"
+edition = "2021"
+description = "A FlowLog (differential-dataflow)-backed egglog Backend, as an out-of-tree example of the egglog-backend-trait SPI."
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1"
+egglog-backend-trait = { path = "../../egglog/egglog-backend-trait" }
+egglog-core-relations = { path = "../../egglog/core-relations" }
+egglog-numeric-id = { path = "../../egglog/numeric-id" }
+hashbrown = "0.16"
+log = "0.4"
+dyn-clone = "1.0.17"
+# Raw differential-dataflow + timely, used in-process by `dd_native.rs`.
+differential-dataflow = "=0.24.0"
+timely = "=0.30.0"
+# `--wcoj` worst-case-optimal join operators. `differential-dogs3` is the
+# crates.io name of `dogsdogsdogs`, which lives in the differential-dataflow
+# repo. We track the branch carrying the upstreamable `lookup_map` index-oob
+# fix (TimelyDataflow/differential-dataflow#765). Because that crate path-deps
+# the repo's own differential-dataflow, the `[patch]` below redirects our
+# crates.io differential-dataflow to the same source so there is a single dd.
+differential-dogs3 = { git = "https://github.com/oflatt/differential-dataflow", rev = "f8d47afb6996942358d36f0ca5796412caf3fe94" }
+serde = { version = "1", features = ["derive", "rc"] }
+
+[[test]]
+# Snapshot + cross-backend parity harness over egglog's .egg corpus, mirroring
+# egglog's own `tests/files.rs` (custom libtest-mimic main, insta snapshots).
+name = "files"
+harness = false
+
+[dev-dependencies]
+# The frontend, so the integration tests can run real `.egg` files on the
+# FlowLog backend via `egglog::EGraph::with_backend(..)`.
+egglog = { path = "../../egglog", default-features = false }
+insta = "1.40"
+libtest-mimic = "0.8"
