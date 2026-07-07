@@ -50,6 +50,7 @@ DEFAULT_FILES = (
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
+    "egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg",
 )
 TARGET_SPEED_CAPTION = (
     "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs."

@@ -120,10 +120,12 @@ If no files are provided, the default target benchmark suite is:
 - `egglog/tests/web-demo/rw-analysis.egg`
 - `egglog/tests/integer_math.egg`
 - `egglog/tests/web-demo/resolution.egg`
+- `egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg`
 
-These four files are proof-compatible representative examples under the current
+These five files are proof-compatible representative examples under the current
 `egglog-experimental` CLI and run under the default `off`, `term`, and `proofs`
-treatment matrix.
+treatment matrix. The eggcc fixture is the heavy container/proof benchmark in
+the default suite.
 Relative file paths are resolved relative to the directory where `./bench.py`
 was invoked, not relative to each target checkout. The same file contents are
 used for every target, and `file.sha256` records the exact benchmark input.
