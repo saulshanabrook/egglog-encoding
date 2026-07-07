@@ -8,12 +8,14 @@
 //! Each argument must evaluate to a `String` that names an existing function.
 
 use egglog::{
-    ArcSort, CommandOutput, EGraph, Error, TermDag, TermId, TypeError, UserDefinedCommand, Value,
-    ast::Expr,
+    CommandOutput, EGraph, Error, RawValues, TermDag, TermId, UserDefinedCommand, Value, Write,
+    ast::{Expr, FunctionSubtype},
     extract::{Extractor, TreeAdditiveCostModel},
     sort::S,
     span,
 };
+
+use crate::table_rows::{for_each_table_row, table_layout};
 
 pub struct KeepBestCommand;
 
@@ -45,26 +47,37 @@ impl UserDefinedCommand for KeepBestCommand {
 
         // Step 4: re-insert the optimal tuples. Evaluate each extracted term
         // via eval_expr so that constructor sub-terms are re-created bottom-up,
-        // then stage all target-table inserts in one with_full_state call.
-        let mut rows_to_insert: Vec<(String, Vec<Value>)> = Vec::new();
-        for (table_name, extracted_rows, termdag) in &extracted {
+        // then stage all target-table inserts in one update call.
+        let mut rows_to_insert: Vec<(String, FunctionSubtype, Vec<Value>)> = Vec::new();
+        for (table_name, subtype, extracted_rows, termdag) in &extracted {
             for term_ids in extracted_rows {
                 let values = eval_terms(egraph, termdag, term_ids)?;
-                rows_to_insert.push((table_name.clone(), values));
+                rows_to_insert.push((table_name.clone(), *subtype, values));
             }
         }
 
-        egraph.with_full_state(|mut state| {
-            for (table_name, values) in &rows_to_insert {
-                egglog::Write::insert(&mut state, table_name, values.iter().copied());
+        egraph.update(|mut state| {
+            for (table_name, subtype, values) in &rows_to_insert {
+                match subtype {
+                    FunctionSubtype::Custom => {
+                        let (output, inputs) = values
+                            .split_last()
+                            .expect("keep-best function rows have at least one output value");
+                        state.set(table_name, RawValues(inputs.to_vec()), *output)?;
+                    }
+                    FunctionSubtype::Constructor => {
+                        state.add(table_name, RawValues(values.clone()))?;
+                    }
+                }
             }
-        });
+            Ok(())
+        })?;
 
         Ok(vec![])
     }
 }
 
-type ExtractedTable = (String, Vec<Vec<TermId>>, TermDag);
+type ExtractedTable = (String, FunctionSubtype, Vec<Vec<TermId>>, TermDag);
 
 /// For each table, collect all rows and extract the best term for each value.
 /// Returns `(table_name, rows, termdag)` triples where each row is a list of
@@ -76,22 +89,12 @@ fn collect_and_extract(
     let mut result = Vec::new();
 
     for table_name in table_names {
-        let func = egraph
-            .get_function(table_name)
-            .ok_or_else(|| TypeError::UnboundFunction(table_name.clone(), span!()))?;
-
-        let all_sorts: Vec<ArcSort> = func
-            .schema()
-            .input
-            .iter()
-            .chain(std::iter::once(&func.schema().output))
-            .cloned()
-            .collect();
+        let layout = table_layout(egraph, table_name, span!())?;
+        let subtype = layout.subtype;
+        let all_sorts = layout.extraction_sorts();
 
         let mut raw_rows: Vec<Vec<Value>> = Vec::new();
-        egraph.function_for_each(table_name, |row| {
-            raw_rows.push(row.vals.to_vec());
-        })?;
+        for_each_table_row(egraph, table_name, &layout, false, |row| raw_rows.push(row))?;
 
         let extractor = Extractor::compute_costs_from_rootsorts(
             Some(all_sorts.clone()),
@@ -116,7 +119,7 @@ fn collect_and_extract(
             extracted_rows.push(term_ids);
         }
 
-        result.push((table_name.clone(), extracted_rows, termdag));
+        result.push((table_name.clone(), subtype, extracted_rows, termdag));
     }
 
     Ok(result)

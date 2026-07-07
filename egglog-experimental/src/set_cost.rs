@@ -196,13 +196,15 @@ impl CostModel<DefaultCost> for DynamicCostModel {
         &self,
         egraph: &EGraph,
         func: &egglog::Function,
-        row: &egglog::FunctionRow<'_>,
+        row: &egglog::Enode<'_>,
     ) -> DefaultCost {
         let name = get_cost_table_name(func.name());
-        let key = row.vals.split_last().unwrap().1;
+        let key = row.children;
         if egraph.get_function(&name).is_some() {
             egraph
-                .lookup_function(&name, key)
+                .read(|state| egglog::Read::lookup(&state, &name, egglog::RawValues(key.to_vec())))
+                .ok()
+                .flatten()
                 .map(|c| {
                     let cost = egraph.value_to_base::<i64>(c);
                     assert!(cost >= 0);

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use egglog::EGraph;
 use std::{fmt, sync::Once};
 

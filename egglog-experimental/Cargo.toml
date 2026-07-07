@@ -12,19 +12,24 @@ readme = "README.md"
 harness = false
 name = "files"
 
+[[bench]]
+harness = false
+name = "files"
+
 [features]
 default = ["bin"]
 bin = ["egglog/bin"]
 
 [dependencies]
-egglog = { git = "https://github.com/egraphs-good/egglog.git", rev = "5294cdc66a7b90a9a1480cb2d930f2ee5785c8dd", default-features = false }
-egglog-ast = { git = "https://github.com/egraphs-good/egglog.git", rev = "5294cdc66a7b90a9a1480cb2d930f2ee5785c8dd", default-features = false }
-egglog-reports = { git = "https://github.com/egraphs-good/egglog.git", rev = "5294cdc66a7b90a9a1480cb2d930f2ee5785c8dd", default-features = false }
+egglog = { workspace = true }
+egglog-ast = { workspace = true }
+egglog-reports = { workspace = true }
 
 num = "0.4.3"
 lazy_static = "1.4"
 log = "0.4"
 
 [dev-dependencies]
+divan = { workspace = true }
 glob = "0.3.1"
 libtest-mimic = "0.8.1"

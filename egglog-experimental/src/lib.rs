@@ -52,6 +52,7 @@ pub use size::*;
 mod primitive;
 mod table_stats;
 pub use table_stats::*;
+mod table_rows;
 
 // Sugar modules using parse-time macros
 mod sugar;
@@ -62,15 +63,31 @@ pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
     let mut egraph = EGraph::default();
+    add_experimental_extensions(&mut egraph);
+    egraph
+}
 
+pub fn new_experimental_egraph_with_term_encoding() -> EGraph {
+    let mut egraph = EGraph::new_with_term_encoding();
+    add_experimental_extensions(&mut egraph);
+    egraph
+}
+
+pub fn new_experimental_egraph_with_proofs() -> EGraph {
+    let mut egraph = EGraph::new_with_proofs();
+    add_experimental_extensions(&mut egraph);
+    egraph
+}
+
+fn add_experimental_extensions(egraph: &mut EGraph) {
     // Set up the parser with experimental parse-time macros
     egraph.parser = experimental_parser();
 
     // Rational support
-    add_base_sort(&mut egraph, RationalSort, span!()).unwrap();
+    add_base_sort(egraph, RationalSort, span!()).unwrap();
 
     // Support for set cost
-    add_set_cost(&mut egraph);
+    add_set_cost(egraph);
     egraph.add_read_primitive(GetSizePrimitive, None);
 
     // unstable-fresh! macro
@@ -104,7 +121,6 @@ pub fn new_experimental_egraph() -> EGraph {
     egraph
         .add_command("primitive".into(), Arc::new(primitive::RegisterPrimitive))
         .unwrap();
-    egraph
 }
 
 // Create a parser with experimental macros
