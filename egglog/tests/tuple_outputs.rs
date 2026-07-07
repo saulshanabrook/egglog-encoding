@@ -205,3 +205,27 @@ fn tuple_merge_must_be_values_form() {
         "expected TupleMergeNotValues, got {err:?}"
     );
 }
+
+#[test]
+fn tuple_output_input_command_loads_all_columns() {
+    // `(input f file)` for a tuple-output function must load every output column, not just
+    // the first, so a TSV row has `input + all outputs` fields.
+    let dir = std::env::temp_dir().join("egglog_tuple_output_input_test");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("iv.tsv"), "1\t10\t20\n2\t30\t40\n").unwrap();
+
+    let mut egraph = EGraph::default();
+    egraph.fact_directory = Some(dir.clone());
+    let result = egraph.parse_and_run_program(
+        None,
+        r#"
+        (function iv (i64) (i64 i64) :merge (values old0 old1))
+        (input iv "iv.tsv")
+        (check (= (values 10 20) (iv 1)))
+        (check (= (values 30 40) (iv 2)))
+        "#,
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+    result.unwrap();
+}

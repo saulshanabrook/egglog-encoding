@@ -1900,9 +1900,11 @@ impl EGraph {
         }
 
         if function_type.subtype != FunctionSubtype::Constructor {
-            match func.schema.output.name() {
-                "i64" | "String" | "Unit" => {}
-                s => panic!("Unsupported type {s} for input"),
+            for sort in func.schema.outputs() {
+                match sort.name() {
+                    "i64" | "String" | "Unit" => {}
+                    s => panic!("Unsupported type {s} for input"),
+                }
             }
         }
 
@@ -1916,7 +1918,7 @@ impl EGraph {
 
         let mut row_schema = func.schema.input.clone();
         if function_type.subtype == FunctionSubtype::Custom {
-            row_schema.push(func.schema.output.clone());
+            row_schema.extend(func.schema.outputs().cloned());
         }
 
         log::debug!("{row_schema:?}");
