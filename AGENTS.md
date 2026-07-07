@@ -17,11 +17,10 @@ session's `xhigh` reasoning effort instead.
 
 ## Tests
 
-Use this order for normal changes:
+Use this order for normal full validation:
 
 ```bash
 cargo test --workspace
-cargo test --workspace proof
 cargo clippy --workspace --all-targets -- -D warnings
 uv lock --check
 uv run --locked ruff format --check bench.py test_bench.py
@@ -30,26 +29,29 @@ uv run --locked mypy bench.py test_bench.py
 uv run --locked pytest -q
 ```
 
-For benchmark-runner changes, also smoke the CLI with a temporary report:
+For proof-focused changes, the filtered proof test is useful while iterating or
+when you want a focused proof rerun:
 
 ```bash
-uv run --locked ./bench.py --rounds 1 --treatments off --report .reports.smoke.jsonl \
-  egglog/tests/integer_math.egg
+cargo test --workspace proof
 ```
 
-For agent-readable benchmark smoke output, pipe report rows from stdout and keep
-runner status and build diagnostics on stderr:
+This is a name-filtered subset of `cargo test --workspace`, so running both as a
+final gate intentionally repeats those tests.
+
+For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
+machine-readable report. Use stdout report mode so the run does not read or
+append to the default benchmark cache; runner status and build diagnostics stay
+on stderr.
 
 ```bash
-uv run --locked ./bench.py --rounds 1 --treatments off --report - \
+./bench.py --rounds 1 --treatments off --report - \
   egglog/tests/integer_math.egg > /tmp/egglog-encoding-bench-smoke.jsonl
 ```
 
 ## Benchmarking
 
 - Use `./bench.py` as the public benchmark entrypoint.
-- Do not pass egglog's `--save-report` during timed benchmark collection; it
-  changes the measured work.
 - Keep `.reports.jsonl` append-only and ignored by git.
 - Use `--report -` when report rows should be streamed to stdout instead of
   appended to a cache file.
