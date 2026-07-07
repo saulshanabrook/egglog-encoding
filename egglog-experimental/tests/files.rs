@@ -115,8 +115,16 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
     let skipped_files = ["math-backoff.egg"];
 
     for entry in glob::glob(glob).unwrap() {
+        let path = entry.unwrap();
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "fixtures")
+        {
+            continue;
+        }
+
         let run = Run {
-            path: entry.unwrap().clone(),
+            path: path.clone(),
             desugar: false,
         };
         if skipped_files.iter().any(|file| run.path.ends_with(file)) {

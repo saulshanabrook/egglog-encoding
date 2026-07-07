@@ -52,7 +52,13 @@ pub use size::*;
 mod primitive;
 mod table_stats;
 pub use table_stats::*;
+mod maybe;
 mod table_rows;
+pub use maybe::*;
+mod either;
+pub use either::*;
+mod container_primitives;
+pub use container_primitives::*;
 
 // Sugar modules using parse-time macros
 mod sugar;
@@ -62,24 +68,32 @@ mod keep_best;
 pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
+    new_experimental_egraph_with_options(true)
+}
+
+pub fn new_experimental_egraph_for_proofs() -> EGraph {
+    new_experimental_egraph_with_options(false)
+}
+
+fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
     let mut egraph = EGraph::default();
-    add_experimental_extensions(&mut egraph);
+    add_experimental_extensions(&mut egraph, extended_run_schedule);
     egraph
 }
 
 pub fn new_experimental_egraph_with_term_encoding() -> EGraph {
     let mut egraph = EGraph::new_with_term_encoding();
-    add_experimental_extensions(&mut egraph);
+    add_experimental_extensions(&mut egraph, false);
     egraph
 }
 
 pub fn new_experimental_egraph_with_proofs() -> EGraph {
     let mut egraph = EGraph::new_with_proofs();
-    add_experimental_extensions(&mut egraph);
+    add_experimental_extensions(&mut egraph, false);
     egraph
 }
 
-fn add_experimental_extensions(egraph: &mut EGraph) {
+fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool) {
     // Set up the parser with experimental parse-time macros
     egraph.parser = experimental_parser();
 
@@ -89,6 +103,15 @@ fn add_experimental_extensions(egraph: &mut EGraph) {
     // Support for set cost
     add_set_cost(egraph);
     egraph.add_read_primitive(GetSizePrimitive, None);
+    egraph
+        .type_info()
+        .add_presort::<MaybeSort>(span!())
+        .unwrap();
+    egraph
+        .type_info()
+        .add_presort::<EitherSort>(span!())
+        .unwrap();
+    add_container_primitives(egraph);
 
     // unstable-fresh! macro
     egraph
@@ -96,9 +119,11 @@ fn add_experimental_extensions(egraph: &mut EGraph) {
         .register(Arc::new(fresh_macro::FreshMacro::new()));
 
     // scheduler support
-    egraph
-        .add_command("run-schedule".into(), Arc::new(RunExtendedSchedule))
-        .unwrap();
+    if extended_run_schedule {
+        egraph
+            .add_command("run-schedule".into(), Arc::new(RunExtendedSchedule))
+            .unwrap();
+    }
     egraph
         .add_command("let-scheduler".into(), Arc::new(LetSchedulerCommand))
         .unwrap();
