@@ -1,1 +1,0 @@
-eval-live @ git+https://github.com/oflatt/eval-live.git

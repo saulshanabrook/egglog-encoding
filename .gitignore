@@ -9,8 +9,6 @@ pkg/
 flamegraph.svg
 perf.data*
 profile.json
-nightly/output/
-nightly/.venv/
 /*.json
 /*.txt
 
@@ -26,5 +24,3 @@ scripts/compiled
 tests/*.json
 
 lcov.info
-
-__pycache__/
