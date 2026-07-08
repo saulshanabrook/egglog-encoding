@@ -40,6 +40,9 @@ fn eggcc_2mm_full_export_uses_container_helpers() {
         "either-right",
         "either-unwrap-left",
         "either-unwrap-right",
+        "https://github.com/egraphs-good/eggcc/pull/796",
+        "https://github.com/egraphs-good/egglog-experimental/pull/56",
+        "(check (FunctionHasType \"main\"",
     ] {
         assert!(
             program.contains(required),
@@ -47,9 +50,14 @@ fn eggcc_2mm_full_export_uses_container_helpers() {
         );
     }
 
+    let non_comment_program = program
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(';'))
+        .collect::<Vec<_>>()
+        .join("\n");
     assert!(
-        !program.contains(":no-merge"),
-        "full eggcc export should not use :no-merge"
+        !non_comment_program.contains(":no-merge"),
+        "full eggcc export should not use :no-merge declarations"
     );
     assert!(
         program.contains(":merge old"),

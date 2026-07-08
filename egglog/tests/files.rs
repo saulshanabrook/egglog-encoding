@@ -4,6 +4,35 @@ use egglog::{file_supports_proofs, *};
 use hashbrown::HashSet;
 use libtest_mimic::Trial;
 
+struct ManualProofDisable {
+    file: &'static str,
+    reason: &'static str,
+}
+
+const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
+    ManualProofDisable {
+        file: "eggcc-2mm.egg",
+        reason: "uses :no-merge declarations such as DUMMYCTX; proof encoding requires a merge function",
+    },
+    ManualProofDisable {
+        file: "subsume.egg",
+        reason: "proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches",
+    },
+    ManualProofDisable {
+        file: "subsume-relation.egg",
+        reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
+    },
+];
+
+const PROOF_INTEGRATION_FILES: &[&str] = &[
+    "tests/integer_math.egg",
+    "tests/web-demo/math.egg",
+    "tests/math-microbenchmark.egg",
+    "tests/web-demo/resolution.egg",
+    "tests/web-demo/rw-analysis.egg",
+    "tests/web-demo/eqsolve.egg",
+];
+
 #[derive(Clone)]
 struct Run {
     path: PathBuf,
@@ -20,6 +49,26 @@ impl Run {
     /// Tests in the proofs directory require proofs to run successfully.
     fn requires_proofs(&self) -> bool {
         self.path.parent().unwrap().ends_with("proofs")
+    }
+
+    fn is_proof_mode_trial(&self) -> bool {
+        self.term_encoding || self.proofs || self.proof_testing
+    }
+
+    fn is_curated_proof_integration(&self) -> bool {
+        PROOF_INTEGRATION_FILES
+            .iter()
+            .any(|file| self.path.ends_with(file))
+    }
+
+    fn proof_filter_prefix(&self) -> Option<&'static str> {
+        if self.requires_proofs() && self.is_proof_mode_trial() {
+            Some("proof_unit")
+        } else if self.is_curated_proof_integration() && self.proof_testing {
+            Some("proof_integration")
+        } else {
+            None
+        }
     }
 
     fn filename_for_test_run(&self) -> Option<String> {
@@ -73,6 +122,30 @@ impl Run {
         };
 
         // Debug mode enables parallelism which can lead to non-deterministic output ordering
+        if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
+            match &result {
+                Ok(outputs) => {
+                    let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
+                    if !proof_snapshot.is_empty() {
+                        insta::assert_snapshot!(snapshot_name, proof_snapshot);
+                    }
+
+                    let shared_snapshot =
+                        CommandOutput::snapshot_non_proof_stable_under_proof_encoding(outputs);
+                    if !shared_snapshot.is_empty() {
+                        insta::assert_snapshot!(
+                            self.snapshot_name_across_treatments(),
+                            shared_snapshot
+                        );
+                    }
+                }
+                Err(err_msg) => {
+                    panic!("proof fixture failed: {err_msg}");
+                }
+            }
+            return;
+        }
+
         if !self.should_skip_snapshot() {
             match &result {
                 Ok(outputs) => {
@@ -223,12 +296,22 @@ impl Run {
         name
     }
 
+    fn proof_testing_snapshot_name(&self) -> Option<String> {
+        if self.is_curated_proof_integration() && self.proof_testing {
+            Some(self.name().to_string())
+        } else {
+            None
+        }
+    }
+
     /// Full test name with mode suffixes for test identification
     fn name(&self) -> impl std::fmt::Display + '_ {
         struct Wrapper<'a>(&'a Run);
         impl std::fmt::Display for Wrapper<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                if self.0.path.parent().unwrap().ends_with("fail-typecheck") {
+                if let Some(prefix) = self.0.proof_filter_prefix() {
+                    write!(f, "{prefix}/")?;
+                } else if self.0.path.parent().unwrap().ends_with("fail-typecheck") {
                     write!(f, "fail-typecheck/")?;
                 }
                 let stem = self.0.path.file_stem().unwrap();
@@ -264,29 +347,20 @@ impl Run {
     fn should_skip_snapshot(&self) -> bool {
         if self.threads > 1 {
             // Skip snapshots for parallel tests due to non-deterministic output ordering
-            true
-        } else {
-            // Skip tests with known non-deterministic output
-            let filename = self.path.file_stem().unwrap().to_string_lossy();
-            const SKIP_PATTERNS: [&str; 6] = [
-                "extract-vec-bench",
-                "python_array_optimize",
-                "stresstest_large_expr",
-                "towers-of-hanoi",
-                "taylor51",
-                "factoring-multisets",
-            ];
-            if SKIP_PATTERNS.iter().any(|pat| filename.contains(pat)) {
-                return true;
-            }
-
-            // bug with egglog producing nondeterministic output in certain modes
-            let proof_skip_list = ["math-microbenchmark", "eqsolve"];
-            let in_list = proof_skip_list
-                .iter()
-                .any(|f| self.path.to_string_lossy().contains(f));
-            in_list && (self.proofs || self.term_encoding || self.proof_testing)
+            return true;
         }
+
+        // Skip tests with known non-deterministic output
+        let filename = self.path.file_stem().unwrap().to_string_lossy();
+        const SKIP_PATTERNS: [&str; 6] = [
+            "extract-vec-bench",
+            "python_array_optimize",
+            "stresstest_large_expr",
+            "towers-of-hanoi",
+            "taylor51",
+            "factoring-multisets",
+        ];
+        SKIP_PATTERNS.iter().any(|pat| filename.contains(pat))
     }
 
     /// only assert snapshot if the snapshot is non-empty
@@ -297,6 +371,13 @@ impl Run {
     ) -> bool {
         !snapshot_content_across_treatments.is_empty() && !self.proof_testing
     }
+}
+
+fn manual_proof_disable_reason(path: &std::path::Path) -> Option<&'static str> {
+    MANUAL_PROOF_DISABLED_FILES
+        .iter()
+        .find(|disabled| path.ends_with(disabled.file))
+        .map(|disabled| disabled.reason)
 }
 
 fn generate_tests(glob: &str) -> Vec<Trial> {
@@ -314,20 +395,8 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         };
         let should_fail = run.should_fail();
         let requires_proofs = run.requires_proofs();
-        // TODO: math-microbenchmark is too slow right now
-        // TODO: subsume.egg fails because we used a `check` on something subsumed. Need a way to run rules over subsumed things. Same with subsume-relation.egg.
-        let proof_unsupported_file_list = [
-            "math-microbenchmark.egg",
-            "rectangle.egg",
-            "eggcc-2mm.egg",
-            "eqsolve.egg",
-            "subsume.egg",
-            "subsume-relation.egg",
-        ];
-        let supports_proofs = file_supports_proofs(&run.path)
-            && !proof_unsupported_file_list
-                .iter()
-                .any(|f| run.path.ends_with(f));
+        let supports_proofs =
+            file_supports_proofs(&run.path) && manual_proof_disable_reason(&run.path).is_none();
 
         if !requires_proofs {
             push_trial(run.clone());
@@ -358,24 +427,39 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             });
         }
 
-        if !should_fail && supports_proofs {
+        if !should_fail && (supports_proofs || run.is_curated_proof_integration()) {
             // proof_testing mode adds automatic prove-exists, which has different output
             push_trial(Run {
                 proof_testing: true,
                 ..run.clone()
             });
 
-            // Complex mode: desugar using proof encoding, then run normally.
-            // Yes this mode is important! It has found multiple bugs.
-            push_trial(Run {
-                proof_testing: true,
-                desugar: true,
-                ..run.clone()
-            });
+            if supports_proofs {
+                // Complex mode: desugar using proof encoding, then run normally.
+                // Yes this mode is important! It has found multiple bugs.
+                push_trial(Run {
+                    proof_testing: true,
+                    desugar: true,
+                    ..run.clone()
+                });
+            }
         }
     }
 
     trials
+}
+
+fn generate_manual_proof_disable_snapshot_test() -> Trial {
+    Trial::test("proof_manual_disabled_files", || {
+        let mut snapshot = MANUAL_PROOF_DISABLED_FILES
+            .iter()
+            .map(|disabled| format!("{}: {}", disabled.file, disabled.reason))
+            .collect::<Vec<_>>();
+        snapshot.sort();
+        insta::assert_snapshot!("proof_manual_disabled_files", snapshot.join("\n"));
+
+        Ok(())
+    })
 }
 
 fn generate_proof_support_snapshot_test() -> Trial {
@@ -408,6 +492,7 @@ fn main() {
 
     // Add the proof support snapshot test
     tests.push(generate_proof_support_snapshot_test());
+    tests.push(generate_manual_proof_disable_snapshot_test());
 
     // ensure all the tests have unique names
     let mut names = HashSet::new();

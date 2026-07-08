@@ -33,11 +33,16 @@ For proof-focused changes, the filtered proof test is useful while iterating or
 when you want a focused proof rerun:
 
 ```bash
-cargo test --workspace proof
+cargo test --workspace --test files proof_unit
+cargo test --workspace --test files proof_integration
 ```
 
-This is a name-filtered subset of `cargo test --workspace`, so running both as a
-final gate intentionally repeats those tests.
+`proof_unit` runs small explicit `(prove ...)` fixtures under `tests/proofs`
+and snapshots their proof-mode output.
+`proof_integration` runs curated larger proof-testing cases that stay in their
+normal test locations, treating checks as proves and snapshotting generated
+proofs. Both are name-filtered subsets of `cargo test --workspace`, so do not
+run them after a full workspace test unless you want a focused proof rerun.
 
 For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
 machine-readable report. Use stdout report mode so the run does not read or
@@ -57,6 +62,8 @@ on stderr.
   appended to a cache file.
 - Runner status output always goes to stderr, including Rich progress and
   summary tables.
+- Benchmark inputs should not contain executable `(prove ...)` commands; use
+  `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
 - Cache reuse is decided by binary SHA-256, file SHA-256, treatment, and

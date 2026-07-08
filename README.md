@@ -19,7 +19,8 @@ The development loop is:
 cargo test --workspace
 
 # Run proof-focused tests while iterating.
-cargo test --workspace proof
+cargo test --workspace --test files proof_unit
+cargo test --workspace --test files proof_integration
 
 # Run lint checks across the workspace.
 cargo clippy --workspace --all-targets
@@ -34,6 +35,18 @@ cargo build --release --workspace
 The root workspace includes both `egglog` and `egglog-experimental`.
 `egglog-experimental` depends on the workspace `egglog` crate, which keeps proof
 changes and downstream experimental behavior in the same reviewable unit.
+
+Proof-specific file tests use two filter prefixes:
+
+- `proof_unit`: small explicit `(prove ...)` fixtures under `tests/proofs`,
+  with proof-mode output saved as snapshots.
+- `proof_integration`: curated larger proof-testing cases that stay in their
+  normal test locations, such as math-style workloads and the eggcc fixture.
+  Checks are treated as prove commands and the generated proofs are saved as
+  snapshots.
+
+Both filters are subsets of the full workspace test run. Use them for fast proof
+iteration and reserve `cargo test --workspace` for the final compatibility gate.
 
 ## Benchmarking
 

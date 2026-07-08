@@ -435,6 +435,25 @@ def resolve_files(raw_files: Sequence[str], invocation_cwd: Path) -> tuple[FileS
     return tuple(files)
 
 
+def file_contains_executable_prove_command(path: Path) -> bool:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(";"):
+            continue
+        if re.match(r"\(prove(?:\s|\))", stripped):
+            return True
+    return False
+
+
+def validate_spec(spec: BenchmarkSpec) -> None:
+    for file_spec in spec.files:
+        if file_contains_executable_prove_command(file_spec.absolute_path):
+            raise ValueError(
+                f"{file_spec.display_path} contains an explicit prove command; "
+                "benchmark files should use check so proof extraction is not included in timed runs"
+            )
+
+
 def resolve_report_destination(raw_report: str, invocation_cwd: Path) -> ReportDestination:
     if raw_report == "-":
         return ReportDestination(path=None, stream=sys.stdout)
@@ -1780,6 +1799,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rounds=args.rounds,
             timeout_sec=args.timeout_sec,
         )
+        validate_spec(spec)
         target_specs = args.target if args.target is not None else ["."]
         target_requests = tuple(parse_target(raw) for raw in target_specs)
         rows = load_report(report_destination)
