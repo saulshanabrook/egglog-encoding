@@ -77,10 +77,10 @@ jobs:
           persist-credentials: false
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-codspeed@4.0.1
+          tool: cargo-codspeed@5.0.1
       - uses: Swatinem/rust-cache@v2
-      - run: cargo codspeed build -p egglog-experimental --bench files
+      - run: cargo codspeed build --measurement-mode ${{ matrix.mode }} -p egglog-experimental --bench files
       - uses: CodSpeedHQ/action@v4
         with:
-          run: cargo codspeed run files
+          run: cargo codspeed run --measurement-mode ${{ matrix.mode }} files
           mode: ${{ matrix.mode }}
