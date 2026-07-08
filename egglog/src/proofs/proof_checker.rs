@@ -20,35 +20,6 @@ use crate::{
 };
 use thiserror::Error;
 
-/// A container side condition is a rule-body fact whose equality is over
-/// container values. Container sorts do not have their own UF proof rows, so
-/// these facts are checked by re-evaluating/binding their values under the rule
-/// substitution instead of by recursively checking a premise proposition.
-pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
-    fn is_container_primitive(expr: &ResolvedExpr) -> bool {
-        matches!(
-            expr,
-            ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
-                if p.output().is_eq_container_sort()
-        )
-    }
-    fn is_container_var(expr: &ResolvedExpr) -> bool {
-        matches!(
-            expr,
-            ResolvedExpr::Var(_, v) if v.sort.is_eq_container_sort()
-        )
-    }
-
-    match fact {
-        ResolvedFact::Eq(_, lhs, rhs) => {
-            is_container_primitive(lhs)
-                || is_container_primitive(rhs)
-                || (is_container_var(lhs) && is_container_var(rhs))
-        }
-        ResolvedFact::Fact(expr) => is_container_primitive(expr),
-    }
-}
-
 /// Result of processing actions: terms bound to variables and propositions
 #[derive(Debug, Clone)]
 pub(crate) struct ActionContext {
@@ -484,20 +455,6 @@ pub enum ProofCheckErrorKind {
     /// Two rules have the same name
     #[error("Duplicate rule name '{rule_name}' found in the program")]
     DuplicateRuleName { rule_name: String },
-    /// Eval marker appeared outside a container side condition
-    #[error("Proof {proof_id}: Eval marker used outside a container side condition")]
-    EvalOutsideSideCondition { proof_id: ProofId },
-    /// A container side condition's two sides evaluate to different containers
-    #[error("Rule '{rule_name}': side condition {fact} does not hold ({lhs:?} != {rhs:?})")]
-    SideConditionMismatch {
-        rule_name: String,
-        fact: String,
-        lhs: TermId,
-        rhs: TermId,
-    },
-    /// A container side condition has no determined side to evaluate
-    #[error("Rule '{rule_name}': side condition {fact} has no bound side to evaluate")]
-    SideConditionUnbound { rule_name: String, fact: String },
 }
 
 /// Context needed for proof checking
@@ -630,30 +587,35 @@ impl ProofStore {
                     .into());
                 }
 
-                let mut working_subst = ctx
+                // Check each premise proof
+                let mut premise_propositions = Vec::new();
+                for &premise_id in premise_proofs {
+                    let prop = self.check_proof_with_context(premise_id, program, ctx)?;
+                    premise_propositions.push(prop);
+                }
+
+                let substitution_with_globals = ctx
                     .global_bindings
                     .iter()
                     .map(|(k, v)| (k.clone(), *v))
                     .chain(substitution.iter().map(|(k, v)| (k.clone(), *v)))
                     .collect::<HashMap<_, _>>();
 
-                // Verify premises in order. Container-valued side conditions
-                // carry only an Eval marker, so re-evaluate them against the
-                // rule body and extend the substitution with any output var.
-                for (fact, &premise_id) in rule.body.iter().zip(premise_proofs.iter()) {
-                    if is_container_side_condition(fact) {
-                        self.check_side_condition(fact, &mut working_subst, name)?;
-                    } else {
-                        let prop = self.check_proof_with_context(premise_id, program, ctx)?;
-                        self.check_fact_matches_proposition(fact, &prop, &working_subst, name)?;
-                    }
+                // Verify that premises match the rule body under the substitution
+                for (fact, prop) in rule.body.iter().zip(premise_propositions.iter()) {
+                    self.check_fact_matches_proposition(
+                        fact,
+                        prop,
+                        &substitution_with_globals,
+                        name,
+                    )?;
                 }
 
                 // Verify that the conclusion matches what the rule produces
                 self.check_rule_produces_equality(
                     rule,
                     substitution,
-                    &working_subst,
+                    &substitution_with_globals,
                     proof.proposition(),
                     name,
                 )?;
@@ -897,9 +859,6 @@ impl ProofStore {
 
                 Ok(Proposition::new(proof.lhs(), proof.rhs()))
             }
-            Justification::Eval => {
-                Err(ProofCheckErrorKind::EvalOutsideSideCondition { proof_id }.into())
-            }
         };
 
         // Cache the result
@@ -908,73 +867,6 @@ impl ProofStore {
         }
 
         result
-    }
-
-    /// Check a container-valued side condition by re-evaluating it against the
-    /// rule body. If one side is an unbound variable, bind it to the evaluated
-    /// container value; otherwise both sides must evaluate to the same value.
-    fn check_side_condition(
-        &mut self,
-        fact: &ResolvedFact,
-        subst: &mut HashMap<String, TermId>,
-        rule_name: &str,
-    ) -> Result<(), ProofCheckError> {
-        let (lhs, rhs) = match fact {
-            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
-            ResolvedFact::Fact(expr) => {
-                return match self.eval_side(expr, subst, rule_name)? {
-                    Some(_) => Ok(()),
-                    None => Err(ProofCheckErrorKind::SideConditionUnbound {
-                        rule_name: rule_name.to_string(),
-                        fact: format!("{fact}"),
-                    }
-                    .into()),
-                };
-            }
-        };
-
-        let lhs_val = self.eval_side(lhs, subst, rule_name)?;
-        let rhs_val = self.eval_side(rhs, subst, rule_name)?;
-        match (lhs, lhs_val, rhs, rhs_val) {
-            (ResolvedExpr::Var(_, v), None, _, Some(val))
-            | (_, Some(val), ResolvedExpr::Var(_, v), None) => {
-                subst.insert(v.name.clone(), val);
-                Ok(())
-            }
-            (_, Some(lhs), _, Some(rhs)) => {
-                if lhs == rhs {
-                    Ok(())
-                } else {
-                    Err(ProofCheckErrorKind::SideConditionMismatch {
-                        rule_name: rule_name.to_string(),
-                        fact: format!("{fact}"),
-                        lhs,
-                        rhs,
-                    }
-                    .into())
-                }
-            }
-            _ => Err(ProofCheckErrorKind::SideConditionUnbound {
-                rule_name: rule_name.to_string(),
-                fact: format!("{fact}"),
-            }
-            .into()),
-        }
-    }
-
-    fn eval_side(
-        &mut self,
-        expr: &ResolvedExpr,
-        subst: &HashMap<String, TermId>,
-        rule_name: &str,
-    ) -> Result<Option<TermId>, ProofCheckError> {
-        match expr {
-            ResolvedExpr::Var(_, var) => Ok(subst.get(&var.name).copied()),
-            _ => {
-                let (term, _) = eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
-                Ok(Some(term))
-            }
-        }
     }
 
     /// Check that a fact matches a proposition under a substitution  

@@ -20,47 +20,6 @@
 //! `egglog_bridge::RuleBuilder` one-for-one: a backend accumulates the calls
 //! into its own IR and finalizes on [`RuleBuilderOps::build`].
 //!
-//! ## Rule execution contract
-//!
-//! A [`Backend::run_rules`] call is one bounded rule-iteration over the
-//! backend's state. RHS effects are staged while matches are being evaluated and
-//! are flushed into tables according to the same semantics as the reference
-//! bridge backend. Rule bodies observe a stable read view for the iteration; a
-//! row produced by an RHS `set`, `lookup`, `remove`, or `subsume` does not create
-//! new matches for another rule body until a later `run_rules` call, although
-//! RHS lookups in the same action stream may observe earlier staged
-//! lookup-or-insert predictions.
-//!
-//! During the flush, deletions are applied before insertions/sets for the same
-//! bounded iteration. This is observable for rebuild-style actions that emit
-//! `delete old; set new`: if both target the same function key, the set is the
-//! row retained after the flush. Subsumption actions are applied after sets, so a
-//! row written and subsumed in the same iteration ends the iteration subsumed
-//! rather than live.
-//!
-//! For function tables, `set` observes the current row for the function's input
-//! key, if any, and folds conflicting output values through the configured
-//! [`MergeFn`]. In each fold, `old` is the currently retained output value and
-//! `new` is the incoming staged value. Implementations may choose their own
-//! physical representation, but they must not derive `old`/`new` from unordered
-//! table iteration; non-monotone merge expressions are already user-visible
-//! undefined behavior, but backend-specific container ordering should not add an
-//! extra source of divergence.
-//!
-//! Seminaive freshness is part of the observable execution model. If a row is
-//! removed and later reinserted with the same logical columns, later rule
-//! iterations must be able to treat that row as newly available, just as the
-//! reference backend does with its hidden row timestamp. Backends that feed an
-//! incremental engine must therefore track row generations or equivalent event
-//! identity, not only end-state set membership.
-//!
-//! Subsumption is semantically a bit on a row, not a separate table. Ordinary
-//! body atoms see only live rows; `query_table(..., is_subsumed = None)` sees
-//! live and subsumed rows; `Some(true)` sees only subsumed rows. A subsumed row
-//! remains the current row for lookup and merge purposes, so a later lookup or
-//! `set` for the same key must find/merge with that row without making it live
-//! again unless an explicit backend operation says otherwise.
-//!
 //! ## Advanced features are optional
 //!
 //! Capabilities that not every backend can offer — the seminaive-safe
@@ -102,7 +61,7 @@ pub use egglog_bridge::{
     ScanEntry, Variable, VariableId,
 };
 pub use egglog_core_relations::{
-    BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
+    BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, ExecutionState,
     ExternalFunction, ExternalFunctionId, Value,
 };
 pub use egglog_reports::{IterationReport, ReportLevel};
@@ -168,18 +127,6 @@ pub trait Backend: Send + Sync {
     /// The backend's container-value registry.
     fn container_values(&self) -> &ContainerValues;
 
-    /// Mutable access to the backend's container-value registry, for backends
-    /// that can execute container primitives without the bridge.
-    fn container_values_mut_dyn(&mut self) -> Option<&mut ContainerValues> {
-        None
-    }
-
-    /// Allocate a fresh counter for container-value ids, for backends that can
-    /// execute container primitives without the bridge.
-    fn new_container_id_counter(&mut self) -> Option<CounterId> {
-        None
-    }
-
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 
     /// Run `f` against a fresh execution state (for staging updates / calling
@@ -200,13 +147,7 @@ pub trait Backend: Send + Sync {
     /// Drop a registered rule.
     fn free_rule(&mut self, id: RuleId);
 
-    /// Run one bounded iteration of the given rule set.
-    ///
-    /// Implementations should evaluate rule bodies against a stable read view
-    /// for this iteration and stage RHS effects until the rule firing is
-    /// applied. The externally visible behavior must match the rule execution
-    /// contract in the crate docs, especially for function `set`/`merge`,
-    /// `remove`, `subsume`, and constructor lookup-or-insert effects.
+    /// Run one iteration of the given rule set.
     fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport>;
 
     /// Drain staged inserts and rebuild if the union-find changed. Returns
@@ -384,10 +325,6 @@ impl<B: Backend + ?Sized> BackendExt for B {
     fn register_container_ty<C: ContainerValue>(&mut self) {
         if let Some(bridge) = self.as_any_mut().downcast_mut::<egglog_bridge::EGraph>() {
             bridge.register_container_ty::<C>();
-        } else if let Some(counter) = self.new_container_id_counter() {
-            self.container_values_mut_dyn()
-                .expect("backend returned a container counter without a container registry")
-                .register_type::<C>(counter, |_state, old, new| std::cmp::min(old, new));
         } else {
             assert!(
                 !self.supports_containers(),
@@ -424,11 +361,8 @@ pub trait RuleBuilderOps {
     /// construction. (Replaces reaching through the concrete backend.)
     fn base_values(&self) -> &BaseValues;
 
-    /// Add a table body atom. The final entry is the function's return value.
-    ///
-    /// `is_subsumed` filters on the row's subsumption bit: `Some(false)` matches
-    /// only live rows, `Some(true)` matches only subsumed rows, and `None`
-    /// matches both.
+    /// Add a table body atom. The final entry is the function's return value;
+    /// `is_subsumed`, when `Some`, filters on the subsumption bit.
     fn query_table(
         &mut self,
         func: FunctionId,
@@ -456,10 +390,6 @@ pub trait RuleBuilderOps {
 
     /// RHS: look up `func(entries)` with the function's configured default on
     /// miss.
-    ///
-    /// Constructor lookup-or-insert must consult the current function table,
-    /// including subsumed rows and previously staged constructor creations that
-    /// are visible to the same RHS evaluation, before minting a fresh id.
     fn lookup(
         &mut self,
         func: FunctionId,
@@ -468,27 +398,12 @@ pub trait RuleBuilderOps {
     ) -> QueryEntry;
 
     /// RHS: subsume the row keyed by `entries` in `func`.
-    ///
-    /// Subsumption hides the row from ordinary `Some(false)` body matches but
-    /// keeps it as the current row for `lookup`, `set`, and
-    /// `query_table(..., None)`. Subsumption is flushed after removes and sets
-    /// from the same bounded iteration.
     fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) -> Result<()>;
 
     /// RHS: set `func(entries[..n-1])` to `entries[n-1]`.
-    ///
-    /// For function tables, this stages a candidate output value for the input
-    /// key. On conflict it is merged with the current retained value using the
-    /// configured [`MergeFn`], where `old` is the retained value and `new` is this
-    /// incoming value. A `set` of a currently subsumed key merges with the
-    /// subsumed row and does not by itself make the row live again.
     fn set(&mut self, func: FunctionId, entries: &[QueryEntry]);
 
     /// RHS: remove the row keyed by `entries` from `func`.
-    ///
-    /// Removes the keyed row from the same logical table state that `set` and
-    /// `lookup` observe, including any subsumed row with that key. Removes are
-    /// flushed before sets from the same bounded iteration.
     fn remove(&mut self, func: FunctionId, entries: &[QueryEntry]);
 
     /// RHS: union two values in the union-find.

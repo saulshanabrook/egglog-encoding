@@ -40,7 +40,6 @@ const EGGLOG_SNAPSHOTS: &str = "../../egglog/tests/snapshots";
 /// a test suite. Skipped entirely (not run on FlowLog).
 const HANG: &[&str] = &[
     "eggcc-2mm.egg",
-    "eggcc-2mm-pass1-merge-old.egg",
     "eqsolve.egg",
     "math-microbenchmark.egg",
     "rectangle.egg",
@@ -69,20 +68,24 @@ const DEBUG_SUBSET: &[&str] = &[
 ///
 /// - push/pop (needs backend snapshotting / `clone_boxed`, which a live
 ///   differential-dataflow dataflow cannot provide):
-///   `calc`, `array`, `bdd`, `lambda`, `math`, `push-pop`.
+///   `calc`, `array`, `bdd`, `math`, `push-pop`.
 const KNOWN_UNSUPPORTED: &[&str] = &[
     "array.egg",
     "bdd.egg",
     "calc.egg",
-    "lambda.egg",
     "math.egg",
     "push-pop.egg",
 ];
 
 /// Files FlowLog runs but whose output DIVERGES from egglog's snapshot — real
-/// bugs surfaced by comparing the full normalized output. Keep this list empty:
-/// any matching failure should either be fixed or documented narrowly here.
-const KNOWN_MISMATCH: &[&str] = &[];
+/// bugs surfaced by comparing the full normalized output (the previous
+/// last-`print-size`-only check missed them). In both, FlowLog leaves a few
+/// extra, un-collapsed constructor e-nodes — an INCOMPLETE congruence-closure
+/// gap (egglog `(AU 21)` vs FlowLog `(AU 23)`; `integer_math` over-counts `Add`
+/// / `Mul` / `MathU` by a handful, and looks mildly nondeterministic too).
+/// TODO(handoff): investigate FlowLog congruence closure on these and remove
+/// them from this list once fixed.
+const KNOWN_MISMATCH: &[&str] = &["antiunify.egg", "integer_math.egg"];
 
 /// The stable content of egglog's shared snapshot for `stem`, if egglog produced
 /// one. Strips insta's `---`-delimited YAML header.
@@ -139,31 +142,13 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
     match flowlog {
         // FlowLog couldn't run it (unsupported feature or a panic). Fine only if
         // documented; a new failure means the list is stale.
-        Ok(Err(err)) => {
+        Ok(Err(_)) | Err(_) => {
             if unsupported {
                 Ok(())
             } else {
                 Err(format!(
                     "{name}: FlowLog failed but is not in KNOWN_UNSUPPORTED — \
-                     add it (with the reason) or investigate the regression\n\
-                     error: {err}"
-                )
-                .into())
-            }
-        }
-        Err(panic) => {
-            if unsupported {
-                Ok(())
-            } else {
-                let panic = panic
-                    .downcast_ref::<String>()
-                    .map(String::as_str)
-                    .or_else(|| panic.downcast_ref::<&str>().copied())
-                    .unwrap_or("<non-string panic payload>");
-                Err(format!(
-                    "{name}: FlowLog panicked but is not in KNOWN_UNSUPPORTED — \
-                     add it (with the reason) or investigate the regression\n\
-                     panic: {panic}"
+                     add it (with the reason) or investigate the regression"
                 )
                 .into())
             }

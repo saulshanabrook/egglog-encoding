@@ -33,15 +33,11 @@ use egglog_backend_trait::{FunctionId, Value};
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
 
-use crate::compile::{
-    row_col, slot_lookup, BodyOp, HeadOp, MergeMode, ReadKey, ReadMode, Row, RuleIr, Slot,
-};
+use crate::compile::{row_col, slot_lookup, BodyOp, HeadOp, MergeMode, Row, RuleIr, Slot};
 use crate::EGraph;
 
 /// Binding environment: variable id → bound `u32` value.
 pub(crate) type Env = HashMap<u32, u32>;
-
-type DdDeltaRows = HashMap<ReadKey, Vec<(Vec<u32>, isize)>>;
 
 /// Retractions batched per function: the key length plus the set of keys to
 /// remove, so one `retain` pass drops them all.
@@ -82,6 +78,47 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
         .filter_map(|&i| eg.rules.get(i).and_then(|r| r.clone()).map(|r| (i, r)))
         .collect();
 
+    // Functions any atom reads with `:internal-include-subsumed` (is_subsumed ==
+    // None). Their read view must include subsumed rows so the congruence/rebuild
+    // rules can canonicalize them. Ordinary functions never appear here, so the
+    // common path is unchanged. (Within a run_rules call one ruleset runs, and a
+    // subsumable function is read either all-include, i.e. the term encoder's
+    // maintenance rulesets, or all-exclude, i.e. user rulesets — never mixed.)
+    let include_subsumed_funcs: HashSet<FunctionId> = rules
+        .iter()
+        .flat_map(|(_, r)| r.body.iter())
+        .filter_map(|op| match op {
+            BodyOp::Atom(a) if a.is_subsumed.is_none() => Some(a.func),
+            _ => None,
+        })
+        .collect();
+
+    // Snapshot the read view: rules match against the pre-iteration mirror.
+    //
+    // The snapshot shares each function's row set by `Rc` rather than
+    // deep-cloning every row: this is O(#functions), not O(state). Mutations to
+    // the mirror this call (head writes, hash-cons in `lookup_or_create`, merge
+    // resolution) go through `Rc::make_mut`, which copy-on-writes only the
+    // functions actually changed while this snapshot is alive — so `read` keeps
+    // the start-of-call contents and rules all match the pre-iteration state.
+    // A function read `:internal-include-subsumed` gets a fresh merged
+    // (live ∪ subsumed) set instead of the shared `Rc`.
+    let read: HashMap<FunctionId, std::rc::Rc<HashSet<Row>>> = eg
+        .mirror
+        .iter()
+        .map(|(f, set)| {
+            let subs = eg.subsumed.get(f).filter(|s| !s.is_empty());
+            match subs {
+                Some(subs) if include_subsumed_funcs.contains(f) => {
+                    let mut merged: HashSet<Row> = (**set).clone();
+                    merged.extend(subs.iter().cloned());
+                    (*f, std::rc::Rc::new(merged))
+                }
+                _ => (*f, std::rc::Rc::clone(set)),
+            }
+        })
+        .collect();
+
     // Snapshot the fresh-id counter: any hash-cons (`lookup_or_create`) this
     // call advances it, the O(1) signal that a new term row was created.
     let next_id_at_start = eg.next_id;
@@ -97,7 +134,7 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     // apply head actions in the original rule firing order. Atom-less rules
     // (`(rule () …)`) have no input relation to drive the DD dataflow, so they
     // stay host-side (fire once); they are computed inline below.
-    let envs_by_rule = fused_bindings(eg, &rules)?;
+    let envs_by_rule = fused_bindings(eg, &read, &rules)?;
 
     for ((idx, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
         let _ = idx;
@@ -138,7 +175,16 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     for (f, (keylen, keys)) in removes_by_func {
         // A `delete`/rebuild retraction clears the row from BOTH the live mirror
         // and the subsumed side-set (a rebuilt-away subsumed row must not linger).
-        changed |= eg.remove_matching_keys(f, keylen, &keys);
+        for store in [&mut eg.mirror, &mut eg.subsumed] {
+            if let Some(set) = store.get_mut(&f) {
+                let before_len = set.len();
+                std::rc::Rc::make_mut(set).retain(|row| {
+                    let k: Box<[u32]> = (0..keylen).map(|i| row_col(row, i)).collect();
+                    !keys.contains(&k)
+                });
+                changed |= set.len() != before_len;
+            }
+        }
     }
     // Apply sets. A plain relation (whole-row key) just inserts. A merge function
     // (Old/New/Min) folds each new value against the CURRENT value for its key by
@@ -157,13 +203,14 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
             MergeMode::Old | MergeMode::New | MergeMode::Min | MergeMode::Computed
         );
         if arity == 0 || !is_merge_fn {
-            changed |= eg.insert_live_row(f, row);
+            let inserted = std::rc::Rc::make_mut(eg.mirror.entry(f).or_default()).insert(row);
+            changed |= inserted;
         } else {
             merge_by_func.entry(f).or_default().push(row);
         }
     }
     for (f, rows) in merge_by_func {
-        changed |= eg.apply_merge_sets(f, &rows)?;
+        changed |= eg.apply_merge_sets(f, &rows);
     }
     // Subsumes last: a row `set` this iteration can then be subsumed, and the
     // move reads the just-updated live mirror.
@@ -227,7 +274,11 @@ pub(crate) fn rule_category(name: &str) -> &'static str {
 /// (`(rule () …)`) have no input relation to drive the DD dataflow, so they are
 /// fired once host-side. Returns a `Vec<Vec<Env>>` parallel to `rules` (same
 /// order), ready for `apply_head`.
-fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<Env>>> {
+fn fused_bindings(
+    eg: &mut EGraph,
+    read: &HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
+    rules: &[(usize, RuleIr)],
+) -> Result<Vec<Vec<Env>>> {
     use crate::dd_native;
 
     let prof = dd_native::prof_enabled();
@@ -312,12 +363,12 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     // The fused join's internal rule order (its build order = `atom_positions`
     // order). Map each fused output slot back to the caller `rules` position and
     // capture each rule's canonical var order.
-    let (fused_rule_idxs, fused_body_reads): (Vec<usize>, Vec<Vec<ReadKey>>) = {
+    let (fused_rule_idxs, fused_body_funcs): (Vec<usize>, Vec<Vec<FunctionId>>) = {
         let fused = eg.dd_fused.get(&key).expect("fused join present");
         (
             fused.rule_indices(),
             (0..fused.rule_indices().len())
-                .map(|p| fused.rule_body_reads(p).to_vec())
+                .map(|p| fused.rule_body_funcs(p).to_vec())
                 .collect(),
         )
     };
@@ -336,69 +387,47 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
         })
         .collect();
 
-    // Distinct relation read views across the whole ruleset. We diff versioned current
-    // snapshots rather than plain row sets: if another ruleset removes and
-    // reinserts the same row between two invocations, the row is present in both
-    // end states but has a fresh version. Feeding `-row` then `+row` as separate
-    // DD steps preserves the reference backend's hidden-timestamp behavior
-    // without replaying transient rows that are no longer visible.
+    // Distinct relations across the whole ruleset → ONE combined signed delta map
+    // fed into the fused worker's SHARED inputs. The `fed` snapshot is per-ruleset
+    // (the fused join's identity), diffed against the live mirror like the per-rule
+    // `dd_native_fed`.
     let t_delta = std::time::Instant::now();
-    let mut all_reads: Vec<ReadKey> = Vec::new();
-    for bf in &fused_body_reads {
-        for &read in bf {
-            if !all_reads.contains(&read) {
-                all_reads.push(read);
+    let empty_set: std::rc::Rc<HashSet<Row>> = std::rc::Rc::new(HashSet::new());
+    let mut all_funcs: Vec<FunctionId> = Vec::new();
+    for bf in &fused_body_funcs {
+        for &f in bf {
+            if !all_funcs.contains(&f) {
+                all_funcs.push(f);
             }
         }
     }
-    let mut removals_batch: DdDeltaRows = HashMap::new();
-    let mut insertions_batch: DdDeltaRows = HashMap::new();
+    let mut delta: HashMap<FunctionId, Vec<(Vec<u32>, isize)>> = HashMap::new();
     {
-        let fed = eg.dd_fused_fed_versions.entry(key.clone()).or_default();
-        for &read in &all_reads {
-            let cur = match read.mode {
-                ReadMode::Live => eg.live_versions.get(&read.func),
-                ReadMode::Subsumed => eg.subsumed_versions.get(&read.func),
-                ReadMode::All => eg.all_versions.get(&read.func),
-            };
-            let cur_empty: HashMap<Row, u64> = HashMap::new();
-            let cur = cur.unwrap_or(&cur_empty);
-            let prev = fed.entry(read).or_default();
-
-            let mut removals = Vec::new();
-            let mut insertions = Vec::new();
-            for row in prev.keys() {
-                if !cur.contains_key(row) {
-                    removals.push((row.to_vec(), -1));
+        let fed = eg.dd_fused_fed.entry(key.clone()).or_default();
+        for &f in &all_funcs {
+            let cur = read.get(&f).cloned().unwrap_or_else(|| empty_set.clone());
+            let prev = fed.entry(f).or_insert_with(|| empty_set.clone());
+            if std::rc::Rc::ptr_eq(&cur, prev) {
+                *prev = cur;
+                continue;
+            }
+            let mut rows: Vec<(Vec<u32>, isize)> = Vec::new();
+            for r in cur.iter() {
+                if !prev.contains(r) {
+                    rows.push((r.to_vec(), 1));
                 }
             }
-            for (row, version) in cur {
-                match prev.get(row) {
-                    None => insertions.push((row.to_vec(), 1)),
-                    Some(prev_version) if prev_version != version => {
-                        removals.push((row.to_vec(), -1));
-                        insertions.push((row.to_vec(), 1));
-                    }
-                    Some(_) => {}
+            for r in prev.iter() {
+                if !cur.contains(r) {
+                    rows.push((r.to_vec(), -1));
                 }
             }
-            if !removals.is_empty() {
-                rs_delta_rows += removals.len() as u64;
-                removals_batch.insert(read, removals);
+            if !rows.is_empty() {
+                rs_delta_rows += rows.len() as u64;
+                delta.insert(f, rows);
             }
-            if !insertions.is_empty() {
-                rs_delta_rows += insertions.len() as u64;
-                insertions_batch.insert(read, insertions);
-            }
-            *prev = cur.clone();
+            *prev = cur;
         }
-    }
-    let mut delta_batches: Vec<DdDeltaRows> = Vec::new();
-    if !removals_batch.is_empty() {
-        delta_batches.push(removals_batch);
-    }
-    if !insertions_batch.is_empty() {
-        delta_batches.push(insertions_batch);
     }
     let delta_elapsed = t_delta.elapsed().as_nanos() as u64;
     if prof {
@@ -414,16 +443,10 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     let feed_before = dd_native::PROF_FEED_NS.load(ProfOrd::Relaxed);
     let step_before = dd_native::PROF_STEP_NS.load(ProfOrd::Relaxed);
     eg.dd_rule_runs += atom_positions.len() as u64;
-    let mut per_rule_bindings = vec![Vec::new(); atom_positions.len()];
-    {
+    let per_rule_bindings = {
         let fused = eg.dd_fused.get_mut(&key).expect("fused join present");
-        for delta in &delta_batches {
-            let stepped = fused.step(delta)?;
-            for (acc, rows) in per_rule_bindings.iter_mut().zip(stepped) {
-                acc.extend(rows);
-            }
-        }
-    }
+        fused.step(&delta)?
+    };
     if rs_prof {
         rs_feed_ns += dd_native::PROF_FEED_NS
             .load(ProfOrd::Relaxed)
@@ -610,16 +633,7 @@ fn apply_head(
                     .iter()
                     .map(|s| resolve(s, env).map(Value::new))
                     .collect::<Result<_>>()?;
-                let val = if eg.info(*func).lookup_mints {
-                    lookup_or_create(eg, *func, &key, lookup_index)
-                } else {
-                    lookup_existing(eg, *func, &key, lookup_index).ok_or_else(|| {
-                        anyhow!(
-                            "lookup on `{}` failed in rule action",
-                            eg.relation_name(*func)
-                        )
-                    })?
-                };
+                let val = lookup_or_create(eg, *func, &key, lookup_index);
                 env.insert(*ret, val.rep());
             }
             HeadOp::Call { id, args, ret } => {
@@ -672,32 +686,10 @@ pub(crate) fn lookup_or_create(
     key: &[Value],
     index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
 ) -> Value {
-    if let Some(value) = lookup_existing(eg, func, key, index) {
-        return value;
-    }
-    let k: Box<[u32]> = key.iter().map(|v| v.rep()).collect();
-    let id = eg.fresh_id_internal();
-    index.entry(func).or_default().insert(k, id);
-    let mut full: Vec<u32> = key.iter().map(|v| v.rep()).collect();
-    full.push(id);
-    let row: Row = full.into_boxed_slice();
-    eg.insert_live_row(func, row);
-    Value::new(id)
-}
-
-/// Look up the current output of `func` for input `key` without creating a row.
-pub(crate) fn lookup_existing(
-    eg: &EGraph,
-    func: FunctionId,
-    key: &[Value],
-    index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
-) -> Option<Value> {
     let info = eg.info(func);
     let inputs_len = info.arity.saturating_sub(1);
-    // Lazily build the key->output index for this function from live ∪ subsumed
-    // rows so repeated lookups within one iteration are O(1) instead of O(state)
-    // scans. A subsumed constructor row is still the current table row in the
-    // reference backend; looking it up must not mint a fresh visible row.
+    // Lazily build the key->output index for this function from the mirror so
+    // repeated lookups within one iteration are O(1) instead of O(state) scans.
     let idx = index.entry(func).or_insert_with(|| {
         let mut m: HashMap<Box<[u32]>, u32> = HashMap::new();
         if let Some(set) = eg.mirror.get(&func) {
@@ -706,14 +698,17 @@ pub(crate) fn lookup_existing(
                 m.insert(k, row_col(row, inputs_len));
             }
         }
-        if let Some(set) = eg.subsumed.get(&func) {
-            for row in set.iter() {
-                let k: Box<[u32]> = (0..inputs_len).map(|i| row_col(row, i)).collect();
-                m.entry(k).or_insert(row_col(row, inputs_len));
-            }
-        }
         m
     });
     let k: Box<[u32]> = key.iter().map(|v| v.rep()).collect();
-    idx.get(&k).copied().map(Value::new)
+    if let Some(&out) = idx.get(&k) {
+        return Value::new(out);
+    }
+    let id = eg.fresh_id_internal();
+    idx.insert(k, id);
+    let mut full: Vec<u32> = key.iter().map(|v| v.rep()).collect();
+    full.push(id);
+    let row: Row = full.into_boxed_slice();
+    std::rc::Rc::make_mut(eg.mirror.entry(func).or_default()).insert(row);
+    Value::new(id)
 }

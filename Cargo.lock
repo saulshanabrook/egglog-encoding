@@ -732,7 +732,6 @@ dependencies = [
  "egglog",
  "egglog-backend-trait",
  "egglog-core-relations",
- "egglog-experimental",
  "egglog-numeric-id",
  "hashbrown 0.16.1",
  "libtest-mimic",

@@ -236,7 +236,7 @@ impl ProofStore {
         let mut changed = false;
 
         match &mut proof.justification {
-            Justification::Fiat | Justification::Eval => return proof_id,
+            Justification::Fiat => return proof_id,
             Justification::Rule { premise_proofs, .. } => {
                 for pid in premise_proofs.iter_mut() {
                     let mapped = f(self, *pid);
@@ -350,7 +350,6 @@ impl Proof {
             } => {}
             Justification::Trans(_, _) => {}
             Justification::Sym(_) => {}
-            Justification::Eval => {}
         }
     }
 }

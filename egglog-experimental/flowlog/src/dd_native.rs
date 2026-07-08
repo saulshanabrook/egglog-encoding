@@ -51,6 +51,7 @@ use differential_dataflow::input::InputSession;
 use differential_dataflow::VecCollection;
 use differential_dogs3::altneu::AltNeu;
 use differential_dogs3::{CollectionIndex, ProposeExtensionMethod};
+use egglog_backend_trait::FunctionId;
 use hashbrown::{HashMap, HashSet};
 use timely::communication::allocator::thread::Thread;
 use timely::communication::allocator::Allocator;
@@ -60,13 +61,13 @@ use timely::dataflow::Scope;
 use timely::worker::Worker;
 use timely::WorkerConfig;
 
-use crate::compile::{BodyOp, ReadKey, RuleIr, Slot};
+use crate::compile::{BodyOp, RuleIr, Slot};
 
 /// A signed `(row, weight)` delta for one relation (`+1` inserted, `-1`
 /// retracted), with rows as plain `Vec<u32>`.
 type SignedDelta = Vec<(Vec<u32>, isize)>;
-/// Per-relation-view input deltas fed into one [`FusedDdJoin::step`].
-type DeltaMap = HashMap<ReadKey, SignedDelta>;
+/// Per-relation input deltas fed into one [`FusedDdJoin::step`].
+type DeltaMap = HashMap<FunctionId, SignedDelta>;
 /// One `step`'s captured output deltas, parallel to the fused join's rule list.
 type StepOutput = Vec<SignedDelta>;
 /// A per-rule output-capture buffer shared with the DD closure (fixed-width
@@ -382,7 +383,7 @@ pub struct JoinPlan {
 }
 
 struct PlanAtom {
-    read_key: ReadKey,
+    func: FunctionId,
     slots: Vec<Slot>,
 }
 
@@ -430,7 +431,7 @@ pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
                     }
                 }
                 atoms.push(PlanAtom {
-                    read_key: atom.read_key(),
+                    func: atom.func,
                     slots: atom.slots.clone(),
                 });
             }
@@ -676,8 +677,8 @@ fn collect_head_vars(head: &[crate::compile::HeadOp], out: &mut hashbrown::HashS
 /// binding row as the binary join (bit-exact head firing).
 #[derive(Clone, Debug)]
 pub(crate) struct TriangleShape {
-    mul_input: ReadKey,
-    add_input: ReadKey,
+    mul_func: FunctionId,
+    add_func: FunctionId,
     // binding-row columns (positions in the n_vars-wide Row)
     col_a: usize,
     col_b: usize,
@@ -728,13 +729,13 @@ pub(crate) fn detect_triangle(plan: &JoinPlan) -> Option<TriangleShape> {
     let a1 = atom_var(1)?;
     let a2 = atom_var(2)?;
 
-    let mul_input = plan.atoms[0].read_key;
+    let mul_func = plan.atoms[0].func;
     // A0, A1 same relation; A2 a different relation.
-    if plan.atoms[1].read_key != mul_input {
+    if plan.atoms[1].func != mul_func {
         return None;
     }
-    let add_input = plan.atoms[2].read_key;
-    if add_input == mul_input {
+    let add_func = plan.atoms[2].func;
+    if add_func == mul_func {
         return None;
     }
 
@@ -764,8 +765,8 @@ pub(crate) fn detect_triangle(plan: &JoinPlan) -> Option<TriangleShape> {
 
     let col = |v: u32| -> usize { plan.var_col[&v] };
     Some(TriangleShape {
-        mul_input,
-        add_input,
+        mul_func,
+        add_func,
         col_a: col(a),
         col_b: col(b),
         col_m1: col(m1),
@@ -821,7 +822,7 @@ pub(crate) fn detect_triangle(plan: &JoinPlan) -> Option<TriangleShape> {
 /// keyed by the prefix's `key_cols`, from the ALT (old) or NEU (new) trace.
 #[derive(Clone, Debug)]
 pub(crate) struct CqExtender {
-    /// Index into `CqPlan.atom_inputs` / the rule's atom list.
+    /// Index into `CqPlan.atom_funcs` / the rule's atom list.
     atom_idx: usize,
     /// Binding-row columns (already bound in the prefix) this atom keys on.
     /// Parallel to `key_atom_cols`.
@@ -882,8 +883,8 @@ pub(crate) struct CqDriver {
 /// A general WCOJ plan for a cyclic >=3-atom body.
 #[derive(Clone, Debug)]
 pub(crate) struct CqPlan {
-    /// Relation read view per atom (atom order = the rule's `plan.atoms` order).
-    atom_inputs: Vec<ReadKey>,
+    /// Relation id per atom (atom order = the rule's `plan.atoms` order).
+    atom_funcs: Vec<FunctionId>,
     /// One delta query per atom.
     drivers: Vec<CqDriver>,
 }
@@ -986,7 +987,7 @@ fn is_cyclic_cq(atom_vars: &[Vec<u32>]) -> bool {
 fn build_cq_plan(plan: &JoinPlan, atom_vars: &[Vec<u32>]) -> Option<CqPlan> {
     let n_atoms = plan.atoms.len();
     let var_col = &plan.var_col;
-    let atom_inputs: Vec<ReadKey> = plan.atoms.iter().map(|a| a.read_key).collect();
+    let atom_funcs: Vec<FunctionId> = plan.atoms.iter().map(|a| a.func).collect();
 
     // relation-col lookup: atom i, variable v -> the 0-based slot position.
     let atom_var_col = |i: usize, v: u32| -> Option<usize> {
@@ -1135,7 +1136,7 @@ fn build_cq_plan(plan: &JoinPlan, atom_vars: &[Vec<u32>]) -> Option<CqPlan> {
     }
 
     Some(CqPlan {
-        atom_inputs,
+        atom_funcs,
         drivers,
     })
 }
@@ -1221,9 +1222,8 @@ pub(crate) fn detect_cyclic_cq(plan: &JoinPlan, allow_acyclic: bool) -> Option<C
 /// [`FusedDdJoin::step`] with a SINGLE `worker.step_while` per call.
 pub struct FusedDdJoin {
     worker: Worker,
-    /// One shared input session per DISTINCT body relation read view across all
-    /// rules.
-    inputs: HashMap<ReadKey, InputSession<u32, Row, isize>>,
+    /// One shared input session per DISTINCT body relation across all rules.
+    inputs: HashMap<FunctionId, InputSession<u32, Row, isize>>,
     /// Single probe on all rule outputs (they share the dataflow scope, so one
     /// probe gates the whole epoch's fixpoint).
     probe: ProbeHandle<u32>,
@@ -1243,10 +1243,10 @@ struct FusedRule {
     captured: CaptureBuf,
     /// Number of canonical body variables (binding-row width in use).
     n_vars: usize,
-    /// Distinct relation read views this rule reads. Self-join fan-out is
-    /// handled at build time via the shared collection; this is only used by the
-    /// host to know which input deltas to feed for the rule.
-    body_reads: Vec<ReadKey>,
+    /// `func` -> atom-occurrence indices reading it within THIS rule (self-join
+    /// fan-out is handled at build time via the shared collection, so this is
+    /// only used to know which relations this rule reads).
+    body_funcs: Vec<FunctionId>,
 }
 
 impl FusedDdJoin {
@@ -1269,28 +1269,27 @@ impl FusedDdJoin {
             PROF_WORKERS.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Distinct body relation read views across all rules → one shared input
-        // each.
-        let mut reads: Vec<ReadKey> = Vec::new();
+        // Distinct body relations across all rules → one shared input each.
+        let mut funcs: Vec<FunctionId> = Vec::new();
         for (_, plan) in plans {
             for a in &plan.atoms {
-                if !reads.contains(&a.read_key) {
-                    reads.push(a.read_key);
+                if !funcs.contains(&a.func) {
+                    funcs.push(a.func);
                 }
             }
         }
         if prof_enabled() {
-            PROF_INPUT_SESSIONS.fetch_add(reads.len() as u64, Ordering::Relaxed);
+            PROF_INPUT_SESSIONS.fetch_add(funcs.len() as u64, Ordering::Relaxed);
         }
 
         // Owned per-rule plan snapshots so the `move` dataflow closure is 'static.
         struct RulePlan {
             idx: usize,
             atoms: Vec<Vec<Slot>>,
-            atom_reads: Vec<ReadKey>,
+            atom_funcs: Vec<FunctionId>,
             var_col: HashMap<u32, usize>,
             n_vars: usize,
-            body_reads: Vec<ReadKey>,
+            body_funcs: Vec<FunctionId>,
             /// `--wcoj` and this rule is the recognized triangle ⇒ build the WCOJ
             /// delta query instead of the binary `.join` chain. `None` ⇒ binary.
             triangle: Option<TriangleShape>,
@@ -1306,11 +1305,11 @@ impl FusedDdJoin {
         let rule_plans: Vec<RulePlan> = plans
             .iter()
             .map(|(idx, plan)| {
-                let atom_reads: Vec<ReadKey> = plan.atoms.iter().map(|a| a.read_key).collect();
-                let mut body_reads: Vec<ReadKey> = Vec::new();
-                for &read in &atom_reads {
-                    if !body_reads.contains(&read) {
-                        body_reads.push(read);
+                let atom_funcs: Vec<FunctionId> = plan.atoms.iter().map(|a| a.func).collect();
+                let mut body_funcs: Vec<FunctionId> = Vec::new();
+                for &f in &atom_funcs {
+                    if !body_funcs.contains(&f) {
+                        body_funcs.push(f);
                     }
                 }
                 // Detect WCOJ shapes ONLY when `--wcoj` is set; off ⇒ both
@@ -1335,10 +1334,10 @@ impl FusedDdJoin {
                 RulePlan {
                     idx: *idx,
                     atoms: plan.atoms.iter().map(|a| a.slots.clone()).collect(),
-                    atom_reads,
+                    atom_funcs,
                     var_col: plan.var_col.clone(),
                     n_vars,
-                    body_reads,
+                    body_funcs,
                     triangle,
                     cq,
                     projection: plan.projection.clone(),
@@ -1355,12 +1354,12 @@ impl FusedDdJoin {
             .map(|_| Rc::new(RefCell::new(Vec::new())))
             .collect();
         let captures_in = captures.clone();
-        let reads_in = reads.clone();
+        let funcs_in = funcs.clone();
         // The per-rule metadata `FusedRule` needs (kept here; the closure consumes
         // `rule_plans` for the dataflow build).
-        let rule_meta: Vec<(usize, usize, Vec<ReadKey>)> = rule_plans
+        let rule_meta: Vec<(usize, usize, Vec<FunctionId>)> = rule_plans
             .iter()
-            .map(|rp| (rp.idx, rp.n_vars, rp.body_reads.clone()))
+            .map(|rp| (rp.idx, rp.n_vars, rp.body_funcs.clone()))
             .collect();
 
         // PERF: the per-epoch input delta is already set-semantic — it is built
@@ -1375,9 +1374,9 @@ impl FusedDdJoin {
         let inputs = worker.dataflow::<u32, _, _>(move |scope| {
             // ONE shared input + base collection per distinct relation, shared by
             // every atom occurrence (in every rule) that reads it.
-            let mut inputs: HashMap<ReadKey, InputSession<u32, Row, isize>> = HashMap::new();
-            let mut rel_coll: HashMap<ReadKey, _> = HashMap::new();
-            for &read in &reads_in {
+            let mut inputs: HashMap<FunctionId, InputSession<u32, Row, isize>> = HashMap::new();
+            let mut rel_coll: HashMap<FunctionId, _> = HashMap::new();
+            for &f in &funcs_in {
                 let mut session: InputSession<u32, Row, isize> = InputSession::new();
                 let base = session.to_collection(scope);
                 let coll = if keep_input_distinct {
@@ -1385,8 +1384,8 @@ impl FusedDdJoin {
                 } else {
                     base
                 };
-                inputs.insert(read, session);
-                rel_coll.insert(read, coll);
+                inputs.insert(f, session);
+                rel_coll.insert(f, coll);
             }
 
             for (rp, cap) in rule_plans.iter().zip(captures_in.iter()) {
@@ -1409,11 +1408,11 @@ impl FusedDdJoin {
                     if std::env::var_os("FLOWLOG_WCOJ_TRACE").is_some() {
                         eprintln!(
                             "[WCOJ] triangle rule idx={} mul={:?} add={:?}",
-                            rp.idx, tri.mul_input, tri.add_input
+                            rp.idx, tri.mul_func, tri.add_func
                         );
                     }
-                    let mul = rel_coll[&tri.mul_input].clone();
-                    let add = rel_coll[&tri.add_input].clone();
+                    let mul = rel_coll[&tri.mul_func].clone();
+                    let add = rel_coll[&tri.add_func].clone();
                     wcoj_triangle_collection(scope, mul, add, tri.clone())
                 } else if let Some(cq) = &rp.cq {
                     // GENERAL WCOJ: a detected cyclic >=3-atom body. One shared
@@ -1423,17 +1422,13 @@ impl FusedDdJoin {
                     #[allow(clippy::disallowed_macros)]
                     if std::env::var_os("FLOWLOG_WCOJ_TRACE").is_some() {
                         eprintln!(
-                            "[WCOJ] cyclic-cq rule idx={} atoms={} reads={:?}",
+                            "[WCOJ] cyclic-cq rule idx={} atoms={} funcs={:?}",
                             rp.idx,
-                            cq.atom_inputs.len(),
-                            cq.atom_inputs
+                            cq.atom_funcs.len(),
+                            cq.atom_funcs
                         );
                     }
-                    let colls: Vec<_> = cq
-                        .atom_inputs
-                        .iter()
-                        .map(|read| rel_coll[read].clone())
-                        .collect();
+                    let colls: Vec<_> = cq.atom_funcs.iter().map(|f| rel_coll[f].clone()).collect();
                     wcoj_cq_collection(scope, &colls, cq.clone())
                 } else if let Some(proj) = &rp.projection {
                     // PROJECTED binary chain (`FLOWLOG_PROJECT`): the binding row
@@ -1448,7 +1443,7 @@ impl FusedDdJoin {
                     let step_col = &proj.step_col;
                     let slots0 = atom_slots[0].clone();
                     let sc0 = step_col[0].clone();
-                    let mut cur = rel_coll[&rp.atom_reads[0]]
+                    let mut cur = rel_coll[&rp.atom_funcs[0]]
                         .clone()
                         .flat_map(move |r: Row| bind_atom(&r, &slots0, &sc0));
 
@@ -1476,7 +1471,7 @@ impl FusedDdJoin {
                         let scl = shared_cols_left.clone();
                         let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
                         let sac = shared_atom_cols.clone();
-                        let right = rel_coll[&rp.atom_reads[i]]
+                        let right = rel_coll[&rp.atom_funcs[i]]
                             .clone()
                             .map(move |r: Row| (pack_key(&r, &sac), r));
 
@@ -1504,7 +1499,7 @@ impl FusedDdJoin {
                     let mut bound = vec![false; n_vars];
                     let slots0 = atom_slots[0].clone();
                     let vc0 = var_col.clone();
-                    let mut cur = rel_coll[&rp.atom_reads[0]]
+                    let mut cur = rel_coll[&rp.atom_funcs[0]]
                         .clone()
                         .flat_map(move |r: Row| bind_atom(&r, &slots0, &vc0));
                     mark_bound(&atom_slots[0], var_col, &mut bound);
@@ -1530,7 +1525,7 @@ impl FusedDdJoin {
                         let scl = shared_cols_left.clone();
                         let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
                         let sac = shared_atom_cols.clone();
-                        let right = rel_coll[&rp.atom_reads[i]]
+                        let right = rel_coll[&rp.atom_funcs[i]]
                             .clone()
                             .map(move |r: Row| (pack_key(&r, &sac), r));
 
@@ -1584,11 +1579,11 @@ impl FusedDdJoin {
         let rules: Vec<FusedRule> = rule_meta
             .into_iter()
             .zip(captures)
-            .map(|((idx, n_vars, body_reads), captured)| FusedRule {
+            .map(|((idx, n_vars, body_funcs), captured)| FusedRule {
                 idx,
                 captured,
                 n_vars,
-                body_reads,
+                body_funcs,
             })
             .collect();
 
@@ -1607,8 +1602,8 @@ impl FusedDdJoin {
     }
 
     /// The body relations the fused rule at build position `pos` reads.
-    pub fn rule_body_reads(&self, pos: usize) -> &[ReadKey] {
-        &self.rules[pos].body_reads
+    pub fn rule_body_funcs(&self, pos: usize) -> &[FunctionId] {
+        &self.rules[pos].body_funcs
     }
 
     /// Feed one epoch of signed relation deltas into the SHARED inputs, advance
@@ -1688,15 +1683,12 @@ impl FusedDdJoin {
             let total: usize = self.rules.iter().map(|r| r.captured.borrow().len()).sum();
             let n_rules = self.rules.len();
             use egglog_numeric_id::NumericId;
-            let reads: Vec<(u32, crate::compile::ReadMode)> = deltas
-                .keys()
-                .map(|read| (read.func.rep(), read.mode))
-                .collect();
+            let funcs: Vec<u32> = deltas.keys().map(|f| f.rep()).collect();
             let delta_rows: usize = deltas.values().map(|r| r.len()).sum();
             #[allow(clippy::disallowed_macros)]
             {
                 eprintln!(
-                    "[dd_symmetric] n_rules={n_rules} delta_reads={reads:?} delta_rows={delta_rows} total_out={total}"
+                    "[dd_symmetric] n_rules={n_rules} delta_funcs={funcs:?} delta_rows={delta_rows} total_out={total}"
                 );
             }
         }
@@ -2275,15 +2267,7 @@ fn wcoj_triangle_collection<'scope>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egglog_backend_trait::FunctionId;
     use egglog_numeric_id::NumericId;
-
-    fn live(func: FunctionId) -> ReadKey {
-        ReadKey {
-            func,
-            mode: crate::compile::ReadMode::Live,
-        }
-    }
 
     /// Build a `JoinPlan` directly from `(func, vars)` atoms (all slots are
     /// distinct `Var`s — the shape the WCOJ detector accepts).
@@ -2299,7 +2283,7 @@ mod tests {
                 }
             }
             planned.push(PlanAtom {
-                read_key: live(*func),
+                func: *func,
                 slots: vars.iter().map(|&v| Slot::Var(v)).collect(),
             });
         }
@@ -2317,15 +2301,11 @@ mod tests {
     fn run_once(
         atoms: &[(FunctionId, &[u32])],
         wcoj: bool,
-        rows: &HashMap<FunctionId, SignedDelta>,
+        rows: &DeltaMap,
     ) -> Vec<(Vec<u32>, isize)> {
         let plan = plan_of(atoms);
         let mut j = FusedDdJoin::build(&[(0usize, plan)], wcoj, true).unwrap();
-        let deltas: DeltaMap = rows
-            .iter()
-            .map(|(&f, rows)| (live(f), rows.clone()))
-            .collect();
-        let mut out = j.step(&deltas).unwrap().remove(0);
+        let mut out = j.step(rows).unwrap().remove(0);
         out.sort();
         out
     }

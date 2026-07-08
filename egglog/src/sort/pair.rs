@@ -28,25 +28,6 @@ impl ContainerValue for PairContainer {
     }
 }
 
-/// The `(first, second)` children of a `(pair a b)` term; `None` for any other
-/// term.
-fn pair_term_children(termdag: &TermDag, term: TermId) -> Option<(TermId, TermId)> {
-    match termdag.get(term) {
-        Term::App(head, children) if head == "pair" => match children.as_slice() {
-            [first, second] => Some((*first, *second)),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn pair_term(termdag: &mut TermDag, args: &[TermId]) -> Option<TermId> {
-    if args.len() != 2 {
-        return None;
-    }
-    Some(termdag.app("pair".into(), args.to_vec()))
-}
-
 /// A pair of two values supporting these primitives:
 /// - `pair`
 /// - `pair-first`
@@ -138,30 +119,17 @@ impl ContainerSort for PairSort {
     fn register_primitives(&self, eg: &mut EGraph) {
         let arc = self.clone().to_arcsort();
 
-        let pair_first_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
-            let [pair] = args else {
-                return None;
-            };
-            pair_term_children(termdag, *pair).map(|(first, _)| first)
-        };
-        let pair_second_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
-            let [pair] = args else {
-                return None;
-            };
-            pair_term_children(termdag, *pair).map(|(_, second)| second)
-        };
-
-        add_primitive_with_validator!(eg, "pair" = {self.clone(): PairSort} |x: # (self.first()), y: # (self.second())| -> @PairContainer (arc) {
+        add_primitive!(eg, "pair" = {self.clone(): PairSort} |x: # (self.first()), y: # (self.second())| -> @PairContainer (arc) {
             PairContainer {
                 do_rebuild_first: self.ctx.first.is_eq_sort() || self.ctx.first.is_eq_container_sort(),
                 do_rebuild_second: self.ctx.second.is_eq_sort() || self.ctx.second.is_eq_container_sort(),
                 first: x,
                 second: y,
             }
-        }, pair_term);
+        });
 
-        add_primitive_with_validator!(eg, "pair-first"  = |xs: @PairContainer (arc)| -> # (self.first())  { xs.first  }, pair_first_validator);
-        add_primitive_with_validator!(eg, "pair-second" = |xs: @PairContainer (arc)| -> # (self.second()) { xs.second }, pair_second_validator);
+        add_primitive!(eg, "pair-first"  = |xs: @PairContainer (arc)| -> # (self.first())  { xs.first  });
+        add_primitive!(eg, "pair-second" = |xs: @PairContainer (arc)| -> # (self.second()) { xs.second });
     }
 
     fn reconstruct_termdag(
