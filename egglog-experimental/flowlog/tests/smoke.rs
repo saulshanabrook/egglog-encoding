@@ -11,6 +11,32 @@ fn flowlog_runs_basic_egg() {
     .unwrap();
 }
 
+#[test]
+fn flowlog_runs_proof_mode_pair_container_side_condition() {
+    let backend = Box::new(egglog_experimental_flowlog::EGraph::new_interpret());
+    let mut eg = egglog_experimental::new_experimental_egraph_with_backend_and_proofs(backend);
+    eg.parse_and_run_program(
+        None,
+        r#"
+        (datatype Expr (A))
+        (sort Cost (Pair Expr i64))
+        (relation Seed (Expr))
+        (relation Seen (Cost))
+
+        (Seed (A))
+
+        (rule ((Seed e)
+               (= c (pair e 1)))
+              ((Seen c))
+              :name "pair-side-condition")
+
+        (run 1)
+        (prove (Seen (pair (A) 1)))
+        "#,
+    )
+    .unwrap();
+}
+
 /// FlowLog has no native union-find, so it must be paired with term encoding.
 /// Without it, the frontend refuses to run rather than silently drop `union`s.
 #[test]

@@ -72,7 +72,6 @@ use std::io::{Read as _, Write as _};
 use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 pub use termdag::{Term, TermDag, TermId};
 use thiserror::Error;
@@ -543,7 +542,8 @@ impl EGraph {
     /// Enable the term-encoding pipeline on an existing `EGraph`.
     ///
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
-    pub(crate) fn with_term_encoding_enabled(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_term_encoding_enabled(mut self) -> Self {
         self.proof_state.original_typechecking = Some(Box::new(self.clone()));
         self
     }
@@ -561,11 +561,22 @@ impl EGraph {
         self
     }
 
+    /// Enable the term-encoding pipeline for a custom backend, using the given
+    /// bridge-backed e-graph for parsing/typechecking before instrumentation.
+    #[doc(hidden)]
+    pub fn with_term_encoding_typechecker(mut self, typechecker: EGraph) -> Self {
+        self.proof_state.original_typechecking = Some(Box::new(typechecker));
+        self
+    }
+
     /// Enable proof generation on this e-graph.
     /// TODO proofs should be turned on during creation of the e-graph, not afterwards.
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
-    pub(crate) fn with_proofs_enabled(mut self) -> Self {
-        self = self.with_term_encoding_enabled();
+    #[doc(hidden)]
+    pub fn with_proofs_enabled(mut self) -> Self {
+        if self.proof_state.original_typechecking.is_none() {
+            self = self.with_term_encoding_enabled();
+        }
         self.proof_state.proofs_enabled = true;
         self
     }
@@ -2011,9 +2022,10 @@ impl EGraph {
             let typechecked = original_typechecking.typecheck_program(&desugared)?;
 
             for command in &typechecked {
-                if let Err(reason) =
-                    command_supports_proof_encoding(&command.to_command(), &self.type_info)
-                {
+                if let Err(reason) = command_supports_proof_encoding(
+                    &command.to_command(),
+                    &original_typechecking.type_info,
+                ) {
                     let command_text = format!("{}", command.to_command());
                     return Err(Error::UnsupportedProofCommand {
                         command: command_text,
@@ -2301,6 +2313,12 @@ impl EGraph {
     /// Returns `None` if the function does not exist.
     pub fn get_function(&self, name: &str) -> Option<&Function> {
         self.functions.get(name)
+    }
+
+    /// Whether this e-graph's backend exposes the in-memory action registry
+    /// used by registry-backed primitives.
+    pub fn supports_action_registry(&self) -> bool {
+        self.backend.supports_action_registry()
     }
 
     /// Returns `true` if a user-defined command with the given name is

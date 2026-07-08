@@ -107,6 +107,36 @@ impl Slot {
     }
 }
 
+/// Which row-subsumption view a body atom reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReadMode {
+    /// Ordinary user/body matching: live rows only.
+    Live,
+    /// Internal subsumption scan: subsumed rows only.
+    Subsumed,
+    /// Internal maintenance scan: live and subsumed rows.
+    All,
+}
+
+impl ReadMode {
+    pub fn from_filter(is_subsumed: Option<bool>) -> Self {
+        match is_subsumed {
+            Some(false) => ReadMode::Live,
+            Some(true) => ReadMode::Subsumed,
+            None => ReadMode::All,
+        }
+    }
+}
+
+/// A distinct DD input stream. The same logical relation can be read through
+/// multiple subsumption views in one fused ruleset, and those views must not be
+/// collapsed to one input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadKey {
+    pub func: FunctionId,
+    pub mode: ReadMode,
+}
+
 /// A body atom: a function table reference with one [`Slot`] per column.
 #[derive(Clone, Debug)]
 pub struct BodyAtom {
@@ -116,7 +146,7 @@ pub struct BodyAtom {
     /// excludes subsumed rows (the default for user queries), `None` includes all
     /// rows (the term encoder's `:internal-include-subsumed` congruence/rebuild
     /// rules, which must see subsumed rows to canonicalize them).
-    pub is_subsumed: Option<bool>,
+    pub read_mode: ReadMode,
 }
 
 impl BodyAtom {
@@ -128,7 +158,14 @@ impl BodyAtom {
         BodyAtom {
             func,
             slots: entries.iter().map(Slot::from_entry).collect(),
-            is_subsumed,
+            read_mode: ReadMode::from_filter(is_subsumed),
+        }
+    }
+
+    pub fn read_key(&self) -> ReadKey {
+        ReadKey {
+            func: self.func,
+            mode: self.read_mode,
         }
     }
 }

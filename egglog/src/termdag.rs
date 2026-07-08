@@ -23,6 +23,40 @@ pub struct TermDag {
     nodes: IndexSet<Term>,
 }
 
+/// A [`TermId`] paired with its [`TermDag`] so it can be ordered by
+/// [`TermDag::ast_cmp`]. Only compare wrappers from the same [`TermDag`].
+#[derive(Copy, Clone)]
+pub struct OrdTerm<'a> {
+    termdag: &'a TermDag,
+    id: TermId,
+}
+
+impl OrdTerm<'_> {
+    pub fn id(&self) -> TermId {
+        self.id
+    }
+}
+
+impl PartialEq for OrdTerm<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for OrdTerm<'_> {}
+
+impl PartialOrd for OrdTerm<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for OrdTerm<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.termdag.ast_cmp(self.id, other.id)
+    }
+}
+
 const MAX_PRETTY_LINE_WIDTH: usize = 80;
 const PRETTY_INDENT_STEP: usize = 2;
 const MIN_SHARED_TERM_SIZE: usize = 4;
@@ -122,6 +156,50 @@ impl TermDag {
     /// Panics if the id is not valid.
     pub fn get(&self, id: TermId) -> &Term {
         self.nodes.get_index(id).unwrap()
+    }
+
+    /// A deterministic total order on terms by AST structure rather than by
+    /// hashcons insertion order. Across kinds, `Lit < Var < App`.
+    pub fn ast_cmp(&self, a: TermId, b: TermId) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+
+        let mut worklist = vec![(a, b)];
+        while let Some((a, b)) = worklist.pop() {
+            if a == b {
+                continue;
+            }
+
+            let ord = match (self.get(a), self.get(b)) {
+                (Term::Lit(x), Term::Lit(y)) => x.cmp(y),
+                (Term::Lit(_), _) => Ordering::Less,
+                (_, Term::Lit(_)) => Ordering::Greater,
+                (Term::Var(x), Term::Var(y)) => x.cmp(y),
+                (Term::Var(_), _) => Ordering::Less,
+                (_, Term::Var(_)) => Ordering::Greater,
+                (Term::App(hx, ax), Term::App(hy, ay)) => {
+                    match hx.cmp(hy).then_with(|| ax.len().cmp(&ay.len())) {
+                        Ordering::Equal => {
+                            worklist.extend(ax.iter().copied().zip(ay.iter().copied()).rev());
+                            continue;
+                        }
+                        ord => ord,
+                    }
+                }
+            };
+            if ord.is_ne() {
+                return ord;
+            }
+        }
+
+        Ordering::Equal
+    }
+
+    pub fn sort_terms_by_ast(&self, terms: &mut [TermId]) {
+        terms.sort_by(|a, b| self.ast_cmp(*a, *b));
+    }
+
+    pub fn ord_term(&self, id: TermId) -> OrdTerm<'_> {
+        OrdTerm { termdag: self, id }
     }
 
     /// Make and return a [`Term::App`] with the given head symbol and children,

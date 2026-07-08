@@ -28,6 +28,7 @@ pub(crate) struct EncodingNames {
     pub(crate) eq_trans_constructor: String,
     pub(crate) eq_sym_constructor: String,
     pub(crate) congr_constructor: String,
+    pub(crate) eval_constructor: String,
     /// For a given function symbol, the name of the function that converts to the AST type.
     pub(crate) sort_to_ast_constructor: HashMap<String, String>,
     pub(crate) fn_to_term_sort: HashMap<String, String>,
@@ -69,6 +70,7 @@ impl EncodingNames {
             eq_trans_constructor: symbol_gen.fresh("Trans"),
             eq_sym_constructor: symbol_gen.fresh("Sym"),
             congr_constructor: symbol_gen.fresh("Congr"),
+            eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
             fn_to_term_sort: HashMap::default(),
             single_parent_ruleset_name: symbol_gen.fresh("single_parent"),
@@ -364,6 +366,7 @@ impl ProofInstrumentor<'_> {
             ref eq_trans_constructor,
             ref eq_sym_constructor,
             ref congr_constructor,
+            ref eval_constructor,
             ref pcons,
             ref pnil,
             ..
@@ -399,6 +402,10 @@ impl ProofInstrumentor<'_> {
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
 (constructor  {congr_constructor} ({proof_datatype} i64 {proof_datatype}) {proof_datatype} :internal-hidden)
+
+;; marks the proof of a container-valued side condition. Carries no equality
+;; itself: the checker re-evaluates the side condition against the rule body.
+(constructor  {eval_constructor} () {proof_datatype} :internal-hidden)
                 "
         )
     }
@@ -453,6 +460,10 @@ pub enum ProofEncodingUnsupportedReason {
     InputCommand,
     #[error("missing merge function. All functions need to specify a :merge function.")]
     NoMergeOnNonGlobalFunction,
+    #[error(
+        "`fail` wraps a `set` whose value has equality sort. Proof encoding cannot currently preserve immediate canonical no-merge conflicts for this shape."
+    )]
+    FailSetEqSortOutput,
     #[error(
         "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
     )]
@@ -571,9 +582,14 @@ pub(crate) fn command_supports_proof_encoding(
     // Now check command-specific constraints
     match command {
         GenericCommand::Sort {
+            name,
             presort_and_args: Some(_),
             ..
-        } => Err(ProofEncodingUnsupportedReason::SortWithPresort),
+        } => type_info
+            .get_sort_by_name(name)
+            .filter(|sort| sort.is_container_sort())
+            .map(|_| ())
+            .ok_or(ProofEncodingUnsupportedReason::SortWithPresort),
         GenericCommand::Sort { uf: Some(_), .. } => {
             Err(ProofEncodingUnsupportedReason::SortWithUfAnnotation)
         }
@@ -595,15 +611,14 @@ pub(crate) fn command_supports_proof_encoding(
                 Ok(())
             }
         }
-        // no-merge on a non-global function
-        // To add support: https://github.com/egraphs-good/egglog/issues/774
-        GenericCommand::Function {
-            merge: None, name, ..
-        } => {
-            if type_info.is_global(name) {
-                Ok(())
+        GenericCommand::Function { merge: None, .. } => Ok(()),
+        GenericCommand::Fail(_, command) => {
+            if let GenericCommand::Action(ResolvedAction::Set(_, _, _, expr)) = command.as_ref()
+                && expr.output_type().is_eq_sort()
+            {
+                Err(ProofEncodingUnsupportedReason::FailSetEqSortOutput)
             } else {
-                Err(ProofEncodingUnsupportedReason::NoMergeOnNonGlobalFunction)
+                Ok(())
             }
         }
         // let binding with non-eq sort not supported by proof_global_desugar
