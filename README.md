@@ -19,7 +19,7 @@ The development loop is:
 cargo test --workspace
 
 # Run proof-focused tests while iterating.
-cargo test --workspace proof
+cargo test --workspace --test files 'proofs/'
 
 # Run lint checks across the workspace.
 cargo clippy --workspace --all-targets
@@ -34,6 +34,15 @@ cargo build --release --workspace
 The root workspace includes both `egglog` and `egglog-experimental`.
 `egglog-experimental` depends on the workspace `egglog` crate, which keeps proof
 changes and downstream experimental behavior in the same reviewable unit.
+
+Proof-specific file tests use one filter prefix:
+
+- `proofs/`: explicit `(prove ...)` fixtures under `tests/proofs` plus every
+  proof-compatible file under proof-testing mode. Checks are treated as prove
+  commands and generated proofs are saved as snapshots.
+
+This filter is a subset of the full workspace test run. Use it for fast proof
+iteration and reserve `cargo test --workspace` for the final compatibility gate.
 
 ## Benchmarking
 
@@ -120,10 +129,12 @@ If no files are provided, the default target benchmark suite is:
 - `egglog/tests/web-demo/rw-analysis.egg`
 - `egglog/tests/integer_math.egg`
 - `egglog/tests/web-demo/resolution.egg`
+- `egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg`
 
-These four files are proof-compatible representative examples under the current
+These five files are proof-compatible representative examples under the current
 `egglog-experimental` CLI and run under the default `off`, `term`, and `proofs`
-treatment matrix.
+treatment matrix. The eggcc fixture is the heavy container/proof benchmark in
+the default suite.
 Relative file paths are resolved relative to the directory where `./bench.py`
 was invoked, not relative to each target checkout. The same file contents are
 used for every target, and `file.sha256` records the exact benchmark input.
@@ -513,17 +524,19 @@ Each benchmark report row records the binary hash used for that observation.
 
 ## CI
 
-CI runs on pull requests, manual dispatch, and pushes to `main`. It runs four
-jobs:
+CI runs on pull requests, manual dispatch, and pushes to `main`. It runs these
+job groups:
 
-- `python`: `uv lock --check`, ruff formatting, ruff linting, mypy, and pytest.
+- `python`: `uv lock --check`, ruff/mypy checks for the top-level benchmark
+  runner files, and pytest.
 - `rust`: workspace tests, proof-focused tests, and clippy.
 - `benchmark-smoke`: a one-round `./bench.py` run on
   `egglog/tests/integer_math.egg`.
 - `codspeed`: an in-process, proofs-only `egglog-experimental` benchmark
-  harness over a smaller representative file set. CodSpeed tracks proof-mode
-  movement without invoking `./bench.py`; the CLI benchmark report remains the
-  source for the full off/term/proofs comparison.
+  harness over a smaller representative file set, run through CodSpeed in both
+  simulation and memory modes. CodSpeed tracks proof-mode movement without
+  invoking `./bench.py`; the CLI benchmark report remains the source for the
+  full off/term/proofs comparison.
 
 Python checks are run as separate commands:
 

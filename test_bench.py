@@ -241,6 +241,39 @@ def test_parse_treatments_rejects_duplicates() -> None:
         bench.parse_treatments("off,term,off")
 
 
+def test_validate_spec_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
+    prove_file = tmp_path / "prove.egg"
+    prove_file.write_text(
+        "; comments may mention (prove ...)\n(datatype Expr)\n(prove (Fact))\n",
+        encoding="utf-8",
+    )
+    spec = bench.BenchmarkSpec(
+        files=bench.resolve_files([str(prove_file)], tmp_path),
+        treatments=("off", "term", "proofs"),
+        rounds=1,
+        timeout_sec=120,
+    )
+
+    with pytest.raises(ValueError, match="explicit prove command"):
+        bench.validate_spec(spec)
+
+
+def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None:
+    check_file = tmp_path / "check.egg"
+    check_file.write_text(
+        "; comments may mention (prove ...)\n(datatype Expr)\n(check (Fact))\n",
+        encoding="utf-8",
+    )
+    spec = bench.BenchmarkSpec(
+        files=bench.resolve_files([str(check_file)], tmp_path),
+        treatments=("off", "term", "proofs"),
+        rounds=1,
+        timeout_sec=120,
+    )
+
+    bench.validate_spec(spec)
+
+
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=2.0),

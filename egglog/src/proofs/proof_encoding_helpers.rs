@@ -423,6 +423,12 @@ impl ProofInstrumentor<'_> {
 
 /// Reads a file and checks that its commands support the proof encoding.
 pub fn file_supports_proofs(path: &Path) -> bool {
+    file_supports_proofs_with_egraph(path, EGraph::default())
+}
+
+/// Reads a file, resolves it with the provided e-graph, and checks that its
+/// commands support the proof encoding.
+pub fn file_supports_proofs_with_egraph(path: &Path, mut egraph: EGraph) -> bool {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(_) => return false,
@@ -433,7 +439,6 @@ pub fn file_supports_proofs(path: &Path) -> bool {
         Err(_) => return false,
     };
 
-    let mut egraph = EGraph::default();
     let filename = canonical.to_string_lossy().into_owned();
     let desugared = match egraph.resolve_program(Some(filename.clone()), &contents) {
         Ok(commands) => commands,

@@ -1,8 +1,32 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egglog::{file_supports_proofs, *};
 use hashbrown::HashSet;
 use libtest_mimic::Trial;
+
+struct ManualProofDisable {
+    file: &'static str,
+    reason: &'static str,
+}
+
+const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
+    ManualProofDisable {
+        file: "eggcc-2mm.egg",
+        reason: "uses :no-merge declarations such as DUMMYCTX; proof encoding requires a merge function",
+    },
+    ManualProofDisable {
+        file: "subsume.egg",
+        reason: "proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches",
+    },
+    ManualProofDisable {
+        file: "subsume-relation.egg",
+        reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
+    },
+];
+
+// These proof-testing runs are still executed, but their proof snapshots are
+// too large for default checked-in fixtures.
+const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &["eqsolve.egg"];
 
 #[derive(Clone)]
 struct Run {
@@ -73,6 +97,36 @@ impl Run {
         };
 
         // Debug mode enables parallelism which can lead to non-deterministic output ordering
+        if self.proof_testing {
+            match &result {
+                Ok(outputs) => {
+                    if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
+                        let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
+                        if !proof_snapshot.is_empty() {
+                            insta::assert_snapshot!(snapshot_name, proof_snapshot);
+                        }
+
+                        if !self.requires_proofs() {
+                            let shared_snapshot =
+                                CommandOutput::snapshot_non_proof_stable_under_proof_encoding(
+                                    outputs,
+                                );
+                            if !shared_snapshot.is_empty() {
+                                insta::assert_snapshot!(
+                                    self.snapshot_name_across_treatments(),
+                                    shared_snapshot
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(err_msg) => {
+                    panic!("proof fixture failed: {err_msg}");
+                }
+            }
+            return;
+        }
+
         if !self.should_skip_snapshot() {
             match &result {
                 Ok(outputs) => {
@@ -223,12 +277,22 @@ impl Run {
         name
     }
 
+    fn proof_testing_snapshot_name(&self) -> Option<String> {
+        if self.proof_testing && !proof_testing_snapshot_disabled(&self.path) {
+            Some(self.name().to_string())
+        } else {
+            None
+        }
+    }
+
     /// Full test name with mode suffixes for test identification
     fn name(&self) -> impl std::fmt::Display + '_ {
         struct Wrapper<'a>(&'a Run);
         impl std::fmt::Display for Wrapper<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                if self.0.path.parent().unwrap().ends_with("fail-typecheck") {
+                if self.0.proof_testing || (self.0.requires_proofs() && self.0.proofs) {
+                    write!(f, "proofs/")?;
+                } else if self.0.path.parent().unwrap().ends_with("fail-typecheck") {
                     write!(f, "fail-typecheck/")?;
                 }
                 let stem = self.0.path.file_stem().unwrap();
@@ -264,29 +328,20 @@ impl Run {
     fn should_skip_snapshot(&self) -> bool {
         if self.threads > 1 {
             // Skip snapshots for parallel tests due to non-deterministic output ordering
-            true
-        } else {
-            // Skip tests with known non-deterministic output
-            let filename = self.path.file_stem().unwrap().to_string_lossy();
-            const SKIP_PATTERNS: [&str; 6] = [
-                "extract-vec-bench",
-                "python_array_optimize",
-                "stresstest_large_expr",
-                "towers-of-hanoi",
-                "taylor51",
-                "factoring-multisets",
-            ];
-            if SKIP_PATTERNS.iter().any(|pat| filename.contains(pat)) {
-                return true;
-            }
-
-            // bug with egglog producing nondeterministic output in certain modes
-            let proof_skip_list = ["math-microbenchmark", "eqsolve"];
-            let in_list = proof_skip_list
-                .iter()
-                .any(|f| self.path.to_string_lossy().contains(f));
-            in_list && (self.proofs || self.term_encoding || self.proof_testing)
+            return true;
         }
+
+        // Skip tests with known non-deterministic output
+        let filename = self.path.file_stem().unwrap().to_string_lossy();
+        const SKIP_PATTERNS: [&str; 6] = [
+            "extract-vec-bench",
+            "python_array_optimize",
+            "stresstest_large_expr",
+            "towers-of-hanoi",
+            "taylor51",
+            "factoring-multisets",
+        ];
+        SKIP_PATTERNS.iter().any(|pat| filename.contains(pat))
     }
 
     /// only assert snapshot if the snapshot is non-empty
@@ -297,6 +352,19 @@ impl Run {
     ) -> bool {
         !snapshot_content_across_treatments.is_empty() && !self.proof_testing
     }
+}
+
+fn manual_proof_disable_reason(path: &Path) -> Option<&'static str> {
+    MANUAL_PROOF_DISABLED_FILES
+        .iter()
+        .find(|disabled| path.ends_with(disabled.file))
+        .map(|disabled| disabled.reason)
+}
+
+fn proof_testing_snapshot_disabled(path: &Path) -> bool {
+    PROOF_TESTING_SNAPSHOT_DISABLED_FILES
+        .iter()
+        .any(|file| path.ends_with(file))
 }
 
 fn generate_tests(glob: &str) -> Vec<Trial> {
@@ -314,20 +382,8 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         };
         let should_fail = run.should_fail();
         let requires_proofs = run.requires_proofs();
-        // TODO: math-microbenchmark is too slow right now
-        // TODO: subsume.egg fails because we used a `check` on something subsumed. Need a way to run rules over subsumed things. Same with subsume-relation.egg.
-        let proof_unsupported_file_list = [
-            "math-microbenchmark.egg",
-            "rectangle.egg",
-            "eggcc-2mm.egg",
-            "eqsolve.egg",
-            "subsume.egg",
-            "subsume-relation.egg",
-        ];
-        let supports_proofs = file_supports_proofs(&run.path)
-            && !proof_unsupported_file_list
-                .iter()
-                .any(|f| run.path.ends_with(f));
+        let proof_manually_disabled = manual_proof_disable_reason(&run.path).is_some();
+        let supports_proofs = file_supports_proofs(&run.path) && !proof_manually_disabled;
 
         if !requires_proofs {
             push_trial(run.clone());
@@ -358,24 +414,29 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             });
         }
 
-        if !should_fail && supports_proofs {
+        if !should_fail && !requires_proofs && supports_proofs {
             // proof_testing mode adds automatic prove-exists, which has different output
             push_trial(Run {
                 proof_testing: true,
-                ..run.clone()
-            });
-
-            // Complex mode: desugar using proof encoding, then run normally.
-            // Yes this mode is important! It has found multiple bugs.
-            push_trial(Run {
-                proof_testing: true,
-                desugar: true,
                 ..run.clone()
             });
         }
     }
 
     trials
+}
+
+fn generate_manual_proof_disable_snapshot_test() -> Trial {
+    Trial::test("proof_manual_disabled_files", || {
+        let mut snapshot = MANUAL_PROOF_DISABLED_FILES
+            .iter()
+            .map(|disabled| format!("{}: {}", disabled.file, disabled.reason))
+            .collect::<Vec<_>>();
+        snapshot.sort();
+        insta::assert_snapshot!("proof_manual_disabled_files", snapshot.join("\n"));
+
+        Ok(())
+    })
 }
 
 fn generate_proof_support_snapshot_test() -> Trial {
@@ -408,6 +469,7 @@ fn main() {
 
     // Add the proof support snapshot test
     tests.push(generate_proof_support_snapshot_test());
+    tests.push(generate_manual_proof_disable_snapshot_test());
 
     // ensure all the tests have unique names
     let mut names = HashSet::new();

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{collections::HashSet, path::PathBuf};
 
-use egglog::ast::sanitize_internal_names;
+use egglog::{ast::sanitize_internal_names, file_supports_proofs_with_egraph};
 use egglog_experimental::*;
 use libtest_mimic::Trial;
 
@@ -8,19 +8,25 @@ use libtest_mimic::Trial;
 struct Run {
     path: PathBuf,
     desugar: bool,
+    proofs: bool,
+    proof_testing: bool,
 }
 
 impl Run {
+    fn requires_proofs(&self) -> bool {
+        self.path.parent().unwrap().ends_with("proofs")
+    }
+
     fn run(&self) {
         let program = std::fs::read_to_string(&self.path)
             .unwrap_or_else(|err| panic!("Couldn't read {:?}: {:?}", self.path, err));
 
-        if !self.desugar {
+        let result = if !self.desugar {
             self.test_program(
                 self.path.to_str().map(String::from),
                 &program,
                 "Top level error",
-            );
+            )
         } else {
             let mut egraph = new_experimental_egraph();
             let resolved = egraph
@@ -36,12 +42,41 @@ impl Run {
                 None,
                 &desugared_str,
                 "ERROR after parse, to_string, and parse again.",
-            );
+            )
+        };
+
+        if self.proofs || self.proof_testing {
+            match result {
+                Ok(outputs) => {
+                    let snapshot = CommandOutput::snapshot_proofs_only(&outputs);
+                    if !snapshot.is_empty() {
+                        insta::assert_snapshot!(self.snapshot_name(), snapshot);
+                    }
+                }
+                Err(err_msg) => {
+                    panic!("proof fixture failed: {err_msg}");
+                }
+            }
         }
     }
 
-    fn test_program(&self, filename: Option<String>, program: &str, message: &str) {
-        let mut egraph = new_experimental_egraph();
+    fn egraph(&self) -> EGraph {
+        if self.proof_testing {
+            new_experimental_egraph_with_proof_testing()
+        } else if self.proofs {
+            new_experimental_egraph_with_proofs()
+        } else {
+            new_experimental_egraph()
+        }
+    }
+
+    fn test_program(
+        &self,
+        filename: Option<String>,
+        program: &str,
+        message: &str,
+    ) -> Result<Vec<CommandOutput>, String> {
+        let mut egraph = self.egraph();
         match egraph.parse_and_run_program(filename, program) {
             Ok(outputs) => {
                 if self.should_fail() {
@@ -54,8 +89,10 @@ impl Run {
                             .join("\n")
                     );
                 } else {
-                    for output in outputs {
-                        print!("  {}", output);
+                    if !(self.proofs || self.proof_testing) {
+                        for output in &outputs {
+                            print!("  {output}");
+                        }
                     }
                     // Test graphviz dot generation
                     let mut serialized = egraph
@@ -70,14 +107,17 @@ impl Run {
                     serialized.split_classes(|id, _| egraph.from_node_id(id).is_primitive());
                     serialized.inline_leaves();
                     serialized.to_dot();
+
+                    Ok(outputs)
                 }
             }
             Err(err) => {
                 if !self.should_fail() {
                     panic!("{}: {err}", message)
                 }
+                Err(err.to_string())
             }
-        };
+        }
     }
 
     fn into_trial(self) -> Trial {
@@ -92,16 +132,29 @@ impl Run {
         struct Wrapper<'a>(&'a Run);
         impl std::fmt::Display for Wrapper<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                if self.0.proof_testing || self.0.proofs {
+                    write!(f, "proofs/")?;
+                }
                 let stem = self.0.path.file_stem().unwrap();
                 let stem_str = stem.to_string_lossy().replace(['.', '-', ' '], "_");
                 write!(f, "{stem_str}")?;
                 if self.0.desugar {
                     write!(f, "_resugar")?;
                 }
+                if self.0.proofs {
+                    write!(f, "_proofs")?;
+                }
+                if self.0.proof_testing {
+                    write!(f, "_proof_testing")?;
+                }
                 Ok(())
             }
         }
         Wrapper(self)
+    }
+
+    fn snapshot_name(&self) -> String {
+        self.name().to_string()
     }
 
     fn should_fail(&self) -> bool {
@@ -116,23 +169,38 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 
     for entry in glob::glob(glob).unwrap() {
         let path = entry.unwrap();
-        if path
+        let is_fixture = path
             .components()
-            .any(|component| component.as_os_str() == "fixtures")
-        {
-            continue;
-        }
+            .any(|component| component.as_os_str() == "fixtures");
 
         let run = Run {
             path: path.clone(),
             desugar: false,
+            proofs: false,
+            proof_testing: false,
         };
         if skipped_files.iter().any(|file| run.path.ends_with(file)) {
             continue;
         }
-        // let should_fail = run.should_fail();
+        let should_fail = run.should_fail();
+        let supports_proofs = !should_fail
+            && file_supports_proofs_with_egraph(&run.path, new_experimental_egraph_for_proofs());
 
-        push_trial(run.clone());
+        if run.requires_proofs() {
+            push_trial(Run {
+                proofs: true,
+                ..run.clone()
+            });
+        } else if !is_fixture {
+            push_trial(run.clone());
+        }
+
+        if supports_proofs && !run.requires_proofs() {
+            push_trial(Run {
+                proof_testing: true,
+                ..run.clone()
+            });
+        }
 
         // Temporarily removed due to egglog changes. TODO: uncomment once egglog desugar is fixed
         // if !should_fail {
@@ -149,5 +217,12 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
 fn main() {
     let args = libtest_mimic::Arguments::from_args();
     let tests = generate_tests("tests/**/*.egg");
+    let mut names = HashSet::new();
+    for test in &tests {
+        let name = test.name().to_string();
+        if !names.insert(name.clone()) {
+            panic!("Duplicate test name: {name}");
+        }
+    }
     libtest_mimic::run(&args, tests).exit();
 }

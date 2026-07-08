@@ -31,6 +31,12 @@ fn run_fixture_with_proofs(fixture_name: &str) -> String {
 fn eggcc_2mm_full_export_uses_container_helpers() {
     let (_fixture, program) = read_fixture("eggcc-2mm-pass1-merge-old.egg");
 
+    let non_comment_program = program
+        .lines()
+        .filter(|line| !line.trim_start().starts_with(';'))
+        .collect::<Vec<_>>()
+        .join("\n");
+
     for required in [
         "pair-min-by-second-i64",
         "maybe-either-i64-bool-min",
@@ -40,16 +46,27 @@ fn eggcc_2mm_full_export_uses_container_helpers() {
         "either-right",
         "either-unwrap-left",
         "either-unwrap-right",
+        "(check (FunctionHasType \"main\"",
     ] {
         assert!(
-            program.contains(required),
+            non_comment_program.contains(required),
             "fixture should exercise {required}"
         );
     }
 
+    for required in [
+        "https://github.com/egraphs-good/eggcc/pull/796",
+        "https://github.com/egraphs-good/egglog-experimental/pull/56",
+    ] {
+        assert!(
+            program.contains(required),
+            "fixture should document {required}"
+        );
+    }
+
     assert!(
-        !program.contains(":no-merge"),
-        "full eggcc export should not use :no-merge"
+        !non_comment_program.contains(":no-merge"),
+        "full eggcc export should not use :no-merge declarations"
     );
     assert!(
         program.contains(":merge old"),

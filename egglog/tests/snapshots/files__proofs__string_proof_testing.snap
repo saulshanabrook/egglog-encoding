@@ -1,0 +1,7 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Fiat (= "abcde" "abcde"))
+(Fiat (= 2 2))
+(Fiat (= "cd cd" "cd cd"))
