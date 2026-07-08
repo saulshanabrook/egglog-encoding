@@ -528,17 +528,18 @@ Each benchmark report row records the binary hash used for that observation.
 
 ## CI
 
-CI runs on pull requests, manual dispatch, and pushes to `main`. It runs four
-jobs:
+CI runs on pull requests, manual dispatch, and pushes to `main`. It runs these
+job groups:
 
 - `python`: `uv lock --check`, ruff formatting, ruff linting, mypy, and pytest.
 - `rust`: workspace tests, proof-focused tests, and clippy.
 - `benchmark-smoke`: a one-round `./bench.py` run on
   `egglog/tests/integer_math.egg`.
 - `codspeed`: an in-process, proofs-only `egglog-experimental` benchmark
-  harness over a smaller representative file set. CodSpeed tracks proof-mode
-  movement without invoking `./bench.py`; the CLI benchmark report remains the
-  source for the full off/term/proofs comparison.
+  harness over a smaller representative file set, run through CodSpeed in both
+  simulation and memory modes. CodSpeed tracks proof-mode movement without
+  invoking `./bench.py`; the CLI benchmark report remains the source for the
+  full off/term/proofs comparison.
 
 Python checks are run as separate commands:
 

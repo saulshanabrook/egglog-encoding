@@ -58,11 +58,18 @@ jobs:
       - run: uv run --locked ./bench.py --rounds 1 --treatments off --timeout-sec 120 --report .reports.ci.jsonl egglog/tests/integer_math.egg
 
   codspeed:
+    name: codspeed (${{ matrix.mode }})
     permissions:
       contents: read
       id-token: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode:
+          - simulation
+          - memory
     steps:
       - run: echo "CARGO_INCREMENTAL=0" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
@@ -76,4 +83,4 @@ jobs:
       - uses: CodSpeedHQ/action@v4
         with:
           run: cargo codspeed run files
-          mode: simulation
+          mode: ${{ matrix.mode }}
