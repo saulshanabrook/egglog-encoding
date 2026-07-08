@@ -395,8 +395,8 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         };
         let should_fail = run.should_fail();
         let requires_proofs = run.requires_proofs();
-        let supports_proofs =
-            file_supports_proofs(&run.path) && manual_proof_disable_reason(&run.path).is_none();
+        let proof_manually_disabled = manual_proof_disable_reason(&run.path).is_some();
+        let supports_proofs = file_supports_proofs(&run.path) && !proof_manually_disabled;
 
         if !requires_proofs {
             push_trial(run.clone());
@@ -427,7 +427,10 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             });
         }
 
-        if !should_fail && (supports_proofs || run.is_curated_proof_integration()) {
+        if !should_fail
+            && !proof_manually_disabled
+            && (supports_proofs || run.is_curated_proof_integration())
+        {
             // proof_testing mode adds automatic prove-exists, which has different output
             push_trial(Run {
                 proof_testing: true,

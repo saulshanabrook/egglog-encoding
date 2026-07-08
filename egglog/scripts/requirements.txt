@@ -1,1 +1,1 @@
-eval-live @ git+https://github.com/oflatt/eval-live.git
+eval-live @ git+https://github.com/oflatt/eval-live.git@5a1caae821c7c0a4080f0984bfc9e4c2cb482c05

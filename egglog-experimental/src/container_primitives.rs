@@ -190,6 +190,22 @@ enum BoundMergeKind {
     Max,
 }
 
+impl BoundMergeKind {
+    fn keep_i64_old(self, old: i64, new: i64) -> bool {
+        match self {
+            BoundMergeKind::Min => old <= new,
+            BoundMergeKind::Max => old >= new,
+        }
+    }
+
+    fn keep_bool_old(self, old: bool, new: bool) -> bool {
+        match self {
+            BoundMergeKind::Min => !old || new,
+            BoundMergeKind::Max => old || !new,
+        }
+    }
+}
+
 fn bound_merge<'a, 'db>(
     state: PureState<'a, 'db>,
     args: &[Value],
@@ -225,19 +241,13 @@ fn bound_merge<'a, 'db>(
         (EitherData::Left(old_int), EitherData::Left(new_int)) => {
             let old_int = state.base_values().unwrap::<i64>(old_int);
             let new_int = state.base_values().unwrap::<i64>(new_int);
-            let keep_old = match kind {
-                BoundMergeKind::Min => old_int <= new_int,
-                BoundMergeKind::Max => old_int >= new_int,
-            };
+            let keep_old = kind.keep_i64_old(old_int, new_int);
             Some(if keep_old { args[0] } else { args[1] })
         }
         (EitherData::Right(old_bool), EitherData::Right(new_bool)) => {
             let old_bool = state.base_values().unwrap::<bool>(old_bool);
             let new_bool = state.base_values().unwrap::<bool>(new_bool);
-            let keep_old = match kind {
-                BoundMergeKind::Min => !old_bool || new_bool,
-                BoundMergeKind::Max => old_bool || !new_bool,
-            };
+            let keep_old = kind.keep_bool_old(old_bool, new_bool);
             Some(if keep_old { args[0] } else { args[1] })
         }
         _ => None,
@@ -313,17 +323,11 @@ fn validate_maybe_either_i64_bool_merge(
         (BoundTerm::Dead, _) => Some(*old),
         (_, BoundTerm::Dead) => Some(*new),
         (BoundTerm::Int(old_int), BoundTerm::Int(new_int)) => {
-            let keep_old = match kind {
-                BoundMergeKind::Min => old_int <= new_int,
-                BoundMergeKind::Max => old_int >= new_int,
-            };
+            let keep_old = kind.keep_i64_old(old_int, new_int);
             Some(if keep_old { *old } else { *new })
         }
         (BoundTerm::Bool(old_bool), BoundTerm::Bool(new_bool)) => {
-            let keep_old = match kind {
-                BoundMergeKind::Min => !old_bool || new_bool,
-                BoundMergeKind::Max => old_bool || !new_bool,
-            };
+            let keep_old = kind.keep_bool_old(old_bool, new_bool);
             Some(if keep_old { *old } else { *new })
         }
         _ => None,

@@ -190,13 +190,7 @@ impl ContainerSort for MaybeSort {
                         (Some(old_value), Some(new_value)) => {
                             let old_f = state.base_values().unwrap::<F>(old_value).0.0;
                             let new_f = state.base_values().unwrap::<F>(new_value).0.0;
-                            let tolerance = tol.0.0.abs();
-                            let merged =
-                                old_f == new_f ||
-                                (old_f == 0.0 && new_f == -0.0) ||
-                                (old_f == -0.0 && new_f == 0.0) ||
-                                (old_f - new_f).abs() <= tolerance;
-                            merged.then_some(old)
+                            maybe_f64_values_merge_with_tol(old_f, new_f, tol.0.0).then_some(old)
                         }
                     }
                 }},
@@ -253,14 +247,17 @@ fn validate_maybe_f64_merge_with_tol(termdag: &mut TermDag, args: &[TermId]) -> 
             let Term::Lit(Literal::Float(tolerance)) = termdag.get(*tol) else {
                 return None;
             };
-            let tolerance = tolerance.0.abs();
-            let merged = old_f == new_f
-                || (old_f == 0.0 && new_f == -0.0)
-                || (old_f == -0.0 && new_f == 0.0)
-                || (old_f - new_f).abs() <= tolerance;
-            merged.then_some(*old)
+            maybe_f64_values_merge_with_tol(old_f, new_f, tolerance.0).then_some(*old)
         }
     }
+}
+
+fn maybe_f64_values_merge_with_tol(old_f: f64, new_f: f64, tolerance: f64) -> bool {
+    let tolerance = tolerance.abs();
+    old_f == new_f
+        || (old_f == 0.0 && new_f == -0.0)
+        || (old_f == -0.0 && new_f == 0.0)
+        || (old_f - new_f).abs() <= tolerance
 }
 
 fn maybe_f64(termdag: &TermDag, term: TermId) -> Option<Option<f64>> {

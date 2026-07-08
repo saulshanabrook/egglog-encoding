@@ -44,7 +44,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
 
@@ -302,48 +302,59 @@ def run_sweep() -> tuple[list[dict], list[dict]]:
 
     for path in benchmarks:
         name = path.relative_to(TEST_DIR).as_posix()
-        req = requires_proofs(path)
+        try:
+            req = requires_proofs(path)
 
-        # Qualification probes: the single-thread standard run and the proof run.
-        std_probe = None if req else probe(path, 1, False)
-        proof_probe = None if proof_excluded(path) else probe(path, 1, True)
-        proof_supported = proof_probe is not None and proof_probe[0]
+            # Qualification probes: the single-thread standard run and the proof run.
+            std_probe = None if req else probe(path, 1, False)
+            proof_probe = None if proof_excluded(path) else probe(path, 1, True)
+            proof_supported = proof_probe is not None and proof_probe[0]
 
-        std_qualifies = std_probe is not None and std_probe[0] and std_probe[1] >= MIN_BENCH_SECONDS
-        proof_qualifies = proof_supported and proof_probe[1] >= MIN_BENCH_SECONDS
+            std_qualifies = std_probe is not None and std_probe[0] and std_probe[1] >= MIN_BENCH_SECONDS
+            proof_qualifies = proof_supported and proof_probe[1] >= MIN_BENCH_SECONDS
 
-        if not (std_qualifies or proof_qualifies):
-            reason = "errored" if (req and not proof_supported) else "too-fast"
+            if not (std_qualifies or proof_qualifies):
+                reason = "errored" if (req and not proof_supported) else "too-fast"
+                skipped.append({"name": name, "reason": reason})
+                continue
+
+            cells: dict[str, dict] = {}
+            for key, _label, threads, proof in CONFIGS:
+                if proof:
+                    if not proof_supported:
+                        cells[key] = {"status": "na"}  # proofs unsupported / excluded
+                    else:
+                        cells[key] = measure_cell(path, threads, True, proof_probe)
+                else:
+                    if req:
+                        cells[key] = {"status": "na"}  # needs proofs; no plain run
+                    else:
+                        pr = std_probe if threads == 1 else None
+                        cells[key] = measure_cell(path, threads, False, pr)
+
+            # Enforce the threshold on measured data: the cold qualification probe
+            # can overshoot 50ms for a program whose warmed runs are all faster.
+            measured = [c["mean"] for c in cells.values() if "mean" in c]
+            if not measured or max(measured) < MIN_BENCH_SECONDS:
+                skipped.append({"name": name, "reason": "too-fast"})
+                continue
+
+            rows.append({"name": name, "cells": cells})
+
+            formatted = []
+            for key, *_ in CONFIGS:
+                c = cells[key]
+                formatted.append(
+                    f"{c['mean']:>10.3f}"
+                    if "mean" in c
+                    else f"{c.get('status', '—'):>10}"
+                )
+            log(f"    {name:<40} " + "  ".join(formatted))
+        except Exception as err:
+            reason = f"error: {type(err).__name__}: {err}"
             skipped.append({"name": name, "reason": reason})
+            log(f"    {name:<40} skipped: {reason}")
             continue
-
-        cells: dict[str, dict] = {}
-        for key, _label, threads, proof in CONFIGS:
-            if proof:
-                if not proof_supported:
-                    cells[key] = {"status": "na"}  # proofs unsupported / excluded
-                else:
-                    cells[key] = measure_cell(path, threads, True, proof_probe)
-            else:
-                if req:
-                    cells[key] = {"status": "na"}  # needs proofs; no plain run
-                else:
-                    pr = std_probe if threads == 1 else None
-                    cells[key] = measure_cell(path, threads, False, pr)
-
-        # Enforce the threshold on measured data: the cold qualification probe
-        # can overshoot 50ms for a program whose warmed runs are all faster.
-        measured = [c["mean"] for c in cells.values() if "mean" in c]
-        if not measured or max(measured) < MIN_BENCH_SECONDS:
-            skipped.append({"name": name, "reason": "too-fast"})
-            continue
-
-        rows.append({"name": name, "cells": cells})
-
-        def fmt(key: str) -> str:
-            c = cells[key]
-            return f"{c['mean']:>10.3f}" if "mean" in c else f"{c.get('status', '—'):>10}"
-        log(f"    {name:<40} " + "  ".join(fmt(k) for k, *_ in CONFIGS))
 
     rows.sort(key=lambda r: r["cells"].get("standard", {}).get("mean", 0.0)
               or r["cells"].get("proof", {}).get("mean", 0.0), reverse=True)
@@ -397,7 +408,7 @@ def render_html(rows: list[dict], skipped: list[dict], meta: dict) -> str:
         f'{escape(commit)}</a>'
         if commit_full else escape(commit)
     )
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -458,11 +469,13 @@ def main() -> int:
     rows, skipped = run_sweep()
 
     payload = {
-        "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "generated_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         **meta,
         "min_bench_seconds": MIN_BENCH_SECONDS,
         "run_timeout_seconds": RUN_TIMEOUT,
-        "configs": [{"key": k, "label": l, "threads": t, "proof": p} for k, l, t, p in CONFIGS],
+        "configs": [
+            {"key": key, "label": label, "threads": threads, "proof": proof} for key, label, threads, proof in CONFIGS
+        ],
         "rows": rows,
         "skipped": skipped,
     }

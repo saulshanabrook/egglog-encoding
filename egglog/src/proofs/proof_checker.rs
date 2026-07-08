@@ -959,9 +959,18 @@ impl ProofStore {
         subst: &mut HashMap<String, TermId>,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
-        let ResolvedFact::Eq(_, lhs, rhs) = fact else {
-            // `is_container_side_condition` only flags `Eq` facts.
-            return Ok(());
+        let (lhs, rhs) = match fact {
+            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
+            ResolvedFact::Fact(expr) => {
+                return match self.eval_side(expr, subst, rule_name)? {
+                    Some(_) => Ok(()),
+                    None => Err(ProofCheckErrorKind::SideConditionUnbound {
+                        rule_name: rule_name.to_string(),
+                        fact: format!("{fact}"),
+                    }
+                    .into()),
+                };
+            }
         };
         let lhs_val = self.eval_side(lhs, subst, rule_name)?;
         let rhs_val = self.eval_side(rhs, subst, rule_name)?;
