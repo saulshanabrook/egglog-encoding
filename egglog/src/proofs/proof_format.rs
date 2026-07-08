@@ -65,6 +65,10 @@ enum RawProof {
     /// and a proof that ci = c2,
     /// produces a justification that t1 = f(..., c2, ...)
     Congr(RawProofId, usize, RawProofId),
+    /// Marker for a container-valued side condition. The checker validates the
+    /// side condition directly against the rule body instead of reading a
+    /// proposition from the proof term.
+    Eval,
 }
 
 /// A [`ProofStore`] is similar to a [`TermDag`].
@@ -168,6 +172,9 @@ pub enum Justification {
         child_index: usize,
         child_proof: ProofId,
     },
+    /// Marker for a container-valued side condition. It proves nothing on its
+    /// own; the checker re-evaluates the side condition against the rule body.
+    Eval,
 }
 
 impl RawProofStore {
@@ -236,6 +243,9 @@ impl RawProofStore {
             let child_index = self.parse_index(args[1]);
             let child_proof = self.parse_proof(args[2]);
             RawProof::Congr(proof, child_index, child_proof)
+        } else if head.contains("Eval") {
+            assert!(args.is_empty(), "eval constructor should have no args");
+            RawProof::Eval
         } else {
             panic!("Unrecognized proof term head: {head}. Proof parsing assumes valid proofs.");
         };
@@ -451,6 +461,13 @@ impl ProofStore {
                     },
                 }
             }
+            RawProof::Eval => {
+                let placeholder = self.term_dag.app("@side-condition".to_string(), vec![]);
+                Proof {
+                    proposition: Proposition::new(placeholder, placeholder),
+                    justification: Justification::Eval,
+                }
+            }
         };
 
         let proof_id = self.id_to_proof.push(proof);
@@ -487,6 +504,12 @@ impl ProofStore {
 
         let mut current_subst = substitution;
         for (fact, proof_id) in rule.body.iter().zip(premise_proofs.iter()) {
+            // Container side conditions carry only an Eval marker, so they do
+            // not contain a proposition from which substitution can be recovered.
+            // The checker re-evaluates them in order and binds their outputs.
+            if crate::proofs::proof_checker::is_container_side_condition(fact) {
+                continue;
+            }
             self.unify_fact(fact, *proof_id, &mut current_subst);
         }
 
@@ -657,7 +680,7 @@ impl ProofStore {
         dag.to_string_with_let_internal(symbol_gen, proof_term_id, buffer, |constructor| {
             match constructor {
                 "=" => "prop".to_string(),
-                "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" => "prf".to_string(),
+                "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "Eval" => "prf".to_string(),
                 _ => "t".to_string(),
             }
         })
@@ -753,6 +776,7 @@ impl ProofStore {
                     vec![equality, base_term_id, child_term_id, index_term],
                 )
             }
+            Justification::Eval => dag.app("Eval".to_string(), vec![]),
         };
 
         cache.insert(proof_id, term_id);

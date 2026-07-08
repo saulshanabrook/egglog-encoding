@@ -88,6 +88,13 @@ def make_target(
     )
 
 
+def test_default_benchmark_suite_excludes_heavy_eggcc_fixtures() -> None:
+    default_names = {Path(path).name for path in bench.DEFAULT_FILES}
+
+    assert "eggcc-2mm.egg" not in default_names
+    assert "eggcc-2mm-pass1-merge-old.egg" not in default_names
+
+
 def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0),

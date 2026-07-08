@@ -46,4 +46,5 @@ harness = false
 # The frontend, so the integration tests can run real `.egg` files on the
 # FlowLog backend via `egglog::EGraph::with_backend(..)`.
 egglog = { path = "../../egglog", default-features = false }
+egglog-experimental = { path = "..", default-features = false }
 libtest-mimic = "0.8"

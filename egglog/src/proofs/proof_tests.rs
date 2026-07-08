@@ -178,6 +178,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn term_encoding_allows_no_merge_custom_function_without_conflict() {
+        let program = r#"
+            (sort S)
+            (constructor A () S)
+            (function f (S) i64 :no-merge)
+            (set (f (A)) 1)
+            (print-size)
+        "#;
+
+        let run = |mut egraph: EGraph| {
+            CommandOutput::snapshot_stable_under_proof_encoding(
+                &egraph.parse_and_run_program(None, program).unwrap(),
+            )
+        };
+
+        assert_eq!(
+            run(EGraph::new_with_term_encoding()),
+            run(EGraph::default())
+        );
+    }
+
+    #[test]
+    fn term_encoding_preserves_no_merge_conflict_panic() {
+        let program = r#"
+            (function f (i64) i64 :no-merge)
+            (set (f 0) 1)
+            (set (f 0) 2)
+            (print-size)
+        "#;
+
+        let err = EGraph::new_with_term_encoding()
+            .parse_and_run_program(None, program)
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Illegal merge attempted for function"),
+            "expected no-merge conflict panic, got {err:?}"
+        );
+    }
+
     #[derive(Debug)]
     struct EqContainerTestSort {
         name: String,
@@ -281,6 +323,33 @@ mod tests {
 
                 (run 1)
                 (prove (Done))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn proof_mode_allows_pair_container_side_conditions() {
+        let mut egraph = EGraph::new_with_proofs();
+
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (A))
+                (sort Cost (Pair Expr i64))
+                (relation Seed (Expr))
+                (relation Seen (Cost))
+
+                (Seed (A))
+
+                (rule ((Seed e)
+                       (= c (pair e 1)))
+                      ((Seen c))
+                      :name "pair-side-condition")
+
+                (run 1)
+                (prove (Seen (pair (A) 1)))
                 "#,
             )
             .unwrap();

@@ -2,7 +2,7 @@ use crate::ast::FunctionSubtype;
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
 use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
-use crate::{RawValues, Read, ResolvedCall, TermDag};
+use crate::{ResolvedCall, TermDag};
 use egglog_backend_trait::BackendExt;
 use thiserror::Error;
 
@@ -84,10 +84,28 @@ impl ProofInstrumentor<'_> {
             .schema
             .output
             .clone();
-        let proof_value = self
+        let proof_function = self
             .egraph
-            .update_unchecked(|fs| fs.lookup(&proof_function_name, RawValues(vec![witness_value])))
-            .unwrap()
+            .functions
+            .get(&proof_function_name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "proof table {proof_function_name} for constructor {} was not declared",
+                    func.name
+                )
+            });
+        let mut proof_value = None;
+        self.egraph
+            .backend
+            .for_each_while(proof_function.backend_id, |row| {
+                if row.vals.first() == Some(&witness_value) {
+                    proof_value = row.vals.get(1).copied();
+                    false
+                } else {
+                    true
+                }
+            });
+        let proof_value = proof_value
             .unwrap_or_else(|| panic!("no proof recorded for constructor {}", func.name));
 
         let proof_term_id = extract_root(self.egraph, &mut termdag, proof_value, proof_sort)

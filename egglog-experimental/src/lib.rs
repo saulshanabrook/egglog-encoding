@@ -52,6 +52,12 @@ pub use size::*;
 mod primitive;
 mod table_stats;
 pub use table_stats::*;
+mod maybe;
+pub use maybe::*;
+mod either;
+pub use either::*;
+mod container_primitives;
+pub use container_primitives::*;
 mod table_rows;
 
 // Sugar modules using parse-time macros
@@ -62,24 +68,39 @@ mod keep_best;
 pub use keep_best::KeepBestCommand;
 
 pub fn new_experimental_egraph() -> EGraph {
+    new_experimental_egraph_with_options(true)
+}
+
+pub fn new_experimental_egraph_for_proofs() -> EGraph {
+    new_experimental_egraph_with_options(false)
+}
+
+fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
     let mut egraph = EGraph::default();
-    add_experimental_extensions(&mut egraph);
+    add_experimental_extensions(&mut egraph, extended_run_schedule);
     egraph
 }
 
 pub fn new_experimental_egraph_with_term_encoding() -> EGraph {
-    let mut egraph = EGraph::new_with_term_encoding();
-    add_experimental_extensions(&mut egraph);
-    egraph
+    new_experimental_egraph_for_proofs().with_term_encoding_enabled()
 }
 
 pub fn new_experimental_egraph_with_proofs() -> EGraph {
-    let mut egraph = EGraph::new_with_proofs();
-    add_experimental_extensions(&mut egraph);
-    egraph
+    new_experimental_egraph_for_proofs().with_proofs_enabled()
 }
 
-fn add_experimental_extensions(egraph: &mut EGraph) {
+pub fn new_experimental_egraph_with_backend_for_proofs(backend: Box<dyn Backend>) -> EGraph {
+    let mut egraph = EGraph::with_backend(backend);
+    add_experimental_extensions(&mut egraph, false);
+    let typechecker = new_experimental_egraph_for_proofs().with_term_encoding_enabled();
+    egraph.with_term_encoding_typechecker(typechecker)
+}
+
+pub fn new_experimental_egraph_with_backend_and_proofs(backend: Box<dyn Backend>) -> EGraph {
+    new_experimental_egraph_with_backend_for_proofs(backend).with_proofs_enabled()
+}
+
+fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool) {
     // Set up the parser with experimental parse-time macros
     egraph.parser = experimental_parser();
 
@@ -88,7 +109,18 @@ fn add_experimental_extensions(egraph: &mut EGraph) {
 
     // Support for set cost
     add_set_cost(egraph);
-    egraph.add_read_primitive(GetSizePrimitive, None);
+    if egraph.supports_action_registry() {
+        egraph.add_read_primitive(GetSizePrimitive, None);
+    }
+    egraph
+        .type_info()
+        .add_presort::<MaybeSort>(span!())
+        .unwrap();
+    egraph
+        .type_info()
+        .add_presort::<EitherSort>(span!())
+        .unwrap();
+    add_container_primitives(egraph);
 
     // unstable-fresh! macro
     egraph
@@ -96,9 +128,11 @@ fn add_experimental_extensions(egraph: &mut EGraph) {
         .register(Arc::new(fresh_macro::FreshMacro::new()));
 
     // scheduler support
-    egraph
-        .add_command("run-schedule".into(), Arc::new(RunExtendedSchedule))
-        .unwrap();
+    if extended_run_schedule {
+        egraph
+            .add_command("run-schedule".into(), Arc::new(RunExtendedSchedule))
+            .unwrap();
+    }
     egraph
         .add_command("let-scheduler".into(), Arc::new(LetSchedulerCommand))
         .unwrap();
