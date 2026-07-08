@@ -8,7 +8,6 @@ use libtest_mimic::Trial;
 struct Run {
     path: PathBuf,
     desugar: bool,
-    proofs: bool,
     proof_testing: bool,
 }
 
@@ -45,7 +44,7 @@ impl Run {
             )
         };
 
-        if self.proofs || self.proof_testing {
+        if self.proof_testing {
             match result {
                 Ok(outputs) => {
                     let snapshot = CommandOutput::snapshot_proofs_only(&outputs);
@@ -63,8 +62,6 @@ impl Run {
     fn egraph(&self) -> EGraph {
         if self.proof_testing {
             new_experimental_egraph_with_proof_testing()
-        } else if self.proofs {
-            new_experimental_egraph_with_proofs()
         } else {
             new_experimental_egraph()
         }
@@ -89,7 +86,7 @@ impl Run {
                             .join("\n")
                     );
                 } else {
-                    if !(self.proofs || self.proof_testing) {
+                    if !self.proof_testing {
                         for output in &outputs {
                             print!("  {output}");
                         }
@@ -132,7 +129,7 @@ impl Run {
         struct Wrapper<'a>(&'a Run);
         impl std::fmt::Display for Wrapper<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                if self.0.proof_testing || self.0.proofs {
+                if self.0.proof_testing {
                     write!(f, "proofs/")?;
                 }
                 let stem = self.0.path.file_stem().unwrap();
@@ -140,9 +137,6 @@ impl Run {
                 write!(f, "{stem_str}")?;
                 if self.0.desugar {
                     write!(f, "_resugar")?;
-                }
-                if self.0.proofs {
-                    write!(f, "_proofs")?;
                 }
                 if self.0.proof_testing {
                     write!(f, "_proof_testing")?;
@@ -176,7 +170,6 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         let run = Run {
             path: path.clone(),
             desugar: false,
-            proofs: false,
             proof_testing: false,
         };
         if skipped_files.iter().any(|file| run.path.ends_with(file)) {
@@ -186,16 +179,11 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
         let supports_proofs = !should_fail
             && file_supports_proofs_with_egraph(&run.path, new_experimental_egraph_for_proofs());
 
-        if run.requires_proofs() {
-            push_trial(Run {
-                proofs: true,
-                ..run.clone()
-            });
-        } else if !is_fixture {
+        if !run.requires_proofs() && !is_fixture {
             push_trial(run.clone());
         }
 
-        if supports_proofs && !run.requires_proofs() {
+        if supports_proofs {
             push_trial(Run {
                 proof_testing: true,
                 ..run.clone()

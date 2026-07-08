@@ -33,7 +33,6 @@ struct Run {
     path: PathBuf,
     desugar: bool,
     term_encoding: bool,
-    proofs: bool,
     /// proof_testing mode adds automatic prove-exists commands, which produce
     /// proof output that differs from normal mode. This should use separate snapshots.
     proof_testing: bool,
@@ -41,7 +40,7 @@ struct Run {
 }
 
 impl Run {
-    /// Tests in the proofs directory require proofs to run successfully.
+    /// Tests in the proofs directory require proof testing to run successfully.
     fn requires_proofs(&self) -> bool {
         self.path.parent().unwrap().ends_with("proofs")
     }
@@ -78,7 +77,6 @@ impl Run {
                 path: self.path.clone(),
                 desugar: false,
                 term_encoding: false,
-                proofs: false,
                 proof_testing: false,
                 threads: self.threads,
             };
@@ -96,59 +94,37 @@ impl Run {
             )
         };
 
-        // Debug mode enables parallelism which can lead to non-deterministic output ordering
-        if self.proof_testing {
+        if self.proof_testing || !self.should_skip_snapshot() {
             match &result {
                 Ok(outputs) => {
-                    if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
-                        let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
-                        if !proof_snapshot.is_empty() {
-                            insta::assert_snapshot!(snapshot_name, proof_snapshot);
-                        }
+                    if self.proof_testing {
+                        self.assert_proof_testing_snapshots(outputs);
+                    } else {
+                        // Use base snapshot name (without desugar/term_encoding suffixes)
+                        // so all variants compare against the same expected output.
+                        let snapshot_name_across_treatments =
+                            self.snapshot_name_across_treatments();
+                        let snapshot_content_across_treatments =
+                            CommandOutput::snapshot_stable_under_proof_encoding(outputs);
 
-                        if !self.requires_proofs() {
-                            let shared_snapshot =
-                                CommandOutput::snapshot_non_proof_stable_under_proof_encoding(
-                                    outputs,
-                                );
-                            if !shared_snapshot.is_empty() {
-                                insta::assert_snapshot!(
-                                    self.snapshot_name_across_treatments(),
-                                    shared_snapshot
-                                );
-                            }
+                        if self.should_assert_snapshot_across_treatments(
+                            &snapshot_content_across_treatments,
+                        ) {
+                            insta::assert_snapshot!(
+                                snapshot_name_across_treatments,
+                                snapshot_content_across_treatments
+                            );
                         }
                     }
                 }
                 Err(err_msg) => {
-                    panic!("proof fixture failed: {err_msg}");
-                }
-            }
-            return;
-        }
-
-        if !self.should_skip_snapshot() {
-            match &result {
-                Ok(outputs) => {
-                    // Use base snapshot name (without desugar/term_encoding/proofs suffixes)
-                    // so all variants compare against the same expected output
-                    let snapshot_name_across_treatments = self.snapshot_name_across_treatments();
-                    let snapshot_content_across_treatments =
-                        CommandOutput::snapshot_stable_under_proof_encoding(outputs);
-
-                    if self.should_assert_snapshot_across_treatments(
-                        &snapshot_content_across_treatments,
-                    ) {
-                        insta::assert_snapshot!(
-                            snapshot_name_across_treatments,
-                            snapshot_content_across_treatments
-                        );
+                    if self.proof_testing {
+                        panic!("proof fixture failed: {err_msg}");
+                    } else {
+                        // Snapshot the error message for fail-typecheck tests
+                        let name = self.name().to_string();
+                        insta::assert_snapshot!(name, err_msg);
                     }
-                }
-                Err(err_msg) => {
-                    // Snapshot the error message for fail-typecheck tests
-                    let name = self.name().to_string();
-                    insta::assert_snapshot!(name, err_msg);
                 }
             }
         }
@@ -157,8 +133,6 @@ impl Run {
     fn egraph(&self) -> EGraph {
         if self.proof_testing {
             EGraph::new_with_proofs().with_proof_testing()
-        } else if self.proofs {
-            EGraph::new_with_proofs()
         } else if self.term_encoding {
             EGraph::new_with_term_encoding()
         } else {
@@ -262,7 +236,7 @@ impl Run {
         })
     }
 
-    /// Base snapshot name without mode suffixes - all variants share the same `outputs_to_snapshot_preserved_across_treatments` snapshot
+    /// Base snapshot name without mode suffixes - all variants share the same snapshot
     /// except for proof_testing, which has different output due to using `prove` everywhere.
     fn snapshot_name_across_treatments(&self) -> String {
         let mut name = "shared_snapshot_".to_string();
@@ -278,10 +252,30 @@ impl Run {
     }
 
     fn proof_testing_snapshot_name(&self) -> Option<String> {
-        if self.proof_testing && !proof_testing_snapshot_disabled(&self.path) {
+        if self.proof_testing && !self.desugar && !proof_testing_snapshot_disabled(&self.path) {
             Some(self.name().to_string())
         } else {
             None
+        }
+    }
+
+    fn assert_proof_testing_snapshots(&self, outputs: &[CommandOutput]) {
+        if let Some(snapshot_name) = self.proof_testing_snapshot_name() {
+            let proof_snapshot = CommandOutput::snapshot_proofs_only(outputs);
+            if !proof_snapshot.is_empty() {
+                insta::assert_snapshot!(snapshot_name, proof_snapshot);
+            }
+
+            if !self.requires_proofs() {
+                let shared_snapshot =
+                    CommandOutput::snapshot_non_proof_stable_under_proof_encoding(outputs);
+                if !shared_snapshot.is_empty() {
+                    insta::assert_snapshot!(
+                        self.snapshot_name_across_treatments(),
+                        shared_snapshot
+                    );
+                }
+            }
         }
     }
 
@@ -290,7 +284,7 @@ impl Run {
         struct Wrapper<'a>(&'a Run);
         impl std::fmt::Display for Wrapper<'_> {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                if self.0.proof_testing || (self.0.requires_proofs() && self.0.proofs) {
+                if self.0.proof_testing {
                     write!(f, "proofs/")?;
                 } else if self.0.path.parent().unwrap().ends_with("fail-typecheck") {
                     write!(f, "fail-typecheck/")?;
@@ -303,9 +297,6 @@ impl Run {
                 }
                 if self.0.term_encoding {
                     write!(f, "_term_encoding")?;
-                }
-                if self.0.proofs {
-                    write!(f, "_proofs")?;
                 }
                 if self.0.proof_testing {
                     write!(f, "_proof_testing")?;
@@ -328,24 +319,24 @@ impl Run {
     fn should_skip_snapshot(&self) -> bool {
         if self.threads > 1 {
             // Skip snapshots for parallel tests due to non-deterministic output ordering
-            return true;
+            true
+        } else {
+            // Skip tests with known non-deterministic output
+            let filename = self.path.file_stem().unwrap().to_string_lossy();
+            const SKIP_PATTERNS: [&str; 6] = [
+                "extract-vec-bench",
+                "python_array_optimize",
+                "stresstest_large_expr",
+                "towers-of-hanoi",
+                "taylor51",
+                "factoring-multisets",
+            ];
+            SKIP_PATTERNS.iter().any(|pat| filename.contains(pat))
         }
-
-        // Skip tests with known non-deterministic output
-        let filename = self.path.file_stem().unwrap().to_string_lossy();
-        const SKIP_PATTERNS: [&str; 6] = [
-            "extract-vec-bench",
-            "python_array_optimize",
-            "stresstest_large_expr",
-            "towers-of-hanoi",
-            "taylor51",
-            "factoring-multisets",
-        ];
-        SKIP_PATTERNS.iter().any(|pat| filename.contains(pat))
     }
 
-    /// only assert snapshot if the snapshot is non-empty
-    /// proof_testing has different output due to automatic prove-exists, so no snapshot for that
+    /// Only assert the shared snapshot if the snapshot is non-empty.
+    /// proof_testing snapshots are handled separately.
     fn should_assert_snapshot_across_treatments(
         &self,
         snapshot_content_across_treatments: &str,
@@ -376,7 +367,6 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             path: entry.unwrap().clone(),
             desugar: false,
             term_encoding: false,
-            proofs: false,
             proof_testing: false,
             threads: 1,
         };
@@ -406,18 +396,18 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             });
         }
 
-        // proofs mode (without proof_testing) should produce the same output as normal mode
         if !should_fail && supports_proofs {
-            push_trial(Run {
-                proofs: true,
-                ..run.clone()
-            });
-        }
-
-        if !should_fail && !requires_proofs && supports_proofs {
             // proof_testing mode adds automatic prove-exists, which has different output
             push_trial(Run {
                 proof_testing: true,
+                ..run.clone()
+            });
+
+            // Desugar under proof-testing, then replay the desugared program
+            // while checking proofs against the original source program.
+            push_trial(Run {
+                proof_testing: true,
+                desugar: true,
                 ..run.clone()
             });
         }
