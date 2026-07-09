@@ -9,8 +9,10 @@ import re
 import resource
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +25,6 @@ from pandera.typing import DataFrame, Series
 from rich import box
 from rich.console import Console
 from rich.markup import escape
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -52,16 +53,22 @@ DEFAULT_FILES = (
     "egglog/tests/web-demo/resolution.egg",
     "egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg",
 )
-TARGET_SPEED_CAPTION = (
-    "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs."
+TARGET_WALL_TIME_CAPTION = (
+    "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. "
+    "Wall-time change is derived from the ratio; negative is faster. Intervals are 95% CIs."
 )
-TARGET_SPEED_SUBTITLE = "target / baseline; <1x faster, >1x slower"
-PROOF_OVERHEAD_CAPTION = "Within-target proof overhead. This is separate from target-vs-baseline speed."
+TARGET_PEAK_RSS_CAPTION = (
+    "Ratio is target / baseline. Values below 1x use less peak RSS; above 1x use more. "
+    "RSS change is derived from the ratio; negative uses less memory. Intervals are 95% CIs."
+)
+PROOF_OVERHEAD_CAPTION = "Within-target proof overhead. This is separate from target-vs-baseline wall-time change."
 RESULT_STYLES = {
     "descriptive": "dim",
     "established": "green",
     "faster": "green",
     "invalid": "bold red",
+    "less": "green",
+    "more": "red",
     "not established": "red",
     "point only": "dim",
     "slower": "red",
@@ -938,31 +945,36 @@ def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int)
 def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -> TimingResult:
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
-    before = resource.getrusage(resource.RUSAGE_CHILDREN)
     start = time.perf_counter()
-    try:
-        completed = subprocess.run(
+    with (
+        tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stdout_file,
+        tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace") as stderr_file,
+    ):
+        process = subprocess.Popen(
             command,
             cwd=checkout_path,
             env=env,
             text=True,
-            capture_output=True,
-            timeout=timeout_sec,
+            stdout=stdout_file,
+            stderr=stderr_file,
         )
-    except subprocess.TimeoutExpired:
-        return TimingResult(
-            status="timed-out",
-            timing=TimingRow(),
-            error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
-        )
-    wall_sec = time.perf_counter() - start
-    after = resource.getrusage(resource.RUSAGE_CHILDREN)
-    timing = timing_from_usage(before, after, wall_sec)
-    if completed.returncode == 0:
+        try:
+            return_code, usage = wait4_process(process, timeout_sec)
+        except subprocess.TimeoutExpired:
+            return TimingResult(
+                status="timed-out",
+                timing=TimingRow(),
+                error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
+            )
+        wall_sec = time.perf_counter() - start
+        timing = timing_from_usage(usage, wall_sec)
+        stdout = read_tempfile(stdout_file)
+        stderr = read_tempfile(stderr_file)
+    if return_code == 0:
         return TimingResult(status="success", timing=timing, error=None)
-    message = completed.stderr.strip() or completed.stdout.strip() or "process exited with non-zero status"
-    exit_code = completed.returncode if completed.returncode >= 0 else None
-    signal = -completed.returncode if completed.returncode < 0 else None
+    message = stderr.strip() or stdout.strip() or "process exited with non-zero status"
+    exit_code = return_code if return_code >= 0 else None
+    signal = -return_code if return_code < 0 else None
     return TimingResult(
         status="failure",
         timing=timing,
@@ -970,20 +982,48 @@ def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -
     )
 
 
+def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        waited_pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+        if waited_pid == process.pid:
+            return os.waitstatus_to_exitcode(status), usage
+        if time.monotonic() >= deadline:
+            with suppress(ProcessLookupError):
+                process.kill()
+            with suppress(ChildProcessError):
+                os.wait4(process.pid, 0)
+            raise subprocess.TimeoutExpired(process.args, timeout_sec)
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
+def read_tempfile(handle: TextIO) -> str:
+    handle.seek(0)
+    return handle.read()
+
+
 def timing_from_usage(
-    before: resource.struct_rusage,
-    after: resource.struct_rusage,
+    usage: resource.struct_rusage,
     wall_sec: float,
 ) -> TimingRow:
-    user_sec = max(0.0, after.ru_utime - before.ru_utime)
-    system_sec = max(0.0, after.ru_stime - before.ru_stime)
+    user_sec = max(0.0, usage.ru_utime)
+    system_sec = max(0.0, usage.ru_stime)
     cpu_wall_ratio = (user_sec + system_sec) / wall_sec if wall_sec > 0 else None
     return TimingRow(
         wall_sec=wall_sec,
         user_sec=user_sec,
         system_sec=system_sec,
         cpu_wall_ratio=cpu_wall_ratio,
+        max_rss_bytes=ru_maxrss_to_bytes(usage.ru_maxrss),
     )
+
+
+def ru_maxrss_to_bytes(ru_maxrss: int, platform: str = sys.platform) -> int | None:
+    if ru_maxrss <= 0:
+        return None
+    if platform == "darwin":
+        return ru_maxrss
+    return ru_maxrss * 1024
 
 
 def collection_label(
@@ -1238,6 +1278,19 @@ def collect_rows(
 
 
 def summarize_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
+    return summarize_metric_cell(rows, rounds, "wall_sec", "missing wall_sec")
+
+
+def summarize_rss_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
+    return summarize_metric_cell(rows, rounds, "max_rss_bytes", "missing max_rss_bytes")
+
+
+def summarize_metric_cell(
+    rows: DataFrame[ReportFrame],
+    rounds: int,
+    column: str,
+    missing_issue: str,
+) -> CellSummary:
     status_counts = status_counts_for_rows(rows)
     if len(rows) < rounds:
         return CellSummary(
@@ -1253,9 +1306,9 @@ def summarize_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
         return CellSummary(rows, (), status_counts, None, None, None, "failure row selected")
     if status_counts.get("timed-out", 0):
         return CellSummary(rows, (), status_counts, None, None, None, "timeout row selected")
-    samples = tuple(float(value) for value in rows.loc[rows["wall_sec"].notna(), "wall_sec"].tolist())
+    samples = tuple(float(value) for value in rows.loc[rows[column].notna(), column].tolist())
     if len(samples) != len(rows):
-        return CellSummary(rows, (), status_counts, None, None, None, "missing wall_sec")
+        return CellSummary(rows, (), status_counts, None, None, None, missing_issue)
     mean, ci_low, ci_high = mean_interval(samples)
     return CellSummary(rows, samples, status_counts, mean, ci_low, ci_high, None)
 
@@ -1407,15 +1460,25 @@ def target_cell_summaries(
     }
 
 
-def proof_cells_from_summaries(
-    cell_map: CellMap,
+def target_rss_cell_summaries(
+    rows: DataFrame[ReportFrame],
+    target: ResolvedTarget,
     spec: BenchmarkSpec,
     treatments: Sequence[Treatment] | None = None,
-) -> list[tuple[CellSummary, CellSummary]]:
+) -> CellMap:
     chosen_treatments = spec.treatments if treatments is None else treatments
-    if "off" not in chosen_treatments or "proofs" not in chosen_treatments:
-        return []
-    return [(cell_map[(file_spec.sha256, "off")], cell_map[(file_spec.sha256, "proofs")]) for file_spec in spec.files]
+    return {
+        (file_spec.sha256, treatment): summarize_rss_cell(
+            selected_rows(
+                rows,
+                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
+                spec.rounds,
+            ),
+            spec.rounds,
+        )
+        for file_spec in spec.files
+        for treatment in chosen_treatments
+    }
 
 
 def target_suite_treatment_ratio(
@@ -1433,6 +1496,58 @@ def target_suite_treatment_ratio(
             for file_spec in spec.files
         ]
     )
+
+
+def treatment_file_cells(
+    cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_treatment: Treatment,
+    candidate_treatment: Treatment,
+) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
+    return [
+        (
+            file_spec,
+            cell_map[(file_spec.sha256, baseline_treatment)],
+            cell_map[(file_spec.sha256, candidate_treatment)],
+        )
+        for file_spec in spec.files
+    ]
+
+
+def target_treatment_file_cells(
+    baseline_cells: CellMap,
+    candidate_cells: CellMap,
+    spec: BenchmarkSpec,
+    treatment: Treatment,
+) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
+    return [
+        (
+            file_spec,
+            baseline_cells[(file_spec.sha256, treatment)],
+            candidate_cells[(file_spec.sha256, treatment)],
+        )
+        for file_spec in spec.files
+    ]
+
+
+def ratio_pairs(file_cells: Sequence[tuple[FileSpec, CellSummary, CellSummary]]) -> list[tuple[FileSpec, RatioSummary]]:
+    return [(file_spec, ratio_summary(baseline, candidate)) for file_spec, baseline, candidate in file_cells]
+
+
+def summary_pairs(
+    file_cells: Sequence[tuple[FileSpec, CellSummary, CellSummary]],
+) -> list[tuple[CellSummary, CellSummary]]:
+    return [(baseline, candidate) for _, baseline, candidate in file_cells]
+
+
+def worst_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[FileSpec | None, RatioSummary]:
+    if not ratios:
+        return (None, RatioSummary(None, None, None, "no files"))
+    invalid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is None]
+    if invalid:
+        return invalid[0]
+    valid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is not None]
+    return max(valid, key=lambda item: item[1].point or 0.0)
 
 
 def format_estimate_or_interval(
@@ -1454,8 +1569,43 @@ def format_seconds_summary(summary: CellSummary) -> str:
     return format_estimate_or_interval(summary.mean, summary.ci_low, summary.ci_high, "s", 4)
 
 
+def format_bytes(value: float | None) -> str:
+    if value is None:
+        return "-"
+    units = ("B", "KiB", "MiB", "GiB")
+    amount = float(value)
+    unit = units[0]
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            break
+        amount /= 1024
+    if unit == "B":
+        return f"{int(amount)} B"
+    return f"{amount:.1f} {unit}"
+
+
+def format_bytes_summary(summary: CellSummary) -> str:
+    if summary.mean is None:
+        return "-"
+    point_text = format_bytes(summary.mean)
+    if summary.ci_low is None or summary.ci_high is None:
+        return point_text
+    return f"[{format_bytes(summary.ci_low)}, {format_bytes(summary.ci_high)}]"
+
+
 def format_ratio_summary(summary: RatioSummary) -> str:
     return format_estimate_or_interval(summary.point, summary.ci_low, summary.ci_high, "x", 3)
+
+
+def format_wall_time_change(summary: RatioSummary) -> str:
+    return format_percent_change(summary)
+
+
+def format_percent_change(summary: RatioSummary) -> str:
+    point = None if summary.point is None else (summary.point - 1.0) * 100.0
+    low = None if summary.ci_low is None else (summary.ci_low - 1.0) * 100.0
+    high = None if summary.ci_high is None else (summary.ci_high - 1.0) * 100.0
+    return format_estimate_or_interval(point, low, high, "%", 1)
 
 
 def result_style(status: str) -> str:
@@ -1480,6 +1630,25 @@ def comparison_result(summary: RatioSummary) -> str:
 
 def format_comparison_result(summary: RatioSummary) -> Text:
     result = comparison_result(summary)
+    if result == "invalid" and summary.issue is not None:
+        return styled_status(result, f"invalid: {summary.issue}")
+    return styled_status(result)
+
+
+def lower_is_better_result(summary: RatioSummary) -> str:
+    if summary.point is None:
+        return "invalid"
+    if summary.ci_low is None or summary.ci_high is None:
+        return "point only"
+    if summary.ci_high < 1:
+        return "less"
+    if summary.ci_low > 1:
+        return "more"
+    return "unclear"
+
+
+def format_lower_is_better_result(summary: RatioSummary) -> Text:
+    result = lower_is_better_result(summary)
     if result == "invalid" and summary.issue is not None:
         return styled_status(result, f"invalid: {summary.issue}")
     return styled_status(result)
@@ -1527,13 +1696,15 @@ def render_report(
     render_targets_tree(console, targets)
 
     cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
-    if len(targets) == 1:
-        render_single_target_headline(console, cell_maps[targets[0]], targets[0], spec)
-    else:
-        render_multi_target_headline(console, cell_maps, targets, spec)
+    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
+    if len(targets) > 1:
+        render_per_file_wall_time_change(console, cell_maps, targets, spec)
+        render_per_file_peak_rss_change(console, rss_cell_maps, targets, spec)
 
     for target in targets:
-        render_target_diagnostics(console, cell_maps[target], target, spec)
+        render_target_diagnostics(console, cell_maps[target], rss_cell_maps[target], target, spec)
+
+    render_benchmark_summary(console, cell_maps, rss_cell_maps, targets, spec)
 
 
 def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> None:
@@ -1554,115 +1725,7 @@ def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> 
     console.print(tree)
 
 
-def render_single_target_headline(
-    console: Console,
-    cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    proof_cells = proof_cells_from_summaries(cell_map, spec)
-    if not proof_cells:
-        return
-    suite = suite_ratio(proof_cells)
-    geometric = geometric_mean_ratio(proof_cells)
-    summary_grid = Table.grid(padding=(0, 2))
-    summary_grid.add_column("Metric", style="bold")
-    summary_grid.add_column("Estimate", justify="right")
-    summary_grid.add_column("Outcome")
-    summary_grid.add_row("<2x proof gate", format_ratio_summary(suite), format_proof_gate_result(suite))
-    summary_grid.add_row(
-        "equal-file geom mean",
-        format_ratio_summary(geometric),
-        styled_status("descriptive", "descriptive"),
-    )
-    console.print(
-        Panel(
-            summary_grid,
-            title=f"Outcome: {escape(target.display_label)}",
-            subtitle=PROOF_OVERHEAD_CAPTION,
-            border_style=result_style(proof_gate_result(suite)[0]),
-        )
-    )
-
-
-def render_multi_target_headline(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    render_multi_target_outcome_panel(console, cell_maps, targets, spec)
-    render_suite_speed_change(console, cell_maps, targets, spec)
-    render_per_file_speed_change(console, cell_maps, targets, spec)
-    render_proof_overhead_by_target(console, cell_maps, targets, spec)
-
-
-def render_multi_target_outcome_panel(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    baseline = targets[0]
-    outcome_grid = Table.grid(padding=(0, 2))
-    outcome_grid.add_column("Target", style="bold")
-    outcome_grid.add_column("Metric")
-    outcome_grid.add_column("Estimate", justify="right")
-    outcome_grid.add_column("Outcome")
-    outcome_grid.add_row("[bold]Target[/bold]", "[bold]Metric[/bold]", "[bold]Estimate[/bold]", "[bold]Outcome[/bold]")
-    for target in targets[1:]:
-        for treatment in spec.treatments:
-            ratio = target_suite_treatment_ratio(cell_maps[baseline], cell_maps[target], spec, treatment)
-            outcome_grid.add_row(
-                target.display_label,
-                f"suite {treatment}",
-                format_ratio_summary(ratio),
-                format_comparison_result(ratio),
-            )
-        proof_cells = proof_cells_from_summaries(cell_maps[target], spec)
-        if proof_cells:
-            suite = suite_ratio(proof_cells)
-            outcome_grid.add_row(
-                target.display_label,
-                "<2x proof gate",
-                format_ratio_summary(suite),
-                format_proof_gate_result(suite),
-            )
-    console.print(
-        Panel(
-            outcome_grid,
-            title=f"Outcome vs {escape(baseline.display_label)}",
-            subtitle=TARGET_SPEED_SUBTITLE,
-            border_style="cyan",
-        )
-    )
-
-
-def render_suite_speed_change(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    baseline = targets[0]
-    table = report_table(f"Suite speed change vs {baseline.display_label}", caption=TARGET_SPEED_CAPTION)
-    table.add_column("Target")
-    table.add_column("Treatment")
-    table.add_column("Time ratio", no_wrap=True)
-    table.add_column("Result")
-    for target in targets[1:]:
-        for treatment in spec.treatments:
-            ratio = target_suite_treatment_ratio(cell_maps[baseline], cell_maps[target], spec, treatment)
-            table.add_row(
-                target.display_label,
-                treatment,
-                format_ratio_summary(ratio),
-                format_comparison_result(ratio),
-            )
-    console.print(table)
-
-
-def render_per_file_speed_change(
+def render_per_file_wall_time_change(
     console: Console,
     cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
@@ -1671,12 +1734,13 @@ def render_per_file_speed_change(
     baseline = targets[0]
     for target in targets[1:]:
         table = report_table(
-            f"Per-file speed change vs {baseline.display_label}: {target.display_label}",
-            caption=TARGET_SPEED_CAPTION,
+            f"Per-file wall-time change vs {baseline.display_label}: {target.display_label}",
+            caption=TARGET_WALL_TIME_CAPTION,
         )
         table.add_column("File")
         table.add_column("Treatment")
         table.add_column("Time ratio", no_wrap=True)
+        table.add_column("Wall-time change", no_wrap=True)
         table.add_column("Result")
         for file_spec in spec.files:
             for treatment_index, treatment in enumerate(spec.treatments):
@@ -1688,40 +1752,223 @@ def render_per_file_speed_change(
                     file_spec.display_path if treatment_index == 0 else "",
                     treatment,
                     format_ratio_summary(ratio),
+                    format_wall_time_change(ratio),
                     format_comparison_result(ratio),
                     end_section=treatment_index == len(spec.treatments) - 1,
                 )
         console.print(table)
 
 
-def render_proof_overhead_by_target(
+def render_per_file_peak_rss_change(
     console: Console,
-    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
 ) -> None:
-    if "off" not in spec.treatments or "proofs" not in spec.treatments:
-        return
-    table = report_table("Proof overhead by target", caption=PROOF_OVERHEAD_CAPTION)
-    table.add_column("Target")
-    table.add_column("suite proofs/off", no_wrap=True)
-    table.add_column("equal-file geom mean", no_wrap=True)
-    for target in targets:
-        proof_cells = proof_cells_from_summaries(cell_maps[target], spec)
-        table.add_row(
-            target.display_label,
-            format_ratio_summary(suite_ratio(proof_cells)),
-            format_ratio_summary(geometric_mean_ratio(proof_cells)),
+    baseline = targets[0]
+    baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
+    for target in targets[1:]:
+        if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
+            continue
+        table = report_table(
+            f"Per-file peak RSS change vs {baseline.display_label}: {target.display_label}",
+            caption=TARGET_PEAK_RSS_CAPTION,
         )
+        table.add_column("File")
+        table.add_column("Treatment")
+        table.add_column("RSS ratio", no_wrap=True)
+        table.add_column("RSS change", no_wrap=True)
+        table.add_column("Result")
+        for file_spec in spec.files:
+            for treatment_index, treatment in enumerate(spec.treatments):
+                ratio = ratio_summary(
+                    rss_cell_maps[baseline][(file_spec.sha256, treatment)],
+                    rss_cell_maps[target][(file_spec.sha256, treatment)],
+                )
+                table.add_row(
+                    file_spec.display_path if treatment_index == 0 else "",
+                    treatment,
+                    format_ratio_summary(ratio),
+                    format_percent_change(ratio),
+                    format_lower_is_better_result(ratio),
+                    end_section=treatment_index == len(spec.treatments) - 1,
+                )
+        console.print(table)
+
+
+def render_benchmark_summary(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    console.rule("[bold]Benchmark summary[/bold]")
+    if len(targets) == 1:
+        render_single_target_summary(console, cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
+    else:
+        render_multi_target_summary(console, cell_maps, rss_cell_maps, targets, spec)
+
+
+def render_single_target_summary(
+    console: Console,
+    cell_map: CellMap,
+    rss_cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> None:
+    table = report_table(f"{target.display_label}: proof overhead summary", caption=PROOF_OVERHEAD_CAPTION)
+    table.add_column("Metric")
+    table.add_column("Ratio", no_wrap=True)
+    table.add_column("Change", no_wrap=True)
+    table.add_column("Worst file")
+    table.add_column("Worst ratio", no_wrap=True)
+    table.add_column("Result")
+    if "off" in spec.treatments and "proofs" in spec.treatments:
+        add_within_target_wall_summary_row(table, cell_map, spec, "off", "proofs", "wall proofs/off")
+        add_within_target_rss_summary_row(table, rss_cell_map, spec, "off", "proofs", "peak RSS proofs/off")
+    else:
+        table.add_row("no proof baseline", "-", "-", "-", "-", styled_status("descriptive", "select off and proofs"))
+    if "term" in spec.treatments and "proofs" in spec.treatments:
+        add_within_target_rss_summary_row(table, rss_cell_map, spec, "term", "proofs", "peak RSS proofs/term")
     console.print(table)
+
+
+def add_within_target_wall_summary_row(
+    table: Table,
+    cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_treatment: Treatment,
+    candidate_treatment: Treatment,
+    label: str,
+) -> None:
+    file_cells = treatment_file_cells(cell_map, spec, baseline_treatment, candidate_treatment)
+    pairs = summary_pairs(file_cells)
+    summary = suite_ratio(pairs)
+    geometric = geometric_mean_ratio(pairs)
+    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+    table.add_row(
+        label,
+        format_ratio_summary(summary),
+        format_percent_change(summary),
+        format_worst_file(worst_file),
+        format_ratio_summary(worst),
+        format_proof_gate_result(summary)
+        if baseline_treatment == "off" and candidate_treatment == "proofs"
+        else format_comparison_result(summary),
+    )
+    table.add_row(
+        f"{label} geomean",
+        format_ratio_summary(geometric),
+        format_percent_change(geometric),
+        "-",
+        "-",
+        styled_status("descriptive", "descriptive"),
+    )
+
+
+def add_within_target_rss_summary_row(
+    table: Table,
+    rss_cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_treatment: Treatment,
+    candidate_treatment: Treatment,
+    label: str,
+) -> None:
+    file_cells = treatment_file_cells(rss_cell_map, spec, baseline_treatment, candidate_treatment)
+    pairs = summary_pairs(file_cells)
+    summary = suite_ratio(pairs)
+    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+    table.add_row(
+        label,
+        format_ratio_summary(summary),
+        format_percent_change(summary),
+        format_worst_file(worst_file),
+        format_ratio_summary(worst),
+        format_lower_is_better_result(summary),
+    )
+
+
+def render_multi_target_summary(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline = targets[0]
+    wall_table = report_table(
+        f"Wall-time summary vs {baseline.display_label}",
+        caption=TARGET_WALL_TIME_CAPTION,
+    )
+    wall_table.add_column("Target")
+    wall_table.add_column("Treatment")
+    wall_table.add_column("Wall-time change", no_wrap=True)
+    wall_table.add_column("Geomean", no_wrap=True)
+    wall_table.add_column("Worst file")
+    wall_table.add_column("Worst ratio", no_wrap=True)
+    wall_table.add_column("Result")
+    for target in targets[1:]:
+        for treatment in spec.treatments:
+            file_cells = target_treatment_file_cells(cell_maps[baseline], cell_maps[target], spec, treatment)
+            pairs = summary_pairs(file_cells)
+            suite = suite_ratio(pairs)
+            geometric = geometric_mean_ratio(pairs)
+            worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+            wall_table.add_row(
+                target.display_label,
+                treatment,
+                format_wall_time_change(suite),
+                format_ratio_summary(geometric),
+                format_worst_file(worst_file),
+                format_ratio_summary(worst),
+                format_comparison_result(suite),
+            )
+    console.print(wall_table)
+
+    rss_table = report_table(
+        f"Peak RSS summary vs {baseline.display_label}",
+        caption=TARGET_PEAK_RSS_CAPTION,
+    )
+    rss_table.add_column("Target")
+    rss_table.add_column("Treatment")
+    rss_table.add_column("RSS change", no_wrap=True)
+    rss_table.add_column("Geomean", no_wrap=True)
+    rss_table.add_column("Worst file")
+    rss_table.add_column("Worst ratio", no_wrap=True)
+    rss_table.add_column("Result")
+    for target in targets[1:]:
+        for treatment in spec.treatments:
+            file_cells = target_treatment_file_cells(rss_cell_maps[baseline], rss_cell_maps[target], spec, treatment)
+            pairs = summary_pairs(file_cells)
+            summary = suite_ratio(pairs)
+            geometric = geometric_mean_ratio(pairs)
+            worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+            rss_table.add_row(
+                target.display_label,
+                treatment,
+                format_percent_change(summary),
+                format_ratio_summary(geometric),
+                format_worst_file(worst_file),
+                format_ratio_summary(worst),
+                format_lower_is_better_result(summary),
+            )
+    console.print(rss_table)
+
+
+def format_worst_file(file_spec: FileSpec | None) -> str:
+    return "-" if file_spec is None else file_spec.display_path
 
 
 def render_target_diagnostics(
     console: Console,
     cell_map: CellMap,
+    rss_cell_map: CellMap,
     target: ResolvedTarget,
     spec: BenchmarkSpec,
 ) -> None:
+    render_overhead_ratios(console, cell_map, target, spec)
+
     means_table = report_table(
         f"{target.display_label}: per-file wall time",
         caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
@@ -1750,12 +1997,21 @@ def render_target_diagnostics(
         means_table.add_row(*row_values)
     console.print(means_table)
 
+    render_peak_rss_diagnostics(console, rss_cell_map, target, spec)
+
+
+def render_overhead_ratios(
+    console: Console,
+    cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> None:
     ratio_columns = ratio_specs(spec.treatments)
     if not ratio_columns:
         return
     ratio_table = report_table(
         f"{target.display_label}: overhead ratios",
-        caption="Within-target treatment ratios. These are not target-vs-baseline speed.",
+        caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
     )
     ratio_table.add_column("File")
     for _, _, ratio_name in ratio_columns:
@@ -1770,6 +2026,43 @@ def render_target_diagnostics(
             row_values.append(format_ratio_summary(ratio))
         ratio_table.add_row(*row_values)
     console.print(ratio_table)
+
+
+def render_peak_rss_diagnostics(
+    console: Console,
+    rss_cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> None:
+    if not any(cell.samples for cell in rss_cell_map.values()):
+        return
+    rss_table = report_table(
+        f"{target.display_label}: per-file peak RSS",
+        caption="Within-target peak resident set size estimates. These are separate from wall-time ratios.",
+    )
+    rss_table.add_column("File")
+    for treatment in spec.treatments:
+        rss_table.add_column(treatment, no_wrap=True)
+    rss_rows: list[tuple[list[str], str]] = []
+    has_rss_issues = False
+    for file_spec in spec.files:
+        issue_parts: list[str] = []
+        row_values = [file_spec.display_path]
+        for treatment in spec.treatments:
+            cell = rss_cell_map[(file_spec.sha256, treatment)]
+            row_values.append(format_bytes_summary(cell))
+            if cell.issue is not None:
+                issue_parts.append(f"{treatment}: {cell.issue}")
+        issue_text = "; ".join(issue_parts)
+        has_rss_issues = has_rss_issues or bool(issue_text)
+        rss_rows.append((row_values, issue_text))
+    if has_rss_issues:
+        rss_table.add_column("Issue")
+    for row_values, issue_text in rss_rows:
+        if has_rss_issues:
+            row_values.append(issue_text)
+        rss_table.add_row(*row_values)
+    console.print(rss_table)
 
 
 def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treatment, str], ...]:

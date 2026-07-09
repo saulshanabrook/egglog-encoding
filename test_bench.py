@@ -23,6 +23,7 @@ def make_record(
     started_at: str,
     status: bench.Status = "success",
     wall_sec: float | None = 1.0,
+    max_rss_bytes: int | None = None,
     binary_sha256: str = "sha256:bin",
     file_sha256: str = "sha256:file",
     treatment: bench.Treatment = "off",
@@ -48,7 +49,7 @@ def make_record(
         "user_sec": None,
         "system_sec": None,
         "cpu_wall_ratio": None,
-        "max_rss_bytes": None,
+        "max_rss_bytes": None if status == "timed-out" else max_rss_bytes,
         "error_exit_code": None,
         "error_signal": None,
         "error_message": "timed out" if status == "timed-out" else None,
@@ -218,6 +219,26 @@ def test_summary_formatters_show_ranges_when_defined_and_points_otherwise() -> N
         == "[1.600x, 2.600x]"
     )
     assert bench.format_ratio_summary(bench.RatioSummary(point=2.0, ci_low=None, ci_high=None, issue=None)) == "2.000x"
+    assert bench.format_bytes(512) == "512 B"
+    assert bench.format_bytes(2 * 1024 * 1024) == "2.0 MiB"
+    assert (
+        bench.format_bytes_summary(
+            bench.CellSummary(empty_rows, (), {}, mean=2 * 1024 * 1024, ci_low=None, ci_high=None, issue=None)
+        )
+        == "2.0 MiB"
+    )
+    assert (
+        bench.format_wall_time_change(bench.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None))
+        == "[-30.0%, -10.0%]"
+    )
+    assert (
+        bench.format_wall_time_change(bench.RatioSummary(point=1.25, ci_low=None, ci_high=None, issue=None)) == "25.0%"
+    )
+    assert (
+        bench.format_wall_time_change(bench.RatioSummary(point=None, ci_low=None, ci_high=None, issue="invalid")) == "-"
+    )
+    assert bench.lower_is_better_result(bench.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None)) == "less"
+    assert bench.lower_is_better_result(bench.RatioSummary(point=1.2, ci_low=1.1, ci_high=1.3, issue=None)) == "more"
 
 
 def test_parse_target_variants() -> None:
@@ -397,7 +418,7 @@ def test_render_report_omits_empty_issue_column() -> None:
     assert "Issue" not in stream.getvalue()
 
 
-def test_render_report_orients_single_target_summary_before_diagnostics() -> None:
+def test_render_report_puts_single_target_summary_after_diagnostics() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", treatment="off", wall_sec=1.0),
         make_record(1, started_at="2026-07-04T12:00:01Z", treatment="off", wall_sec=1.1),
@@ -418,10 +439,14 @@ def test_render_report_orients_single_target_summary_before_diagnostics() -> Non
     )
 
     output = stream.getvalue()
-    assert output.index("Outcome") < output.index("per-file wall time")
+    assert "Outcome" not in output
+    assert output.index("overhead ratios") < output.index("per-file wall time")
+    assert output.index("per-file wall time") < output.index("Benchmark summary")
+    assert "wall proofs/off" in output
+    assert "peak RSS proofs/off" in output
 
 
-def test_render_report_compares_multiple_targets_before_diagnostics() -> None:
+def test_render_report_compares_multiple_targets_before_bottom_summary() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", treatment="off", wall_sec=1.0),
         make_record(1, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", treatment="off", wall_sec=1.1),
@@ -468,14 +493,130 @@ def test_render_report_compares_multiple_targets_before_diagnostics() -> None:
 
     output = stream.getvalue()
     assert "target / base" in output
-    assert "Suite speed change vs base" in output
-    assert "Per-file speed change vs base" in output
-    assert "Proof overhead by target" in output
+    assert "Per-file wall-time change vs base" in output
+    assert "Wall-time summary vs base" in output
+    assert "Peak RSS summary vs base" in output
+    assert "Suite ratio" not in output
     assert "Target comparison" not in output
-    assert output.index("Suite speed change vs base") < output.index("base: per-file wall time")
+    assert output.index("Per-file wall-time change vs base") < output.index("base: per-file wall time")
+    assert output.index("base: per-file wall time") < output.index("Benchmark summary")
 
 
-def test_render_report_marks_invalid_multi_target_speed_cells() -> None:
+def test_render_report_compares_proofs_only_targets_with_percent_change() -> None:
+    rows = make_rows(
+        make_record(
+            0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", treatment="proofs", wall_sec=2.0
+        ),
+        make_record(
+            1, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:candidate", treatment="proofs", wall_sec=1.0
+        ),
+    )
+    baseline = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=220, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [baseline, candidate],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("proofs",), rounds=1, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert "Wall-time summary vs base" in output
+    assert "proofs" in output
+    assert "0.500x" in output
+    assert "-50.0%" in output
+    assert "Wall-time change" in output
+    assert "<2x proof gate" not in output
+    assert "Outcome" not in output
+
+
+def test_render_report_compares_peak_rss_separately() -> None:
+    rows = make_rows(
+        make_record(
+            0,
+            started_at="2026-07-04T12:00:00Z",
+            binary_sha256="sha256:base",
+            treatment="proofs",
+            wall_sec=2.0,
+            max_rss_bytes=100 * 1024 * 1024,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-04T12:00:01Z",
+            binary_sha256="sha256:base",
+            treatment="proofs",
+            wall_sec=2.0,
+            max_rss_bytes=100 * 1024 * 1024,
+        ),
+        make_record(
+            2,
+            started_at="2026-07-04T12:00:00Z",
+            binary_sha256="sha256:candidate",
+            treatment="proofs",
+            wall_sec=1.0,
+            max_rss_bytes=80 * 1024 * 1024,
+        ),
+        make_record(
+            3,
+            started_at="2026-07-04T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            treatment="proofs",
+            wall_sec=1.0,
+            max_rss_bytes=80 * 1024 * 1024,
+        ),
+    )
+    baseline = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=240, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [baseline, candidate],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("proofs",), rounds=2, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert "Per-file peak RSS change vs base" in output
+    assert "Peak RSS summary vs base" in output
+    assert "0.800x" in output
+    assert "[-20.0%, -20.0%]" in output
+    assert "less" in output
+    assert output.index("Per-file wall-time change vs base") < output.index("Per-file peak RSS change vs base")
+    assert output.index("Per-file peak RSS change vs base") < output.index("Benchmark summary")
+
+
+def test_render_report_single_target_proofs_only_omits_proof_gate() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", treatment="proofs", wall_sec=1.0))
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=200, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("proofs",), rounds=1, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert "file.egg" in output
+    assert "<2x proof gate" not in output
+    assert "Benchmark summary" in output
+    assert "no proof baseline" in output
+
+
+def test_render_report_marks_invalid_multi_target_wall_time_cells() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", binary_sha256="sha256:base", wall_sec=1.0),
         make_record(1, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:base", wall_sec=1.1),
@@ -567,6 +708,12 @@ def test_report_frame_rejects_extra_columns() -> None:
         bench.report_frame_from_records([record])
 
 
+def test_ru_maxrss_to_bytes_normalizes_platform_units() -> None:
+    assert bench.ru_maxrss_to_bytes(123, platform="darwin") == 123
+    assert bench.ru_maxrss_to_bytes(123, platform="linux") == 123 * 1024
+    assert bench.ru_maxrss_to_bytes(0, platform="linux") is None
+
+
 def test_run_command_records_signal_separately_from_exit_code() -> None:
     result = bench.run_command(
         [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)"],
@@ -580,13 +727,62 @@ def test_run_command_records_signal_separately_from_exit_code() -> None:
     assert result.error.signal == signal.SIGTERM
 
 
-def test_timing_from_usage_leaves_rss_unset() -> None:
-    before = resource.getrusage(resource.RUSAGE_CHILDREN)
-    after = resource.getrusage(resource.RUSAGE_CHILDREN)
+def test_run_command_records_peak_rss() -> None:
+    result = bench.run_command([sys.executable, "-c", "print('ok')"], ROOT, 120)
 
-    timing = bench.timing_from_usage(before, after, 1.0)
+    assert result.status == "success"
+    assert result.timing.max_rss_bytes is not None
+    assert result.timing.max_rss_bytes > 0
 
-    assert timing.max_rss_bytes is None
+
+def test_timing_from_usage_records_peak_rss() -> None:
+    usage = resource.struct_rusage((1.0, 2.0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+
+    timing = bench.timing_from_usage(usage, 1.0)
+
+    assert timing.user_sec == 1.0
+    assert timing.system_sec == 2.0
+    assert timing.max_rss_bytes == bench.ru_maxrss_to_bytes(3)
+
+
+def test_render_report_shows_peak_rss_when_available() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0, max_rss_bytes=2 * 1024 * 1024))
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=300, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert "resident set size" in output
+    assert "2.0 MiB" in output
+
+
+def test_render_report_hides_peak_rss_for_old_rows_without_memory() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0, max_rss_bytes=None))
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=200, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
+    )
+
+    output = stream.getvalue()
+    assert "file.egg" in output
+    assert "per-file peak RSS" not in output
 
 
 def test_runner_output_routes_status_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
