@@ -174,52 +174,6 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     Ok(changed)
 }
 
-/// Derive a stable ruleset LABEL for a `run_rules` call from the rules it runs,
-/// for `FLOWLOG_DD_RULESET_PROF`. The backend trait does not carry the ruleset
-/// name down to `run_rules`, but the term encoder gives each maintenance rule a
-/// `fresh()`-suffixed name with a stable PREFIX that identifies its ruleset
-/// (`uf_update*` / `singleparent*` / `uf_function_index*` / `congruence_rule*` /
-/// `rebuild_rule*` / `merge_rule*` / `merge_cleanup*` / `delete_rule*`); user
-/// rewrite rules are named by their full s-expression text. We map each rule
-/// name to its category, then label the call by the categories present (all
-/// rules in one `run_rules` call belong to one egglog ruleset).
-/// Map a single rule NAME to its bucket label. Maintenance rules emitted by the
-/// term encoder carry a stable, `fresh()`-suffixed name;
-/// most are `@`-prefixed (`@uf_update`, `@congruence_rule`, …) but
-/// `singleparent@uf_update` is not. Match the identifying substring so the
-/// leading `@` and trailing digits don't matter. Order: most specific first
-/// (`singleparent` and the `_subsume` variant before their bare forms;
-/// `uf_function_index` before `uf_update`).
-pub(crate) fn rule_category(name: &str) -> &'static str {
-    const MAINT: &[(&str, &str)] = &[
-        ("singleparent", "single_parent"),
-        ("uf_function_index", "uf_function_index"),
-        // The `@uf_change_drain` ruleset. Matched BEFORE `uf_update` (keep the
-        // most-specific UF rules grouped).
-        ("uf_change_drain", "uf_change_drain"),
-        ("uf_update", "path_compress/uf_update"),
-        ("delete_rule_subsume", "delete_subsume"),
-        ("delete_rule", "delete_subsume"),
-        // `@congruence_rule` and `@rebuild_rule` are both in the term encoder's
-        // `rebuilding` ruleset and run in ONE fused `run_rules` call; split them
-        // into distinct buckets so canonicalization (which joins function rows
-        // against `@uf`) can be separated from congruence detection.
-        ("congruence_rule", "congruence"),
-        ("rebuild_rule", "canonicalize"),
-        ("merge_cleanup", "rebuilding_cleanup"),
-        ("merge_rule", "merge_rule"),
-    ];
-    for (needle, label) in MAINT {
-        if name.contains(needle) {
-            return label;
-        }
-    }
-    if name.starts_with("eval_actions") {
-        return "eval_actions";
-    }
-    "<user>"
-}
-
 /// Compute every rule's binding envs in ONE fused pass: the whole atom-bearing
 /// ruleset's body joins run on a SINGLE shared timely worker
 /// ([`dd_native::FusedDdJoin`]) clocked once this iteration, then each rule's
@@ -230,19 +184,6 @@ pub(crate) fn rule_category(name: &str) -> &'static str {
 fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<Env>>> {
     use crate::dd_native;
 
-    let prof = dd_native::prof_enabled();
-    let rs_prof = dd_native::ruleset_prof_enabled();
-    // Per-ruleset attribution: the wall clock for the WHOLE atom-bearing path
-    // this call, plus the per-bucket nanos we accumulate below. The call's time
-    // is later apportioned across the rule CATEGORIES present (so `@rebuild_rule`
-    // and `@congruence_rule`, fused into one timely step, land in distinct
-    // `canonicalize`/`congruence` buckets).
-    let rs_t_total = std::time::Instant::now();
-    let mut rs_delta_ns: u64 = 0;
-    let mut rs_prim_ns: u64 = 0;
-    let mut rs_feed_ns: u64 = 0;
-    let mut rs_step_ns: u64 = 0;
-    let mut rs_delta_rows: u64 = 0;
     let mut out: Vec<Vec<Env>> = vec![Vec::new(); rules.len()];
 
     // Partition: atom-bearing rules drive the fused DD worker; atom-less rules
@@ -300,12 +241,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             };
             plans.push((idx, plan));
         }
-        // `--wcoj`: enable the worst-case-optimal triangle delta query. The
-        // build detects the triangle shape per rule; non-triangle rules in the
-        // ruleset keep the binary `.join` chain (hybrid). Off ⇒ byte-identical
-        // to the pre-WCOJ build.
-        let wcoj = eg.wcoj_enabled;
-        let fused = dd_native::FusedDdJoin::build(&plans, wcoj, false)?;
+        let fused = dd_native::FusedDdJoin::build(&plans)?;
         eg.dd_fused.insert(key.clone(), fused);
     }
 
@@ -342,7 +278,6 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     // end states but has a fresh version. Feeding `-row` then `+row` as separate
     // DD steps preserves the reference backend's hidden-timestamp behavior
     // without replaying transient rows that are no longer visible.
-    let t_delta = std::time::Instant::now();
     let mut all_reads: Vec<ReadKey> = Vec::new();
     for bf in &fused_body_reads {
         for &read in bf {
@@ -383,11 +318,9 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
                 }
             }
             if !removals.is_empty() {
-                rs_delta_rows += removals.len() as u64;
                 removals_batch.insert(read, removals);
             }
             if !insertions.is_empty() {
-                rs_delta_rows += insertions.len() as u64;
                 insertions_batch.insert(read, insertions);
             }
             *prev = cur.clone();
@@ -400,19 +333,8 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     if !insertions_batch.is_empty() {
         delta_batches.push(insertions_batch);
     }
-    let delta_elapsed = t_delta.elapsed().as_nanos() as u64;
-    if prof {
-        dd_native::PROF_DELTA_NS.fetch_add(delta_elapsed, std::sync::atomic::Ordering::Relaxed);
-    }
-    rs_delta_ns += delta_elapsed;
 
-    // ONE step of the shared worker for the WHOLE ruleset. `step` updates the
-    // global PROF_FEED_NS / PROF_STEP_NS counters when profiling is on (which it
-    // is whenever either env var is set), so snapshot them before/after to split
-    // this ruleset's feed vs worker_step time.
-    use std::sync::atomic::Ordering as ProfOrd;
-    let feed_before = dd_native::PROF_FEED_NS.load(ProfOrd::Relaxed);
-    let step_before = dd_native::PROF_STEP_NS.load(ProfOrd::Relaxed);
+    // ONE step of the shared worker for the WHOLE ruleset.
     eg.dd_rule_runs += atom_positions.len() as u64;
     let mut per_rule_bindings = vec![Vec::new(); atom_positions.len()];
     {
@@ -424,24 +346,10 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             }
         }
     }
-    if rs_prof {
-        rs_feed_ns += dd_native::PROF_FEED_NS
-            .load(ProfOrd::Relaxed)
-            .wrapping_sub(feed_before);
-        rs_step_ns += dd_native::PROF_STEP_NS
-            .load(ProfOrd::Relaxed)
-            .wrapping_sub(step_before);
-    }
-
-    // Per-rule positive-binding count = the fused join's workload proxy for each
-    // rule (used below to apportion the single fused worker_step across the rule
-    // CATEGORIES present in this call). Length is parallel to `atom_positions`.
-    let mut rs_pos_bindings: Vec<u64> = vec![0; atom_positions.len()];
 
     // Turn each rule's positive binding deltas into envs; re-run its body prims
     // host-side. Negative weights are integral bookkeeping (a body row retracted)
     // — egglog heads are monotone-fire, so we do NOT re-fire on disappearance.
-    let t_prim = std::time::Instant::now();
     for (fpos, bindings) in per_rule_bindings.into_iter().enumerate() {
         let caller_pos = atom_positions[fpos];
         let rule = &rules[caller_pos].1;
@@ -451,7 +359,6 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             if *w <= 0 {
                 continue;
             }
-            rs_pos_bindings[fpos] += 1;
             let mut env: Env = Env::new();
             for (i, &v) in var_order.iter().enumerate() {
                 env.insert(v, bind[i]);
@@ -465,69 +372,6 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             envs.extend(es);
         }
         out[caller_pos] = envs;
-    }
-
-    let prim_elapsed = t_prim.elapsed().as_nanos() as u64;
-    if prof {
-        dd_native::PROF_PRIM_NS.fetch_add(prim_elapsed, std::sync::atomic::Ordering::Relaxed);
-    }
-    rs_prim_ns += prim_elapsed;
-
-    if rs_prof {
-        let rs_total_ns = rs_t_total.elapsed().as_nanos() as u64;
-        // Several rule CATEGORIES (e.g. `canonicalize` = `@rebuild_rule` and
-        // `congruence` = `@congruence_rule`) run in ONE fused timely step, so
-        // there is no per-category wall clock. Apportion this call's measured
-        // buckets across the categories present, weighted by each category's
-        // share of POSITIVE output bindings (the join workload it produced). If
-        // no rule produced output this call, fall back to an even split by rule
-        // count so the call's wall time is still attributed.
-        let mut cat_w: HashMap<&'static str, u64> = HashMap::new();
-        let mut cat_n: HashMap<&'static str, u64> = HashMap::new();
-        // Cross-check: nanos of (apportioned) worker_step attributable to rules
-        // whose BODY reads a `@uf` table (`UF_*` relation).
-        let mut uf_body_w: u64 = 0;
-        for (fpos, &pos) in atom_positions.iter().enumerate() {
-            let rule = &rules[pos].1;
-            let cat = rule_category(&rule.name);
-            let w = rs_pos_bindings[fpos];
-            *cat_w.entry(cat).or_default() += w;
-            *cat_n.entry(cat).or_default() += 1;
-            let reads_uf = rule.body.iter().any(
-                |op| matches!(op, BodyOp::Atom(a) if eg.relation_name(a.func).contains("UF_")),
-            );
-            if reads_uf {
-                uf_body_w += w;
-            }
-        }
-        let total_w: u64 = cat_w.values().sum();
-        let total_n: u64 = cat_n.values().sum();
-        // Worker_step nanos apportioned to UF-body-reading rules.
-        let uf_step_ns = if total_w > 0 {
-            (rs_step_ns as u128 * uf_body_w as u128 / total_w as u128) as u64
-        } else {
-            0
-        };
-        dd_native::ruleset_uf_body_record(uf_step_ns, rs_step_ns);
-        for (cat, &w) in &cat_w {
-            let n = cat_n[cat];
-            // share by binding workload, else by rule count.
-            let (num, den): (u128, u128) = if total_w > 0 {
-                (w as u128, total_w as u128)
-            } else {
-                (n as u128, total_n.max(1) as u128)
-            };
-            let part = |v: u64| (v as u128 * num / den) as u64;
-            dd_native::ruleset_prof_record(
-                cat,
-                part(rs_total_ns),
-                part(rs_step_ns),
-                part(rs_feed_ns),
-                part(rs_prim_ns),
-                part(rs_delta_ns),
-                part(rs_delta_rows),
-            );
-        }
     }
 
     Ok(out)

@@ -28,7 +28,6 @@ pub mod interpret;
 mod rule_builder;
 
 use compile::{row_col, unpack_row, MergeMode, MergeTree, ReadKey, Row, RuleIr};
-use external_func::ExternalFuncRegistry;
 
 type MergeUpdate = (Box<[u32]>, Option<(u32, RowLocation)>, (u32, RowLocation));
 
@@ -57,7 +56,7 @@ pub(crate) struct RelationInfo {
 // EGraph
 // ---------------------------------------------------------------------------
 
-/// The FlowLog-backed egraph.
+/// The experimental differential-dataflow-backed egraph.
 pub struct EGraph {
     relations: Vec<RelationInfo>,
     /// Rule slots; `None` = freed.
@@ -78,7 +77,6 @@ pub struct EGraph {
     /// A core-relations [`Database`] used purely as the base-value / primitive
     /// engine, so `Value`s are bit-for-bit identical to the reference backend.
     db: Database,
-    pub(crate) external_funcs: ExternalFuncRegistry,
     /// Monotonic fresh-id counter for `fresh_id` / `add_term`.
     pub(crate) next_id: u32,
     report_level: ReportLevel,
@@ -104,13 +102,6 @@ pub struct EGraph {
     pub(crate) subsumed_versions: HashMap<FunctionId, HashMap<Row, u64>>,
     /// Per-ruleset, per-function version snapshot last fed to the fused DD join.
     pub(crate) dd_fused_fed_versions: HashMap<Vec<usize>, HashMap<ReadKey, HashMap<Row, u64>>>,
-    /// `--wcoj`: route the reverse-distributivity triangle rule through the
-    /// worst-case-optimal delta-query join (dogsdogsdogs prefix-extension +
-    /// AltNeu 3-stream decomposition in [`dd_native`]) instead of the left-deep
-    /// binary `.join` chain. Detected structurally per rule at fused-build time;
-    /// non-triangle rules are unaffected. Off by default — when off the FlowLog
-    /// join path is byte-identical to the pre-WCOJ behavior.
-    pub(crate) wcoj_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,19 +116,8 @@ impl Default for EGraph {
     }
 }
 
-impl Drop for EGraph {
-    fn drop(&mut self) {
-        // Step-0 profile dump (gated FLOWLOG_DD_PROF): #workers, #InputSessions,
-        // and the worker.step vs host-side prim/delta split. No-op otherwise.
-        dd_native::dd_prof_dump();
-        // Per-ruleset profile dump (gated FLOWLOG_DD_RULESET_PROF): attribute
-        // DD wall time to the ruleset NAME, sorted descending. No-op otherwise.
-        dd_native::dd_ruleset_prof_dump();
-    }
-}
-
 impl EGraph {
-    /// Construct a fresh FlowLog-backed egraph. Rule bodies run on the in-process
+    /// Construct a fresh DD-backed egraph. Rule bodies run on the in-process
     /// differential-dataflow join; body primitives and head actions are applied
     /// host-side into the mirror. This is the constructor the egglog frontend
     /// uses (`EGraph::with_flowlog_backend`).
@@ -154,7 +134,6 @@ impl EGraph {
             mirror: HashMap::new(),
             subsumed: HashMap::new(),
             db,
-            external_funcs: ExternalFuncRegistry::default(),
             // Start at 1 so id 0 stays a "null"/padding sentinel.
             next_id: 1,
             report_level: ReportLevel::default(),
@@ -166,17 +145,7 @@ impl EGraph {
             all_versions: HashMap::new(),
             subsumed_versions: HashMap::new(),
             dd_fused_fed_versions: HashMap::new(),
-            wcoj_enabled: false,
         }
-    }
-
-    /// Turn on `--wcoj`: route the reverse-distributivity triangle rule through
-    /// the worst-case-optimal delta-query join (see [`dd_native`]). When off,
-    /// every rule lowers to the left-deep binary `.join` chain exactly as
-    /// before. Detected structurally at fused-build time; non-triangle rules are
-    /// unaffected. Off by default.
-    pub fn enable_wcoj(&mut self) {
-        self.wcoj_enabled = true;
     }
 
     pub(crate) fn info(&self, f: FunctionId) -> &RelationInfo {
@@ -185,8 +154,7 @@ impl EGraph {
             .unwrap_or_else(|| panic!("FunctionId({}) not registered", f.rep()))
     }
 
-    /// Relation name for `f` (used by the per-ruleset profiler to detect `@uf`
-    /// body atoms — the union-find tables are named `@UF_<sort>` / `@UF_<sort>f`).
+    /// Relation name for `f`, used in diagnostics and unsupported-shape errors.
     pub(crate) fn relation_name(&self, f: FunctionId) -> &str {
         &self.info(f).name
     }
@@ -1603,22 +1571,16 @@ impl Backend for EGraph {
         &mut self,
         func: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId {
-        let func2 = dyn_clone::clone_box(&*func);
-        let id = self.db.add_external_function(func);
-        self.external_funcs.add_func_at(id, func2);
-        id
+        self.db.add_external_function(func)
     }
 
     fn free_external_func(&mut self, func: ExternalFunctionId) {
         self.db.free_external_function(func);
-        self.external_funcs.free(func);
     }
 
     fn new_panic(&mut self, message: String) -> ExternalFunctionId {
-        let panic_fn = external_func::PanicFunc::new(message.clone());
-        let id = self.db.add_external_function(Box::new(panic_fn));
-        self.external_funcs.add_panic_at(id, message);
-        id
+        self.db
+            .add_external_function(Box::new(external_func::PanicFunc::new(message)))
     }
 
     // -- capability flags ---------------------------------------------------
@@ -1635,9 +1597,9 @@ impl Backend for EGraph {
     }
 
     fn supports_action_registry(&self) -> bool {
-        // No egglog `ActionRegistry`. Registry-backed primitives are registered
-        // via the frontend's registry-free placeholder/snapshot path and
-        // dispatched by the FlowLog interpreter's external-func mechanism.
+        // No egglog `ActionRegistry`. Ordinary primitives execute through the
+        // embedded `Database`; registry-backed read/write/full primitives that
+        // need live table access are outside this backend's current contract.
         false
     }
 

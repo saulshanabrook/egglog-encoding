@@ -68,14 +68,24 @@ const DEBUG_SUBSET: &[&str] = &[
 ///
 /// - push/pop (needs backend snapshotting / `clone_boxed`, which a live
 ///   differential-dataflow dataflow cannot provide):
-///   `calc`, `array`, `bdd`, `lambda`, `math`, `push-pop`.
+///   `array`, `bdd`, `calc`, `container-fail`, `lambda`, `math`, `push-pop`.
+/// - container rebuild read primitives (registered through egglog's
+///   `ActionRegistry`; FlowLog has direct container storage but no registry
+///   execution state for read primitives over its term-encoded mirror):
+///   `container-proofs`, `datatypes`, `nested-container-dirty-propagation`,
+///   `repro-querybug3`.
 const KNOWN_UNSUPPORTED: &[&str] = &[
     "array.egg",
     "bdd.egg",
     "calc.egg",
+    "container-fail.egg",
+    "container-proofs.egg",
+    "datatypes.egg",
     "lambda.egg",
     "math.egg",
+    "nested-container-dirty-propagation.egg",
     "push-pop.egg",
+    "repro-querybug3.egg",
 ];
 
 /// Files FlowLog runs but whose output DIVERGES from egglog's snapshot — real

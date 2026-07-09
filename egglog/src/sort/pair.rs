@@ -9,7 +9,7 @@ pub struct PairContainer {
 }
 
 impl ContainerValue for PairContainer {
-    fn rebuild_contents(&mut self, rebuilder: &dyn Rebuilder) -> bool {
+    fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         let mut changed = false;
         if self.do_rebuild_first {
             let new = rebuilder.rebuild_val(self.first);
@@ -40,6 +40,8 @@ fn pair_term_children(termdag: &TermDag, term: TermId) -> Option<(TermId, TermId
     }
 }
 
+/// Intern the `(pair a b)` term for `args`; `None` unless there are exactly
+/// two. The inverse of [`pair_term_children`].
 fn pair_term(termdag: &mut TermDag, args: &[TermId]) -> Option<TermId> {
     if args.len() != 2 {
         return None;
@@ -138,6 +140,10 @@ impl ContainerSort for PairSort {
     fn register_primitives(&self, eg: &mut EGraph) {
         let arc = self.clone().to_arcsort();
 
+        // The proof "term form" of a pair: an s-expr `(pair a b)` headed by
+        // the constructing primitive, matching `reconstruct_termdag`. The
+        // validator lets the proof checker evaluate `pair` applications, and
+        // `pair-first`/`pair-second` extract a child of a `(pair a b)` term.
         let pair_first_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
             let [pair] = args else {
                 return None;
@@ -173,6 +179,10 @@ impl ContainerSort for PairSort {
     ) -> TermId {
         assert_eq!(element_terms.len(), 2);
         termdag.app("pair".into(), vec![element_terms[0], element_terms[1]])
+    }
+
+    fn rebuild_container_normalizer(&self) -> Option<(String, PrimitiveValidator)> {
+        Some(("pair".to_owned(), Arc::new(pair_term)))
     }
 
     fn serialized_name(&self, _container_values: &ContainerValues, _: Value) -> String {

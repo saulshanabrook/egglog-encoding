@@ -52,7 +52,13 @@ pub use size::*;
 mod primitive;
 mod table_stats;
 pub use table_stats::*;
+mod maybe;
 mod table_rows;
+pub use maybe::*;
+mod either;
+pub use either::*;
+mod container_primitives;
+pub use container_primitives::*;
 
 // Sugar modules using parse-time macros
 mod sugar;
@@ -94,6 +100,10 @@ pub fn new_experimental_egraph_with_backend_and_proofs(backend: Box<dyn Backend>
     new_experimental_egraph_with_backend_for_proofs(backend).with_proofs_enabled()
 }
 
+pub fn new_experimental_egraph_with_proof_testing() -> EGraph {
+    new_experimental_egraph_with_proofs().with_proof_testing()
+}
+
 fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool) {
     // Set up the parser with experimental parse-time macros
     egraph.parser = experimental_parser();
@@ -105,6 +115,17 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
     add_set_cost(egraph);
     if egraph.supports_action_registry() {
         egraph.add_read_primitive(GetSizePrimitive, None);
+    }
+    egraph
+        .type_info()
+        .add_presort::<MaybeSort>(span!())
+        .unwrap();
+    egraph
+        .type_info()
+        .add_presort::<EitherSort>(span!())
+        .unwrap();
+    if egraph.supports_action_registry() {
+        add_container_primitives(egraph);
     }
 
     // unstable-fresh! macro

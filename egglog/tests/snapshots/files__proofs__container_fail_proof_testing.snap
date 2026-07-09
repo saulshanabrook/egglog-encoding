@@ -1,0 +1,45 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 266
+expression: proof_snapshot
+---
+(let t0 (vec-of (w (k (b)))))
+(let t1 (l t0))
+(Sym
+  (= t1 (b))
+  (Rule
+    (= (b) t1)
+    (name "(rewrite (l (vec-of (k x))) x)")
+    (premises
+      (Fiat (= (k (b)) (k (b))))
+      (Eval)
+      (Congr
+        (= t1 (l (vec-of (k (b)))))
+        (Fiat (= t1 t1))
+        (Congr
+          (= t0 (vec-of (k (b))))
+          (Fiat (= t0 t0))
+          (Rule
+            (= (w (k (b))) (k (b)))
+            (name "(rewrite (w x) x)")
+            (premises (Fiat (= (w (k (b))) (w (k (b))))))
+            (substitution (x (k (b))) (@rewrite_var__ (w (k (b))))))
+          0)
+        0))
+    (substitution
+      (@v32 (k (b)))
+      (@rewrite_var__1 t1)
+      (x (b))
+      (@v33 (vec-of (k (b)))))))
+(let t0 (l (vec-of (k (b)))))
+(Sym
+  (= t0 (b))
+  (Rule
+    (= (b) t0)
+    (name "(rewrite (l (vec-of (k x))) x)")
+    (premises (Fiat (= (k (b)) (k (b)))) (Eval) (Fiat (= t0 t0)))
+    (substitution
+      (@v32 (k (b)))
+      (@rewrite_var__1 t0)
+      (x (b))
+      (@v33 (vec-of (k (b)))))))

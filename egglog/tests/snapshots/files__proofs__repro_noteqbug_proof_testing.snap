@@ -1,0 +1,6 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Sym (= (R 1) (R 2)) (Fiat (= (R 2) (R 1))))
+(Sym (= (R 1) (R 2)) (Fiat (= (R 2) (R 1))))

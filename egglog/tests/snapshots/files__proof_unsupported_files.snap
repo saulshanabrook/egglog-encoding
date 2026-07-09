@@ -1,6 +1,6 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 399
+assertion_line: 453
 expression: snapshot
 ---
 array.egg
@@ -8,11 +8,9 @@ bdd.egg
 before-proofs.egg
 bignum.egg
 complex-merge-prim.egg
-container-fail.egg
 container-rebuild.egg
 cyk.egg
 cykjson.egg
-datatypes.egg
 eggcc-extraction.egg
 eqsat-basic-multiset.egg
 extract-vec-bench.egg
@@ -30,7 +28,6 @@ map.egg
 math.egg
 multiset.egg
 naive-action-lookup.egg
-nested-container-dirty-propagation.egg
 pair.egg
 prims.egg
 python_array_optimize.egg
@@ -47,7 +44,6 @@ string_quotes.egg
 taylor51.egg
 towers-of-hanoi.egg
 tricky-type-checking.egg
-type-constraints-tests.egg
 typed_primitive_unstable_app.egg
 typeinfer.egg
 uf-extraction.egg

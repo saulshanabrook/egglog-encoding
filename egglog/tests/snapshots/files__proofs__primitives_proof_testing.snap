@@ -1,0 +1,9 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Fiat (= 4 4))
+(Fiat (= 1 1))
+(Fiat (= -1 -1))
+(Fiat (= () ()))
+(Fiat (= () ()))

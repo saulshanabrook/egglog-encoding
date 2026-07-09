@@ -1,6 +1,6 @@
 use crate::Error;
 use egglog::{
-    CommandOutput, EGraph, TermDag, TermId, UserDefinedCommand,
+    CommandOutput, EGraph, Enode, RawValues, Read, TermDag, TermId, UserDefinedCommand,
     ast::*,
     extract::{CostModel, DefaultCost, Extractor, TreeAdditiveCostModel},
     span,
@@ -196,13 +196,12 @@ impl CostModel<DefaultCost> for DynamicCostModel {
         &self,
         egraph: &EGraph,
         func: &egglog::Function,
-        row: &egglog::Enode<'_>,
+        enode: &Enode<'_>,
     ) -> DefaultCost {
         let name = get_cost_table_name(func.name());
-        let key = row.children;
         if egraph.get_function(&name).is_some() {
             egraph
-                .read(|state| egglog::Read::lookup(&state, &name, egglog::RawValues(key.to_vec())))
+                .read(|state| state.lookup(&name, RawValues(enode.children.to_vec())))
                 .ok()
                 .flatten()
                 .map(|c| {
@@ -210,9 +209,9 @@ impl CostModel<DefaultCost> for DynamicCostModel {
                     assert!(cost >= 0);
                     cost as DefaultCost
                 })
-                .unwrap_or_else(|| TreeAdditiveCostModel {}.enode_cost(egraph, func, row))
+                .unwrap_or_else(|| TreeAdditiveCostModel {}.enode_cost(egraph, func, enode))
         } else {
-            TreeAdditiveCostModel {}.enode_cost(egraph, func, row)
+            TreeAdditiveCostModel {}.enode_cost(egraph, func, enode)
         }
     }
 }

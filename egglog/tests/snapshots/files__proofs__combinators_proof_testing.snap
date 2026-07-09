@@ -1,0 +1,844 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (If (Var "x") (N 0) (N 1)))
+(let t1 (Add t0 (N 2)))
+(let t2 (Abs "x" t1))
+(let t3 (App t2 (FConst)))
+(let t4 (Comb t0))
+(let t5 (CAbs "x" t4))
+(let t6 (CApp t5 (CFConst)))
+(let t7 (Uncomb t6))
+(let t8 (Add t7 (N 2)))
+(let t9 (Comb t3))
+(let t10 (Uncomb t9))
+(let t11 (CApp (CAddConst) t6))
+(let t12 (CApp (CAddConst) t4))
+(let t13 (CAbs "x" t12))
+(let t14 (CApp t13 (CFConst)))
+(let t15 (CAbs "x" (Comb (N 2))))
+(let t16 (CApp t15 (CFConst)))
+(let t17 (CApp t14 t16))
+(let t18 (CApp (CApp (SConst) t13) t15))
+(let t19 (Comb t2))
+(let t20 (CApp t19 (CFConst)))
+(let t21 (CApp t19 (Comb (FConst))))
+(let t22 (premises (Fiat (= t3 t3))))
+(let t23 (x t3))
+(let t24 (substitution (a (FConst)) (f t2) t23))
+(let t25 (CApp t12 (Comb (N 2))))
+(let t26 (Comb t1))
+(let t27 (CAbs "x" t26))
+(let t28
+  (premises
+                                        (Congr
+                                          (= t19 (CAbs "x" t25))
+                                          (Sym
+                                            (= t19 t27)
+                                            (Rule
+                                              (= t27 t19)
+                                              (name
+                                                "(rule ((= x (Abs v body)))
+        ((union (Comb x) (CAbs v (Comb body))))
+           )")
+                                              (premises (Fiat (= t2 t2)))
+                                              (substitution
+                                                (v "x")
+                                                (body t1)
+                                                (x t2))))
+                                          (Sym
+                                            (= t26 t25)
+                                            (Rule
+                                              (= t25 t26)
+                                              (name
+                                                "(rule ((= x (Add l r)))
+        ((union (Comb x) (CApp (CApp $CAdd (Comb l)) (Comb r))))
+           )")
+                                              (premises (Fiat (= t1 t1)))
+                                              (substitution
+                                                (r (N 2))
+                                                (x t1)
+                                                (l t0))))
+                                          1)))
+(let t29
+  (substitution
+                                        (v "x")
+                                        (y (Comb (N 2)))
+                                        (x t12)
+                                        (@rewrite_var__9 t19)))
+(let t30
+  (premises
+                                (Congr
+                                  (= t9 (CApp t18 (CFConst)))
+                                  (Trans
+                                    (= t9 t20)
+                                    (Sym
+                                      (= t9 t21)
+                                      (Rule
+                                        (= t21 t9)
+                                        (name
+                                          "(rule ((= x (App f a)))
+        ((union (Comb x) (CApp (Comb f) (Comb a))))
+           )")
+                                        t22
+                                        t24))
+                                    (Congr
+                                      (= t21 t20)
+                                      (Rule
+                                        (= t21 t21)
+                                        (name
+                                          "(rule ((= x (App f a)))
+        ((union (Comb x) (CApp (Comb f) (Comb a))))
+           )")
+                                        t22
+                                        t24)
+                                      (Rule
+                                        (= (Comb (FConst)) (CFConst))
+                                        (name
+                                          "(rule ((= x $F))
+        ((union (Comb x) $CF))
+           )")
+                                        (premises (Fiat (= (FConst) (FConst))))
+                                        (substitution (x (FConst))))
+                                      1))
+                                  (Sym
+                                    (= t19 t18)
+                                    (Rule
+                                      (= t18 t19)
+                                      (name
+                                        "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                      t28
+                                      t29))
+                                  0)))
+(let t31
+  (substitution
+                                (cz (CFConst))
+                                (cx t13)
+                                (@rewrite_var__16 t9)
+                                (cy t15)))
+(let t32 (CApp (KConst) (Comb (N 2))))
+(let t33 (CApp (KConst) (CN 2)))
+(let prf0
+  (Rule
+                                              (= (CN 2) (Comb (N 2)))
+                                              (name
+                                                "(rule ((= x (N n)))
+        ((union (Comb x) (CN n)))
+           )")
+                                              (premises (Fiat (= (N 2) (N 2))))
+                                              (substitution (x (N 2)) (n 2))))
+(let prf1 (Sym (= (Comb (N 2)) (CN 2)) prf0))
+(let t34
+  (premises
+                                        (Congr
+                                          (= t15 (CAbs "x" (CN 2)))
+                                          (Rule
+                                            (= t15 t15)
+                                            (name
+                                              "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                            t28
+                                            t29)
+                                          prf1
+                                          1)))
+(let t35
+  (substitution
+                                        (@rewrite_var__4 t15)
+                                        (v "x")
+                                        (n 2)))
+(let t36 (cx (Comb (N 2))))
+(let t37 (CApp (CAbs "x" (CAddConst)) (CFConst)))
+(let t38 (CApp t37 t6))
+(let t39
+  (CApp
+                                        (CApp (SConst) (CAbs "x" (CAddConst)))
+                                        t5))
+(let t40
+  (premises
+                                        (Rule
+                                          (= t13 t13)
+                                          (name
+                                            "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                          t28
+                                          t29)))
+(let t41
+  (substitution
+                                        (v "x")
+                                        (y t4)
+                                        (x (CAddConst))
+                                        (@rewrite_var__9 t13)))
+(let t42
+  (premises
+                                (Congr
+                                  (= t14 (CApp t39 (CFConst)))
+                                  (Rule
+                                    (= t14 t14)
+                                    (name
+                                      "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                    t30
+                                    t31)
+                                  (Sym
+                                    (= t13 t39)
+                                    (Rule
+                                      (= t39 t13)
+                                      (name
+                                        "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                      t40
+                                      t41))
+                                  0)))
+(let t43
+  (substitution
+                                (cz (CFConst))
+                                (cx (CAbs "x" (CAddConst)))
+                                (@rewrite_var__16 t14)
+                                (cy t5)))
+(let t44
+  (premises
+                      (Congr
+                        (= t9 (CApp t11 (Comb (N 2))))
+                        (Congr
+                          (= t9 (CApp t14 (Comb (N 2))))
+                          (Sym
+                            (= t9 t17)
+                            (Rule
+                              (= t17 t9)
+                              (name
+                                "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                              t30
+                              t31))
+                          (Rule
+                            (= t16 (Comb (N 2)))
+                            (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                            (premises
+                              (Congr
+                                (= t16 (CApp t32 (CFConst)))
+                                (Rule
+                                  (= t16 t16)
+                                  (name
+                                    "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                  t30
+                                  t31)
+                                (Trans
+                                  (= t15 t32)
+                                  (Sym
+                                    (= t15 t33)
+                                    (Rule
+                                      (= t33 t15)
+                                      (name
+                                        "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                      t34
+                                      t35))
+                                  (Congr
+                                    (= t33 t32)
+                                    (Rule
+                                      (= t33 t33)
+                                      (name
+                                        "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                      t34
+                                      t35)
+                                    prf0
+                                    1))
+                                0))
+                            (substitution
+                              (@rewrite_var__15 t16)
+                              t36
+                              (cy (CFConst))))
+                          1)
+                        (Congr
+                          (= t14 t11)
+                          (Sym
+                            (= t14 t38)
+                            (Rule
+                              (= t38 t14)
+                              (name
+                                "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                              t42
+                              t43))
+                          (Rule
+                            (= t37 (CAddConst))
+                            (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                            (premises
+                              (Congr
+                                (=
+                                  t37
+                                  (CApp (CApp (KConst) (CAddConst)) (CFConst)))
+                                (Rule
+                                  (= t37 t37)
+                                  (name
+                                    "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                  t42
+                                  t43)
+                                (Sym
+                                  (=
+                                    (CAbs "x" (CAddConst))
+                                    (CApp (KConst) (CAddConst)))
+                                  (Rule
+                                    (=
+                                      (CApp (KConst) (CAddConst))
+                                      (CAbs "x" (CAddConst)))
+                                    (name
+                                      "(rewrite (CAbs v $CAdd) (CApp $K $CAdd))")
+                                    (premises
+                                      (Rule
+                                        (=
+                                          (CAbs "x" (CAddConst))
+                                          (CAbs "x" (CAddConst)))
+                                        (name
+                                          "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                        t40
+                                        t41))
+                                    (substitution
+                                      (v "x")
+                                      (@rewrite_var__8 (CAbs "x" (CAddConst))))))
+                                0))
+                            (substitution
+                              (@rewrite_var__15 t37)
+                              (cx (CAddConst))
+                              (cy (CFConst))))
+                          0)
+                        0)))
+(let t45 (substitution (cl t6) (cr (Comb (N 2))) (cx t9)))
+(let t46 (Uncomb (Comb (N 2))))
+(let t47 (Add t7 t46))
+(let t48 (If (FConst) (N 0) (N 1)))
+(let t49 (Uncomb (Comb (N 0))))
+(let t50 (Uncomb (Comb (N 1))))
+(let t51 (If (Uncomb (CFConst)) t49 t50))
+(let t52 (CApp (CApp (CIfConst) (CFConst)) (Comb (N 0))))
+(let t53 (CApp (CIfConst) (Comb (Var "x"))))
+(let t54 (CApp t53 (Comb (N 0))))
+(let t55 (CAbs "x" t54))
+(let t56 (CApp t55 (CFConst)))
+(let t57 (CAbs "x" (Comb (N 1))))
+(let t58 (CApp t57 (CFConst)))
+(let t59 (CApp t56 t58))
+(let t60 (CApp (CApp (SConst) t55) t57))
+(let t61 (CApp t54 (Comb (N 1))))
+(let t62
+  (premises
+                                        (Congr
+                                          (= t5 (CAbs "x" t61))
+                                          (Rule
+                                            (= t5 t5)
+                                            (name
+                                              "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                            t40
+                                            t41)
+                                          (Sym
+                                            (= t4 t61)
+                                            (Rule
+                                              (= t61 t4)
+                                              (name
+                                                "(rule ((= x (If c t f)))
+        ((union (Comb x) (CApp (CApp (CApp $CIf (Comb c)) (Comb t)) (Comb f))))
+           )")
+                                              (premises (Fiat (= t0 t0)))
+                                              (substitution
+                                                (t (N 0))
+                                                (f (N 1))
+                                                (x t0)
+                                                (c (Var "x")))))
+                                          1)))
+(let t63
+  (substitution
+                                        (v "x")
+                                        (y (Comb (N 1)))
+                                        (x t54)
+                                        (@rewrite_var__9 t5)))
+(let t64
+  (premises
+                                (Congr
+                                  (= t6 (CApp t60 (CFConst)))
+                                  (Rule
+                                    (= t6 t6)
+                                    (name
+                                      "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                    t42
+                                    t43)
+                                  (Sym
+                                    (= t5 t60)
+                                    (Rule
+                                      (= t60 t5)
+                                      (name
+                                        "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                      t62
+                                      t63))
+                                  0)))
+(let t65
+  (substitution
+                                (cz (CFConst))
+                                (cx t55)
+                                (@rewrite_var__16 t6)
+                                (cy t57)))
+(let t66 (CApp (KConst) (Comb (N 1))))
+(let t67 (CApp (KConst) (CN 1)))
+(let prf2
+  (Rule
+                                              (= (CN 1) (Comb (N 1)))
+                                              (name
+                                                "(rule ((= x (N n)))
+        ((union (Comb x) (CN n)))
+           )")
+                                              (premises (Fiat (= (N 1) (N 1))))
+                                              (substitution (x (N 1)) (n 1))))
+(let prf3 (Sym (= (Comb (N 1)) (CN 1)) prf2))
+(let t68
+  (premises
+                                        (Congr
+                                          (= t57 (CAbs "x" (CN 1)))
+                                          (Rule
+                                            (= t57 t57)
+                                            (name
+                                              "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                            t62
+                                            t63)
+                                          prf3
+                                          1)))
+(let t69
+  (substitution
+                                        (@rewrite_var__4 t57)
+                                        (v "x")
+                                        (n 1)))
+(let t70 (cx (Comb (N 1))))
+(let t71 (CAbs "x" t53))
+(let t72 (CApp t71 (CFConst)))
+(let t73 (CAbs "x" (Comb (N 0))))
+(let t74 (CApp t73 (CFConst)))
+(let t75 (CApp t72 t74))
+(let t76 (CApp (CApp (SConst) t71) t73))
+(let t77
+  (premises
+                                          (Rule
+                                            (= t55 t55)
+                                            (name
+                                              "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                            t62
+                                            t63)))
+(let t78
+  (substitution
+                                          (v "x")
+                                          (y (Comb (N 0)))
+                                          (x t53)
+                                          (@rewrite_var__9 t55)))
+(let t79
+  (premises
+                                  (Congr
+                                    (= t56 (CApp t76 (CFConst)))
+                                    (Rule
+                                      (= t56 t56)
+                                      (name
+                                        "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                      t64
+                                      t65)
+                                    (Sym
+                                      (= t55 t76)
+                                      (Rule
+                                        (= t76 t55)
+                                        (name
+                                          "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                        t77
+                                        t78))
+                                    0)))
+(let t80
+  (substitution
+                                  (cz (CFConst))
+                                  (cx t71)
+                                  (@rewrite_var__16 t56)
+                                  (cy t73)))
+(let t81 (CApp (KConst) (Comb (N 0))))
+(let t82 (CApp (KConst) (CN 0)))
+(let prf4
+  (Rule
+                                                (= (CN 0) (Comb (N 0)))
+                                                (name
+                                                  "(rule ((= x (N n)))
+        ((union (Comb x) (CN n)))
+           )")
+                                                (premises (Fiat (= (N 0) (N 0))))
+                                                (substitution (x (N 0)) (n 0))))
+(let prf5 (Sym (= (Comb (N 0)) (CN 0)) prf4))
+(let t83
+  (premises
+                                          (Congr
+                                            (= t73 (CAbs "x" (CN 0)))
+                                            (Rule
+                                              (= t73 t73)
+                                              (name
+                                                "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                              t77
+                                              t78)
+                                            prf5
+                                            1)))
+(let t84
+  (substitution
+                                          (@rewrite_var__4 t73)
+                                          (v "x")
+                                          (n 0)))
+(let t85 (cx (Comb (N 0))))
+(let t86 (CAbs "x" (Comb (Var "x"))))
+(let t87 (CApp t86 (CFConst)))
+(let t88 (CApp (CAbs "x" (CIfConst)) (CFConst)))
+(let t89 (CApp t88 t87))
+(let t90
+  (CApp
+                                            (CApp (SConst) (CAbs "x" (CIfConst)))
+                                            t86))
+(let t91
+  (premises
+                                            (Rule
+                                              (= t71 t71)
+                                              (name
+                                                "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                              t77
+                                              t78)))
+(let t92
+  (substitution
+                                            (v "x")
+                                            (y (Comb (Var "x")))
+                                            (x (CIfConst))
+                                            (@rewrite_var__9 t71)))
+(let t93
+  (premises
+                                    (Congr
+                                      (= t72 (CApp t90 (CFConst)))
+                                      (Rule
+                                        (= t72 t72)
+                                        (name
+                                          "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                        t79
+                                        t80)
+                                      (Sym
+                                        (= t71 t90)
+                                        (Rule
+                                          (= t90 t71)
+                                          (name
+                                            "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                          t91
+                                          t92))
+                                      0)))
+(let t94
+  (substitution
+                                    (cz (CFConst))
+                                    (cx (CAbs "x" (CIfConst)))
+                                    (@rewrite_var__16 t72)
+                                    (cy t86)))
+(let t95
+  (premises
+                      (Congr
+                        (= t6 (CApp t52 (Comb (N 1))))
+                        (Congr
+                          (= t6 (CApp t56 (Comb (N 1))))
+                          (Sym
+                            (= t6 t59)
+                            (Rule
+                              (= t59 t6)
+                              (name
+                                "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                              t64
+                              t65))
+                          (Rule
+                            (= t58 (Comb (N 1)))
+                            (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                            (premises
+                              (Congr
+                                (= t58 (CApp t66 (CFConst)))
+                                (Rule
+                                  (= t58 t58)
+                                  (name
+                                    "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                  t64
+                                  t65)
+                                (Trans
+                                  (= t57 t66)
+                                  (Sym
+                                    (= t57 t67)
+                                    (Rule
+                                      (= t67 t57)
+                                      (name
+                                        "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                      t68
+                                      t69))
+                                  (Congr
+                                    (= t67 t66)
+                                    (Rule
+                                      (= t67 t67)
+                                      (name
+                                        "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                      t68
+                                      t69)
+                                    prf2
+                                    1))
+                                0))
+                            (substitution
+                              (@rewrite_var__15 t58)
+                              t70
+                              (cy (CFConst))))
+                          1)
+                        (Congr
+                          (= t56 t52)
+                          (Congr
+                            (= t56 (CApp t72 (Comb (N 0))))
+                            (Sym
+                              (= t56 t75)
+                              (Rule
+                                (= t75 t56)
+                                (name
+                                  "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                t79
+                                t80))
+                            (Rule
+                              (= t74 (Comb (N 0)))
+                              (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                              (premises
+                                (Congr
+                                  (= t74 (CApp t81 (CFConst)))
+                                  (Rule
+                                    (= t74 t74)
+                                    (name
+                                      "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                    t79
+                                    t80)
+                                  (Trans
+                                    (= t73 t81)
+                                    (Sym
+                                      (= t73 t82)
+                                      (Rule
+                                        (= t82 t73)
+                                        (name
+                                          "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                        t83
+                                        t84))
+                                    (Congr
+                                      (= t82 t81)
+                                      (Rule
+                                        (= t82 t82)
+                                        (name
+                                          "(rewrite (CAbs v (CN n)) (CApp $K (CN n)))")
+                                        t83
+                                        t84)
+                                      prf4
+                                      1))
+                                  0))
+                              (substitution
+                                (@rewrite_var__15 t74)
+                                t85
+                                (cy (CFConst))))
+                            1)
+                          (Congr
+                            (= t72 (CApp (CIfConst) (CFConst)))
+                            (Congr
+                              (= t72 (CApp (CIfConst) t87))
+                              (Sym
+                                (= t72 t89)
+                                (Rule
+                                  (= t89 t72)
+                                  (name
+                                    "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                  t93
+                                  t94))
+                              (Rule
+                                (= t88 (CIfConst))
+                                (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                                (premises
+                                  (Congr
+                                    (=
+                                      t88
+                                      (CApp (CApp (KConst) (CIfConst)) (CFConst)))
+                                    (Rule
+                                      (= t88 t88)
+                                      (name
+                                        "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                      t93
+                                      t94)
+                                    (Sym
+                                      (=
+                                        (CAbs "x" (CIfConst))
+                                        (CApp (KConst) (CIfConst)))
+                                      (Rule
+                                        (=
+                                          (CApp (KConst) (CIfConst))
+                                          (CAbs "x" (CIfConst)))
+                                        (name
+                                          "(rewrite (CAbs v $CIf) (CApp $K $CIf))")
+                                        (premises
+                                          (Rule
+                                            (=
+                                              (CAbs "x" (CIfConst))
+                                              (CAbs "x" (CIfConst)))
+                                            (name
+                                              "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                            t91
+                                            t92))
+                                        (substitution
+                                          (@rewrite_var__7 (CAbs "x" (CIfConst)))
+                                          (v "x"))))
+                                    0))
+                                (substitution
+                                  (@rewrite_var__15 t88)
+                                  (cx (CIfConst))
+                                  (cy (CFConst))))
+                              0)
+                            (Rule
+                              (= t87 (CFConst))
+                              (name "(rewrite (CApp $I cx) cx)")
+                              (premises
+                                (Congr
+                                  (= t87 (CApp (IConst) (CFConst)))
+                                  (Rule
+                                    (= t87 t87)
+                                    (name
+                                      "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
+                                    t93
+                                    t94)
+                                  (Rule
+                                    (= t86 (IConst))
+                                    (name "(rewrite (CAbs v (CVar v)) $I)")
+                                    (premises
+                                      (Congr
+                                        (= t86 (CAbs "x" (CVar "x")))
+                                        (Rule
+                                          (= t86 t86)
+                                          (name
+                                            "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
+                                          t91
+                                          t92)
+                                        (Sym
+                                          (= (Comb (Var "x")) (CVar "x"))
+                                          (Rule
+                                            (= (CVar "x") (Comb (Var "x")))
+                                            (name
+                                              "(rule ((= x (Var v)))
+        ((union (Comb x) (CVar v)))
+           )")
+                                            (premises
+                                              (Fiat (= (Var "x") (Var "x"))))
+                                            (substitution (v "x") (x (Var "x")))))
+                                        1))
+                                    (substitution (@rewrite_var__2 t86) (v "x")))
+                                  0))
+                              (substitution (@rewrite_var__14 t87) (cx (CFConst))))
+                            1)
+                          0)
+                        0)))
+(let t96
+  (substitution
+                      (cc (CFConst))
+                      (ct (Comb (N 0)))
+                      (cx t6)
+                      (cf (Comb (N 1)))))
+(Sym
+  (= t3 (N 3))
+  (Rule
+    (= (N 3) t3)
+    (name "(rewrite (Add (N n) (N m)) (N (+ n m)))")
+    (premises
+      (Congr
+        (= t3 (Add (N 1) (N 2)))
+        (Trans
+          (= t3 t8)
+          (Sym
+            (= t3 t10)
+            (Rule
+              (= t10 t3)
+              (name "(rewrite (Uncomb (Comb x)) x)")
+              (premises
+                (Rule
+                  (= t10 t10)
+                  (name
+                    "(rule ((= cx (CApp (CApp $CAdd cl) cr)))
+      ((union (Uncomb cx) (Add (Uncomb cl) (Uncomb cr))))
+         )")
+                  t44
+                  t45))
+              (substitution (@rewrite_var__1 t10) t23)))
+          (Trans
+            (= t10 t8)
+            (Sym
+              (= t10 t47)
+              (Rule
+                (= t47 t10)
+                (name
+                  "(rule ((= cx (CApp (CApp $CAdd cl) cr)))
+      ((union (Uncomb cx) (Add (Uncomb cl) (Uncomb cr))))
+         )")
+                t44
+                t45))
+            (Congr
+              (= t47 t8)
+              (Rule
+                (= t47 t47)
+                (name
+                  "(rule ((= cx (CApp (CApp $CAdd cl) cr)))
+      ((union (Uncomb cx) (Add (Uncomb cl) (Uncomb cr))))
+         )")
+                t44
+                t45)
+              (Rule
+                (= t46 (N 2))
+                (name
+                  "(rule ((= cx (CN n)))
+      ((union (Uncomb cx) (N n)))
+         )")
+                (premises prf1)
+                (substitution t36 (n 2)))
+              1)))
+        (Rule
+          (= t7 (N 1))
+          (name "(rewrite (If $F t f) f)")
+          (premises
+            (Trans
+              (= t7 t48)
+              (Sym
+                (= t7 t51)
+                (Rule
+                  (= t51 t7)
+                  (name
+                    "(rule ((= cx (CApp (CApp (CApp $CIf cc) ct) cf)))
+      ((union (Uncomb cx) (If (Uncomb cc) (Uncomb ct) (Uncomb cf))))
+         )")
+                  t95
+                  t96))
+              (Congr
+                (= t51 t48)
+                (Congr
+                  (= t51 (If (FConst) (N 0) t50))
+                  (Congr
+                    (= t51 (If (FConst) t49 t50))
+                    (Rule
+                      (= t51 t51)
+                      (name
+                        "(rule ((= cx (CApp (CApp (CApp $CIf cc) ct) cf)))
+      ((union (Uncomb cx) (If (Uncomb cc) (Uncomb ct) (Uncomb cf))))
+         )")
+                      t95
+                      t96)
+                    (Rule
+                      (= (Uncomb (CFConst)) (FConst))
+                      (name
+                        "(rule ((= cx $CF))
+      ((union (Uncomb cx) $F))
+         )")
+                      (premises (Fiat (= (CFConst) (CFConst))))
+                      (substitution (cx (CFConst))))
+                    0)
+                  (Rule
+                    (= t49 (N 0))
+                    (name
+                      "(rule ((= cx (CN n)))
+      ((union (Uncomb cx) (N n)))
+         )")
+                    (premises prf5)
+                    (substitution t85 (n 0)))
+                  1)
+                (Rule
+                  (= t50 (N 1))
+                  (name
+                    "(rule ((= cx (CN n)))
+      ((union (Uncomb cx) (N n)))
+         )")
+                  (premises prf3)
+                  (substitution t70 (n 1)))
+                2)))
+          (substitution (@rewrite_var__12 t7) (t (N 0)) (f (N 1))))
+        0))
+    (substitution (@rewrite_var__13 t3) (m 2) (n 1))))

@@ -9,7 +9,7 @@ pub struct SetContainer {
 }
 
 impl ContainerValue for SetContainer {
-    fn rebuild_contents(&mut self, rebuilder: &dyn Rebuilder) -> bool {
+    fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         if self.do_rebuild {
             let mut xs: Vec<_> = self.data.iter().copied().collect();
             let changed = rebuilder.rebuild_slice(&mut xs);
@@ -24,6 +24,8 @@ impl ContainerValue for SetContainer {
     }
 }
 
+/// The elements of a `(set-of e0 ...)` term as a Rust `BTreeSet` in AST
+/// order, matching `SetContainer`'s semantics; `None` for any other term.
 fn set_term_to_btreeset<'a>(termdag: &'a TermDag, term: TermId) -> Option<BTreeSet<OrdTerm<'a>>> {
     match termdag.get(term) {
         Term::App(head, children) if head == "set-of" => {
@@ -33,10 +35,14 @@ fn set_term_to_btreeset<'a>(termdag: &'a TermDag, term: TermId) -> Option<BTreeS
     }
 }
 
+/// Flatten a set back to the element list of its canonical `(set-of ...)`
+/// term (sorted by AST order and deduplicated by construction).
 fn set_term_args(set: BTreeSet<OrdTerm<'_>>) -> Vec<TermId> {
     set.into_iter().map(|e| e.id()).collect()
 }
 
+/// Canonicalize `elements` to the `(set-of e0 e1 ...)` term form: sorted by
+/// [`TermDag::ast_cmp`] and deduplicated, so proof checking can reproduce it.
 fn normalize_set_term(termdag: &mut TermDag, elements: &[TermId]) -> TermId {
     let set: BTreeSet<_> = elements.iter().map(|e| termdag.ord_term(*e)).collect();
     let elements = set_term_args(set);
@@ -130,6 +136,10 @@ impl ContainerSort for SetSort {
     fn register_primitives(&self, eg: &mut EGraph) {
         let arc = self.clone().to_arcsort();
 
+        // Proof term form of a set: `(set-of e0 e1 ...)` sorted and
+        // deduplicated, matching `reconstruct_termdag`. Each validator
+        // round-trips through a Rust `BTreeSet` (see `set_term_to_btreeset`),
+        // so it evaluates set terms with `SetContainer`'s semantics.
         let set_of_validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
             Some(normalize_set_term(termdag, args))
         };
@@ -216,6 +226,8 @@ impl ContainerSort for SetSort {
             data: xs.collect()
         } }, set_of_validator);
 
+        // No validator: `set-get` indexes the runtime `BTreeSet<Value>` order,
+        // which terms cannot reproduce, so it is unsupported in proof mode.
         add_primitive!(eg, "set-get" = |xs: @SetContainer (arc), i: i64| -?> # (self.element()) { xs.data.iter().nth(i as usize).copied() });
         add_primitive_with_validator!(eg, "set-insert" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ xs.data.insert( x); xs }}, set_insert_validator);
         add_primitive_with_validator!(eg, "set-remove" = |mut xs: @SetContainer (arc), x: # (self.element())| -> @SetContainer (arc) {{ xs.data.remove(&x); xs }}, set_remove_validator);
@@ -236,7 +248,18 @@ impl ContainerSort for SetSort {
         termdag: &mut TermDag,
         element_terms: Vec<TermId>,
     ) -> TermId {
+        // Canonical form (sorted by deterministic AST order, deduped) so proof
+        // checking can reproduce it from terms alone.
         normalize_set_term(termdag, &element_terms)
+    }
+
+    fn rebuild_container_normalizer(&self) -> Option<(String, PrimitiveValidator)> {
+        Some((
+            "set-of".to_owned(),
+            Arc::new(|termdag: &mut TermDag, args: &[TermId]| {
+                Some(normalize_set_term(termdag, args))
+            }),
+        ))
     }
 
     fn serialized_name(&self, _container_values: &ContainerValues, _: Value) -> String {

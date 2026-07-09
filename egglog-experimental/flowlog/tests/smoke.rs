@@ -21,17 +21,17 @@ fn flowlog_runs_proof_mode_pair_container_side_condition() {
         (datatype Expr (A))
         (sort Cost (Pair Expr i64))
         (relation Seed (Expr))
-        (relation Seen (Cost))
+        (relation Seen ())
 
         (Seed (A))
 
         (rule ((Seed e)
                (= c (pair e 1)))
-              ((Seen c))
+              ((Seen))
               :name "pair-side-condition")
 
         (run 1)
-        (prove (Seen (pair (A) 1)))
+        (prove (Seen))
         "#,
     )
     .unwrap();

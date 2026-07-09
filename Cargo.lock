@@ -510,7 +510,8 @@ dependencies = [
 [[package]]
 name = "differential-dataflow"
 version = "0.24.0"
-source = "git+https://github.com/oflatt/differential-dataflow?rev=f8d47afb6996942358d36f0ca5796412caf3fe94#f8d47afb6996942358d36f0ca5796412caf3fe94"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "befdc46c04f5671a2dfe32a9d06ce8efe44f650f0f6f974d190b9a6ee1c17665"
 dependencies = [
  "columnar",
  "columnation",
@@ -518,16 +519,6 @@ dependencies = [
  "paste",
  "serde",
  "smallvec",
- "timely",
-]
-
-[[package]]
-name = "differential-dogs3"
-version = "0.24.0"
-source = "git+https://github.com/oflatt/differential-dataflow?rev=f8d47afb6996942358d36f0ca5796412caf3fe94#f8d47afb6996942358d36f0ca5796412caf3fe94"
-dependencies = [
- "differential-dataflow",
- "serde",
  "timely",
 ]
 
@@ -715,6 +706,7 @@ dependencies = [
  "egglog-ast",
  "egglog-reports",
  "glob",
+ "insta",
  "lazy_static",
  "libtest-mimic",
  "log",
@@ -727,8 +719,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "differential-dataflow",
- "differential-dogs3",
- "dyn-clone",
  "egglog",
  "egglog-backend-trait",
  "egglog-core-relations",
