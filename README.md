@@ -164,6 +164,8 @@ The default treatment matrix is:
 
 `--proof-testing` is a correctness mode, not a benchmark treatment, and does not
 appear in performance headlines.
+Use `--treatments proofs` when iterating on proof performance across two or more
+targets and you only need same-treatment proof-mode comparisons.
 
 The measured command shape is:
 
@@ -224,7 +226,8 @@ Timing fields:
 - `system_sec`: child-process system CPU time when available, otherwise `null`.
 - `cpu_wall_ratio`: `(user_sec + system_sec) / wall_sec` when available,
   otherwise `null`.
-- `max_rss_bytes`: max resident set size when available, otherwise `null`.
+- `max_rss_bytes`: child-process max resident set size in bytes when available,
+  otherwise `null`.
 
 For `status: timed-out`, `wall_sec`, `user_sec`, `system_sec`,
 `cpu_wall_ratio`, and `max_rss_bytes` are `null`. The row records only that the
@@ -282,19 +285,22 @@ and timeout; if no exact successful rows exist, the estimate is reported as
 unknown rather than borrowing data from another target or binary.
 During fresh collection, `observations` are measured report rows and
 `subprocesses` are child process launches, including the one target startup
-warmup when fresh rows are needed.
+warmup when fresh rows are needed. Peak RSS is collected from the measured child
+process resource usage and rendered separately from wall-time ratios.
 
-The printed report is ordered so the decision summaries come before diagnostic
-tables. It starts with a target tree showing source, git revision, binary hash,
-and checkout path. A one-target report then prints an outcome panel for the
-`<2x` proof-overhead gate. A multi-target report treats the first target as the
-baseline, prints an outcome panel with same-treatment speed changes for each
-later target, then prints suite speed changes, per-file speed changes, proof
-overhead by target, and per-target diagnostics. Multi-target speed ratios are
-`target / baseline`: values below `1x` are faster than the baseline, and values
-above `1x` are slower. Ratio tables include captions with this orientation, and
-result cells are labeled `faster`, `slower`, `unclear`, `point only`, or
-`invalid`.
+The printed report is ordered so the final decision summary comes last. It
+starts with report metadata and a target tree showing source, git revision,
+binary hash, and checkout path. Multi-target reports then print per-file
+wall-time changes and per-file peak RSS changes before per-target diagnostics.
+The final `Benchmark summary` section contains the suite-level wall-time result
+plus peak-RSS summaries. Multi-target wall-time ratios are `target / baseline`:
+values below `1x` are faster than the baseline, and values above `1x` are
+slower. The adjacent wall-time change column is derived from the same ratio:
+negative percentages are faster and positive percentages are slower. Peak RSS
+changes are rendered separately with less/more wording so memory is not mixed
+into wall-time interpretation. Within-target overhead ratios are printed before
+raw wall-time and peak-RSS tables. Result cells are labeled `faster`, `slower`,
+`less`, `more`, `unclear`, `point only`, or `invalid`.
 
 ## Statistics
 
@@ -376,16 +382,18 @@ baseline means. Its confidence interval applies the same Fieller-style ratio
 interval to the summed means, propagating run-to-run timing variance for the
 specified suite.
 
-For multi-target speed comparisons, the runner uses the same ratio-of-means
+For multi-target wall-time comparisons, the runner uses the same ratio-of-means
 method with the first target as the baseline. It compares the same treatment
-between targets, for example `candidate proofs / baseline proofs`, and prints a
-fixed-suite ratio for each treatment plus per-file ratios for diagnostics. This
-is separate from proof overhead, which remains a within-target ratio such as
-`proofs / off`.
+between targets, for example `candidate proofs / baseline proofs`, and prints
+the fixed-suite wall-time change for each treatment, an equal-file geometric
+mean ratio, and per-file ratios for diagnostics. This is separate from proof
+overhead, which remains a within-target ratio such as `proofs / off`.
 
 The report includes:
 
 - per-file wall-time estimates for each treatment;
+- per-file peak RSS estimates for each treatment when memory samples are
+  available;
 - `term / off` overhead;
 - `proofs / off` total proof overhead;
 - `proofs / term` marginal proof-generation overhead;
@@ -393,8 +401,9 @@ The report includes:
   summed mean baseline time, with a fixed-suite confidence interval;
 - equal-file geometric mean ratio (`proofs/off`), which gives each benchmark
   file equal weight in the summary;
-- for multiple targets, suite and per-file same-treatment speed changes
-  relative to the first target, plus proof overhead by target.
+- for multiple targets, suite and per-file same-treatment wall-time changes
+  relative to the first target, plus peak RSS changes with confidence intervals
+  relative to the first target.
 
 When a confidence interval is defined, printed estimate cells show the interval
 range. When it is undefined, they show the point estimate.
