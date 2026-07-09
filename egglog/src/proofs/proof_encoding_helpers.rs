@@ -669,7 +669,17 @@ pub(crate) fn command_supports_proof_encoding(
                 Ok(())
             }
         }
-        GenericCommand::Function { merge: None, .. } => Ok(()),
+        // no-merge on a non-global function
+        // To add support: https://github.com/egraphs-good/egglog/issues/774
+        GenericCommand::Function {
+            merge: None, name, ..
+        } => {
+            if type_info.is_global(name) {
+                Ok(())
+            } else {
+                Err(ProofEncodingUnsupportedReason::NoMergeOnNonGlobalFunction)
+            }
+        }
         GenericCommand::Fail(_, command) => {
             if let GenericCommand::Action(ResolvedAction::Set(_, _, _, expr)) = command.as_ref()
                 && expr.output_type().is_eq_sort()

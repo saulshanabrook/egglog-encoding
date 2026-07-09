@@ -179,48 +179,6 @@ mod tests {
     }
 
     #[test]
-    fn term_encoding_allows_no_merge_custom_function_without_conflict() {
-        let program = r#"
-            (sort S)
-            (constructor A () S)
-            (function f (S) i64 :no-merge)
-            (set (f (A)) 1)
-            (print-size)
-        "#;
-
-        let run = |mut egraph: EGraph| {
-            CommandOutput::snapshot_stable_under_proof_encoding(
-                &egraph.parse_and_run_program(None, program).unwrap(),
-            )
-        };
-
-        assert_eq!(
-            run(EGraph::new_with_term_encoding()),
-            run(EGraph::default())
-        );
-    }
-
-    #[test]
-    fn term_encoding_preserves_no_merge_conflict_panic() {
-        let program = r#"
-            (function f (i64) i64 :no-merge)
-            (set (f 0) 1)
-            (set (f 0) 2)
-            (print-size)
-        "#;
-
-        let err = EGraph::new_with_term_encoding()
-            .parse_and_run_program(None, program)
-            .unwrap_err();
-
-        assert!(
-            err.to_string()
-                .contains("Illegal merge attempted for function"),
-            "expected no-merge conflict panic, got {err:?}"
-        );
-    }
-
-    #[test]
     fn proof_mode_allows_eq_container_primitive_results_in_facts() {
         // A real (presort-declared) eq-container sort, so the term/proof
         // encoding builds its rebuild primitive. A custom identity primitive
