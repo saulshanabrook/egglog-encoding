@@ -94,7 +94,7 @@ impl Run {
             )
         };
 
-        if self.proof_testing || !self.should_skip_snapshot() {
+        if !self.should_skip_snapshot() {
             match &result {
                 Ok(outputs) => {
                     if self.proof_testing {
@@ -317,7 +317,10 @@ impl Run {
     }
 
     fn should_skip_snapshot(&self) -> bool {
-        if self.threads > 1 {
+        if self.proof_testing {
+            // Proof-testing snapshots have their own filtering below.
+            false
+        } else if self.threads > 1 {
             // Skip snapshots for parallel tests due to non-deterministic output ordering
             true
         } else {
