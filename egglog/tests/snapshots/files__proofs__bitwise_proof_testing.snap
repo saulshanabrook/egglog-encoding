@@ -1,0 +1,13 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Fiat (= 0 0))
+(Fiat (= 8 8))
+(Fiat (= 10 10))
+(Fiat (= 2 2))
+(Fiat (= 8 8))
+(Fiat (= 1 1))
+(Fiat (= 2 2))
+(Fiat (= 2 2))
+(Fiat (= -1 -1))

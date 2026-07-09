@@ -626,6 +626,7 @@ dependencies = [
  "egglog-ast",
  "egglog-reports",
  "glob",
+ "insta",
  "lazy_static",
  "libtest-mimic",
  "log",

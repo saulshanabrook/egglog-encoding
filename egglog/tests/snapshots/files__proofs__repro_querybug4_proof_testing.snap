@@ -1,0 +1,15 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let prf0 (Fiat (= 2 2)))
+(Rule
+  (= (OtherNum 2) (Num 2))
+  (name
+    "(rule ((= fvar5__ 2)
+       (= fvar6__ fvar5__)
+       (= y fvar5__))
+      ((union (OtherNum fvar5__) (Num fvar5__)))
+         )")
+  (premises prf0 prf0 prf0)
+  (substitution (y 2) (fvar5__ 2) (fvar6__ 2)))

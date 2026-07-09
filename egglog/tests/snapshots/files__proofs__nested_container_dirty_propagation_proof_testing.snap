@@ -1,0 +1,32 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (vec-of (vec-of (w (b)))))
+(let t1 (p t0))
+(Sym
+  (= t1 (b))
+  (Rule
+    (= (b) t1)
+    (name "(rewrite (p (vec-of (vec-of (b)))) (b))")
+    (premises
+      (Fiat (= (b) (b)))
+      (Eval)
+      (Congr
+        (= t1 (p (vec-of (vec-of (b)))))
+        (Fiat (= t1 t1))
+        (Congr
+          (= t0 (vec-of (vec-of (b))))
+          (Fiat (= t0 t0))
+          (Congr
+            (= (vec-of (w (b))) (vec-of (b)))
+            (Fiat (= (vec-of (w (b))) (vec-of (w (b)))))
+            (Rule
+              (= (w (b)) (b))
+              (name "(rewrite (w x) x)")
+              (premises (Fiat (= (w (b)) (w (b)))))
+              (substitution (x (b)) (@rewrite_var__ (w (b)))))
+            0)
+          0)
+        0))
+    (substitution (@rewrite_var__1 t1) (@v25 (vec-of (vec-of (b)))) (@v24 (b)))))
