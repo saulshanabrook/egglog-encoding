@@ -82,15 +82,15 @@ fn new_experimental_egraph_with_options(extended_run_schedule: bool) -> EGraph {
 }
 
 pub fn new_experimental_egraph_with_term_encoding() -> EGraph {
-    let mut egraph = EGraph::new_with_term_encoding();
-    add_experimental_extensions(&mut egraph, false);
-    egraph
+    new_experimental_egraph_for_proofs().with_term_encoding_enabled()
 }
 
 pub fn new_experimental_egraph_with_proofs() -> EGraph {
-    let mut egraph = EGraph::new_with_proofs();
-    add_experimental_extensions(&mut egraph, false);
-    egraph
+    new_experimental_egraph_for_proofs().with_proofs_enabled()
+}
+
+pub fn new_experimental_egraph_with_proof_testing() -> EGraph {
+    new_experimental_egraph_with_proofs().with_proof_testing()
 }
 
 fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool) {

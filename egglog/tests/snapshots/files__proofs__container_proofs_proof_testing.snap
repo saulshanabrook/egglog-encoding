@@ -1,0 +1,199 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let prf0 (Fiat (= (S (Z)) (S (Z)))))
+(let t0 (set-of (S (Z)) (Z)))
+(let t1 (HasSet t0))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises prf0 (Fiat (= (Z) (Z))) prf0 (Eval) (Fiat (= t1 t1)))
+  (substitution (@v29 (S (Z))) (@v30 (Z)) (@v32 t0) (@v31 (S (Z)))))
+(let t0 (pair (Z) (S (Z))))
+(let t1 (HasPair t0))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    (Fiat (= (Z) (Z)))
+    (Fiat (= (S (Z)) (S (Z))))
+    (Eval)
+    (Fiat (= t1 t1)))
+  (substitution (@v72 (Z)) (@v73 (S (Z))) (@v74 t0)))
+(let t0 (vec-of (Z) (S (Z))))
+(let t1 (HasVec t0))
+(Rule
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
+  (premises
+    (Fiat (= (Z) (Z)))
+    (Fiat (= (S (Z)) (S (Z))))
+    (Eval)
+    (Fiat (= t1 t1)))
+  (substitution (@v109 (Z)) (@v110 (S (Z))) (@v111 t0)))
+(let t0 (map-of (Z) (S (Z))))
+(let t1 (HasMap t0))
+(Rule
+  (= (@ExistsConstructor3) (@ExistsConstructor3))
+  (name "@prove_exists_rule3")
+  (premises
+    (Fiat (= (Z) (Z)))
+    (Fiat (= (S (Z)) (S (Z))))
+    (Eval)
+    (Fiat (= t1 t1)))
+  (substitution (@v149 t0) (@v147 (Z)) (@v148 (S (Z)))))
+(let prf0 (Fiat (= (Z) (Z))))
+(let t0 (multiset-of (S (Z)) (Z) (Z)))
+(let t1 (HasMS t0))
+(Rule
+  (= (@ExistsConstructor4) (@ExistsConstructor4))
+  (name "@prove_exists_rule4")
+  (premises prf0 (Fiat (= (S (Z)) (S (Z)))) prf0 (Eval) (Fiat (= t1 t1)))
+  (substitution (@v189 t0) (@v187 (S (Z))) (@v188 (Z)) (@v186 (Z))))
+(let t0 (vec-of (Z) (S (Z))))
+(let t1 (HasVec t0))
+(Rule
+  (= (VLen 2) (VLen 2))
+  (name
+    "(rule ((HasVec v)
+       (= n (vec-length v)))
+      ((VLen n))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= 2 2)))
+  (substitution (v t0) (n 2)))
+(let t0 (vec-of (Z) (S (Z))))
+(let t1 (HasVec t0))
+(Rule
+  (= (VGet (S (Z))) (VGet (S (Z))))
+  (name
+    "(rule ((HasVec v)
+       (= e (vec-get v 1)))
+      ((VGet e))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= (S (Z)) (S (Z)))))
+  (substitution (v t0) (e (S (Z)))))
+(let t0 (map-of (Z) (S (Z))))
+(let t1 (HasMap t0))
+(Rule
+  (= (MapLen 1) (MapLen 1))
+  (name
+    "(rule ((HasMap m)
+       (= n (map-length m)))
+      ((MapLen n))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= 1 1)))
+  (substitution (m t0) (n 1)))
+(let t0 (map-of (Z) (S (Z))))
+(let t1 (HasMap t0))
+(Rule
+  (= (MapGet (S (Z))) (MapGet (S (Z))))
+  (name
+    "(rule ((HasMap m)
+       (= w (map-get m (Z))))
+      ((MapGet w))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= (Z) (Z))) (Fiat (= (S (Z)) (S (Z)))))
+  (substitution (m t0) (w (S (Z))) (@v281 (Z))))
+(let t0 (multiset-of (S (Z)) (Z) (Z)))
+(let t1 (HasMS t0))
+(Rule
+  (= (MSLen 3) (MSLen 3))
+  (name
+    "(rule ((HasMS m)
+       (= n (multiset-length m)))
+      ((MSLen n))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= 3 3)))
+  (substitution (m t0) (n 3)))
+(let t0 (pair (Z) (S (Z))))
+(let t1 (HasPair t0))
+(Rule
+  (= (PFirst (Z)) (PFirst (Z)))
+  (name
+    "(rule ((HasPair p)
+       (= a (pair-first p)))
+      ((PFirst a))
+         )")
+  (premises (Fiat (= t1 t1)) (Fiat (= (Z) (Z))))
+  (substitution (a (Z)) (p t0)))
+(Rule
+  (= (QVecLen 2) (QVecLen 2))
+  (name
+    "(rule ((HasElem a)
+       (= xs (vec-of a a))
+       (= n (vec-length xs)))
+      ((QVecLen n))
+         )")
+  (premises (Fiat (= (HasElem (Z)) (HasElem (Z)))) (Eval) (Fiat (= 2 2)))
+  (substitution (a (Z)) (n 2)))
+(let prf0 (Fiat (= (HasElem (Z)) (HasElem (Z)))))
+(Rule
+  (= (QVecGet (Z)) (QVecGet (Z)))
+  (name
+    "(rule ((HasElem a)
+       (HasElem b)
+       (= xs (vec-of a b))
+       (= e (vec-get xs 1)))
+      ((QVecGet e))
+         )")
+  (premises prf0 prf0 (Eval) (Fiat (= (Z) (Z))))
+  (substitution (a (Z)) (b (Z)) (e (Z))))
+(Rule
+  (= (QVecGet (S (Z))) (QVecGet (S (Z))))
+  (name
+    "(rule ((HasElem a)
+       (HasElem b)
+       (= xs (vec-of a b))
+       (= e (vec-get xs 1)))
+      ((QVecGet e))
+         )")
+  (premises
+    (Fiat (= (HasElem (Z)) (HasElem (Z))))
+    (Fiat (= (HasElem (S (Z))) (HasElem (S (Z)))))
+    (Eval)
+    (Fiat (= (S (Z)) (S (Z)))))
+  (substitution (a (Z)) (b (S (Z))) (e (S (Z)))))
+(let prf0 (Fiat (= (HasElem (Z)) (HasElem (Z)))))
+(Rule
+  (= (QSame (Z) (Z)) (QSame (Z) (Z)))
+  (name
+    "(rule ((HasElem a)
+       (HasElem b)
+       (= (set-of a) (set-of b)))
+      ((QSame a b))
+         )")
+  (premises prf0 prf0 (Eval))
+  (substitution (a (Z)) (b (Z))))
+(let t0 (QSame (S (Z)) (S (Z))))
+(let prf0 (Fiat (= (HasElem (S (Z))) (HasElem (S (Z))))))
+(Rule
+  (= t0 t0)
+  (name
+    "(rule ((HasElem a)
+       (HasElem b)
+       (= (set-of a) (set-of b)))
+      ((QSame a b))
+         )")
+  (premises prf0 prf0 (Eval))
+  (substitution (a (S (Z))) (b (S (Z)))))
+(let prf0 (Fiat (= (Z) (Z))))
+(let t0 (WrapVec (vec-of (Z) (Z))))
+(let t1 (OutWrap t0))
+(Rule
+  (= (@ExistsConstructor17) (@ExistsConstructor17))
+  (name "@prove_exists_rule17")
+  (premises
+    prf0
+    prf0
+    (Eval)
+    (Rule
+      (= t1 t1)
+      (name
+        "(rule ((HasElem a)
+       (= w (WrapVec (vec-of a a))))
+      ((OutWrap w))
+         )")
+      (premises (Fiat (= (HasElem (Z)) (HasElem (Z)))) (Eval) (Fiat (= t0 t0)))
+      (substitution (a (Z)) (w t0) (@v537 (vec-of (Z) (Z))))))
+  (substitution (@v546 (Z)) (@v547 (Z)) (@v548 (vec-of (Z) (Z)))))

@@ -41,4 +41,4 @@
 (Trigger)
 (run 1)
 
-(check (= (A) (B)))
+(prove (= (A) (B)))

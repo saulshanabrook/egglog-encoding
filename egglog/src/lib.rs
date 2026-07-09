@@ -51,7 +51,9 @@ use indexmap::map::Entry;
 use log::{Level, log_enabled};
 use numeric_id::DenseIdMap;
 use prelude::*;
-pub use proofs::proof_encoding_helpers::{file_supports_proofs, program_supports_proofs};
+pub use proofs::proof_encoding_helpers::{
+    file_supports_proofs, file_supports_proofs_with_egraph, program_supports_proofs,
+};
 
 /// Read-only proof reconstruction API.
 pub mod proof {
@@ -166,6 +168,29 @@ impl CommandOutput {
     /// legitimately differ or are non-deterministic (timing, `PrintFunction`
     /// per #793, extraction variants) and reduces `ExtractBest` to its cost.
     pub fn snapshot_stable_under_proof_encoding(outputs: &[CommandOutput]) -> String {
+        Self::snapshot_stable(outputs, true)
+    }
+
+    /// Render only proof outputs. This keeps proof snapshots focused on the
+    /// proof certificate and leaves ordinary outputs to the shared snapshots.
+    pub fn snapshot_proofs_only(outputs: &[CommandOutput]) -> String {
+        outputs
+            .iter()
+            .filter_map(|output| match output {
+                CommandOutput::ProveExists { .. } => Some(output.to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    /// Render the non-proof outputs that should still match the normal-mode
+    /// shared snapshot when proof-testing rewrites checks into prove commands.
+    pub fn snapshot_non_proof_stable_under_proof_encoding(outputs: &[CommandOutput]) -> String {
+        Self::snapshot_stable(outputs, false)
+    }
+
+    fn snapshot_stable(outputs: &[CommandOutput], include_proofs: bool) -> String {
         outputs
             .iter()
             .filter_map(|output| match output {
@@ -175,6 +200,7 @@ impl CommandOutput {
                     Some(format!("(extraction-costs {cost})\n"))
                 }
                 CommandOutput::ExtractVariants(..) => None,
+                CommandOutput::ProveExists { .. } if !include_proofs => None,
                 other => Some(other.to_string()),
             })
             .collect::<Vec<_>>()
@@ -527,7 +553,8 @@ impl EGraph {
     /// Enable the term-encoding pipeline on an existing `EGraph`.
     ///
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
-    pub(crate) fn with_term_encoding_enabled(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_term_encoding_enabled(mut self) -> Self {
         self.proof_state.original_typechecking = Some(Box::new(self.clone()));
         self
     }
@@ -535,7 +562,8 @@ impl EGraph {
     /// Enable proof generation on this e-graph.
     /// TODO proofs should be turned on during creation of the e-graph, not afterwards.
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
-    pub(crate) fn with_proofs_enabled(mut self) -> Self {
+    #[doc(hidden)]
+    pub fn with_proofs_enabled(mut self) -> Self {
         self = self.with_term_encoding_enabled();
         self.proof_state.proofs_enabled = true;
         self

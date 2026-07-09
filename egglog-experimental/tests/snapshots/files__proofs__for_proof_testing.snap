@@ -1,0 +1,5 @@
+---
+source: egglog-experimental/tests/files.rs
+expression: snapshot
+---
+(Rule (= (R 1 2) (R 1 2)) (name "@for_rule1") (premises) (substitution))

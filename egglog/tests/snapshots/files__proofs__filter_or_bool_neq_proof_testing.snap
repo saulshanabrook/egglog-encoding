@@ -1,0 +1,26 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(let prf0 (Fiat (= (Val 1) (Val 1))))
+(Rule
+  (= (@ExistsConstructor16) (@ExistsConstructor16))
+  (name "@prove_exists_rule16")
+  (premises prf0 (Fiat (= (Val 2) (Val 2))) prf0 prf0 (Fiat (= () ())))
+  (substitution (@v189 (Val 1)) (@v187 (Val 2)) (@v188 (Val 1)) (@v186 (Val 1))))
