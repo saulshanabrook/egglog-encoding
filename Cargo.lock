@@ -704,6 +704,7 @@ dependencies = [
  "codspeed-divan-compat",
  "egglog",
  "egglog-ast",
+ "egglog-experimental-flowlog",
  "egglog-reports",
  "glob",
  "insta",

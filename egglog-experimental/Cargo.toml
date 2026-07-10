@@ -18,12 +18,14 @@ name = "files"
 
 [features]
 default = ["bin"]
-bin = ["egglog/bin"]
+bin = ["egglog/bin", "flowlog-backend"]
+flowlog-backend = ["dep:egglog-experimental-flowlog"]
 
 [dependencies]
 egglog = { workspace = true }
 egglog-ast = { workspace = true }
 egglog-reports = { workspace = true }
+egglog-experimental-flowlog = { path = "flowlog", optional = true }
 
 num = "0.4.3"
 lazy_static = "1.4"

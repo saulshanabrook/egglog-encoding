@@ -7,6 +7,7 @@ import math
 import os
 import re
 import resource
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -39,12 +40,20 @@ from rich.tree import Tree
 from scipy import stats
 
 Status = Literal["success", "timed-out", "failure"]
+Backend = Literal["main", "flowlog"]
 Treatment = Literal["off", "term", "proofs"]
+BuildProfile = Literal["release", "profiling"]
 
 DEFAULT_REPORT = ".reports.jsonl"
+DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
+DEFAULT_PROFILE_SECONDS = 10
+MAX_PROFILE_ITERATIONS = 10_000
+PROFILE_CACHE_VERSION = "v1"
+PROFILE_SAMPLY_RATE_HZ = 1000
 TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
+DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
     "egglog/tests/math-microbenchmark.egg",
@@ -61,7 +70,15 @@ TARGET_PEAK_RSS_CAPTION = (
     "Ratio is target / baseline. Values below 1x use less peak RSS; above 1x use more. "
     "RSS change is derived from the ratio; negative uses less memory. Intervals are 95% CIs."
 )
-PROOF_OVERHEAD_CAPTION = "Within-target proof overhead. This is separate from target-vs-baseline wall-time change."
+BACKEND_WALL_TIME_CAPTION = (
+    "Ratio is candidate backend / baseline backend for the same target and treatment. "
+    "Values below 1x are faster; above 1x are slower. Intervals are 95% CIs."
+)
+BACKEND_PEAK_RSS_CAPTION = (
+    "Ratio is candidate backend / baseline backend for the same target and treatment. "
+    "Values below 1x use less peak RSS; above 1x use more. Intervals are 95% CIs."
+)
+PROOF_OVERHEAD_CAPTION = "Within-backend proof overhead. This is not backend-vs-main performance."
 RESULT_STYLES = {
     "descriptive": "dim",
     "established": "green",
@@ -119,6 +136,7 @@ class ReportFrame(pa.DataFrameModel):
     binary_sha256: Series[str]
     file_path: Series[str]
     file_sha256: Series[str]
+    backend: Series[str] = pa.Field(isin=["main", "flowlog"])
     treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
     timeout_sec: Series[int] = pa.Field(gt=0)
     wall_sec: Series[float] = pa.Field(nullable=True, ge=0)
@@ -161,6 +179,39 @@ class BenchmarkSpec:
     treatments: tuple[Treatment, ...]
     rounds: int
     timeout_sec: int
+    backends: tuple[Backend, ...] = DEFAULT_BACKENDS
+
+
+@dataclass(frozen=True)
+class BenchmarkCell:
+    backend: Backend
+    treatment: Treatment
+
+
+@dataclass(frozen=True)
+class ProfileMode:
+    iterations: int | None
+    profile_seconds: int | None
+
+    @property
+    def cache_label(self) -> str:
+        if self.iterations is not None:
+            return f"i{self.iterations}"
+        assert self.profile_seconds is not None
+        return f"auto{self.profile_seconds}s"
+
+
+@dataclass(frozen=True)
+class ProfileRequest:
+    file: FileSpec
+    target_request: TargetRequest
+    backend: Backend
+    treatment: Treatment
+    timeout_sec: int
+    profiles_dir: Path
+    mode: ProfileMode
+    open_after: bool
+    force_run: bool
 
 
 @dataclass(frozen=True)
@@ -215,12 +266,14 @@ class EstimateKey:
     file_sha256: str
     treatment: Treatment
     timeout_sec: int
+    backend: Backend = "main"
 
 
 @dataclass(frozen=True)
 class CellPlan:
     target: ResolvedTarget
     file: FileSpec
+    backend: Backend
     treatment: Treatment
     required_rows: int
     selected_cached_rows: DataFrame[ReportFrame]
@@ -270,7 +323,7 @@ class CellSummary:
         return self.issue is None and self.mean is not None
 
 
-CellMap = dict[tuple[str, Treatment], CellSummary]
+CellMap = dict[tuple[str, Backend, Treatment], CellSummary]
 TargetCellMaps = dict[ResolvedTarget, CellMap]
 
 
@@ -293,6 +346,12 @@ class RatioSummary:
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    if argv and argv[0] == "profile":
+        return parse_profile_args(argv[1:])
+    return parse_benchmark_args(argv)
+
+
+def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect or reuse egglog-experimental benchmark reports.",
     )
@@ -321,6 +380,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=f"per-process timeout in seconds (default: {DEFAULT_TIMEOUT_SEC})",
     )
     parser.add_argument(
+        "--backend",
+        default=",".join(DEFAULT_BACKENDS),
+        help="comma-separated backends: main, flowlog; non-main backends run term/proofs only (default: main)",
+    )
+    parser.add_argument(
         "--treatments",
         default=",".join(DEFAULT_TREATMENTS),
         help="comma-separated treatments (default: off,term,proofs)",
@@ -330,7 +394,70 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="append fresh rows even when enough cached rows exist",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    args.command = "benchmark"
+    return args
+
+
+def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog=f"{Path(sys.argv[0]).name} profile",
+        description="Record or reuse a cached Samply CPU profile for one egglog workload.",
+    )
+    parser.add_argument("file", help="egglog file to profile")
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="target source: ., /path, @git-ref, #pr, or label=source; cache-only label= is not supported",
+    )
+    parser.add_argument(
+        "--backend",
+        default="main",
+        help="single backend to profile (default: main)",
+    )
+    parser.add_argument(
+        "--treatment",
+        default="proofs",
+        help="single treatment to profile (default: proofs)",
+    )
+    iteration_group = parser.add_mutually_exclusive_group()
+    iteration_group.add_argument(
+        "--iterations",
+        type=positive_int,
+        default=None,
+        help="explicit Samply iteration count",
+    )
+    iteration_group.add_argument(
+        "--profile-seconds",
+        type=positive_int,
+        default=None,
+        help=f"target duration for automatic iteration selection (default: {DEFAULT_PROFILE_SECONDS})",
+    )
+    parser.add_argument(
+        "--profiles-dir",
+        default=DEFAULT_PROFILES_DIR,
+        help=f"profile cache directory (default: {DEFAULT_PROFILES_DIR})",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="open the profile with samply load after recording or cache hit",
+    )
+    parser.add_argument(
+        "--force-run",
+        action="store_true",
+        help="record again and atomically replace the cached profile",
+    )
+    parser.add_argument(
+        "--timeout-sec",
+        type=positive_int,
+        default=DEFAULT_TIMEOUT_SEC,
+        help=f"per-workload timeout in seconds for calibration and profiling watchdog (default: {DEFAULT_TIMEOUT_SEC})",
+    )
+    args = parser.parse_args(argv)
+    args.command = "profile"
+    return args
 
 
 def positive_int(value: str) -> int:
@@ -356,6 +483,77 @@ def parse_treatments(value: str) -> tuple[Treatment, ...]:
     if not treatments:
         raise ValueError("at least one treatment is required")
     return tuple(treatments)
+
+
+def parse_backends(value: str) -> tuple[Backend, ...]:
+    backends: list[Backend] = []
+    seen: set[str] = set()
+    for raw in value.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        if item not in {"main", "flowlog"}:
+            raise ValueError(f"unknown backend: {item}")
+        if item in seen:
+            raise ValueError(f"duplicate backend: {item}")
+        seen.add(item)
+        backends.append(cast(Backend, item))
+    if not backends:
+        raise ValueError("at least one backend is required")
+    return tuple(backends)
+
+
+def backend_supports_treatment(backend: Backend, treatment: Treatment) -> bool:
+    return backend == "main" or treatment in {"term", "proofs"}
+
+
+def supported_treatments(backend: Backend) -> tuple[Treatment, ...]:
+    if backend == "main":
+        return ("off", "term", "proofs")
+    return ("term", "proofs")
+
+
+def backend_treatment_cells(
+    backends: Sequence[Backend],
+    treatments: Sequence[Treatment],
+) -> tuple[BenchmarkCell, ...]:
+    cells: list[BenchmarkCell] = []
+    requested = ",".join(treatments)
+    for backend in backends:
+        backend_cells = tuple(
+            BenchmarkCell(backend, treatment)
+            for treatment in treatments
+            if backend_supports_treatment(backend, treatment)
+        )
+        if not backend_cells:
+            supported = ",".join(supported_treatments(backend))
+            raise ValueError(
+                f"backend {backend} has no supported treatments in requested set {requested}; "
+                f"supported treatments: {supported}"
+            )
+        cells.extend(backend_cells)
+    return tuple(cells)
+
+
+def benchmark_cells(spec: BenchmarkSpec) -> tuple[BenchmarkCell, ...]:
+    return backend_treatment_cells(spec.backends, spec.treatments)
+
+
+def backend_has_treatment(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> bool:
+    return any(cell.backend == backend and cell.treatment == treatment for cell in benchmark_cells(spec))
+
+
+def shared_backend_treatments(
+    spec: BenchmarkSpec,
+    baseline_backend: Backend,
+    candidate_backend: Backend,
+) -> tuple[Treatment, ...]:
+    return tuple(
+        treatment
+        for treatment in spec.treatments
+        if backend_supports_treatment(baseline_backend, treatment)
+        and backend_supports_treatment(candidate_backend, treatment)
+    )
 
 
 def parse_target(raw: str) -> TargetRequest:
@@ -453,12 +651,66 @@ def file_contains_executable_prove_command(path: Path) -> bool:
 
 
 def validate_spec(spec: BenchmarkSpec) -> None:
+    benchmark_cells(spec)
     for file_spec in spec.files:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
                 f"{file_spec.display_path} contains an explicit prove command; "
                 "benchmark files should use check so proof extraction is not included in timed runs"
             )
+
+
+def parse_single_backend(value: str) -> Backend:
+    backends = parse_backends(value)
+    if len(backends) != 1:
+        raise ValueError("profile mode requires exactly one backend")
+    return backends[0]
+
+
+def parse_single_treatment(value: str) -> Treatment:
+    treatments = parse_treatments(value)
+    if len(treatments) != 1:
+        raise ValueError("profile mode requires exactly one treatment")
+    return treatments[0]
+
+
+def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
+    files = resolve_files([str(args.file)], invocation_cwd)
+    backend = parse_single_backend(str(args.backend))
+    treatment = parse_single_treatment(str(args.treatment))
+    target_specs = args.target if args.target is not None else ["."]
+    if len(target_specs) != 1:
+        raise ValueError("profile mode requires exactly one target")
+    mode = ProfileMode(
+        iterations=args.iterations,
+        profile_seconds=args.profile_seconds if args.profile_seconds is not None else DEFAULT_PROFILE_SECONDS,
+    )
+    if args.iterations is not None:
+        mode = ProfileMode(iterations=args.iterations, profile_seconds=None)
+    profiles_dir = Path(str(args.profiles_dir)).expanduser()
+    if not profiles_dir.is_absolute():
+        profiles_dir = invocation_cwd / profiles_dir
+    request = ProfileRequest(
+        file=files[0],
+        target_request=parse_target(str(target_specs[0])),
+        backend=backend,
+        treatment=treatment,
+        timeout_sec=int(args.timeout_sec),
+        profiles_dir=profiles_dir,
+        mode=mode,
+        open_after=bool(args.open),
+        force_run=bool(args.force_run),
+    )
+    validate_spec(
+        BenchmarkSpec(
+            files=(request.file,),
+            treatments=(request.treatment,),
+            rounds=1,
+            timeout_sec=request.timeout_sec,
+            backends=(request.backend,),
+        )
+    )
+    return request
 
 
 def resolve_report_destination(raw_report: str, invocation_cwd: Path) -> ReportDestination:
@@ -502,10 +754,13 @@ def normalize_report_frame(frame: pd.DataFrame) -> DataFrame[ReportFrame]:
     extra = sorted(set(normalized.columns) - set(columns))
     if extra:
         raise ValueError(f"unexpected report column(s): {', '.join(extra)}")
+    if "backend" not in normalized.columns:
+        normalized["backend"] = "main"
     for column in columns:
         if column not in normalized.columns:
             normalized[column] = pd.NA
     normalized = normalized.loc[:, columns]
+    normalized["backend"] = normalized["backend"].fillna("main")
     normalized["started_at"] = pd.to_datetime(normalized["started_at"], utc=True, errors="raise")
     for column in ["wall_sec", "user_sec", "system_sec", "cpu_wall_ratio"]:
         normalized[column] = pd.to_numeric(normalized[column], errors="raise")
@@ -573,6 +828,7 @@ class EstimateModel:
                 file_sha256=str(record["file_sha256"]),
                 treatment=cast(Treatment, str(record["treatment"])),
                 timeout_sec=int(record["timeout_sec"]),
+                backend=cast(Backend, str(record["backend"])),
             )
             samples.setdefault(key, []).append(float(record["wall_sec"]))
         return cls(samples)
@@ -626,6 +882,7 @@ def selected_rows(
     matches = rows.loc[
         rows["binary_sha256"].eq(key.binary_sha256)
         & rows["file_sha256"].eq(key.file_sha256)
+        & rows["backend"].eq(key.backend)
         & rows["treatment"].eq(key.treatment)
         & rows["timeout_sec"].eq(key.timeout_sec)
     ]
@@ -641,6 +898,7 @@ def status_counts_for_rows(rows: DataFrame[ReportFrame]) -> dict[str, int]:
 def estimate_key_for(
     target: ResolvedTarget,
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
     timeout_sec: int,
 ) -> EstimateKey:
@@ -649,6 +907,7 @@ def estimate_key_for(
         file_sha256=file_spec.sha256,
         treatment=treatment,
         timeout_sec=timeout_sec,
+        backend=backend,
     )
 
 
@@ -660,8 +919,8 @@ def build_collection_plan(
 ) -> CollectionPlan:
     cells: list[CellPlan] = []
     for file_spec in spec.files:
-        for treatment in spec.treatments:
-            estimate_key = estimate_key_for(target, file_spec, treatment, spec.timeout_sec)
+        for cell in benchmark_cells(spec):
+            estimate_key = estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec)
             cached = selected_rows(
                 rows,
                 estimate_key,
@@ -672,7 +931,8 @@ def build_collection_plan(
                 CellPlan(
                     target=target,
                     file=file_spec,
-                    treatment=treatment,
+                    backend=cell.backend,
+                    treatment=cell.treatment,
                     required_rows=spec.rounds,
                     selected_cached_rows=cached,
                     missing_observations=missing,
@@ -786,20 +1046,24 @@ def target_row_for_request(
     )
 
 
-def build_target(row: TargetRow, output: RunnerOutput) -> tuple[Path, str]:
+def build_target(row: TargetRow, output: RunnerOutput, build_profile: BuildProfile = "release") -> tuple[Path, str]:
     checkout_path = Path(row.path)
     output.build_start(row)
+    if build_profile == "release":
+        build_args = ["cargo", "build", "--release", "-p", "egglog-experimental"]
+    else:
+        build_args = ["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]
     subprocess.run(
-        ["cargo", "build", "--release", "-p", "egglog-experimental"],
+        build_args,
         cwd=checkout_path,
         check=True,
         stdout=sys.stderr,
         stderr=sys.stderr,
     )
     binary_name = "egglog-experimental.exe" if os.name == "nt" else "egglog-experimental"
-    binary_path = checkout_path / "target" / "release" / binary_name
+    binary_path = checkout_path / "target" / build_profile / binary_name
     if not binary_path.is_file():
-        raise FileNotFoundError(f"release binary was not produced: {binary_path}")
+        raise FileNotFoundError(f"{build_profile} binary was not produced: {binary_path}")
     binary_sha256 = sha256_file(binary_path)
     return (binary_path, binary_sha256)
 
@@ -857,16 +1121,42 @@ def resolve_target(
     return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
 
 
+def resolve_profile_target(
+    request: TargetRequest,
+    invocation_cwd: Path,
+    repo_root: Path,
+    output: RunnerOutput,
+) -> ResolvedTarget:
+    if request.is_label_lookup:
+        raise ValueError("profile mode does not support cache-only label= targets; use label=SOURCE")
+    if request.source.startswith("@"):
+        ref = request.source[1:]
+        if not ref:
+            raise ValueError(f"git target is missing a ref: {request.raw}")
+        checkout_path, resolved_sha = materialize_git_ref(repo_root, ref, request.label or ref)
+        row = target_row_for_request(request, checkout_path, resolved_sha)
+    elif parse_pr_number(request.source) is not None:
+        checkout_path, resolved_sha = materialize_pr_target(repo_root, request.source, request.label)
+        row = target_row_for_request(request, checkout_path, resolved_sha)
+    else:
+        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
+        row = target_row_for_request(request, checkout_path, git_ref_value)
+
+    binary_path, binary_sha256 = build_target(row, output, "profiling")
+    row = replace(row, is_dirty=git_dirty(Path(row.path)))
+    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+
+
 def label_has_enough_rows(
     rows: DataFrame[ReportFrame],
     binary_sha256: str,
     spec: BenchmarkSpec,
 ) -> bool:
     for file_spec in spec.files:
-        for treatment in spec.treatments:
+        for cell in benchmark_cells(spec):
             matches = selected_rows(
                 rows,
-                EstimateKey(binary_sha256, file_spec.sha256, treatment, spec.timeout_sec),
+                EstimateKey(binary_sha256, file_spec.sha256, cell.treatment, spec.timeout_sec, cell.backend),
                 spec.rounds,
             )
             if len(matches) < spec.rounds:
@@ -919,27 +1209,176 @@ def treatment_flags(treatment: Treatment) -> list[str]:
     return ["--proofs"]
 
 
-def run_process(
+def backend_flags(backend: Backend) -> list[str]:
+    if backend == "main":
+        return []
+    return ["--backend", backend]
+
+
+def workload_command(
     binary_path: Path,
-    checkout_path: Path,
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
-    timeout_sec: int,
-) -> TimingResult:
-    command = [
+) -> list[str]:
+    return [
         str(binary_path),
         "--mode",
         "no-messages",
         "-j",
         "1",
+        *backend_flags(backend),
         *treatment_flags(treatment),
         str(file_spec.absolute_path),
     ]
-    return run_command(command, checkout_path, timeout_sec)
+
+
+def run_process(
+    binary_path: Path,
+    checkout_path: Path,
+    file_spec: FileSpec,
+    backend: Backend,
+    treatment: Treatment,
+    timeout_sec: int,
+) -> TimingResult:
+    return run_command(workload_command(binary_path, file_spec, backend, treatment), checkout_path, timeout_sec)
 
 
 def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
     return run_command([str(binary_path), "--help"], checkout_path, timeout_sec)
+
+
+def profile_hash_component(value: str) -> str:
+    return value.removeprefix("sha256:")
+
+
+def profile_cache_path(
+    profiles_dir: Path,
+    binary_sha256: str,
+    file_sha256: str,
+    backend: Backend,
+    treatment: Treatment,
+    mode: ProfileMode,
+) -> Path:
+    return (
+        profiles_dir
+        / PROFILE_CACHE_VERSION
+        / profile_hash_component(binary_sha256)
+        / profile_hash_component(file_sha256)
+        / f"{backend}-{treatment}-{mode.cache_label}.json.gz"
+    )
+
+
+def profile_cache_hit(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
+def calculate_profile_iterations(
+    elapsed_seconds: float,
+    profile_seconds: int,
+    max_iterations: int = MAX_PROFILE_ITERATIONS,
+) -> tuple[int, bool]:
+    if elapsed_seconds <= 0:
+        return (max_iterations, True)
+    uncapped = max(1, math.ceil(profile_seconds * 1.10 / elapsed_seconds))
+    if uncapped > max_iterations:
+        return (max_iterations, True)
+    return (uncapped, False)
+
+
+def profile_name(
+    file_spec: FileSpec,
+    backend: Backend,
+    treatment: Treatment,
+    mode: ProfileMode,
+    iterations: int,
+    binary_sha256: str,
+) -> str:
+    stem = Path(file_spec.display_path).stem
+    file_hash = profile_hash_component(file_spec.sha256)[:8]
+    binary_hash = profile_hash_component(binary_sha256)[:8]
+    mode_label = mode.cache_label if mode.iterations is not None else f"auto>={mode.profile_seconds}s"
+    return f"{stem} {backend}/{treatment} {mode_label} x{iterations} [bin:{binary_hash} file:{file_hash}]"
+
+
+def profile_temp_path(artifact: Path) -> Path:
+    return artifact.with_name(f".{artifact.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def samply_executable() -> str:
+    executable = shutil.which("samply")
+    if executable is None:
+        raise FileNotFoundError("Install Samply with: cargo install --locked samply")
+    return executable
+
+
+def samply_record_command(
+    samply: str,
+    artifact: Path,
+    name: str,
+    iterations: int,
+    workload: Sequence[str],
+) -> list[str]:
+    return [
+        samply,
+        "record",
+        "--save-only",
+        "--rate",
+        str(PROFILE_SAMPLY_RATE_HZ),
+        "--reuse-threads",
+        "--iteration-count",
+        str(iterations),
+        "--profile-name",
+        name,
+        "--output",
+        str(artifact),
+        "--",
+        *workload,
+    ]
+
+
+def profile_record_timeout(timeout_sec: int, iterations: int) -> int:
+    return max(timeout_sec + 60, timeout_sec * iterations + 60)
+
+
+def run_samply_record(
+    *,
+    artifact: Path,
+    name: str,
+    iterations: int,
+    workload: Sequence[str],
+    checkout_path: Path,
+    timeout_sec: int,
+) -> None:
+    temp_artifact = profile_temp_path(artifact)
+    temp_artifact.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileNotFoundError):
+        temp_artifact.unlink()
+    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
+    env = os.environ.copy()
+    env["RUST_LOG"] = "error"
+    try:
+        subprocess.run(
+            command,
+            cwd=checkout_path,
+            env=env,
+            check=True,
+            timeout=profile_record_timeout(timeout_sec, iterations),
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+        if not profile_cache_hit(temp_artifact):
+            raise ValueError(f"Samply did not produce a nonempty profile artifact: {temp_artifact}")
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(temp_artifact, artifact)
+    except BaseException:
+        with suppress(FileNotFoundError):
+            temp_artifact.unlink()
+        raise
+
+
+def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
+    subprocess.run([samply_executable(), "load", str(artifact)], cwd=checkout_path, check=True)
 
 
 def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -> TimingResult:
@@ -1028,12 +1467,13 @@ def ru_maxrss_to_bytes(ru_maxrss: int, platform: str = sys.platform) -> int | No
 
 def collection_label(
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
     round_index: int,
     rounds: int,
 ) -> str:
     filename = Path(file_spec.display_path).name
-    return f"{filename} {treatment} {round_index + 1}/{rounds}"
+    return f"{filename} {backend}/{treatment} {round_index + 1}/{rounds}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -1086,8 +1526,8 @@ def emit_collection_plan(
 ) -> None:
     total_estimate = collection_plan_estimate(plan, estimate_model)
     table = Table(title=f"{plan.target.display_label}: cache and estimate plan")
-    table.add_column("File")
-    table.add_column("Treatment")
+    table.add_column("File", overflow="fold")
+    table.add_column("Cell", no_wrap=True)
     table.add_column("Cached")
     table.add_column("Missing")
     table.add_column("Statuses")
@@ -1100,7 +1540,7 @@ def emit_collection_plan(
         statuses = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items())) or "-"
         table.add_row(
             cell.file.display_path,
-            cell.treatment,
+            f"{cell.backend}/{cell.treatment}",
             f"{len(cell.selected_cached_rows)}/{cell.required_rows}",
             str(cell.missing_observations),
             statuses,
@@ -1133,6 +1573,7 @@ def flat_report_record(
         "binary_sha256": target.binary_sha256,
         "file_path": cell.file.display_path,
         "file_sha256": cell.file.sha256,
+        "backend": cell.backend,
         "treatment": cell.treatment,
         "timeout_sec": spec.timeout_sec,
         "wall_sec": result.timing.wall_sec,
@@ -1192,11 +1633,12 @@ def collect_rows(
                 if round_index >= cell.missing_observations:
                     continue
                 cell_file = cell.file
+                cell_backend = cell.backend
                 cell_treatment = cell.treatment
                 cell_key = cell.estimate_key
                 required_rounds = cell.missing_observations
                 observation_number = completed_observations + 1
-                label = collection_label(cell_file, cell_treatment, round_index, required_rounds)
+                label = collection_label(cell_file, cell_backend, cell_treatment, round_index, required_rounds)
 
                 def update_progress(current: str, advance: int = 0) -> None:
                     if progress is None or process_task is None:
@@ -1210,7 +1652,14 @@ def collect_rows(
 
                 update_progress(f"row {observation_number}/{total_observations} timed")
                 started_at = now_iso()
-                result = run_process(binary_path, Path(target.row.path), cell_file, cell_treatment, spec.timeout_sec)
+                result = run_process(
+                    binary_path,
+                    Path(target.row.path),
+                    cell_file,
+                    cell_backend,
+                    cell_treatment,
+                    spec.timeout_sec,
+                )
                 estimate_model.record_process(cell_key, result)
                 decrement_remaining(cell_key)
                 update_progress(
@@ -1443,20 +1892,22 @@ def target_cell_summaries(
     rows: DataFrame[ReportFrame],
     target: ResolvedTarget,
     spec: BenchmarkSpec,
+    backends: Sequence[Backend] | None = None,
     treatments: Sequence[Treatment] | None = None,
 ) -> CellMap:
+    chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, treatment): summarize_cell(
+        (file_spec.sha256, cell.backend, cell.treatment): summarize_cell(
             selected_rows(
                 rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
+                estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
                 spec.rounds,
             ),
             spec.rounds,
         )
         for file_spec in spec.files
-        for treatment in chosen_treatments
+        for cell in backend_treatment_cells(chosen_backends, chosen_treatments)
     }
 
 
@@ -1464,20 +1915,22 @@ def target_rss_cell_summaries(
     rows: DataFrame[ReportFrame],
     target: ResolvedTarget,
     spec: BenchmarkSpec,
+    backends: Sequence[Backend] | None = None,
     treatments: Sequence[Treatment] | None = None,
 ) -> CellMap:
+    chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, treatment): summarize_rss_cell(
+        (file_spec.sha256, cell.backend, cell.treatment): summarize_rss_cell(
             selected_rows(
                 rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
+                estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
                 spec.rounds,
             ),
             spec.rounds,
         )
         for file_spec in spec.files
-        for treatment in chosen_treatments
+        for cell in backend_treatment_cells(chosen_backends, chosen_treatments)
     }
 
 
@@ -1486,12 +1939,13 @@ def target_suite_treatment_ratio(
     candidate_cells: CellMap,
     spec: BenchmarkSpec,
     treatment: Treatment,
+    backend: Backend = "main",
 ) -> RatioSummary:
     return suite_ratio(
         [
             (
-                baseline_cells[(file_spec.sha256, treatment)],
-                candidate_cells[(file_spec.sha256, treatment)],
+                baseline_cells[(file_spec.sha256, backend, treatment)],
+                candidate_cells[(file_spec.sha256, backend, treatment)],
             )
             for file_spec in spec.files
         ]
@@ -1501,14 +1955,15 @@ def target_suite_treatment_ratio(
 def treatment_file_cells(
     cell_map: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
 ) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, baseline_treatment)],
-            cell_map[(file_spec.sha256, candidate_treatment)],
+            cell_map[(file_spec.sha256, backend, baseline_treatment)],
+            cell_map[(file_spec.sha256, backend, candidate_treatment)],
         )
         for file_spec in spec.files
     ]
@@ -1518,13 +1973,31 @@ def target_treatment_file_cells(
     baseline_cells: CellMap,
     candidate_cells: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     treatment: Treatment,
 ) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
     return [
         (
             file_spec,
-            baseline_cells[(file_spec.sha256, treatment)],
-            candidate_cells[(file_spec.sha256, treatment)],
+            baseline_cells[(file_spec.sha256, backend, treatment)],
+            candidate_cells[(file_spec.sha256, backend, treatment)],
+        )
+        for file_spec in spec.files
+    ]
+
+
+def backend_treatment_file_cells(
+    cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_backend: Backend,
+    candidate_backend: Backend,
+    treatment: Treatment,
+) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
+    return [
+        (
+            file_spec,
+            cell_map[(file_spec.sha256, baseline_backend, treatment)],
+            cell_map[(file_spec.sha256, candidate_backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -1550,6 +2023,37 @@ def worst_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[F
     return max(valid, key=lambda item: item[1].point or 0.0)
 
 
+def best_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[FileSpec | None, RatioSummary]:
+    if not ratios:
+        return (None, RatioSummary(None, None, None, "no files"))
+    valid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is not None]
+    if valid:
+        return min(valid, key=lambda item: item[1].point or math.inf)
+    return ratios[0]
+
+
+def count_better_files(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[int, int]:
+    valid = [ratio for _, ratio in ratios if ratio.point is not None]
+    better = sum(1 for ratio in valid if ratio.ci_high is not None and ratio.ci_high < 1.0)
+    return (better, len(valid))
+
+
+def format_better_file_count(count: tuple[int, int]) -> str:
+    better, total = count
+    if total == 0:
+        return "-"
+    return f"{better}/{total}"
+
+
+def suite_total_mean(cells: Sequence[CellSummary]) -> float | None:
+    total = 0.0
+    for cell in cells:
+        if not cell.ok or cell.mean is None:
+            return None
+        total += cell.mean
+    return total
+
+
 def format_estimate_or_interval(
     point: float | None,
     low: float | None,
@@ -1567,6 +2071,10 @@ def format_estimate_or_interval(
 
 def format_seconds_summary(summary: CellSummary) -> str:
     return format_estimate_or_interval(summary.mean, summary.ci_low, summary.ci_high, "s", 4)
+
+
+def format_seconds_value(value: float | None) -> str:
+    return "-" if value is None else f"{value:.4f}s"
 
 
 def format_bytes(value: float | None) -> str:
@@ -1682,6 +2190,18 @@ def report_table(title: str, *, caption: str | None = None, show_lines: bool = F
     )
 
 
+def cell_label(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> str:
+    if len(spec.backends) == 1:
+        return treatment
+    return f"{backend}/{treatment}"
+
+
+def backend_metric_label(spec: BenchmarkSpec, backend: Backend, label: str) -> str:
+    if len(spec.backends) == 1:
+        return label
+    return f"{backend} {label}"
+
+
 def render_report(
     console: Console,
     report_destination: ReportDestination,
@@ -1700,6 +2220,9 @@ def render_report(
     if len(targets) > 1:
         render_per_file_wall_time_change(console, cell_maps, targets, spec)
         render_per_file_peak_rss_change(console, rss_cell_maps, targets, spec)
+    if len(spec.backends) > 1:
+        render_per_file_backend_wall_time_change(console, cell_maps, targets, spec)
+        render_per_file_backend_peak_rss_change(console, rss_cell_maps, targets, spec)
 
     for target in targets:
         render_target_diagnostics(console, cell_maps[target], rss_cell_maps[target], target, spec)
@@ -1732,29 +2255,32 @@ def render_per_file_wall_time_change(
     spec: BenchmarkSpec,
 ) -> None:
     baseline = targets[0]
+    cells = benchmark_cells(spec)
     for target in targets[1:]:
         table = report_table(
             f"Per-file wall-time change vs {baseline.display_label}: {target.display_label}",
             caption=TARGET_WALL_TIME_CAPTION,
         )
         table.add_column("File")
+        table.add_column("Backend")
         table.add_column("Treatment")
         table.add_column("Time ratio", no_wrap=True)
         table.add_column("Wall-time change", no_wrap=True)
         table.add_column("Result")
         for file_spec in spec.files:
-            for treatment_index, treatment in enumerate(spec.treatments):
+            for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, treatment)],
-                    cell_maps[target][(file_spec.sha256, treatment)],
+                    cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
+                    cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
                 )
                 table.add_row(
-                    file_spec.display_path if treatment_index == 0 else "",
-                    treatment,
+                    file_spec.display_path if cell_index == 0 else "",
+                    cell.backend,
+                    cell.treatment,
                     format_ratio_summary(ratio),
                     format_wall_time_change(ratio),
                     format_comparison_result(ratio),
-                    end_section=treatment_index == len(spec.treatments) - 1,
+                    end_section=cell_index == len(cells) - 1,
                 )
         console.print(table)
 
@@ -1767,6 +2293,7 @@ def render_per_file_peak_rss_change(
 ) -> None:
     baseline = targets[0]
     baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
+    cells = benchmark_cells(spec)
     for target in targets[1:]:
         if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
             continue
@@ -1775,25 +2302,110 @@ def render_per_file_peak_rss_change(
             caption=TARGET_PEAK_RSS_CAPTION,
         )
         table.add_column("File")
+        table.add_column("Backend")
         table.add_column("Treatment")
         table.add_column("RSS ratio", no_wrap=True)
         table.add_column("RSS change", no_wrap=True)
         table.add_column("Result")
         for file_spec in spec.files:
-            for treatment_index, treatment in enumerate(spec.treatments):
+            for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    rss_cell_maps[baseline][(file_spec.sha256, treatment)],
-                    rss_cell_maps[target][(file_spec.sha256, treatment)],
+                    rss_cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
+                    rss_cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
                 )
                 table.add_row(
-                    file_spec.display_path if treatment_index == 0 else "",
-                    treatment,
+                    file_spec.display_path if cell_index == 0 else "",
+                    cell.backend,
+                    cell.treatment,
                     format_ratio_summary(ratio),
                     format_percent_change(ratio),
                     format_lower_is_better_result(ratio),
-                    end_section=treatment_index == len(spec.treatments) - 1,
+                    end_section=cell_index == len(cells) - 1,
                 )
         console.print(table)
+
+
+def render_per_file_backend_wall_time_change(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline_backend = spec.backends[0]
+    for target in targets:
+        for backend in spec.backends[1:]:
+            shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
+            if not shared_treatments:
+                continue
+            table = report_table(
+                f"Per-file backend wall-time change vs {baseline_backend}: {target.display_label} {backend}",
+                caption=BACKEND_WALL_TIME_CAPTION,
+            )
+            table.add_column("File")
+            table.add_column("Treatment")
+            table.add_column("Time ratio", no_wrap=True)
+            table.add_column("Wall-time change", no_wrap=True)
+            table.add_column("Result")
+            for file_spec in spec.files:
+                for treatment_index, treatment in enumerate(shared_treatments):
+                    ratio = ratio_summary(
+                        cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
+                        cell_maps[target][(file_spec.sha256, backend, treatment)],
+                    )
+                    table.add_row(
+                        file_spec.display_path if treatment_index == 0 else "",
+                        treatment,
+                        format_ratio_summary(ratio),
+                        format_wall_time_change(ratio),
+                        format_comparison_result(ratio),
+                        end_section=treatment_index == len(shared_treatments) - 1,
+                    )
+            console.print(table)
+
+
+def render_per_file_backend_peak_rss_change(
+    console: Console,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    baseline_backend = spec.backends[0]
+    baseline_has_rss = {
+        target: any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == baseline_backend)
+        for target in targets
+    }
+    for target in targets:
+        for backend in spec.backends[1:]:
+            shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
+            if not shared_treatments:
+                continue
+            candidate_has_rss = any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == backend)
+            if not baseline_has_rss[target] and not candidate_has_rss:
+                continue
+            table = report_table(
+                f"Per-file backend peak RSS change vs {baseline_backend}: {target.display_label} {backend}",
+                caption=BACKEND_PEAK_RSS_CAPTION,
+            )
+            table.add_column("File")
+            table.add_column("Treatment")
+            table.add_column("RSS ratio", no_wrap=True)
+            table.add_column("RSS change", no_wrap=True)
+            table.add_column("Result")
+            for file_spec in spec.files:
+                for treatment_index, treatment in enumerate(shared_treatments):
+                    ratio = ratio_summary(
+                        rss_cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
+                        rss_cell_maps[target][(file_spec.sha256, backend, treatment)],
+                    )
+                    table.add_row(
+                        file_spec.display_path if treatment_index == 0 else "",
+                        treatment,
+                        format_ratio_summary(ratio),
+                        format_percent_change(ratio),
+                        format_lower_is_better_result(ratio),
+                        end_section=treatment_index == len(shared_treatments) - 1,
+                    )
+            console.print(table)
 
 
 def render_benchmark_summary(
@@ -1804,6 +2416,7 @@ def render_benchmark_summary(
     spec: BenchmarkSpec,
 ) -> None:
     console.rule("[bold]Benchmark summary[/bold]")
+    render_backend_summary(console, cell_maps, rss_cell_maps, targets, spec)
     if len(targets) == 1:
         render_single_target_summary(console, cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
     else:
@@ -1824,13 +2437,59 @@ def render_single_target_summary(
     table.add_column("Worst file")
     table.add_column("Worst ratio", no_wrap=True)
     table.add_column("Result")
-    if "off" in spec.treatments and "proofs" in spec.treatments:
-        add_within_target_wall_summary_row(table, cell_map, spec, "off", "proofs", "wall proofs/off")
-        add_within_target_rss_summary_row(table, rss_cell_map, spec, "off", "proofs", "peak RSS proofs/off")
-    else:
-        table.add_row("no proof baseline", "-", "-", "-", "-", styled_status("descriptive", "select off and proofs"))
-    if "term" in spec.treatments and "proofs" in spec.treatments:
-        add_within_target_rss_summary_row(table, rss_cell_map, spec, "term", "proofs", "peak RSS proofs/term")
+    for backend in spec.backends:
+        has_off_proofs = backend_has_treatment(spec, backend, "off") and backend_has_treatment(spec, backend, "proofs")
+        has_term_proofs = backend_has_treatment(spec, backend, "term") and backend_has_treatment(
+            spec, backend, "proofs"
+        )
+        if has_off_proofs:
+            add_within_target_wall_summary_row(
+                table,
+                cell_map,
+                spec,
+                backend,
+                "off",
+                "proofs",
+                backend_metric_label(spec, backend, "wall proofs/off"),
+            )
+            add_within_target_rss_summary_row(
+                table,
+                rss_cell_map,
+                spec,
+                backend,
+                "off",
+                "proofs",
+                backend_metric_label(spec, backend, "peak RSS proofs/off"),
+            )
+        elif has_term_proofs:
+            add_within_target_wall_summary_row(
+                table,
+                cell_map,
+                spec,
+                backend,
+                "term",
+                "proofs",
+                backend_metric_label(spec, backend, "wall proofs/term"),
+            )
+        else:
+            table.add_row(
+                backend_metric_label(spec, backend, "no proof baseline"),
+                "-",
+                "-",
+                "-",
+                "-",
+                styled_status("descriptive", "select off and proofs"),
+            )
+        if has_term_proofs:
+            add_within_target_rss_summary_row(
+                table,
+                rss_cell_map,
+                spec,
+                backend,
+                "term",
+                "proofs",
+                backend_metric_label(spec, backend, "peak RSS proofs/term"),
+            )
     console.print(table)
 
 
@@ -1838,11 +2497,12 @@ def add_within_target_wall_summary_row(
     table: Table,
     cell_map: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
     label: str,
 ) -> None:
-    file_cells = treatment_file_cells(cell_map, spec, baseline_treatment, candidate_treatment)
+    file_cells = treatment_file_cells(cell_map, spec, backend, baseline_treatment, candidate_treatment)
     pairs = summary_pairs(file_cells)
     summary = suite_ratio(pairs)
     geometric = geometric_mean_ratio(pairs)
@@ -1871,11 +2531,12 @@ def add_within_target_rss_summary_row(
     table: Table,
     rss_cell_map: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
     label: str,
 ) -> None:
-    file_cells = treatment_file_cells(rss_cell_map, spec, baseline_treatment, candidate_treatment)
+    file_cells = treatment_file_cells(rss_cell_map, spec, backend, baseline_treatment, candidate_treatment)
     pairs = summary_pairs(file_cells)
     summary = suite_ratio(pairs)
     worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
@@ -1897,11 +2558,13 @@ def render_multi_target_summary(
     spec: BenchmarkSpec,
 ) -> None:
     baseline = targets[0]
+    cells = benchmark_cells(spec)
     wall_table = report_table(
         f"Wall-time summary vs {baseline.display_label}",
         caption=TARGET_WALL_TIME_CAPTION,
     )
     wall_table.add_column("Target")
+    wall_table.add_column("Backend")
     wall_table.add_column("Treatment")
     wall_table.add_column("Wall-time change", no_wrap=True)
     wall_table.add_column("Geomean", no_wrap=True)
@@ -1909,15 +2572,18 @@ def render_multi_target_summary(
     wall_table.add_column("Worst ratio", no_wrap=True)
     wall_table.add_column("Result")
     for target in targets[1:]:
-        for treatment in spec.treatments:
-            file_cells = target_treatment_file_cells(cell_maps[baseline], cell_maps[target], spec, treatment)
+        for cell in cells:
+            file_cells = target_treatment_file_cells(
+                cell_maps[baseline], cell_maps[target], spec, cell.backend, cell.treatment
+            )
             pairs = summary_pairs(file_cells)
             suite = suite_ratio(pairs)
             geometric = geometric_mean_ratio(pairs)
             worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
             wall_table.add_row(
                 target.display_label,
-                treatment,
+                cell.backend,
+                cell.treatment,
                 format_wall_time_change(suite),
                 format_ratio_summary(geometric),
                 format_worst_file(worst_file),
@@ -1931,6 +2597,7 @@ def render_multi_target_summary(
         caption=TARGET_PEAK_RSS_CAPTION,
     )
     rss_table.add_column("Target")
+    rss_table.add_column("Backend")
     rss_table.add_column("Treatment")
     rss_table.add_column("RSS change", no_wrap=True)
     rss_table.add_column("Geomean", no_wrap=True)
@@ -1938,21 +2605,174 @@ def render_multi_target_summary(
     rss_table.add_column("Worst ratio", no_wrap=True)
     rss_table.add_column("Result")
     for target in targets[1:]:
-        for treatment in spec.treatments:
-            file_cells = target_treatment_file_cells(rss_cell_maps[baseline], rss_cell_maps[target], spec, treatment)
+        for cell in cells:
+            file_cells = target_treatment_file_cells(
+                rss_cell_maps[baseline],
+                rss_cell_maps[target],
+                spec,
+                cell.backend,
+                cell.treatment,
+            )
             pairs = summary_pairs(file_cells)
             summary = suite_ratio(pairs)
             geometric = geometric_mean_ratio(pairs)
             worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
             rss_table.add_row(
                 target.display_label,
-                treatment,
+                cell.backend,
+                cell.treatment,
                 format_percent_change(summary),
                 format_ratio_summary(geometric),
                 format_worst_file(worst_file),
                 format_ratio_summary(worst),
                 format_lower_is_better_result(summary),
             )
+    console.print(rss_table)
+
+
+def display_backend(backend: Backend) -> str:
+    if backend == "flowlog":
+        return "FlowLog"
+    return backend
+
+
+def backend_summary_title(spec: BenchmarkSpec, baseline_backend: Backend, metric: str) -> str:
+    if len(spec.backends) == 2:
+        return f"{display_backend(spec.backends[1])} vs {display_backend(baseline_backend)} {metric}"
+    return f"Backend {metric} summary vs {display_backend(baseline_backend)}"
+
+
+def backend_ratio_heading(spec: BenchmarkSpec, baseline_backend: Backend) -> str:
+    if len(spec.backends) == 2:
+        return f"{display_backend(spec.backends[1])}/{display_backend(baseline_backend)}"
+    return f"Candidate/{display_backend(baseline_backend)}"
+
+
+def backend_candidate_total_heading(spec: BenchmarkSpec) -> str:
+    if len(spec.backends) == 2:
+        return f"{display_backend(spec.backends[1])} total"
+    return "Candidate total"
+
+
+def render_backend_summary(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    if len(spec.backends) <= 1:
+        return
+    baseline_backend = spec.backends[0]
+    include_target = len(targets) > 1
+    ratio_heading = backend_ratio_heading(spec, baseline_backend)
+    candidate_total_heading = backend_candidate_total_heading(spec)
+    wall_table = report_table(
+        backend_summary_title(spec, baseline_backend, "wall time"),
+        caption=BACKEND_WALL_TIME_CAPTION,
+    )
+    if include_target:
+        wall_table.add_column("Target")
+    wall_table.add_column("Backend")
+    wall_table.add_column("Mode")
+    wall_table.add_column(f"{display_backend(baseline_backend)} total", no_wrap=True)
+    wall_table.add_column(candidate_total_heading, no_wrap=True)
+    wall_table.add_column(ratio_heading, no_wrap=True)
+    wall_table.add_column("Change", no_wrap=True)
+    wall_table.add_column("File geomean", no_wrap=True)
+    wall_table.add_column("Faster files", no_wrap=True)
+    wall_table.add_column("Best file")
+    wall_table.add_column("Best ratio", no_wrap=True)
+    wall_table.add_column("Best result")
+    for target in targets:
+        for backend in spec.backends[1:]:
+            for treatment in shared_backend_treatments(spec, baseline_backend, backend):
+                file_cells = backend_treatment_file_cells(
+                    cell_maps[target],
+                    spec,
+                    baseline_backend,
+                    backend,
+                    treatment,
+                )
+                pairs = summary_pairs(file_cells)
+                suite = suite_ratio(pairs)
+                geometric = geometric_mean_ratio(pairs)
+                ratios = ratio_pairs(file_cells)
+                best_file, best = best_file_ratio(ratios)
+                row_values: list[Any] = []
+                if include_target:
+                    row_values.append(target.display_label)
+                row_values.extend(
+                    [
+                        backend,
+                        treatment,
+                        format_seconds_value(suite_total_mean([baseline for baseline, _ in pairs])),
+                        format_seconds_value(suite_total_mean([candidate for _, candidate in pairs])),
+                        format_ratio_summary(suite),
+                        format_wall_time_change(suite),
+                        format_ratio_summary(geometric),
+                        format_better_file_count(count_better_files(ratios)),
+                        format_worst_file(best_file),
+                        format_ratio_summary(best),
+                        format_comparison_result(best),
+                    ]
+                )
+                wall_table.add_row(*row_values)
+    console.print(wall_table)
+
+    if not any(cell.samples for target in targets for cell in rss_cell_maps[target].values()):
+        return
+    rss_table = report_table(
+        backend_summary_title(spec, baseline_backend, "peak RSS"),
+        caption=BACKEND_PEAK_RSS_CAPTION,
+    )
+    if include_target:
+        rss_table.add_column("Target")
+    rss_table.add_column("Backend")
+    rss_table.add_column("Mode")
+    rss_table.add_column(f"{display_backend(baseline_backend)} total", no_wrap=True)
+    rss_table.add_column(candidate_total_heading, no_wrap=True)
+    rss_table.add_column(ratio_heading, no_wrap=True)
+    rss_table.add_column("Change", no_wrap=True)
+    rss_table.add_column("File geomean", no_wrap=True)
+    rss_table.add_column("Lower-RSS files", no_wrap=True)
+    rss_table.add_column("Best file")
+    rss_table.add_column("Best ratio", no_wrap=True)
+    rss_table.add_column("Best result")
+    for target in targets:
+        for backend in spec.backends[1:]:
+            for treatment in shared_backend_treatments(spec, baseline_backend, backend):
+                file_cells = backend_treatment_file_cells(
+                    rss_cell_maps[target],
+                    spec,
+                    baseline_backend,
+                    backend,
+                    treatment,
+                )
+                pairs = summary_pairs(file_cells)
+                summary = suite_ratio(pairs)
+                geometric = geometric_mean_ratio(pairs)
+                ratios = ratio_pairs(file_cells)
+                best_file, best = best_file_ratio(ratios)
+                rss_row_values: list[Any] = []
+                if include_target:
+                    rss_row_values.append(target.display_label)
+                rss_row_values.extend(
+                    [
+                        backend,
+                        treatment,
+                        format_bytes(suite_total_mean([baseline for baseline, _ in pairs])),
+                        format_bytes(suite_total_mean([candidate for _, candidate in pairs])),
+                        format_ratio_summary(summary),
+                        format_percent_change(summary),
+                        format_ratio_summary(geometric),
+                        format_better_file_count(count_better_files(ratios)),
+                        format_worst_file(best_file),
+                        format_ratio_summary(best),
+                        format_lower_is_better_result(best),
+                    ]
+                )
+                rss_table.add_row(*rss_row_values)
     console.print(rss_table)
 
 
@@ -1968,24 +2788,25 @@ def render_target_diagnostics(
     spec: BenchmarkSpec,
 ) -> None:
     render_overhead_ratios(console, cell_map, target, spec)
+    cells = benchmark_cells(spec)
 
     means_table = report_table(
         f"{target.display_label}: per-file wall time",
         caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
     )
     means_table.add_column("File")
-    for treatment in spec.treatments:
-        means_table.add_column(treatment, no_wrap=True)
+    for cell in cells:
+        means_table.add_column(cell_label(spec, cell.backend, cell.treatment), no_wrap=True)
     means_rows: list[tuple[list[str], str]] = []
     has_mean_issues = False
     for file_spec in spec.files:
         issue_parts: list[str] = []
         row_values = [file_spec.display_path]
-        for treatment in spec.treatments:
-            cell = cell_map[(file_spec.sha256, treatment)]
-            row_values.append(format_seconds_summary(cell))
-            if cell.issue is not None:
-                issue_parts.append(f"{treatment}: {cell.issue}")
+        for cell in cells:
+            summary = cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            row_values.append(format_seconds_summary(summary))
+            if summary.issue is not None:
+                issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
         issue_text = "; ".join(issue_parts)
         has_mean_issues = has_mean_issues or bool(issue_text)
         means_rows.append((row_values, issue_text))
@@ -2006,24 +2827,26 @@ def render_overhead_ratios(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
 ) -> None:
-    ratio_columns = ratio_specs(spec.treatments)
-    if not ratio_columns:
+    ratio_columns = {backend: ratio_specs_for_backend(spec, backend) for backend in spec.backends}
+    if not any(ratio_columns.values()):
         return
     ratio_table = report_table(
         f"{target.display_label}: overhead ratios",
         caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
     )
     ratio_table.add_column("File")
-    for _, _, ratio_name in ratio_columns:
-        ratio_table.add_column(ratio_name, no_wrap=True)
+    for backend in spec.backends:
+        for _, _, ratio_name in ratio_columns[backend]:
+            ratio_table.add_column(backend_metric_label(spec, backend, ratio_name), no_wrap=True)
     for file_spec in spec.files:
         row_values = [file_spec.display_path]
-        for baseline_treatment, candidate_treatment, _ in ratio_columns:
-            ratio = ratio_summary(
-                cell_map[(file_spec.sha256, baseline_treatment)],
-                cell_map[(file_spec.sha256, candidate_treatment)],
-            )
-            row_values.append(format_ratio_summary(ratio))
+        for backend in spec.backends:
+            for baseline_treatment, candidate_treatment, _ in ratio_columns[backend]:
+                ratio = ratio_summary(
+                    cell_map[(file_spec.sha256, backend, baseline_treatment)],
+                    cell_map[(file_spec.sha256, backend, candidate_treatment)],
+                )
+                row_values.append(format_ratio_summary(ratio))
         ratio_table.add_row(*row_values)
     console.print(ratio_table)
 
@@ -2036,23 +2859,24 @@ def render_peak_rss_diagnostics(
 ) -> None:
     if not any(cell.samples for cell in rss_cell_map.values()):
         return
+    cells = benchmark_cells(spec)
     rss_table = report_table(
         f"{target.display_label}: per-file peak RSS",
         caption="Within-target peak resident set size estimates. These are separate from wall-time ratios.",
     )
     rss_table.add_column("File")
-    for treatment in spec.treatments:
-        rss_table.add_column(treatment, no_wrap=True)
+    for cell in cells:
+        rss_table.add_column(cell_label(spec, cell.backend, cell.treatment), no_wrap=True)
     rss_rows: list[tuple[list[str], str]] = []
     has_rss_issues = False
     for file_spec in spec.files:
         issue_parts: list[str] = []
         row_values = [file_spec.display_path]
-        for treatment in spec.treatments:
-            cell = rss_cell_map[(file_spec.sha256, treatment)]
-            row_values.append(format_bytes_summary(cell))
-            if cell.issue is not None:
-                issue_parts.append(f"{treatment}: {cell.issue}")
+        for cell in cells:
+            summary = rss_cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            row_values.append(format_bytes_summary(summary))
+            if summary.issue is not None:
+                issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
         issue_text = "; ".join(issue_parts)
         has_rss_issues = has_rss_issues or bool(issue_text)
         rss_rows.append((row_values, issue_text))
@@ -2076,14 +2900,97 @@ def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treat
     return tuple(specs)
 
 
+def ratio_specs_for_backend(
+    spec: BenchmarkSpec,
+    backend: Backend,
+) -> tuple[tuple[Treatment, Treatment, str], ...]:
+    return tuple(
+        ratio_spec
+        for ratio_spec in ratio_specs(spec.treatments)
+        if backend_has_treatment(spec, backend, ratio_spec[0]) and backend_has_treatment(spec, backend, ratio_spec[1])
+    )
+
+
+def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: Path, repo_root: Path) -> None:
+    request = resolve_profile_request(args, invocation_cwd)
+    target = resolve_profile_target(request.target_request, invocation_cwd, repo_root, output)
+    if target.binary_path is None:
+        raise ValueError(f"target {target.display_label} needs a profiling binary")
+    checkout_path = Path(target.row.path)
+    workload = workload_command(target.binary_path, request.file, request.backend, request.treatment)
+    artifact = profile_cache_path(
+        request.profiles_dir,
+        target.binary_sha256,
+        request.file.sha256,
+        request.backend,
+        request.treatment,
+        request.mode,
+    )
+    if profile_cache_hit(artifact) and not request.force_run:
+        output.console.print(f"[bold]Profile cache hit[/bold] {artifact}")
+        if request.open_after:
+            open_samply_profile(artifact, checkout_path)
+        return
+
+    iterations = request.mode.iterations
+    if iterations is None:
+        assert request.mode.profile_seconds is not None
+        output.console.print(
+            f"[bold]Calibrating[/bold] {request.file.display_path} "
+            f"{request.backend}/{request.treatment} for {request.mode.profile_seconds}s"
+        )
+        calibration = run_command(workload, checkout_path, request.timeout_sec)
+        if calibration.status != "success" or calibration.timing.wall_sec is None:
+            detail = calibration.error.message if calibration.error is not None else calibration.status
+            raise ValueError(f"profile calibration failed: {detail}")
+        iterations, capped = calculate_profile_iterations(
+            calibration.timing.wall_sec,
+            request.mode.profile_seconds,
+        )
+        output.console.print(
+            f"  calibration: {calibration.timing.wall_sec:.3f}s; recording {iterations} Samply iteration(s)"
+        )
+        if capped:
+            output.console.print(
+                "[yellow]warning:[/yellow] maximum profile iterations reached; "
+                "the profile may be shorter than the requested duration"
+            )
+
+    assert iterations is not None
+    name = profile_name(
+        request.file,
+        request.backend,
+        request.treatment,
+        request.mode,
+        iterations,
+        target.binary_sha256,
+    )
+    output.console.print(f"[bold]Recording profile[/bold] {artifact}")
+    run_samply_record(
+        artifact=artifact,
+        name=name,
+        iterations=iterations,
+        workload=workload,
+        checkout_path=checkout_path,
+        timeout_sec=request.timeout_sec,
+    )
+    output.console.print(f"[bold]Profile written[/bold] {artifact}")
+    if request.open_after:
+        open_samply_profile(artifact, checkout_path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     output = RunnerOutput()
     try:
         script_root = Path(__file__).resolve().parent
-        treatments = parse_treatments(args.treatments)
         invocation_cwd = Path.cwd()
         repo_root = git_root_for_path(script_root)
+        if args.command == "profile":
+            run_profile(args, output, invocation_cwd, repo_root)
+            return 0
+        backends = parse_backends(args.backend)
+        treatments = parse_treatments(args.treatments)
         report_destination = resolve_report_destination(args.report, invocation_cwd)
         files = resolve_files(args.files, invocation_cwd)
         spec = BenchmarkSpec(
@@ -2091,6 +2998,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             treatments=treatments,
             rounds=args.rounds,
             timeout_sec=args.timeout_sec,
+            backends=backends,
         )
         validate_spec(spec)
         target_specs = args.target if args.target is not None else ["."]
@@ -2126,7 +3034,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets,
             spec,
         )
-    except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
+    except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2
     return 0

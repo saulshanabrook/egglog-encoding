@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import io
 import json
 import resource
@@ -26,6 +27,7 @@ def make_record(
     max_rss_bytes: int | None = None,
     binary_sha256: str = "sha256:bin",
     file_sha256: str = "sha256:file",
+    backend: bench.Backend = "main",
     treatment: bench.Treatment = "off",
     timeout_sec: int = 120,
     target_label: str | None = None,
@@ -43,6 +45,7 @@ def make_record(
         "binary_sha256": binary_sha256,
         "file_path": "file.egg",
         "file_sha256": file_sha256,
+        "backend": backend,
         "treatment": treatment,
         "timeout_sec": timeout_sec,
         "wall_sec": None if status == "timed-out" else wall_sec,
@@ -262,6 +265,81 @@ def test_parse_treatments_rejects_duplicates() -> None:
         bench.parse_treatments("off,term,off")
 
 
+def test_parse_backends_accepts_single_and_comma_separated_values() -> None:
+    assert bench.parse_backends("main") == ("main",)
+    assert bench.parse_backends("main,flowlog") == ("main", "flowlog")
+    assert bench.parse_backends(" flowlog , main ") == ("flowlog", "main")
+
+
+def test_parse_backends_rejects_duplicates_unknowns_and_empty_values() -> None:
+    with pytest.raises(ValueError, match="duplicate backend: main"):
+        bench.parse_backends("main,flowlog,main")
+    with pytest.raises(ValueError, match="unknown backend: dd"):
+        bench.parse_backends("dd")
+    with pytest.raises(ValueError, match="at least one backend"):
+        bench.parse_backends(",,")
+
+
+def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
+    benchmark_args = bench.parse_args(["--rounds", "1", "file.egg"])
+    profile_args = bench.parse_args(["profile", "file.egg"])
+
+    assert benchmark_args.command == "benchmark"
+    assert benchmark_args.files == ["file.egg"]
+    assert benchmark_args.rounds == 1
+    assert profile_args.command == "profile"
+    assert profile_args.file == "file.egg"
+    assert profile_args.backend == "main"
+    assert profile_args.treatment == "proofs"
+
+
+def test_parse_profile_args_rejects_iterations_with_profile_seconds() -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["profile", "file.egg", "--iterations", "1", "--profile-seconds", "1"])
+
+
+def test_benchmark_cells_filter_off_for_non_main_backends() -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    spec = bench.BenchmarkSpec(
+        files=(file_spec,),
+        treatments=("off", "term", "proofs"),
+        rounds=1,
+        timeout_sec=120,
+        backends=("main", "flowlog"),
+    )
+
+    assert bench.benchmark_cells(spec) == (
+        bench.BenchmarkCell("main", "off"),
+        bench.BenchmarkCell("main", "term"),
+        bench.BenchmarkCell("main", "proofs"),
+        bench.BenchmarkCell("flowlog", "term"),
+        bench.BenchmarkCell("flowlog", "proofs"),
+    )
+
+
+def test_validate_spec_rejects_backend_with_no_supported_treatments() -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    spec = bench.BenchmarkSpec(
+        files=(file_spec,),
+        treatments=("off",),
+        rounds=1,
+        timeout_sec=120,
+        backends=("flowlog",),
+    )
+
+    with pytest.raises(ValueError, match="backend flowlog has no supported treatments"):
+        bench.validate_spec(spec)
+
+
+def test_resolve_profile_request_reuses_backend_treatment_validation(tmp_path: Path) -> None:
+    file_path = tmp_path / "file.egg"
+    file_path.write_text("(check (= 1 1))\n", encoding="utf-8")
+    args = bench.parse_args(["profile", str(file_path), "--backend", "flowlog", "--treatment", "off"])
+
+    with pytest.raises(ValueError, match="backend flowlog has no supported treatments"):
+        bench.resolve_profile_request(args, ROOT)
+
+
 def test_validate_spec_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
     prove_file = tmp_path / "prove.egg"
     prove_file.write_text(
@@ -370,6 +448,27 @@ def test_collection_plan_counts_cache_and_missing_rows() -> None:
     assert plan.total_planned_processes == 2
     assert force_plan.cells[0].missing_observations == 2
     assert force_plan.total_planned_processes == 3
+
+
+def test_collection_plan_does_not_reuse_main_rows_for_flowlog() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", backend="main", treatment="term", wall_sec=1.0))
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    spec = bench.BenchmarkSpec(
+        files=(file_spec,),
+        treatments=("term",),
+        rounds=1,
+        timeout_sec=120,
+        backends=("main", "flowlog"),
+    )
+
+    plan = bench.build_collection_plan(rows, target, spec, False)
+
+    main_cell, flowlog_cell = plan.cells
+    assert main_cell.backend == "main"
+    assert main_cell.missing_observations == 0
+    assert flowlog_cell.backend == "flowlog"
+    assert flowlog_cell.missing_observations == 1
 
 
 def test_parse_args_rejects_removed_output_mode() -> None:
@@ -500,6 +599,107 @@ def test_render_report_compares_multiple_targets_before_bottom_summary() -> None
     assert "Target comparison" not in output
     assert output.index("Per-file wall-time change vs base") < output.index("base: per-file wall time")
     assert output.index("base: per-file wall time") < output.index("Benchmark summary")
+
+
+def test_render_report_compares_backends_for_single_target() -> None:
+    rows = make_rows(
+        make_record(0, started_at="2026-07-04T12:00:00Z", backend="main", treatment="term", wall_sec=1.0),
+        make_record(1, started_at="2026-07-04T12:00:01Z", backend="main", treatment="term", wall_sec=1.1),
+        make_record(2, started_at="2026-07-04T12:00:00Z", backend="flowlog", treatment="term", wall_sec=2.0),
+        make_record(3, started_at="2026-07-04T12:00:01Z", backend="flowlog", treatment="term", wall_sec=2.1),
+    )
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    stream = io.StringIO()
+    console = Console(file=stream, width=240, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(
+            files=(file_spec,),
+            treatments=("term",),
+            rounds=2,
+            timeout_sec=120,
+            backends=("main", "flowlog"),
+        ),
+    )
+
+    output = stream.getvalue()
+    assert "Per-file backend wall-time change vs main" in output
+    assert "FlowLog vs main wall time" in output
+    assert "FlowLog/main" in output
+    assert "Best file" in output
+    assert "Best ratio" in output
+    assert "Faster files" in output
+    assert "main/term" in output
+    assert "flowlog/term" in output
+    assert "flowlog/off" not in output
+    assert "1.952x" in output
+    assert output.index("FlowLog vs main wall time") < output.index("proof overhead summary")
+
+
+def test_render_report_backend_summary_highlights_best_file() -> None:
+    records: list[dict[str, Any]] = []
+
+    def add_cell(
+        *,
+        file_sha256: str,
+        backend: bench.Backend,
+        wall_sec: float,
+        max_rss_bytes: int,
+    ) -> None:
+        for _ in range(2):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-04T12:00:{len(records):02d}Z",
+                    file_sha256=file_sha256,
+                    backend=backend,
+                    treatment="term",
+                    wall_sec=wall_sec,
+                    max_rss_bytes=max_rss_bytes,
+                )
+            )
+
+    mib = 1024 * 1024
+    add_cell(file_sha256="sha256:slow", backend="main", wall_sec=1.0, max_rss_bytes=100 * mib)
+    add_cell(file_sha256="sha256:slow", backend="flowlog", wall_sec=2.0, max_rss_bytes=200 * mib)
+    add_cell(file_sha256="sha256:fast", backend="main", wall_sec=1.0, max_rss_bytes=100 * mib)
+    add_cell(file_sha256="sha256:fast", backend="flowlog", wall_sec=0.5, max_rss_bytes=80 * mib)
+    rows = make_rows(*records)
+    target = make_target()
+    slow_file = bench.FileSpec("slow.egg", ROOT / "slow.egg", "sha256:slow")
+    fast_file = bench.FileSpec("fast.egg", ROOT / "fast.egg", "sha256:fast")
+    stream = io.StringIO()
+    console = Console(file=stream, width=260, color_system=None)
+
+    bench.render_report(
+        console,
+        bench.ReportDestination(path=None, stream=io.StringIO()),
+        rows,
+        [target],
+        bench.BenchmarkSpec(
+            files=(slow_file, fast_file),
+            treatments=("term",),
+            rounds=2,
+            timeout_sec=120,
+            backends=("main", "flowlog"),
+        ),
+    )
+
+    output = stream.getvalue()
+    assert "FlowLog vs main wall time" in output
+    assert "FlowLog vs main peak RSS" in output
+    assert "Faster files" in output
+    assert "Lower-RSS files" in output
+    assert "fast.egg" in output
+    assert "1/2" in output
+    assert "1.250x" in output
+    assert "0.500x" in output
+    assert "0.800x" in output
 
 
 def test_render_report_compares_proofs_only_targets_with_percent_change() -> None:
@@ -659,6 +859,7 @@ def test_report_dash_writes_rows_to_stream_and_does_not_load_cache() -> None:
     assert records[0]["wall_sec"] == 1.0
     assert records[0]["target_source"] == "."
     assert records[0]["file_path"] == "file.egg"
+    assert records[0]["backend"] == "main"
     assert "row_index" not in records[0]
     assert "warmup_rounds" not in records[0]
     assert "target" not in records[0]
@@ -676,13 +877,27 @@ def test_flat_jsonl_roundtrips_through_report_frame(tmp_path: Path) -> None:
     raw_record = json.loads(report.read_text(encoding="utf-8"))
     assert raw_record["target_label"] == "mine"
     assert raw_record["wall_sec"] == 1.0
+    assert raw_record["backend"] == "main"
     assert "row_index" not in raw_record
     assert "warmup_rounds" not in raw_record
     assert "target" not in raw_record
 
     assert loaded["row_index"].tolist() == [0]
     assert loaded["target_label"].tolist() == ["mine"]
+    assert loaded["backend"].tolist() == ["main"]
     assert loaded["wall_sec"].tolist() == [1.0]
+
+
+def test_old_flat_jsonl_without_backend_loads_as_main(tmp_path: Path) -> None:
+    report = tmp_path / "reports.jsonl"
+    record = make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0)
+    record.pop("row_index")
+    record.pop("backend")
+    report.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+    loaded = bench.load_report(bench.ReportDestination(path=report))
+
+    assert loaded["backend"].tolist() == ["main"]
 
 
 def test_report_frame_rejects_success_without_wall_time() -> None:
@@ -725,6 +940,373 @@ def test_run_command_records_signal_separately_from_exit_code() -> None:
     assert result.error is not None
     assert result.error.exit_code is None
     assert result.error.signal == signal.SIGTERM
+
+
+def test_run_process_passes_backend_flag_only_for_flowlog(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[list[str]] = []
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+
+    def fake_run_command(command: list[str], checkout_path: Path, timeout_sec: int) -> bench.TimingResult:
+        commands.append(command)
+        assert checkout_path == ROOT
+        assert timeout_sec == 120
+        return bench.TimingResult("success", bench.TimingRow(wall_sec=1.0), None)
+
+    monkeypatch.setattr(bench, "run_command", fake_run_command)
+
+    bench.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "main", "off", 120)
+    bench.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "flowlog", "proofs", 120)
+
+    assert "--backend" not in commands[0]
+    assert commands[1][commands[1].index("--backend") : commands[1].index("--backend") + 2] == [
+        "--backend",
+        "flowlog",
+    ]
+    assert "--proofs" in commands[1]
+
+
+def test_workload_command_matches_benchmark_behavior() -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+
+    assert bench.workload_command(ROOT / "egglog-experimental", file_spec, "main", "off") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        str(file_spec.absolute_path),
+    ]
+    assert bench.workload_command(ROOT / "egglog-experimental", file_spec, "flowlog", "proofs") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--backend",
+        "flowlog",
+        "--proofs",
+        str(file_spec.absolute_path),
+    ]
+
+
+def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+    binary = tmp_path / "target" / "profiling" / "egglog-experimental"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("binary", encoding="utf-8")
+    row = bench.TargetRow(
+        source=".",
+        path=str(tmp_path),
+        git_ref="HEAD",
+        git_sha="abc123",
+        is_dirty=False,
+    )
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        commands.append(command)
+
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+    monkeypatch.setattr(bench, "sha256_file", lambda path: "sha256:bin")
+
+    binary_path, binary_sha256 = bench.build_target(row, bench.RunnerOutput(), "profiling")
+
+    assert commands == [["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]]
+    assert binary_path == binary
+    assert binary_sha256 == "sha256:bin"
+
+
+def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
+    binary_hash = "sha256:" + "a" * 64
+    file_hash = "sha256:" + "b" * 64
+
+    explicit = bench.profile_cache_path(
+        Path(".profiles"), binary_hash, file_hash, "main", "proofs", bench.ProfileMode(5, None)
+    )
+    automatic = bench.profile_cache_path(
+        Path(".profiles"),
+        binary_hash,
+        file_hash,
+        "main",
+        "proofs",
+        bench.ProfileMode(None, 10),
+    )
+
+    assert explicit == Path(".profiles") / "v1" / ("a" * 64) / ("b" * 64) / "main-proofs-i5.json.gz"
+    assert automatic == Path(".profiles") / "v1" / ("a" * 64) / ("b" * 64) / "main-proofs-auto10s.json.gz"
+
+
+def test_calculate_profile_iterations_uses_margin_and_cap() -> None:
+    assert bench.calculate_profile_iterations(2.0, 10) == (6, False)
+    assert bench.calculate_profile_iterations(20.0, 10) == (1, False)
+    assert bench.calculate_profile_iterations(0.00001, 10, max_iterations=7) == (7, True)
+    assert bench.calculate_profile_iterations(0.0, 10, max_iterations=7) == (7, True)
+
+
+def test_samply_record_uses_fixed_flags_and_replaces_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    artifact.write_bytes(b"old")
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        commands.append(command)
+        output = Path(command[command.index("--output") + 1])
+        output.write_bytes(b"new")
+
+    monkeypatch.setattr(bench, "samply_executable", lambda: "samply")
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    bench.run_samply_record(
+        artifact=artifact,
+        name="profile",
+        iterations=3,
+        workload=["workload"],
+        checkout_path=ROOT,
+        timeout_sec=120,
+    )
+
+    assert artifact.read_bytes() == b"new"
+    command = commands[0]
+    assert command[:7] == ["samply", "record", "--save-only", "--rate", "1000", "--reuse-threads", "--iteration-count"]
+    assert command[command.index("--iteration-count") + 1] == "3"
+    assert command[-2:] == ["--", "workload"]
+
+
+def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    temp_artifact = tmp_path / "profile.tmp"
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        temp_artifact.write_bytes(b"partial")
+        raise bench.subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(bench, "samply_executable", lambda: "samply")
+    monkeypatch.setattr(bench, "profile_temp_path", lambda path: temp_artifact)
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    with pytest.raises(bench.subprocess.CalledProcessError):
+        bench.run_samply_record(
+            artifact=artifact,
+            name="profile",
+            iterations=1,
+            workload=["workload"],
+            checkout_path=ROOT,
+            timeout_sec=120,
+        )
+
+    assert not artifact.exists()
+    assert not temp_artifact.exists()
+
+
+def test_missing_samply_reports_install_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bench.shutil, "which", lambda name: None)
+
+    with pytest.raises(FileNotFoundError, match="cargo install --locked samply"):
+        bench.samply_executable()
+
+
+def test_profile_cache_hit_runs_neither_calibration_nor_samply(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(None, 10),
+        open_after=False,
+        force_run=False,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    artifact = bench.profile_cache_path(
+        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
+    )
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"profile")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
+    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+
+def test_profile_cache_hit_can_open_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(1, None),
+        open_after=True,
+        force_run=False,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    artifact = bench.profile_cache_path(
+        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
+    )
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"profile")
+    opened: list[Path] = []
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(bench, "open_samply_profile", lambda artifact, checkout_path: opened.append(artifact))
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    assert opened == [artifact]
+
+
+def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(3, None),
+        open_after=False,
+        force_run=True,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    artifact = bench.profile_cache_path(
+        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
+    )
+    artifact.parent.mkdir(parents=True)
+    artifact.write_bytes(b"old")
+    recorded: list[tuple[Path, int]] = []
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
+    monkeypatch.setattr(
+        bench,
+        "run_samply_record",
+        lambda **kwargs: recorded.append((kwargs["artifact"], kwargs["iterations"])),
+    )
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    assert recorded == [(artifact, 3)]
+
+
+def test_profile_auto_calibrates_once_and_uses_derived_iterations(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(None, 10),
+        open_after=False,
+        force_run=True,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    recorded: list[int] = []
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench,
+        "run_command",
+        lambda command, checkout_path, timeout_sec: bench.TimingResult("success", bench.TimingRow(wall_sec=2.0), None),
+    )
+    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: recorded.append(kwargs["iterations"]))
+    monkeypatch.setattr(bench, "load_report", lambda destination: pytest.fail("profile mode should not load reports"))
+    monkeypatch.setattr(
+        bench, "append_rows", lambda destination, rows: pytest.fail("profile mode should not append rows")
+    )
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    assert recorded == [6]
+
+
+def test_profile_auto_calibration_failure_stops_before_samply(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(None, 10),
+        open_after=False,
+        force_run=True,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench,
+        "run_command",
+        lambda command, checkout_path, timeout_sec: bench.TimingResult(
+            "timed-out", bench.TimingRow(), bench.ErrorRow("timed out")
+        ),
+    )
+    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
+
+    with pytest.raises(ValueError, match="profile calibration failed"):
+        bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+
+def test_profile_auto_iteration_cap_prints_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
+) -> None:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(None, 10),
+        open_after=False,
+        force_run=True,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench,
+        "run_command",
+        lambda command, checkout_path, timeout_sec: bench.TimingResult(
+            "success", bench.TimingRow(wall_sec=0.001), None
+        ),
+    )
+    monkeypatch.setattr(bench, "calculate_profile_iterations", lambda elapsed_seconds, profile_seconds: (7, True))
+    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: None)
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    assert "maximum profile iterations reached" in capsys.readouterr().err
+
+
+def test_profile_rejects_cache_only_label_targets() -> None:
+    with pytest.raises(ValueError, match="cache-only label="):
+        bench.resolve_profile_target(bench.parse_target("cached="), ROOT, ROOT, bench.RunnerOutput())
 
 
 def test_run_command_records_peak_rss() -> None:
