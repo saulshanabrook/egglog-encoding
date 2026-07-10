@@ -293,7 +293,7 @@ impl TypeConstraint for FunctionCTorTypeConstraint {
                 // the output type and input types (starting after the partial args) must match between these functions
                 let expected_output = self.function.output.clone();
                 let expected_input = self.function.inputs.clone();
-                let actual_output = func_type.output.clone();
+                let actual_output = func_type.output().clone();
                 let actual_input: Vec<ArcSort> = func_type
                     .input
                     .iter()

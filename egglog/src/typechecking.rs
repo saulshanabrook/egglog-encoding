@@ -115,26 +115,25 @@ pub struct FuncType {
     pub name: String,
     pub subtype: FunctionSubtype,
     pub input: Vec<ArcSort>,
-    /// The first (primary) output sort. See [`FuncType::outputs`].
-    pub output: ArcSort,
-    /// Additional output sorts for tuple-output functions. Empty for ordinary functions.
-    pub extra_outputs: Vec<ArcSort>,
+    /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
+    /// ordinary functions have exactly one. Always non-empty.
+    pub outputs: Vec<ArcSort>,
 }
 
 impl FuncType {
-    /// All output (value-column) sorts: the primary output followed by any extras.
-    pub fn outputs(&self) -> impl Iterator<Item = &ArcSort> {
-        std::iter::once(&self.output).chain(self.extra_outputs.iter())
+    /// The primary (first) output sort.
+    pub fn output(&self) -> &ArcSort {
+        &self.outputs[0]
     }
 
     /// The number of output (value) columns.
     pub fn num_outputs(&self) -> usize {
-        1 + self.extra_outputs.len()
+        self.outputs.len()
     }
 
     /// Whether this function has more than one output column.
     pub fn is_tuple_output(&self) -> bool {
-        !self.extra_outputs.is_empty()
+        self.outputs.len() > 1
     }
 }
 
@@ -144,8 +143,9 @@ impl PartialEq for FuncType {
             && self.subtype == other.subtype
             && self.num_outputs() == other.num_outputs()
             && self
-                .outputs()
-                .zip(other.outputs())
+                .outputs
+                .iter()
+                .zip(other.outputs.iter())
                 .all(|(a, b)| a.name() == b.name())
         {
             if self.input.len() != other.input.len() {
@@ -169,7 +169,7 @@ impl Hash for FuncType {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.subtype.hash(state);
-        for out in self.outputs() {
+        for out in &self.outputs {
             out.name().hash(state);
         }
         for inp in &self.input {
@@ -423,7 +423,7 @@ impl EGraph {
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
-                    let output_sort = self.type_info.sorts.get(&fdecl.schema.output).unwrap();
+                    let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
                         .global_sorts
                         .insert(fdecl.name.clone(), output_sort.clone());
@@ -728,10 +728,9 @@ impl TypeInfo {
             .iter()
             .map(&resolve)
             .collect::<Result<Vec<_>, _>>()?;
-        let output = resolve(&func.schema.output)?;
-        let extra_outputs = func
+        let outputs = func
             .schema
-            .extra_outputs
+            .outputs
             .iter()
             .map(&resolve)
             .collect::<Result<Vec<_>, _>>()?;
@@ -740,8 +739,7 @@ impl TypeInfo {
             name: func.name.clone(),
             subtype: func.subtype,
             input,
-            output,
-            extra_outputs,
+            outputs,
         })
     }
 
@@ -783,7 +781,8 @@ impl TypeInfo {
         }
         let outputs: Vec<ArcSort> = fdecl
             .schema
-            .outputs()
+            .outputs
+            .iter()
             .map(|name| self.sorts.get(name).unwrap().clone())
             .collect();
         let is_tuple = fdecl.schema.is_tuple_output();

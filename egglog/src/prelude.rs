@@ -825,8 +825,7 @@ macro_rules! datatype {
             stringify!($name),
             Schema {
                 input: vec![$(stringify!($args).to_owned()),*],
-                output: stringify!($sort).to_owned(),
-                extra_outputs: vec![],
+                outputs: vec![stringify!($sort).to_owned()],
             },
             [$($cost)*].first().copied(),
             false,

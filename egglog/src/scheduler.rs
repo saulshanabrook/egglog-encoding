@@ -338,6 +338,7 @@ impl SchedulerRuleInfo {
             .collect();
         let decided = egraph.backend.add_table(FunctionConfig {
             schema,
+            n_vals: 1,
             default: DefaultVal::Const(unit),
             merge: MergeFn::AssertEq,
             name: "backend".to_string(),

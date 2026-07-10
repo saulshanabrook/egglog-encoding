@@ -221,7 +221,7 @@ impl std::fmt::Display for CommandOutput {
                 write!(f, "Overall statistics:\n{run_report}")
             }
             CommandOutput::PrintFunction(function, termdag, terms_and_outputs, mode) => {
-                let out_is_unit = function.schema.output.name() == UnitSort.name();
+                let out_is_unit = function.schema.output().name() == UnitSort.name();
                 if *mode == PrintFunctionMode::CSV {
                     let mut wtr = Writer::from_writer(vec![]);
                     for (term_id, output) in terms_and_outputs {
@@ -375,31 +375,15 @@ impl Function {
 #[derive(Clone, Debug)]
 pub struct ResolvedSchema {
     pub input: Vec<ArcSort>,
-    /// The first (primary) output sort. See [`ResolvedSchema::outputs`].
-    pub output: ArcSort,
-    /// Additional output sorts for tuple-output functions. Empty for ordinary functions.
-    pub extra_outputs: Vec<ArcSort>,
+    /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
+    /// ordinary functions have exactly one. Always non-empty.
+    pub outputs: Vec<ArcSort>,
 }
 
 impl ResolvedSchema {
-    /// All output (value-column) sorts: the primary output followed by any extras.
-    pub fn outputs(&self) -> impl Iterator<Item = &ArcSort> {
-        std::iter::once(&self.output).chain(self.extra_outputs.iter())
-    }
-
-    /// Get the type at position `index`, counting the output columns as positions
-    /// `input.len()`, `input.len() + 1`, ...
-    pub fn get_by_pos(&self, index: usize) -> Option<&ArcSort> {
-        if index < self.input.len() {
-            self.input.get(index)
-        } else {
-            let out_idx = index - self.input.len();
-            if out_idx == 0 {
-                Some(&self.output)
-            } else {
-                self.extra_outputs.get(out_idx - 1)
-            }
-        }
+    /// The primary (first) output sort.
+    pub fn output(&self) -> &ArcSort {
+        &self.outputs[0]
     }
 }
 
@@ -826,9 +810,9 @@ impl EGraph {
                     translated_args,
                 ))
             }
-            // A top-level `(values ...)` tuple merge is decomposed per column in
-            // `declare_function`; reaching here means a `values` was nested inside another merge
-            // expression, which is not supported.
+            // `(values ...)` never legitimately reaches here: a top-level tuple merge is
+            // destructured per column in `declare_function`, and any other `(values ...)` is
+            // rejected during type-checking. This arm only keeps the match exhaustive.
             GenericExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::TypeError(
                 TypeError::TupleMergeNotValues("<merge>".to_owned(), span.clone()),
             )),
@@ -836,8 +820,10 @@ impl EGraph {
     }
 
     /// Build the native congruence `:merge` for a term-encoding constructor view
-    /// `(children) -> (eclass, view_proof)` (proof mode). Returns `None` for any function that isn't
-    /// such a view, leaving the ordinary merge lowering in place.
+    /// `(children) -> (eclass, view_proof)` (proof mode). Returns `Ok(None)` for any function that
+    /// isn't such a view, leaving the ordinary merge lowering in place. Once the view shape matches,
+    /// the proof-encoding metadata (`:internal-proof-names`/`:internal-uf`) must resolve; a missing
+    /// piece is a hard error rather than a silent fallback that would drop congruence.
     ///
     /// The view proofs are oriented `eclass = f(children)` (eclass on the LEFT). On an FD conflict
     /// (two congruent terms share the same canonical children) the merge keeps the SMALLER eclass and
@@ -848,32 +834,55 @@ impl EGraph {
         decl: &ResolvedFunctionDecl,
         output: &ArcSort,
         num_outputs: usize,
-    ) -> Option<egglog_bridge::MergeFn> {
+    ) -> Result<Option<egglog_bridge::MergeFn>, Error> {
         use egglog_bridge::MergeFn;
         // Detected purely by shape: a term-constructor view with an eq-sort first output and a
         // second (proof) output. This shape is only ever emitted by the proof encoder, so we don't
         // gate on `proofs_enabled` — that lets a re-parsed desugared program (run in a fresh, non-
         // proof egraph) rebuild the same merge, which is what makes the encoding self-contained.
         if !(decl.term_constructor.is_some() && num_outputs == 2 && output.is_eq_sort()) {
-            return None;
+            return Ok(None);
         }
+        // The shape now uniquely identifies a proof-mode congruence view, so every lookup below is
+        // expected to succeed. If one doesn't, the encoding's `:internal-proof-names`/`:internal-uf`
+        // metadata is absent or stale; fail loudly instead of silently falling back to a merge that
+        // never resolves congruence.
+        let missing = |what: &str| {
+            Error::BackendError(format!(
+                "term-encoding congruence view `{}` cannot resolve {what}; the proof encoding's \
+                 :internal-proof-names/:internal-uf metadata is absent or stale",
+                decl.name
+            ))
+        };
         let resolve = |name: &str| -> Option<ExternalFunctionId> {
             self.type_info
                 .get_prims(name)
                 .and_then(|p| p.first())
                 .and_then(|p| p.context_ids[crate::Context::Write])
         };
-        let min_id = resolve("ordering-min")?;
-        let max_id = resolve("ordering-max")?;
-        let uf_name = self.proof_state.uf_parent.get(&decl.schema.output)?;
-        let uf_id = self.functions.get(uf_name)?.backend_id;
+        let min_id =
+            resolve("ordering-min").ok_or_else(|| missing("the `ordering-min` primitive"))?;
+        let max_id =
+            resolve("ordering-max").ok_or_else(|| missing("the `ordering-max` primitive"))?;
+        let uf_name = self
+            .proof_state
+            .uf_parent
+            .get(decl.schema.output())
+            .ok_or_else(|| missing("its per-sort union-find"))?;
+        let uf_id = self
+            .functions
+            .get(uf_name)
+            .ok_or_else(|| missing("its union-find function"))?
+            .backend_id;
         let trans_id = self
             .functions
-            .get(&self.proof_state.proof_names.eq_trans_constructor)?
+            .get(&self.proof_state.proof_names.eq_trans_constructor)
+            .ok_or_else(|| missing("the `Trans` proof constructor"))?
             .backend_id;
         let sym_id = self
             .functions
-            .get(&self.proof_state.proof_names.eq_sym_constructor)?
+            .get(&self.proof_state.proof_names.eq_sym_constructor)
+            .ok_or_else(|| missing("the `Sym` proof constructor"))?
             .backend_id;
         // Column 0 = eclass, column 1 = view_proof (`eclass = f(children)`).
         let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
@@ -914,7 +923,7 @@ impl EGraph {
             then: Box::new(MergeFn::OldCol(1)),
             els: Box::new(min_pf()),
         };
-        Some(MergeFn::Columns(vec![col0, col1]))
+        Ok(Some(MergeFn::Columns(vec![col0, col1])))
     }
 
     /// Build the self-referential union-find `:merge` for the encoding's single
@@ -1029,14 +1038,13 @@ impl EGraph {
             .iter()
             .map(get_sort)
             .collect::<Result<Vec<_>, _>>()?;
-        let output = get_sort(&decl.schema.output)?;
-        let extra_outputs = decl
+        let outputs = decl
             .schema
-            .extra_outputs
+            .outputs
             .iter()
             .map(get_sort)
             .collect::<Result<Vec<_>, _>>()?;
-        let num_outputs = 1 + extra_outputs.len();
+        let num_outputs = outputs.len();
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -1056,7 +1064,7 @@ impl EGraph {
             // backend id is the id `add_table` (below) will assign, peeked deterministically.
             let uf_id = self.backend.peek_next_function_id();
             self.build_uf_self_merge(uf_id, num_outputs)?
-        } else if let Some(m) = self.native_congruence_merge(decl, &output, num_outputs) {
+        } else if let Some(m) = self.native_congruence_merge(decl, &outputs[0], num_outputs)? {
             // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
             // a native :merge that stages the congruence edge into the per-sort UF table, instead of
             // a rule-encoded self-join.
@@ -1084,10 +1092,10 @@ impl EGraph {
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
             schema: input
                 .iter()
-                .chain([&output])
-                .chain(extra_outputs.iter())
+                .chain(outputs.iter())
                 .map(|sort| sort.column_ty(&self.backend))
                 .collect(),
+            n_vals: num_outputs,
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
                 FunctionSubtype::Custom => DefaultVal::Fail,
@@ -1099,11 +1107,7 @@ impl EGraph {
 
         let function = Function {
             decl: decl.clone(),
-            schema: ResolvedSchema {
-                input,
-                output,
-                extra_outputs,
-            },
+            schema: ResolvedSchema { input, outputs },
             can_subsume,
             backend_id,
         };
@@ -2112,7 +2116,7 @@ impl EGraph {
         }
 
         if function_type.subtype != FunctionSubtype::Constructor {
-            for sort in func.schema.outputs() {
+            for sort in &func.schema.outputs {
                 match sort.name() {
                     "i64" | "String" | "Unit" => {}
                     s => panic!("Unsupported type {s} for input"),
@@ -2130,7 +2134,7 @@ impl EGraph {
 
         let mut row_schema = func.schema.input.clone();
         if function_type.subtype == FunctionSubtype::Custom {
-            row_schema.extend(func.schema.outputs().cloned());
+            row_schema.extend(func.schema.outputs.iter().cloned());
         }
 
         log::debug!("{row_schema:?}");
@@ -2731,7 +2735,7 @@ fn resolve_function_container_target_with_context(
                 .iter()
                 .zip(&expected_inputs)
                 .all(|(actual, expected)| actual.name() == expected.name());
-        if !inputs_match || func_type.output.name() != output.name() {
+        if !inputs_match || func_type.output().name() != output.name() {
             let expected_input_names = expected_inputs
                 .iter()
                 .map(|sort| sort.name())
@@ -2748,7 +2752,7 @@ fn resolve_function_container_target_with_context(
                 expected_input_names,
                 output.name(),
                 actual_input_names,
-                func_type.output.name(),
+                func_type.output().name(),
             )));
         }
 
@@ -3374,7 +3378,7 @@ mod tests {
             ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
                 assert_eq!(func.name, "$x");
                 assert!(children.is_empty());
-                assert_eq!(func.output.name(), I64Sort.name());
+                assert_eq!(func.output().name(), I64Sort.name());
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
         }

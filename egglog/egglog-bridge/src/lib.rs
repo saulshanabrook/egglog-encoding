@@ -190,8 +190,12 @@ impl Default for EGraph {
 
 /// Properties of a function added to an [`EGraph`].
 pub struct FunctionConfig {
-    /// The function's schema. The last column in the schema is the return type.
+    /// The function's schema: `n_keys` key (input) columns followed by [`FunctionConfig::n_vals`]
+    /// value (output) columns.
     pub schema: Vec<ColumnTy>,
+    /// The number of value (output) columns; the remaining leading columns are keys. Must be at
+    /// least 1 and at most `schema.len()`. A tuple-output function has more than one.
+    pub n_vals: usize,
     /// The behavior of the function when lookups are made on keys not currently present.
     pub default: DefaultVal,
     /// How to resolve FD conflicts for the function.
@@ -502,6 +506,7 @@ impl EGraph {
     pub fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
         let FunctionConfig {
             schema,
+            n_vals,
             default,
             merge,
             name,
@@ -511,23 +516,22 @@ impl EGraph {
             !schema.is_empty(),
             "must have at least one column in schema"
         );
+        // `n_vals` (value-column count) is declared by the caller, not inferred from the merge, so a
+        // tuple-output function whose merge isn't a top-level `Columns` can't silently mis-split its
+        // key and value columns. `to_callback` cross-checks that the merge produces exactly `n_vals`
+        // columns, and `check_value_col_indices` that its `OldCol`/`NewCol` stay in range.
+        assert!(
+            (1..=schema.len()).contains(&n_vals),
+            "function {name} declares {n_vals} value columns but has {} columns total",
+            schema.len()
+        );
+        merge.check_value_col_indices(n_vals, &name);
         let to_rebuild: Vec<ColumnId> = schema
             .iter()
             .enumerate()
             .filter(|(_, ty)| matches!(ty, ColumnTy::Id))
             .map(|(i, _)| ColumnId::from_usize(i))
             .collect();
-        // The number of value (return) columns is determined by the merge: a `Columns` merge has
-        // one entry per value column, every other merge applies to a single value column.
-        let n_vals = match &merge {
-            MergeFn::Columns(cols) => cols.len(),
-            _ => 1,
-        };
-        assert!(
-            schema.len() >= n_vals,
-            "function {name} has fewer columns ({}) than value columns ({n_vals})",
-            schema.len()
-        );
         let n_keys = schema.len() - n_vals;
         let schema_math = SchemaMath {
             subsume: can_subsume,
@@ -556,11 +560,23 @@ impl EGraph {
             can_subsume,
             name: name.clone(),
         });
-        debug_assert_eq!(res, next_func_id);
+        // Not a debug_assert: a mismatch here silently mis-maps every future reference to this
+        // function's table (see the knot-tying comment above), so pay the one-time check in release.
+        assert_eq!(
+            res, next_func_id,
+            "peek_next_function_id / add_table id reservation is out of sync"
+        );
 
         let mut read_deps = IndexSet::<TableId>::new();
         let mut write_deps = IndexSet::<TableId>::new();
         merge.fill_deps(self, &mut read_deps, &mut write_deps);
+        // A self-referential merge may only *write* back into its own table (the pre-seeded
+        // write buffer handles that); *reading* self during its own merge is unsupported and would
+        // otherwise panic deep inside merge execution.
+        assert!(
+            !read_deps.contains(&table_id),
+            "self-referential merge for `{name}` may only write to its own table, not read it"
+        );
         let merge_fn = merge.to_callback(schema_math, &name, self);
         let table = SortedWritesTable::new(
             n_args,
@@ -575,7 +591,10 @@ impl EGraph {
             read_deps.iter().copied(),
             write_deps.iter().copied(),
         );
-        debug_assert_eq!(assigned_table_id, table_id);
+        assert_eq!(
+            assigned_table_id, table_id,
+            "reserved table id did not match the id assigned by add_table_named"
+        );
         let incremental_rebuild_rules = self.incremental_rebuild_rules(res, &schema);
         let nonincremental_rebuild_rule = self.nonincremental_rebuild(res, &schema);
         let info = &mut self.funcs[res];
@@ -1154,6 +1173,38 @@ impl MergeFn {
                 els.fill_deps(egraph, read_deps, write_deps);
             }
             AssertEq | Old | New | OldCol(..) | NewCol(..) | Const(..) => {}
+        }
+    }
+
+    /// Assert that every `OldCol(i)`/`NewCol(i)` references a real value column (`i < n_vals`).
+    /// An out-of-range index would otherwise read a timestamp/subsume column or panic during merge
+    /// execution; this surfaces the mistake at table-creation time with a clear message.
+    fn check_value_col_indices(&self, n_vals: usize, name: &str) {
+        use MergeFn::*;
+        let check = |i: usize, kind: &str| {
+            assert!(
+                i < n_vals,
+                "merge for `{name}` references {kind}({i}), but the function has only {n_vals} value column(s)"
+            );
+        };
+        match self {
+            OldCol(i) => check(*i, "OldCol"),
+            NewCol(i) => check(*i, "NewCol"),
+            Primitive(_, args) | Function(_, args) | Columns(args) | TableInsert(_, args)
+            | Seq(args) => args
+                .iter()
+                .for_each(|a| a.check_value_col_indices(n_vals, name)),
+            Construct(_, args, value_args) => args
+                .iter()
+                .chain(value_args.iter())
+                .for_each(|a| a.check_value_col_indices(n_vals, name)),
+            IfEq { a, b, then, els } => {
+                a.check_value_col_indices(n_vals, name);
+                b.check_value_col_indices(n_vals, name);
+                then.check_value_col_indices(n_vals, name);
+                els.check_value_col_indices(n_vals, name);
+            }
+            AssertEq | Old | New | UnionId | Const(..) => {}
         }
     }
 

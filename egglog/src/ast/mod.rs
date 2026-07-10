@@ -1313,25 +1313,23 @@ impl Display for Variant {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Schema {
     pub input: Vec<String>,
-    /// The first (primary) output sort. Most functions have exactly this one output.
-    pub output: String,
-    /// Additional output sorts for tuple-output functions (declared with a parenthesized list of
-    /// output sorts, e.g. `(function f (Math) (i64 i64) ...)`). Empty for ordinary functions.
-    pub extra_outputs: Vec<String>,
+    /// The output (value-column) sorts, primary first. A tuple-output function (declared with a
+    /// parenthesized list, e.g. `(function f (Math) (i64 i64) ...)`) has more than one; ordinary
+    /// functions have exactly one. Always non-empty.
+    pub outputs: Vec<String>,
 }
 
 impl Display for Schema {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        if self.extra_outputs.is_empty() {
-            write!(f, "({}) {}", ListDisplay(&self.input, " "), self.output)
-        } else {
+        if self.is_tuple_output() {
             write!(
                 f,
-                "({}) ({} {})",
+                "({}) ({})",
                 ListDisplay(&self.input, " "),
-                self.output,
-                ListDisplay(&self.extra_outputs, " ")
+                ListDisplay(&self.outputs, " ")
             )
+        } else {
+            write!(f, "({}) {}", ListDisplay(&self.input, " "), self.output())
         }
     }
 }
@@ -1340,37 +1338,29 @@ impl Schema {
     pub fn new(input: Vec<String>, output: String) -> Self {
         Self {
             input,
-            output,
-            extra_outputs: vec![],
+            outputs: vec![output],
         }
     }
 
     /// Construct a schema with one or more output sorts. `outputs` must be non-empty.
     pub fn new_tuple(input: Vec<String>, outputs: Vec<String>) -> Self {
-        let mut outputs = outputs.into_iter();
-        let output = outputs
-            .next()
-            .expect("schema must have at least one output");
-        Self {
-            input,
-            output,
-            extra_outputs: outputs.collect(),
-        }
+        assert!(!outputs.is_empty(), "schema must have at least one output");
+        Self { input, outputs }
     }
 
-    /// Iterate over all output (value-column) sorts: the primary output followed by any extras.
-    pub fn outputs(&self) -> impl Iterator<Item = &String> {
-        std::iter::once(&self.output).chain(self.extra_outputs.iter())
+    /// The primary (first) output sort.
+    pub fn output(&self) -> &String {
+        &self.outputs[0]
     }
 
     /// The number of output (value) columns.
     pub fn num_outputs(&self) -> usize {
-        1 + self.extra_outputs.len()
+        self.outputs.len()
     }
 
     /// Whether this function has more than one output column.
     pub fn is_tuple_output(&self) -> bool {
-        !self.extra_outputs.is_empty()
+        self.outputs.len() > 1
     }
 }
 
@@ -1574,7 +1564,7 @@ where
         if let GenericExpr::Call(values_span, values_head, values_args) = a
             && values_head.is_values()
             && let GenericExpr::Call(func_span, func_head, func_args) = b
-            && func_head.tuple_output_arity(typeinfo).is_some()
+            && func_head.is_tuple_output(typeinfo)
         {
             return Some(TupleDestructure {
                 values_head,
@@ -1832,8 +1822,7 @@ where
                 name: fun(name),
                 schema: Schema {
                     input: schema.input.into_iter().map(&mut *fun).collect(),
-                    output: fun(schema.output),
-                    extra_outputs: schema.extra_outputs.into_iter().map(&mut *fun).collect(),
+                    outputs: schema.outputs.into_iter().map(&mut *fun).collect(),
                 },
                 cost,
                 unextractable,
@@ -1860,8 +1849,7 @@ where
                 name: fun(name),
                 schema: Schema {
                     input: schema.input.into_iter().map(&mut *fun).collect(),
-                    output: fun(schema.output),
-                    extra_outputs: schema.extra_outputs.into_iter().map(&mut *fun).collect(),
+                    outputs: schema.outputs.into_iter().map(&mut *fun).collect(),
                 },
                 merge,
                 hidden,

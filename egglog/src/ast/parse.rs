@@ -350,10 +350,11 @@ impl Parser {
 
         Ok(match head.as_str() {
             "sort" => {
-                // Parse sort - :internal-uf/:internal-proof-func and container sorts are mutually exclusive
+                // Parse sort - the :internal-* annotations and container sorts are mutually exclusive
                 // (sort <name>)
                 // (sort <name> :internal-uf <uf-function>)
                 // (sort <name> :internal-proof-func <internal-proof-func-name>)
+                // (sort <name> :internal-proof-names <congr> <trans> <sym>)
                 // (sort <name> (<container sort> <argument sort>*))
                 match tail {
                     [name] => vec![Command::Sort {

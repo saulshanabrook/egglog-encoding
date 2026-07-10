@@ -971,7 +971,7 @@ fn get_atom_application_constraints(
             for (arg_typ, arg) in typ
                 .input
                 .iter()
-                .chain(typ.outputs())
+                .chain(typ.outputs.iter())
                 .cloned()
                 .zip(args.iter().cloned())
             {

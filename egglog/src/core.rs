@@ -159,7 +159,7 @@ impl ResolvedCall {
 
     pub fn output(&self) -> &ArcSort {
         match self {
-            ResolvedCall::Func(func) => &func.output,
+            ResolvedCall::Func(func) => func.output(),
             ResolvedCall::Primitive(prim) => prim.output(),
             // `values` has no single output; its first column is returned only so that callers
             // that incidentally ask for "a" sort do not panic. Tuple-output uses are routed
@@ -174,7 +174,7 @@ impl ResolvedCall {
         match self {
             ResolvedCall::Func(func) => {
                 let mut types = func.input.clone();
-                types.extend(func.outputs().cloned());
+                types.extend(func.outputs.iter().cloned());
                 types
             }
             ResolvedCall::Primitive(prim) => prim.input().to_vec(),
@@ -208,7 +208,7 @@ impl ResolvedCall {
         ctx: crate::Context,
     ) -> ResolvedCall {
         if let Some(ty) = typeinfo.get_func_type(head) {
-            let expected = ty.input.iter().chain(ty.outputs()).map(|s| s.name());
+            let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
             let actual = types.iter().map(|s| s.name());
             if expected.eq(actual) {
                 return ResolvedCall::Func(ty.clone());
@@ -279,20 +279,18 @@ impl IsFunc for String {
 pub trait HeadOps {
     /// Whether this head is the `values` tuple constructor.
     fn is_values(&self) -> bool;
-    /// If this head is a tuple-output function (more than one output column), the number of output
-    /// columns; otherwise `None`.
-    fn tuple_output_arity(&self, type_info: &TypeInfo) -> Option<usize>;
+    /// Whether this head is a tuple-output function (more than one output column).
+    fn is_tuple_output(&self, type_info: &TypeInfo) -> bool;
 }
 
 impl HeadOps for String {
     fn is_values(&self) -> bool {
         self == "values"
     }
-    fn tuple_output_arity(&self, type_info: &TypeInfo) -> Option<usize> {
+    fn is_tuple_output(&self, type_info: &TypeInfo) -> bool {
         type_info
             .get_func_type(self)
-            .map(|t| t.num_outputs())
-            .filter(|n| *n > 1)
+            .is_some_and(|t| t.is_tuple_output())
     }
 }
 
@@ -300,11 +298,8 @@ impl HeadOps for ResolvedCall {
     fn is_values(&self) -> bool {
         matches!(self, ResolvedCall::Values(_))
     }
-    fn tuple_output_arity(&self, _type_info: &TypeInfo) -> Option<usize> {
-        match self {
-            ResolvedCall::Func(f) if f.is_tuple_output() => Some(f.num_outputs()),
-            _ => None,
-        }
+    fn is_tuple_output(&self, _type_info: &TypeInfo) -> bool {
+        matches!(self, ResolvedCall::Func(f) if f.is_tuple_output())
     }
 }
 

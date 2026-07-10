@@ -523,7 +523,16 @@ impl Database {
         loop {
             to_merge.clear();
             let to_merge_vec = self.notification_list.reset();
-            if to_merge_vec.len() < 4 {
+            // `merge_simple` is faster but ignores read/write-dependency ordering, so it is only
+            // sound when no dirty table's merge reads another table (e.g. a `Construct`/`Function`
+            // lookup inside a `:merge`). With a read dependency, an unordered merge could observe a
+            // stale, not-yet-merged target — and a `Construct` could then mint a duplicate id — so
+            // fall back to the dependency-ordered strata path however few tables are dirty.
+            if to_merge_vec.len() < 4
+                && !to_merge_vec
+                    .iter()
+                    .any(|table| self.deps.has_read_deps(*table))
+            {
                 ever_changed |= self.merge_simple(to_merge_vec);
                 break;
             }
@@ -634,10 +643,14 @@ impl Database {
     pub fn merge_table(&mut self, table: TableId) -> bool {
         let mut info = self.tables.unwrap_val(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
-        let table_changed = info.table.merge(&mut ExecutionState::new(
-            self.read_only_view(),
-            Default::default(),
-        ));
+        // Pre-seed the table's own write buffer so a self-referential merge can stage a write back
+        // into itself (the table has been `unwrap_val`'d out, so the lazy `new_buffer()` path would
+        // fail for the self id). This mirrors `merge_simple`; see the comment there.
+        let mut bufs = DenseIdMap::default();
+        bufs.insert(table, info.table.new_buffer());
+        let table_changed = info
+            .table
+            .merge(&mut ExecutionState::new(self.read_only_view(), bufs));
         self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
         self.tables.insert(table, info);
         table_changed.added

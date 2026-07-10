@@ -215,9 +215,8 @@ impl<'a> ProofInstrumentor<'a> {
         let delete_subsume_ruleset = self.proof_names().delete_subsume_ruleset_name.clone();
         let fresh_name = self.egraph.parser.symbol_gen.fresh("delete_rule");
 
-        // The FD tuple view is keyed by children only; match its value tuple to delete by key.
-        // Subsumption is not supported on a multi-output view (the bridge subsume path is
-        // single-output), and no proof workload subsumes constructor terms, so it is omitted.
+        // The FD tuple view is keyed by children only, so match its value tuple to delete/subsume
+        // by key (the bridge re-reads every value column when subsuming a tuple-output view).
         if self.native_merge_view(fdecl) {
             let e = self.fresh_var();
             let pf = self.fresh_var();
@@ -335,7 +334,7 @@ impl<'a> ProofInstrumentor<'a> {
         let term_and_proof = self.update_view(name, &updated, &proof_var);
         let cleanup_constructor = self.egraph.parser.symbol_gen.fresh("mergecleanup");
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("mergecleanupsort");
-        let output_sort = fdecl.schema.output.clone();
+        let output_sort = fdecl.schema.output().clone();
 
         // The first runs the merge function adding a new row.
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
@@ -403,7 +402,7 @@ impl<'a> ProofInstrumentor<'a> {
         // We also have a proof that other eclass representative r_2 = f(c_1,...,c_n), the same term.
         // We want a proof that r1 = r2, which we get by transitivity.
         let union_code = self.union(
-            &fdecl.schema.output,
+            fdecl.schema.output(),
             "new",
             "old",
             &Justification::Proof(format!("({trans} {prf1} ({sym} {prf2}))",)),
@@ -466,7 +465,7 @@ impl<'a> ProofInstrumentor<'a> {
 
     fn term_and_view(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
         let schema = &fdecl.schema;
-        let out_type = schema.output.clone();
+        let out_type = schema.output().clone();
 
         let name = &fdecl.name;
         let view_name = self.view_name(&fdecl.name);
@@ -480,14 +479,14 @@ impl<'a> ProofInstrumentor<'a> {
             if fdecl.subtype == FunctionSubtype::Constructor {
                 "".to_string()
             } else {
-                schema.output.to_string()
+                schema.output().to_string()
             }
         );
         let view_sorts = format!("{in_sorts} {out_type}");
         let proof_constructors = self.proof_functions(fdecl, &view_sorts);
 
         let view_sort = if fdecl.subtype == FunctionSubtype::Constructor {
-            schema.output.clone()
+            schema.output().clone()
         } else {
             fresh_sort.clone()
         };
@@ -1212,7 +1211,7 @@ impl<'a> ProofInstrumentor<'a> {
             let proof_var = self.fresh_var();
             // add a proof for the constructor if needed
             let term_proof = if func_type.subtype == FunctionSubtype::Constructor {
-                let term_proof_constructor = self.term_proof_name(func_type.output.name());
+                let term_proof_constructor = self.term_proof_name(func_type.output().name());
                 format!("(set ({term_proof_constructor} {fv}) {proof_var})")
             } else {
                 "".to_string()

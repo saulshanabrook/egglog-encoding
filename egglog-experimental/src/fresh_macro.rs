@@ -88,8 +88,7 @@ fn desugar_fresh_rule(
         name: constructor_name.clone(),
         schema: Schema {
             input: schema,
-            output: output_sort,
-            extra_outputs: vec![],
+            outputs: vec![output_sort],
         },
         cost: first_opts.cost,
         unextractable: first_opts.unextractable,

@@ -155,7 +155,7 @@ impl EGraph {
                 let n_keys = function.schema.input.len();
                 let inps = &row.vals[..n_keys];
                 let out = &row.vals[n_keys];
-                let class_id = self.value_to_class_id(&function.schema.output, *out);
+                let class_id = self.value_to_class_id(function.schema.output(), *out);
                 if function.decl.internal_let {
                     let_bindings
                         .entry(class_id.clone())
@@ -192,7 +192,7 @@ impl EGraph {
         let node_ids: NodeIDs = all_calls.iter().fold(
             HashMap::default(),
             |mut acc, (func, _input, _output, _subsumed, class_id, node_id)| {
-                if func.schema.output.is_eq_sort() {
+                if func.schema.output().is_eq_sort() {
                     acc.entry(class_id.clone())
                         .or_default()
                         .push_back(node_id.clone());
@@ -208,7 +208,7 @@ impl EGraph {
         };
 
         for (func, input, output, subsumed, class_id, node_id) in all_calls {
-            self.serialize_value(&mut serializer, &func.schema.output, output, &class_id);
+            self.serialize_value(&mut serializer, func.schema.output(), output, &class_id);
 
             assert_eq!(input.len(), func.schema.input.len());
             let children: Vec<_> = input

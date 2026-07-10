@@ -108,8 +108,7 @@ pub(crate) fn desugar_command(
                         variant.name,
                         Schema {
                             input: variant.types,
-                            output: datatype.clone(),
-                            extra_outputs: vec![],
+                            outputs: vec![datatype.clone()],
                         },
                         variant.cost,
                         false,
@@ -247,8 +246,7 @@ fn desugar_prove(parser: &mut Parser, span: Span, query: Vec<Fact>) -> Vec<NComm
             constructor_name.clone(),
             Schema {
                 input: vec![],
-                output: fresh_sort.clone(),
-                extra_outputs: vec![],
+                outputs: vec![fresh_sort.clone()],
             },
             None,
             false,
@@ -301,8 +299,7 @@ fn desugar_datatype(span: Span, name: String, variants: Vec<Variant>) -> Vec<NCo
             variant.name,
             Schema {
                 input: variant.types,
-                output: name.clone(),
-                extra_outputs: vec![],
+                outputs: vec![name.clone()],
             },
             variant.cost,
             variant.unextractable,
@@ -427,8 +424,7 @@ fn desugar_relation(
             name,
             Schema {
                 input: inputs,
-                output: fresh_sort,
-                extra_outputs: vec![],
+                outputs: vec![fresh_sort],
             },
             None,
             false,

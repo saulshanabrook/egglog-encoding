@@ -40,7 +40,7 @@ pub(crate) fn table_layout(egraph: &EGraph, name: &str, span: Span) -> Result<Ta
     Ok(TableLayout {
         subtype: func.subtype(),
         input_sorts: schema.input.clone(),
-        output_sort: schema.output.clone(),
+        output_sort: schema.output().clone(),
     })
 }
 

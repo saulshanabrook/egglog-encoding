@@ -733,7 +733,7 @@ impl Function {
     /// Whether this is the proof-mode functional-dependency view `(children) -> (eclass, proof)`,
     /// where the e-class is the first output column rather than the last input column.
     fn is_fd_view(&self) -> bool {
-        self.decl.term_constructor.is_some() && !self.schema.extra_outputs.is_empty()
+        self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
     }
 
     /// For view tables (with term_constructor), the effective output sort is the last input column
@@ -741,11 +741,11 @@ impl Function {
     /// This is used by extraction to determine which sort a table produces values for.
     pub(crate) fn extraction_output_sort(&self) -> &ArcSort {
         if self.is_fd_view() {
-            &self.schema.output
+            self.schema.output()
         } else if self.decl.term_constructor.is_some() {
             self.schema.input.last().unwrap()
         } else {
-            &self.schema.output
+            self.schema.output()
         }
     }
 
@@ -835,7 +835,7 @@ impl EGraph {
             .ok_or(TypeError::UnboundFunction(sym.to_owned(), span!()))?;
         let mut rootsorts = func.schema.input.clone();
         if include_output {
-            rootsorts.extend(func.schema.outputs().cloned());
+            rootsorts.extend(func.schema.outputs.iter().cloned());
         }
         let extractor = Extractor::compute_costs_from_rootsorts(
             Some(rootsorts),
@@ -867,7 +867,7 @@ impl EGraph {
                     // one; we display them wrapped in a `(values ...)` term to mirror the surface
                     // syntax.
                     let mut out_terms = Vec::new();
-                    for (i, sort) in func.schema.outputs().enumerate() {
+                    for (i, sort) in func.schema.outputs.iter().enumerate() {
                         let value = row.vals[func.schema.input.len() + i];
                         let (_, term) = extractor
                             .extract_best_with_sort(self, &mut termdag, value, sort.clone())
