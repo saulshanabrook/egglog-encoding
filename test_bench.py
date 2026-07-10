@@ -287,10 +287,21 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert benchmark_args.command == "benchmark"
     assert benchmark_args.files == ["file.egg"]
     assert benchmark_args.rounds == 1
+    assert benchmark_args.format == "rich"
     assert profile_args.command == "profile"
     assert profile_args.file == "file.egg"
     assert profile_args.backend == "main"
     assert profile_args.treatment == "proofs"
+
+
+def test_parse_args_rejects_markdown_report_dash() -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["--format", "markdown", "--report", "-", "file.egg"])
+
+
+def test_parse_profile_args_rejects_benchmark_format() -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["profile", "file.egg", "--format", "markdown"])
 
 
 def test_parse_profile_args_rejects_iterations_with_profile_seconds() -> None:
@@ -842,6 +853,259 @@ def test_render_report_marks_invalid_multi_target_wall_time_cells() -> None:
     output = stream.getvalue()
     assert "invalid: timeout row selected" in output
     assert "off" in output
+
+
+def test_markdown_escape_cell_handles_pipes_backslashes_and_multiline() -> None:
+    assert bench.markdown_escape_cell("a|b\\c\r\nnext\nlast") == "a\\|b\\\\c<br>next<br>last"
+
+
+def test_render_markdown_table_uses_github_pipe_table() -> None:
+    table = bench.ReportTableData(
+        title="Example",
+        headers=("A|B", "Count"),
+        rows=(("x\\y", "one\ntwo"),),
+        caption="caption | text",
+        alignments=("left", "right"),
+    )
+
+    output = bench.render_markdown_table(table)
+
+    assert output == ("### Example\n\n| A\\|B | Count |\n| --- | ---: |\n| x\\\\y | one<br>two |\n\n*caption \\| text*")
+
+
+def test_benchmark_command_block_uses_fixed_entrypoint_and_shell_quoting() -> None:
+    assert bench.benchmark_command_block(("--report", "/tmp/report path.jsonl", "pipe|file.egg")) == (
+        "```shell\n$ ./bench.py --report '/tmp/report path.jsonl' 'pipe|file.egg'\n```"
+    )
+
+
+def test_render_markdown_report_deterministic_golden() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    target = make_target()
+    file_spec = bench.FileSpec("dir/file.egg", ROOT / "file.egg", "sha256:file")
+
+    output = bench.render_markdown_report(
+        bench.ReportDestination(path=Path("reports.jsonl")),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
+        ("--rounds", "1", "--format", "markdown", "dir/file.egg"),
+    )
+
+    assert output == (
+        "```shell\n"
+        "$ ./bench.py --rounds 1 --format markdown dir/file.egg\n"
+        "```\n"
+        "\n"
+        "# Benchmark Report\n"
+        "\n"
+        "- Report: `reports.jsonl`\n"
+        "- Selected rows per cell: `1`\n"
+        "\n"
+        "## Targets\n"
+        "\n"
+        "| Role | Label | Git | Dirty | Binary | Path |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        f"| target | abc123 | abc123 | no | bin | {ROOT} |\n"
+        "\n"
+        "## Target Diagnostics\n"
+        "\n"
+        "### abc123: per-file wall time\n"
+        "\n"
+        "| File | off |\n"
+        "| --- | ---: |\n"
+        "| dir/file.egg | 1.0000s |\n"
+        "\n"
+        "*Within-target wall-time estimates. These are not target-vs-baseline ratios.*\n"
+        "\n"
+        "## Benchmark Summary\n"
+        "\n"
+        "### abc123: proof overhead summary\n"
+        "\n"
+        "| Metric | Ratio | Change | Worst file | Worst ratio | Result |\n"
+        "| --- | ---: | ---: | --- | ---: | --- |\n"
+        "| no proof baseline | - | - | - | - | select off and proofs |\n"
+        "\n"
+        "*Within-backend proof overhead. This is not backend-vs-main performance.*"
+    )
+
+
+def test_markdown_report_has_no_rich_markup_ansi_or_box_drawing() -> None:
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    target = make_target()
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+
+    output = bench.render_markdown_report(
+        bench.ReportDestination(path=Path("reports.jsonl")),
+        rows,
+        [target],
+        bench.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=1, timeout_sec=120),
+    )
+
+    assert "\x1b[" not in output
+    assert "[bold]" not in output
+    assert not any(character in output for character in "━─┏┓└┘│┃┡┩╇")
+
+
+def test_backend_summary_table_data_feeds_rich_and_markdown_renderers() -> None:
+    records: list[dict[str, Any]] = []
+    for file_sha256, main_time, flowlog_time in (("sha256:slow", 1.0, 2.0), ("sha256:fast", 1.0, 0.5)):
+        records.append(
+            make_record(
+                len(records),
+                started_at=f"2026-07-04T12:00:{len(records):02d}Z",
+                file_sha256=file_sha256,
+                backend="main",
+                treatment="term",
+                wall_sec=main_time,
+            )
+        )
+        records.append(
+            make_record(
+                len(records),
+                started_at=f"2026-07-04T12:00:{len(records):02d}Z",
+                file_sha256=file_sha256,
+                backend="flowlog",
+                treatment="term",
+                wall_sec=flowlog_time,
+            )
+        )
+    rows = make_rows(*records)
+    target = make_target()
+    slow_file = bench.FileSpec("slow.egg", ROOT / "slow.egg", "sha256:slow")
+    fast_file = bench.FileSpec("fast.egg", ROOT / "fast.egg", "sha256:fast")
+    spec = bench.BenchmarkSpec(
+        files=(slow_file, fast_file),
+        treatments=("term",),
+        rounds=1,
+        timeout_sec=120,
+        backends=("main", "flowlog"),
+    )
+    cell_maps = {target: bench.target_cell_summaries(rows, target, spec)}
+    rss_cell_maps = {target: bench.target_rss_cell_summaries(rows, target, spec)}
+    table_data = bench.backend_summary_tables(cell_maps, rss_cell_maps, [target], spec)[0]
+    rich_stream = io.StringIO()
+    rich_console = Console(file=rich_stream, width=260, color_system=None)
+
+    rich_console.print(bench.render_rich_table(table_data))
+    markdown = bench.render_markdown_table(table_data)
+
+    assert table_data.headers[-3:] == ("Best file", "Best ratio", "Best result")
+    assert table_data.rows == (
+        (
+            "flowlog",
+            "term",
+            "2.0000s",
+            "2.5000s",
+            "1.250x",
+            "25.0%",
+            "1.000x",
+            "0/2",
+            "fast.egg",
+            "0.500x",
+            "point only",
+        ),
+    )
+    for value in table_data.rows[0]:
+        assert value in markdown
+        assert value in rich_stream.getvalue()
+
+
+def test_main_markdown_report_goes_to_stdout_and_status_to_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    tmp_path: Path,
+) -> None:
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = bench.FileSpec("file.egg", benchmark_file, "sha256:file")
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    target = make_target()
+
+    monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
+    monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
+    monkeypatch.setattr(bench, "load_report", lambda destination: rows)
+    monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
+    monkeypatch.setattr(bench, "build_collection_plan", lambda *args: object())
+    monkeypatch.setattr(
+        bench,
+        "emit_collection_plan",
+        lambda output, plan, estimate_model: output.console.print("status line"),
+    )
+    monkeypatch.setattr(
+        bench,
+        "collect_rows",
+        lambda current_rows, *args: bench.CollectionResult(current_rows, bench.empty_report_frame()),
+    )
+    argv = [
+        "--format",
+        "markdown",
+        "--report",
+        str(tmp_path / "reports.jsonl"),
+        "--rounds",
+        "1",
+        "--treatments",
+        "off",
+        "file.egg",
+    ]
+
+    result = bench.main(argv)
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out.startswith(bench.benchmark_command_block(argv) + "\n\n# Benchmark Report\n")
+    assert captured.out.endswith("\n")
+    assert not captured.out.endswith("\n\n")
+    assert "\x1b[" not in captured.out
+    assert "[bold]" not in captured.out
+    assert "status line" in captured.err
+    assert "# Benchmark Report" not in captured.err
+
+
+def test_main_rich_report_remains_on_stderr_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    tmp_path: Path,
+) -> None:
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = bench.FileSpec("file.egg", benchmark_file, "sha256:file")
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    target = make_target()
+
+    monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
+    monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
+    monkeypatch.setattr(bench, "load_report", lambda destination: rows)
+    monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
+    monkeypatch.setattr(bench, "build_collection_plan", lambda *args: object())
+    monkeypatch.setattr(
+        bench,
+        "emit_collection_plan",
+        lambda output, plan, estimate_model: output.console.print("status line"),
+    )
+    monkeypatch.setattr(
+        bench,
+        "collect_rows",
+        lambda current_rows, *args: bench.CollectionResult(current_rows, bench.empty_report_frame()),
+    )
+
+    result = bench.main(
+        [
+            "--report",
+            str(tmp_path / "reports.jsonl"),
+            "--rounds",
+            "1",
+            "--treatments",
+            "off",
+            "file.egg",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert captured.out == ""
+    assert "status line" in captured.err
+    assert "Benchmark report" in captured.err
 
 
 def test_report_dash_writes_rows_to_stream_and_does_not_load_cache() -> None:

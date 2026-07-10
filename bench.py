@@ -7,6 +7,7 @@ import math
 import os
 import re
 import resource
+import shlex
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,7 @@ Status = Literal["success", "timed-out", "failure"]
 Backend = Literal["main", "flowlog"]
 Treatment = Literal["off", "term", "proofs"]
 BuildProfile = Literal["release", "profiling"]
+TableAlignment = Literal["left", "right"]
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_PROFILES_DIR = ".profiles"
@@ -345,6 +347,15 @@ class RatioSummary:
         return self.issue is None and self.point is not None
 
 
+@dataclass(frozen=True)
+class ReportTableData:
+    title: str
+    headers: tuple[str, ...]
+    rows: tuple[tuple[str, ...], ...]
+    caption: str | None = None
+    alignments: tuple[TableAlignment, ...] | None = None
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     if argv and argv[0] == "profile":
         return parse_profile_args(argv[1:])
@@ -366,6 +377,12 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         "--report",
         default=DEFAULT_REPORT,
         help=f"JSONL report/cache path, or - for stdout (default: {DEFAULT_REPORT})",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("rich", "markdown"),
+        default="rich",
+        help="final report format: rich to stderr, or markdown to stdout (default: rich)",
     )
     parser.add_argument(
         "--rounds",
@@ -395,6 +412,8 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         help="append fresh rows even when enough cached rows exist",
     )
     args = parser.parse_args(argv)
+    if args.format == "markdown" and args.report == "-":
+        parser.error("--format markdown cannot be combined with --report -")
     args.command = "benchmark"
     return args
 
@@ -2143,6 +2162,13 @@ def format_comparison_result(summary: RatioSummary) -> Text:
     return styled_status(result)
 
 
+def comparison_result_text(summary: RatioSummary) -> str:
+    result = comparison_result(summary)
+    if result == "invalid" and summary.issue is not None:
+        return f"invalid: {summary.issue}"
+    return result
+
+
 def lower_is_better_result(summary: RatioSummary) -> str:
     if summary.point is None:
         return "invalid"
@@ -2162,6 +2188,13 @@ def format_lower_is_better_result(summary: RatioSummary) -> Text:
     return styled_status(result)
 
 
+def lower_is_better_result_text(summary: RatioSummary) -> str:
+    result = lower_is_better_result(summary)
+    if result == "invalid" and summary.issue is not None:
+        return f"invalid: {summary.issue}"
+    return result
+
+
 def proof_gate_result(summary: RatioSummary) -> tuple[str, str]:
     if summary.point is None:
         return ("invalid", f"invalid: {summary.issue or 'unavailable'}")
@@ -2177,6 +2210,14 @@ def format_proof_gate_result(summary: RatioSummary) -> Text:
     return styled_status(status, text)
 
 
+def proof_gate_result_text(summary: RatioSummary) -> str:
+    return proof_gate_result(summary)[1]
+
+
+def report_row(*values: object) -> tuple[str, ...]:
+    return tuple(str(value) for value in values)
+
+
 def report_table(title: str, *, caption: str | None = None, show_lines: bool = False) -> Table:
     return Table(
         title=title,
@@ -2188,6 +2229,57 @@ def report_table(title: str, *, caption: str | None = None, show_lines: bool = F
         box=box.SIMPLE_HEAVY,
         show_lines=show_lines,
     )
+
+
+def rich_result_cell(value: str) -> str | Text:
+    if value.startswith("invalid:"):
+        return styled_status("invalid", value)
+    if value == "<2x established":
+        return styled_status("established", value)
+    if value == "<2x not established":
+        return styled_status("not established", value)
+    if value in RESULT_STYLES:
+        return styled_status(value)
+    return value
+
+
+def render_rich_table(table_data: ReportTableData) -> Table:
+    table = report_table(table_data.title, caption=table_data.caption)
+    alignments = table_data.alignments or tuple("left" for _ in table_data.headers)
+    for header, alignment in zip(table_data.headers, alignments, strict=True):
+        table.add_column(header, no_wrap=alignment == "right", justify="right" if alignment == "right" else "left")
+    result_columns = {"Result", "Best result"}
+    for row in table_data.rows:
+        values: list[str | Text] = []
+        for header, value in zip(table_data.headers, row, strict=True):
+            values.append(rich_result_cell(value) if header in result_columns else value)
+        table.add_row(*values)
+    return table
+
+
+def markdown_escape_cell(value: object) -> str:
+    text = str(value)
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "\n").replace("\n", "<br>")
+
+
+def render_markdown_table(table_data: ReportTableData, *, heading_level: int = 3) -> str:
+    alignments = table_data.alignments or tuple("left" for _ in table_data.headers)
+    separator_cells = tuple("---:" if alignment == "right" else "---" for alignment in alignments)
+    lines = [
+        f"{'#' * heading_level} {table_data.title}",
+        "",
+        "| " + " | ".join(markdown_escape_cell(header) for header in table_data.headers) + " |",
+        "| " + " | ".join(separator_cells) + " |",
+    ]
+    for row in table_data.rows:
+        lines.append("| " + " | ".join(markdown_escape_cell(value) for value in row) + " |")
+    if table_data.caption:
+        lines.extend(["", f"*{markdown_escape_cell(table_data.caption)}*"])
+    return "\n".join(lines)
+
+
+def benchmark_command_block(argv: Sequence[str]) -> str:
+    return "```shell\n$ " + shlex.join(["./bench.py", *argv]) + "\n```"
 
 
 def cell_label(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> str:
@@ -2230,6 +2322,62 @@ def render_report(
     render_benchmark_summary(console, cell_maps, rss_cell_maps, targets, spec)
 
 
+def render_markdown_report(
+    report_destination: ReportDestination,
+    rows: DataFrame[ReportFrame],
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+    command_argv: Sequence[str] | None = None,
+) -> str:
+    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
+    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
+    parts = []
+    if command_argv is not None:
+        parts.append(benchmark_command_block(command_argv))
+    parts.extend(
+        [
+            "# Benchmark Report",
+            f"- Report: `{report_destination.display_path}`\n- Selected rows per cell: `{spec.rounds}`",
+            render_markdown_table(targets_table_data(targets), heading_level=2),
+        ]
+    )
+
+    comparison_tables: list[ReportTableData] = []
+    if len(targets) > 1:
+        comparison_tables.extend(per_file_wall_time_change_tables(cell_maps, targets, spec))
+        comparison_tables.extend(per_file_peak_rss_change_tables(rss_cell_maps, targets, spec))
+    if len(spec.backends) > 1:
+        comparison_tables.extend(per_file_backend_wall_time_change_tables(cell_maps, targets, spec))
+        comparison_tables.extend(per_file_backend_peak_rss_change_tables(rss_cell_maps, targets, spec))
+    if comparison_tables:
+        parts.append("## Comparisons")
+        parts.extend(render_markdown_table(table_data) for table_data in comparison_tables)
+
+    diagnostic_tables: list[ReportTableData] = []
+    for target in targets:
+        overhead = overhead_ratios_table_data(cell_maps[target], target, spec)
+        if overhead is not None:
+            diagnostic_tables.append(overhead)
+        diagnostic_tables.append(target_wall_time_table_data(cell_maps[target], target, spec))
+        peak_rss = target_peak_rss_table_data(rss_cell_maps[target], target, spec)
+        if peak_rss is not None:
+            diagnostic_tables.append(peak_rss)
+    if diagnostic_tables:
+        parts.append("## Target Diagnostics")
+        parts.extend(render_markdown_table(table_data) for table_data in diagnostic_tables)
+
+    summary_tables: list[ReportTableData] = list(backend_summary_tables(cell_maps, rss_cell_maps, targets, spec))
+    if len(targets) == 1:
+        summary_tables.append(
+            single_target_summary_table_data(cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
+        )
+    else:
+        summary_tables.extend(multi_target_summary_tables(cell_maps, rss_cell_maps, targets, spec))
+    parts.append("## Benchmark Summary")
+    parts.extend(render_markdown_table(table_data) for table_data in summary_tables)
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
 def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> None:
     tree = Tree("[bold]Targets[/bold]", guide_style="dim")
     for index, target in enumerate(targets):
@@ -2248,41 +2396,119 @@ def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> 
     console.print(tree)
 
 
-def render_per_file_wall_time_change(
-    console: Console,
+def targets_table_data(targets: Sequence[ResolvedTarget]) -> ReportTableData:
+    rows: list[tuple[str, ...]] = []
+    for index, target in enumerate(targets):
+        role = "target"
+        if len(targets) > 1:
+            role = "baseline" if index == 0 else "candidate"
+        git = target.row.git_sha[:12]
+        if target.row.git_ref != "HEAD":
+            git = f"{git} ({target.row.git_ref})"
+        rows.append(
+            report_row(
+                role,
+                target.display_label,
+                git,
+                "yes" if target.row.is_dirty else "no",
+                target.binary_sha256.removeprefix("sha256:")[:12],
+                target.row.path,
+            )
+        )
+    return ReportTableData(
+        title="Targets",
+        headers=("Role", "Label", "Git", "Dirty", "Binary", "Path"),
+        rows=tuple(rows),
+    )
+
+
+def per_file_wall_time_change_tables(
     cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-) -> None:
+) -> tuple[ReportTableData, ...]:
     baseline = targets[0]
     cells = benchmark_cells(spec)
+    tables: list[ReportTableData] = []
     for target in targets[1:]:
-        table = report_table(
-            f"Per-file wall-time change vs {baseline.display_label}: {target.display_label}",
-            caption=TARGET_WALL_TIME_CAPTION,
-        )
-        table.add_column("File")
-        table.add_column("Backend")
-        table.add_column("Treatment")
-        table.add_column("Time ratio", no_wrap=True)
-        table.add_column("Wall-time change", no_wrap=True)
-        table.add_column("Result")
+        rows: list[tuple[str, ...]] = []
         for file_spec in spec.files:
             for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
                     cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
                     cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
                 )
-                table.add_row(
-                    file_spec.display_path if cell_index == 0 else "",
-                    cell.backend,
-                    cell.treatment,
-                    format_ratio_summary(ratio),
-                    format_wall_time_change(ratio),
-                    format_comparison_result(ratio),
-                    end_section=cell_index == len(cells) - 1,
+                rows.append(
+                    report_row(
+                        file_spec.display_path if cell_index == 0 else "",
+                        cell.backend,
+                        cell.treatment,
+                        format_ratio_summary(ratio),
+                        format_wall_time_change(ratio),
+                        comparison_result_text(ratio),
+                    )
                 )
-        console.print(table)
+        tables.append(
+            ReportTableData(
+                title=f"Per-file wall-time change vs {baseline.display_label}: {target.display_label}",
+                headers=("File", "Backend", "Treatment", "Time ratio", "Wall-time change", "Result"),
+                rows=tuple(rows),
+                caption=TARGET_WALL_TIME_CAPTION,
+                alignments=("left", "left", "left", "right", "right", "left"),
+            )
+        )
+    return tuple(tables)
+
+
+def render_per_file_wall_time_change(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    for table_data in per_file_wall_time_change_tables(cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
+
+
+def per_file_peak_rss_change_tables(
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> tuple[ReportTableData, ...]:
+    baseline = targets[0]
+    baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
+    cells = benchmark_cells(spec)
+    tables: list[ReportTableData] = []
+    for target in targets[1:]:
+        if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
+            continue
+        rows: list[tuple[str, ...]] = []
+        for file_spec in spec.files:
+            for cell_index, cell in enumerate(cells):
+                ratio = ratio_summary(
+                    rss_cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
+                    rss_cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+                )
+                rows.append(
+                    report_row(
+                        file_spec.display_path if cell_index == 0 else "",
+                        cell.backend,
+                        cell.treatment,
+                        format_ratio_summary(ratio),
+                        format_percent_change(ratio),
+                        lower_is_better_result_text(ratio),
+                    )
+                )
+        tables.append(
+            ReportTableData(
+                title=f"Per-file peak RSS change vs {baseline.display_label}: {target.display_label}",
+                headers=("File", "Backend", "Treatment", "RSS ratio", "RSS change", "Result"),
+                rows=tuple(rows),
+                caption=TARGET_PEAK_RSS_CAPTION,
+                alignments=("left", "left", "left", "right", "right", "left"),
+            )
+        )
+    return tuple(tables)
 
 
 def render_per_file_peak_rss_change(
@@ -2291,38 +2517,48 @@ def render_per_file_peak_rss_change(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
 ) -> None:
-    baseline = targets[0]
-    baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
-    cells = benchmark_cells(spec)
-    for target in targets[1:]:
-        if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
-            continue
-        table = report_table(
-            f"Per-file peak RSS change vs {baseline.display_label}: {target.display_label}",
-            caption=TARGET_PEAK_RSS_CAPTION,
-        )
-        table.add_column("File")
-        table.add_column("Backend")
-        table.add_column("Treatment")
-        table.add_column("RSS ratio", no_wrap=True)
-        table.add_column("RSS change", no_wrap=True)
-        table.add_column("Result")
-        for file_spec in spec.files:
-            for cell_index, cell in enumerate(cells):
-                ratio = ratio_summary(
-                    rss_cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
-                    rss_cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+    for table_data in per_file_peak_rss_change_tables(rss_cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
+
+
+def per_file_backend_wall_time_change_tables(
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> tuple[ReportTableData, ...]:
+    baseline_backend = spec.backends[0]
+    tables: list[ReportTableData] = []
+    for target in targets:
+        for backend in spec.backends[1:]:
+            shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
+            if not shared_treatments:
+                continue
+            rows: list[tuple[str, ...]] = []
+            for file_spec in spec.files:
+                for treatment_index, treatment in enumerate(shared_treatments):
+                    ratio = ratio_summary(
+                        cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
+                        cell_maps[target][(file_spec.sha256, backend, treatment)],
+                    )
+                    rows.append(
+                        report_row(
+                            file_spec.display_path if treatment_index == 0 else "",
+                            treatment,
+                            format_ratio_summary(ratio),
+                            format_wall_time_change(ratio),
+                            comparison_result_text(ratio),
+                        )
+                    )
+            tables.append(
+                ReportTableData(
+                    title=f"Per-file backend wall-time change vs {baseline_backend}: {target.display_label} {backend}",
+                    headers=("File", "Treatment", "Time ratio", "Wall-time change", "Result"),
+                    rows=tuple(rows),
+                    caption=BACKEND_WALL_TIME_CAPTION,
+                    alignments=("left", "left", "right", "right", "left"),
                 )
-                table.add_row(
-                    file_spec.display_path if cell_index == 0 else "",
-                    cell.backend,
-                    cell.treatment,
-                    format_ratio_summary(ratio),
-                    format_percent_change(ratio),
-                    format_lower_is_better_result(ratio),
-                    end_section=cell_index == len(cells) - 1,
-                )
-        console.print(table)
+            )
+    return tuple(tables)
 
 
 def render_per_file_backend_wall_time_change(
@@ -2331,49 +2567,21 @@ def render_per_file_backend_wall_time_change(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
 ) -> None:
-    baseline_backend = spec.backends[0]
-    for target in targets:
-        for backend in spec.backends[1:]:
-            shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
-            if not shared_treatments:
-                continue
-            table = report_table(
-                f"Per-file backend wall-time change vs {baseline_backend}: {target.display_label} {backend}",
-                caption=BACKEND_WALL_TIME_CAPTION,
-            )
-            table.add_column("File")
-            table.add_column("Treatment")
-            table.add_column("Time ratio", no_wrap=True)
-            table.add_column("Wall-time change", no_wrap=True)
-            table.add_column("Result")
-            for file_spec in spec.files:
-                for treatment_index, treatment in enumerate(shared_treatments):
-                    ratio = ratio_summary(
-                        cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
-                        cell_maps[target][(file_spec.sha256, backend, treatment)],
-                    )
-                    table.add_row(
-                        file_spec.display_path if treatment_index == 0 else "",
-                        treatment,
-                        format_ratio_summary(ratio),
-                        format_wall_time_change(ratio),
-                        format_comparison_result(ratio),
-                        end_section=treatment_index == len(shared_treatments) - 1,
-                    )
-            console.print(table)
+    for table_data in per_file_backend_wall_time_change_tables(cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
 
 
-def render_per_file_backend_peak_rss_change(
-    console: Console,
+def per_file_backend_peak_rss_change_tables(
     rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-) -> None:
+) -> tuple[ReportTableData, ...]:
     baseline_backend = spec.backends[0]
     baseline_has_rss = {
         target: any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == baseline_backend)
         for target in targets
     }
+    tables: list[ReportTableData] = []
     for target in targets:
         for backend in spec.backends[1:]:
             shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
@@ -2382,30 +2590,42 @@ def render_per_file_backend_peak_rss_change(
             candidate_has_rss = any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == backend)
             if not baseline_has_rss[target] and not candidate_has_rss:
                 continue
-            table = report_table(
-                f"Per-file backend peak RSS change vs {baseline_backend}: {target.display_label} {backend}",
-                caption=BACKEND_PEAK_RSS_CAPTION,
-            )
-            table.add_column("File")
-            table.add_column("Treatment")
-            table.add_column("RSS ratio", no_wrap=True)
-            table.add_column("RSS change", no_wrap=True)
-            table.add_column("Result")
+            rows: list[tuple[str, ...]] = []
             for file_spec in spec.files:
                 for treatment_index, treatment in enumerate(shared_treatments):
                     ratio = ratio_summary(
                         rss_cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
                         rss_cell_maps[target][(file_spec.sha256, backend, treatment)],
                     )
-                    table.add_row(
-                        file_spec.display_path if treatment_index == 0 else "",
-                        treatment,
-                        format_ratio_summary(ratio),
-                        format_percent_change(ratio),
-                        format_lower_is_better_result(ratio),
-                        end_section=treatment_index == len(shared_treatments) - 1,
+                    rows.append(
+                        report_row(
+                            file_spec.display_path if treatment_index == 0 else "",
+                            treatment,
+                            format_ratio_summary(ratio),
+                            format_percent_change(ratio),
+                            lower_is_better_result_text(ratio),
+                        )
                     )
-            console.print(table)
+            tables.append(
+                ReportTableData(
+                    title=f"Per-file backend peak RSS change vs {baseline_backend}: {target.display_label} {backend}",
+                    headers=("File", "Treatment", "RSS ratio", "RSS change", "Result"),
+                    rows=tuple(rows),
+                    caption=BACKEND_PEAK_RSS_CAPTION,
+                    alignments=("left", "left", "right", "right", "left"),
+                )
+            )
+    return tuple(tables)
+
+
+def render_per_file_backend_peak_rss_change(
+    console: Console,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    for table_data in per_file_backend_peak_rss_change_tables(rss_cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
 
 
 def render_benchmark_summary(
@@ -2423,6 +2643,81 @@ def render_benchmark_summary(
         render_multi_target_summary(console, cell_maps, rss_cell_maps, targets, spec)
 
 
+def single_target_summary_table_data(
+    cell_map: CellMap,
+    rss_cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> ReportTableData:
+    rows: list[tuple[str, ...]] = []
+    for backend in spec.backends:
+        has_off_proofs = backend_has_treatment(spec, backend, "off") and backend_has_treatment(spec, backend, "proofs")
+        has_term_proofs = backend_has_treatment(spec, backend, "term") and backend_has_treatment(
+            spec, backend, "proofs"
+        )
+        if has_off_proofs:
+            rows.extend(
+                within_target_wall_summary_rows(
+                    cell_map,
+                    spec,
+                    backend,
+                    "off",
+                    "proofs",
+                    backend_metric_label(spec, backend, "wall proofs/off"),
+                )
+            )
+            rows.append(
+                within_target_rss_summary_row(
+                    rss_cell_map,
+                    spec,
+                    backend,
+                    "off",
+                    "proofs",
+                    backend_metric_label(spec, backend, "peak RSS proofs/off"),
+                )
+            )
+        elif has_term_proofs:
+            rows.extend(
+                within_target_wall_summary_rows(
+                    cell_map,
+                    spec,
+                    backend,
+                    "term",
+                    "proofs",
+                    backend_metric_label(spec, backend, "wall proofs/term"),
+                )
+            )
+        else:
+            rows.append(
+                report_row(
+                    backend_metric_label(spec, backend, "no proof baseline"),
+                    "-",
+                    "-",
+                    "-",
+                    "-",
+                    "select off and proofs",
+                )
+            )
+        if has_term_proofs:
+            rows.append(
+                within_target_rss_summary_row(
+                    rss_cell_map,
+                    spec,
+                    backend,
+                    "term",
+                    "proofs",
+                    backend_metric_label(spec, backend, "peak RSS proofs/term"),
+                )
+            )
+    return ReportTableData(
+        title=f"{target.display_label}: proof overhead summary",
+        headers=("Metric", "Ratio", "Change", "Worst file", "Worst ratio", "Result"),
+        rows=tuple(rows),
+        caption=PROOF_OVERHEAD_CAPTION,
+        alignments=("left", "right", "right", "left", "right", "left"),
+    )
+
+
 def render_single_target_summary(
     console: Console,
     cell_map: CellMap,
@@ -2430,147 +2725,78 @@ def render_single_target_summary(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
 ) -> None:
-    table = report_table(f"{target.display_label}: proof overhead summary", caption=PROOF_OVERHEAD_CAPTION)
-    table.add_column("Metric")
-    table.add_column("Ratio", no_wrap=True)
-    table.add_column("Change", no_wrap=True)
-    table.add_column("Worst file")
-    table.add_column("Worst ratio", no_wrap=True)
-    table.add_column("Result")
-    for backend in spec.backends:
-        has_off_proofs = backend_has_treatment(spec, backend, "off") and backend_has_treatment(spec, backend, "proofs")
-        has_term_proofs = backend_has_treatment(spec, backend, "term") and backend_has_treatment(
-            spec, backend, "proofs"
-        )
-        if has_off_proofs:
-            add_within_target_wall_summary_row(
-                table,
-                cell_map,
-                spec,
-                backend,
-                "off",
-                "proofs",
-                backend_metric_label(spec, backend, "wall proofs/off"),
-            )
-            add_within_target_rss_summary_row(
-                table,
-                rss_cell_map,
-                spec,
-                backend,
-                "off",
-                "proofs",
-                backend_metric_label(spec, backend, "peak RSS proofs/off"),
-            )
-        elif has_term_proofs:
-            add_within_target_wall_summary_row(
-                table,
-                cell_map,
-                spec,
-                backend,
-                "term",
-                "proofs",
-                backend_metric_label(spec, backend, "wall proofs/term"),
-            )
-        else:
-            table.add_row(
-                backend_metric_label(spec, backend, "no proof baseline"),
-                "-",
-                "-",
-                "-",
-                "-",
-                styled_status("descriptive", "select off and proofs"),
-            )
-        if has_term_proofs:
-            add_within_target_rss_summary_row(
-                table,
-                rss_cell_map,
-                spec,
-                backend,
-                "term",
-                "proofs",
-                backend_metric_label(spec, backend, "peak RSS proofs/term"),
-            )
-    console.print(table)
+    console.print(render_rich_table(single_target_summary_table_data(cell_map, rss_cell_map, target, spec)))
 
 
-def add_within_target_wall_summary_row(
-    table: Table,
+def within_target_wall_summary_rows(
     cell_map: CellMap,
     spec: BenchmarkSpec,
     backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
     label: str,
-) -> None:
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
     file_cells = treatment_file_cells(cell_map, spec, backend, baseline_treatment, candidate_treatment)
     pairs = summary_pairs(file_cells)
     summary = suite_ratio(pairs)
     geometric = geometric_mean_ratio(pairs)
     worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-    table.add_row(
-        label,
-        format_ratio_summary(summary),
-        format_percent_change(summary),
-        format_worst_file(worst_file),
-        format_ratio_summary(worst),
-        format_proof_gate_result(summary)
+    result = (
+        proof_gate_result_text(summary)
         if baseline_treatment == "off" and candidate_treatment == "proofs"
-        else format_comparison_result(summary),
+        else comparison_result_text(summary)
     )
-    table.add_row(
-        f"{label} geomean",
-        format_ratio_summary(geometric),
-        format_percent_change(geometric),
-        "-",
-        "-",
-        styled_status("descriptive", "descriptive"),
+    return (
+        report_row(
+            label,
+            format_ratio_summary(summary),
+            format_percent_change(summary),
+            format_worst_file(worst_file),
+            format_ratio_summary(worst),
+            result,
+        ),
+        report_row(
+            f"{label} geomean",
+            format_ratio_summary(geometric),
+            format_percent_change(geometric),
+            "-",
+            "-",
+            "descriptive",
+        ),
     )
 
 
-def add_within_target_rss_summary_row(
-    table: Table,
+def within_target_rss_summary_row(
     rss_cell_map: CellMap,
     spec: BenchmarkSpec,
     backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
     label: str,
-) -> None:
+) -> tuple[str, ...]:
     file_cells = treatment_file_cells(rss_cell_map, spec, backend, baseline_treatment, candidate_treatment)
     pairs = summary_pairs(file_cells)
     summary = suite_ratio(pairs)
     worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-    table.add_row(
+    return report_row(
         label,
         format_ratio_summary(summary),
         format_percent_change(summary),
         format_worst_file(worst_file),
         format_ratio_summary(worst),
-        format_lower_is_better_result(summary),
+        lower_is_better_result_text(summary),
     )
 
 
-def render_multi_target_summary(
-    console: Console,
+def multi_target_summary_tables(
     cell_maps: TargetCellMaps,
     rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-) -> None:
+) -> tuple[ReportTableData, ReportTableData]:
     baseline = targets[0]
     cells = benchmark_cells(spec)
-    wall_table = report_table(
-        f"Wall-time summary vs {baseline.display_label}",
-        caption=TARGET_WALL_TIME_CAPTION,
-    )
-    wall_table.add_column("Target")
-    wall_table.add_column("Backend")
-    wall_table.add_column("Treatment")
-    wall_table.add_column("Wall-time change", no_wrap=True)
-    wall_table.add_column("Geomean", no_wrap=True)
-    wall_table.add_column("Worst file")
-    wall_table.add_column("Worst ratio", no_wrap=True)
-    wall_table.add_column("Result")
+    wall_rows: list[tuple[str, ...]] = []
     for target in targets[1:]:
         for cell in cells:
             file_cells = target_treatment_file_cells(
@@ -2580,30 +2806,20 @@ def render_multi_target_summary(
             suite = suite_ratio(pairs)
             geometric = geometric_mean_ratio(pairs)
             worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-            wall_table.add_row(
-                target.display_label,
-                cell.backend,
-                cell.treatment,
-                format_wall_time_change(suite),
-                format_ratio_summary(geometric),
-                format_worst_file(worst_file),
-                format_ratio_summary(worst),
-                format_comparison_result(suite),
+            wall_rows.append(
+                report_row(
+                    target.display_label,
+                    cell.backend,
+                    cell.treatment,
+                    format_wall_time_change(suite),
+                    format_ratio_summary(geometric),
+                    format_worst_file(worst_file),
+                    format_ratio_summary(worst),
+                    comparison_result_text(suite),
+                )
             )
-    console.print(wall_table)
 
-    rss_table = report_table(
-        f"Peak RSS summary vs {baseline.display_label}",
-        caption=TARGET_PEAK_RSS_CAPTION,
-    )
-    rss_table.add_column("Target")
-    rss_table.add_column("Backend")
-    rss_table.add_column("Treatment")
-    rss_table.add_column("RSS change", no_wrap=True)
-    rss_table.add_column("Geomean", no_wrap=True)
-    rss_table.add_column("Worst file")
-    rss_table.add_column("Worst ratio", no_wrap=True)
-    rss_table.add_column("Result")
+    rss_rows: list[tuple[str, ...]] = []
     for target in targets[1:]:
         for cell in cells:
             file_cells = target_treatment_file_cells(
@@ -2617,17 +2833,54 @@ def render_multi_target_summary(
             summary = suite_ratio(pairs)
             geometric = geometric_mean_ratio(pairs)
             worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-            rss_table.add_row(
-                target.display_label,
-                cell.backend,
-                cell.treatment,
-                format_percent_change(summary),
-                format_ratio_summary(geometric),
-                format_worst_file(worst_file),
-                format_ratio_summary(worst),
-                format_lower_is_better_result(summary),
+            rss_rows.append(
+                report_row(
+                    target.display_label,
+                    cell.backend,
+                    cell.treatment,
+                    format_percent_change(summary),
+                    format_ratio_summary(geometric),
+                    format_worst_file(worst_file),
+                    format_ratio_summary(worst),
+                    lower_is_better_result_text(summary),
+                )
             )
-    console.print(rss_table)
+    return (
+        ReportTableData(
+            title=f"Wall-time summary vs {baseline.display_label}",
+            headers=(
+                "Target",
+                "Backend",
+                "Treatment",
+                "Wall-time change",
+                "Geomean",
+                "Worst file",
+                "Worst ratio",
+                "Result",
+            ),
+            rows=tuple(wall_rows),
+            caption=TARGET_WALL_TIME_CAPTION,
+            alignments=("left", "left", "left", "right", "right", "left", "right", "left"),
+        ),
+        ReportTableData(
+            title=f"Peak RSS summary vs {baseline.display_label}",
+            headers=("Target", "Backend", "Treatment", "RSS change", "Geomean", "Worst file", "Worst ratio", "Result"),
+            rows=tuple(rss_rows),
+            caption=TARGET_PEAK_RSS_CAPTION,
+            alignments=("left", "left", "left", "right", "right", "left", "right", "left"),
+        ),
+    )
+
+
+def render_multi_target_summary(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    for table_data in multi_target_summary_tables(cell_maps, rss_cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
 
 
 def display_backend(backend: Backend) -> str:
@@ -2654,36 +2907,37 @@ def backend_candidate_total_heading(spec: BenchmarkSpec) -> str:
     return "Candidate total"
 
 
-def render_backend_summary(
-    console: Console,
+def backend_summary_tables(
     cell_maps: TargetCellMaps,
     rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-) -> None:
+) -> tuple[ReportTableData, ...]:
     if len(spec.backends) <= 1:
-        return
+        return ()
     baseline_backend = spec.backends[0]
     include_target = len(targets) > 1
     ratio_heading = backend_ratio_heading(spec, baseline_backend)
     candidate_total_heading = backend_candidate_total_heading(spec)
-    wall_table = report_table(
-        backend_summary_title(spec, baseline_backend, "wall time"),
-        caption=BACKEND_WALL_TIME_CAPTION,
-    )
+    wall_headers: list[str] = []
     if include_target:
-        wall_table.add_column("Target")
-    wall_table.add_column("Backend")
-    wall_table.add_column("Mode")
-    wall_table.add_column(f"{display_backend(baseline_backend)} total", no_wrap=True)
-    wall_table.add_column(candidate_total_heading, no_wrap=True)
-    wall_table.add_column(ratio_heading, no_wrap=True)
-    wall_table.add_column("Change", no_wrap=True)
-    wall_table.add_column("File geomean", no_wrap=True)
-    wall_table.add_column("Faster files", no_wrap=True)
-    wall_table.add_column("Best file")
-    wall_table.add_column("Best ratio", no_wrap=True)
-    wall_table.add_column("Best result")
+        wall_headers.append("Target")
+    wall_headers.extend(
+        [
+            "Backend",
+            "Mode",
+            f"{display_backend(baseline_backend)} total",
+            candidate_total_heading,
+            ratio_heading,
+            "Change",
+            "File geomean",
+            "Faster files",
+            "Best file",
+            "Best ratio",
+            "Best result",
+        ]
+    )
+    wall_rows: list[tuple[str, ...]] = []
     for target in targets:
         for backend in spec.backends[1:]:
             for treatment in shared_backend_treatments(spec, baseline_backend, backend):
@@ -2699,7 +2953,7 @@ def render_backend_summary(
                 geometric = geometric_mean_ratio(pairs)
                 ratios = ratio_pairs(file_cells)
                 best_file, best = best_file_ratio(ratios)
-                row_values: list[Any] = []
+                row_values: list[object] = []
                 if include_target:
                     row_values.append(target.display_label)
                 row_values.extend(
@@ -2714,31 +2968,55 @@ def render_backend_summary(
                         format_better_file_count(count_better_files(ratios)),
                         format_worst_file(best_file),
                         format_ratio_summary(best),
-                        format_comparison_result(best),
+                        comparison_result_text(best),
                     ]
                 )
-                wall_table.add_row(*row_values)
-    console.print(wall_table)
+                wall_rows.append(report_row(*row_values))
+    tables = [
+        ReportTableData(
+            title=backend_summary_title(spec, baseline_backend, "wall time"),
+            headers=tuple(wall_headers),
+            rows=tuple(wall_rows),
+            caption=BACKEND_WALL_TIME_CAPTION,
+            alignments=tuple(
+                "right"
+                if header
+                in {
+                    f"{display_backend(baseline_backend)} total",
+                    candidate_total_heading,
+                    ratio_heading,
+                    "Change",
+                    "File geomean",
+                    "Faster files",
+                    "Best ratio",
+                }
+                else "left"
+                for header in wall_headers
+            ),
+        )
+    ]
 
     if not any(cell.samples for target in targets for cell in rss_cell_maps[target].values()):
-        return
-    rss_table = report_table(
-        backend_summary_title(spec, baseline_backend, "peak RSS"),
-        caption=BACKEND_PEAK_RSS_CAPTION,
-    )
+        return tuple(tables)
+    rss_headers: list[str] = []
     if include_target:
-        rss_table.add_column("Target")
-    rss_table.add_column("Backend")
-    rss_table.add_column("Mode")
-    rss_table.add_column(f"{display_backend(baseline_backend)} total", no_wrap=True)
-    rss_table.add_column(candidate_total_heading, no_wrap=True)
-    rss_table.add_column(ratio_heading, no_wrap=True)
-    rss_table.add_column("Change", no_wrap=True)
-    rss_table.add_column("File geomean", no_wrap=True)
-    rss_table.add_column("Lower-RSS files", no_wrap=True)
-    rss_table.add_column("Best file")
-    rss_table.add_column("Best ratio", no_wrap=True)
-    rss_table.add_column("Best result")
+        rss_headers.append("Target")
+    rss_headers.extend(
+        [
+            "Backend",
+            "Mode",
+            f"{display_backend(baseline_backend)} total",
+            candidate_total_heading,
+            ratio_heading,
+            "Change",
+            "File geomean",
+            "Lower-RSS files",
+            "Best file",
+            "Best ratio",
+            "Best result",
+        ]
+    )
+    rss_rows: list[tuple[str, ...]] = []
     for target in targets:
         for backend in spec.backends[1:]:
             for treatment in shared_backend_treatments(spec, baseline_backend, backend):
@@ -2754,7 +3032,7 @@ def render_backend_summary(
                 geometric = geometric_mean_ratio(pairs)
                 ratios = ratio_pairs(file_cells)
                 best_file, best = best_file_ratio(ratios)
-                rss_row_values: list[Any] = []
+                rss_row_values: list[object] = []
                 if include_target:
                     rss_row_values.append(target.display_label)
                 rss_row_values.extend(
@@ -2769,11 +3047,45 @@ def render_backend_summary(
                         format_better_file_count(count_better_files(ratios)),
                         format_worst_file(best_file),
                         format_ratio_summary(best),
-                        format_lower_is_better_result(best),
+                        lower_is_better_result_text(best),
                     ]
                 )
-                rss_table.add_row(*rss_row_values)
-    console.print(rss_table)
+                rss_rows.append(report_row(*rss_row_values))
+    tables.append(
+        ReportTableData(
+            title=backend_summary_title(spec, baseline_backend, "peak RSS"),
+            headers=tuple(rss_headers),
+            rows=tuple(rss_rows),
+            caption=BACKEND_PEAK_RSS_CAPTION,
+            alignments=tuple(
+                "right"
+                if header
+                in {
+                    f"{display_backend(baseline_backend)} total",
+                    candidate_total_heading,
+                    ratio_heading,
+                    "Change",
+                    "File geomean",
+                    "Lower-RSS files",
+                    "Best ratio",
+                }
+                else "left"
+                for header in rss_headers
+            ),
+        )
+    )
+    return tuple(tables)
+
+
+def render_backend_summary(
+    console: Console,
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> None:
+    for table_data in backend_summary_tables(cell_maps, rss_cell_maps, targets, spec):
+        console.print(render_rich_table(table_data))
 
 
 def format_worst_file(file_spec: FileSpec | None) -> str:
@@ -2788,16 +3100,14 @@ def render_target_diagnostics(
     spec: BenchmarkSpec,
 ) -> None:
     render_overhead_ratios(console, cell_map, target, spec)
-    cells = benchmark_cells(spec)
+    console.print(render_rich_table(target_wall_time_table_data(cell_map, target, spec)))
+    render_peak_rss_diagnostics(console, rss_cell_map, target, spec)
 
-    means_table = report_table(
-        f"{target.display_label}: per-file wall time",
-        caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
-    )
-    means_table.add_column("File")
-    for cell in cells:
-        means_table.add_column(cell_label(spec, cell.backend, cell.treatment), no_wrap=True)
-    means_rows: list[tuple[list[str], str]] = []
+
+def target_wall_time_table_data(cell_map: CellMap, target: ResolvedTarget, spec: BenchmarkSpec) -> ReportTableData:
+    cells = benchmark_cells(spec)
+    headers = ["File", *(cell_label(spec, cell.backend, cell.treatment) for cell in cells)]
+    rows_with_issue: list[tuple[list[str], str]] = []
     has_mean_issues = False
     for file_spec in spec.files:
         issue_parts: list[str] = []
@@ -2809,16 +3119,23 @@ def render_target_diagnostics(
                 issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
         issue_text = "; ".join(issue_parts)
         has_mean_issues = has_mean_issues or bool(issue_text)
-        means_rows.append((row_values, issue_text))
+        rows_with_issue.append((row_values, issue_text))
     if has_mean_issues:
-        means_table.add_column("Issue")
-    for row_values, issue_text in means_rows:
+        headers.append("Issue")
+    rows: list[tuple[str, ...]] = []
+    for row_values, issue_text in rows_with_issue:
         if has_mean_issues:
             row_values.append(issue_text)
-        means_table.add_row(*row_values)
-    console.print(means_table)
-
-    render_peak_rss_diagnostics(console, rss_cell_map, target, spec)
+        rows.append(tuple(row_values))
+    return ReportTableData(
+        title=f"{target.display_label}: per-file wall time",
+        headers=tuple(headers),
+        rows=tuple(rows),
+        caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
+        alignments=tuple(
+            "left" if index == 0 or header == "Issue" else "right" for index, header in enumerate(headers)
+        ),
+    )
 
 
 def render_overhead_ratios(
@@ -2827,17 +3144,22 @@ def render_overhead_ratios(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
 ) -> None:
+    table_data = overhead_ratios_table_data(cell_map, target, spec)
+    if table_data is not None:
+        console.print(render_rich_table(table_data))
+
+
+def overhead_ratios_table_data(
+    cell_map: CellMap, target: ResolvedTarget, spec: BenchmarkSpec
+) -> ReportTableData | None:
     ratio_columns = {backend: ratio_specs_for_backend(spec, backend) for backend in spec.backends}
     if not any(ratio_columns.values()):
-        return
-    ratio_table = report_table(
-        f"{target.display_label}: overhead ratios",
-        caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
-    )
-    ratio_table.add_column("File")
+        return None
+    headers = ["File"]
     for backend in spec.backends:
         for _, _, ratio_name in ratio_columns[backend]:
-            ratio_table.add_column(backend_metric_label(spec, backend, ratio_name), no_wrap=True)
+            headers.append(backend_metric_label(spec, backend, ratio_name))
+    rows: list[tuple[str, ...]] = []
     for file_spec in spec.files:
         row_values = [file_spec.display_path]
         for backend in spec.backends:
@@ -2847,8 +3169,14 @@ def render_overhead_ratios(
                     cell_map[(file_spec.sha256, backend, candidate_treatment)],
                 )
                 row_values.append(format_ratio_summary(ratio))
-        ratio_table.add_row(*row_values)
-    console.print(ratio_table)
+        rows.append(tuple(row_values))
+    return ReportTableData(
+        title=f"{target.display_label}: overhead ratios",
+        headers=tuple(headers),
+        rows=tuple(rows),
+        caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
+        alignments=tuple("left" if index == 0 else "right" for index, _ in enumerate(headers)),
+    )
 
 
 def render_peak_rss_diagnostics(
@@ -2857,16 +3185,20 @@ def render_peak_rss_diagnostics(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
 ) -> None:
+    table_data = target_peak_rss_table_data(rss_cell_map, target, spec)
+    if table_data is not None:
+        console.print(render_rich_table(table_data))
+
+
+def target_peak_rss_table_data(
+    rss_cell_map: CellMap,
+    target: ResolvedTarget,
+    spec: BenchmarkSpec,
+) -> ReportTableData | None:
     if not any(cell.samples for cell in rss_cell_map.values()):
-        return
+        return None
     cells = benchmark_cells(spec)
-    rss_table = report_table(
-        f"{target.display_label}: per-file peak RSS",
-        caption="Within-target peak resident set size estimates. These are separate from wall-time ratios.",
-    )
-    rss_table.add_column("File")
-    for cell in cells:
-        rss_table.add_column(cell_label(spec, cell.backend, cell.treatment), no_wrap=True)
+    headers = ["File", *(cell_label(spec, cell.backend, cell.treatment) for cell in cells)]
     rss_rows: list[tuple[list[str], str]] = []
     has_rss_issues = False
     for file_spec in spec.files:
@@ -2881,12 +3213,21 @@ def render_peak_rss_diagnostics(
         has_rss_issues = has_rss_issues or bool(issue_text)
         rss_rows.append((row_values, issue_text))
     if has_rss_issues:
-        rss_table.add_column("Issue")
+        headers.append("Issue")
+    rows: list[tuple[str, ...]] = []
     for row_values, issue_text in rss_rows:
         if has_rss_issues:
             row_values.append(issue_text)
-        rss_table.add_row(*row_values)
-    console.print(rss_table)
+        rows.append(tuple(row_values))
+    return ReportTableData(
+        title=f"{target.display_label}: per-file peak RSS",
+        headers=tuple(headers),
+        rows=tuple(rows),
+        caption="Within-target peak resident set size estimates. These are separate from wall-time ratios.",
+        alignments=tuple(
+            "left" if index == 0 or header == "Issue" else "right" for index, header in enumerate(headers)
+        ),
+    )
 
 
 def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treatment, str], ...]:
@@ -2980,7 +3321,8 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    raw_argv = tuple(sys.argv[1:] if argv is None else argv)
+    args = parse_args(raw_argv)
     output = RunnerOutput()
     try:
         script_root = Path(__file__).resolve().parent
@@ -3027,13 +3369,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             emit_collection_plan(output, plan, estimate_model)
             collection = collect_rows(rows, report_destination, plan, spec, output, estimate_model)
             rows = collection.rows
-        render_report(
-            output.console,
-            report_destination,
-            rows,
-            targets,
-            spec,
-        )
+        if args.format == "markdown":
+            sys.stdout.write(render_markdown_report(report_destination, rows, targets, spec, raw_argv) + "\n")
+        else:
+            render_report(
+                output.console,
+                report_destination,
+                rows,
+                targets,
+                spec,
+            )
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2
