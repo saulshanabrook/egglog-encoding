@@ -299,6 +299,9 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             let cur_empty: HashMap<Row, u64> = HashMap::new();
             let cur = cur.unwrap_or(&cur_empty);
             let prev = fed.entry(read).or_default();
+            if prev == cur {
+                continue;
+            }
 
             let mut removals = Vec::new();
             let mut insertions = Vec::new();

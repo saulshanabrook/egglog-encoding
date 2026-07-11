@@ -582,6 +582,9 @@ impl FusedDdJoin {
                 inputs.insert(read, session);
                 rel_coll.insert(read, coll);
             }
+            // A collection-level join arranges both inputs at every call site.
+            // Share base-relation arrangements with the same key projection.
+            let mut arranged_right = HashMap::new();
 
             for (rp, cap) in rule_plans.iter().zip(captures_in.iter()) {
                 // This rule's per-atom collection vector, from the SHARED relation
@@ -631,10 +634,17 @@ impl FusedDdJoin {
 
                         let scl = shared_cols_left.clone();
                         let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
-                        let sac = shared_atom_cols.clone();
-                        let right = rel_coll[&rp.atom_reads[i]]
-                            .clone()
-                            .map(move |r: Row| (pack_key(&r, &sac), r));
+                        let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
+                        let right = arranged_right
+                            .entry(arrangement_key)
+                            .or_insert_with(|| {
+                                let sac = shared_atom_cols.clone();
+                                rel_coll[&rp.atom_reads[i]]
+                                    .clone()
+                                    .map(move |r: Row| (pack_key(&r, &sac), r))
+                                    .arrange_by_key()
+                            })
+                            .clone();
 
                         // Carried vars: live at BOTH prev and cur but NOT produced
                         // by this atom — copy them from prev[v] to cur[v]. Atom
@@ -643,11 +653,9 @@ impl FusedDdJoin {
                         let slotsc = slots.clone();
                         let prevc = prev.clone();
                         let curc = curl.clone();
-                        cur = left
-                            .join(right)
-                            .flat_map(move |(_k, (b, r)): (Key, (Row, Row))| {
-                                remap_merge_atom_into(&b, &r, &slotsc, &prevc, &curc)
-                            });
+                        cur = left.join_core(right, move |_key, b, r| {
+                            remap_merge_atom_into(b, r, &slotsc, &prevc, &curc)
+                        });
                     }
 
                     // Final projection: pack the surviving vars (at their last-step
@@ -685,19 +693,24 @@ impl FusedDdJoin {
 
                         let scl = shared_cols_left.clone();
                         let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
-                        let sac = shared_atom_cols.clone();
-                        let right = rel_coll[&rp.atom_reads[i]]
-                            .clone()
-                            .map(move |r: Row| (pack_key(&r, &sac), r));
+                        let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
+                        let right = arranged_right
+                            .entry(arrangement_key)
+                            .or_insert_with(|| {
+                                let sac = shared_atom_cols.clone();
+                                rel_coll[&rp.atom_reads[i]]
+                                    .clone()
+                                    .map(move |r: Row| (pack_key(&r, &sac), r))
+                                    .arrange_by_key()
+                            })
+                            .clone();
 
                         let slotsc = slots.clone();
                         let vc = var_col.clone();
                         let bound_now = bound.clone();
-                        cur = left
-                            .join(right)
-                            .flat_map(move |(_k, (b, r)): (Key, (Row, Row))| {
-                                merge_atom_into(&b, &r, &slotsc, &vc, &bound_now)
-                            });
+                        cur = left.join_core(right, move |_key, b, r| {
+                            merge_atom_into(b, r, &slotsc, &vc, &bound_now)
+                        });
                         mark_bound(&slots, var_col, &mut bound);
                     }
                     cur
