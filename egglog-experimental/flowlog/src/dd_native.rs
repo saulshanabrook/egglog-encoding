@@ -703,18 +703,11 @@ impl FusedDdJoin {
                     cur
                 };
 
-                // The output `.distinct()` is redundant here. `step`
-                // accumulates each rule's binding deltas into a per-key weight map
-                // and `interpret::fused_bindings` inspects only the SIGN of the net
-                // weight (>0 ⇒ one env; net-zero already filtered). distinct would
-                // clamp the binding multiplicity to {0,1}, but since only the sign
-                // is observed and net-zero rows are dropped, the clamp is
-                // unobservable. `.consolidate()` still collapses per-key
-                // multiplicities so the captured batch is one signed row per key.
-                let out = cur.consolidate();
-
                 let cap = Rc::clone(cap);
-                out.inner
+                // `step` accumulates captured deltas by binding row before
+                // interpreting their sign, so consolidating this stream in DD
+                // would duplicate the same per-key aggregation.
+                cur.inner
                     .inspect_batch(move |_t, batch| {
                         let mut buf = cap.borrow_mut();
                         for (row, _time, w) in batch.iter() {

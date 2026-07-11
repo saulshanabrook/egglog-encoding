@@ -29,7 +29,8 @@ mod rule_builder;
 
 use compile::{row_col, unpack_row, MergeMode, MergeTree, ReadKey, Row, RuleIr};
 
-type MergeUpdate = (Box<[u32]>, Option<(u32, RowLocation)>, (u32, RowLocation));
+type LocatedValue = (u32, RowLocation);
+type RowReplacement = (Box<[u32]>, LocatedValue);
 
 // ---------------------------------------------------------------------------
 // Relation metadata
@@ -108,6 +109,19 @@ pub struct EGraph {
 enum RowLocation {
     Live,
     Subsumed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CurrentValue {
+    value: u32,
+    location: RowLocation,
+    rows_for_key: usize,
+}
+
+impl CurrentValue {
+    fn located(self) -> LocatedValue {
+        (self.value, self.location)
+    }
 }
 
 impl Default for EGraph {
@@ -227,13 +241,13 @@ impl EGraph {
         let mut cur = self.current_values_by_key(f, inputs_len);
         // Fold new values in emission order, remembering each touched key's
         // original value so the stale row can be retracted.
-        let mut orig: HashMap<Box<[u32]>, Option<(u32, RowLocation)>> = HashMap::new();
+        let mut orig: HashMap<Box<[u32]>, Option<CurrentValue>> = HashMap::new();
         for row in rows {
             let key: Box<[u32]> = row[..inputs_len].into();
             let nv = row_col(row, inputs_len);
             let existing = cur.get(&key).copied();
             orig.entry(key.clone()).or_insert(existing);
-            let existing_value = existing.map(|(value, _)| value);
+            let existing_value = existing.map(|current| current.value);
             let merged = match (existing_value, merge) {
                 (None, _) => nv,
                 (Some(_), MergeMode::New) => nv,
@@ -243,17 +257,31 @@ impl EGraph {
                 (Some(c), MergeMode::Relation | MergeMode::Computed) => c,
             };
             let location = existing
-                .map(|(_, location)| location)
+                .map(|current| current.location)
                 .unwrap_or(RowLocation::Live);
-            cur.insert(key, (merged, location));
+            let rows_for_key = existing.map(|current| current.rows_for_key).unwrap_or(0);
+            cur.insert(
+                key,
+                CurrentValue {
+                    value: merged,
+                    location,
+                    rows_for_key,
+                },
+            );
         }
-        // Apply the net change per touched key.
-        let mut changed = false;
+        // Apply the net change per touched key. The initial scan above also
+        // counted duplicate rows, so normalization does not need another full
+        // relation scan for every key.
+        let mut replacements = Vec::new();
         for (key, old) in orig {
-            let new = cur[&key];
-            changed |= self.reconcile_located_row(f, &key, old, new);
+            let new = cur[&key].located();
+            let already_normalized =
+                old.is_some_and(|current| current.rows_for_key == 1 && current.located() == new);
+            if !already_normalized {
+                replacements.push((key, new));
+            }
         }
-        Ok(changed)
+        Ok(self.replace_located_rows(f, inputs_len, replacements))
     }
 
     /// The [`MergeMode::Computed`] case of [`apply_merge_sets`]: fold each key's
@@ -289,13 +317,13 @@ impl EGraph {
         let mut lookup_index: HashMap<FunctionId, HashMap<Box<[u32]>, u32>> = HashMap::new();
         // Fold each touched key: start from the current value, fold in each new
         // value via the tree (`old` = accumulator, `new` = the value).
-        let mut updates: Vec<MergeUpdate> = Vec::new();
+        let mut updates: Vec<RowReplacement> = Vec::new();
         for key in order {
             let old = cur.get(&key).copied();
             let location = old
-                .map(|(_, location)| location)
+                .map(|current| current.location)
                 .unwrap_or(RowLocation::Live);
-            let mut acc = old.map(|(value, _)| value);
+            let mut acc = old.map(|current| current.value);
             for &nv in &newv[&key] {
                 acc = Some(match acc {
                     None => nv,
@@ -304,16 +332,14 @@ impl EGraph {
             }
             let new_val = acc.unwrap();
             let new = (new_val, location);
-            if Some(new) != old {
-                updates.push((key, old, new));
+            if Some(new) != old.map(CurrentValue::located) {
+                updates.push((key, new));
             }
         }
         // Reconcile the mirror. A `Func` node that minted an e-node advanced
         // `next_id` — that is itself a real change even if no value flipped.
         let mut changed = self.next_id != next_id_before;
-        for (key, old, new) in updates {
-            changed |= self.reconcile_located_row(f, &key, old, new);
-        }
+        changed |= self.replace_located_rows(f, inputs_len, updates);
         Ok(changed)
     }
 
@@ -418,75 +444,50 @@ impl EGraph {
         &self,
         f: FunctionId,
         inputs_len: usize,
-    ) -> HashMap<Box<[u32]>, (u32, RowLocation)> {
+    ) -> HashMap<Box<[u32]>, CurrentValue> {
         let live_len = self.mirror.get(&f).map(|set| set.len()).unwrap_or(0);
         let subsumed_len = self.subsumed.get(&f).map(|set| set.len()).unwrap_or(0);
         let mut cur = HashMap::with_capacity(live_len + subsumed_len);
-        if let Some(set) = self.mirror.get(&f) {
-            for row in set.iter() {
-                let key: Box<[u32]> = row[..inputs_len].into();
-                cur.insert(key, (row_col(row, inputs_len), RowLocation::Live));
-            }
-        }
-        if let Some(set) = self.subsumed.get(&f) {
-            for row in set.iter() {
-                let key: Box<[u32]> = row[..inputs_len].into();
-                cur.insert(key, (row_col(row, inputs_len), RowLocation::Subsumed));
-            }
-        }
-        cur
-    }
-
-    fn reconcile_located_row(
-        &mut self,
-        f: FunctionId,
-        key: &[u32],
-        old: Option<(u32, RowLocation)>,
-        new: (u32, RowLocation),
-    ) -> bool {
-        if Some(new) == old && self.key_is_normalized_to(f, key, new) {
-            return false;
-        }
-        let was_normalized = self.key_is_normalized_to(f, key, new);
-        self.remove_key_from_all_locations(f, key);
-        let new_row = row_with_value(key, new.0);
-        self.insert_located_row(f, new.1, new_row);
-        Some(new) != old || !was_normalized
-    }
-
-    fn key_is_normalized_to(
-        &self,
-        f: FunctionId,
-        key: &[u32],
-        expected: (u32, RowLocation),
-    ) -> bool {
-        let expected_row = row_with_value(key, expected.0);
-        let mut matching_rows = 0;
-        let mut found_expected = false;
         for (location, store) in [
             (RowLocation::Live, &self.mirror),
             (RowLocation::Subsumed, &self.subsumed),
         ] {
             if let Some(rows) = store.get(&f) {
-                for row in rows.iter().filter(|row| row_key_matches(row, key)) {
-                    matching_rows += 1;
-                    found_expected |=
-                        location == expected.1 && row.as_ref() == expected_row.as_ref();
+                for row in rows.iter() {
+                    let value = row_col(row, inputs_len);
+                    let key: Box<[u32]> = row[..inputs_len].into();
+                    cur.entry(key)
+                        .and_modify(|current: &mut CurrentValue| {
+                            current.value = value;
+                            current.location = location;
+                            current.rows_for_key += 1;
+                        })
+                        .or_insert(CurrentValue {
+                            value,
+                            location,
+                            rows_for_key: 1,
+                        });
                 }
             }
         }
-        matching_rows == 1 && found_expected
+        cur
     }
 
-    fn remove_key_from_all_locations(&mut self, f: FunctionId, key: &[u32]) {
-        let removed_live = remove_key_from_store(&mut self.mirror, f, key);
-        for row in removed_live {
-            self.record_row_event(f, row, -1, -1, 0);
+    fn replace_located_rows(
+        &mut self,
+        f: FunctionId,
+        keylen: usize,
+        replacements: Vec<RowReplacement>,
+    ) -> bool {
+        if replacements.is_empty() {
+            return false;
         }
-        let removed_subsumed = remove_key_from_store(&mut self.subsumed, f, key);
-        for row in removed_subsumed {
-            self.record_row_event(f, row, 0, -1, -1);
+        let keys = replacements.iter().map(|(key, _)| key.clone()).collect();
+        self.remove_matching_keys(f, keylen, &keys);
+        for (key, (value, location)) in replacements {
+            self.insert_located_row(f, location, row_with_value(&key, value));
         }
+        true
     }
 
     fn insert_located_row(&mut self, f: FunctionId, location: RowLocation, row: Row) -> bool {
@@ -557,29 +558,6 @@ fn row_with_value(key: &[u32], value: u32) -> Row {
     row.into_boxed_slice()
 }
 
-fn row_key_matches(row: &Row, key: &[u32]) -> bool {
-    row.len() >= key.len() && &row[..key.len()] == key
-}
-
-fn remove_key_from_store(
-    store: &mut HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
-    f: FunctionId,
-    key: &[u32],
-) -> Vec<Row> {
-    let mut removed = Vec::new();
-    if let Some(rows) = store.get_mut(&f) {
-        std::rc::Rc::make_mut(rows).retain(|row| {
-            if row_key_matches(row, key) {
-                removed.push(row.clone());
-                false
-            } else {
-                true
-            }
-        });
-    }
-    removed
-}
-
 fn remove_keys_from_store(
     store: &mut HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
     f: FunctionId,
@@ -589,8 +567,7 @@ fn remove_keys_from_store(
     let mut removed = Vec::new();
     if let Some(rows) = store.get_mut(&f) {
         std::rc::Rc::make_mut(rows).retain(|row| {
-            let k: Box<[u32]> = (0..keylen).map(|i| row_col(row, i)).collect();
-            if keys.contains(&k) {
+            if keys.contains(&row[..keylen]) {
                 removed.push(row.clone());
                 false
             } else {

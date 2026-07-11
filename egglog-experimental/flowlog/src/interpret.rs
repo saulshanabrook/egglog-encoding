@@ -543,7 +543,9 @@ pub(crate) fn lookup_existing(
     // scans. A subsumed constructor row is still the current table row in the
     // reference backend; looking it up must not mint a fresh visible row.
     let idx = index.entry(func).or_insert_with(|| {
-        let mut m: HashMap<Box<[u32]>, u32> = HashMap::new();
+        let live_len = eg.mirror.get(&func).map_or(0, |rows| rows.len());
+        let subsumed_len = eg.subsumed.get(&func).map_or(0, |rows| rows.len());
+        let mut m: HashMap<Box<[u32]>, u32> = HashMap::with_capacity(live_len + subsumed_len);
         if let Some(set) = eg.mirror.get(&func) {
             for row in set.iter() {
                 let k: Box<[u32]> = (0..inputs_len).map(|i| row_col(row, i)).collect();
