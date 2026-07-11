@@ -20,9 +20,11 @@
 - Built-in keywords (most command, action, and schedule heads such as `function`, `set`, `union`,
   `rule`, `run`, ..., plus the tuple constructor `values`) are now reserved and may no longer be
   used as user identifiers (function/sort/constructor/relation/variant names or variables). Names
-  starting with `:` are likewise reserved, since that prefix marks option keywords (`:merge`,
-  `:cost`, ...). The common-word commands `input` and `output` are only partially reserved: they
-  remain usable as variables, but not as definition names or as the head of a call expression.
+  starting with `:` may not be used as identifiers (definition names), since that prefix marks
+  option keywords (`:merge`, `:cost`, ...); it is still accepted in expression position so command
+  macros can consume their own option markers (e.g. `:until`). The common-word commands `input` and
+  `output` are only partially reserved: they remain usable as variables, but not as definition names
+  or as the head of a call expression.
 - Add typed `EGraph` extension state that clones with `EGraph` and is restored by `push`/`pop`.
 - Report full source file paths in egglog span and error messages.
 - Fix seminaive matching after nested containers rebuild in place by propagating dirty container ids through parent containers.

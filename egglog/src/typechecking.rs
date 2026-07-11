@@ -486,6 +486,19 @@ impl EGraph {
                 )?)
             }
             NCommand::Extract(span, expr, variants) => {
+                // A tuple-output function returns more than one value, so it can't be extracted as a
+                // single term; surface a clear error instead of a confusing arity mismatch.
+                if let GenericExpr::Call(_, head, _) = expr
+                    && self
+                        .type_info
+                        .get_func_type(head)
+                        .is_some_and(|t| t.is_tuple_output())
+                {
+                    return Err(TypeError::CannotExtractTupleOutput(
+                        head.clone(),
+                        span.clone(),
+                    ));
+                }
                 let res_expr = self.type_info.typecheck_standalone_expr(
                     symbol_gen,
                     expr,
@@ -1330,6 +1343,10 @@ pub enum TypeError {
         actual: usize,
         span: Span,
     },
+    #[error(
+        "{1}\nCannot extract tuple-output function {0}: extraction yields a single term, but a tuple-output function has more than one output column. Read its columns in a rule with `(= (values ...) ({0} ...))` instead."
+    )]
+    CannotExtractTupleOutput(String, Span),
 }
 
 #[cfg(test)]

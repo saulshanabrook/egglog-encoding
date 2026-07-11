@@ -229,3 +229,87 @@ fn tuple_output_input_command_loads_all_columns() {
     std::fs::remove_dir_all(&dir).ok();
     result.unwrap();
 }
+
+#[test]
+fn extract_tuple_output_rejected() {
+    // A tuple-output function returns more than one value, so it can't be extracted as a single
+    // term; this should be a clear error rather than a confusing arity mismatch.
+    let err = EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+            (datatype M (V i64))
+            (function iv (M) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))
+            (set (iv (V 0)) (values 3 7))
+            (extract (iv (V 0)))
+            "#,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::TypeError(TypeError::CannotExtractTupleOutput(..))
+        ),
+        "expected CannotExtractTupleOutput, got {err:?}"
+    );
+}
+
+#[test]
+fn zero_input_tuple_output() {
+    // A tuple-output function may have no inputs (a single global tuple cell).
+    run(r#"
+        (function pt () (i64 i64) :merge (values (max old0 new0) (min old1 new1)))
+        (set (pt) (values 1 10))
+        (set (pt) (values 5 3))
+        (check (= (values 5 3) (pt)))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn tuple_output_delete() {
+    // `delete` removes a tuple row by key.
+    run(r#"
+        (datatype M (V i64))
+        (function iv (M) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))
+        (set (iv (V 0)) (values 3 7))
+        (check (= (values 3 7) (iv (V 0))))
+        (delete (iv (V 0)))
+        (fail (check (= (values 3 7) (iv (V 0)))))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn proof_mode_rejects_tuple_output() {
+    // The term/proof encoding is built around single-output constructor views and does not model
+    // user tuple-output functions, so declaring one under proofs is rejected.
+    let err = EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            "(function iv (i64) (i64 i64) :merge (values old0 old1))",
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::UnsupportedProofCommand { .. })
+            && err
+                .to_string()
+                .contains("tuple-output functions are not supported"),
+        "expected UnsupportedProofCommand for a tuple output, got {err:?}"
+    );
+}
+
+#[test]
+fn tuple_merge_unnumbered_old_new_rejected() {
+    // A tuple merge must address columns as `old0`/`new0`/`old1`/...; bare `old`/`new` don't bind.
+    let err = EGraph::default()
+        .parse_and_run_program(
+            None,
+            "(function iv (i64) (i64 i64) :merge (values old new))",
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, Error::TypeError(_)),
+        "expected a type error for bare old/new in a tuple merge, got {err:?}"
+    );
+}
