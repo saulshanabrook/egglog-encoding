@@ -1,4 +1,4 @@
-//! `impl RuleBuilderOps` for the FlowLog backend.
+//! `impl RuleBuilderOps` for the Differential Dataflow backend.
 //!
 //! An **accumulator**: each `RuleBuilderOps` call appends to an in-progress
 //! [`RuleIr`] (defined in `compile.rs`) in emission order, and `build()`
@@ -15,7 +15,7 @@ use crate::compile::{BodyAtom, BodyOp, HeadOp, RuleIr, Slot};
 use crate::EGraph;
 
 /// Accumulates a rule's body ops and head ops, then registers them.
-pub struct FlowlogRuleBuilder<'a> {
+pub struct DdRuleBuilder<'a> {
     egraph: &'a mut EGraph,
     ir: RuleIr,
     /// Fresh variable counter, seeded above any caller-provided variable id.
@@ -24,9 +24,9 @@ pub struct FlowlogRuleBuilder<'a> {
     deferred_err: Option<anyhow::Error>,
 }
 
-impl<'a> FlowlogRuleBuilder<'a> {
+impl<'a> DdRuleBuilder<'a> {
     pub fn new(egraph: &'a mut EGraph, desc: &str) -> Self {
-        FlowlogRuleBuilder {
+        DdRuleBuilder {
             egraph,
             ir: RuleIr {
                 name: desc.to_string(),
@@ -51,7 +51,7 @@ impl<'a> FlowlogRuleBuilder<'a> {
     }
 }
 
-impl<'a> RuleBuilderOps for FlowlogRuleBuilder<'a> {
+impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
     fn new_var(&mut self, _ty: ColumnTy) -> QueryEntry {
         self.fresh_var(None)
     }
@@ -82,9 +82,7 @@ impl<'a> RuleBuilderOps for FlowlogRuleBuilder<'a> {
         _ret_ty: ColumnTy,
     ) -> Result<()> {
         if entries.is_empty() {
-            return Err(anyhow::anyhow!(
-                "FlowLog backend: query_prim with no entries"
-            ));
+            return Err(anyhow::anyhow!("DD backend: query_prim with no entries"));
         }
         let args: Vec<Slot> = entries[..entries.len() - 1]
             .iter()

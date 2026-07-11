@@ -1,14 +1,13 @@
-//! Host-side iteration driver for the FlowLog backend.
+//! Host-side iteration driver for the Differential Dataflow backend.
 //!
 //! One `run_rules` call = **one bounded egglog iteration**. The body join runs
 //! on the in-process, build-once, epoch-driven raw differential-dataflow
 //! dataflow (`crate::dd_native`); this module owns the orchestration around it:
 //!
-//! 1. snapshot the relation mirror (the read view for this iteration — all rules
-//!    match against the same pre-iteration state, egglog's semi-naive "match the
-//!    old database, then apply" model for a single hop);
-//! 2. for each rule, drive its persistent DD join with the per-relation signed
-//!    delta vs. what that join was last fed, then re-run any body primitives
+//! 1. compute every rule's matches against the same pre-iteration relation
+//!    state, following egglog's "match, then apply" model for one bounded hop;
+//! 2. drive the ruleset's persistent fused DD dataflow with the per-relation
+//!    signed delta vs. what that dataflow was last fed, then re-run body primitives
 //!    (`!=` guards, value-computing prims) host-side over the produced bindings;
 //! 3. for every surviving binding, execute the head ops in order — `set` /
 //!    `remove` / `subsume` writes, RHS `lookup` (eq-sort constructor: create on
@@ -18,15 +17,15 @@
 //!
 //! ## The engine split
 //!
-//! The relational table-atom join is the ONLY thing on the engine, and it is the
-//! ONLY join path — there is no host nested-loop fallback. Any rule the DD plan
-//! cannot lower (a binding row exceeding the fixed width cap [`dd_native::W`], or
-//! any shape `plan_join` rejects) `panic!`s with a specific reason. The primitive
-//! tail + head actions are applied HOST-side here.
+//! Relational table-atom joins are the only operations on the DD engine, and
+//! there is no host nested-loop fallback. Any rule the DD plan cannot lower (a
+//! binding row exceeding the fixed width cap [`crate::dd_native::W`], or any
+//! shape `plan_join` rejects) `panic!`s with a specific reason. Body primitives
+//! and head actions are applied host-side here.
 //!
 //! Primitives are invoked through `Database::with_execution_state`, so they see
-//! the same interned base `Value`s the frontend created — giving the FlowLog
-//! backend bit-for-bit value parity with the reference backend.
+//! the same interned base `Value`s the frontend created and preserve bit-for-bit
+//! value parity with the reference backend.
 
 use anyhow::{anyhow, Result};
 use egglog_backend_trait::{FunctionId, Value};
@@ -63,12 +62,12 @@ enum Write {
 /// build-once, epoch-driven raw differential-dataflow dataflow
 /// (`crate::dd_native`).
 ///
-/// Per rule: compute the signed `+/-` delta of each body relation vs the rows
-/// last fed to that rule's persistent DD join, `step` the join (which feeds ONLY
-/// the delta into never-cleared InputSessions — genuinely incremental), turn the
-/// positive binding deltas into envs, re-run body prims host-side (value prims /
-/// guards the engine keeps off-circuit), then apply head actions. Writes +
-/// FD-merge are applied so results are bit-exact.
+/// Compute the signed `+/-` delta of each distinct body-relation view vs. the
+/// rows last fed to the ruleset's persistent fused DD dataflow. Each nonempty
+/// removal or insertion phase steps the shared worker, feeding only deltas into
+/// never-cleared `InputSession`s. Positive per-rule binding deltas become envs;
+/// body primitives and head actions then run host-side. Writes and FD merges are
+/// applied afterward so results are bit-exact.
 pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     // Every rule — including the term encoder's canonicalization rules — lowers
     // as an ordinary rule and joins on the fused DD worker; there is no special
@@ -93,14 +92,13 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     let mut lookup_index: HashMap<FunctionId, HashMap<Box<[u32]>, u32>> = HashMap::new();
 
     // Compute every rule's binding envs FIRST (so the whole atom-bearing ruleset
-    // runs on ONE fused DD worker in a single epoch — `fused_bindings`), THEN
+    // runs on one fused DD worker via `fused_bindings`), THEN
     // apply head actions in the original rule firing order. Atom-less rules
     // (`(rule () …)`) have no input relation to drive the DD dataflow, so they
     // stay host-side (fire once); they are computed inline below.
     let envs_by_rule = fused_bindings(eg, &rules)?;
 
-    for ((idx, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
-        let _ = idx;
+    for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
         for mut env in envs {
             apply_head(eg, &rule.head, &mut env, &mut writes, &mut lookup_index)?;
         }
@@ -177,7 +175,7 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
 /// Compute every rule's binding envs in ONE fused pass: the whole atom-bearing
 /// ruleset's body joins run on a SINGLE shared timely worker
 /// ([`dd_native::FusedDdJoin`]) clocked once this iteration, then each rule's
-/// host-side prim tail is re-run over its own bindings. Atom-less rules
+/// host-side body primitives are re-run over its own bindings. Atom-less rules
 /// (`(rule () …)`) have no input relation to drive the DD dataflow, so they are
 /// fired once host-side. Returns a `Vec<Vec<Env>>` parallel to `rules` (same
 /// order), ready for `apply_head`.
@@ -192,7 +190,6 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     let mut atom_positions: Vec<usize> = Vec::new();
     let mut atom_rule_idxs: Vec<usize> = Vec::new();
     for (pos, (idx, rule)) in rules.iter().enumerate() {
-        let _ = idx;
         let has_atoms = rule.body.iter().any(|op| matches!(op, BodyOp::Atom(_)));
         if has_atoms {
             atom_positions.push(pos);
@@ -234,7 +231,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             let plan = match dd_native::plan_join(rule) {
                 Ok(p) => p,
                 Err(reason) => panic!(
-                    "FlowLog DD join cannot lower rule {:?}: {reason} \
+                    "Differential Dataflow join cannot lower rule {:?}: {reason} \
                      (no host fallback; the DD dataflow is the only join path)",
                     rule.name
                 ),
@@ -272,8 +269,8 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
         })
         .collect();
 
-    // Distinct relation read views across the whole ruleset. We diff versioned current
-    // snapshots rather than plain row sets: if another ruleset removes and
+    // Distinct relation read views across the whole ruleset. We diff versioned
+    // current snapshots rather than plain row sets: if another ruleset removes and
     // reinserts the same row between two invocations, the row is present in both
     // end states but has a fresh version. Feeding `-row` then `+row` as separate
     // DD steps preserves the reference backend's hidden-timestamp behavior
@@ -337,8 +334,8 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
         delta_batches.push(insertions_batch);
     }
 
-    // ONE step of the shared worker for the WHOLE ruleset.
-    eg.dd_rule_runs += atom_positions.len() as u64;
+    // Step the shared worker once per nonempty signed-delta phase. A version
+    // change may require a removal phase followed by an insertion phase.
     let mut per_rule_bindings = vec![Vec::new(); atom_positions.len()];
     {
         let fused = eg.dd_fused.get_mut(&key).expect("fused join present");
@@ -383,7 +380,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
 /// Evaluate a primitive body op over each binding env, returning the new list of
 /// envs. A value-computing prim binds (or checks) its return var; a guard prim
 /// (`!=`) that fails prunes the env. Table atoms are NOT handled here — they run
-/// on the DD dataflow; this is only the host-side primitive tail.
+/// on the DD dataflow; this is only the host-side primitive phase.
 pub(crate) fn step_prim(eg: &mut EGraph, op: &BodyOp, envs: Vec<Env>) -> Result<Vec<Env>> {
     let BodyOp::Prim { id, args, ret } = op else {
         unreachable!("step_prim called on a non-primitive body op");
@@ -445,7 +442,8 @@ fn apply_head(
             HeadOp::Subsume { func, slots } => {
                 // The subsume action addresses a view row by its children+output
                 // columns (a prefix; the trailing epoch is not given). Defer the
-                // move to `apply_writes` so it lands after this iteration's sets.
+                // move to the pending-write phase so it lands after this
+                // iteration's sets.
                 let prefix: Vec<u32> = slots
                     .iter()
                     .map(|s| resolve(s, env))
@@ -482,9 +480,12 @@ fn apply_head(
                 // real failures surface as panics through `PanicFunc`.
             }
             HeadOp::Union { .. } => {
-                // Term-encoding mode emits unions as `(set (@uf …))` writes, not
-                // trait `union` calls, so a direct `union` never reaches a
-                // tractable program.
+                // Term encoding lowers unions to `(set (@uf ...))` writes. Do not
+                // silently discard a native union if this backend is driven
+                // outside that required frontend mode.
+                return Err(anyhow!(
+                    "DD backend received a native union; term encoding must lower unions to @uf writes"
+                ));
             }
             HeadOp::Panic(msg) => {
                 return Err(anyhow!("{msg}"));

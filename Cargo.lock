@@ -704,7 +704,7 @@ dependencies = [
  "codspeed-divan-compat",
  "egglog",
  "egglog-ast",
- "egglog-experimental-flowlog",
+ "egglog-experimental-dd",
  "egglog-reports",
  "glob",
  "insta",
@@ -715,7 +715,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "egglog-experimental-flowlog"
+name = "egglog-experimental-dd"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -61,7 +61,7 @@ class BackendSpec:
 
 BACKEND_SPECS: dict[Backend, BackendSpec] = {
     "main": BackendSpec("main", ("off", "term", "proofs"), ()),
-    "flowlog": BackendSpec("FlowLog", ("term", "proofs"), ("--backend", "flowlog")),
+    "dd": BackendSpec("DD", ("term", "proofs"), ("--backend", "dd")),
 }
 
 DEFAULT_REPORT = ".reports.jsonl"

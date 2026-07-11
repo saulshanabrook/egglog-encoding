@@ -1,9 +1,9 @@
 //! In-process, build-once, epoch-driven incremental body join on RAW
 //! `differential-dataflow` + `timely`.
 //!
-//! This is the ONLY join path for the FlowLog backend (driven by
+//! This is the only join path for the Differential Dataflow backend (driven by
 //! [`crate::interpret::run_iteration`]); there is no host nested-loop fallback.
-//! It panics (via the caller) on shapes it does not support — see `plan_join`.
+//! The caller panics on shapes it cannot lower; see [`plan_join`].
 //!
 //! ## The join: one fused worker per ruleset
 //!
@@ -16,18 +16,18 @@
 //!
 //! ## The base architecture
 //!
-//! For each atom-bearing rule we build ONE differential-dataflow dataflow, ONCE,
-//! inside a single-threaded timely `Worker` we OWN (so we can `step` it across
-//! host calls). Each body atom occurrence is sourced from a
-//! `differential_dataflow::input::InputSession`; the rule's body join is a
-//! left-deep chain of DD `.join`s, with `!=` guards and value-prims inlined in
-//! `.flat_map`/`.filter`; the head binding rows flow out through `.inspect_batch`
-//! into a shared `CaptureBuf` capture buffer.
+//! Each ruleset owns one dataflow in a single-threaded timely [`Worker`] that is
+//! stepped across host calls. Every body relation view has one shared
+//! [`InputSession`], while each atom-bearing rule lowers to a left-deep join
+//! subgraph. Table constraints run in the dataflow; body primitives run later
+//! in the host interpreter. Binding deltas flow through `.inspect_batch` into
+//! per-rule capture buffers.
 //!
-//! Each egglog iteration (= one epoch) the host feeds ONLY the per-relation
-//! signed DELTA into the InputSessions (`+1` insert, `-1` retract), advances the
-//! timely timestamp, `step_while`s the worker to that epoch's fixpoint, and
-//! drains the capture buffer to get the OUTPUT binding deltas. The
+//! The host feeds only per-relation signed deltas (`+1` insert, `-1` retract)
+//! into the input sessions, advances the timely timestamp for each nonempty
+//! delta batch, drives the worker to that epoch's frontier, and drains the
+//! output binding deltas. One egglog iteration may submit a removal batch and
+//! then an insertion batch to preserve reinsertion freshness. The
 //! InputSessions are NEVER cleared — the DD arrangements persist across epochs,
 //! which is what makes the join genuinely incremental (epoch K does only
 //! delta·integral work, not a full recompute) — the whole point of the design.
@@ -68,19 +68,20 @@ type StepOutput = Vec<SignedDelta>;
 type CaptureBuf = Rc<RefCell<Vec<(Row, isize)>>>;
 
 /// Fixed binding-row width (DD `Data` needs a `Sized + Ord + Hash` type; an
-/// array gives us that). Set to 48 to cover the widest rebuild rule the flowlog
-/// test corpus generates: `luminal-llama`'s `@rebuild_rule34` uses 35 distinct
-/// body vars (a wide-arity congruence-closure rebuild). 48 covers every
-/// reachable program with headroom; a rule exceeding this is reported as a
-/// row-width-cap wall (raise `W` to extend coverage — it is purely a fixed
-/// array size, costing `W * 4` bytes per binding row).
+/// array gives us that). Set to 48 to cover the widest live-variable frontier
+/// in the backend corpus: `luminal-llama`'s `@rebuild_rule34` uses 35 distinct
+/// body vars in a wide congruence-closure rebuild. A larger live frontier is
+/// reported as a row-width-cap wall. Raising `W` extends coverage at a cost of
+/// `W * 4` bytes per relation or binding row.
 pub const W: usize = 48;
 
-/// A fixed-width binding / relation row flowing through the DD dataflow:
-/// `row[i]` is the value of canonical body variable `i` (0 if not yet bound).
+/// A fixed-width relation or binding row flowing through the DD dataflow. Input
+/// rows store relation columns in the low slots. Intermediate binding columns
+/// are assigned by the current `ProjectionPlan` stage, and captured outputs
+/// repack surviving variables into the low slots in [`JoinPlan::var_order`].
 ///
 /// A NEWTYPE over `[u32; W]` (rather than the bare array) because timely's
-/// `ExchangeData` bound — required by DD `.join`/`.distinct` — is
+/// `ExchangeData` bound required by DD joins is
 /// `Serialize + Deserialize`, and `serde` only derives those for arrays up to
 /// length 32. The hand-written serde impl (serialize as a fixed-length seq of
 /// `W` `u32`s) lifts that cap so `W` can exceed 32 (the corpus needs 35). All
@@ -153,19 +154,12 @@ impl Default for Row {
     }
 }
 
-/// A planned DD join: canonical body-variable order + the table atoms.
+/// A planned DD join: table atoms plus a bounded live-variable layout.
 pub struct JoinPlan {
-    /// `var_order[i]` is the variable id at binding-row column `i`.
-    var_order: Vec<u32>,
-    /// var id -> binding-row column index.
-    var_col: HashMap<u32, usize>,
     /// Body table atoms in emission order.
     atoms: Vec<PlanAtom>,
-    /// `Some` ⇒ row projection found a column-reusing layout that fits `W`
-    /// though the static var count does not; the binary chain uses the per-step
-    /// columns instead of `var_col`. `None` ⇒ the static layout (every distinct
-    /// var gets a permanent column).
-    projection: Option<ProjectionPlan>,
+    /// Per-step column allocation for variables live at each join stage.
+    projection: ProjectionPlan,
 }
 
 struct PlanAtom {
@@ -174,36 +168,22 @@ struct PlanAtom {
 }
 
 impl JoinPlan {
-    /// The variable id at each CAPTURED binding-row column, in column order. With
-    /// projection this is the reduced surviving-var set (the build packs them into
-    /// columns `0..head_vars.len()`); without, it is the full static var order.
-    /// Either way the head scatter reads captured-row column `i` for var
-    /// `var_order()[i]`, so it stays correct.
+    /// The variable id at each captured binding-row column, in column order.
     pub fn var_order(&self) -> Vec<u32> {
-        match &self.projection {
-            Some(p) => p.head_vars.clone(),
-            None => self.var_order.clone(),
-        }
+        self.projection.head_vars.clone()
     }
 }
 
 /// Build the join plan for `rule`, or `Err(reason)` if the DD dataflow cannot
-/// support its shape (the caller PANICS — there is no host fallback). Supported:
-/// one or more table atoms, at most [`W`] distinct body vars, atom arity at most
-/// [`W`]. Body prims (`!=` guards, value prims like `+`) are re-run host-side
-/// over the bindings by the caller (the table-join-on-engine /
-/// prim-tail-host-side split), so we accept them by leaving them to the host tail.
+/// support its shape (the caller panics because there is no host fallback).
+/// Supported rules have one or more table atoms, atom arity at most [`W`], and
+/// no more than [`W`] simultaneously live body variables. Body primitives are
+/// evaluated later by the host interpreter, so they do not become DD operators.
 pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
-    let mut var_order: Vec<u32> = Vec::new();
-    let mut var_col: HashMap<u32, usize> = HashMap::new();
-    let mut atoms: Vec<PlanAtom> = Vec::new();
+    use hashbrown::HashSet;
 
-    let see = |v: u32, var_order: &mut Vec<u32>, var_col: &mut HashMap<u32, usize>| {
-        if !var_col.contains_key(&v) {
-            var_col.insert(v, var_order.len());
-            var_order.push(v);
-        }
-    };
+    let mut body_vars = HashSet::new();
+    let mut atoms: Vec<PlanAtom> = Vec::new();
 
     for op in &rule.body {
         match op {
@@ -213,7 +193,7 @@ pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
                 }
                 for s in &atom.slots {
                     if let Slot::Var(v) = s {
-                        see(*v, &mut var_order, &mut var_col);
+                        body_vars.insert(*v);
                     }
                 }
                 atoms.push(PlanAtom {
@@ -221,10 +201,8 @@ pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
                     slots: atom.slots.clone(),
                 });
             }
-            // Body prims (e.g. `!=` guards, value prims like `+`) are re-run
-            // host-side over the join bindings by the caller (the table-join-on-
-            // engine / prim-tail-host-side split). They do not affect join
-            // planning; a value prim may bind a fresh var the head reads.
+            // The host replays body primitives over each completed table
+            // binding. Their variables remain live through the projection.
             BodyOp::Prim { .. } => {}
         }
     }
@@ -232,46 +210,29 @@ pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
     if atoms.is_empty() {
         return Err("no body table atoms (atom-less rule)".to_string());
     }
-    // When the static layout exceeds `W`, attempt a per-step register allocation
-    // that reuses binding-row columns for variables whose liveness intervals do
-    // not overlap. If the reused-column frontier fits `W`, the binary chain can
-    // still run the rule on the fixed-width `Row`.
-    if let Some(proj) = build_projection(&atoms, &rule.head, &rule.body) {
-        return Ok(JoinPlan {
-            var_order,
-            var_col,
-            atoms,
-            projection: Some(proj),
-        });
-    }
-
-    if var_order.len() > W {
-        return Err(format!("too many body vars {} > W {}", var_order.len(), W));
-    }
-
-    Ok(JoinPlan {
-        var_order,
-        var_col,
-        atoms,
-        projection: None,
-    })
+    let projection = build_projection(&atoms, &rule.head, &rule.body).ok_or_else(|| {
+        format!(
+            "live body-variable frontier exceeds W {W} ({} distinct body variables)",
+            body_vars.len()
+        )
+    })?;
+    Ok(JoinPlan { atoms, projection })
 }
 
-/// A per-step binding-row column layout produced by [`build_projection`]: column
-/// reuse (linear-scan register allocation over body-atom liveness) that keeps the
-/// frontier within [`W`] so a rule whose STATIC var count exceeds `W` can still
-/// run on the fixed-width `Row`. See the call site in [`plan_join`].
+/// Per-step binding columns produced by linear-scan allocation over body-atom
+/// liveness. Reusing dead variables' columns lets some rules with more than
+/// [`W`] total variables fit in a fixed-width [`Row`].
 #[derive(Clone, Debug)]
-pub(crate) struct ProjectionPlan {
+struct ProjectionPlan {
     /// `step_col[i]` maps each variable LIVE during step `i` (atom `i`'s join) to
     /// its binding-row column at that step. A var's column is stable from its
     /// birth step to its death step but may differ across non-overlapping vars.
-    pub step_col: Vec<HashMap<u32, usize>>,
+    step_col: Vec<HashMap<u32, usize>>,
     /// The surviving (head/body-prim-relevant) variables and their FINAL columns,
     /// in a deterministic order. Drives the reduced head-scatter `var_order`.
-    pub head_vars: Vec<u32>,
+    head_vars: Vec<u32>,
     /// Final column of each surviving var (parallel to `head_vars`).
-    pub head_cols: Vec<usize>,
+    head_cols: Vec<usize>,
 }
 
 /// Build a column-reusing layout for the body atoms, or `None` if the reused
@@ -437,16 +398,15 @@ fn collect_head_vars(head: &[crate::compile::HeadOp], out: &mut hashbrown::HashS
 // `FusedDdJoin` collapses this to ONE worker hosting ONE `worker.dataflow(...)`
 // scope for the whole ruleset (keyed by the sorted live rule-index list). Within
 // that scope:
-//   - every DISTINCT body relation across all rules gets ONE `InputSession` →
-//     ONE base `Collection`, `.distinct()`'d ONCE and SHARED by every atom
-//     occurrence (in every rule) that reads it. Cloning a DD collection is a
-//     handle copy, so the shared `.distinct()` arrangement is built once, not K
-//     times — the dedup win.
+//   - every distinct body relation view across all rules gets one `InputSession`
+//     and one base `Collection`, shared by every atom occurrence that reads it;
+//   - input deltas are already set-semantic, so no `.distinct()` is needed;
+//   - right-side arrangements are shared by relation view and key projection.
 //   - each rule is a left-deep join sub-stream reading those shared collections,
 //     with its OWN `inspect_batch` capture into a per-rule `Rc<RefCell<Vec>>`.
-// Per epoch: feed each relation's delta ONCE into its shared input, advance +
-// step the SINGLE worker once, then drain each rule's capture buffer. The
-// host-side prim re-run + `apply_head` are unchanged (the caller does them).
+// Per nonempty delta phase, feed each relation once, advance and step the worker,
+// then drain each rule's capture buffer. The caller evaluates body primitives
+// and head actions host-side.
 //
 // The NEVER-CLEAR / fed-only-deltas invariant is preserved (the InputSessions
 // persist across epochs = genuinely incremental), as is the external epoch-drive.
@@ -462,8 +422,8 @@ pub struct FusedDdJoin {
     /// Single probe on all rule outputs (they share the dataflow scope, so one
     /// probe gates the whole epoch's fixpoint).
     probe: ProbeHandle<u32>,
-    /// The fused rules, in build (= sorted rule-index) order. Each carries its
-    /// own capture buffer + var width.
+    /// The fused rules in caller-supplied build order. The sorted rule-index list
+    /// identifies the ruleset cache entry but does not reorder these outputs.
     rules: Vec<FusedRule>,
     /// Current epoch (monotonic; advanced once per [`step`]).
     epoch: u32,
@@ -476,7 +436,7 @@ struct FusedRule {
     /// This rule's per-epoch output binding-delta capture (`inspect_batch`
     /// appends `(row, weight)`; drained by [`FusedDdJoin::step`]).
     captured: CaptureBuf,
-    /// Number of canonical body variables (binding-row width in use).
+    /// Number of surviving body variables packed into each captured row.
     n_vars: usize,
     /// Distinct relation read views this rule reads. Self-join fan-out is
     /// handled at build time via the shared collection; this is only used by the
@@ -513,11 +473,9 @@ impl FusedDdJoin {
             idx: usize,
             atoms: Vec<Vec<Slot>>,
             atom_reads: Vec<ReadKey>,
-            var_col: HashMap<u32, usize>,
             n_vars: usize,
             body_reads: Vec<ReadKey>,
-            /// Per-step column-reuse layout; `None` uses the static-column chain.
-            projection: Option<ProjectionPlan>,
+            projection: ProjectionPlan,
         }
         let rule_plans: Vec<RulePlan> = plans
             .iter()
@@ -529,18 +487,11 @@ impl FusedDdJoin {
                         body_reads.push(read);
                     }
                 }
-                // With projection the CAPTURED row is packed to the surviving
-                // vars (columns `0..head_vars.len()`), so the capture/scatter
-                // width is `head_vars.len()`, not the full static var count.
-                let n_vars = match &plan.projection {
-                    Some(p) => p.head_vars.len(),
-                    None => plan.var_order.len(),
-                };
+                let n_vars = plan.projection.head_vars.len();
                 RulePlan {
                     idx: *idx,
                     atoms: plan.atoms.iter().map(|a| a.slots.clone()).collect(),
                     atom_reads,
-                    var_col: plan.var_col.clone(),
                     n_vars,
                     body_reads,
                     projection: plan.projection.clone(),
@@ -565,12 +516,11 @@ impl FusedDdJoin {
             .map(|rp| (rp.idx, rp.n_vars, rp.body_reads.clone()))
             .collect();
 
-        // The per-epoch input delta is already set-semantic — it is built
-        // from a `HashSet` set-difference vs the fed view (`interpret::fused_bindings`),
-        // so each row appears at most once with weight ±1. The input integral
-        // therefore stays 0/1 per row WITHOUT `.distinct()`, making the input
-        // distinct (a full integral + per-key consolidation every epoch, over
-        // the large relation integrals) pure overhead.
+        // The per-epoch input delta is already set-semantic: it comes from the
+        // versioned current-vs-fed map diff in `interpret::fused_bindings`, so
+        // each row appears at most once with weight ±1. The input integral
+        // therefore stays 0/1 per row without `.distinct()`. Adding that operator
+        // would perform redundant consolidation over the large relation integrals.
         let inputs = worker.dataflow::<u32, _, _>(move |scope| {
             // ONE shared input + base collection per distinct relation, shared by
             // every atom occurrence (in every rule) that reads it.
@@ -591,130 +541,58 @@ impl FusedDdJoin {
                 // collections (cloning a DD collection is just a handle copy).
                 let n_atoms = rp.atoms.len();
                 let atom_slots = &rp.atoms;
-                let var_col = &rp.var_col;
-                let n_vars = rp.n_vars;
+                let proj = &rp.projection;
+                let step_col = &proj.step_col;
+                let slots0 = atom_slots[0].clone();
+                let sc0 = step_col[0].clone();
+                let mut cur = rel_coll[&rp.atom_reads[0]]
+                    .clone()
+                    .flat_map(move |r: Row| bind_atom(&r, &slots0, &sc0));
 
-                let cur = if let Some(proj) = &rp.projection {
-                    // Projected binary chain: the binding row
-                    // is laid out per-step with column REUSE (`proj.step_col`), so
-                    // a rule whose static var count exceeds `W` still fits. The
-                    // chain is otherwise identical to the static path below; the
-                    // only differences are (a) every var's column is the per-step
-                    // column instead of the static `var_col`, (b) each merge REMAPS
-                    // carried-over vars whose column changed (reuse) and zeroes
-                    // freed columns, and (c) a final `.map` packs the surviving
-                    // vars into columns `0..head_vars.len()` for the capture.
-                    let step_col = &proj.step_col;
-                    let slots0 = atom_slots[0].clone();
-                    let sc0 = step_col[0].clone();
-                    let mut cur = rel_coll[&rp.atom_reads[0]]
-                        .clone()
-                        .flat_map(move |r: Row| bind_atom(&r, &slots0, &sc0));
+                for i in 1..n_atoms {
+                    let slots = atom_slots[i].clone();
+                    let prev = &step_col[i - 1];
+                    let next = &step_col[i];
+                    let shared: Vec<u32> = atom_vars(&slots)
+                        .into_iter()
+                        .filter(|v| prev.contains_key(v))
+                        .collect();
+                    let shared_cols_left: Vec<usize> = shared.iter().map(|v| prev[v]).collect();
+                    let shared_atom_cols: Vec<usize> = shared
+                        .iter()
+                        .map(|v| {
+                            slots
+                                .iter()
+                                .position(|s| matches!(s, Slot::Var(x) if x == v))
+                                .expect("shared var present in atom")
+                        })
+                        .collect();
 
-                    for i in 1..n_atoms {
-                        let slots = atom_slots[i].clone();
-                        let prev = &step_col[i - 1];
-                        let curl = &step_col[i];
-                        // Shared = atom vars already live (present in `prev`).
-                        let shared: Vec<u32> = atom_vars(&slots)
-                            .into_iter()
-                            .filter(|v| prev.contains_key(v))
-                            .collect();
-                        // Left key reads each shared var from its PREVIOUS column.
-                        let shared_cols_left: Vec<usize> = shared.iter().map(|v| prev[v]).collect();
-                        let shared_atom_cols: Vec<usize> = shared
-                            .iter()
-                            .map(|v| {
-                                slots
-                                    .iter()
-                                    .position(|s| matches!(s, Slot::Var(x) if x == v))
-                                    .expect("shared var present in atom")
-                            })
-                            .collect();
+                    let left_cols = shared_cols_left.clone();
+                    let left = cur.map(move |b: Row| (pack_key(&b, &left_cols), b));
+                    let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
+                    let right = arranged_right
+                        .entry(arrangement_key)
+                        .or_insert_with(|| {
+                            let right_cols = shared_atom_cols.clone();
+                            rel_coll[&rp.atom_reads[i]]
+                                .clone()
+                                .map(move |r: Row| (pack_key(&r, &right_cols), r))
+                                .arrange_by_key()
+                        })
+                        .clone();
 
-                        let scl = shared_cols_left.clone();
-                        let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
-                        let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
-                        let right = arranged_right
-                            .entry(arrangement_key)
-                            .or_insert_with(|| {
-                                let sac = shared_atom_cols.clone();
-                                rel_coll[&rp.atom_reads[i]]
-                                    .clone()
-                                    .map(move |r: Row| (pack_key(&r, &sac), r))
-                                    .arrange_by_key()
-                            })
-                            .clone();
+                    let previous_layout = prev.clone();
+                    let next_layout = next.clone();
+                    cur = left.join_core(right, move |_key, binding, row| {
+                        remap_merge_atom_into(binding, row, &slots, &previous_layout, &next_layout)
+                    });
+                }
 
-                        // Carried vars: live at BOTH prev and cur but NOT produced
-                        // by this atom — copy them from prev[v] to cur[v]. Atom
-                        // vars: written/validated at cur[v]. (prev_col, cur_col,
-                        // is_shared, atom_col) per relevant var, precomputed.
-                        let slotsc = slots.clone();
-                        let prevc = prev.clone();
-                        let curc = curl.clone();
-                        cur = left.join_core(right, move |_key, b, r| {
-                            remap_merge_atom_into(b, r, &slotsc, &prevc, &curc)
-                        });
-                    }
-
-                    // Final projection: pack the surviving vars (at their last-step
-                    // columns `head_cols`) into the capture columns `0..k`, zeroing
-                    // the rest, so the head scatter reads `bind[i]` for surviving
-                    // var `i` exactly like the static path.
-                    let head_cols = proj.head_cols.clone();
-                    cur.map(move |b: Row| pack_key(&b, &head_cols))
-                } else {
-                    let mut bound = vec![false; n_vars];
-                    let slots0 = atom_slots[0].clone();
-                    let vc0 = var_col.clone();
-                    let mut cur = rel_coll[&rp.atom_reads[0]]
-                        .clone()
-                        .flat_map(move |r: Row| bind_atom(&r, &slots0, &vc0));
-                    mark_bound(&atom_slots[0], var_col, &mut bound);
-
-                    for i in 1..n_atoms {
-                        let slots = atom_slots[i].clone();
-                        let shared: Vec<u32> = atom_vars(&slots)
-                            .into_iter()
-                            .filter(|v| var_col.get(v).map(|&c| bound[c]).unwrap_or(false))
-                            .collect();
-                        let shared_cols_left: Vec<usize> =
-                            shared.iter().map(|v| var_col[v]).collect();
-                        let shared_atom_cols: Vec<usize> = shared
-                            .iter()
-                            .map(|v| {
-                                slots
-                                    .iter()
-                                    .position(|s| matches!(s, Slot::Var(x) if x == v))
-                                    .expect("shared var present in atom")
-                            })
-                            .collect();
-
-                        let scl = shared_cols_left.clone();
-                        let left = cur.map(move |b: Row| (pack_key(&b, &scl), b));
-                        let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
-                        let right = arranged_right
-                            .entry(arrangement_key)
-                            .or_insert_with(|| {
-                                let sac = shared_atom_cols.clone();
-                                rel_coll[&rp.atom_reads[i]]
-                                    .clone()
-                                    .map(move |r: Row| (pack_key(&r, &sac), r))
-                                    .arrange_by_key()
-                            })
-                            .clone();
-
-                        let slotsc = slots.clone();
-                        let vc = var_col.clone();
-                        let bound_now = bound.clone();
-                        cur = left.join_core(right, move |_key, b, r| {
-                            merge_atom_into(b, r, &slotsc, &vc, &bound_now)
-                        });
-                        mark_bound(&slots, var_col, &mut bound);
-                    }
-                    cur
-                };
+                // Pack the variables needed by body primitives and head actions
+                // into the capture columns expected by `var_order()`.
+                let head_cols = proj.head_cols.clone();
+                let cur = cur.map(move |binding: Row| pack_key(&binding, &head_cols));
 
                 let cap = Rc::clone(cap);
                 // `step` accumulates captured deltas by binding row before
@@ -765,15 +643,15 @@ impl FusedDdJoin {
 
     /// Feed one epoch of signed relation deltas into the SHARED inputs, advance
     /// the timestamp, run the SINGLE worker to this epoch's fixpoint, and return
-    /// per-rule binding deltas. The outer `Vec` is in [`rule_indices`] order; each
-    /// inner `Vec` is `(binding_row_as_var_order_vec, weight)`.
+    /// per-rule binding deltas. The outer `Vec` is in [`Self::rule_indices`]
+    /// order; each inner `Vec` is `(binding_row_as_var_order_vec, weight)`.
     ///
     /// CRUCIAL: the InputSessions are NEVER cleared — only the delta is pushed, so
     /// the DD arrangements persist and the join is genuinely incremental.
     pub fn step(&mut self, deltas: &DeltaMap) -> Result<StepOutput> {
-        // Every rule — congruence, user, and canonicalization — runs through the
-        // SAME symmetric incremental join: feed ALL deltas, one sub-step, capture
-        // every rule. No rule kind takes a special path.
+        // Every atom-bearing rule — congruence, user, and canonicalization — runs
+        // through the same symmetric incremental join: feed all deltas, take one
+        // sub-step, and capture every rule. No atom-bearing rule kind is special.
         self.step_symmetric(deltas)
     }
 
@@ -867,21 +745,10 @@ fn atom_vars(slots: &[Slot]) -> Vec<u32> {
     out
 }
 
-/// Mark the canonical columns of an atom's variables as bound.
-fn mark_bound(slots: &[Slot], var_col: &HashMap<u32, usize>, bound: &mut [bool]) {
-    for s in slots {
-        if let Slot::Var(v) = s {
-            if let Some(&c) = var_col.get(v) {
-                bound[c] = true;
-            }
-        }
-    }
-}
-
 /// Match the first atom's relation row against its slots, producing the initial
-/// canonical binding row (or empty vec if a const / repeated-var constraint
+/// binding row under the first-step layout (or no row if a constraint
 /// fails). Returns a `Vec` for `flat_map`.
-fn bind_atom(r: &Row, slots: &[Slot], var_col: &HashMap<u32, usize>) -> Vec<Row> {
+fn bind_atom(r: &Row, slots: &[Slot], layout: &HashMap<u32, usize>) -> Vec<Row> {
     let mut out = empty_row();
     let mut local: HashMap<u32, u32> = HashMap::new();
     for (i, s) in slots.iter().enumerate() {
@@ -899,7 +766,7 @@ fn bind_atom(r: &Row, slots: &[Slot], var_col: &HashMap<u32, usize>) -> Vec<Row>
                     }
                 } else {
                     local.insert(*v, val);
-                    out[var_col[v]] = val;
+                    out[layout[v]] = val;
                 }
             }
         }
@@ -907,55 +774,12 @@ fn bind_atom(r: &Row, slots: &[Slot], var_col: &HashMap<u32, usize>) -> Vec<Row>
     vec![out]
 }
 
-/// Merge atom row `r` into binding `b`: already-bound columns must agree;
-/// previously-unbound atom vars are written. Empty vec on constraint failure.
-fn merge_atom_into(
-    b: &Row,
-    r: &Row,
-    slots: &[Slot],
-    var_col: &HashMap<u32, usize>,
-    bound: &[bool],
-) -> Vec<Row> {
-    let mut out = *b;
-    let mut local: HashMap<u32, u32> = HashMap::new();
-    for (i, s) in slots.iter().enumerate() {
-        let val = r[i];
-        match s {
-            Slot::Const(c) => {
-                if *c != val {
-                    return Vec::new();
-                }
-            }
-            Slot::Var(v) => {
-                if let Some(&prev) = local.get(v) {
-                    if prev != val {
-                        return Vec::new();
-                    }
-                    continue;
-                }
-                local.insert(*v, val);
-                let c = var_col[v];
-                if bound[c] {
-                    if out[c] != val {
-                        return Vec::new();
-                    }
-                } else {
-                    out[c] = val;
-                }
-            }
-        }
-    }
-    vec![out]
-}
-
-/// Projecting merge for the column-reusing chain. Like [`merge_atom_into`] but
-/// rebuilds the row from scratch under a NEW column layout: `prev` is the
+/// Merge one atom into a binding while changing column layouts. `prev` is the
 /// left-row layout (step `i-1`), `cur` is the output layout (step `i`). Carried
 /// vars (live in both layouts but not produced here) are copied `prev[v]→cur[v]`;
 /// the atom's vars are validated (shared) or written (fresh) at `cur[v]`; every
 /// other output column is left zeroed. This is what reuses freed columns and so
-/// keeps the frontier within `W`. Empty vec on a const / repeated-var / shared-
-/// var constraint failure (same semantics as the static merge).
+/// keeps the frontier within `W`. Returns no row on a constraint failure.
 fn remap_merge_atom_into(
     b: &Row,
     r: &Row,
@@ -1021,29 +845,80 @@ mod tests {
         }
     }
 
-    /// Build a `JoinPlan` directly from `(func, vars)` atoms.
+    fn body_atom(func: FunctionId, vars: impl IntoIterator<Item = u32>) -> BodyOp {
+        BodyOp::Atom(crate::compile::BodyAtom {
+            func,
+            slots: vars.into_iter().map(Slot::Var).collect(),
+            read_mode: crate::compile::ReadMode::Live,
+        })
+    }
+
+    /// Build a `JoinPlan` from `(func, vars)` atoms, preserving every variable
+    /// in the captured output through a synthetic head action.
     fn plan_of(atoms: &[(FunctionId, &[u32])]) -> JoinPlan {
-        let mut var_order: Vec<u32> = Vec::new();
-        let mut var_col: HashMap<u32, usize> = HashMap::new();
-        let mut planned: Vec<PlanAtom> = Vec::new();
-        for (func, vars) in atoms {
-            for &v in *vars {
-                if !var_col.contains_key(&v) {
-                    var_col.insert(v, var_order.len());
-                    var_order.push(v);
-                }
-            }
-            planned.push(PlanAtom {
-                read_key: live(*func),
-                slots: vars.iter().map(|&v| Slot::Var(v)).collect(),
-            });
-        }
-        JoinPlan {
-            var_order,
-            var_col,
-            atoms: planned,
-            projection: None,
-        }
+        let body = atoms
+            .iter()
+            .map(|(func, vars)| body_atom(*func, vars.iter().copied()))
+            .collect();
+        let mut vars: Vec<u32> = atoms
+            .iter()
+            .flat_map(|(_, vars)| vars.iter().copied())
+            .collect();
+        vars.sort_unstable();
+        vars.dedup();
+        plan_join(&RuleIr {
+            name: "test join".to_string(),
+            body,
+            head: vec![crate::compile::HeadOp::Set {
+                func: FunctionId::new(u32::MAX),
+                slots: vars.into_iter().map(Slot::Var).collect(),
+            }],
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn plan_reuses_columns_across_wide_variable_chain() {
+        let func = FunctionId::new(0);
+        let final_var = W as u32 + 1;
+        let body = (0..=W as u32)
+            .map(|var| body_atom(func, [var, var + 1]))
+            .collect();
+        let plan = plan_join(&RuleIr {
+            name: "wide chain".to_string(),
+            body,
+            head: vec![crate::compile::HeadOp::Set {
+                func,
+                slots: vec![Slot::Var(final_var)],
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(plan.var_order(), vec![final_var]);
+        assert!(plan
+            .projection
+            .step_col
+            .iter()
+            .all(|layout| layout.len() <= W));
+    }
+
+    #[test]
+    fn plan_rejects_live_variable_frontier_wider_than_row() {
+        let func = FunctionId::new(0);
+        let head_vars: Vec<Slot> = (0..=W as u32).map(Slot::Var).collect();
+        let rule = RuleIr {
+            name: "wide frontier".to_string(),
+            body: vec![body_atom(func, 0..W as u32), body_atom(func, [0, W as u32])],
+            head: vec![crate::compile::HeadOp::Set {
+                func,
+                slots: head_vars,
+            }],
+        };
+
+        let error = plan_join(&rule)
+            .err()
+            .expect("wide live frontier must fail");
+        assert!(error.contains("live body-variable frontier exceeds W"));
     }
 
     /// Feed one all-at-once delta of `rows` per func into a fresh

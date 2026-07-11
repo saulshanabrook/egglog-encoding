@@ -371,15 +371,15 @@ def test_parse_treatments_rejects_duplicates() -> None:
 
 def test_parse_backends_accepts_single_and_comma_separated_values() -> None:
     assert bench.parse_backends("main") == ("main",)
-    assert bench.parse_backends("main,flowlog") == ("main", "flowlog")
-    assert bench.parse_backends(" flowlog , main ") == ("flowlog", "main")
+    assert bench.parse_backends("main,dd") == ("main", "dd")
+    assert bench.parse_backends(" dd , main ") == ("dd", "main")
 
 
 def test_parse_backends_rejects_duplicates_unknowns_and_empty_values() -> None:
     with pytest.raises(ValueError, match="duplicate backend: main"):
-        bench.parse_backends("main,flowlog,main")
-    with pytest.raises(ValueError, match="unknown backend: dd"):
-        bench.parse_backends("dd")
+        bench.parse_backends("main,dd,main")
+    with pytest.raises(ValueError, match="unknown backend: bogus"):
+        bench.parse_backends("bogus")
     with pytest.raises(ValueError, match="at least one backend"):
         bench.parse_backends(",,")
 
@@ -443,15 +443,15 @@ def test_benchmark_cells_filter_off_for_non_main_backends() -> None:
         treatments=("off", "term", "proofs"),
         rounds=1,
         timeout_sec=120,
-        backends=("main", "flowlog"),
+        backends=("main", "dd"),
     )
 
     assert bench.benchmark_cells(spec) == (
         bench.BenchmarkCell("main", "off"),
         bench.BenchmarkCell("main", "term"),
         bench.BenchmarkCell("main", "proofs"),
-        bench.BenchmarkCell("flowlog", "term"),
-        bench.BenchmarkCell("flowlog", "proofs"),
+        bench.BenchmarkCell("dd", "term"),
+        bench.BenchmarkCell("dd", "proofs"),
     )
 
 
@@ -462,19 +462,19 @@ def test_validate_spec_rejects_backend_with_no_supported_treatments() -> None:
         treatments=("off",),
         rounds=1,
         timeout_sec=120,
-        backends=("flowlog",),
+        backends=("dd",),
     )
 
-    with pytest.raises(ValueError, match="backend flowlog has no supported treatments"):
+    with pytest.raises(ValueError, match="backend dd has no supported treatments"):
         bench.validate_spec(spec)
 
 
 def test_resolve_profile_request_reuses_backend_treatment_validation(tmp_path: Path) -> None:
     file_path = tmp_path / "file.egg"
     file_path.write_text("(check (= 1 1))\n", encoding="utf-8")
-    args = bench.parse_args(["profile", str(file_path), "--backend", "flowlog", "--treatment", "off"])
+    args = bench.parse_args(["profile", str(file_path), "--backend", "dd", "--treatment", "off"])
 
-    with pytest.raises(ValueError, match="backend flowlog has no supported treatments"):
+    with pytest.raises(ValueError, match="backend dd has no supported treatments"):
         bench.resolve_profile_request(args, ROOT)
 
 
@@ -511,7 +511,7 @@ def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     bench.validate_spec(spec)
 
 
-def test_default_files_use_flowlog_safe_math_microbenchmark() -> None:
+def test_default_files_use_dd_safe_math_microbenchmark() -> None:
     display_paths = tuple(file.display_path for file in bench.resolve_files([], ROOT))
 
     assert "egglog/tests/math-microbenchmark-mini.egg" in display_paths
@@ -644,7 +644,7 @@ def test_collection_plan_counts_cache_and_missing_rows() -> None:
     assert force_plan.total_planned_processes == 3
 
 
-def test_collection_plan_does_not_reuse_main_rows_for_flowlog() -> None:
+def test_collection_plan_does_not_reuse_main_rows_for_dd() -> None:
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", backend="main", treatment="term", wall_sec=1.0))
     target = make_target()
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
@@ -653,16 +653,16 @@ def test_collection_plan_does_not_reuse_main_rows_for_flowlog() -> None:
         treatments=("term",),
         rounds=1,
         timeout_sec=120,
-        backends=("main", "flowlog"),
+        backends=("main", "dd"),
     )
 
     plan = bench.build_collection_plan(rows, target, spec, False)
 
-    main_cell, flowlog_cell = plan.cells
+    main_cell, dd_cell = plan.cells
     assert main_cell.backend == "main"
     assert main_cell.missing_observations == 0
-    assert flowlog_cell.backend == "flowlog"
-    assert flowlog_cell.missing_observations == 1
+    assert dd_cell.backend == "dd"
+    assert dd_cell.missing_observations == 1
 
 
 def test_parse_args_rejects_removed_output_mode() -> None:
@@ -799,8 +799,8 @@ def test_render_report_compares_backends_for_single_target() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", backend="main", treatment="term", wall_sec=1.0),
         make_record(1, started_at="2026-07-04T12:00:01Z", backend="main", treatment="term", wall_sec=1.1),
-        make_record(2, started_at="2026-07-04T12:00:00Z", backend="flowlog", treatment="term", wall_sec=2.0),
-        make_record(3, started_at="2026-07-04T12:00:01Z", backend="flowlog", treatment="term", wall_sec=2.1),
+        make_record(2, started_at="2026-07-04T12:00:00Z", backend="dd", treatment="term", wall_sec=2.0),
+        make_record(3, started_at="2026-07-04T12:00:01Z", backend="dd", treatment="term", wall_sec=2.1),
     )
     target = make_target()
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
@@ -817,22 +817,22 @@ def test_render_report_compares_backends_for_single_target() -> None:
             treatments=("term",),
             rounds=2,
             timeout_sec=120,
-            backends=("main", "flowlog"),
+            backends=("main", "dd"),
         ),
     )
 
     output = stream.getvalue()
     assert "Per-file backend wall-time change vs main" in output
-    assert "FlowLog vs main wall time" in output
-    assert "FlowLog/main" in output
+    assert "DD vs main wall time" in output
+    assert "DD/main" in output
     assert "Best file" in output
     assert "Best ratio" in output
     assert "Faster files" in output
     assert "main/term" in output
-    assert "flowlog/term" in output
-    assert "flowlog/off" not in output
+    assert "dd/term" in output
+    assert "dd/off" not in output
     assert "1.952x" in output
-    assert output.index("FlowLog vs main wall time") < output.index("proof overhead summary")
+    assert output.index("DD vs main wall time") < output.index("proof overhead summary")
 
 
 def test_render_report_backend_summary_highlights_best_file() -> None:
@@ -860,9 +860,9 @@ def test_render_report_backend_summary_highlights_best_file() -> None:
 
     mib = 1024 * 1024
     add_cell(file_sha256="sha256:slow", backend="main", wall_sec=1.0, max_rss_bytes=100 * mib)
-    add_cell(file_sha256="sha256:slow", backend="flowlog", wall_sec=2.0, max_rss_bytes=200 * mib)
+    add_cell(file_sha256="sha256:slow", backend="dd", wall_sec=2.0, max_rss_bytes=200 * mib)
     add_cell(file_sha256="sha256:fast", backend="main", wall_sec=1.0, max_rss_bytes=100 * mib)
-    add_cell(file_sha256="sha256:fast", backend="flowlog", wall_sec=0.5, max_rss_bytes=80 * mib)
+    add_cell(file_sha256="sha256:fast", backend="dd", wall_sec=0.5, max_rss_bytes=80 * mib)
     rows = make_rows(*records)
     target = make_target()
     slow_file = bench.FileSpec("slow.egg", ROOT / "slow.egg", "sha256:slow")
@@ -880,13 +880,13 @@ def test_render_report_backend_summary_highlights_best_file() -> None:
             treatments=("term",),
             rounds=2,
             timeout_sec=120,
-            backends=("main", "flowlog"),
+            backends=("main", "dd"),
         ),
     )
 
     output = stream.getvalue()
-    assert "FlowLog vs main wall time" in output
-    assert "FlowLog vs main peak RSS" in output
+    assert "DD vs main wall time" in output
+    assert "DD vs main peak RSS" in output
     assert "Faster files" in output
     assert "Lower-RSS files" in output
     assert "fast.egg" in output
@@ -1132,7 +1132,7 @@ def test_markdown_report_has_no_rich_markup_ansi_or_box_drawing() -> None:
 
 def test_backend_summary_table_data_feeds_rich_and_markdown_renderers() -> None:
     records: list[dict[str, Any]] = []
-    for file_sha256, main_time, flowlog_time in (("sha256:slow", 1.0, 2.0), ("sha256:fast", 1.0, 0.5)):
+    for file_sha256, main_time, dd_time in (("sha256:slow", 1.0, 2.0), ("sha256:fast", 1.0, 0.5)):
         records.append(
             make_record(
                 len(records),
@@ -1148,9 +1148,9 @@ def test_backend_summary_table_data_feeds_rich_and_markdown_renderers() -> None:
                 len(records),
                 started_at=f"2026-07-04T12:00:{len(records):02d}Z",
                 file_sha256=file_sha256,
-                backend="flowlog",
+                backend="dd",
                 treatment="term",
-                wall_sec=flowlog_time,
+                wall_sec=dd_time,
             )
         )
     rows = make_rows(*records)
@@ -1162,7 +1162,7 @@ def test_backend_summary_table_data_feeds_rich_and_markdown_renderers() -> None:
         treatments=("term",),
         rounds=1,
         timeout_sec=120,
-        backends=("main", "flowlog"),
+        backends=("main", "dd"),
     )
     cell_maps = {target: bench.target_cell_summaries(rows, target, spec)}
     rss_cell_maps = {target: bench.target_rss_cell_summaries(rows, target, spec)}
@@ -1176,7 +1176,7 @@ def test_backend_summary_table_data_feeds_rich_and_markdown_renderers() -> None:
     assert table_data.headers[-3:] == ("Best file", "Best ratio", "Best result")
     assert table_data.rows == (
         (
-            "flowlog",
+            "dd",
             "term",
             "2.0000s",
             "2.5000s",
@@ -1389,7 +1389,7 @@ def test_run_command_records_signal_separately_from_exit_code() -> None:
     assert result.error.signal == signal.SIGTERM
 
 
-def test_run_process_passes_backend_flag_only_for_flowlog(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_process_passes_backend_flag_only_for_dd(monkeypatch: pytest.MonkeyPatch) -> None:
     commands: list[list[str]] = []
     file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
 
@@ -1402,12 +1402,12 @@ def test_run_process_passes_backend_flag_only_for_flowlog(monkeypatch: pytest.Mo
     monkeypatch.setattr(bench, "run_command", fake_run_command)
 
     bench.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "main", "off", 120)
-    bench.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "flowlog", "proofs", 120)
+    bench.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "dd", "proofs", 120)
 
     assert "--backend" not in commands[0]
     assert commands[1][commands[1].index("--backend") : commands[1].index("--backend") + 2] == [
         "--backend",
-        "flowlog",
+        "dd",
     ]
     assert "--proofs" in commands[1]
 
@@ -1423,14 +1423,14 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "1",
         str(file_spec.absolute_path),
     ]
-    assert bench.workload_command(ROOT / "egglog-experimental", file_spec, "flowlog", "proofs") == [
+    assert bench.workload_command(ROOT / "egglog-experimental", file_spec, "dd", "proofs") == [
         str(ROOT / "egglog-experimental"),
         "--mode",
         "no-messages",
         "-j",
         "1",
         "--backend",
-        "flowlog",
+        "dd",
         "--proofs",
         str(file_spec.absolute_path),
     ]

@@ -122,8 +122,8 @@ pub type PanicMsg = Box<dyn FnOnce() -> String + Send>;
 ///
 /// The frontend holds a `Box<dyn Backend>` and drives everything through this
 /// trait. Implementations: the in-memory reference `egglog_bridge::EGraph`
-/// (this crate's `backend_impl`), and separate-crate engines such as the FlowLog
-/// (differential-dataflow) backend in `egglog-experimental/flowlog`.
+/// (this crate's `backend_impl`), and separate-crate engines such as the
+/// Differential Dataflow backend in `egglog-experimental/dd`.
 ///
 /// See the crate docs for which methods are required vs. optional and how the
 /// ergonomic sugar on `dyn Backend` relates to the `_dyn` methods here.
@@ -267,11 +267,11 @@ pub trait Backend: Send + Sync {
     }
 
     /// Whether this backend needs the frontend's term-encoding pipeline to be
-    /// enabled. A backend without a native union-find (a relational backend
-    /// such as FlowLog) relies on term encoding to lower congruence and rebuild
-    /// to ordinary rules over `@uf` tables; running it in native mode would
-    /// silently drop `union`s. The frontend refuses to run such a backend
-    /// unless the e-graph was built with term encoding (via
+    /// enabled. A backend without a native union-find, such as the experimental
+    /// Differential Dataflow backend, relies on term encoding to lower
+    /// congruence and rebuild to ordinary rules over `@uf` tables; running it in
+    /// native mode would silently drop `union`s. The frontend refuses to run
+    /// such a backend unless the e-graph was built with term encoding (via
     /// `EGraph::with_term_encoding`).
     fn requires_term_encoding(&self) -> bool {
         false

@@ -1,26 +1,26 @@
-//! Runs egglog's `.egg` corpus through the FlowLog backend and checks each
+//! Runs egglog's `.egg` corpus through the DD backend and checks each
 //! result against egglog's OWN golden snapshot.
 //!
 //! egglog's `tests/files.rs` appends `(print-size)` to every corpus file and, for
 //! each file, stores ONE snapshot (`egglog/tests/snapshots/
 //! files__shared_snapshot_<stem>.snap`) whose content is normalized to be
 //! identical across the native / term-encoding / proofs treatments
-//! (`CommandOutput::snapshot_stable_under_proof_encoding`). FlowLog is
+//! (`CommandOutput::snapshot_stable_under_proof_encoding`). DD is
 //! term-encoded, so its normalized output must equal that shared snapshot. This
 //! test reuses those files directly — egglog is the single source of truth, and
-//! FlowLog keeps no snapshots of its own.
+//! DD keeps no snapshots of its own.
 //!
-//! egglog's snapshot is only meaningful for FlowLog when it is term-encoding
+//! egglog's snapshot is only meaningful for DD when it is term-encoding
 //! output: egglog runs the term-encoding treatment (and so the shared snapshot is
 //! stable across native + term encoding) exactly when `file_supports_proofs`. For
 //! files that don't support proofs the snapshot is native-only, which a
 //! term-encoded backend needn't reproduce, so those are skipped.
 //!
 //! Per (proof-supporting) corpus file:
-//! - FlowLog can't run it (an unsupported FEATURE — see [`KNOWN_UNSUPPORTED`]) →
+//! - DD can't run it (an unsupported FEATURE — see [`KNOWN_UNSUPPORTED`]) →
 //!   passes only if listed; a new failure (or a listed file that starts working)
 //!   fails the harness so the list stays honest;
-//! - FlowLog runs it and its normalized output equals egglog's snapshot → pass;
+//! - DD runs it and its normalized output equals egglog's snapshot → pass;
 //! - otherwise it DIFFERS from egglog → fail, unless in [`KNOWN_MISMATCH`].
 //!
 //! Run with `--release`: differential-dataflow is impractically slow in debug
@@ -33,11 +33,11 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 
 /// egglog's shared golden snapshots (one per corpus file, stable across
-/// treatments), which this harness checks FlowLog against.
+/// treatments), which this harness checks DD against.
 const EGGLOG_SNAPSHOTS: &str = "../../egglog/tests/snapshots";
 
 /// Files that saturate too slowly on the differential-dataflow path to belong in
-/// a test suite. Skipped entirely (not run on FlowLog).
+/// a test suite. Skipped entirely (not run on DD).
 const HANG: &[&str] = &[
     "eggcc-2mm.egg",
     "eqsolve.egg",
@@ -61,7 +61,7 @@ const DEBUG_SUBSET: &[&str] = &[
     "eqsat-basic.egg",
 ];
 
-/// Files egglog snapshots but FlowLog cannot run, because they use a FEATURE this
+/// Files egglog snapshots but DD cannot run, because they use a FEATURE this
 /// simplified backend does not implement (as opposed to a wrong answer, of which
 /// there are none). Listed explicitly so the harness fails if the set changes in
 /// either direction. Reasons:
@@ -70,7 +70,7 @@ const DEBUG_SUBSET: &[&str] = &[
 ///   differential-dataflow dataflow cannot provide):
 ///   `array`, `bdd`, `calc`, `container-fail`, `lambda`, `math`, `push-pop`.
 /// - container rebuild read primitives (registered through egglog's
-///   `ActionRegistry`; FlowLog has direct container storage but no registry
+///   `ActionRegistry`; DD has direct container storage but no registry
 ///   execution state for read primitives over its term-encoded mirror):
 ///   `container-proofs`, `datatypes`, `nested-container-dirty-propagation`,
 ///   `repro-querybug3`.
@@ -88,7 +88,7 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "repro-querybug3.egg",
 ];
 
-/// Files FlowLog runs but whose output DIVERGES from egglog's snapshot — real
+/// Files DD runs but whose output DIVERGES from egglog's snapshot — real
 /// bugs surfaced by comparing the full normalized output. Keep this list empty:
 /// any matching failure should either be fixed or documented narrowly here.
 const KNOWN_MISMATCH: &[&str] = &[];
@@ -103,13 +103,11 @@ fn egglog_snapshot(stem: &str) -> Option<String> {
     Some(content.trim_end().to_string())
 }
 
-/// Run `program` on FlowLog and render its outputs with the SAME normalization
+/// Run `program` on DD and render its outputs with the SAME normalization
 /// egglog's snapshot used, so the two are directly comparable.
-fn run_flowlog(file: &str, program: &str) -> Result<String, String> {
-    let mut eg = EGraph::with_backend(Box::new(
-        egglog_experimental_flowlog::EGraph::new_interpret(),
-    ))
-    .with_term_encoding();
+fn run_dd(file: &str, program: &str) -> Result<String, String> {
+    let mut eg =
+        EGraph::with_backend(Box::new(egglog_experimental_dd::EGraph::new())).with_term_encoding();
     match eg.parse_and_run_program(Some(file.to_string()), program) {
         Ok(outs) => Ok(CommandOutput::snapshot_stable_under_proof_encoding(&outs)
             .trim_end()
@@ -140,20 +138,20 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
     let src = std::fs::read_to_string(path).map_err(|e| format!("read {name}: {e}"))?;
     let program = format!("{src}\n(print-size)");
     let file = path.display().to_string();
-    let flowlog = catch_unwind(AssertUnwindSafe(|| run_flowlog(&file, &program)));
+    let dd = catch_unwind(AssertUnwindSafe(|| run_dd(&file, &program)));
 
     let unsupported = KNOWN_UNSUPPORTED.contains(&name.as_str());
     let known_mismatch = KNOWN_MISMATCH.contains(&name.as_str());
 
-    match flowlog {
-        // FlowLog couldn't run it (unsupported feature or a panic). Fine only if
+    match dd {
+        // DD couldn't run it (unsupported feature or a panic). Fine only if
         // documented; a new failure means the list is stale.
         Ok(Err(err)) => {
             if unsupported {
                 Ok(())
             } else {
                 Err(format!(
-                    "{name}: FlowLog failed but is not in KNOWN_UNSUPPORTED — \
+                    "{name}: DD failed but is not in KNOWN_UNSUPPORTED — \
                      add it (with the reason) or investigate the regression\n\
                      error: {err}"
                 )
@@ -170,7 +168,7 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
                     .or_else(|| panic.downcast_ref::<&str>().copied())
                     .unwrap_or("<non-string panic payload>");
                 Err(format!(
-                    "{name}: FlowLog panicked but is not in KNOWN_UNSUPPORTED — \
+                    "{name}: DD panicked but is not in KNOWN_UNSUPPORTED — \
                      add it (with the reason) or investigate the regression\n\
                      panic: {panic}"
                 )
@@ -197,8 +195,8 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
         // Documented divergence: still differs (checked above), don't fail.
         Ok(Ok(_)) if known_mismatch => Ok(()),
         Ok(Ok(out)) => Err(format!(
-            "{name}: FlowLog disagrees with egglog's snapshot\n\
-             --- egglog ---\n{expected}\n--- flowlog ---\n{out}"
+            "{name}: DD disagrees with egglog's snapshot\n\
+             --- egglog ---\n{expected}\n--- dd ---\n{out}"
         )
         .into()),
     }
@@ -225,7 +223,7 @@ fn corpus() -> Vec<PathBuf> {
 }
 
 fn main() {
-    // FlowLog panics on features it can't lower; keep the output clean while
+    // DD panics on features it can't lower; keep the output clean while
     // `catch_unwind` turns those into a KNOWN_UNSUPPORTED check.
     std::panic::set_hook(Box::new(|_| {}));
     let args = Arguments::from_args();

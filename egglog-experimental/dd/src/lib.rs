@@ -1,11 +1,11 @@
-//! # egglog-experimental-flowlog
+//! # egglog-experimental-dd
 //!
 //! A differential-dataflow-backed implementation of egglog's
 //! [`egglog_backend_trait::Backend`] interface.
 //!
 //! One `run_rules` call is one bounded egglog iteration. Each rule's body
 //! table-atom join runs on an in-process differential-dataflow dataflow
-//! ([`dd_native`]); the body primitive tail and head actions are applied
+//! ([`dd_native`]); body primitives and head actions are applied
 //! host-side ([`interpret`]) into a Rust-side materialized mirror of every
 //! relation. `for_each` / `lookup_id` / `table_size` read that mirror.
 
@@ -32,19 +32,66 @@ use compile::{row_col, unpack_row, MergeMode, MergeTree, ReadKey, Row, RuleIr};
 type LocatedValue = (u32, RowLocation);
 type RowReplacement = (Box<[u32]>, LocatedValue);
 
+mod dd_workers {
+    use hashbrown::HashMap;
+
+    use crate::dd_native;
+
+    /// Owns the single-threaded Timely workers behind an exclusive-access
+    /// boundary. The worker map is private to this module, and every accessor
+    /// requires `&mut self`, so immutable backend operations cannot touch
+    /// Timely's `Rc`/`RefCell` state.
+    pub(super) struct DdWorkers {
+        inner: HashMap<Vec<usize>, dd_native::FusedDdJoin>,
+    }
+
+    impl DdWorkers {
+        pub(super) fn new() -> Self {
+            Self {
+                inner: HashMap::new(),
+            }
+        }
+
+        pub(super) fn contains_key(&mut self, key: &[usize]) -> bool {
+            self.inner.contains_key(key)
+        }
+
+        pub(super) fn insert(&mut self, key: Vec<usize>, value: dd_native::FusedDdJoin) {
+            self.inner.insert(key, value);
+        }
+
+        pub(super) fn get(&mut self, key: &[usize]) -> Option<&dd_native::FusedDdJoin> {
+            self.inner.get(key)
+        }
+
+        pub(super) fn get_mut(&mut self, key: &[usize]) -> Option<&mut dd_native::FusedDdJoin> {
+            self.inner.get_mut(key)
+        }
+
+        pub(super) fn retain(&mut self, mut keep: impl FnMut(&Vec<usize>) -> bool) {
+            self.inner.retain(|key, _| keep(key));
+        }
+    }
+
+    // SAFETY: `FusedDdJoin` does not expose or clone its Timely handles outside
+    // this private owner. Moving `DdWorkers` moves every related handle together,
+    // and the only worker accessors require `&mut self`. In particular, `Sync`
+    // cannot be used to reach Timely state through a shared reference.
+    unsafe impl Send for DdWorkers {}
+    unsafe impl Sync for DdWorkers {}
+}
+
+use dd_workers::DdWorkers;
+
 // ---------------------------------------------------------------------------
 // Relation metadata
 // ---------------------------------------------------------------------------
 
 /// What we remember about each registered relation/function.
 pub(crate) struct RelationInfo {
-    #[allow(dead_code)]
     name: String,
     /// Number of columns (including the output column for functions).
     pub(crate) arity: usize,
-    /// True for functions/constructors that have an output column.
-    #[allow(dead_code)]
-    has_output: bool,
     /// Whether RHS lookups may create a fresh output row on miss.
     pub(crate) lookup_mints: bool,
     /// How functional-dependency conflicts are resolved.
@@ -65,34 +112,28 @@ pub struct EGraph {
     /// Rust-side materialized mirror: the accumulated contents of each relation.
     /// This is what `for_each` / `lookup_id` / `table_size` read.
     ///
-    /// The set per function is shared by `Rc` so the per-iteration read snapshot
-    /// (see `interpret::run_iteration`) is O(#functions), not O(state):
-    /// mutations copy-on-write via `Rc::make_mut` only the functions actually
-    /// changed while a snapshot is alive.
-    pub(crate) mirror: HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
+    pub(crate) mirror: HashMap<FunctionId, HashSet<Row>>,
     /// Subsumed rows, moved OUT of `mirror` by `(subsume …)` (a "soft delete").
     /// Ordinary queries (`is_subsumed = Some(false)`) read only `mirror`, so
     /// subsumed rows are excluded for free; `:internal-include-subsumed` rules and
     /// `for_each` read `mirror` ∪ `subsumed`. Keyed like `mirror`, by `FunctionId`.
-    pub(crate) subsumed: HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
+    pub(crate) subsumed: HashMap<FunctionId, HashSet<Row>>,
     /// A core-relations [`Database`] used purely as the base-value / primitive
     /// engine, so `Value`s are bit-for-bit identical to the reference backend.
     db: Database,
     /// Monotonic fresh-id counter for `fresh_id` / `add_term`.
     pub(crate) next_id: u32,
     report_level: ReportLevel,
-    /// Diagnostics: rule firings whose body join ran on the DD engine.
-    pub(crate) dd_rule_runs: u64,
     /// Atom-less rules (`(rule () …)`) fire ONCE; an entry here marks a rule
     /// index as already fired. The DD dataflow has no input relation to drive an
     /// atom-less body, so this fired-marker is the one piece of seminaive
-    /// bookkeeping the DD path reuses (see `interpret::dd_native_bindings`).
+    /// bookkeeping the DD path reuses (see `interpret::fused_bindings`).
     /// `free_rule` removes the entry so a re-installed rule can fire again.
     pub(crate) seen: HashMap<usize, ()>,
     /// Per-RULESET fused DD join (one shared timely worker + one dataflow for the
     /// whole ruleset), keyed by the sorted live rule-index list. This is the
     /// join path the interpreter drives.
-    pub(crate) dd_fused: HashMap<Vec<usize>, dd_native::FusedDdJoin>,
+    pub(crate) dd_fused: DdWorkers,
     /// Monotone version assigned whenever a row becomes visible in one of the
     /// DD read views. This stands in for the reference backend's hidden
     /// timestamp: removing and reinserting the same row gives it a fresh version,
@@ -126,16 +167,16 @@ impl CurrentValue {
 
 impl Default for EGraph {
     fn default() -> Self {
-        Self::new_interpret()
+        Self::new()
     }
 }
 
 impl EGraph {
-    /// Construct a fresh DD-backed egraph. Rule bodies run on the in-process
-    /// differential-dataflow join; body primitives and head actions are applied
-    /// host-side into the mirror. This is the constructor the egglog frontend
-    /// uses (`EGraph::with_flowlog_backend`).
-    pub fn new_interpret() -> Self {
+    /// Construct a fresh Differential Dataflow backend. Rule bodies run on the
+    /// in-process DD join; body primitives and head actions are applied
+    /// host-side into the mirror. Pass this backend to
+    /// `egglog::EGraph::with_backend` through the frontend integration crate.
+    pub fn new() -> Self {
         let mut db = Database::new();
         // Pre-register the `()` (Unit) base type so `add_table`'s relation-vs-
         // function detection can always resolve the Unit `BaseValueId`.
@@ -151,9 +192,8 @@ impl EGraph {
             // Start at 1 so id 0 stays a "null"/padding sentinel.
             next_id: 1,
             report_level: ReportLevel::default(),
-            dd_rule_runs: 0,
             seen: HashMap::new(),
-            dd_fused: HashMap::new(),
+            dd_fused: DdWorkers::new(),
             next_row_version: 1,
             live_versions: HashMap::new(),
             all_versions: HashMap::new(),
@@ -185,22 +225,14 @@ impl EGraph {
         self.db.container_values()
     }
 
-    /// Diagnostics: the number of rule firings whose body table-atom join ran on
-    /// the in-process Differential-Dataflow dataflow. Every atom-bearing rule
-    /// runs there (no host fallback); lets a test assert the join genuinely ran
-    /// on DD.
-    pub fn flowlog_dd_rule_runs(&self) -> u64 {
-        self.dd_rule_runs
-    }
-
     /// The functional-dependency merge mode of a function (from `add_table`).
     pub(crate) fn merge_mode(&self, f: FunctionId) -> MergeMode {
         self.info(f).merge
     }
 
     /// Evaluate a primitive through the embedded `Database` (the base-value /
-    /// primitive engine). Both the host interpreter and the DD-join path's
-    /// host-side primitive tail call this, so `Value`s are bit-for-bit
+    /// primitive engine). Both the host interpreter and the DD join's
+    /// host-side primitive phase call this, so `Value`s are bit-for-bit
     /// identical to the reference backend.
     pub(crate) fn eval_prim_internal(
         &self,
@@ -410,7 +442,7 @@ impl EGraph {
             return false;
         }
         {
-            let live = std::rc::Rc::make_mut(self.mirror.get_mut(&f).unwrap());
+            let live = self.mirror.get_mut(&f).unwrap();
             for r in &moved {
                 live.remove(r);
             }
@@ -418,7 +450,7 @@ impl EGraph {
         for r in &moved {
             self.record_row_event(f, r.clone(), -1, 0, 1);
         }
-        let subs = std::rc::Rc::make_mut(self.subsumed.entry(f).or_default());
+        let subs = self.subsumed.entry(f).or_default();
         for r in moved {
             subs.insert(r);
         }
@@ -433,7 +465,7 @@ impl EGraph {
         {
             return false;
         }
-        let inserted = std::rc::Rc::make_mut(self.mirror.entry(f).or_default()).insert(row.clone());
+        let inserted = self.mirror.entry(f).or_default().insert(row.clone());
         if inserted {
             self.record_row_event(f, row, 1, 1, 0);
         }
@@ -495,7 +527,7 @@ impl EGraph {
             RowLocation::Live => &mut self.mirror,
             RowLocation::Subsumed => &mut self.subsumed,
         };
-        let inserted = std::rc::Rc::make_mut(store.entry(f).or_default()).insert(row.clone());
+        let inserted = store.entry(f).or_default().insert(row.clone());
         if inserted {
             match location {
                 RowLocation::Live => self.record_row_event(f, row, 1, 1, 0),
@@ -559,14 +591,14 @@ fn row_with_value(key: &[u32], value: u32) -> Row {
 }
 
 fn remove_keys_from_store(
-    store: &mut HashMap<FunctionId, std::rc::Rc<HashSet<Row>>>,
+    store: &mut HashMap<FunctionId, HashSet<Row>>,
     f: FunctionId,
     keylen: usize,
     keys: &HashSet<Box<[u32]>>,
 ) -> Vec<Row> {
     let mut removed = Vec::new();
     if let Some(rows) = store.get_mut(&f) {
-        std::rc::Rc::make_mut(rows).retain(|row| {
+        rows.retain(|row| {
             if keys.contains(&row[..keylen]) {
                 removed.push(row.clone());
                 false
@@ -601,17 +633,6 @@ fn update_version_map(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Send + Sync (single-threaded use)
-// ---------------------------------------------------------------------------
-//
-// The embedded differential-dataflow worker and its handles are not all
-// auto-`Send`/`Sync`. The egraph is only ever driven from a single thread, so
-// we assert the bounds the trait requires. Concurrent multi-thread use is
-// unsupported.
-unsafe impl Send for EGraph {}
-unsafe impl Sync for EGraph {}
-
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
@@ -639,10 +660,31 @@ mod tests {
     }
 
     #[test]
+    fn native_union_is_rejected_instead_of_silently_dropped() {
+        let mut eg = EGraph::new();
+        let left = QueryEntry::Const {
+            val: Value::new(1),
+            ty: ColumnTy::Id,
+        };
+        let right = QueryEntry::Const {
+            val: Value::new(2),
+            ty: ColumnTy::Id,
+        };
+        let rule = {
+            let mut builder = Backend::new_rule(&mut eg, "native union", true);
+            builder.union(left, right);
+            builder.build().unwrap()
+        };
+
+        let error = Backend::run_rules(&mut eg, &[rule]).unwrap_err();
+        assert!(error.to_string().contains("received a native union"));
+    }
+
+    #[test]
     fn merge_set_preserves_subsumed_status() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        std::rc::Rc::make_mut(eg.subsumed.entry(f).or_default()).insert(row(&[1, 10]));
+        eg.subsumed.entry(f).or_default().insert(row(&[1, 10]));
 
         assert!(eg.apply_merge_sets(f, &[row(&[1, 11])]).unwrap());
 
@@ -653,10 +695,10 @@ mod tests {
 
     #[test]
     fn lookup_or_create_finds_subsumed_rows() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
         eg.next_id = 100;
-        std::rc::Rc::make_mut(eg.subsumed.entry(f).or_default()).insert(row(&[42, 7]));
+        eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
 
         let mut lookup_index = HashMap::new();
         let value = interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index);
@@ -668,10 +710,10 @@ mod tests {
 
     #[test]
     fn merge_set_collapses_live_subsumed_key_duplicate() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        std::rc::Rc::make_mut(eg.mirror.entry(f).or_default()).insert(row(&[1, 10]));
-        std::rc::Rc::make_mut(eg.subsumed.entry(f).or_default()).insert(row(&[1, 11]));
+        eg.mirror.entry(f).or_default().insert(row(&[1, 10]));
+        eg.subsumed.entry(f).or_default().insert(row(&[1, 11]));
 
         assert!(eg.apply_merge_sets(f, &[row(&[1, 12])]).unwrap());
 
@@ -682,7 +724,7 @@ mod tests {
 
     #[test]
     fn same_table_self_join_produces_cross_pairs() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let unit_ty = eg
             .db
             .base_values()
@@ -740,7 +782,7 @@ mod tests {
 
     #[test]
     fn fused_ruleset_allows_mixed_read_modes_same_relation() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let unit_ty = eg
             .db
             .base_values()
@@ -813,7 +855,7 @@ mod tests {
 
     #[test]
     fn same_table_self_join_applies_primitive_guards() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let neq = Backend::register_external_func(
             &mut eg,
             Box::new(egglog_core_relations::make_external_func(|_, args| {
@@ -895,7 +937,7 @@ mod tests {
 
     #[test]
     fn same_table_self_join_allows_independent_unit_outputs() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let neq = Backend::register_external_func(
             &mut eg,
             Box::new(egglog_core_relations::make_external_func(|_, args| {
@@ -979,7 +1021,7 @@ mod tests {
 
     #[test]
     fn incremental_self_join_retracts_old_path_edge() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let neq = Backend::register_external_func(
             &mut eg,
             Box::new(egglog_core_relations::make_external_func(|_, args| {
@@ -1036,7 +1078,7 @@ mod tests {
 
     #[test]
     fn reinserted_same_row_refires_incremental_join() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let neq = Backend::register_external_func(
             &mut eg,
             Box::new(egglog_core_relations::make_external_func(|_, args| {
@@ -1097,7 +1139,7 @@ mod tests {
 
     #[test]
     fn same_iteration_remove_then_set_keeps_set_value() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let unit_ty = eg
             .db
             .base_values()
@@ -1154,7 +1196,7 @@ mod tests {
 
     #[test]
     fn same_iteration_set_then_subsume_ends_subsumed() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let unit_ty = eg
             .db
             .base_values()
@@ -1210,7 +1252,7 @@ mod tests {
 
     #[test]
     fn fused_delta_feed_does_not_expose_mixed_old_new_snapshots() {
-        let mut eg = EGraph::new_interpret();
+        let mut eg = EGraph::new();
         let neq = Backend::register_external_func(
             &mut eg,
             Box::new(egglog_core_relations::make_external_func(|_, args| {
@@ -1307,7 +1349,7 @@ mod tests {
 // Merge-mode recognition (shared by `add_table`)
 // ---------------------------------------------------------------------------
 
-/// Map a single-output-column [`MergeFn`] to the FlowLog [`MergeMode`] (plus, for
+/// Map a single-output-column [`MergeFn`] to this backend's [`MergeMode`] (plus, for
 /// [`MergeMode::Computed`], the evaluatable [`MergeTree`]) that resolves its FD
 /// conflict:
 ///   - `AssertEq` / `Old`     => keep the old value
@@ -1362,7 +1404,7 @@ impl Backend for EGraph {
         let arity = config.schema.len();
         assert!(
             arity <= compile::MAX_ARITY,
-            "FlowLog backend supports relations of arity <= {} (got {} for `{}`)",
+            "DD backend supports relations of arity <= {} (got {} for `{}`)",
             compile::MAX_ARITY,
             arity,
             config.name
@@ -1376,7 +1418,7 @@ impl Backend for EGraph {
         // custom function regardless of whether it has a real output column.
         let output_is_unit = config.schema.last().is_some_and(|t| match t {
             ColumnTy::Base(bv) => {
-                // `()` is pre-registered in `new_interpret`, so this never panics.
+                // `()` is pre-registered in `new`, so this never panics.
                 *bv == self
                     .db
                     .base_values()
@@ -1393,12 +1435,11 @@ impl Backend for EGraph {
         self.relations.push(RelationInfo {
             name: config.name,
             arity,
-            has_output,
             lookup_mints: matches!(config.default, DefaultVal::FreshId),
             merge,
             merge_tree,
         });
-        self.mirror.insert(id, std::rc::Rc::new(HashSet::new()));
+        self.mirror.insert(id, HashSet::new());
         id
     }
 
@@ -1451,14 +1492,14 @@ impl Backend for EGraph {
     fn clear_table(&mut self, func: FunctionId) {
         if let Some(set) = self.mirror.get_mut(&func) {
             let removed: Vec<Row> = set.iter().cloned().collect();
-            std::rc::Rc::make_mut(set).clear();
+            set.clear();
             for row in removed {
                 self.record_row_event(func, row, -1, -1, 0);
             }
         }
         if let Some(set) = self.subsumed.get_mut(&func) {
             let removed: Vec<Row> = set.iter().cloned().collect();
-            std::rc::Rc::make_mut(set).clear();
+            set.clear();
             for row in removed {
                 self.record_row_event(func, row, 0, -1, -1);
             }
@@ -1498,7 +1539,7 @@ impl Backend for EGraph {
     fn new_rule<'a>(&'a mut self, desc: &str, _seminaive: bool) -> Box<dyn RuleBuilderOps + 'a> {
         // Seminaive is native to differential dataflow; the flag is accepted
         // for parity and ignored.
-        Box::new(rule_builder::FlowlogRuleBuilder::new(self, desc))
+        Box::new(rule_builder::DdRuleBuilder::new(self, desc))
     }
 
     fn free_rule(&mut self, id: RuleId) {
@@ -1508,7 +1549,7 @@ impl Backend for EGraph {
             self.seen.remove(&i);
             // Any fused ruleset that included this rule is now stale: drop it so
             // it is rebuilt (without the freed rule) on the next `run_rules`.
-            self.dd_fused.retain(|key, _| !key.contains(&i));
+            self.dd_fused.retain(|key| !key.contains(&i));
             self.dd_fused_fed_versions
                 .retain(|key, _| !key.contains(&i));
         }
@@ -1563,7 +1604,7 @@ impl Backend for EGraph {
     // -- capability flags ---------------------------------------------------
 
     fn requires_term_encoding(&self) -> bool {
-        // FlowLog has no native union-find: congruence and rebuild are lowered
+        // This backend has no native union-find: congruence and rebuild are lowered
         // to ordinary rules over `@uf` tables by the term encoder. Without it,
         // `union`s would be silently dropped (see `HeadOp::Union` in interpret).
         true
@@ -1593,7 +1634,7 @@ impl Backend for EGraph {
             if n == 0 {
                 continue;
             }
-            log::info!("== FlowLog relation `{}` ({} rows) ==", info.name, n);
+            log::info!("== DD relation `{}` ({} rows) ==", info.name, n);
         }
     }
 
@@ -1603,7 +1644,7 @@ impl Backend for EGraph {
         // A running differential-dataflow dataflow can't be cloned; push/pop
         // snapshot support (replaying the mirror + rule IR + relation metadata
         // into a fresh engine) is not implemented.
-        unimplemented!("FlowLog backend clone_boxed (push/pop) is not implemented")
+        unimplemented!("DD backend clone_boxed (push/pop) is not implemented")
     }
 
     // -- bridge-only escape hatch ------------------------------------------

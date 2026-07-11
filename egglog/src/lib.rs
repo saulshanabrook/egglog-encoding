@@ -576,8 +576,8 @@ impl EGraph {
 
     /// Enable the term-encoding pipeline for a custom backend.
     ///
-    /// Backends without a native union-find (relational backends such as
-    /// FlowLog) require this: congruence and rebuild are lowered to ordinary
+    /// Relational backends without a native union-find require this:
+    /// congruence and rebuild are lowered to ordinary
     /// rules over `@uf` tables instead of relying on the backend's own
     /// union-find. Re-typechecking after the encoder runs uses a default
     /// (bridge-backed) e-graph, so this backend need not implement typechecking.

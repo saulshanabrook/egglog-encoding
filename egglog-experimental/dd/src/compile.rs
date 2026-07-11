@@ -1,4 +1,4 @@
-//! Rule IR and row representation for the FlowLog backend.
+//! Rule IR and row representation for the DD backend.
 //!
 //! ## Row representation
 //!
@@ -215,7 +215,7 @@ pub enum HeadOp {
 ///
 /// `body` is an ordered list of table-atom matches and primitive evaluations;
 /// `head` is an ordered list of writes. `run_rules` runs the body table-atom
-/// join on the DD dataflow, then applies the body primitive tail and head
+/// join on the DD dataflow, then applies body primitives and head
 /// actions host-side (see [`crate::interpret`]).
 #[derive(Clone, Debug, Default)]
 pub struct RuleIr {

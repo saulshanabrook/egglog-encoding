@@ -13,7 +13,7 @@ members = [
   "egglog/src/sort/add_primitive",
   "egglog/wasm-example",
   "egglog-experimental",
-  "egglog-experimental/flowlog",
+  "egglog-experimental/dd",
 ]
 
 [workspace.package]

@@ -5,7 +5,7 @@
 # It stays on edition 2021 (its differential-dataflow / timely dependency tree is
 # edition 2021); the workspace `resolver = "3"` supports the mixed edition.
 [package]
-name = "egglog-experimental-flowlog"
+name = "egglog-experimental-dd"
 version = "0.1.0"
 edition = "2021"
 description = "An experimental differential-dataflow-backed egglog Backend, as an out-of-tree example of the egglog-backend-trait SPI."
@@ -25,7 +25,7 @@ timely = "=0.30.0"
 serde = { version = "1", features = ["derive", "rc"] }
 
 [[test]]
-# Parity harness over egglog's .egg corpus: checks FlowLog's output against
+# Parity harness over egglog's .egg corpus: checks the DD backend against
 # egglog's OWN shared snapshots (`egglog/tests/snapshots/files__shared_snapshot_
 # *.snap`), so egglog is the single source of truth. Custom libtest-mimic main.
 name = "files"
@@ -33,7 +33,7 @@ harness = false
 
 [dev-dependencies]
 # The frontend, so the integration tests can run real `.egg` files on the
-# FlowLog backend via `egglog::EGraph::with_backend(..)`.
+# Differential Dataflow backend via `egglog::EGraph::with_backend(..)`.
 egglog = { path = "../../egglog", default-features = false }
 egglog-experimental = { path = "..", default-features = false }
 libtest-mimic = "0.8"

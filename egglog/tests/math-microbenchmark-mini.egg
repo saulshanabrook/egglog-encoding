@@ -1,5 +1,5 @@
 ;; The full benchmark runs 11 rounds. Eight preserves its rule and seed shape
-;; while leaving enough headroom for the FlowLog backend.
+;; while leaving enough headroom for the DD backend.
 (datatype Math
     (Diff Math Math)
     (Integral Math Math)
