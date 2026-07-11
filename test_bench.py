@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import io
 import json
 import resource
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +16,7 @@ import pytest
 from rich.console import Console
 
 import bench
+import samply_analysis
 
 ROOT = Path(__file__).resolve().parent
 
@@ -90,6 +93,107 @@ def make_target(
         binary_sha256=binary_sha256,
         binary_path=binary_path,
     )
+
+
+def make_profile_data() -> dict[str, Any]:
+    return {
+        "meta": {"sampleUnits": {"threadCPUDelta": "us"}},
+        "libs": [],
+        "threads": [],
+    }
+
+
+def make_cpu_profile_data(binary_path: Path) -> dict[str, Any]:
+    thread = {
+        "stringArray": ["0x10", "system_call", "application", "system"],
+        "samples": {
+            "length": 4,
+            "stack": [0, 0, 1, None],
+            "threadCPUDelta": [9_000_000, 100_000, 200_000, 300_000],
+        },
+        "stackTable": {"length": 2, "frame": [0, 1], "prefix": [None, None]},
+        "frameTable": {"length": 2, "address": [0x10, 0x20], "func": [0, 1]},
+        "funcTable": {"length": 2, "name": [0, 1], "resource": [0, 1]},
+        "resourceTable": {"length": 2, "name": [2, 3], "lib": [0, 1]},
+    }
+    parked_thread = {
+        **thread,
+        "samples": {
+            "length": 2,
+            "stack": [0, 0],
+            "threadCPUDelta": [5_000_000, 0],
+        },
+    }
+    return {
+        "meta": {"sampleUnits": {"threadCPUDelta": "us"}},
+        "libs": [
+            {"name": binary_path.name, "path": str(binary_path), "arch": "arm64"},
+            {"name": "libsystem_kernel.dylib", "path": "/usr/lib/system/libsystem_kernel.dylib", "arch": "arm64"},
+        ],
+        "threads": [thread, parked_thread],
+    }
+
+
+def write_profile(path: Path, profile: dict[str, Any] | None = None, *, compressed: bool = True) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = make_profile_data() if profile is None else profile
+    if compressed:
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(data, handle)
+    else:
+        path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def make_cpu_summary() -> samply_analysis.ProfileCpuSummary:
+    return samply_analysis.ProfileCpuSummary(
+        observed_cpu_seconds=1.0,
+        application_cpu_seconds=0.8,
+        other_library_cpu_seconds=0.15,
+        unattributed_cpu_seconds=0.05,
+        symbolized_application_cpu_seconds=0.6,
+        functions=(
+            samply_analysis.ProfileFunctionCpu("first<T>", 0.4),
+            samply_analysis.ProfileFunctionCpu("second", 0.2),
+        ),
+        warnings=(),
+    )
+
+
+def make_profile_case(
+    tmp_path: Path,
+    *,
+    mode: bench.ProfileMode | None = None,
+    open_after: bool = False,
+    force_run: bool = False,
+    top: int = 15,
+    show_summary: bool = True,
+    output_format: bench.OutputFormat = "rich",
+) -> tuple[bench.ProfileRequest, bench.ResolvedTarget, Path]:
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
+    request = bench.ProfileRequest(
+        file=file_spec,
+        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+        backend="main",
+        treatment="proofs",
+        timeout_sec=120,
+        profiles_dir=tmp_path,
+        mode=bench.ProfileMode(None, 10) if mode is None else mode,
+        open_after=open_after,
+        force_run=force_run,
+        top=top,
+        show_summary=show_summary,
+        output_format=output_format,
+    )
+    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    artifact = bench.profile_cache_path(
+        tmp_path,
+        target.binary_sha256,
+        file_spec.sha256,
+        request.backend,
+        request.treatment,
+        request.mode,
+    )
+    return (request, target, artifact)
 
 
 def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
@@ -280,6 +384,22 @@ def test_parse_backends_rejects_duplicates_unknowns_and_empty_values() -> None:
         bench.parse_backends(",,")
 
 
+def test_backend_registry_drives_parsing_capabilities_flags_and_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        bench.BACKEND_SPECS,
+        "future",
+        bench.BackendSpec("Future", ("proofs",), ("--backend", "future")),
+    )
+
+    assert bench.parse_backends("future") == ("future",)
+    assert bench.supported_treatments("future") == ("proofs",)
+    assert bench.backend_flags("future") == ["--backend", "future"]
+    assert bench.display_backend("future") == "Future"
+    assert bench.backend_treatment_cells(("future",), ("off", "proofs")) == (bench.BenchmarkCell("future", "proofs"),)
+
+
 def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
     benchmark_args = bench.parse_args(["--rounds", "1", "file.egg"])
     profile_args = bench.parse_args(["profile", "file.egg"])
@@ -292,16 +412,23 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert profile_args.file == "file.egg"
     assert profile_args.backend == "main"
     assert profile_args.treatment == "proofs"
+    assert profile_args.top == 15
+    assert not profile_args.no_summary
+    assert profile_args.format == "rich"
+
+
+def test_parse_profile_args_accepts_presentation_options() -> None:
+    args = bench.parse_args(["profile", "file.egg", "--top", "7", "--no-summary", "--format", "markdown", "--open"])
+
+    assert args.top == 7
+    assert args.no_summary
+    assert args.format == "markdown"
+    assert args.open
 
 
 def test_parse_args_rejects_markdown_report_dash() -> None:
     with pytest.raises(SystemExit):
         bench.parse_args(["--format", "markdown", "--report", "-", "file.egg"])
-
-
-def test_parse_profile_args_rejects_benchmark_format() -> None:
-    with pytest.raises(SystemExit):
-        bench.parse_args(["profile", "file.egg", "--format", "markdown"])
 
 
 def test_parse_profile_args_rejects_iterations_with_profile_seconds() -> None:
@@ -384,6 +511,13 @@ def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     bench.validate_spec(spec)
 
 
+def test_default_files_use_flowlog_safe_math_microbenchmark() -> None:
+    display_paths = tuple(file.display_path for file in bench.resolve_files([], ROOT))
+
+    assert "egglog/tests/math-microbenchmark-mini.egg" in display_paths
+    assert "egglog/tests/math-microbenchmark.egg" not in display_paths
+
+
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=2.0),
@@ -443,6 +577,55 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
         ["git", "fetch", "origin", "+refs/pull/33/head:refs/remotes/origin/pr/33"],
         ["git", "worktree", "add", "--detach", str(tmp_path / ".bench-worktrees" / "33"), "abc123"],
     ]
+
+
+def test_target_resolvers_share_materialization_and_select_build_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = bench.parse_target(".")
+    row = bench.TargetRow(".", str(ROOT), "HEAD", "abc123", False)
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    materialized: list[bench.TargetRequest] = []
+    build_profiles: list[bench.BuildProfile] = []
+
+    def fake_materialize(
+        target_request: bench.TargetRequest,
+        invocation_cwd: Path,
+        repo_root: Path,
+    ) -> bench.TargetRow:
+        materialized.append(target_request)
+        return row
+
+    def fake_build(
+        target_request: bench.TargetRequest,
+        target_row: bench.TargetRow,
+        output: bench.RunnerOutput,
+        build_profile: bench.BuildProfile,
+    ) -> bench.ResolvedTarget:
+        assert target_request == request
+        assert target_row == row
+        build_profiles.append(build_profile)
+        return target
+
+    monkeypatch.setattr(bench, "materialize_target_request", fake_materialize)
+    monkeypatch.setattr(bench, "build_resolved_target", fake_build)
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+
+    benchmark_target = bench.resolve_target(
+        request,
+        bench.empty_report_frame(),
+        make_spec(file_spec),
+        False,
+        ROOT,
+        ROOT,
+        bench.RunnerOutput(),
+    )
+    profile_target = bench.resolve_profile_target(request, ROOT, ROOT, bench.RunnerOutput())
+
+    assert benchmark_target == target
+    assert profile_target == target
+    assert materialized == [request, request]
+    assert build_profiles == ["release", "profiling"]
 
 
 def test_collection_plan_counts_cache_and_missing_rows() -> None:
@@ -1299,6 +1482,12 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
     assert automatic == Path(".profiles") / "v1" / ("a" * 64) / ("b" * 64) / "main-proofs-auto10s.json.gz"
 
 
+def test_profile_display_path_is_relative_inside_invocation_directory(tmp_path: Path) -> None:
+    artifact = tmp_path / ".profiles" / "v1" / "profile.json.gz"
+
+    assert bench.profile_display_path(artifact, tmp_path) == Path(".profiles/v1/profile.json.gz")
+
+
 def test_calculate_profile_iterations_uses_margin_and_cap() -> None:
     assert bench.calculate_profile_iterations(2.0, 10) == (6, False)
     assert bench.calculate_profile_iterations(20.0, 10) == (1, False)
@@ -1312,17 +1501,18 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
 ) -> None:
     artifact = tmp_path / "profile.json.gz"
     artifact.write_bytes(b"old")
+    profile = make_profile_data()
     commands: list[list[str]] = []
 
     def fake_run(command: list[str], **kwargs: Any) -> None:
         commands.append(command)
         output = Path(command[command.index("--output") + 1])
-        output.write_bytes(b"new")
+        write_profile(output, profile)
 
     monkeypatch.setattr(bench, "samply_executable", lambda: "samply")
     monkeypatch.setattr(bench.subprocess, "run", fake_run)
 
-    bench.run_samply_record(
+    recorded_profile = bench.run_samply_record(
         artifact=artifact,
         name="profile",
         iterations=3,
@@ -1331,8 +1521,11 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
         timeout_sec=120,
     )
 
-    assert artifact.read_bytes() == b"new"
+    assert recorded_profile == profile
+    assert artifact.read_bytes()[:2] == b"\x1f\x8b"
     command = commands[0]
+    temporary_output = Path(command[command.index("--output") + 1])
+    assert temporary_output.name.endswith(".json.gz")
     assert command[:7] == ["samply", "record", "--save-only", "--rate", "1000", "--reuse-threads", "--iteration-count"]
     assert command[command.index("--iteration-count") + 1] == "3"
     assert command[-2:] == ["--", "workload"]
@@ -1340,7 +1533,7 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
 
 def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     artifact = tmp_path / "profile.json.gz"
-    temp_artifact = tmp_path / "profile.tmp"
+    temp_artifact = tmp_path / ".profile.tmp-test.json.gz"
 
     def fake_run(command: list[str], **kwargs: Any) -> None:
         temp_artifact.write_bytes(b"partial")
@@ -1364,6 +1557,81 @@ def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, 
     assert not temp_artifact.exists()
 
 
+def test_read_profile_artifact_rejects_plain_json(tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    write_profile(artifact, compressed=False)
+
+    with pytest.raises(ValueError, match="not gzip-compressed"):
+        samply_analysis.read_artifact(artifact)
+
+
+def test_read_profile_artifact_rejects_malformed_json(tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    with gzip.open(artifact, "wt", encoding="utf-8") as handle:
+        handle.write("not-json")
+
+    with pytest.raises(ValueError, match="could not parse profile artifact"):
+        samply_analysis.read_artifact(artifact)
+
+
+def test_read_profile_artifact_normalizes_os_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    artifact.write_bytes(b"\x1f\x8b")
+    original_open = Path.open
+
+    def denied_open(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if path == artifact:
+            raise PermissionError("denied")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", denied_open)
+
+    with pytest.raises(ValueError, match="could not read profile artifact"):
+        samply_analysis.read_artifact(artifact)
+
+
+def test_profile_leaf_samples_have_named_fields(tmp_path: Path) -> None:
+    binary = tmp_path / "egglog-experimental"
+    profile = make_cpu_profile_data(binary)
+
+    samples = tuple(samply_analysis._thread_leaf_samples(profile["threads"][0], 1e-6))
+
+    assert samples[0].cpu_seconds == pytest.approx(0.1)
+    assert samples[0].library_index == 0
+    assert samples[0].function_name == "0x10"
+    assert samples[0].relative_address == 0x10
+
+
+def test_samply_plain_json_output_is_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    artifact.write_bytes(b"old")
+    temporary_paths: list[Path] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        output = Path(command[command.index("--output") + 1])
+        temporary_paths.append(output)
+        write_profile(output, compressed=False)
+
+    monkeypatch.setattr(bench, "samply_executable", lambda: "samply")
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    with pytest.raises(ValueError, match="gzip"):
+        bench.run_samply_record(
+            artifact=artifact,
+            name="profile",
+            iterations=1,
+            workload=["workload"],
+            checkout_path=ROOT,
+            timeout_sec=120,
+        )
+
+    assert artifact.read_bytes() == b"old"
+    assert temporary_paths and not temporary_paths[0].exists()
+
+
 def test_missing_samply_reports_install_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bench.shutil, "which", lambda name: None)
 
@@ -1371,55 +1639,284 @@ def test_missing_samply_reports_install_command(monkeypatch: pytest.MonkeyPatch)
         bench.samply_executable()
 
 
-def test_profile_cache_hit_runs_neither_calibration_nor_samply(
+def test_macos_profile_summary_uses_cpu_deltas_and_atos_offsets(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
+    binary = tmp_path / "egglog-experimental"
+    binary.write_bytes(b"binary")
+    profile = make_cpu_profile_data(binary)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout="crate..Thing$LT$T$GT$::run::h1234 (in egglog-experimental) + 4\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(samply_analysis.shutil, "which", lambda name: "/usr/bin/atos" if name == "atos" else None)
+    monkeypatch.setattr(samply_analysis.subprocess, "run", fake_run)
+
+    summary = samply_analysis.summarize(profile, binary)
+
+    assert summary.observed_cpu_seconds == pytest.approx(0.6)
+    assert summary.application_cpu_seconds == pytest.approx(0.1)
+    assert summary.other_library_cpu_seconds == pytest.approx(0.2)
+    assert summary.unattributed_cpu_seconds == pytest.approx(0.3)
+    assert summary.symbolized_application_cpu_seconds == pytest.approx(0.1)
+    assert len(summary.functions) == 1
+    assert summary.functions[0].name == "crate::Thing<T>::run::h1234"
+    assert summary.functions[0].cpu_seconds == pytest.approx(0.1)
+    assert len(commands) == 1
+    assert "-offset" in commands[0]
+    assert "0x10" in commands[0]
+    assert "0x100000010" not in commands[0]
+
+
+def test_macos_profile_summary_is_partial_without_atos(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "egglog-experimental"
+    binary.write_bytes(b"binary")
+    monkeypatch.setattr(samply_analysis.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        samply_analysis.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("symbolizer should not run without atos"),
+    )
+
+    summary = samply_analysis.summarize(make_cpu_profile_data(binary), binary)
+
+    assert summary.observed_cpu_seconds == pytest.approx(0.6)
+    assert summary.application_cpu_seconds == pytest.approx(0.1)
+    assert summary.symbolized_application_cpu_seconds == 0
+    assert summary.functions == ()
+    assert any("atos is unavailable" in warning for warning in summary.warnings)
+
+
+def test_macos_rust_v0_symbols_use_llvm_cxxfilt(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[tuple[list[str], str | None]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append((command, kwargs.get("input")))
+        return subprocess.CompletedProcess(command, 0, stdout="__rustc::__rdl_alloc\n", stderr="")
+
+    monkeypatch.setattr(
+        samply_analysis.shutil,
+        "which",
+        lambda name: "/usr/bin/xcrun" if name == "xcrun" else None,
+    )
+    monkeypatch.setattr(samply_analysis.subprocess, "run", fake_run)
+
+    symbols, warnings = samply_analysis.demangle_rust_v0_symbols({0x10: "_RNvExample"})
+
+    assert symbols == {0x10: "__rustc::__rdl_alloc"}
+    assert warnings == ()
+    assert commands == [(["/usr/bin/xcrun", "llvm-cxxfilt"], "_RNvExample\n")]
+
+
+def test_profile_load_command_quotes_paths_for_posix_and_windows(tmp_path: Path) -> None:
+    artifact = tmp_path / "profiles with spaces" / "profile.json.gz"
+
+    assert samply_analysis.load_command(artifact, os_name="posix") == f"samply load '{artifact.resolve()}'"
+    assert samply_analysis.load_command(artifact, os_name="nt") == f'samply load "{artifact.resolve()}"'
+    assert samply_analysis.load_command(Path(".profiles/profile.json.gz"), os_name="posix") == (
+        "samply load .profiles/profile.json.gz"
+    )
+
+
+def test_profile_rich_and_markdown_render_same_summary(tmp_path: Path) -> None:
+    artifact = tmp_path / "profiles with spaces" / "profile.json.gz"
+    summary = make_cpu_summary()
+    report = samply_analysis.ProfileReport(
+        artifact=artifact,
+        cache_status="hit",
+        workload="dir\\name|file\nnext.egg",
         backend="main",
         treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
-        mode=bench.ProfileMode(None, 10),
-        open_after=False,
-        force_run=False,
+        top=1,
+        cpu_summary=summary,
     )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
-    artifact = bench.profile_cache_path(
-        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
-    )
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"profile")
+    rich_output = io.StringIO()
+    console = Console(file=rich_output, force_terminal=False, width=120)
+
+    samply_analysis.render_rich(console, report)
+    markdown = samply_analysis.render_markdown(report)
+
+    for value in ("CPU Profile Summary", "Observed thread", "Application symbols", "first", "samply load"):
+        assert value in rich_output.getvalue()
+        assert value in markdown
+    assert "second" not in rich_output.getvalue()
+    assert "second" not in markdown
+    assert "first&lt;T&gt;" in markdown
+    assert "dir\\\\name\\|file<br>next.egg" in markdown
+    assert "| Metric | CPU | Share |" in markdown
+
+
+def test_open_samply_profile_redirects_viewer_output_and_handles_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    calls: list[dict[str, Any]] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        calls.append(kwargs)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(bench, "samply_executable", lambda: "samply")
+    monkeypatch.setattr(bench.subprocess, "run", fake_run)
+
+    bench.open_samply_profile(artifact, ROOT)
+
+    assert calls == [{"cwd": ROOT, "check": True, "stdout": sys.stderr, "stderr": sys.stderr}]
+
+
+@pytest.mark.parametrize("platform", ["linux", "win32"])
+def test_profile_cache_hit_on_non_macos_skips_cpu_summary_and_workload(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+    platform: str,
+) -> None:
+    request, target, artifact = make_profile_case(tmp_path)
+    write_profile(artifact)
+    monkeypatch.setattr(bench.sys, "platform", platform)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
     monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
+    monkeypatch.setattr(
+        samply_analysis,
+        "summarize",
+        lambda *args, **kwargs: pytest.fail("macOS summary should not run"),
+    )
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
 
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Profile Ready" in captured.err
+    assert "Artifact" in captured.err
+    assert ".json.gz" in captured.err
+    assert "CPU Profile Summary" not in captured.err
+    assert "samply load" in captured.err
+    assert "profiler.firefox.com" not in captured.err
+    assert "currently available on macOS only" in captured.err
+
+
+def test_profile_cache_hit_on_non_macos_prints_markdown_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    request, target, artifact = make_profile_case(tmp_path, output_format="markdown")
+    write_profile(artifact)
+    monkeypatch.setattr(bench.sys, "platform", "linux")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(samply_analysis, "summarize", lambda *args: pytest.fail("summary should not run"))
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith("## Profile Ready\n")
+    assert "| Field | Value |" in captured.out
+    assert "```shell\nsamply load " in captured.out
+    assert "CPU Breakdown" not in captured.out
+    assert "currently available on macOS only" in captured.err
+
+
+def test_profile_cache_hit_on_macos_prints_cpu_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    request, target, artifact = make_profile_case(tmp_path, top=1)
+    write_profile(artifact)
+    summary = make_cpu_summary()
+    monkeypatch.setattr(bench.sys, "platform", "darwin")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: summary)
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "CPU Profile Summary" in captured.err
+    assert "CPU breakdown" in captured.err
+    assert "Observed thread" in captured.err
+    assert "Application symbols" in captured.err
+    assert "Top functions by self CPU" in captured.err
+    assert "first" in captured.err
+    assert "second" not in captured.err
+    assert "samply load" in captured.err
+
+
+def test_profile_cache_hit_prints_github_markdown_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    request, target, artifact = make_profile_case(tmp_path, top=1, output_format="markdown")
+    write_profile(artifact)
+    monkeypatch.setattr(bench.sys, "platform", "darwin")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: make_cpu_summary())
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    captured = capsys.readouterr()
+    assert captured.out.startswith("## CPU Profile Summary\n")
+    assert "| Field | Value |" in captured.out
+    assert "### CPU Breakdown" in captured.out
+    assert "| Metric | CPU | Share |" in captured.out
+    assert "### Top Functions by Self CPU" in captured.out
+    assert "first" in captured.out
+    assert "second" not in captured.out
+    assert "```shell\nsamply load " in captured.out
+    assert "\x1b[" not in captured.out
+    assert not any(character in captured.out for character in "┏┓┗┛━┃")
+    assert captured.out.endswith("\n") and not captured.out.endswith("\n\n")
+    assert "Profile cache hit" in captured.err
+
+
+def test_profile_no_summary_prints_only_absolute_artifact_path(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: Any,
+) -> None:
+    request, target, artifact = make_profile_case(
+        tmp_path,
+        mode=bench.ProfileMode(1, None),
+        show_summary=False,
+    )
+    write_profile(artifact)
+    monkeypatch.setattr(bench.sys, "platform", "linux")
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+
+    bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
+
+    captured = capsys.readouterr()
+    assert captured.out == f"{artifact.resolve()}\n"
+    assert "currently available on macOS only" not in captured.err
+
 
 def test_profile_cache_hit_can_open_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
-        backend="main",
-        treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
+    request, target, artifact = make_profile_case(
+        tmp_path,
         mode=bench.ProfileMode(1, None),
         open_after=True,
-        force_run=False,
+        show_summary=False,
     )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
-    artifact = bench.profile_cache_path(
-        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
-    )
-    artifact.parent.mkdir(parents=True)
-    artifact.write_bytes(b"profile")
+    write_profile(artifact)
     opened: list[Path] = []
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
@@ -1434,33 +1931,24 @@ def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
-        backend="main",
-        treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
+    request, target, artifact = make_profile_case(
+        tmp_path,
         mode=bench.ProfileMode(3, None),
-        open_after=False,
         force_run=True,
-    )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
-    artifact = bench.profile_cache_path(
-        tmp_path, target.binary_sha256, file_spec.sha256, "main", "proofs", request.mode
+        show_summary=False,
     )
     artifact.parent.mkdir(parents=True)
     artifact.write_bytes(b"old")
     recorded: list[tuple[Path, int]] = []
+
+    def fake_record(**kwargs: Any) -> dict[str, Any]:
+        recorded.append((kwargs["artifact"], kwargs["iterations"]))
+        return make_profile_data()
+
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
-    monkeypatch.setattr(
-        bench,
-        "run_samply_record",
-        lambda **kwargs: recorded.append((kwargs["artifact"], kwargs["iterations"])),
-    )
+    monkeypatch.setattr(bench, "run_samply_record", fake_record)
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
 
@@ -1471,20 +1959,13 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
-        backend="main",
-        treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
-        mode=bench.ProfileMode(None, 10),
-        open_after=False,
-        force_run=True,
-    )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     recorded: list[int] = []
+
+    def fake_record(**kwargs: Any) -> dict[str, Any]:
+        recorded.append(kwargs["iterations"])
+        return make_profile_data()
+
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
     monkeypatch.setattr(
@@ -1492,7 +1973,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
         "run_command",
         lambda command, checkout_path, timeout_sec: bench.TimingResult("success", bench.TimingRow(wall_sec=2.0), None),
     )
-    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: recorded.append(kwargs["iterations"]))
+    monkeypatch.setattr(bench, "run_samply_record", fake_record)
     monkeypatch.setattr(bench, "load_report", lambda destination: pytest.fail("profile mode should not load reports"))
     monkeypatch.setattr(
         bench, "append_rows", lambda destination, rows: pytest.fail("profile mode should not append rows")
@@ -1507,19 +1988,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
-        backend="main",
-        treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
-        mode=bench.ProfileMode(None, 10),
-        open_after=False,
-        force_run=True,
-    )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
     monkeypatch.setattr(
@@ -1538,19 +2007,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
 def test_profile_auto_iteration_cap_prints_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
 ) -> None:
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:" + "b" * 64)
-    request = bench.ProfileRequest(
-        file=file_spec,
-        target_request=bench.TargetRequest(raw=".", source=".", label=None),
-        backend="main",
-        treatment="proofs",
-        timeout_sec=120,
-        profiles_dir=tmp_path,
-        mode=bench.ProfileMode(None, 10),
-        open_after=False,
-        force_run=True,
-    )
-    target = make_target(binary_sha256="sha256:" + "a" * 64, binary_path=ROOT / "egglog-experimental")
+    request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
     monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
     monkeypatch.setattr(
@@ -1561,7 +2018,7 @@ def test_profile_auto_iteration_cap_prints_warning(
         ),
     )
     monkeypatch.setattr(bench, "calculate_profile_iterations", lambda elapsed_seconds, profile_seconds: (7, True))
-    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: None)
+    monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: make_profile_data())
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
 

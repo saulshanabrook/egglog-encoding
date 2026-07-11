@@ -13,7 +13,8 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -40,17 +42,34 @@ from rich.text import Text
 from rich.tree import Tree
 from scipy import stats
 
+import samply_analysis
+
 Status = Literal["success", "timed-out", "failure"]
-Backend = Literal["main", "flowlog"]
+Backend = str
 Treatment = Literal["off", "term", "proofs"]
 BuildProfile = Literal["release", "profiling"]
+OutputFormat = Literal["rich", "markdown"]
 TableAlignment = Literal["left", "right"]
+
+
+@dataclass(frozen=True)
+class BackendSpec:
+    display_name: str
+    treatments: tuple[Treatment, ...]
+    flags: tuple[str, ...]
+
+
+BACKEND_SPECS: dict[Backend, BackendSpec] = {
+    "main": BackendSpec("main", ("off", "term", "proofs"), ()),
+    "flowlog": BackendSpec("FlowLog", ("term", "proofs"), ("--backend", "flowlog")),
+}
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
 DEFAULT_PROFILE_SECONDS = 10
+DEFAULT_PROFILE_TOP = 15
 MAX_PROFILE_ITERATIONS = 10_000
 PROFILE_CACHE_VERSION = "v1"
 PROFILE_SAMPLY_RATE_HZ = 1000
@@ -58,7 +77,7 @@ TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
-    "egglog/tests/math-microbenchmark.egg",
+    "egglog/tests/math-microbenchmark-mini.egg",
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
@@ -138,7 +157,7 @@ class ReportFrame(pa.DataFrameModel):
     binary_sha256: Series[str]
     file_path: Series[str]
     file_sha256: Series[str]
-    backend: Series[str] = pa.Field(isin=["main", "flowlog"])
+    backend: Series[str] = pa.Field(isin=list(BACKEND_SPECS))
     treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
     timeout_sec: Series[int] = pa.Field(gt=0)
     wall_sec: Series[float] = pa.Field(nullable=True, ge=0)
@@ -214,6 +233,9 @@ class ProfileRequest:
     mode: ProfileMode
     open_after: bool
     force_run: bool
+    top: int = DEFAULT_PROFILE_TOP
+    show_summary: bool = True
+    output_format: OutputFormat = "rich"
 
 
 @dataclass(frozen=True)
@@ -356,6 +378,17 @@ class ReportTableData:
     alignments: tuple[TableAlignment, ...] | None = None
 
 
+@dataclass(frozen=True)
+class MetricSpec:
+    title: str
+    caption: str
+    file_count_heading: str
+    format_total: Callable[[float | None], str]
+    format_change: Callable[[RatioSummary], str]
+    format_result: Callable[[RatioSummary], str]
+    omit_without_samples: bool = False
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     if argv and argv[0] == "profile":
         return parse_profile_args(argv[1:])
@@ -399,7 +432,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--backend",
         default=",".join(DEFAULT_BACKENDS),
-        help="comma-separated backends: main, flowlog; non-main backends run term/proofs only (default: main)",
+        help=f"comma-separated backends: {', '.join(BACKEND_SPECS)} (default: {','.join(DEFAULT_BACKENDS)})",
     )
     parser.add_argument(
         "--treatments",
@@ -459,6 +492,23 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
         help=f"profile cache directory (default: {DEFAULT_PROFILES_DIR})",
     )
     parser.add_argument(
+        "--top",
+        type=positive_int,
+        default=DEFAULT_PROFILE_TOP,
+        help=f"application functions to show in the macOS CPU summary (default: {DEFAULT_PROFILE_TOP})",
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="print only the profile artifact path",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("rich", "markdown"),
+        default="rich",
+        help="summary format: rich to stderr, or markdown to stdout (default: rich)",
+    )
+    parser.add_argument(
         "--open",
         action="store_true",
         help="open the profile with samply load after recording or cache hit",
@@ -511,25 +561,30 @@ def parse_backends(value: str) -> tuple[Backend, ...]:
         item = raw.strip()
         if not item:
             continue
-        if item not in {"main", "flowlog"}:
+        if item not in BACKEND_SPECS:
             raise ValueError(f"unknown backend: {item}")
         if item in seen:
             raise ValueError(f"duplicate backend: {item}")
         seen.add(item)
-        backends.append(cast(Backend, item))
+        backends.append(item)
     if not backends:
         raise ValueError("at least one backend is required")
     return tuple(backends)
 
 
+def backend_spec(backend: Backend) -> BackendSpec:
+    try:
+        return BACKEND_SPECS[backend]
+    except KeyError as error:
+        raise ValueError(f"unknown backend: {backend}") from error
+
+
 def backend_supports_treatment(backend: Backend, treatment: Treatment) -> bool:
-    return backend == "main" or treatment in {"term", "proofs"}
+    return treatment in backend_spec(backend).treatments
 
 
 def supported_treatments(backend: Backend) -> tuple[Treatment, ...]:
-    if backend == "main":
-        return ("off", "term", "proofs")
-    return ("term", "proofs")
+    return backend_spec(backend).treatments
 
 
 def backend_treatment_cells(
@@ -700,12 +755,11 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
     target_specs = args.target if args.target is not None else ["."]
     if len(target_specs) != 1:
         raise ValueError("profile mode requires exactly one target")
-    mode = ProfileMode(
-        iterations=args.iterations,
-        profile_seconds=args.profile_seconds if args.profile_seconds is not None else DEFAULT_PROFILE_SECONDS,
-    )
     if args.iterations is not None:
         mode = ProfileMode(iterations=args.iterations, profile_seconds=None)
+    else:
+        profile_seconds = args.profile_seconds if args.profile_seconds is not None else DEFAULT_PROFILE_SECONDS
+        mode = ProfileMode(iterations=None, profile_seconds=profile_seconds)
     profiles_dir = Path(str(args.profiles_dir)).expanduser()
     if not profiles_dir.is_absolute():
         profiles_dir = invocation_cwd / profiles_dir
@@ -719,6 +773,9 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         mode=mode,
         open_after=bool(args.open),
         force_run=bool(args.force_run),
+        top=int(args.top),
+        show_summary=not bool(args.no_summary),
+        output_format=cast(OutputFormat, str(args.format)),
     )
     validate_spec(
         BenchmarkSpec(
@@ -1087,6 +1144,32 @@ def build_target(row: TargetRow, output: RunnerOutput, build_profile: BuildProfi
     return (binary_path, binary_sha256)
 
 
+def materialize_target_request(request: TargetRequest, invocation_cwd: Path, repo_root: Path) -> TargetRow:
+    if request.is_label_lookup:
+        raise ValueError("cache-only target labels cannot be materialized without a cached report row")
+    if request.source.startswith("@"):
+        ref = request.source[1:]
+        if not ref:
+            raise ValueError(f"git target is missing a ref: {request.raw}")
+        checkout_path, git_ref_value = materialize_git_ref(repo_root, ref, request.label or ref)
+    elif parse_pr_number(request.source) is not None:
+        checkout_path, git_ref_value = materialize_pr_target(repo_root, request.source, request.label)
+    else:
+        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
+    return target_row_for_request(request, checkout_path, git_ref_value)
+
+
+def build_resolved_target(
+    request: TargetRequest,
+    row: TargetRow,
+    output: RunnerOutput,
+    build_profile: BuildProfile,
+) -> ResolvedTarget:
+    binary_path, binary_sha256 = build_target(row, output, build_profile)
+    row = replace(row, is_dirty=git_dirty(Path(row.path)))
+    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+
+
 def resolve_target(
     request: TargetRequest,
     rows: DataFrame[ReportFrame],
@@ -1118,26 +1201,10 @@ def resolve_target(
             )
         checkout_path, resolved_sha = materialize_git_ref(repo_root, str(pointer["target_git_sha"]), request.label)
         row = target_row_for_request(request, checkout_path, resolved_sha)
-        binary_path, binary_sha256 = build_target(row, output)
-        row = replace(row, is_dirty=git_dirty(checkout_path))
-        return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+        return build_resolved_target(request, row, output, "release")
 
-    if request.source.startswith("@"):
-        ref = request.source[1:]
-        if not ref:
-            raise ValueError(f"git target is missing a ref: {request.raw}")
-        checkout_path, resolved_sha = materialize_git_ref(repo_root, ref, request.label or ref)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    elif parse_pr_number(request.source) is not None:
-        checkout_path, resolved_sha = materialize_pr_target(repo_root, request.source, request.label)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    else:
-        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
-        row = target_row_for_request(request, checkout_path, git_ref_value)
-
-    binary_path, binary_sha256 = build_target(row, output)
-    row = replace(row, is_dirty=git_dirty(Path(row.path)))
-    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+    row = materialize_target_request(request, invocation_cwd, repo_root)
+    return build_resolved_target(request, row, output, "release")
 
 
 def resolve_profile_target(
@@ -1148,22 +1215,8 @@ def resolve_profile_target(
 ) -> ResolvedTarget:
     if request.is_label_lookup:
         raise ValueError("profile mode does not support cache-only label= targets; use label=SOURCE")
-    if request.source.startswith("@"):
-        ref = request.source[1:]
-        if not ref:
-            raise ValueError(f"git target is missing a ref: {request.raw}")
-        checkout_path, resolved_sha = materialize_git_ref(repo_root, ref, request.label or ref)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    elif parse_pr_number(request.source) is not None:
-        checkout_path, resolved_sha = materialize_pr_target(repo_root, request.source, request.label)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    else:
-        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
-        row = target_row_for_request(request, checkout_path, git_ref_value)
-
-    binary_path, binary_sha256 = build_target(row, output, "profiling")
-    row = replace(row, is_dirty=git_dirty(Path(row.path)))
-    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+    row = materialize_target_request(request, invocation_cwd, repo_root)
+    return build_resolved_target(request, row, output, "profiling")
 
 
 def label_has_enough_rows(
@@ -1229,9 +1282,7 @@ def treatment_flags(treatment: Treatment) -> list[str]:
 
 
 def backend_flags(backend: Backend) -> list[str]:
-    if backend == "main":
-        return []
-    return ["--backend", backend]
+    return list(backend_spec(backend).flags)
 
 
 def workload_command(
@@ -1292,6 +1343,14 @@ def profile_cache_hit(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
+def profile_display_path(path: Path, invocation_cwd: Path) -> Path:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(invocation_cwd.resolve())
+    except ValueError:
+        return resolved
+
+
 def calculate_profile_iterations(
     elapsed_seconds: float,
     profile_seconds: int,
@@ -1321,7 +1380,8 @@ def profile_name(
 
 
 def profile_temp_path(artifact: Path) -> Path:
-    return artifact.with_name(f".{artifact.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    base_name = artifact.name.removesuffix(".json.gz")
+    return artifact.with_name(f".{base_name}.tmp-{uuid.uuid4().hex}.json.gz")
 
 
 def samply_executable() -> str:
@@ -1368,7 +1428,7 @@ def run_samply_record(
     workload: Sequence[str],
     checkout_path: Path,
     timeout_sec: int,
-) -> None:
+) -> dict[str, Any]:
     temp_artifact = profile_temp_path(artifact)
     temp_artifact.parent.mkdir(parents=True, exist_ok=True)
     with suppress(FileNotFoundError):
@@ -1388,8 +1448,10 @@ def run_samply_record(
         )
         if not profile_cache_hit(temp_artifact):
             raise ValueError(f"Samply did not produce a nonempty profile artifact: {temp_artifact}")
+        profile = samply_analysis.read_artifact(temp_artifact)
         artifact.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temp_artifact, artifact)
+        return profile
     except BaseException:
         with suppress(FileNotFoundError):
             temp_artifact.unlink()
@@ -1397,7 +1459,16 @@ def run_samply_record(
 
 
 def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
-    subprocess.run([samply_executable(), "load", str(artifact)], cwd=checkout_path, check=True)
+    try:
+        subprocess.run(
+            [samply_executable(), "load", str(artifact)],
+            cwd=checkout_path,
+            check=True,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+    except KeyboardInterrupt:
+        return
 
 
 def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -> TimingResult:
@@ -1645,7 +1716,7 @@ def collect_rows(
         else:
             remaining_processes.pop(key, None)
 
-    def run_loop(progress: Progress | None = None, process_task: Any | None = None) -> None:
+    def run_loop(progress: Progress, process_task: TaskID) -> None:
         nonlocal next_index, completed_observations
         for round_index in range(max_deficit):
             for cell in plan.cells:
@@ -1660,8 +1731,6 @@ def collect_rows(
                 label = collection_label(cell_file, cell_backend, cell_treatment, round_index, required_rounds)
 
                 def update_progress(current: str, advance: int = 0) -> None:
-                    if progress is None or process_task is None:
-                        return
                     progress.update(
                         process_task,
                         advance=advance,
@@ -1698,7 +1767,6 @@ def collect_rows(
                 fresh_frames.append(fresh_frame)
                 next_index += 1
                 completed_observations += 1
-                assert progress is not None
                 progress.console.print(f"  {label}: fresh {format_timing_result(result)}")
                 update_progress(
                     f"rows {completed_observations}/{total_observations}; last {format_timing_result(result)}"
@@ -2884,9 +2952,7 @@ def render_multi_target_summary(
 
 
 def display_backend(backend: Backend) -> str:
-    if backend == "flowlog":
-        return "FlowLog"
-    return backend
+    return backend_spec(backend).display_name
 
 
 def backend_summary_title(spec: BenchmarkSpec, baseline_backend: Backend, metric: str) -> str:
@@ -2907,22 +2973,20 @@ def backend_candidate_total_heading(spec: BenchmarkSpec) -> str:
     return "Candidate total"
 
 
-def backend_summary_tables(
+def backend_summary_table(
     cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
-) -> tuple[ReportTableData, ...]:
-    if len(spec.backends) <= 1:
-        return ()
+    metric: MetricSpec,
+) -> ReportTableData:
     baseline_backend = spec.backends[0]
     include_target = len(targets) > 1
     ratio_heading = backend_ratio_heading(spec, baseline_backend)
     candidate_total_heading = backend_candidate_total_heading(spec)
-    wall_headers: list[str] = []
+    headers: list[str] = []
     if include_target:
-        wall_headers.append("Target")
-    wall_headers.extend(
+        headers.append("Target")
+    headers.extend(
         [
             "Backend",
             "Mode",
@@ -2931,13 +2995,13 @@ def backend_summary_tables(
             ratio_heading,
             "Change",
             "File geomean",
-            "Faster files",
+            metric.file_count_heading,
             "Best file",
             "Best ratio",
             "Best result",
         ]
     )
-    wall_rows: list[tuple[str, ...]] = []
+    rows: list[tuple[str, ...]] = []
     for target in targets:
         for backend in spec.backends[1:]:
             for treatment in shared_backend_treatments(spec, baseline_backend, backend):
@@ -2949,7 +3013,7 @@ def backend_summary_tables(
                     treatment,
                 )
                 pairs = summary_pairs(file_cells)
-                suite = suite_ratio(pairs)
+                summary = suite_ratio(pairs)
                 geometric = geometric_mean_ratio(pairs)
                 ratios = ratio_pairs(file_cells)
                 best_file, best = best_file_ratio(ratios)
@@ -2960,121 +3024,75 @@ def backend_summary_tables(
                     [
                         backend,
                         treatment,
-                        format_seconds_value(suite_total_mean([baseline for baseline, _ in pairs])),
-                        format_seconds_value(suite_total_mean([candidate for _, candidate in pairs])),
-                        format_ratio_summary(suite),
-                        format_wall_time_change(suite),
-                        format_ratio_summary(geometric),
-                        format_better_file_count(count_better_files(ratios)),
-                        format_worst_file(best_file),
-                        format_ratio_summary(best),
-                        comparison_result_text(best),
-                    ]
-                )
-                wall_rows.append(report_row(*row_values))
-    tables = [
-        ReportTableData(
-            title=backend_summary_title(spec, baseline_backend, "wall time"),
-            headers=tuple(wall_headers),
-            rows=tuple(wall_rows),
-            caption=BACKEND_WALL_TIME_CAPTION,
-            alignments=tuple(
-                "right"
-                if header
-                in {
-                    f"{display_backend(baseline_backend)} total",
-                    candidate_total_heading,
-                    ratio_heading,
-                    "Change",
-                    "File geomean",
-                    "Faster files",
-                    "Best ratio",
-                }
-                else "left"
-                for header in wall_headers
-            ),
-        )
-    ]
-
-    if not any(cell.samples for target in targets for cell in rss_cell_maps[target].values()):
-        return tuple(tables)
-    rss_headers: list[str] = []
-    if include_target:
-        rss_headers.append("Target")
-    rss_headers.extend(
-        [
-            "Backend",
-            "Mode",
-            f"{display_backend(baseline_backend)} total",
-            candidate_total_heading,
-            ratio_heading,
-            "Change",
-            "File geomean",
-            "Lower-RSS files",
-            "Best file",
-            "Best ratio",
-            "Best result",
-        ]
-    )
-    rss_rows: list[tuple[str, ...]] = []
-    for target in targets:
-        for backend in spec.backends[1:]:
-            for treatment in shared_backend_treatments(spec, baseline_backend, backend):
-                file_cells = backend_treatment_file_cells(
-                    rss_cell_maps[target],
-                    spec,
-                    baseline_backend,
-                    backend,
-                    treatment,
-                )
-                pairs = summary_pairs(file_cells)
-                summary = suite_ratio(pairs)
-                geometric = geometric_mean_ratio(pairs)
-                ratios = ratio_pairs(file_cells)
-                best_file, best = best_file_ratio(ratios)
-                rss_row_values: list[object] = []
-                if include_target:
-                    rss_row_values.append(target.display_label)
-                rss_row_values.extend(
-                    [
-                        backend,
-                        treatment,
-                        format_bytes(suite_total_mean([baseline for baseline, _ in pairs])),
-                        format_bytes(suite_total_mean([candidate for _, candidate in pairs])),
+                        metric.format_total(suite_total_mean([baseline for baseline, _ in pairs])),
+                        metric.format_total(suite_total_mean([candidate for _, candidate in pairs])),
                         format_ratio_summary(summary),
-                        format_percent_change(summary),
+                        metric.format_change(summary),
                         format_ratio_summary(geometric),
                         format_better_file_count(count_better_files(ratios)),
                         format_worst_file(best_file),
                         format_ratio_summary(best),
-                        lower_is_better_result_text(best),
+                        metric.format_result(best),
                     ]
                 )
-                rss_rows.append(report_row(*rss_row_values))
-    tables.append(
-        ReportTableData(
-            title=backend_summary_title(spec, baseline_backend, "peak RSS"),
-            headers=tuple(rss_headers),
-            rows=tuple(rss_rows),
-            caption=BACKEND_PEAK_RSS_CAPTION,
-            alignments=tuple(
-                "right"
-                if header
-                in {
-                    f"{display_backend(baseline_backend)} total",
-                    candidate_total_heading,
-                    ratio_heading,
-                    "Change",
-                    "File geomean",
-                    "Lower-RSS files",
-                    "Best ratio",
-                }
-                else "left"
-                for header in rss_headers
-            ),
-        )
+                rows.append(report_row(*row_values))
+    right_aligned = {
+        f"{display_backend(baseline_backend)} total",
+        candidate_total_heading,
+        ratio_heading,
+        "Change",
+        "File geomean",
+        metric.file_count_heading,
+        "Best ratio",
+    }
+    return ReportTableData(
+        title=backend_summary_title(spec, baseline_backend, metric.title),
+        headers=tuple(headers),
+        rows=tuple(rows),
+        caption=metric.caption,
+        alignments=tuple("right" if header in right_aligned else "left" for header in headers),
     )
-    return tuple(tables)
+
+
+def backend_summary_tables(
+    cell_maps: TargetCellMaps,
+    rss_cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> tuple[ReportTableData, ...]:
+    if len(spec.backends) <= 1:
+        return ()
+    metrics = (
+        (
+            cell_maps,
+            MetricSpec(
+                title="wall time",
+                caption=BACKEND_WALL_TIME_CAPTION,
+                file_count_heading="Faster files",
+                format_total=format_seconds_value,
+                format_change=format_wall_time_change,
+                format_result=comparison_result_text,
+            ),
+        ),
+        (
+            rss_cell_maps,
+            MetricSpec(
+                title="peak RSS",
+                caption=BACKEND_PEAK_RSS_CAPTION,
+                file_count_heading="Lower-RSS files",
+                format_total=format_bytes,
+                format_change=format_percent_change,
+                format_result=lower_is_better_result_text,
+                omit_without_samples=True,
+            ),
+        ),
+    )
+    return tuple(
+        backend_summary_table(metric_cell_maps, targets, spec, metric)
+        for metric_cell_maps, metric in metrics
+        if not metric.omit_without_samples
+        or any(cell.samples for target in targets for cell in metric_cell_maps[target].values())
+    )
 
 
 def render_backend_summary(
@@ -3267,55 +3285,96 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
         request.treatment,
         request.mode,
     )
+    profile: dict[str, Any] | None = None
+    cache_status: Literal["hit", "recorded"] = "recorded"
     if profile_cache_hit(artifact) and not request.force_run:
-        output.console.print(f"[bold]Profile cache hit[/bold] {artifact}")
-        if request.open_after:
-            open_samply_profile(artifact, checkout_path)
-        return
+        try:
+            profile = samply_analysis.read_artifact(artifact)
+        except ValueError as error:
+            output.console.print(f"[yellow]warning:[/yellow] ignoring invalid profile cache entry: {error}")
+        else:
+            cache_status = "hit"
+            output.console.print(f"[bold]Profile cache hit[/bold] {artifact}")
 
-    iterations = request.mode.iterations
-    if iterations is None:
-        assert request.mode.profile_seconds is not None
-        output.console.print(
-            f"[bold]Calibrating[/bold] {request.file.display_path} "
-            f"{request.backend}/{request.treatment} for {request.mode.profile_seconds}s"
-        )
-        calibration = run_command(workload, checkout_path, request.timeout_sec)
-        if calibration.status != "success" or calibration.timing.wall_sec is None:
-            detail = calibration.error.message if calibration.error is not None else calibration.status
-            raise ValueError(f"profile calibration failed: {detail}")
-        iterations, capped = calculate_profile_iterations(
-            calibration.timing.wall_sec,
-            request.mode.profile_seconds,
-        )
-        output.console.print(
-            f"  calibration: {calibration.timing.wall_sec:.3f}s; recording {iterations} Samply iteration(s)"
-        )
-        if capped:
+    if profile is None:
+        iterations = request.mode.iterations
+        if iterations is None:
+            assert request.mode.profile_seconds is not None
             output.console.print(
-                "[yellow]warning:[/yellow] maximum profile iterations reached; "
-                "the profile may be shorter than the requested duration"
+                f"[bold]Calibrating[/bold] {request.file.display_path} "
+                f"{request.backend}/{request.treatment} for {request.mode.profile_seconds}s"
             )
+            calibration = run_command(workload, checkout_path, request.timeout_sec)
+            if calibration.status != "success" or calibration.timing.wall_sec is None:
+                detail = calibration.error.message if calibration.error is not None else calibration.status
+                raise ValueError(f"profile calibration failed: {detail}")
+            iterations, capped = calculate_profile_iterations(
+                calibration.timing.wall_sec,
+                request.mode.profile_seconds,
+            )
+            output.console.print(
+                f"  calibration: {calibration.timing.wall_sec:.3f}s; recording {iterations} Samply iteration(s)"
+            )
+            if capped:
+                output.console.print(
+                    "[yellow]warning:[/yellow] maximum profile iterations reached; "
+                    "the profile may be shorter than the requested duration"
+                )
 
-    assert iterations is not None
-    name = profile_name(
-        request.file,
-        request.backend,
-        request.treatment,
-        request.mode,
-        iterations,
-        target.binary_sha256,
-    )
-    output.console.print(f"[bold]Recording profile[/bold] {artifact}")
-    run_samply_record(
-        artifact=artifact,
-        name=name,
-        iterations=iterations,
-        workload=workload,
-        checkout_path=checkout_path,
-        timeout_sec=request.timeout_sec,
-    )
-    output.console.print(f"[bold]Profile written[/bold] {artifact}")
+        assert iterations is not None
+        name = profile_name(
+            request.file,
+            request.backend,
+            request.treatment,
+            request.mode,
+            iterations,
+            target.binary_sha256,
+        )
+        output.console.print(f"[bold]Recording profile[/bold] {artifact}")
+        profile = run_samply_record(
+            artifact=artifact,
+            name=name,
+            iterations=iterations,
+            workload=workload,
+            checkout_path=checkout_path,
+            timeout_sec=request.timeout_sec,
+        )
+        output.console.print(f"[bold]Profile written[/bold] {artifact}")
+
+    if request.show_summary:
+        display_artifact = profile_display_path(artifact, invocation_cwd)
+        summary: samply_analysis.ProfileCpuSummary | None = None
+        if sys.platform == "darwin":
+            try:
+                summary = samply_analysis.summarize(profile, target.binary_path)
+            except ValueError as error:
+                output.console.print(f"[yellow]warning:[/yellow] CPU profile summary unavailable: {error}")
+            if summary is not None:
+                for warning in summary.warnings:
+                    output.console.print(f"[yellow]warning:[/yellow] {warning}")
+        else:
+            output.console.print(
+                "[yellow]warning:[/yellow] CPU profile summaries are currently available on macOS only; "
+                "the Samply artifact was created normally."
+            )
+        report = samply_analysis.ProfileReport(
+            artifact=display_artifact,
+            cache_status=cache_status,
+            workload=request.file.display_path,
+            backend=request.backend,
+            treatment=request.treatment,
+            top=request.top,
+            cpu_summary=summary,
+        )
+        if request.output_format == "markdown":
+            rendered = samply_analysis.render_markdown(report)
+            sys.stdout.write(rendered + "\n")
+            sys.stdout.flush()
+        else:
+            samply_analysis.render_rich(output.console, report)
+    else:
+        sys.stdout.write(str(artifact.resolve()) + "\n")
+        sys.stdout.flush()
     if request.open_after:
         open_samply_profile(artifact, checkout_path)
 

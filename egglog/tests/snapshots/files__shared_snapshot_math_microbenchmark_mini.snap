@@ -1,0 +1,32 @@
+---
+source: tests/files.rs
+expression: snapshot_content_across_treatments
+---
+2977
+3516
+((Add 2977)
+ (Const 5)
+ (Cos 1)
+ (Diff 338)
+ (Div 3)
+ (Integral 782)
+ (Ln 1)
+ (Mul 3516)
+ (Pow 2)
+ (Sin 1)
+ (Sqrt 1)
+ (Sub 483)
+ (Var 3))
+((Add 2977)
+ (Const 5)
+ (Cos 1)
+ (Diff 338)
+ (Div 3)
+ (Integral 782)
+ (Ln 1)
+ (Mul 3516)
+ (Pow 2)
+ (Sin 1)
+ (Sqrt 1)
+ (Sub 483)
+ (Var 3))
