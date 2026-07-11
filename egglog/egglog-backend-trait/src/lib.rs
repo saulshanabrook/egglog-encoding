@@ -269,10 +269,10 @@ pub trait Backend: Send + Sync {
     /// Whether this backend needs the frontend's term-encoding pipeline to be
     /// enabled. A backend without a native union-find, such as the experimental
     /// Differential Dataflow backend, relies on term encoding to lower
-    /// congruence and rebuild to ordinary rules over `@uf` tables; running it in
-    /// native mode would silently drop `union`s. The frontend refuses to run
-    /// such a backend unless the e-graph was built with term encoding (via
-    /// `EGraph::with_term_encoding`).
+    /// congruence and rebuild to ordinary rules over `@uf` tables. Native mode
+    /// has no correct representation for those unions, so the frontend refuses
+    /// to run such a backend unless the e-graph was built with term encoding
+    /// (via `EGraph::with_term_encoding`).
     fn requires_term_encoding(&self) -> bool {
         false
     }

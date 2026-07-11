@@ -8,6 +8,15 @@
 //! ([`dd_native`]); body primitives and head actions are applied
 //! host-side ([`interpret`]) into a Rust-side materialized mirror of every
 //! relation. `for_each` / `lookup_id` / `table_size` read that mirror.
+//!
+//! ## Why this is a DD backend
+//!
+//! This crate constructs Timely and Differential Dataflow operators directly;
+//! it does not compile through a higher-level dataflow language or runtime. That
+//! keeps this prototype focused on the backend SPI and the costs of persistent
+//! incremental joins. Evaluating a higher-level compiler/runtime, including its
+//! tuple generation, planning, and stratification choices, would be a separate
+//! backend experiment rather than an interchangeable implementation detail here.
 
 use std::any::Any;
 
@@ -1604,9 +1613,10 @@ impl Backend for EGraph {
     // -- capability flags ---------------------------------------------------
 
     fn requires_term_encoding(&self) -> bool {
-        // This backend has no native union-find: congruence and rebuild are lowered
-        // to ordinary rules over `@uf` tables by the term encoder. Without it,
-        // `union`s would be silently dropped (see `HeadOp::Union` in interpret).
+        // This backend has no native union-find: congruence and rebuild are
+        // lowered to ordinary rules over `@uf` tables by the term encoder. The
+        // frontend refuses to run this backend without that encoding, and the
+        // interpreter defensively errors if a native `HeadOp::Union` reaches it.
         true
     }
 

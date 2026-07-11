@@ -19,6 +19,13 @@ pub type Row = Box<[u32]>;
 /// How a function resolves a functional-dependency conflict (two rows sharing
 /// the same key columns with different output columns). Recognized from the
 /// trait `MergeFn` (see `lib.rs::add_table`).
+///
+/// The common modes intentionally do not all go through [`MergeTree`]. A
+/// relation has no output to merge, while top-level `Old`, `New`, and `Min`
+/// select a value without cloning or evaluating a tree and without requiring a
+/// mutable primitive/hash-cons context. Only a merge that actually evaluates an
+/// expression uses `Computed`. [`MergeTree::Old`] and [`MergeTree::New`] still
+/// exist because those operands can occur inside a larger computed expression.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeMode {
     /// Plain relation: the whole row is the key, no output column to resolve.
@@ -205,7 +212,8 @@ pub enum HeadOp {
         args: Vec<Slot>,
         ret: u32,
     },
-    /// `(union l r)`.
+    /// A native `(union l r)`. Term encoding normally lowers this to `@uf`
+    /// writes; the interpreter returns an error if this operation reaches it.
     Union { l: Slot, r: Slot },
     /// `(panic msg)`.
     Panic(String),
@@ -217,6 +225,15 @@ pub enum HeadOp {
 /// `head` is an ordered list of writes. `run_rules` runs the body table-atom
 /// join on the DD dataflow, then applies body primitives and head
 /// actions host-side (see [`crate::interpret`]).
+///
+/// This backend-local IR is retained deliberately.
+/// [`egglog_backend_trait::RuleBuilderOps`] supplies a rule as a sequence of
+/// callbacks before the backend knows which rules will be run together. DD
+/// cannot construct the fused ruleset dataflow until `run_rules` provides that
+/// membership, and the host still needs the primitive and head operations after
+/// DD returns bindings. Lowering each callback or rule directly would either
+/// lose ruleset-wide input/arrangement sharing or retain equivalent metadata
+/// elsewhere.
 #[derive(Clone, Debug, Default)]
 pub struct RuleIr {
     pub name: String,

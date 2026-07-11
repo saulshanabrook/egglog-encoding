@@ -2,7 +2,9 @@
 //!
 //! An **accumulator**: each `RuleBuilderOps` call appends to an in-progress
 //! [`RuleIr`] (defined in `compile.rs`) in emission order, and `build()`
-//! registers it on the egraph for [`crate::interpret`] to execute.
+//! registers it on the egraph. The backend must retain this representation until
+//! `run_rules` reveals ruleset membership, when [`crate::dd_native`] can build a
+//! fused join and [`crate::interpret`] can execute the host-side operations.
 
 use anyhow::Result;
 use egglog_backend_trait::{
