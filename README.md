@@ -117,27 +117,47 @@ Behavior:
 
 ### Files
 
-Positional arguments are benchmark files:
+Positional arguments are benchmark files. Append a fact directory after `:` for
+workloads containing `(input ...)` commands:
 
 ```bash
 ./bench.py egglog/tests/foo.egg egglog/tests/bar.egg
+./bench.py benchmarks/pointer.egg:benchmarks/data/pointer
 ```
 
 If no files are provided, the default target benchmark suite is:
 
 - `egglog/tests/math-microbenchmark.egg`
-- `egglog/tests/web-demo/rw-analysis.egg`
-- `egglog/tests/integer_math.egg`
-- `egglog/tests/web-demo/resolution.egg`
-- `egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg`
+- `egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg`
+- `benchmarks/pointer-analysis-small.egg`, with its checked-in sample data in
+  `benchmarks/data/pointer-analysis-small`
+- `egglog/tests/hardboiled_conv1d_32.egg`
+- `egglog/tests/luminal-llama.egg`
+- `egglog/tests/web-demo/herbie.egg`
 
-These five files are proof-compatible representative examples under the current
+These six files are proof-compatible representative examples under the current
 `egglog-experimental` CLI and run under the default `off`, `term`, and `proofs`
 treatment matrix. The eggcc fixture is the heavy container/proof benchmark in
-the default suite.
+the default suite. The pointer-analysis workload uses the first 100 rows from
+each input relation of the artifact's smallest `initdb.bc` dataset so all three
+treatments complete within the standard timeout.
+
+| Workload | Compatibility adaptation | Correctness signal |
+| --- | --- | --- |
+| Math | Existing synthetic stress fixture | Existing checks and proof snapshots |
+| eggcc 2mm | Existing bounded container fixture | Existing checks and proof snapshots |
+| Pointer analysis | 100-row samples for 23 input relations | Known `constant_points_to` row is derived |
+| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
+| Luminal | Static Llama graph from `egglog_repro` commit `7fb0194812b5b11e41a286d8b55e48e3b0bfcd66` | `t712` is checked after kernel lowering |
+| Herbie | Static engine proxy; no end-to-end Racket orchestration or FPCore corpus | All 14 existing checks run through the proof checker |
+
 Relative file paths are resolved relative to the directory where `./bench.py`
 was invoked, not relative to each target checkout. The same file contents are
-used for every target, and `file.sha256` records the exact benchmark input.
+used for every target, and `file.sha256` records the exact benchmark input. The
+default workload table also owns any per-file fact-directory configuration.
+Final report tables normally show only each filename. If selected files share a
+filename, the report uses the shortest path suffix that distinguishes them. The
+initial collection plan and machine-readable report rows retain full paths.
 
 ### Options
 
@@ -173,6 +193,7 @@ The measured command shape is:
 RUST_LOG=error <build-dir>/target/release/egglog-experimental \
   --mode no-messages \
   -j 1 \
+  [--fact-directory <path>] \
   [--term-encoding | --proofs] \
   <file.egg>
 ```
@@ -218,6 +239,10 @@ File fields:
 
 - `file_path`: benchmark file path as invoked.
 - `file_sha256`: SHA-256 of the file contents.
+- `fact_directory_path`: absolute fact-directory path, or `null` when the
+  workload has no external facts.
+- `fact_directory_sha256`: deterministic SHA-256 of relative file names and
+  contents under the fact directory, or the empty string when absent.
 
 Timing fields:
 
@@ -280,9 +305,10 @@ rows first and then analyzes the `--rounds` most recent matching rows by
 The stderr output shows the cache plan and final selected observations.
 The cache plan reports cached rows, missing rows, selected cached statuses,
 exact-cell duration estimates, and estimated fresh collection time. Estimates
-use only successful rows with the same binary SHA-256, file SHA-256, treatment,
-and timeout; if no exact successful rows exist, the estimate is reported as
-unknown rather than borrowing data from another target or binary.
+use only successful rows with the same binary SHA-256, file SHA-256,
+fact-directory SHA-256, treatment, and timeout; if no exact successful rows
+exist, the estimate is reported as unknown rather than borrowing data from
+another target, binary, or input dataset.
 During fresh collection, `observations` are measured report rows and
 `subprocesses` are child process launches, including the one target startup
 warmup when fresh rows are needed. Peak RSS is collected from the measured child
@@ -320,9 +346,9 @@ Collection and analysis behavior:
 - The runner builds each target with `cargo build --release` before deciding
   whether cached timing rows can be reused.
 - Cache identity comes from persisted fields: binary SHA-256, file SHA-256,
-  treatment, and timeout. Target source, path, git ref, git SHA, and dirty flag
-  are provenance/display fields; they do not prevent reuse when the binary
-  SHA-256 matches.
+  fact-directory SHA-256, treatment, and timeout. Target source, path, git ref,
+  git SHA, dirty flag, and fact-directory path are provenance/display fields;
+  they do not prevent reuse when the content hashes match.
 - Timeouts are incomplete cells. The report shows where timeouts happened, but
   does not compute percent improvement, ratio confidence intervals, suite-pass
   overhead, or geometric-mean overhead for comparisons that include timed-out

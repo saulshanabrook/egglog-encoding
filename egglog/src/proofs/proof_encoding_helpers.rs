@@ -445,10 +445,12 @@ pub enum ProofEncodingUnsupportedReason {
     SortWithProofFuncAnnotation,
     #[error("user-defined commands are not supported.")]
     UserDefinedCommand,
-    #[error("input commands are not supported.")]
-    InputCommand,
-    #[error("missing merge function. All functions need to specify a :merge function.")]
-    NoMergeOnNonGlobalFunction,
+    #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
+    FailInputCommand,
+    #[error(
+        "`fail` wraps a `set` whose value has equality sort. Proof encoding cannot currently preserve immediate canonical no-merge conflicts for this shape."
+    )]
+    FailSetEqSortOutput,
     #[error(
         "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
     )]
@@ -585,6 +587,15 @@ pub(crate) fn command_supports_proof_encoding(
     if has_function_lookup_in_action {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }
+    if let GenericCommand::Function {
+        merge: Some(merge), ..
+    } = command
+        && type_info
+            .expr_has_function_lookup(&merge.result)
+            .is_some()
+    {
+        return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
+    }
 
     // A container built by a primitive in the query is a side condition with no
     // carryable proof, so it can't be used in an action. Reject a rule that binds
@@ -645,7 +656,6 @@ pub(crate) fn command_supports_proof_encoding(
             ..
         } => Err(ProofEncodingUnsupportedReason::SortWithProofFuncAnnotation),
         GenericCommand::UserDefined(..) => Err(ProofEncodingUnsupportedReason::UserDefinedCommand),
-        GenericCommand::Input { .. } => Err(ProofEncodingUnsupportedReason::InputCommand),
         // Extract commands can't have non-global function lookups
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
@@ -658,17 +668,15 @@ pub(crate) fn command_supports_proof_encoding(
                 Ok(())
             }
         }
-        // no-merge on a non-global function
-        // To add support: https://github.com/egraphs-good/egglog/issues/774
-        GenericCommand::Function {
-            merge: None, name, ..
-        } => {
-            if type_info.is_global(name) {
-                Ok(())
-            } else {
-                Err(ProofEncodingUnsupportedReason::NoMergeOnNonGlobalFunction)
+        GenericCommand::Fail(_, command) => match command.as_ref() {
+            GenericCommand::Input { .. } => Err(ProofEncodingUnsupportedReason::FailInputCommand),
+            GenericCommand::Action(ResolvedAction::Set(_, _, _, expr))
+                if expr.output_type().is_eq_sort() =>
+            {
+                Err(ProofEncodingUnsupportedReason::FailSetEqSortOutput)
             }
-        }
+            _ => Ok(()),
+        },
         // let binding with non-eq sort not supported by proof_global_desugar
         ResolvedCommand::Action(ResolvedAction::Let(_, _, expr)) => {
             // let binding with non-eq sort not supported by proof_global_desugar

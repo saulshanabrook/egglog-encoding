@@ -1,8 +1,8 @@
 ; Generated from the 2mm pass-1 eggcc export built while preparing
 ; egraphs-good/eggcc#796 (https://github.com/egraphs-good/eggcc/pull/796).
 ; The fixture was checked into egraphs-good/egglog-experimental#56
-; (https://github.com/egraphs-good/egglog-experimental/pull/56) with former
-; :no-merge functions represented as :merge old for proof-mode compatibility.
+; (https://github.com/egraphs-good/egglog-experimental/pull/56). Its original
+; :no-merge declarations are preserved now that proof mode supports them.
 
 ; Prologue
 (datatype Expr)
@@ -93,7 +93,7 @@
 (constructor TLConcat (TypeList TypeList) TypeList :unextractable)
 (rewrite (TLConcat (TNil) r) r :ruleset type-helpers)
 (rewrite (TLConcat (TCons hd tl) r) (TCons hd (TLConcat tl r)) :ruleset type-helpers)
-(function TypeList-length (TypeList) i64 :merge old)
+(function TypeList-length (TypeList) i64 :no-merge)
 (constructor TypeList-ith (TypeList i64) BaseType :unextractable)
 (rule () ((set (TypeList-length (TNil)) 0)) :ruleset type-helpers)
 (rule ((= lst (TCons hd tl)) (= len (TypeList-length tl))) ((set (TypeList-length lst) (+ 1 len))) :ruleset type-helpers)
@@ -218,7 +218,7 @@
 (rule ((TupleT tylist) (PureTypeList tylist)) ((PureType (TupleT tylist))) :ruleset type-analysis)
 (rule ((TNil)) ((PureTypeList (TNil))) :ruleset type-analysis)
 (rule ((TCons hd tl) (PureBaseType hd) (PureTypeList tl)) ((PureTypeList (TCons hd tl))) :ruleset type-analysis)
-(function ListExpr-length (ListExpr) i64 :merge old)
+(function ListExpr-length (ListExpr) i64 :no-merge)
 (constructor ListExpr-ith (ListExpr i64) Expr :unextractable)
 (constructor ListExpr-suffix (ListExpr i64) ListExpr :unextractable)
 (constructor Append (ListExpr Expr) ListExpr :unextractable)
@@ -227,7 +227,7 @@
 (rule ((= (ListExpr-suffix list n) (Nil))) ((set (ListExpr-length list) n)) :ruleset always-run)
 (rewrite (Append (Cons a b) e) (Cons a (Append b e)) :ruleset always-run)
 (rewrite (Append (Nil) e) (Cons e (Nil)) :ruleset always-run)
-(function tuple-length (Expr) i64 :merge old)
+(function tuple-length (Expr) i64 :no-merge)
 (rule ((HasType expr (TupleT tl)) (= len (TypeList-length tl))) ((set (tuple-length expr) len)) :ruleset always-run)
 (relation leading-Expr (Expr))
 (relation leading-Expr-list (ListExpr))
@@ -649,7 +649,7 @@
 (constructor AddIntInterval (IntInterval IntInterval) IntInterval)
 (rewrite (AddIntInterval (MkIntInterval lo1 hi1) (MkIntInterval lo2 hi2)) (MkIntInterval (AddIntOrInfinity lo1 lo2) (AddIntOrInfinity hi1 hi2)) :ruleset always-run)
 (datatype List<i64+IntInterval> (Nil-List<i64+IntInterval>) (Cons-List<i64+IntInterval> i64 IntInterval List<i64+IntInterval>))
-(function Length-List<i64+IntInterval> (List<i64+IntInterval>) i64 :merge old)
+(function Length-List<i64+IntInterval> (List<i64+IntInterval>) i64 :no-merge)
 (rule ((= x (Nil-List<i64+IntInterval>))) ((set (Length-List<i64+IntInterval> x) 0)) :ruleset always-run)
 (rule ((= x (Cons-List<i64+IntInterval> hd0 hd1 tl)) (= l (Length-List<i64+IntInterval> tl))) ((set (Length-List<i64+IntInterval> x) (+ l 1))) :ruleset always-run)
 (rule ((= x (Nil-List<i64+IntInterval>))) ((set (Length-List<i64+IntInterval> x) 0)) :ruleset memory-helpers)
@@ -715,7 +715,7 @@
 (relation PointsNowhere-PtrPointees (PtrPointees))
 (rule ((= f (PointsTo x)) (IsEmpty-List<i64+IntInterval> x)) ((PointsNowhere-PtrPointees f)) :ruleset always-run)
 (datatype List<PtrPointees> (Nil-List<PtrPointees>) (Cons-List<PtrPointees> PtrPointees List<PtrPointees>))
-(function Length-List<PtrPointees> (List<PtrPointees>) i64 :merge old)
+(function Length-List<PtrPointees> (List<PtrPointees>) i64 :no-merge)
 (rule ((= x (Nil-List<PtrPointees>))) ((set (Length-List<PtrPointees> x) 0)) :ruleset always-run)
 (rule ((= x (Cons-List<PtrPointees> hd0 tl)) (= l (Length-List<PtrPointees> tl))) ((set (Length-List<PtrPointees> x) (+ l 1))) :ruleset always-run)
 (rule ((= x (Nil-List<PtrPointees>))) ((set (Length-List<PtrPointees> x) 0)) :ruleset memory-helpers)
@@ -753,7 +753,7 @@
 (rewrite (ExprSet-union (ES set1) (ES set2)) (ES (set-union set1 set2)) :ruleset memory-helpers)
 (constructor ExprSet-insert (ExprSet Expr) ExprSet)
 (rewrite (ExprSet-insert (ES set1) x) (ES (set-insert set1 x)) :ruleset memory-helpers)
-(function ExprSet-length (ExprSet) i64 :merge old)
+(function ExprSet-length (ExprSet) i64 :no-merge)
 (rule ((ES set1)) ((set (ExprSet-length (ES set1)) (set-length set1))) :ruleset memory-helpers)
 (datatype Pointees (TuplePointsTo List<PtrPointees>) (PtrPointsTo PtrPointees))
 (constructor UnwrapPtrPointsTo (Pointees) PtrPointees)
@@ -829,7 +829,7 @@
 (rewrite (PointsToCells (Alloc id sz state ty) aps) (TuplePointsTo (Cons-List<PtrPointees> (PointsTo (Cons-List<i64+IntInterval> id (MkIntInterval (I 0) (I 0)) (Nil-List<i64+IntInterval>))) (Cons-List<PtrPointees> (PointsTo (Nil-List<i64+IntInterval>)) (Nil-List<PtrPointees>)))) :ruleset memory-helpers)
 (constructor PointsToCellsAtIter (Pointees Expr Expr i64) Pointees)
 (rule ((= e (DoWhile inputs pred-body)) (PointsToCells e aps)) ((union (PointsToCellsAtIter aps inputs pred-body 0) (PointsToCells inputs aps)) (union (PointsToCellsAtIter aps inputs pred-body 1) (UnionPointees (PointsToCellsAtIter aps inputs pred-body 0) (PointeesDropFirst (PointsToCells pred-body (PointsToCellsAtIter aps inputs pred-body 0)))))) :ruleset memory-helpers)
-(function succ (i64) i64 :merge old)
+(function succ (i64) i64 :no-merge)
 (rule ((PointsToCellsAtIter aps inputs pred-body i)) ((set (succ i) (+ i 1))) :ruleset memory-helpers)
 (rule ((= pointees0 (PointsToCellsAtIter aps inputs pred-body i)) (= pointees1 (PointsToCellsAtIter aps inputs pred-body (succ i))) (Resolved-Pointees pointees0) (Resolved-Pointees pointees1) (!= pointees0 pointees1)) ((union (PointsToCellsAtIter aps inputs pred-body (+ i 2)) (UnionPointees pointees1 (PointeesDropFirst (PointsToCells pred-body pointees1))))) :ruleset memory)
 (rule ((= pointees (PointsToCellsAtIter aps inputs pred-body i)) (= pointees (PointsToCellsAtIter aps inputs pred-body (succ i)))) ((union (PointsToCells (DoWhile inputs pred-body) aps) pointees)) :ruleset memory)

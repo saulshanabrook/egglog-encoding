@@ -1,6 +1,7 @@
 use egglog::ast::Command;
 use egglog::util::SymbolGen;
 use egglog::*;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 struct RecordFunctionInputArity {
@@ -45,4 +46,42 @@ fn proof_mode_command_macros_see_original_function_arities() {
         .unwrap();
 
     assert_eq!(*seen.lock().unwrap(), vec![1]);
+}
+
+#[test]
+fn proof_mode_inputs_rows_as_fiat_actions() {
+    let directory = std::env::temp_dir().join(format!("egglog_proof_input_{}", std::process::id()));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("edges.tsv"), "a\tb\nb\tc\n").unwrap();
+    std::fs::write(directory.join("scores.tsv"), "a\t7\n").unwrap();
+
+    let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+    egraph.fact_directory = Some(directory.clone());
+    let result = egraph.parse_and_run_program(
+        None,
+        r#"
+        (relation Edge (String String))
+        (function score (String) i64 :no-merge)
+        (input Edge "edges.tsv")
+        (input score "scores.tsv")
+        (check (Edge "a" "b"))
+        (check (= (score "a") 7))
+        "#,
+    );
+
+    std::fs::remove_dir_all(directory).ok();
+    result.unwrap();
+}
+
+#[test]
+fn pointer_analysis_sample_passes_proof_checking() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("egglog crate should be inside the workspace");
+    let mut egraph = EGraph::new_with_proofs().with_proof_testing();
+    egraph.fact_directory = Some(repository.join("benchmarks/data/pointer-analysis-small"));
+    let program =
+        std::fs::read_to_string(repository.join("benchmarks/pointer-analysis-small.egg")).unwrap();
+
+    egraph.parse_and_run_program(None, &program).unwrap();
 }

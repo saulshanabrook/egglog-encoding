@@ -48,6 +48,8 @@ def make_record(
         "binary_sha256": binary_sha256,
         "file_path": "file.egg",
         "file_sha256": file_sha256,
+        "fact_directory_path": None,
+        "fact_directory_sha256": "",
         "backend": backend,
         "treatment": treatment,
         "timeout_sec": timeout_sec,
@@ -521,11 +523,54 @@ def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     bench.validate_spec(spec)
 
 
-def test_default_files_use_full_math_microbenchmark() -> None:
-    display_paths = tuple(file.display_path for file in bench.resolve_files([], ROOT))
+def test_default_workloads_are_the_six_research_cases() -> None:
+    files = bench.resolve_files([], ROOT)
+    display_paths = tuple(file.display_path for file in files)
 
-    assert "egglog/tests/math-microbenchmark.egg" in display_paths
-    assert "egglog/tests/math-microbenchmark-mini.egg" not in display_paths
+    assert display_paths == (
+        "egglog/tests/math-microbenchmark.egg",
+        "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
+        "benchmarks/pointer-analysis-small.egg",
+        "egglog/tests/hardboiled_conv1d_32.egg",
+        "egglog/tests/luminal-llama.egg",
+        "egglog/tests/web-demo/herbie.egg",
+    )
+    pointer = next(file for file in files if file.display_path == "benchmarks/pointer-analysis-small.egg")
+    assert pointer.fact_directory == (ROOT / "benchmarks/data/pointer-analysis-small").resolve()
+    assert pointer.fact_directory_sha256.startswith("sha256:")
+
+
+def test_report_file_labels_use_filenames_and_disambiguate_collisions() -> None:
+    unique = bench.FileSpec("long/path/unique.egg", ROOT / "unique.egg", "sha256:unique")
+    first = bench.FileSpec("alpha/shared.egg", ROOT / "first.egg", "sha256:first")
+    second = bench.FileSpec("beta/nested/shared.egg", ROOT / "second.egg", "sha256:second")
+
+    labels = bench.report_file_labels((unique, first, second))
+
+    assert labels == {
+        unique: "unique.egg",
+        first: "alpha/shared.egg",
+        second: "nested/shared.egg",
+    }
+
+
+def test_workload_argument_rejects_missing_file_or_fact_directory() -> None:
+    for value in (":facts", "file.egg:"):
+        with pytest.raises(ValueError, match="expected FILE:FACT_DIRECTORY"):
+            bench.parse_workload_config(value)
+
+
+def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
+    benchmark = tmp_path / "input.egg"
+    benchmark.write_text('(input Edge "edge.tsv")\n', encoding="utf-8")
+    facts = tmp_path / "facts"
+    facts.mkdir()
+    (facts / "edge.tsv").write_text("a\tb\n", encoding="utf-8")
+
+    (file_spec,) = bench.resolve_files(["input.egg:facts"], tmp_path)
+
+    assert file_spec.fact_directory == facts.resolve()
+    assert file_spec.fact_directory_sha256 == bench.sha256_directory(facts)
 
 
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:
@@ -692,7 +737,7 @@ def test_parse_args_rejects_removed_warmup_mode() -> None:
 def test_collection_plan_writes_human_output_to_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
     target = make_target()
-    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    file_spec = bench.FileSpec("dir/file.egg", ROOT / "file.egg", "sha256:file")
     plan = bench.build_collection_plan(rows, target, make_spec(file_spec), False)
     stream = io.StringIO()
     monkeypatch.setattr(sys, "stderr", stream)
@@ -702,7 +747,7 @@ def test_collection_plan_writes_human_output_to_stderr(monkeypatch: pytest.Monke
 
     output_text = stream.getvalue()
     assert "cache and estimate plan" in output_text
-    assert "file.egg" in output_text
+    assert "dir/file.egg" in output_text
     assert "1/2" in output_text
     assert "Estimated fresh collection time" in output_text
 
@@ -1111,7 +1156,7 @@ def test_render_markdown_report_deterministic_golden() -> None:
         "\n"
         "| File | off |\n"
         "| --- | ---: |\n"
-        "| dir/file.egg | 1.0000s |\n"
+        "| file.egg | 1.0000s |\n"
         "\n"
         "*Within-target wall-time estimates. These are not target-vs-baseline ratios.*\n"
         "\n"
@@ -1125,6 +1170,68 @@ def test_render_markdown_report_deterministic_golden() -> None:
         "\n"
         "*Within-backend proof overhead. This is not backend-vs-main performance.*"
     )
+
+
+def test_rich_and_markdown_reports_use_unique_file_suffixes() -> None:
+    rows = make_rows(
+        make_record(
+            0,
+            started_at="2026-07-04T12:00:00Z",
+            file_sha256="sha256:first",
+            treatment="off",
+            wall_sec=1.0,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-04T12:00:01Z",
+            file_sha256="sha256:first",
+            treatment="proofs",
+            wall_sec=3.0,
+        ),
+        make_record(
+            2,
+            started_at="2026-07-04T12:00:02Z",
+            file_sha256="sha256:second",
+            treatment="off",
+            wall_sec=1.0,
+        ),
+        make_record(
+            3,
+            started_at="2026-07-04T12:00:03Z",
+            file_sha256="sha256:second",
+            treatment="proofs",
+            wall_sec=2.0,
+        ),
+    )
+    target = make_target()
+    first = bench.FileSpec("root/alpha/shared.egg", ROOT / "first.egg", "sha256:first")
+    second = bench.FileSpec("root/beta/nested/shared.egg", ROOT / "second.egg", "sha256:second")
+    spec = bench.BenchmarkSpec(
+        files=(first, second),
+        treatments=("off", "proofs"),
+        rounds=1,
+        timeout_sec=120,
+    )
+    rich_stream = io.StringIO()
+    bench.render_report(
+        Console(file=rich_stream, width=240, color_system=None),
+        bench.ReportDestination(path=Path("reports.jsonl")),
+        rows,
+        [target],
+        spec,
+    )
+    markdown = bench.render_markdown_report(
+        bench.ReportDestination(path=Path("reports.jsonl")),
+        rows,
+        [target],
+        spec,
+    )
+
+    for output in (rich_stream.getvalue(), markdown):
+        assert "alpha/shared.egg" in output
+        assert "nested/shared.egg" in output
+        assert "root/alpha/shared.egg" not in output
+        assert "root/beta/nested/shared.egg" not in output
 
 
 def test_markdown_report_has_no_rich_markup_ansi_or_box_drawing() -> None:
@@ -1220,7 +1327,11 @@ def test_main_markdown_report_goes_to_stdout_and_status_to_stderr(
     target = make_target()
 
     monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
-    monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
+    monkeypatch.setattr(
+        bench,
+        "resolve_files",
+        lambda raw_files, invocation_cwd: (file_spec,),
+    )
     monkeypatch.setattr(bench, "load_report", lambda destination: rows)
     monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
     monkeypatch.setattr(bench, "build_collection_plan", lambda *args: object())
@@ -1271,7 +1382,11 @@ def test_main_rich_report_remains_on_stderr_by_default(
     target = make_target()
 
     monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
-    monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
+    monkeypatch.setattr(
+        bench,
+        "resolve_files",
+        lambda raw_files, invocation_cwd: (file_spec,),
+    )
     monkeypatch.setattr(bench, "load_report", lambda destination: rows)
     monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
     monkeypatch.setattr(bench, "build_collection_plan", lambda *args: object())
@@ -1449,6 +1564,17 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         str(file_spec.absolute_path),
     ]
 
+    facts = ROOT / "facts"
+    file_with_facts = bench.FileSpec(
+        "file.egg",
+        ROOT / "file.egg",
+        "sha256:file",
+        facts,
+        "sha256:facts",
+    )
+    command = bench.workload_command(ROOT / "egglog-experimental", file_with_facts, "main", "proofs")
+    assert command[5:7] == ["--fact-directory", str(facts)]
+
 
 def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     commands: list[list[str]] = []
@@ -1506,8 +1632,21 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
         bench.ProfileMode(None, 10),
     )
 
-    assert explicit == Path(".profiles") / "v1" / ("a" * 64) / ("b" * 64) / "main-proofs-i5.json.gz"
-    assert automatic == Path(".profiles") / "v1" / ("a" * 64) / ("b" * 64) / "main-proofs-auto10s.json.gz"
+    base = Path(".profiles") / "v2" / ("a" * 64) / ("b" * 64) / "no-facts"
+    assert explicit == base / "main-proofs-i5.json.gz"
+    assert automatic == base / "main-proofs-auto10s.json.gz"
+
+    data_hash = "sha256:" + "c" * 64
+    with_facts = bench.profile_cache_path(
+        Path(".profiles"),
+        binary_hash,
+        file_hash,
+        "main",
+        "proofs",
+        bench.ProfileMode(5, None),
+        data_hash,
+    )
+    assert with_facts == base.parent / ("c" * 64) / "main-proofs-i5.json.gz"
 
 
 def test_profile_display_path_is_relative_inside_invocation_directory(tmp_path: Path) -> None:
