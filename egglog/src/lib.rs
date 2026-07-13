@@ -847,17 +847,17 @@ impl EGraph {
                             "expected string literal after `unstable-fn`".into(),
                         ));
                     };
-                    let panic_id = self
-                        .backend
-                        .action_registry()
-                        .read()
-                        .unwrap()
-                        .default_panic_id();
                     let bridge = self
                         .backend
                         .as_any()
                         .downcast_ref::<egglog_bridge::EGraph>()
-                        .expect("`unstable-fn` is only supported on the reference bridge backend");
+                        .ok_or_else(|| {
+                            Error::BackendError(
+                                "`unstable-fn` merge expressions require the reference bridge backend"
+                                    .into(),
+                            )
+                        })?;
+                    let panic_id = bridge.action_registry().read().unwrap().default_panic_id();
                     let resolved = resolve_function_container_target_with_context(
                         bridge,
                         &self.functions,
@@ -1231,6 +1231,22 @@ impl EGraph {
         // it expects only `union` on constructors (not set).
         let union_to_set = self.proof_state.original_typechecking.is_none();
 
+        match self.rulesets.get(&rule.ruleset) {
+            Some(Ruleset::Rules(_)) => {}
+            Some(Ruleset::Combined(_)) => {
+                return Err(Error::CombinedRulesetError(
+                    rule.ruleset.clone(),
+                    rule.span.clone(),
+                ));
+            }
+            None => {
+                return Err(Error::NoSuchRuleset(
+                    rule.ruleset.clone(),
+                    rule.span.clone(),
+                ));
+            }
+        }
+
         let compiled: Vec<(String, core::ResolvedCoreRule, egglog_bridge::RuleId)> = {
             let core_rule = rule.to_canonicalized_core_rule(
                 &self.type_info,
@@ -1243,31 +1259,25 @@ impl EGraph {
                 rb.set_no_decomp(no_decomp);
                 let mut translator =
                     BackendRule::new(rb, &self.functions, &self.type_info, requires_read_context);
-                translator.query(query, rule.include_subsumed);
+                translator.query(query, rule.include_subsumed)?;
                 translator.actions(actions)?;
                 translator.build()
             };
             vec![(rule.name.clone(), core_rule, rule_id)]
         };
 
-        if let Some(rules) = self.rulesets.get_mut(&rule.ruleset) {
-            match rules {
-                Ruleset::Rules(rules) => {
-                    for (name, core_rule, rule_id) in compiled {
-                        match rules.entry(name.clone()) {
-                            indexmap::map::Entry::Occupied(_) => {
-                                panic!("Rule '{name}' was already present")
-                            }
-                            indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
-                        };
-                    }
-                    Ok(rule.name)
+        let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&rule.ruleset) else {
+            unreachable!("ruleset was validated before compiling the rule")
+        };
+        for (name, core_rule, rule_id) in compiled {
+            match rules.entry(name.clone()) {
+                indexmap::map::Entry::Occupied(_) => {
+                    panic!("Rule '{name}' was already present")
                 }
-                Ruleset::Combined(_) => Err(Error::CombinedRulesetError(rule.ruleset, rule.span)),
-            }
-        } else {
-            Err(Error::NoSuchRuleset(rule.ruleset, rule.span))
+                indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
+            };
         }
+        Ok(rule.name)
     }
 
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
@@ -1481,23 +1491,43 @@ impl EGraph {
                                 .unwrap_or_else(|| Span::Panic)
                         )));
                     };
+                    if !self.backend.as_any().is::<egglog_bridge::EGraph>() {
+                        return Err(Error::BackendError(
+                            "`unstable-fn` is only supported on the reference bridge backend"
+                                .into(),
+                        ));
+                    }
                     let panic_id = self.backend.new_panic(format!(
                         "unstable-fn over `{name}` was applied in a context where its wrapped \
                          function is not valid for this call site, if in a rule, add :naive."
                     ));
-                    let bridge = self
-                        .backend
-                        .as_any()
-                        .downcast_ref::<egglog_bridge::EGraph>()
-                        .expect("`unstable-fn` is only supported on the reference bridge backend");
-                    let resolved_function = resolve_function_container_target_with_context(
-                        bridge,
-                        &self.functions,
-                        &self.type_info,
-                        name,
-                        prim,
-                        panic_id,
-                    )?;
+                    let resolved_function = {
+                        let bridge = self
+                            .backend
+                            .as_any()
+                            .downcast_ref::<egglog_bridge::EGraph>()
+                            .ok_or_else(|| {
+                                Error::BackendError(
+                                    "`unstable-fn` is only supported on the reference bridge backend"
+                                        .into(),
+                                )
+                            })?;
+                        resolve_function_container_target_with_context(
+                            bridge,
+                            &self.functions,
+                            &self.type_info,
+                            name,
+                            prim,
+                            panic_id,
+                        )
+                    };
+                    let resolved_function = match resolved_function {
+                        Ok(resolved) => resolved,
+                        Err(error) => {
+                            self.backend.free_external_func(panic_id);
+                            return Err(error);
+                        }
+                    };
                     let fn_value = self.backend.base_values().get(resolved_function);
                     let binding_name = self.parser.symbol_gen.fresh("unstable_fn_target");
                     bindings.push((binding_name.clone(), fn_value));
@@ -1645,7 +1675,11 @@ impl EGraph {
             &self.type_info,
             true, // global query: Read context (may read the DB)
         );
-        translator.query(&query, true);
+        if let Err(error) = translator.query(&query, true) {
+            drop(translator);
+            self.backend.free_external_func(ext_id);
+            return Err(error);
+        }
         translator.rb.call_external_func(
             ext_id,
             &[],
@@ -2021,7 +2055,11 @@ impl EGraph {
             .backend
             .as_any()
             .downcast_ref::<egglog_bridge::EGraph>()
-            .expect("loading facts from a file requires the reference bridge backend");
+            .ok_or_else(|| {
+                Error::BackendError(
+                    "loading facts from a file requires the reference bridge backend".into(),
+                )
+            })?;
         let table_action = egglog_bridge::TableAction::new(bridge, func.backend_id);
 
         if function_type.subtype != FunctionSubtype::Constructor {
@@ -2741,7 +2779,7 @@ impl<'a> BackendRule<'a> {
         prim: &core::SpecializedPrimitive,
         args: &[core::ResolvedAtomTerm],
         ctx: crate::Context,
-    ) -> (ExternalFunctionId, Vec<QueryEntry>, ColumnTy) {
+    ) -> Result<(ExternalFunctionId, Vec<QueryEntry>, ColumnTy), Error> {
         // The typechecker has already checked that this primitive is
         // valid in `ctx`; pick the runtime id that stamps the same ctx
         // onto the state wrapper when invoked.
@@ -2750,9 +2788,22 @@ impl<'a> BackendRule<'a> {
         let mut qe_args = self.args(args);
 
         if prim.name() == "unstable-fn" {
-            let core::ResolvedAtomTerm::Literal(_, Literal::String(ref name)) = args[0] else {
-                panic!("expected string literal after `unstable-fn`")
+            let Some(core::ResolvedAtomTerm::Literal(_, Literal::String(name))) = args.first()
+            else {
+                return Err(Error::BackendError(
+                    "expected string literal after `unstable-fn`".into(),
+                ));
             };
+            if self
+                .rb
+                .backend_any()
+                .and_then(|backend| backend.downcast_ref::<egglog_bridge::EGraph>())
+                .is_none()
+            {
+                return Err(Error::BackendError(
+                    "`unstable-fn` is only supported on the reference bridge backend".into(),
+                ));
+            }
             // Pre-register a panic id used by `FunctionContainer::apply`
             // when the wrapped function is applied in a context that
             // doesn't admit it. Triggered at runtime via the egglog
@@ -2766,7 +2817,11 @@ impl<'a> BackendRule<'a> {
                 .rb
                 .backend_any()
                 .and_then(|a| a.downcast_ref::<egglog_bridge::EGraph>())
-                .expect("`unstable-fn` is only supported on the reference bridge backend");
+                .ok_or_else(|| {
+                    Error::BackendError(
+                        "`unstable-fn` is only supported on the reference bridge backend".into(),
+                    )
+                })?;
             let resolved = resolve_function_container_target_with_context(
                 bridge,
                 self.functions,
@@ -2775,13 +2830,13 @@ impl<'a> BackendRule<'a> {
                 prim,
                 panic_id,
             )
-            .unwrap_or_else(|err| panic!("{err}"));
+            .unwrap_or_else(|error| panic!("{error}"));
 
             qe_args[0] = base_constant(self.rb.base_values(), resolved);
         }
 
         let output_ty = prim.output().column_ty(self.rb.base_values());
-        (resolved_id, qe_args, output_ty)
+        Ok((resolved_id, qe_args, output_ty))
     }
 
     fn args<'b>(
@@ -2791,7 +2846,11 @@ impl<'a> BackendRule<'a> {
         args.into_iter().map(|x| self.entry(x)).collect()
     }
 
-    fn query(&mut self, query: &core::Query<ResolvedCall, ResolvedVar>, include_subsumed: bool) {
+    fn query(
+        &mut self,
+        query: &core::Query<ResolvedCall, ResolvedVar>,
+        include_subsumed: bool,
+    ) -> Result<(), Error> {
         for atom in &query.atoms {
             match &atom.head {
                 ResolvedCall::Func(f) => {
@@ -2801,15 +2860,20 @@ impl<'a> BackendRule<'a> {
                         true => None,
                         false => Some(false),
                     };
-                    self.rb.query_table(f, &args, is_subsumed).unwrap();
+                    self.rb
+                        .query_table(f, &args, is_subsumed)
+                        .map_err(|error| Error::BackendError(error.to_string()))?;
                 }
                 ResolvedCall::Primitive(p) => {
                     let ctx = self.query_context();
-                    let (p, args, ty) = self.prim(p, &atom.args, ctx);
-                    self.rb.query_prim(p, &args, ty).unwrap()
+                    let (p, args, ty) = self.prim(p, &atom.args, ctx)?;
+                    self.rb
+                        .query_prim(p, &args, ty)
+                        .map_err(|error| Error::BackendError(error.to_string()))?;
                 }
             }
         }
+        Ok(())
     }
 
     fn actions(&mut self, actions: &core::ResolvedCoreActions) -> Result<(), Error> {
@@ -2834,7 +2898,7 @@ impl<'a> BackendRule<'a> {
                         ResolvedCall::Primitive(p) => {
                             let name = p.name().to_owned();
                             let ctx = self.action_context();
-                            let (p, args, ty) = self.prim(p, args, ctx);
+                            let (p, args, ty) = self.prim(p, args, ctx)?;
                             let span = span.clone();
                             self.rb.call_external_func(
                                 p,

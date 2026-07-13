@@ -46,6 +46,50 @@ type DdDeltaRows = HashMap<ReadKey, Vec<(Vec<u32>, isize)>>;
 /// remove, so one `retain` pass drops them all.
 type RemovesByFunc = HashMap<FunctionId, (usize, HashSet<Box<[u32]>>)>;
 
+/// Map the fused worker's rule order back to positions in the current caller.
+/// The worker cache key identifies a set of rule ids, so a cache hit does not
+/// imply that the caller supplied those ids in the original build order.
+fn fused_caller_positions(
+    atom_positions: &[usize],
+    atom_rule_idxs: &[usize],
+    fused_rule_idxs: &[usize],
+) -> Result<Vec<usize>> {
+    if atom_positions.len() != atom_rule_idxs.len() || atom_rule_idxs.len() != fused_rule_idxs.len()
+    {
+        return Err(anyhow!(
+            "fused rule mapping length mismatch: caller positions={}, caller ids={}, fused ids={}",
+            atom_positions.len(),
+            atom_rule_idxs.len(),
+            fused_rule_idxs.len()
+        ));
+    }
+
+    let mut caller_by_rule = HashMap::with_capacity(atom_rule_idxs.len());
+    for (&rule_idx, &position) in atom_rule_idxs.iter().zip(atom_positions) {
+        if caller_by_rule.insert(rule_idx, position).is_some() {
+            return Err(anyhow!(
+                "duplicate caller rule index {rule_idx} in fused ruleset"
+            ));
+        }
+    }
+
+    let mut seen = HashSet::with_capacity(fused_rule_idxs.len());
+    let mut positions = Vec::with_capacity(fused_rule_idxs.len());
+    for &rule_idx in fused_rule_idxs {
+        if !seen.insert(rule_idx) {
+            return Err(anyhow!(
+                "duplicate cached rule index {rule_idx} in fused ruleset"
+            ));
+        }
+        let position = caller_by_rule.get(&rule_idx).copied().ok_or_else(|| {
+            anyhow!("cached fused rule index {rule_idx} is absent from the caller ruleset")
+        })?;
+        positions.push(position);
+    }
+
+    Ok(positions)
+}
+
 /// A pending write to apply after all matches are computed.
 enum Write {
     /// Insert/overwrite a full row.
@@ -242,9 +286,9 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
         eg.dd_fused.insert(key.clone(), fused);
     }
 
-    // The fused join's internal rule order (its build order = `atom_positions`
-    // order). Map each fused output slot back to the caller `rules` position and
-    // capture each rule's canonical var order.
+    // Capture the fused worker's build order and map each output slot back to
+    // the current caller by stable rule id. The sorted cache key only proves set
+    // equality; it does not prove that this call uses the original order.
     let (fused_rule_idxs, fused_body_reads): (Vec<usize>, Vec<Vec<ReadKey>>) = {
         let fused = eg.dd_fused.get(&key).expect("fused join present");
         (
@@ -254,12 +298,11 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
                 .collect(),
         )
     };
-    // The fused build order equals `atom_rule_idxs` (we built it that way), so
-    // map fused position -> caller `rules` position via `atom_positions`.
-    debug_assert_eq!(fused_rule_idxs, atom_rule_idxs, "fused build order");
+    let fused_positions =
+        fused_caller_positions(&atom_positions, &atom_rule_idxs, &fused_rule_idxs)?;
 
     // Each atom-bearing rule's canonical var order (for env reconstruction).
-    let var_orders: Vec<Vec<u32>> = atom_positions
+    let var_orders: Vec<Vec<u32>> = fused_positions
         .iter()
         .map(|&pos| {
             let rule = &rules[pos].1;
@@ -336,7 +379,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
 
     // Step the shared worker once per nonempty signed-delta phase. A version
     // change may require a removal phase followed by an insertion phase.
-    let mut per_rule_bindings = vec![Vec::new(); atom_positions.len()];
+    let mut per_rule_bindings = vec![Vec::new(); fused_positions.len()];
     {
         let fused = eg.dd_fused.get_mut(&key).expect("fused join present");
         for delta in &delta_batches {
@@ -351,7 +394,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     // host-side. Negative weights are integral bookkeeping (a body row retracted)
     // — egglog heads are monotone-fire, so we do NOT re-fire on disappearance.
     for (fpos, bindings) in per_rule_bindings.into_iter().enumerate() {
-        let caller_pos = atom_positions[fpos];
+        let caller_pos = fused_positions[fpos];
         let rule = &rules[caller_pos].1;
         let var_order = &var_orders[fpos];
         let mut envs: Vec<Env> = Vec::new();
@@ -566,4 +609,26 @@ pub(crate) fn lookup_existing(
     });
     let k: Box<[u32]> = key.iter().map(|v| v.rep()).collect();
     idx.get(&k).copied().map(Value::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fused_caller_positions;
+
+    #[test]
+    fn fused_rule_mapping_uses_rule_ids_instead_of_caller_order() {
+        assert_eq!(
+            fused_caller_positions(&[4, 9], &[10, 20], &[20, 10]).unwrap(),
+            [9, 4]
+        );
+    }
+
+    #[test]
+    fn fused_rule_mapping_rejects_inconsistent_cache_entries() {
+        let missing = fused_caller_positions(&[4, 9], &[10, 20], &[10, 30]).unwrap_err();
+        assert!(missing.to_string().contains("absent from the caller"));
+
+        let duplicate = fused_caller_positions(&[4, 9], &[10, 20], &[10, 10]).unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate cached rule"));
+    }
 }

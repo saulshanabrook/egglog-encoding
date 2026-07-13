@@ -86,7 +86,7 @@
 //! change to the bridge itself is a one-line re-export of `Variable` /
 //! `VariableId`, which a backend needs to construct [`QueryEntry::Var`].
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
@@ -113,6 +113,13 @@ pub use egglog_reports::{IterationReport, ReportLevel};
 /// avoids formatting a `Span` (an `O(file)` scan) for every action in every
 /// generated rule. Boxed so the trait stays object-safe.
 pub type PanicMsg = Box<dyn FnOnce() -> String + Send>;
+
+/// Backend-selected policy for reconciling two ids that rebuild to the same
+/// container value. The container type is supplied separately to
+/// [`Backend::container_merge_fn`], so a backend may choose a different policy
+/// for each registered [`ContainerValue`] type.
+pub type ContainerMergeFn =
+    Arc<dyn for<'a> Fn(&mut ExecutionState<'a>, Value, Value) -> Value + Send + Sync>;
 
 // ---------------------------------------------------------------------------
 // The `Backend` trait
@@ -174,9 +181,20 @@ pub trait Backend: Send + Sync {
         None
     }
 
+    /// Read the output value for `key` from a function table without inserting
+    /// a missing row. Subsumed rows remain lookup-visible.
+    fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value>;
+
     /// Allocate a fresh counter for container-value ids, for backends that can
     /// execute container primitives without the bridge.
     fn new_container_id_counter(&mut self) -> Option<CounterId> {
+        None
+    }
+
+    /// Select the merge policy for a registered container type. Backends that
+    /// advertise container support outside the reference bridge must provide
+    /// this alongside a container registry and id counter.
+    fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
         None
     }
 
@@ -257,13 +275,13 @@ pub trait Backend: Send + Sync {
     /// Whether this backend supports `Vec` / `Set` / `Map` / `MultiSet`
     /// container sorts.
     fn supports_containers(&self) -> bool {
-        true
+        false
     }
 
     /// Whether this backend exposes an in-memory [`ActionRegistry`]
     /// ([`Backend::action_registry`]).
     fn supports_action_registry(&self) -> bool {
-        true
+        false
     }
 
     /// Whether this backend needs the frontend's term-encoding pipeline to be
@@ -328,9 +346,11 @@ pub trait BackendExt {
     /// Register a container-value type `C`.
     ///
     /// Container registration wires the container into the backend's rebuild
-    /// loop, which requires backend-internal state. Only the reference bridge
-    /// implements it today; on a backend that does not support containers this
-    /// is a no-op (such programs never construct containers).
+    /// loop, which requires backend-internal state. The reference bridge handles
+    /// this directly; another container-capable backend supplies its registry,
+    /// id counter, and per-container merge policy through the capability methods
+    /// on [`Backend`]. Registration is a no-op for backends that do not advertise
+    /// container support.
     fn register_container_ty<C: ContainerValue>(&mut self);
 
     /// Intern a container value `C`, returning its `Value` handle.
@@ -384,15 +404,16 @@ impl<B: Backend + ?Sized> BackendExt for B {
     fn register_container_ty<C: ContainerValue>(&mut self) {
         if let Some(bridge) = self.as_any_mut().downcast_mut::<egglog_bridge::EGraph>() {
             bridge.register_container_ty::<C>();
-        } else if let Some(counter) = self.new_container_id_counter() {
+        } else if self.supports_containers() {
+            let counter = self
+                .new_container_id_counter()
+                .expect("backend advertises container support without an id counter");
+            let merge_fn = self
+                .container_merge_fn(TypeId::of::<C>())
+                .expect("backend advertises container support without merge semantics");
             self.container_values_mut_dyn()
                 .expect("backend returned a container counter without a container registry")
-                .register_type::<C>(counter, |_state, old, new| std::cmp::min(old, new));
-        } else {
-            assert!(
-                !self.supports_containers(),
-                "backend advertises container support but does not route register_container_ty"
-            );
+                .register_type::<C>(counter, move |state, old, new| merge_fn(state, old, new));
         }
     }
 

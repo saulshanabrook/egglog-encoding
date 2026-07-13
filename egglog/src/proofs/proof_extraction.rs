@@ -94,18 +94,10 @@ impl ProofInstrumentor<'_> {
                     func.name
                 )
             });
-        let mut proof_value = None;
-        self.egraph
+        let proof_value = self
+            .egraph
             .backend
-            .for_each_while(proof_function.backend_id, |row| {
-                if row.vals.first() == Some(&witness_value) {
-                    proof_value = row.vals.get(1).copied();
-                    false
-                } else {
-                    true
-                }
-            });
-        let proof_value = proof_value
+            .lookup_id(proof_function.backend_id, &[witness_value])
             .unwrap_or_else(|| panic!("no proof recorded for constructor {}", func.name));
 
         let proof_term_id = extract_root(self.egraph, &mut termdag, proof_value, proof_sort)

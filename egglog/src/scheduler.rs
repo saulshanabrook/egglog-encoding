@@ -189,95 +189,109 @@ impl EGraph {
             }
         }
 
-        let mut rules = Vec::new();
+        if !self.backend.as_any().is::<egglog_bridge::EGraph>() {
+            return Err(Error::BackendError(
+                "scheduler match instantiation requires the reference bridge backend".into(),
+            ));
+        }
+
         let rulesets = std::mem::take(&mut self.rulesets);
-        collect_rules(ruleset, &rulesets, &mut rules);
         let mut schedulers = std::mem::take(&mut self.schedulers);
+        let result = (|| -> Result<RunReport, Error> {
+            let mut rules = Vec::new();
+            collect_rules(ruleset, &rulesets, &mut rules);
 
-        // Step 1: build all the query/action rules and worklist if have not already
-        let record = &mut schedulers[scheduler_id];
-        rules.iter().for_each(|(id, rule)| {
-            record
-                .rule_info
-                .entry((*id).to_owned())
-                .or_insert_with(|| SchedulerRuleInfo::new(self, rule, id));
-        });
-
-        // Step 2: run all the queries for one iteration
-        let query_rules = rules
-            .iter()
-            .filter_map(|(rule_id, _rule)| {
-                let rule_info = record.rule_info.get(rule_id).unwrap();
-
-                if rule_info.should_seek {
-                    Some(rule_info.query_rule)
-                } else {
-                    None
+            // Step 1: build all the query/action rules and worklist if have not already
+            let record = &mut schedulers[scheduler_id];
+            for (id, rule) in &rules {
+                if !record.rule_info.contains_key(id) {
+                    let info = SchedulerRuleInfo::new(self, rule, id)?;
+                    record.rule_info.insert(id.clone(), info);
                 }
-            })
-            .collect::<Vec<_>>();
-
-        let query_iter_report = self
-            .backend
-            .run_rules(&query_rules)
-            .map_err(|e| Error::BackendError(e.to_string()))?;
-
-        // Step 3: let the scheduler decide which matches need to be kept
-        self.backend.with_execution_state(|state| {
-            for (rule_id, _rule) in rules.iter() {
-                let rule_info = record.rule_info.get_mut(rule_id).unwrap();
-
-                let matches: Vec<Value> =
-                    std::mem::take(rule_info.matches.lock().unwrap().as_mut());
-                let mut matches = Matches::new(matches, rule_info.free_vars.clone());
-                rule_info.should_seek =
-                    record
-                        .scheduler
-                        .filter_matches(rule_id, ruleset, &mut matches);
-                let bridge = self
-                    .backend
-                    .as_any()
-                    .downcast_ref::<egglog_bridge::EGraph>()
-                    .expect("scheduler match instantiation requires the reference bridge backend");
-                let table_action = TableAction::new(bridge, rule_info.decided);
-                *rule_info.matches.lock().unwrap() = matches.instantiate(state, &table_action);
             }
-        });
-        self.backend.flush_updates();
 
-        // Step 4: run the action rules
-        let action_rules = rules
-            .iter()
-            .map(|(rule_id, _rule)| {
-                let rule_info = record.rule_info.get(rule_id).unwrap();
-                rule_info.action_rule
-            })
-            .collect::<Vec<_>>();
-        let action_iter_report = self
-            .backend
-            .run_rules(&action_rules)
-            .map_err(|e| Error::BackendError(e.to_string()))?;
+            // Step 2: run all the queries for one iteration
+            let query_rules = rules
+                .iter()
+                .filter_map(|(rule_id, _rule)| {
+                    let rule_info = record.rule_info.get(rule_id).unwrap();
 
-        // Step 5: combine the reports
-        let mut query_report = RunReport::singleton(ruleset, query_iter_report);
-        let mut action_report = RunReport::singleton(ruleset, action_iter_report);
+                    if rule_info.should_seek {
+                        Some(rule_info.query_rule)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
 
-        // query matches don't count
-        query_report.updated = false;
-        query_report.num_matches_per_rule.clear();
-        // Scheduler state should not count as database progress. Instead it
-        // determines whether a no-op iteration can be treated as fully stopped.
-        action_report.can_stop = !action_report.updated && {
-            let rule_ids = rules.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>();
-            record.scheduler.can_stop(&rule_ids, ruleset)
-        };
+            let query_iter_report = self
+                .backend
+                .run_rules(&query_rules)
+                .map_err(|e| Error::BackendError(e.to_string()))?;
 
-        query_report.union(action_report);
+            // Step 3: let the scheduler decide which matches need to be kept
+            let bridge = self
+                .backend
+                .as_any()
+                .downcast_ref::<egglog_bridge::EGraph>()
+                .ok_or_else(|| {
+                    Error::BackendError(
+                        "scheduler match instantiation requires the reference bridge backend"
+                            .into(),
+                    )
+                })?;
+            self.backend.with_execution_state(|state| {
+                for (rule_id, _rule) in &rules {
+                    let rule_info = record.rule_info.get_mut(rule_id).unwrap();
+
+                    let matches: Vec<Value> =
+                        std::mem::take(rule_info.matches.lock().unwrap().as_mut());
+                    let mut matches = Matches::new(matches, rule_info.free_vars.clone());
+                    rule_info.should_seek =
+                        record
+                            .scheduler
+                            .filter_matches(rule_id, ruleset, &mut matches);
+                    let table_action = TableAction::new(bridge, rule_info.decided);
+                    *rule_info.matches.lock().unwrap() = matches.instantiate(state, &table_action);
+                }
+            });
+            self.backend.flush_updates();
+
+            // Step 4: run the action rules
+            let action_rules = rules
+                .iter()
+                .map(|(rule_id, _rule)| {
+                    let rule_info = record.rule_info.get(rule_id).unwrap();
+                    rule_info.action_rule
+                })
+                .collect::<Vec<_>>();
+            let action_iter_report = self
+                .backend
+                .run_rules(&action_rules)
+                .map_err(|e| Error::BackendError(e.to_string()))?;
+
+            // Step 5: combine the reports
+            let mut query_report = RunReport::singleton(ruleset, query_iter_report);
+            let mut action_report = RunReport::singleton(ruleset, action_iter_report);
+
+            // query matches don't count
+            query_report.updated = false;
+            query_report.num_matches_per_rule.clear();
+            // Scheduler state should not count as database progress. Instead it
+            // determines whether a no-op iteration can be treated as fully stopped.
+            action_report.can_stop = !action_report.updated && {
+                let rule_ids = rules.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>();
+                record.scheduler.can_stop(&rule_ids, ruleset)
+            };
+
+            query_report.union(action_report);
+            Ok(query_report)
+        })();
 
         self.rulesets = rulesets;
         self.schedulers = schedulers;
 
-        Ok(query_report)
+        result
     }
 }
 
@@ -327,7 +341,11 @@ impl ExternalFunction for CollectMatches {
 }
 
 impl SchedulerRuleInfo {
-    fn new(egraph: &mut EGraph, rule: &ResolvedCoreRule, name: &str) -> SchedulerRuleInfo {
+    fn new(
+        egraph: &mut EGraph,
+        rule: &ResolvedCoreRule,
+        name: &str,
+    ) -> Result<SchedulerRuleInfo, Error> {
         let free_vars = rule.head.get_free_vars().into_iter().collect::<Vec<_>>();
         let unit_type = egraph.backend.base_values().get_ty::<()>();
         let unit = egraph.backend.base_values().get(());
@@ -357,7 +375,7 @@ impl SchedulerRuleInfo {
             &egraph.type_info,
             false, // seminaive query: Pure/Write contexts
         );
-        qrule_builder.query(&rule.body, false);
+        qrule_builder.query(&rule.body, false)?;
         let entries = free_vars
             .iter()
             .map(|fv| qrule_builder.entry(&GenericAtomTerm::Var(span!(), fv.clone())))
@@ -385,21 +403,21 @@ impl SchedulerRuleInfo {
         arule_builder
             .rb
             .query_table(decided, &entries, None)
-            .unwrap();
-        arule_builder.actions(&rule.head).unwrap();
+            .map_err(|error| Error::BackendError(error.to_string()))?;
+        arule_builder.actions(&rule.head)?;
         // Remove the entry as it's now done
         entries.pop();
         arule_builder.rb.remove(decided, &entries);
         let arule_id = arule_builder.build();
 
-        SchedulerRuleInfo {
+        Ok(SchedulerRuleInfo {
             free_vars,
             query_rule: qrule_id,
             action_rule: arule_id,
             matches,
             decided,
             should_seek: true,
-        }
+        })
     }
 }
 

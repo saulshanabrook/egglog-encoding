@@ -18,7 +18,7 @@ name = "files"
 
 [features]
 default = ["bin"]
-bin = ["egglog/bin", "dd-backend"]
+bin = ["egglog/bin"]
 dd-backend = ["dep:egglog-experimental-dd"]
 
 [dependencies]

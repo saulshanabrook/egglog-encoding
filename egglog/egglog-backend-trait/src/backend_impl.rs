@@ -163,6 +163,10 @@ impl Backend for EGraph {
         EGraph::container_values(self)
     }
 
+    fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {
+        EGraph::lookup_id(self, func, key)
+    }
+
     fn with_execution_state_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) {
         EGraph::with_execution_state(self, |es| f(es));
     }
@@ -217,6 +221,14 @@ impl Backend for EGraph {
 
     fn action_registry(&self) -> &Arc<RwLock<ActionRegistry>> {
         EGraph::action_registry(self)
+    }
+
+    fn supports_containers(&self) -> bool {
+        true
+    }
+
+    fn supports_action_registry(&self) -> bool {
+        true
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -3,11 +3,12 @@ use std::ffi::OsString;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Backend {
     Main,
+    #[cfg(feature = "dd-backend")]
     Dd,
 }
 
 fn main() {
-    let (backend, mut args) = extract_backend_arg(std::env::args_os()).unwrap_or_else(|err| {
+    let (backend, args) = extract_backend_arg(std::env::args_os()).unwrap_or_else(|err| {
         eprintln!("error: {err}");
         std::process::exit(2);
     });
@@ -17,12 +18,18 @@ fn main() {
             Some("--proofs" | "--proof-testing" | "--term-encoding")
         )
     });
-    if backend == Backend::Dd {
-        args.retain(|arg| arg.to_str() != Some("--term-encoding"));
-    }
+    #[cfg(feature = "dd-backend")]
+    let args = if matches!(backend, Backend::Dd) {
+        args.into_iter()
+            .filter(|arg| arg.to_str() != Some("--term-encoding"))
+            .collect()
+    } else {
+        args
+    };
     let egraph = match backend {
         Backend::Main if proof_mode => egglog_experimental::new_experimental_egraph_for_proofs(),
         Backend::Main => egglog_experimental::new_experimental_egraph(),
+        #[cfg(feature = "dd-backend")]
         Backend::Dd => egglog_experimental::new_experimental_egraph_with_backend_for_proofs(
             Box::new(egglog_experimental_dd::EGraph::new()),
         ),
@@ -66,10 +73,51 @@ where
 fn parse_backend(value: Option<&str>) -> Result<Backend, String> {
     match value {
         Some("main") => Ok(Backend::Main),
-        Some("dd") => Ok(Backend::Dd),
+        Some("dd") => parse_dd_backend(),
         Some(other) => Err(format!(
             "unknown backend {other:?}; expected one of: main, dd"
         )),
         None => Err("backend value must be valid UTF-8".to_string()),
+    }
+}
+
+#[cfg(feature = "dd-backend")]
+fn parse_dd_backend() -> Result<Backend, String> {
+    Ok(Backend::Dd)
+}
+
+#[cfg(not(feature = "dd-backend"))]
+fn parse_dd_backend() -> Result<Backend, String> {
+    Err(
+        "backend \"dd\" requires building egglog-experimental with --features dd-backend"
+            .to_string(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_main_backend() {
+        assert_eq!(parse_backend(Some("main")), Ok(Backend::Main));
+    }
+
+    #[cfg(not(feature = "dd-backend"))]
+    #[test]
+    fn explains_how_to_enable_dd_backend() {
+        assert_eq!(
+            parse_backend(Some("dd")),
+            Err(
+                "backend \"dd\" requires building egglog-experimental with --features dd-backend"
+                    .to_string()
+            )
+        );
+    }
+
+    #[cfg(feature = "dd-backend")]
+    #[test]
+    fn parses_enabled_dd_backend() {
+        assert_eq!(parse_backend(Some("dd")), Ok(Backend::Dd));
     }
 }

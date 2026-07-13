@@ -18,13 +18,16 @@
 //! tuple generation, planning, and stratification choices, would be a separate
 //! backend experiment rather than an interchangeable implementation detail here.
 
-use std::any::Any;
+use std::{
+    any::{Any, TypeId},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use egglog_backend_trait::{
-    Backend, BaseValues, ColumnTy, ContainerValues, CounterId, DefaultVal, ExecutionState,
-    ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, MergeFn,
-    ReportLevel, RuleBuilderOps, RuleId, ScanEntry, Value,
+    Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
+    ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
+    IterationReport, MergeFn, ReportLevel, RuleBuilderOps, RuleId, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -1527,12 +1530,35 @@ impl Backend for EGraph {
         self.db.container_values()
     }
 
+    fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {
+        let info = self.info(func);
+        if info.merge == MergeMode::Relation || key.len() + 1 != info.arity {
+            return None;
+        }
+        let key: Vec<u32> = key.iter().map(|value| value.rep()).collect();
+        let find = |rows: Option<&HashSet<Row>>| {
+            rows?.iter().find_map(|row| {
+                (row[..key.len()] == key[..]).then(|| Value::new(row_col(row, key.len())))
+            })
+        };
+        find(self.mirror.get(&func)).or_else(|| find(self.subsumed.get(&func)))
+    }
+
     fn container_values_mut_dyn(&mut self) -> Option<&mut ContainerValues> {
         Some(self.db.container_values_mut())
     }
 
     fn new_container_id_counter(&mut self) -> Option<CounterId> {
         Some(self.db.add_counter())
+    }
+
+    fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
+        // The supported proof/term subset interns container values but does not
+        // rely on merging distinct ids for one rebuilt value. Keep that subset's
+        // handles deterministic. Faithful conflicting-id rebuild would also need
+        // to stage equality into the authoritative DD mirror, which is outside
+        // this backend's current container contract.
+        Some(Arc::new(|_state, old, new| std::cmp::min(old, new)))
     }
 
     fn with_execution_state_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) {

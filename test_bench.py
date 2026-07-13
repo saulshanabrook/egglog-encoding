@@ -390,12 +390,13 @@ def test_backend_registry_drives_parsing_capabilities_flags_and_display(
     monkeypatch.setitem(
         bench.BACKEND_SPECS,
         "future",
-        bench.BackendSpec("Future", ("proofs",), ("--backend", "future")),
+        bench.BackendSpec("Future", ("proofs",), ("--backend", "future"), ("future-backend",)),
     )
 
     assert bench.parse_backends("future") == ("future",)
     assert bench.supported_treatments("future") == ("proofs",)
     assert bench.backend_flags("future") == ["--backend", "future"]
+    assert bench.backend_cargo_features(("main", "future")) == ("future-backend",)
     assert bench.display_backend("future") == "Future"
     assert bench.backend_treatment_cells(("future",), ("off", "proofs")) == (bench.BenchmarkCell("future", "proofs"),)
 
@@ -587,6 +588,7 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
     target = make_target(binary_path=ROOT / "egglog-experimental")
     materialized: list[bench.TargetRequest] = []
     build_profiles: list[bench.BuildProfile] = []
+    build_features: list[tuple[str, ...]] = []
 
     def fake_materialize(
         target_request: bench.TargetRequest,
@@ -601,10 +603,12 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
         target_row: bench.TargetRow,
         output: bench.RunnerOutput,
         build_profile: bench.BuildProfile,
+        cargo_features: tuple[str, ...],
     ) -> bench.ResolvedTarget:
         assert target_request == request
         assert target_row == row
         build_profiles.append(build_profile)
+        build_features.append(cargo_features)
         return target
 
     monkeypatch.setattr(bench, "materialize_target_request", fake_materialize)
@@ -620,12 +624,13 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
         ROOT,
         bench.RunnerOutput(),
     )
-    profile_target = bench.resolve_profile_target(request, ROOT, ROOT, bench.RunnerOutput())
+    profile_target = bench.resolve_profile_target(request, "dd", ROOT, ROOT, bench.RunnerOutput())
 
     assert benchmark_target == target
     assert profile_target == target
     assert materialized == [request, request]
     assert build_profiles == ["release", "profiling"]
+    assert build_features == [(), ("dd-backend",)]
 
 
 def test_collection_plan_counts_cache_and_missing_rows() -> None:
@@ -1462,6 +1467,20 @@ def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tm
     assert binary_sha256 == "sha256:bin"
 
 
+def test_build_target_enables_requested_backend_features(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    commands: list[list[str]] = []
+    binary = tmp_path / "target" / "release" / "egglog-experimental"
+    binary.parent.mkdir(parents=True)
+    binary.write_text("binary", encoding="utf-8")
+    row = bench.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+    monkeypatch.setattr(bench.subprocess, "run", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(bench, "sha256_file", lambda path: "sha256:bin")
+
+    bench.build_target(row, bench.RunnerOutput(), cargo_features=bench.backend_cargo_features(("main", "dd")))
+
+    assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental", "--features", "dd-backend"]]
+
+
 def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
     binary_hash = "sha256:" + "a" * 64
     file_hash = "sha256:" + "b" * 64
@@ -1787,7 +1806,9 @@ def test_profile_cache_hit_on_non_macos_skips_cpu_summary_and_workload(
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", platform)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
     monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
     monkeypatch.setattr(
@@ -1818,7 +1839,9 @@ def test_profile_cache_hit_on_non_macos_prints_markdown_handoff(
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "linux")
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(samply_analysis, "summarize", lambda *args: pytest.fail("summary should not run"))
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1841,7 +1864,9 @@ def test_profile_cache_hit_on_macos_prints_cpu_summary(
     summary = make_cpu_summary()
     monkeypatch.setattr(bench.sys, "platform", "darwin")
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: summary)
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1867,7 +1892,9 @@ def test_profile_cache_hit_prints_github_markdown_summary(
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "darwin")
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: make_cpu_summary())
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1900,7 +1927,9 @@ def test_profile_no_summary_prints_only_absolute_artifact_path(
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "linux")
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
 
@@ -1919,7 +1948,9 @@ def test_profile_cache_hit_can_open_profile(monkeypatch: pytest.MonkeyPatch, tmp
     write_profile(artifact)
     opened: list[Path] = []
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(bench, "open_samply_profile", lambda artifact, checkout_path: opened.append(artifact))
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1946,7 +1977,9 @@ def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
         return make_profile_data()
 
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
     monkeypatch.setattr(bench, "run_samply_record", fake_record)
 
@@ -1967,7 +2000,9 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
         return make_profile_data()
 
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(
         bench,
         "run_command",
@@ -1990,7 +2025,9 @@ def test_profile_auto_calibration_failure_stops_before_samply(
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(
         bench,
         "run_command",
@@ -2009,7 +2046,9 @@ def test_profile_auto_iteration_cap_prints_warning(
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
     monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(bench, "resolve_profile_target", lambda request, invocation_cwd, repo_root, output: target)
+    monkeypatch.setattr(
+        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
+    )
     monkeypatch.setattr(
         bench,
         "run_command",
@@ -2027,7 +2066,7 @@ def test_profile_auto_iteration_cap_prints_warning(
 
 def test_profile_rejects_cache_only_label_targets() -> None:
     with pytest.raises(ValueError, match="cache-only label="):
-        bench.resolve_profile_target(bench.parse_target("cached="), ROOT, ROOT, bench.RunnerOutput())
+        bench.resolve_profile_target(bench.parse_target("cached="), "main", ROOT, ROOT, bench.RunnerOutput())
 
 
 def test_run_command_records_peak_rss() -> None:

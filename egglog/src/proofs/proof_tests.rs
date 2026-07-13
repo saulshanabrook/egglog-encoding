@@ -320,6 +320,36 @@ mod tests {
     }
 
     #[test]
+    fn proof_mode_allows_bound_container_variable_equality() {
+        let mut egraph = EGraph::new_with_proofs();
+
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype Expr (A))
+                (sort Cost (Pair Expr i64))
+                (relation Left (Cost))
+                (relation Right (Cost))
+                (relation Seen ())
+
+                (Left (pair (A) 1))
+                (Right (pair (A) 1))
+
+                (rule ((Left lhs)
+                       (Right rhs)
+                       (= lhs rhs))
+                      ((Seen))
+                      :name "bound-pair-variable-side-condition")
+
+                (run 1)
+                (prove (Seen))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
     fn doc_example_add_function2() {
         let commands = term_encode(
             r#"

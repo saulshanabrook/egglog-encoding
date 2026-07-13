@@ -947,31 +947,7 @@ impl<'a> ProofInstrumentor<'a> {
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
     ) -> String {
-        fn is_container_primitive(expr: &ResolvedExpr) -> bool {
-            matches!(
-                expr,
-                ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
-                    if p.output().is_eq_container_sort()
-            )
-        }
-        fn is_container_var(expr: &ResolvedExpr) -> bool {
-            matches!(
-                expr,
-                ResolvedExpr::Var(_, v) if v.sort.is_eq_container_sort()
-            )
-        }
-        fn is_container_side_condition(fact: &ResolvedFact) -> bool {
-            match fact {
-                ResolvedFact::Eq(_, lhs, rhs) => {
-                    is_container_primitive(lhs)
-                        || is_container_primitive(rhs)
-                        || (is_container_var(lhs) && is_container_var(rhs))
-                }
-                ResolvedFact::Fact(expr) => is_container_primitive(expr),
-            }
-        }
-
-        if self.proofs_enabled() && is_container_side_condition(fact) {
+        if self.proofs_enabled() && super::proof_checker::is_container_side_condition(fact) {
             res.push(fact.to_string());
             let eval = &self.proof_names().eval_constructor;
             return format!("({eval})");

@@ -1,4 +1,15 @@
+use egglog::scheduler::{Matches, Scheduler};
 use egglog::EGraph;
+
+#[derive(Clone)]
+struct ChooseAllScheduler;
+
+impl Scheduler for ChooseAllScheduler {
+    fn filter_matches(&mut self, _rule: &str, _ruleset: &str, matches: &mut Matches) -> bool {
+        matches.choose_all();
+        true
+    }
+}
 
 #[test]
 fn dd_runs_basic_egg() {
@@ -49,5 +60,31 @@ fn dd_without_term_encoding_errors() {
     assert!(
         err.to_string().contains("term encoding"),
         "expected a term-encoding-required error, got: {err}"
+    );
+}
+
+#[test]
+fn dd_custom_scheduler_returns_a_backend_capability_error() {
+    let backend = Box::new(egglog_experimental_dd::EGraph::new());
+    let mut eg = EGraph::with_backend(backend).with_term_encoding();
+    eg.parse_and_run_program(
+        None,
+        r#"
+        (ruleset scheduled)
+        (relation Input (i64))
+        (relation Output (i64))
+        (rule ((Input x)) ((Output x)) :ruleset scheduled)
+        "#,
+    )
+    .unwrap();
+    let scheduler = eg.add_scheduler(Box::new(ChooseAllScheduler));
+
+    let error = eg
+        .step_rules_with_scheduler(scheduler, "scheduled")
+        .expect_err("DD cannot instantiate custom-scheduler matches through the bridge");
+
+    assert!(
+        error.to_string().contains("reference bridge backend"),
+        "unexpected scheduler capability error: {error}"
     );
 }

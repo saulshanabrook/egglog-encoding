@@ -57,11 +57,12 @@ class BackendSpec:
     display_name: str
     treatments: tuple[Treatment, ...]
     flags: tuple[str, ...]
+    cargo_features: tuple[str, ...] = ()
 
 
 BACKEND_SPECS: dict[Backend, BackendSpec] = {
     "main": BackendSpec("main", ("off", "term", "proofs"), ()),
-    "dd": BackendSpec("DD", ("term", "proofs"), ("--backend", "dd")),
+    "dd": BackendSpec("DD", ("term", "proofs"), ("--backend", "dd"), ("dd-backend",)),
 }
 
 DEFAULT_REPORT = ".reports.jsonl"
@@ -585,6 +586,10 @@ def backend_supports_treatment(backend: Backend, treatment: Treatment) -> bool:
 
 def supported_treatments(backend: Backend) -> tuple[Treatment, ...]:
     return backend_spec(backend).treatments
+
+
+def backend_cargo_features(backends: Sequence[Backend]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(feature for backend in backends for feature in backend_spec(backend).cargo_features))
 
 
 def backend_treatment_cells(
@@ -1122,13 +1127,20 @@ def target_row_for_request(
     )
 
 
-def build_target(row: TargetRow, output: RunnerOutput, build_profile: BuildProfile = "release") -> tuple[Path, str]:
+def build_target(
+    row: TargetRow,
+    output: RunnerOutput,
+    build_profile: BuildProfile = "release",
+    cargo_features: Sequence[str] = (),
+) -> tuple[Path, str]:
     checkout_path = Path(row.path)
     output.build_start(row)
     if build_profile == "release":
         build_args = ["cargo", "build", "--release", "-p", "egglog-experimental"]
     else:
         build_args = ["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]
+    if cargo_features:
+        build_args.extend(("--features", ",".join(cargo_features)))
     subprocess.run(
         build_args,
         cwd=checkout_path,
@@ -1164,8 +1176,9 @@ def build_resolved_target(
     row: TargetRow,
     output: RunnerOutput,
     build_profile: BuildProfile,
+    cargo_features: Sequence[str],
 ) -> ResolvedTarget:
-    binary_path, binary_sha256 = build_target(row, output, build_profile)
+    binary_path, binary_sha256 = build_target(row, output, build_profile, cargo_features)
     row = replace(row, is_dirty=git_dirty(Path(row.path)))
     return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
 
@@ -1201,14 +1214,15 @@ def resolve_target(
             )
         checkout_path, resolved_sha = materialize_git_ref(repo_root, str(pointer["target_git_sha"]), request.label)
         row = target_row_for_request(request, checkout_path, resolved_sha)
-        return build_resolved_target(request, row, output, "release")
+        return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
 
     row = materialize_target_request(request, invocation_cwd, repo_root)
-    return build_resolved_target(request, row, output, "release")
+    return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
 
 
 def resolve_profile_target(
     request: TargetRequest,
+    backend: Backend,
     invocation_cwd: Path,
     repo_root: Path,
     output: RunnerOutput,
@@ -1216,7 +1230,7 @@ def resolve_profile_target(
     if request.is_label_lookup:
         raise ValueError("profile mode does not support cache-only label= targets; use label=SOURCE")
     row = materialize_target_request(request, invocation_cwd, repo_root)
-    return build_resolved_target(request, row, output, "profiling")
+    return build_resolved_target(request, row, output, "profiling", backend_cargo_features((backend,)))
 
 
 def label_has_enough_rows(
@@ -3272,7 +3286,7 @@ def ratio_specs_for_backend(
 
 def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: Path, repo_root: Path) -> None:
     request = resolve_profile_request(args, invocation_cwd)
-    target = resolve_profile_target(request.target_request, invocation_cwd, repo_root, output)
+    target = resolve_profile_target(request.target_request, request.backend, invocation_cwd, repo_root, output)
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
