@@ -10,15 +10,15 @@
 //!
 //! [`Backend`] is deliberately small. The *required* surface is the handful of
 //! operations the frontend actually needs: register functions ([`Backend::add_table`]),
-//! build and run rules ([`Backend::new_rule`] / [`Backend::run_rules`]), read
+//! register and run rules ([`Backend::add_rule`] / [`Backend::run_rules`]), read
 //! tables back ([`Backend::for_each_while_dyn`] / [`Backend::table_size`]),
 //! canonicalize ids ([`Backend::get_canon_repr`]), reach the value registries
 //! ([`Backend::base_values`] / [`Backend::container_values`]), and register
 //! primitives ([`Backend::register_external_func`]).
 //!
-//! Rules are built through [`RuleBuilderOps`], which mirrors the reference
-//! `egglog_bridge::RuleBuilder` one-for-one: a backend accumulates the calls
-//! into its own IR and finalizes on [`RuleBuilderOps::build`].
+//! Rules cross the backend boundary as a complete [`RuleSpec`]. This lets each
+//! backend lower or retain the shared logical rule without replaying a callback
+//! builder API or reconstructing an equivalent IR.
 //!
 //! ## Rule execution contract
 //!
@@ -54,12 +54,12 @@
 //! incremental engine must therefore track row generations or equivalent event
 //! identity, not only end-state set membership.
 //!
-//! Subsumption is semantically a bit on a row, not a separate table. Ordinary
-//! body atoms see only live rows; `query_table(..., is_subsumed = None)` sees
-//! live and subsumed rows; `Some(true)` sees only subsumed rows. A subsumed row
-//! remains the current row for lookup and merge purposes, so a later lookup or
-//! `set` for the same key must find/merge with that row without making it live
-//! again unless an explicit backend operation says otherwise.
+//! Subsumption is semantically a bit on a row, not a separate table. Body atoms
+//! using [`ReadMode::Live`] see only live rows, [`ReadMode::All`] sees live and
+//! subsumed rows, and [`ReadMode::Subsumed`] sees only subsumed rows. A subsumed
+//! row remains the current row for lookup and merge purposes, so a later lookup
+//! or `set` for the same key must find/merge with that row without making it
+//! live again unless an explicit backend operation says otherwise.
 //!
 //! ## Advanced features are optional
 //!
@@ -96,8 +96,7 @@ mod backend_impl;
 // ---------------------------------------------------------------------------
 
 pub use egglog_bridge::{
-    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, QueryEntry, RuleId,
-    ScanEntry, Variable, VariableId,
+    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
@@ -105,12 +104,85 @@ pub use egglog_core_relations::{
 };
 pub use egglog_reports::{IterationReport, ReportLevel};
 
-/// A lazily-computed failure message for RHS lookups / external calls.
-///
-/// Only built if the lookup or call actually fails at runtime; deferring it
-/// avoids formatting a `Span` (an `O(file)` scan) for every action in every
-/// generated rule. Boxed so the trait stays object-safe.
-pub type PanicMsg = Box<dyn FnOnce() -> String + Send>;
+/// Which subsumption view a table atom reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReadMode {
+    Live,
+    Subsumed,
+    All,
+}
+
+impl ReadMode {
+    pub(crate) fn is_subsumed(self) -> Option<bool> {
+        match self {
+            Self::Live => Some(false),
+            Self::Subsumed => Some(true),
+            Self::All => None,
+        }
+    }
+}
+
+/// A typed variable in a backend rule.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct RuleVar {
+    pub id: u32,
+    pub name: Box<str>,
+    pub ty: ColumnTy,
+}
+
+/// A typed constant in a backend rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RuleValue {
+    pub value: Value,
+    pub ty: ColumnTy,
+}
+
+/// A call in a rule body.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RuleBodyCall {
+    Table {
+        id: FunctionId,
+        read: ReadMode,
+    },
+    Primitive {
+        id: ExternalFunctionId,
+        name: Box<str>,
+        output: ColumnTy,
+    },
+}
+
+/// A call in a rule action stream.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RuleActionCall {
+    Table {
+        id: FunctionId,
+        name: Box<str>,
+    },
+    Primitive {
+        id: ExternalFunctionId,
+        name: Box<str>,
+        output: ColumnTy,
+    },
+}
+
+pub type BackendCoreRule =
+    egglog_ast::core::GenericCoreRule<RuleBodyCall, RuleActionCall, RuleVar, RuleValue>;
+
+/// A complete logical rule supplied to a backend.
+#[derive(Clone, Debug)]
+pub struct RuleSpec {
+    pub name: String,
+    pub seminaive: bool,
+    pub no_decomp: bool,
+    pub core: BackendCoreRule,
+}
+
+/// One bounded invocation of a logical ruleset.
+#[derive(Clone, Copy, Debug)]
+pub struct RuleSetRun<'a> {
+    pub name: Option<&'a str>,
+    pub rules: &'a [RuleId],
+}
 
 /// Backend-selected policy for reconciling two ids that rebuild to the same
 /// container value. The container type is supplied separately to
@@ -201,9 +273,8 @@ pub trait Backend: Send + Sync {
 
     // -- rule management ----------------------------------------------------
 
-    /// Begin building a rule. Populate via [`RuleBuilderOps`] and finalize with
-    /// [`RuleBuilderOps::build`].
-    fn new_rule<'a>(&'a mut self, desc: &str, seminaive: bool) -> Box<dyn RuleBuilderOps + 'a>;
+    /// Register a complete logical rule.
+    fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId>;
 
     /// Drop a registered rule.
     fn free_rule(&mut self, id: RuleId);
@@ -215,7 +286,7 @@ pub trait Backend: Send + Sync {
     /// applied. The externally visible behavior must match the rule execution
     /// contract in the crate docs, especially for function `set`/`merge`,
     /// `remove`, `subsume`, and constructor lookup-or-insert effects.
-    fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport>;
+    fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport>;
 
     /// Drain staged inserts and rebuild if the union-find changed. Returns
     /// whether the database changed.
@@ -389,122 +460,5 @@ impl<B: Backend + ?Sized> BackendExt for B {
                 .expect("backend returned a container counter without a container registry")
                 .register_type::<C>(counter, move |state, old, new| merge_fn(state, old, new));
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// `RuleBuilderOps` — mirrors `egglog_bridge::RuleBuilder`
-// ---------------------------------------------------------------------------
-
-/// Operations the frontend needs while constructing a rule. The reference
-/// implementation delegates to `egglog_bridge::RuleBuilder`; another backend
-/// may accumulate the calls into its own IR before [`RuleBuilderOps::build`].
-pub trait RuleBuilderOps {
-    /// Bind a new variable of the given type.
-    fn new_var(&mut self, ty: ColumnTy) -> QueryEntry;
-
-    /// Bind a new variable of the given type with a display name.
-    fn new_var_named(&mut self, ty: ColumnTy, name: &str) -> QueryEntry;
-
-    /// The base-value registry, for building typed constants during rule
-    /// construction. (Replaces reaching through the concrete backend.)
-    fn base_values(&self) -> &BaseValues;
-
-    /// Add a table body atom. The final entry is the function's return value.
-    ///
-    /// `is_subsumed` filters on the row's subsumption bit: `Some(false)` matches
-    /// only live rows, `Some(true)` matches only subsumed rows, and `None`
-    /// matches both.
-    fn query_table(
-        &mut self,
-        func: FunctionId,
-        entries: &[QueryEntry],
-        is_subsumed: Option<bool>,
-    ) -> Result<()>;
-
-    /// Add a primitive body atom. The final entry is the return value.
-    fn query_prim(
-        &mut self,
-        func: ExternalFunctionId,
-        entries: &[QueryEntry],
-        ret_ty: ColumnTy,
-    ) -> Result<()>;
-
-    /// Call an external function in the RHS, panicking with `panic_msg` (built
-    /// lazily) on failure. Returns the result variable.
-    fn call_external_func(
-        &mut self,
-        func: ExternalFunctionId,
-        args: &[QueryEntry],
-        ret_ty: ColumnTy,
-        panic_msg: PanicMsg,
-    ) -> QueryEntry;
-
-    /// RHS: look up `func(entries)` with the function's configured default on
-    /// miss.
-    ///
-    /// Constructor lookup-or-insert must consult the current function table,
-    /// including subsumed rows and previously staged constructor creations that
-    /// are visible to the same RHS evaluation, before minting a fresh id.
-    fn lookup(
-        &mut self,
-        func: FunctionId,
-        entries: &[QueryEntry],
-        panic_msg: PanicMsg,
-    ) -> QueryEntry;
-
-    /// RHS: subsume the row keyed by `entries` in `func`.
-    ///
-    /// Subsumption hides the row from ordinary `Some(false)` body matches but
-    /// keeps it as the current row for `lookup`, `set`, and
-    /// `query_table(..., None)`. Subsumption is flushed after removes and sets
-    /// from the same bounded iteration.
-    fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) -> Result<()>;
-
-    /// RHS: set `func(entries[..n-1])` to `entries[n-1]`.
-    ///
-    /// For function tables, this stages a candidate output value for the input
-    /// key. On conflict it is merged with the current retained value using the
-    /// configured [`MergeFn`], where `old` is the retained value and `new` is this
-    /// incoming value. A `set` of a currently subsumed key merges with the
-    /// subsumed row and does not by itself make the row live again.
-    fn set(&mut self, func: FunctionId, entries: &[QueryEntry]);
-
-    /// RHS: remove the row keyed by `entries` from `func`.
-    ///
-    /// Removes the keyed row from the same logical table state that `set` and
-    /// `lookup` observe, including any subsumed row with that key. Removes are
-    /// flushed before sets from the same bounded iteration.
-    fn remove(&mut self, func: FunctionId, entries: &[QueryEntry]);
-
-    /// RHS: union two values in the union-find.
-    fn union(&mut self, l: QueryEntry, r: QueryEntry);
-
-    /// RHS: panic with the given message.
-    fn panic(&mut self, message: String);
-
-    /// Register a deferred-panic external function on the backend and return
-    /// its id (used, e.g., to bake a panic id into a wrapped function).
-    fn new_panic(&mut self, message: String) -> ExternalFunctionId;
-
-    /// Release an external function registered while building this rule.
-    fn free_external_func(&mut self, func: ExternalFunctionId);
-
-    /// Skip tree-decomposition during query planning for this rule
-    /// (`:no-decomp`). Default no-op for backends that don't decompose.
-    fn set_no_decomp(&mut self, _no_decomp: bool) {}
-
-    /// Finalize the rule, returning its [`RuleId`].
-    ///
-    /// On failure, the builder must release any backend resources it reserved.
-    fn build(self: Box<Self>) -> Result<RuleId>;
-
-    // -- optional: bridge-only escape hatch ---------------------------------
-
-    /// The underlying backend as `&dyn Any` during rule building, for
-    /// bridge-only features such as `unstable-fn`'s `TableAction` capture.
-    /// Returns `None` on backends that do not expose it.
-    fn backend_any(&self) -> Option<&dyn std::any::Any> {
-        None
     }
 }

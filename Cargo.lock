@@ -623,6 +623,7 @@ name = "egglog-backend-trait"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "egglog-ast",
  "egglog-bridge",
  "egglog-core-relations",
  "egglog-reports",
@@ -720,11 +721,13 @@ dependencies = [
  "anyhow",
  "differential-dataflow",
  "egglog",
+ "egglog-ast",
  "egglog-backend-trait",
  "egglog-core-relations",
  "egglog-experimental",
  "egglog-numeric-id",
  "hashbrown 0.16.1",
+ "insta",
  "libtest-mimic",
  "log",
  "serde",

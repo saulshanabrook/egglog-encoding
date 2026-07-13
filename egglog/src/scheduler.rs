@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use core_relations::{ExecutionState, ExternalFunction, ExternalFunctionId, Value};
-use egglog_backend_trait::BackendExt;
+use egglog_backend_trait::{BackendExt, ReadMode, RuleSetRun, RuleValue};
 use egglog_bridge::{
-    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, QueryEntry, RuleId, TableAction,
+    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, TableAction,
 };
 use egglog_reports::RunReport;
 use numeric_id::define_id;
@@ -226,7 +226,10 @@ impl EGraph {
 
             let query_iter_report = self
                 .backend
-                .run_rules(&query_rules)
+                .run_rules(RuleSetRun {
+                    name: Some(ruleset),
+                    rules: &query_rules,
+                })
                 .map_err(|e| Error::BackendError(e.to_string()))?;
 
             // Step 3: let the scheduler decide which matches need to be kept
@@ -267,7 +270,10 @@ impl EGraph {
                 .collect::<Vec<_>>();
             let action_iter_report = self
                 .backend
-                .run_rules(&action_rules)
+                .run_rules(RuleSetRun {
+                    name: Some(ruleset),
+                    rules: &action_rules,
+                })
                 .map_err(|e| Error::BackendError(e.to_string()))?;
 
             // Step 5: combine the reports
@@ -382,13 +388,16 @@ impl SchedulerRuleInfo {
         rule: &ResolvedCoreRule,
         name: &str,
     ) -> Result<SchedulerRuleInfo, Error> {
-        let free_vars = rule.head.get_free_vars().into_iter().collect::<Vec<_>>();
+        let free_vars = rule.head.free_vars();
         let unit_type = egraph.backend.base_values().get_ty::<()>();
         let unit = egraph.backend.base_values().get(());
-        let unit_entry = QueryEntry::Const {
-            val: unit,
-            ty: ColumnTy::Base(unit_type),
-        };
+        let unit_entry = GenericAtomTerm::Literal(
+            rule.span.clone(),
+            RuleValue {
+                value: unit,
+                ty: ColumnTy::Base(unit_type),
+            },
+        );
 
         let matches = Arc::new(Mutex::new(Vec::new()));
         let collect_matches = egraph
@@ -406,7 +415,7 @@ impl SchedulerRuleInfo {
             .collect();
         // Step 1: build the query rule
         let mut qrule_builder = BackendRule::new(
-            egraph.backend.new_rule(name, true),
+            &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
             false, // seminaive query: Pure/Write contexts
@@ -418,14 +427,22 @@ impl SchedulerRuleInfo {
         let entries = free_vars
             .iter()
             .map(|fv| qrule_builder.entry(&GenericAtomTerm::Var(span!(), fv.clone())))
-            .collect::<Vec<_>>();
-        let _var = qrule_builder.rb.call_external_func(
+            .collect::<Result<Vec<_>, _>>();
+        let entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                drop(qrule_builder);
+                return Err(build.rollback(egraph, error));
+            }
+        };
+        qrule_builder.call_external_func(
+            rule.span.clone(),
             collect_matches,
-            &entries,
+            "collect_matches",
+            entries,
             ColumnTy::Base(unit_type),
-            Box::new(|| "collect_matches".to_string()),
         );
-        let qrule_id = match qrule_builder.try_build() {
+        let qrule_id = match qrule_builder.try_build(name, true, false, rule.span.clone()) {
             Ok(rule) => rule,
             Err(error) => return Err(build.rollback(egraph, error)),
         };
@@ -442,28 +459,32 @@ impl SchedulerRuleInfo {
 
         // Step 2: build the action rule
         let mut arule_builder = BackendRule::new(
-            egraph.backend.new_rule(name, false),
+            &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
             true, // action rule reads the DB: Read/Full contexts
         );
-        let mut entries = free_vars
+        let entries = free_vars
             .iter()
             .map(|fv| arule_builder.entry(&GenericAtomTerm::Var(span!(), fv.clone())))
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>();
+        let mut entries = match entries {
+            Ok(entries) => entries,
+            Err(error) => {
+                drop(arule_builder);
+                return Err(build.rollback(egraph, error));
+            }
+        };
         entries.push(unit_entry);
-        if let Err(error) = arule_builder.rb.query_table(decided, &entries, None) {
-            drop(arule_builder);
-            return Err(build.rollback(egraph, Error::BackendError(error.to_string())));
-        }
+        arule_builder.query_table(rule.span.clone(), decided, entries.clone(), ReadMode::All);
         if let Err(error) = arule_builder.actions(&rule.head) {
             drop(arule_builder);
             return Err(build.rollback(egraph, error));
         }
         // Remove the entry as it's now done
         entries.pop();
-        arule_builder.rb.remove(decided, &entries);
-        let arule_id = match arule_builder.try_build() {
+        arule_builder.remove(rule.span.clone(), decided, "backend", entries);
+        let arule_id = match arule_builder.try_build(name, false, false, rule.span.clone()) {
             Ok(rule) => rule,
             Err(error) => return Err(build.rollback(egraph, error)),
         };
@@ -482,6 +503,7 @@ impl SchedulerRuleInfo {
 #[cfg(test)]
 mod test {
     use super::*;
+    use egglog_backend_trait::RuleSpec;
 
     fn scheduler_rule_fixture() -> (EGraph, ResolvedCoreRule) {
         let mut egraph = EGraph::default();
@@ -513,8 +535,21 @@ mod test {
                     },
                 )))
         });
-        let rules =
-            std::array::from_fn(|_| egraph.backend.new_rule("probe", false).build().unwrap());
+        let rules = std::array::from_fn(|_| {
+            egraph
+                .backend
+                .add_rule(RuleSpec {
+                    name: "probe".into(),
+                    seminaive: false,
+                    no_decomp: false,
+                    core: egglog_ast::core::GenericCoreRule {
+                        span: span!(),
+                        body: Default::default(),
+                        head: Default::default(),
+                    },
+                })
+                .unwrap()
+        });
         let unit_type = egraph.backend.base_values().get_ty::<()>();
         let unit = egraph.backend.base_values().get(());
         let table = egraph.backend.add_table(FunctionConfig {

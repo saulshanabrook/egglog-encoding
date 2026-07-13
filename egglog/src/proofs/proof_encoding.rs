@@ -10,10 +10,6 @@ pub(crate) struct EncodingState {
     pub uf_function: HashMap<String, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
-    /// Function name -> (hidden current-value function, input arity). The
-    /// current function mirrors eager backend merge/no-merge behavior, so
-    /// cleanup and RHS lookups can observe the retained current value.
-    pub merge_current: HashMap<String, (String, usize)>,
     /// Maps container sort name -> the name of its registered container-rebuild
     /// primitive (`ContainerRebuild`). Cached so each container sort gets
     /// a single rebuild primitive shared across all functions using it.
@@ -21,6 +17,11 @@ pub(crate) struct EncodingState {
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
     pub container_rebuild_proof_name: HashMap<String, String>,
+    /// Function name -> (hidden current-value function, input arity). The
+    /// current function uses the original eager backend merge, so cleanup can
+    /// discard stale proof-view candidates whenever the current value already
+    /// has a proof witness.
+    pub merge_current: HashMap<String, (String, usize)>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -329,26 +330,12 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             "()".to_string()
         };
-        let merge_fn_decl = self.merge_expr_for_current_decl(merge_fn);
         let mut merge_fn_code = vec![];
-        let mut merge_rhs_reads = false;
         let merge_fn_var = self.instrument_action_expr(
             merge_fn,
             &mut merge_fn_code,
             &Justification::Merge(name.clone(), p1_fresh.clone(), p2_fresh.clone()),
-            &mut merge_rhs_reads,
         );
-        let merge_eval_mode = if merge_rhs_reads
-            || self
-                .egraph
-                .type_info
-                .expr_has_function_lookup(merge_fn)
-                .is_some()
-        {
-            " :naive"
-        } else {
-            ""
-        };
         let merge_fn_code_str = merge_fn_code.join("\n");
         let mut updated = child_names.to_vec();
         updated.push(merge_fn_var.clone());
@@ -376,7 +363,7 @@ impl<'a> ProofInstrumentor<'a> {
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
         format!(
             "(function {current_name} ({input_sorts}) {output_sort}
-                    :merge {merge_fn_decl}
+                    :merge {merge_fn}
                     :unextractable
                     :internal-hidden)
                  (sort {fresh_sort})
@@ -394,7 +381,7 @@ impl<'a> ProofInstrumentor<'a> {
                         ({cleanup_constructor} {merge_fn_var} new)
                        )
                         :ruleset {rebuilding_ruleset}
-                        :name \"{fresh_name}\"{merge_eval_mode})
+                        :name \"{fresh_name}\")
                  (rule (({cleanup_constructor} merged old)
                         ({view_name} {child_names_str} merged)
                         ({view_name} {child_names_str} old)
@@ -410,105 +397,6 @@ impl<'a> ProofInstrumentor<'a> {
                         :ruleset {rebuilding_cleanup_ruleset}
                         :name \"{current_cleanup_name}\")
                 ",
-        )
-    }
-
-    /// Render a source merge expression in the term-encoded namespace used by
-    /// hidden `*Current` tables. Custom functions are no longer callable under
-    /// their source arity after term encoding; their current-value table is.
-    fn merge_expr_for_current_decl(&self, expr: &ResolvedExpr) -> String {
-        match expr {
-            ResolvedExpr::Lit(_, lit) => format!("{lit}"),
-            ResolvedExpr::Var(_, resolved_var) => resolved_var.name.clone(),
-            ResolvedExpr::Call(_, resolved_call, args) => {
-                let args = args
-                    .iter()
-                    .map(|arg| self.merge_expr_for_current_decl(arg))
-                    .collect::<Vec<_>>();
-                let name = match resolved_call {
-                    ResolvedCall::Func(func_type)
-                        if func_type.subtype == FunctionSubtype::Custom
-                            && !self.egraph.type_info.is_global(&func_type.name) =>
-                    {
-                        self.egraph
-                            .proof_state
-                            .merge_current
-                            .get(&func_type.name)
-                            .map(|(current_name, _)| current_name.as_str())
-                            .unwrap_or(func_type.name.as_str())
-                    }
-                    ResolvedCall::Func(func_type) => func_type.name.as_str(),
-                    ResolvedCall::Primitive(primitive) => primitive.name(),
-                };
-                format!("({name} {})", ListDisplay(args, " "))
-            }
-        }
-    }
-
-    /// Generate a rule that preserves native `:no-merge` semantics for custom
-    /// functions: conflicting outputs for the same inputs are illegal.
-    fn handle_no_merge_fn(
-        &mut self,
-        fdecl: &ResolvedFunctionDecl,
-        child_names: &[String],
-        child_names_str: &str,
-        rebuilding_ruleset: &str,
-    ) -> String {
-        let name = &fdecl.name;
-        let view_name = self.view_name(name);
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
-        let input_sorts = ListDisplay(&fdecl.schema.input, " ");
-        let output_sort = &fdecl.schema.output;
-        let output_is_eq_sort = fdecl.resolved_schema.output().is_eq_sort();
-        let current_decl = if output_is_eq_sort {
-            String::new()
-        } else {
-            let current_name = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh(&format!("{name}Current"));
-            self.egraph
-                .proof_state
-                .merge_current
-                .insert(name.clone(), (current_name.clone(), child_names.len()));
-            format!(
-                "(function {current_name} ({input_sorts}) {output_sort}
-                    :no-merge
-                    :unextractable
-                    :internal-hidden)"
-            )
-        };
-        let conflict_guard = if fdecl.resolved_schema.output().is_eq_sort() {
-            let uf_function_name = self.uf_function_name(fdecl.resolved_schema.output().name());
-            if self.egraph.proof_state.proofs_enabled {
-                format!(
-                    "(= old_pair_ ({uf_function_name} old))
-                     (= old_leader_ (pair-first old_pair_))
-                     (= new_pair_ ({uf_function_name} new))
-                     (= new_leader_ (pair-first new_pair_))
-                     (!= old_leader_ new_leader_)"
-                )
-            } else {
-                format!(
-                    "(= old_leader_ ({uf_function_name} old))
-                     (= new_leader_ ({uf_function_name} new))
-                     (!= old_leader_ new_leader_)"
-                )
-            }
-        } else {
-            "(!= old new)".to_string()
-        };
-
-        format!(
-            "{current_decl}
-             (rule (({view_name} {child_names_str} old)
-                    ({view_name} {child_names_str} new)
-                    {conflict_guard}
-                    (= (ordering-max old new) new))
-                   ((panic \"Illegal merge attempted for function {name}\"))
-                    :ruleset {rebuilding_ruleset}
-                    :name \"{fresh_name}\")"
         )
     }
 
@@ -572,17 +460,13 @@ impl<'a> ProofInstrumentor<'a> {
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let view_name = self.view_name(&fdecl.name);
         if fdecl.subtype == FunctionSubtype::Custom {
-            if fdecl.merge.is_some() {
-                self.handle_merge_fn(
-                    fdecl,
-                    &child_names,
-                    &child_names_str,
-                    &view_name,
-                    &rebuilding_ruleset,
-                )
-            } else {
-                self.handle_no_merge_fn(fdecl, &child_names, &child_names_str, &rebuilding_ruleset)
-            }
+            self.handle_merge_fn(
+                fdecl,
+                &child_names,
+                &child_names_str,
+                &view_name,
+                &rebuilding_ruleset,
+            )
         } else {
             self.handle_congruence(fdecl, &child_names, &rebuilding_ruleset)
         }
@@ -826,8 +710,9 @@ impl<'a> ProofInstrumentor<'a> {
         let updated_view = self.update_view(&fdecl.name, &children_updated, &pf_var);
         let container_proof_bindings_str = container_proof_bindings.join("\n");
         let container_reflexive_sets_str = container_reflexive_sets.join("\n");
+
         // Make a single rule that updates the view when any child's leader differs.
-        let eval_opt = if has_container { " :naive" } else { "" };
+        let naive = if has_container { " :naive" } else { "" };
         let rule = format!(
             "(rule ({query_view}
                     {uf_query_str}
@@ -839,8 +724,8 @@ impl<'a> ProofInstrumentor<'a> {
                   {updated_view}
                   {container_reflexive_sets_str}
                   (delete ({view_name} {children}))
-                 )
-                  :ruleset {} {eval_opt} :name \"{fresh_name}\" :internal-include-subsumed)",
+                 ){naive}
+                  :ruleset {} :name \"{fresh_name}\" :internal-include-subsumed)",
             self.proof_names().rebuilding_ruleset_name
         );
         self.parse_program(&rule)
@@ -934,12 +819,6 @@ impl<'a> ProofInstrumentor<'a> {
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
     ) -> String {
-        if self.proofs_enabled() && super::proof_checker::is_container_side_condition(fact) {
-            res.push(fact.to_string());
-            let eval = &self.proof_names().eval_constructor;
-            return format!("({eval})");
-        }
-
         match fact {
             // In proof normal form, this is the only way that function calls appear.
             ResolvedFact::Eq(
@@ -960,7 +839,7 @@ impl<'a> ProofInstrumentor<'a> {
                 for arg in args {
                     let (var, proof) = self.instrument_fact_expr(arg, res, action_lookups);
                     new_args.push(var);
-                    arg_proofs.push(arg.output_type().is_eq_sort().then_some(proof));
+                    arg_proofs.push(proof);
                 }
                 new_args.push(v.to_string());
 
@@ -974,14 +853,12 @@ impl<'a> ProofInstrumentor<'a> {
                 if self.egraph.proof_state.proofs_enabled {
                     let mut proof = proof_var;
                     for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                        if let Some(arg_proof) = arg_proof {
-                            let congr = &self.proof_names().congr_constructor;
-                            proof = format!(
-                                "
-                                ({congr} {proof} {i} {arg_proof})
-                                "
-                            );
-                        }
+                        let congr = &self.proof_names().congr_constructor;
+                        proof = format!(
+                            "
+                            ({congr} {proof} {i} {arg_proof})
+                            "
+                        );
                     }
                     proof
                 } else {
@@ -1058,7 +935,9 @@ impl<'a> ProofInstrumentor<'a> {
                     resolved_var.name.clone(),
                     if !self.egraph.proof_state.proofs_enabled {
                         "()".to_string()
-                    } else if resolved_var.sort.is_eq_sort() {
+                    } else if resolved_var.sort.is_eq_sort()
+                        || resolved_var.sort.is_eq_container_sort()
+                    {
                         let term_proof_name = self.term_proof_name(resolved_var.sort.name());
                         let fresh_proof = self.fresh_var();
                         // Every eq-sort term has its term_proof set at
@@ -1071,15 +950,13 @@ impl<'a> ProofInstrumentor<'a> {
                         action_lookups
                             .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
                         fresh_proof
-                    } else if resolved_var.sort.is_eq_container_sort() {
-                        let eval = &self.proof_names().eval_constructor;
-                        format!("({eval})")
                     } else {
                         let fiat_constructor = &self.proof_names().fiat_constructor;
+                        let lit_sort = resolved_var.sort.name();
                         let to_ast = self
                             .proof_names()
                             .sort_to_ast_constructor
-                            .get(resolved_var.sort.name())
+                            .get(lit_sort)
                             .unwrap();
                         format!("({fiat_constructor} ({to_ast} {var}) ({to_ast} {var}))")
                     },
@@ -1096,7 +973,7 @@ impl<'a> ProofInstrumentor<'a> {
                     } else {
                         let (arg_str, proof) = self.instrument_fact_expr(arg, res, action_lookups);
                         new_args.push(arg_str);
-                        arg_proofs.push(arg.output_type().is_eq_sort().then_some(proof));
+                        arg_proofs.push(Some(proof));
                     }
                 }
                 match resolved_call {
@@ -1207,29 +1084,18 @@ impl<'a> ProofInstrumentor<'a> {
         &mut self,
         action: &ResolvedAction,
         justification: &Justification,
-    ) -> (Vec<String>, bool) {
+    ) -> Vec<String> {
         let mut res = vec![];
-        let mut rhs_reads = false;
 
         match action {
             ResolvedAction::Let(_span, v, generic_expr) => {
-                let v2 = self.instrument_action_expr(
-                    generic_expr,
-                    &mut res,
-                    justification,
-                    &mut rhs_reads,
-                );
+                let v2 = self.instrument_action_expr(generic_expr, &mut res, justification);
                 res.push(format!("(let {} {})", v.name, v2));
             }
             ResolvedAction::Set(_span, h, generic_exprs, generic_expr) => {
                 let mut exprs = vec![];
                 for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
-                    exprs.push(self.instrument_action_expr(
-                        e,
-                        &mut res,
-                        justification,
-                        &mut rhs_reads,
-                    ));
+                    exprs.push(self.instrument_action_expr(e, &mut res, justification));
                 }
 
                 let ResolvedCall::Func(func_type) = h else {
@@ -1249,9 +1115,7 @@ impl<'a> ProofInstrumentor<'a> {
                     };
                     let children = generic_exprs
                         .iter()
-                        .map(|e| {
-                            self.instrument_action_expr(e, &mut res, justification, &mut rhs_reads)
-                        })
+                        .map(|e| self.instrument_action_expr(e, &mut res, justification))
                         .collect::<Vec<_>>();
 
                     res.push(format!("({symbol} {})", ListDisplay(children, " ")));
@@ -1262,18 +1126,8 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedAction::Union(_span, generic_expr, generic_expr1) => {
-                let v1 = self.instrument_action_expr(
-                    generic_expr,
-                    &mut res,
-                    justification,
-                    &mut rhs_reads,
-                );
-                let v2 = self.instrument_action_expr(
-                    generic_expr1,
-                    &mut res,
-                    justification,
-                    &mut rhs_reads,
-                );
+                let v1 = self.instrument_action_expr(generic_expr, &mut res, justification);
+                let v2 = self.instrument_action_expr(generic_expr1, &mut res, justification);
                 let ot = generic_expr.output_type();
                 let type_name = ot.name();
                 let unioned = self.union(type_name, &v1, &v2, justification);
@@ -1283,11 +1137,11 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(format!("{action}"));
             }
             ResolvedAction::Expr(_span, generic_expr) => {
-                self.instrument_action_expr(generic_expr, &mut res, justification, &mut rhs_reads);
+                self.instrument_action_expr(generic_expr, &mut res, justification);
             }
         }
 
-        (res, rhs_reads)
+        res
     }
 
     /// Build the proof term that justifies a freshly-created term `fv`
@@ -1436,7 +1290,6 @@ impl<'a> ProofInstrumentor<'a> {
         expr: &ResolvedExpr,
         res: &mut Vec<String>,
         proof: &Justification,
-        rhs_reads: &mut bool,
     ) -> String {
         match expr {
             ResolvedExpr::Lit(_, lit) => format!("{lit}"),
@@ -1444,7 +1297,7 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedExpr::Call(_, resolved_call, args) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.instrument_action_expr(arg, res, proof, rhs_reads))
+                    .map(|arg| self.instrument_action_expr(arg, res, proof))
                     .collect::<Vec<_>>();
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
@@ -1453,22 +1306,6 @@ impl<'a> ProofInstrumentor<'a> {
                             // They're allowed, in proof mode they are constructors.
                             if self.egraph.type_info.is_global(&func_type.name) {
                                 return format!("({} {})", func_type.name, ListDisplay(&args, " "));
-                            }
-                            if let Some((current_name, input_arity)) = self
-                                .egraph
-                                .proof_state
-                                .merge_current
-                                .get(&func_type.name)
-                                .cloned()
-                                && args.len() == input_arity
-                            {
-                                *rhs_reads = true;
-                                let fv = self.fresh_var();
-                                res.push(format!(
-                                    "(let {fv} ({current_name} {}))",
-                                    ListDisplay(&args, " ")
-                                ));
-                                return fv;
                             }
                             panic!(
                                 "Found a function lookup in actions, should have been prevented by typechecking"
@@ -1519,15 +1356,12 @@ impl<'a> ProofInstrumentor<'a> {
         &mut self,
         actions: &[ResolvedAction],
         justification: &Justification,
-    ) -> (Vec<String>, bool) {
+    ) -> Vec<String> {
         let mut res = vec![];
-        let mut rhs_reads = false;
         for action in actions {
-            let (action_code, action_rhs_reads) = self.instrument_action(action, justification);
-            res.extend(action_code);
-            rhs_reads |= action_rhs_reads;
+            res.extend(self.instrument_action(action, justification));
         }
-        (res, rhs_reads)
+        res
     }
 
     /// Instrument a rule to use term encoding. This involves using the view tables in facts,
@@ -1540,6 +1374,7 @@ impl<'a> ProofInstrumentor<'a> {
         let (facts, action_lookups, proof_str) = self.instrument_facts(&rule.body);
         let proof_var = self.fresh_var();
         let proof = Justification::Rule(rule.name.clone(), proof_var.clone());
+        let reads_in_rhs = !action_lookups.is_empty();
         // The looked-up proofs feed `proof_str`, so bind them first.
         let action_lookups_str = ListDisplay(&action_lookups, "\n                    ");
         let proof_var_binding = if self.egraph.proof_state.proofs_enabled {
@@ -1552,8 +1387,7 @@ impl<'a> ProofInstrumentor<'a> {
             "".to_string()
         };
 
-        let (actions, action_rhs_reads) = self.instrument_actions(&rule.head.0, &proof);
-        let reads_in_rhs = !action_lookups.is_empty() || action_rhs_reads;
+        let actions = self.instrument_actions(&rule.head.0, &proof);
         let name = &rule.name;
         let ruleset_opt = if rule.ruleset.is_empty() {
             "".to_string()
@@ -1724,8 +1558,9 @@ impl<'a> ProofInstrumentor<'a> {
                 res.extend(self.instrument_rule(rule));
             }
             ResolvedNCommand::CoreAction(action) => {
-                let (instrumented, _) = self.instrument_action(action, &Justification::Fiat);
-                let instrumented = instrumented.join("\n");
+                let instrumented = self
+                    .instrument_action(action, &Justification::Fiat)
+                    .join("\n");
                 res.extend(self.parse_program(&instrumented));
             }
             ResolvedNCommand::Check(span, facts) => {
@@ -1746,19 +1581,10 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
                 let mut action_stmts = vec![];
-                let mut rhs_reads = false;
-                let instrumented_expr = self.instrument_action_expr(
-                    expr,
-                    &mut action_stmts,
-                    &Justification::Fiat,
-                    &mut rhs_reads,
-                );
-                let instrumented_variants = self.instrument_action_expr(
-                    variants,
-                    &mut action_stmts,
-                    &Justification::Fiat,
-                    &mut rhs_reads,
-                );
+                let instrumented_expr =
+                    self.instrument_action_expr(expr, &mut action_stmts, &Justification::Fiat);
+                let instrumented_variants =
+                    self.instrument_action_expr(variants, &mut action_stmts, &Justification::Fiat);
 
                 // Add any action statements needed to set up the expressions
                 for stmt in action_stmts {

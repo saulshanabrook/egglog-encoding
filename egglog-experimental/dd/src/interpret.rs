@@ -28,13 +28,15 @@
 //! value parity with the reference backend.
 
 use anyhow::{anyhow, Result};
-use egglog_backend_trait::{FunctionId, Value};
+use egglog_ast::core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreActions};
+use egglog_ast::generic_ast::Change;
+use egglog_backend_trait::{
+    FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar, Value,
+};
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
 
-use crate::compile::{
-    slot_lookup, BodyOp, HeadOp, MergeMode, ReadKey, ReadMode, Row, RuleIr, Slot,
-};
+use crate::compile::{MergeMode, ReadKey, Row};
 use crate::EGraph;
 
 /// Binding environment: variable id → bound `u32` value.
@@ -120,7 +122,7 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     // Collect each rule's index + IR up front (clone to avoid borrow conflicts
     // while we also mutate the mirror via lookups). Every rule takes the same
     // atom-rule path and joins on the fused DD worker.
-    let rules: Vec<(usize, RuleIr)> = rule_idxs
+    let rules: Vec<(usize, RuleSpec)> = rule_idxs
         .iter()
         .filter_map(|&i| eg.rules.get(i).and_then(|r| r.clone()).map(|r| (i, r)))
         .collect();
@@ -144,7 +146,13 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
 
     for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
         for mut env in envs {
-            apply_head(eg, &rule.head, &mut env, &mut writes, &mut lookup_index)?;
+            apply_head(
+                eg,
+                &rule.core.head,
+                &mut env,
+                &mut writes,
+                &mut lookup_index,
+            )?;
         }
     }
 
@@ -218,7 +226,7 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
 /// (`(rule () …)`) have no input relation to drive the DD dataflow, so they are
 /// fired once host-side. Returns a `Vec<Vec<Env>>` parallel to `rules` (same
 /// order), ready for `apply_head`.
-fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<Env>>> {
+fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Vec<Env>>> {
     use crate::dd_native;
 
     let mut out: Vec<Vec<Env>> = vec![Vec::new(); rules.len()];
@@ -229,7 +237,12 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     let mut atom_positions: Vec<usize> = Vec::new();
     let mut atom_rule_idxs: Vec<usize> = Vec::new();
     for (pos, (idx, rule)) in rules.iter().enumerate() {
-        let has_atoms = rule.body.iter().any(|op| matches!(op, BodyOp::Atom(_)));
+        let has_atoms = rule
+            .core
+            .body
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom.head, RuleBodyCall::Table { .. }));
         if has_atoms {
             atom_positions.push(pos);
             atom_rule_idxs.push(*idx);
@@ -240,10 +253,12 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
             }
             eg.seen.insert(*idx, ());
             let mut envs: Vec<Env> = vec![Env::new()];
-            for op in &rule.body {
-                envs = step_prim(eg, op, envs)?;
-                if envs.is_empty() {
-                    break;
+            for atom in &rule.core.body.atoms {
+                if matches!(atom.head, RuleBodyCall::Primitive { .. }) {
+                    envs = step_prim(eg, atom, envs)?;
+                    if envs.is_empty() {
+                        break;
+                    }
                 }
             }
             out[pos] = envs;
@@ -401,9 +416,9 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
                 env.insert(v, bind[i]);
             }
             let mut es: Vec<Env> = vec![env];
-            for op in &rule.body {
-                if let BodyOp::Prim { .. } = op {
-                    es = step_prim(eg, op, es)?;
+            for atom in &rule.core.body.atoms {
+                if matches!(atom.head, RuleBodyCall::Primitive { .. }) {
+                    es = step_prim(eg, atom, es)?;
                 }
             }
             envs.extend(es);
@@ -418,38 +433,47 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
 /// envs. A value-computing prim binds (or checks) its return var; a guard prim
 /// (`!=`) that fails prunes the env. Table atoms are NOT handled here — they run
 /// on the DD dataflow; this is only the host-side primitive phase.
-pub(crate) fn step_prim(eg: &mut EGraph, op: &BodyOp, envs: Vec<Env>) -> Result<Vec<Env>> {
-    let BodyOp::Prim { id, args, ret } = op else {
+pub(crate) fn step_prim(
+    eg: &mut EGraph,
+    atom: &GenericAtom<RuleBodyCall, RuleVar, RuleValue>,
+    envs: Vec<Env>,
+) -> Result<Vec<Env>> {
+    let RuleBodyCall::Primitive { id, .. } = atom.head else {
         unreachable!("step_prim called on a non-primitive body op");
     };
+    let (ret, args) = atom
+        .args
+        .split_last()
+        .ok_or_else(|| anyhow!("body primitive has no return term"))?;
     let mut out = Vec::new();
     for env in envs {
         let resolved: Option<Vec<Value>> = args
             .iter()
-            .map(|s| slot_lookup(s, &|v| env.get(&v).copied()).map(Value::new))
+            .map(|term| term_value(term, &env).map(Value::new))
             .collect();
         let Some(argv) = resolved else { continue };
-        let result = eg.eval_prim_internal(*id, &argv);
+        let result = eg.eval_prim_internal(id, &argv);
         let Some(result) = result else {
             // Primitive failed (e.g. `!=` of equal args) — prune.
             continue;
         };
         match ret {
-            Slot::Var(v) => {
+            GenericAtomTerm::Var(_, variable) => {
                 let mut next = env.clone();
-                match next.get(v) {
+                match next.get(&variable.id) {
                     Some(&existing) if existing != result.rep() => continue,
                     _ => {
-                        next.insert(*v, result.rep());
+                        next.insert(variable.id, result.rep());
                     }
                 }
                 out.push(next);
             }
-            Slot::Const(c) => {
-                if *c == result.rep() {
+            GenericAtomTerm::Literal(_, constant) => {
+                if constant.value.rep() == result.rep() {
                     out.push(env);
                 }
             }
+            GenericAtomTerm::Global(..) => {}
         }
     }
     Ok(out)
@@ -458,65 +482,68 @@ pub(crate) fn step_prim(eg: &mut EGraph, op: &BodyOp, envs: Vec<Env>) -> Result<
 /// Execute the head ops for one binding, accumulating writes.
 fn apply_head(
     eg: &mut EGraph,
-    head: &[HeadOp],
+    head: &GenericCoreActions<RuleActionCall, RuleVar, RuleValue>,
     env: &mut Env,
     writes: &mut Vec<Write>,
     lookup_index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
 ) -> Result<()> {
-    for op in head {
-        match op {
-            HeadOp::Set { func, slots } => {
-                let row = build_row(slots, env)?;
-                writes.push(Write::Set(*func, row));
-            }
-            HeadOp::Remove { func, slots } => {
-                let key: Vec<u32> = slots
-                    .iter()
-                    .map(|s| resolve(s, env))
-                    .collect::<Result<_>>()?;
-                writes.push(Write::Remove(*func, key));
-            }
-            HeadOp::Subsume { func, slots } => {
-                // The subsume action addresses a view row by its children+output
-                // columns (a prefix; the trailing epoch is not given). Defer the
-                // move to the pending-write phase so it lands after this
-                // iteration's sets.
-                let prefix: Vec<u32> = slots
-                    .iter()
-                    .map(|s| resolve(s, env))
-                    .collect::<Result<_>>()?;
-                writes.push(Write::Subsume(*func, prefix));
-            }
-            HeadOp::Lookup { func, args, ret } => {
-                let key: Vec<Value> = args
-                    .iter()
-                    .map(|s| resolve(s, env).map(Value::new))
-                    .collect::<Result<_>>()?;
-                let val = if eg.info(*func).lookup_mints {
-                    lookup_or_create(eg, *func, &key, lookup_index)
-                } else {
-                    lookup_existing(eg, *func, &key, lookup_index).ok_or_else(|| {
-                        anyhow!(
-                            "lookup on `{}` failed in rule action",
-                            eg.relation_name(*func)
-                        )
-                    })?
+    for action in &head.0 {
+        match action {
+            GenericCoreAction::Let(_, variable, call, arguments) => {
+                let arguments = resolve_terms(arguments, env)?;
+                let result = match call {
+                    RuleActionCall::Table { id, .. } => {
+                        let key = arguments
+                            .iter()
+                            .copied()
+                            .map(Value::new)
+                            .collect::<Vec<_>>();
+                        if eg.info(*id).lookup_mints {
+                            Some(lookup_or_create(eg, *id, &key, lookup_index))
+                        } else {
+                            Some(lookup_existing(eg, *id, &key, lookup_index).ok_or_else(|| {
+                                anyhow!(
+                                    "lookup on `{}` failed in rule action",
+                                    eg.relation_name(*id)
+                                )
+                            })?)
+                        }
+                    }
+                    RuleActionCall::Primitive { id, .. } => {
+                        let arguments = arguments
+                            .iter()
+                            .copied()
+                            .map(Value::new)
+                            .collect::<Vec<_>>();
+                        eg.eval_prim_internal(*id, &arguments)
+                    }
                 };
-                env.insert(*ret, val.rep());
-            }
-            HeadOp::Call { id, args, ret } => {
-                let argv: Vec<Value> = args
-                    .iter()
-                    .map(|s| resolve(s, env).map(Value::new))
-                    .collect::<Result<_>>()?;
-                let result = eg.eval_prim_internal(*id, &argv);
-                if let Some(v) = result {
-                    env.insert(*ret, v.rep());
+                if let Some(result) = result {
+                    env.insert(variable.id, result.rep());
                 }
-                // A `None` result (primitive failure) in an action is a no-op;
-                // real failures surface as panics through `PanicFunc`.
             }
-            HeadOp::Union { .. } => {
+            GenericCoreAction::LetAtomTerm(_, variable, term) => {
+                env.insert(variable.id, resolve_term(term, env)?);
+            }
+            GenericCoreAction::Set(_, call, arguments, value) => {
+                let RuleActionCall::Table { id, .. } = call else {
+                    return Err(anyhow!("DD backend cannot set a primitive"));
+                };
+                let mut row = resolve_terms(arguments, env)?;
+                row.push(resolve_term(value, env)?);
+                writes.push(Write::Set(*id, row.into_boxed_slice()));
+            }
+            GenericCoreAction::Change(_, change, call, arguments) => {
+                let RuleActionCall::Table { id, .. } = call else {
+                    return Err(anyhow!("DD backend cannot delete or subsume a primitive"));
+                };
+                let values = resolve_terms(arguments, env)?;
+                match change {
+                    Change::Delete => writes.push(Write::Remove(*id, values)),
+                    Change::Subsume => writes.push(Write::Subsume(*id, values)),
+                }
+            }
+            GenericCoreAction::Union(..) => {
                 // Term encoding lowers unions to `(set (@uf ...))` writes. Do not
                 // silently discard a native union if this backend is driven
                 // outside that required frontend mode.
@@ -524,7 +551,7 @@ fn apply_head(
                     "DD backend received a native union; term encoding must lower unions to @uf writes"
                 ));
             }
-            HeadOp::Panic(msg) => {
+            GenericCoreAction::Panic(_, msg) => {
                 return Err(anyhow!("{msg}"));
             }
         }
@@ -532,19 +559,20 @@ fn apply_head(
     Ok(())
 }
 
-/// Build a full row from head-action slots under `env`.
-fn build_row(slots: &[Slot], env: &Env) -> Result<Row> {
-    let vals: Vec<u32> = slots
-        .iter()
-        .map(|s| resolve(s, env))
-        .collect::<Result<_>>()?;
-    Ok(vals.into_boxed_slice())
+fn term_value(term: &GenericAtomTerm<RuleVar, RuleValue>, env: &Env) -> Option<u32> {
+    match term {
+        GenericAtomTerm::Var(_, variable) => env.get(&variable.id).copied(),
+        GenericAtomTerm::Literal(_, value) => Some(value.value.rep()),
+        GenericAtomTerm::Global(..) => None,
+    }
 }
 
-/// Resolve a slot to a concrete value, erroring if it is an unbound variable.
-fn resolve(s: &Slot, env: &Env) -> Result<u32> {
-    slot_lookup(s, &|v| env.get(&v).copied())
-        .ok_or_else(|| anyhow!("unbound variable {s:?} in rule head"))
+fn resolve_term(term: &GenericAtomTerm<RuleVar, RuleValue>, env: &Env) -> Result<u32> {
+    term_value(term, env).ok_or_else(|| anyhow!("unbound term {term:?} in rule head"))
+}
+
+fn resolve_terms(terms: &[GenericAtomTerm<RuleVar, RuleValue>], env: &Env) -> Result<Vec<u32>> {
+    terms.iter().map(|term| resolve_term(term, env)).collect()
 }
 
 /// Look up the output of `func` for input `key`. If absent, create the row with

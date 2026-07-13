@@ -27,7 +27,7 @@ use anyhow::Result;
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeFn, ReportLevel, RuleBuilderOps, RuleId, ScanEntry, Value,
+    IterationReport, MergeFn, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -36,9 +36,8 @@ use hashbrown::{HashMap, HashSet};
 mod compile;
 mod dd_native;
 mod interpret;
-mod rule_builder;
 
-use compile::{MergeMode, MergeTree, ReadKey, Row, RuleIr};
+use compile::{MergeMode, MergeTree, ReadKey, Row};
 
 type LocatedValue = (u32, RowLocation);
 type RowReplacement = (Box<[u32]>, LocatedValue);
@@ -114,15 +113,16 @@ pub(crate) struct RelationInfo {
 pub struct EGraph {
     relations: Vec<RelationInfo>,
     /// Rule slots; `None` = freed.
-    pub(crate) rules: Vec<Option<RuleIr>>,
+    pub(crate) rules: Vec<Option<RuleSpec>>,
     /// Rust-side materialized mirror: the accumulated contents of each relation.
     /// This is what `for_each` / `lookup_id` / `table_size` read.
     ///
     pub(crate) mirror: HashMap<FunctionId, HashSet<Row>>,
     /// Subsumed rows, moved OUT of `mirror` by `(subsume …)` (a "soft delete").
-    /// Ordinary queries (`is_subsumed = Some(false)`) read only `mirror`, so
-    /// subsumed rows are excluded for free; `:internal-include-subsumed` rules and
-    /// `for_each` read `mirror` ∪ `subsumed`. Keyed like `mirror`, by `FunctionId`.
+    /// Ordinary [`egglog_backend_trait::ReadMode::Live`] queries read only
+    /// `mirror`, so subsumed rows are excluded for free; include-subsumed rules
+    /// and `for_each` read `mirror` union `subsumed`. Keyed like `mirror`, by
+    /// `FunctionId`.
     pub(crate) subsumed: HashMap<FunctionId, HashSet<Row>>,
     /// A core-relations [`Database`] used purely as the base-value / primitive
     /// engine, so `Value`s are bit-for-bit identical to the reference backend.
@@ -620,21 +620,163 @@ fn update_version_map(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use egglog_ast::{
+        core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreRule, Query},
+        generic_ast::Change,
+        span::Span,
+    };
     use egglog_backend_trait::{
         Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, MergeFn,
-        QueryEntry, RuleId, Value,
+        ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+        Value,
     };
     use egglog_numeric_id::NumericId;
+
+    type RuleTerm = GenericAtomTerm<RuleVar, RuleValue>;
+
+    struct TestRule {
+        spec: RuleSpec,
+        next_var: u32,
+    }
+
+    impl TestRule {
+        fn new(name: &str, seminaive: bool) -> Self {
+            Self {
+                spec: RuleSpec {
+                    name: name.to_owned(),
+                    seminaive,
+                    no_decomp: false,
+                    core: GenericCoreRule {
+                        span: Span::Panic,
+                        body: Query::default(),
+                        head: Default::default(),
+                    },
+                },
+                next_var: 0,
+            }
+        }
+
+        fn new_var(&mut self, ty: ColumnTy) -> RuleTerm {
+            let id = self.next_var;
+            self.next_var += 1;
+            GenericAtomTerm::Var(
+                Span::Panic,
+                RuleVar {
+                    id,
+                    name: format!("v{id}").into_boxed_str(),
+                    ty,
+                },
+            )
+        }
+
+        fn query_table(
+            &mut self,
+            id: FunctionId,
+            args: &[RuleTerm],
+            is_subsumed: Option<bool>,
+        ) -> Result<()> {
+            self.spec.core.body.atoms.push(GenericAtom {
+                span: Span::Panic,
+                head: RuleBodyCall::Table {
+                    id,
+                    read: match is_subsumed {
+                        Some(false) => ReadMode::Live,
+                        Some(true) => ReadMode::Subsumed,
+                        None => ReadMode::All,
+                    },
+                },
+                args: args.to_vec(),
+            });
+            Ok(())
+        }
+
+        fn query_prim(
+            &mut self,
+            id: ExternalFunctionId,
+            args: &[RuleTerm],
+            output: ColumnTy,
+        ) -> Result<()> {
+            self.spec.core.body.atoms.push(GenericAtom {
+                span: Span::Panic,
+                head: RuleBodyCall::Primitive {
+                    id,
+                    name: "external".into(),
+                    output,
+                },
+                args: args.to_vec(),
+            });
+            Ok(())
+        }
+
+        fn set(&mut self, id: FunctionId, entries: &[RuleTerm]) {
+            let (value, args) = entries.split_last().expect("set has a value");
+            self.spec.core.head.0.push(GenericCoreAction::Set(
+                Span::Panic,
+                RuleActionCall::Table {
+                    id,
+                    name: "table".into(),
+                },
+                args.to_vec(),
+                value.clone(),
+            ));
+        }
+
+        fn change(&mut self, id: FunctionId, entries: &[RuleTerm], change: Change) {
+            self.spec.core.head.0.push(GenericCoreAction::Change(
+                Span::Panic,
+                change,
+                RuleActionCall::Table {
+                    id,
+                    name: "table".into(),
+                },
+                entries.to_vec(),
+            ));
+        }
+
+        fn remove(&mut self, id: FunctionId, entries: &[RuleTerm]) {
+            self.change(id, entries, Change::Delete);
+        }
+
+        fn subsume(&mut self, id: FunctionId, entries: &[RuleTerm]) -> Result<()> {
+            self.change(id, entries, Change::Subsume);
+            Ok(())
+        }
+
+        fn union(&mut self, lhs: RuleTerm, rhs: RuleTerm) {
+            self.spec
+                .core
+                .head
+                .0
+                .push(GenericCoreAction::Union(Span::Panic, lhs, rhs));
+        }
+
+        fn build(self, egraph: &mut EGraph) -> RuleId {
+            Backend::add_rule(egraph, self.spec).unwrap()
+        }
+    }
 
     fn row(vals: &[u32]) -> Row {
         vals.to_vec().into_boxed_slice()
     }
 
-    fn constant(value: u32, ty: ColumnTy) -> QueryEntry {
-        QueryEntry::Const {
-            val: Value::new(value),
-            ty,
-        }
+    fn run_rules(egraph: &mut EGraph, rules: &[RuleId]) -> Result<IterationReport> {
+        Backend::run_rules(
+            egraph,
+            RuleSetRun {
+                name: Some("test"),
+                rules,
+            },
+        )
+    }
+
+    fn constant(value: u32, ty: ColumnTy) -> RuleTerm {
+        GenericAtomTerm::Literal(
+            Span::Panic,
+            RuleValue {
+                value: Value::new(value),
+                ty,
+            },
+        )
     }
 
     fn id_function(eg: &mut EGraph, name: &str, merge: MergeFn) -> FunctionId {
@@ -713,7 +855,7 @@ mod tests {
                 can_subsume: false,
             },
         );
-        let mut rb = Backend::new_rule(eg, "path_compress", true);
+        let mut rb = TestRule::new("path_compress", true);
         let a = rb.new_var(ColumnTy::Id);
         let b = rb.new_var(ColumnTy::Id);
         let c = rb.new_var(ColumnTy::Id);
@@ -730,7 +872,7 @@ mod tests {
         .unwrap();
         rb.remove(uf, &[a.clone(), b]);
         rb.set(uf, &[a, c, unit]);
-        (uf, rb.build().unwrap())
+        (uf, rb.build(eg))
     }
 
     fn write_order_tables(eg: &mut EGraph) -> (BaseValueId, FunctionId, FunctionId) {
@@ -765,12 +907,12 @@ mod tests {
         let left = constant(1, ColumnTy::Id);
         let right = constant(2, ColumnTy::Id);
         let rule = {
-            let mut builder = Backend::new_rule(&mut eg, "native union", true);
+            let mut builder = TestRule::new("native union", true);
             builder.union(left, right);
-            builder.build().unwrap()
+            builder.build(&mut eg)
         };
 
-        let error = Backend::run_rules(&mut eg, &[rule]).unwrap_err();
+        let error = run_rules(&mut eg, &[rule]).unwrap_err();
         assert!(error.to_string().contains("received a native union"));
     }
 
@@ -822,7 +964,7 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "self_join", true);
+            let mut rb = TestRule::new("self_join", true);
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
@@ -832,10 +974,10 @@ mod tests {
             rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.set(out, &[a, b, c, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(eg.mirror[&out].contains(&row(&[1, 2, 3, 0])));
         assert!(eg.mirror[&out].contains(&row(&[1, 3, 2, 0])));
@@ -879,25 +1021,25 @@ mod tests {
         eg.insert_located_row(relation, RowLocation::Subsumed, row(&[2, 0]));
 
         let live_rule = {
-            let mut rb = Backend::new_rule(&mut eg, "live_read", true);
+            let mut rb = TestRule::new("live_read", true);
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[x.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.set(live_out, &[x, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
         let all_rule = {
-            let mut rb = Backend::new_rule(&mut eg, "all_read", true);
+            let mut rb = TestRule::new("all_read", true);
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[x.clone(), unit.clone()], None)
                 .unwrap();
             rb.set(all_out, &[x, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[live_rule, all_rule]).unwrap();
+        run_rules(&mut eg, &[live_rule, all_rule]).unwrap();
 
         assert!(eg.mirror[&live_out].contains(&row(&[1, 0])));
         assert!(!eg.mirror[&live_out].contains(&row(&[2, 0])));
@@ -913,7 +1055,7 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "guarded_self_join", true);
+            let mut rb = TestRule::new("guarded_self_join", true);
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
@@ -935,10 +1077,10 @@ mod tests {
             )
             .unwrap();
             rb.set(out, &[a, b, c, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(eg.mirror[&out].contains(&row(&[1, 3, 2, 0])));
         assert!(!eg.mirror[&out].contains(&row(&[1, 2, 3, 0])));
@@ -952,7 +1094,7 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "unit_var_self_join", true);
+            let mut rb = TestRule::new("unit_var_self_join", true);
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
@@ -976,10 +1118,10 @@ mod tests {
             )
             .unwrap();
             rb.set(out, &[a, b, c, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(eg.mirror[&out].contains(&row(&[1, 3, 2, 0])));
         assert!(!eg.mirror[&out].contains(&row(&[1, 2, 3, 0])));
@@ -991,9 +1133,9 @@ mod tests {
         let (uf, rule) = path_compression_fixture(&mut eg);
 
         eg.insert_live_row(uf, row(&[40, 4, 0]));
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
         eg.insert_live_row(uf, row(&[75, 40, 0]));
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(!eg.mirror[&uf].contains(&row(&[75, 40, 0])));
         assert!(eg.mirror[&uf].contains(&row(&[75, 4, 0])));
@@ -1006,12 +1148,12 @@ mod tests {
 
         eg.insert_live_row(uf, row(&[40, 4, 0]));
         eg.insert_live_row(uf, row(&[75, 40, 0]));
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
         assert!(!eg.mirror[&uf].contains(&row(&[75, 40, 0])));
         assert!(eg.mirror[&uf].contains(&row(&[75, 4, 0])));
 
         eg.insert_live_row(uf, row(&[75, 40, 0]));
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(!eg.mirror[&uf].contains(&row(&[75, 40, 0])));
         assert!(eg.mirror[&uf].contains(&row(&[75, 4, 0])));
@@ -1024,7 +1166,7 @@ mod tests {
         eg.insert_live_row(f, row(&[1, 9]));
 
         let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "remove_then_set", true);
+            let mut rb = TestRule::new("remove_then_set", true);
             let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
                 .unwrap();
@@ -1032,10 +1174,10 @@ mod tests {
             let new = constant(2, ColumnTy::Id);
             rb.remove(f, std::slice::from_ref(&key));
             rb.set(f, &[key, new]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(!eg.mirror[&f].contains(&row(&[1, 9])));
         assert!(eg.mirror[&f].contains(&row(&[1, 2])));
@@ -1047,7 +1189,7 @@ mod tests {
         let (unit_ty, trigger, f) = write_order_tables(&mut eg);
 
         let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "set_then_subsume", true);
+            let mut rb = TestRule::new("set_then_subsume", true);
             let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
                 .unwrap();
@@ -1055,10 +1197,10 @@ mod tests {
             let value = constant(2, ColumnTy::Id);
             rb.set(f, &[key.clone(), value]);
             rb.subsume(f, &[key]).unwrap();
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[rule]).unwrap();
+        run_rules(&mut eg, &[rule]).unwrap();
 
         assert!(!eg.mirror[&f].contains(&row(&[1, 2])));
         assert!(eg.subsumed[&f].contains(&row(&[1, 2])));
@@ -1103,16 +1245,16 @@ mod tests {
         assert!(eg.apply_merge_sets(current, &[row(&[10])]).unwrap());
 
         let view_first_rule = {
-            let mut rb = Backend::new_rule(&mut eg, "view_first", true);
+            let mut rb = TestRule::new("view_first", true);
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(view, &[x.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.set(dummy, &[x, unit]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
         let cleanup_rule = {
-            let mut rb = Backend::new_rule(&mut eg, "current_cleanup", true);
+            let mut rb = TestRule::new("current_cleanup", true);
             let selected = rb.new_var(ColumnTy::Id);
             let old = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
@@ -1129,16 +1271,16 @@ mod tests {
             )
             .unwrap();
             rb.remove(view, &[old]);
-            rb.build().unwrap()
+            rb.build(&mut eg)
         };
 
-        Backend::run_rules(&mut eg, &[view_first_rule, cleanup_rule]).unwrap();
+        run_rules(&mut eg, &[view_first_rule, cleanup_rule]).unwrap();
         assert!(eg.mirror[&view].contains(&row(&[10, 0])));
 
         eg.insert_live_row(view, row(&[4, 0]));
         assert!(eg.apply_merge_sets(current, &[row(&[4])]).unwrap());
 
-        Backend::run_rules(&mut eg, &[view_first_rule, cleanup_rule]).unwrap();
+        run_rules(&mut eg, &[view_first_rule, cleanup_rule]).unwrap();
 
         assert!(eg.mirror[&view].contains(&row(&[4, 0])));
         assert!(!eg.mirror[&view].contains(&row(&[10, 0])));
@@ -1352,10 +1494,10 @@ impl Backend for EGraph {
 
     // -- rule management ----------------------------------------------------
 
-    fn new_rule<'a>(&'a mut self, desc: &str, _seminaive: bool) -> Box<dyn RuleBuilderOps + 'a> {
-        // Seminaive is native to differential dataflow; the flag is accepted
-        // for parity and ignored.
-        Box::new(rule_builder::DdRuleBuilder::new(self, desc))
+    fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
+        let id = RuleId::new(self.rules.len() as u32);
+        self.rules.push(Some(rule));
+        Ok(id)
     }
 
     fn free_rule(&mut self, id: RuleId) {
@@ -1371,13 +1513,14 @@ impl Backend for EGraph {
         }
     }
 
-    fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
+    fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
         // One `run_rules` call = one bounded egglog iteration. The frontend calls
         // this N times for `(run N)`.
-        if rules.is_empty() {
+        if run.rules.is_empty() {
             return Ok(IterationReport::default());
         }
-        let live: Vec<usize> = rules
+        let live: Vec<usize> = run
+            .rules
             .iter()
             .map(|r| r.rep() as usize)
             .filter(|&i| self.rules.get(i).map(|s| s.is_some()).unwrap_or(false))
@@ -1425,7 +1568,8 @@ impl Backend for EGraph {
         // This backend has no native union-find: congruence and rebuild are
         // lowered to ordinary rules over `@uf` tables by the term encoder. The
         // frontend refuses to run this backend without that encoding, and the
-        // interpreter defensively errors if a native `HeadOp::Union` reaches it.
+        // interpreter defensively errors if a native `GenericCoreAction::Union`
+        // reaches it.
         true
     }
 

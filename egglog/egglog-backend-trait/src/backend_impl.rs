@@ -6,113 +6,132 @@
 //! [`Backend`] trait is local here.
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
-use anyhow::Result;
-use egglog_bridge::{ActionRegistry, EGraph, RuleBuilder};
+use anyhow::{Result, bail};
+use egglog_bridge::{ActionRegistry, EGraph, QueryEntry, RuleBuilder};
+
+use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, PanicMsg, QueryEntry,
-    ReportLevel, RuleBuilderOps, RuleId, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 
-// ---------------------------------------------------------------------------
-// RuleBuilderOps for the bridge's RuleBuilder
-// ---------------------------------------------------------------------------
+fn rule_entry(
+    builder: &mut RuleBuilder<'_>,
+    variables: &mut BTreeMap<u32, QueryEntry>,
+    term: &GenericAtomTerm<RuleVar, RuleValue>,
+) -> Result<QueryEntry> {
+    match term {
+        GenericAtomTerm::Var(_, variable) => Ok(variables
+            .entry(variable.id)
+            .or_insert_with(|| builder.new_var_named(variable.ty, &variable.name))
+            .clone()),
+        GenericAtomTerm::Literal(_, constant) => Ok(QueryEntry::Const {
+            val: constant.value,
+            ty: constant.ty,
+        }),
+        GenericAtomTerm::Global(..) => bail!("globals must be desugared before backend lowering"),
+    }
+}
 
-impl RuleBuilderOps for RuleBuilder<'_> {
-    fn new_var(&mut self, ty: ColumnTy) -> QueryEntry {
-        QueryEntry::Var(self.new_var(ty))
+fn rule_entries(
+    builder: &mut RuleBuilder<'_>,
+    variables: &mut BTreeMap<u32, QueryEntry>,
+    terms: &[GenericAtomTerm<RuleVar, RuleValue>],
+) -> Result<Vec<QueryEntry>> {
+    terms
+        .iter()
+        .map(|term| rule_entry(builder, variables, term))
+        .collect()
+}
+
+fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
+    let RuleSpec {
+        name,
+        seminaive,
+        no_decomp,
+        core,
+    } = rule;
+    let mut builder = egraph.new_rule(&name, seminaive);
+    builder.set_no_decomp(no_decomp);
+    let mut variables = BTreeMap::new();
+
+    for atom in &core.body.atoms {
+        let entries = rule_entries(&mut builder, &mut variables, &atom.args)?;
+        match &atom.head {
+            RuleBodyCall::Table { id, read } => {
+                builder.query_table(*id, &entries, read.is_subsumed())?;
+            }
+            RuleBodyCall::Primitive { id, output, .. } => {
+                builder.query_prim(*id, &entries, *output)?;
+            }
+        }
     }
 
-    fn new_var_named(&mut self, ty: ColumnTy, name: &str) -> QueryEntry {
-        self.new_var_named(ty, name)
+    for action in &core.head.0 {
+        match action {
+            GenericCoreAction::Let(span, variable, call, arguments) => {
+                let entries = rule_entries(&mut builder, &mut variables, arguments)?;
+                let result: QueryEntry = match call {
+                    RuleActionCall::Table { id, name } => {
+                        let span = span.clone();
+                        let name = name.clone();
+                        builder
+                            .lookup(*id, &entries, move || {
+                                format!("{span}: lookup of function {name} failed")
+                            })
+                            .into()
+                    }
+                    RuleActionCall::Primitive {
+                        id, name, output, ..
+                    } => {
+                        let span = span.clone();
+                        let name = name.clone();
+                        builder
+                            .call_external_func(*id, &entries, *output, move || {
+                                format!("{span}: call of primitive {name} failed")
+                            })
+                            .into()
+                    }
+                };
+                variables.insert(variable.id, result);
+            }
+            GenericCoreAction::LetAtomTerm(_, variable, term) => {
+                let entry = rule_entry(&mut builder, &mut variables, term)?;
+                variables.insert(variable.id, entry);
+            }
+            GenericCoreAction::Set(_, call, arguments, value) => {
+                let RuleActionCall::Table { id, .. } = call else {
+                    bail!("cannot set a primitive")
+                };
+                let mut entries = rule_entries(&mut builder, &mut variables, arguments)?;
+                entries.push(rule_entry(&mut builder, &mut variables, value)?);
+                builder.set(*id, &entries);
+            }
+            GenericCoreAction::Change(_, change, call, arguments) => {
+                let RuleActionCall::Table { id, .. } = call else {
+                    bail!("cannot delete or subsume a primitive")
+                };
+                let entries = rule_entries(&mut builder, &mut variables, arguments)?;
+                match change {
+                    egglog_ast::generic_ast::Change::Delete => builder.remove(*id, &entries),
+                    egglog_ast::generic_ast::Change::Subsume => builder.subsume(*id, &entries),
+                }
+            }
+            GenericCoreAction::Union(_, lhs, rhs) => {
+                let lhs = rule_entry(&mut builder, &mut variables, lhs)?;
+                let rhs = rule_entry(&mut builder, &mut variables, rhs)?;
+                builder.union(lhs, rhs);
+            }
+            GenericCoreAction::Panic(_, message) => builder.panic(message.clone()),
+        }
     }
 
-    fn base_values(&self) -> &BaseValues {
-        self.egraph().base_values()
-    }
-
-    fn query_table(
-        &mut self,
-        func: FunctionId,
-        entries: &[QueryEntry],
-        is_subsumed: Option<bool>,
-    ) -> Result<()> {
-        self.query_table(func, entries, is_subsumed).map(|_| ())
-    }
-
-    fn query_prim(
-        &mut self,
-        func: ExternalFunctionId,
-        entries: &[QueryEntry],
-        ret_ty: ColumnTy,
-    ) -> Result<()> {
-        self.query_prim(func, entries, ret_ty)
-    }
-
-    fn call_external_func(
-        &mut self,
-        func: ExternalFunctionId,
-        args: &[QueryEntry],
-        ret_ty: ColumnTy,
-        panic_msg: PanicMsg,
-    ) -> QueryEntry {
-        let var = self.call_external_func(func, args, ret_ty, panic_msg);
-        QueryEntry::Var(var)
-    }
-
-    fn lookup(
-        &mut self,
-        func: FunctionId,
-        entries: &[QueryEntry],
-        panic_msg: PanicMsg,
-    ) -> QueryEntry {
-        let var = self.lookup(func, entries, panic_msg);
-        QueryEntry::Var(var)
-    }
-
-    fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) -> Result<()> {
-        self.subsume(func, entries);
-        Ok(())
-    }
-
-    fn set(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        self.set(func, entries);
-    }
-
-    fn remove(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        self.remove(func, entries);
-    }
-
-    fn union(&mut self, l: QueryEntry, r: QueryEntry) {
-        self.union(l, r);
-    }
-
-    fn panic(&mut self, message: String) {
-        self.panic(message);
-    }
-
-    fn new_panic(&mut self, message: String) -> ExternalFunctionId {
-        self.new_panic(message)
-    }
-
-    fn free_external_func(&mut self, func: ExternalFunctionId) {
-        self.free_external_func(func);
-    }
-
-    fn set_no_decomp(&mut self, no_decomp: bool) {
-        self.set_no_decomp(no_decomp);
-    }
-
-    fn build(self: Box<Self>) -> Result<RuleId> {
-        Ok(RuleBuilder::build(*self))
-    }
-
-    fn backend_any(&self) -> Option<&dyn Any> {
-        Some(self.egraph())
-    }
+    Ok(builder.build())
 }
 
 // ---------------------------------------------------------------------------
@@ -164,16 +183,16 @@ impl Backend for EGraph {
         EGraph::with_execution_state_tracked(self, |es| f(es)).1
     }
 
-    fn new_rule<'a>(&'a mut self, desc: &str, seminaive: bool) -> Box<dyn RuleBuilderOps + 'a> {
-        Box::new(EGraph::new_rule(self, desc, seminaive))
+    fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
+        build_rule(self, rule)
     }
 
     fn free_rule(&mut self, id: RuleId) {
         EGraph::free_rule(self, id);
     }
 
-    fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
-        EGraph::run_rules(self, rules)
+    fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
+        EGraph::run_rules(self, run.rules)
     }
 
     fn flush_updates(&mut self) -> bool {

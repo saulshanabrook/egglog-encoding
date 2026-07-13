@@ -21,7 +21,7 @@
 //!   passes only if listed; a new failure (or a listed file that starts working)
 //!   fails the harness so the list stays honest;
 //! - DD runs it and its normalized output equals egglog's snapshot → pass;
-//! - otherwise it DIFFERS from egglog → fail, unless in [`KNOWN_MISMATCH`].
+//! - otherwise the normal insta assertion reports the mismatch.
 //!
 //! Run with `--release`: differential-dataflow is impractically slow in debug
 //! builds. Under `cargo test` (debug) this harness covers only a fast
@@ -31,10 +31,6 @@ use egglog::{file_supports_proofs, CommandOutput, EGraph};
 use libtest_mimic::{Arguments, Failed, Trial};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
-
-/// egglog's shared golden snapshots (one per corpus file, stable across
-/// treatments), which this harness checks DD against.
-const EGGLOG_SNAPSHOTS: &str = "../../egglog/tests/snapshots";
 
 /// Files that saturate too slowly on the differential-dataflow path to belong in
 /// a test suite. Skipped entirely (not run on DD).
@@ -88,21 +84,6 @@ const KNOWN_UNSUPPORTED: &[&str] = &[
     "repro-querybug3.egg",
 ];
 
-/// Files DD runs but whose output DIVERGES from egglog's snapshot — real
-/// bugs surfaced by comparing the full normalized output. Keep this list empty:
-/// any matching failure should either be fixed or documented narrowly here.
-const KNOWN_MISMATCH: &[&str] = &[];
-
-/// The stable content of egglog's shared snapshot for `stem`, if egglog produced
-/// one. Strips insta's `---`-delimited YAML header.
-fn egglog_snapshot(stem: &str) -> Option<String> {
-    let path = format!("{EGGLOG_SNAPSHOTS}/files__shared_snapshot_{stem}.snap");
-    let raw = std::fs::read_to_string(path).ok()?;
-    // insta format: `---\n<yaml header>\n---\n<content>`.
-    let content = raw.splitn(3, "---\n").nth(2)?;
-    Some(content.trim_end().to_string())
-}
-
 /// Run `program` on DD and render its outputs with the SAME normalization
 /// egglog's snapshot used, so the two are directly comparable.
 fn run_dd(file: &str, program: &str) -> Result<String, String> {
@@ -130,19 +111,12 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
     if !file_supports_proofs(path) {
         return Ok(());
     }
-    // A proof-supporting file that egglog ran always has a snapshot; be defensive.
-    let Some(expected) = egglog_snapshot(&stem) else {
-        return Ok(());
-    };
-
     let src = std::fs::read_to_string(path).map_err(|e| format!("read {name}: {e}"))?;
     let program = format!("{src}\n(print-size)");
     let file = path.display().to_string();
     let dd = catch_unwind(AssertUnwindSafe(|| run_dd(&file, &program)));
 
     let unsupported = KNOWN_UNSUPPORTED.contains(&name.as_str());
-    let known_mismatch = KNOWN_MISMATCH.contains(&name.as_str());
-
     match dd {
         // DD couldn't run it (unsupported feature or a panic). Fine only if
         // documented; a new failure means the list is stale.
@@ -175,30 +149,18 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
                 .into())
             }
         }
-        Ok(Ok(out)) if out == expected => {
-            if unsupported {
-                Err(format!(
-                    "{name} is listed in KNOWN_UNSUPPORTED but now matches egglog's \
-                     snapshot — remove it from that list"
-                )
-                .into())
-            } else if known_mismatch {
-                Err(format!(
-                    "{name} is listed in KNOWN_MISMATCH but now matches egglog's \
-                     snapshot — remove it from that list"
-                )
-                .into())
-            } else {
-                Ok(())
-            }
-        }
-        // Documented divergence: still differs (checked above), don't fail.
-        Ok(Ok(_)) if known_mismatch => Ok(()),
-        Ok(Ok(out)) => Err(format!(
-            "{name}: DD disagrees with egglog's snapshot\n\
-             --- egglog ---\n{expected}\n--- dd ---\n{out}"
+        Ok(Ok(_)) if unsupported => Err(format!(
+            "{name} is listed in KNOWN_UNSUPPORTED but now runs — remove it from that list"
         )
         .into()),
+        Ok(Ok(out)) => {
+            let mut settings = insta::Settings::clone_current();
+            settings.set_snapshot_path("../../../egglog/tests/snapshots");
+            settings.bind(|| {
+                insta::assert_snapshot!(format!("shared_snapshot_{stem}"), out);
+            });
+            Ok(())
+        }
     }
 }
 
@@ -223,9 +185,6 @@ fn corpus() -> Vec<PathBuf> {
 }
 
 fn main() {
-    // DD panics on features it can't lower; keep the output clean while
-    // `catch_unwind` turns those into a KNOWN_UNSUPPORTED check.
-    std::panic::set_hook(Box::new(|_| {}));
     let args = Arguments::from_args();
     let trials = corpus()
         .into_iter()

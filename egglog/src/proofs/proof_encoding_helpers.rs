@@ -480,10 +480,6 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("missing merge function. All functions need to specify a :merge function.")]
     NoMergeOnNonGlobalFunction,
     #[error(
-        "`fail` wraps a `set` whose value has equality sort. Proof encoding cannot currently preserve immediate canonical no-merge conflicts for this shape."
-    )]
-    FailSetEqSortOutput,
-    #[error(
         "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
     )]
     LetBindingWithNonEqSort,
@@ -678,15 +674,6 @@ pub(crate) fn command_supports_proof_encoding(
                 Ok(())
             } else {
                 Err(ProofEncodingUnsupportedReason::NoMergeOnNonGlobalFunction)
-            }
-        }
-        GenericCommand::Fail(_, command) => {
-            if let GenericCommand::Action(ResolvedAction::Set(_, _, _, expr)) = command.as_ref()
-                && expr.output_type().is_eq_sort()
-            {
-                Err(ProofEncodingUnsupportedReason::FailSetEqSortOutput)
-            } else {
-                Ok(())
             }
         }
         // let binding with non-eq sort not supported by proof_global_desugar

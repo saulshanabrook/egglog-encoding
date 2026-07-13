@@ -20,10 +20,11 @@ use crate::{
 };
 use thiserror::Error;
 
-/// A container side condition is a rule-body fact whose equality is over
-/// container values. Container sorts do not have their own UF proof rows, so
-/// these facts are checked by re-evaluating/binding their values under the rule
-/// substitution instead of by recursively checking a premise proposition.
+/// A side condition is a rule-body fact that is just a container-producing
+/// primitive applied to bound variables — `(= v (vec-of e))`, `(= (set-of a)
+/// (set-of b))`, etc. Its proof is a bare [`Justification::Eval`] marker and it
+/// is verified by re-evaluation in [`ProofStore::check_side_condition`] rather
+/// than by matching a premise proposition.
 pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
     fn is_container_primitive(expr: &ResolvedExpr) -> bool {
         matches!(
@@ -32,19 +33,8 @@ pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
                 if p.output().is_eq_container_sort()
         )
     }
-    fn is_container_var(expr: &ResolvedExpr) -> bool {
-        matches!(
-            expr,
-            ResolvedExpr::Var(_, v) if v.sort.is_eq_container_sort()
-        )
-    }
-
     match fact {
-        ResolvedFact::Eq(_, lhs, rhs) => {
-            is_container_primitive(lhs)
-                || is_container_primitive(rhs)
-                || (is_container_var(lhs) && is_container_var(rhs))
-        }
+        ResolvedFact::Eq(_, lhs, rhs) => is_container_primitive(lhs) || is_container_primitive(rhs),
         ResolvedFact::Fact(expr) => is_container_primitive(expr),
     }
 }
@@ -959,49 +949,41 @@ impl ProofStore {
         result
     }
 
-    /// Check a container-valued side condition by re-evaluating it against the
-    /// rule body. If one side is an unbound variable, bind it to the evaluated
-    /// container value; otherwise both sides must evaluate to the same value.
+    /// Check a container side condition by re-evaluating it against the rule
+    /// body, rather than against a premise proposition. An unbound side is the
+    /// side condition's output and is bound; otherwise both sides must evaluate
+    /// to the same container. Extends `subst` with any bound output.
     fn check_side_condition(
         &mut self,
         fact: &ResolvedFact,
         subst: &mut HashMap<String, TermId>,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
-        let (lhs, rhs) = match fact {
-            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
-            ResolvedFact::Fact(expr) => {
-                return match self.eval_side(expr, subst, rule_name)? {
-                    Some(_) => Ok(()),
-                    None => Err(ProofCheckErrorKind::SideConditionUnbound {
-                        rule_name: rule_name.to_string(),
-                        fact: format!("{fact}"),
-                    }
-                    .into()),
-                };
-            }
+        let ResolvedFact::Eq(_, lhs, rhs) = fact else {
+            // `is_container_side_condition` only flags `Eq` facts.
+            return Ok(());
         };
-
         let lhs_val = self.eval_side(lhs, subst, rule_name)?;
         let rhs_val = self.eval_side(rhs, subst, rule_name)?;
         match (lhs, lhs_val, rhs, rhs_val) {
+            // One side is an unbound variable: it is the side condition's output.
             (ResolvedExpr::Var(_, v), None, _, Some(val))
             | (_, Some(val), ResolvedExpr::Var(_, v), None) => {
                 subst.insert(v.name.clone(), val);
                 Ok(())
             }
-            (_, Some(lhs), _, Some(rhs)) => {
-                if lhs == rhs {
-                    Ok(())
-                } else {
-                    Err(ProofCheckErrorKind::SideConditionMismatch {
+            // Both sides determined: they must be the same container.
+            (_, Some(l), _, Some(r)) => {
+                if l != r {
+                    return Err(ProofCheckErrorKind::SideConditionMismatch {
                         rule_name: rule_name.to_string(),
                         fact: format!("{fact}"),
-                        lhs,
-                        rhs,
+                        lhs: l,
+                        rhs: r,
                     }
-                    .into())
+                    .into());
                 }
+                Ok(())
             }
             _ => Err(ProofCheckErrorKind::SideConditionUnbound {
                 rule_name: rule_name.to_string(),

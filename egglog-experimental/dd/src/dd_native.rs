@@ -46,6 +46,8 @@ use std::rc::Rc;
 
 use anyhow::Result;
 use differential_dataflow::input::InputSession;
+use egglog_ast::core::{GenericAtom, GenericAtomTerm, GenericCoreAction};
+use egglog_backend_trait::{RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar};
 use hashbrown::HashMap;
 use timely::communication::allocator::thread::Thread;
 use timely::communication::allocator::Allocator;
@@ -54,7 +56,7 @@ use timely::dataflow::operators::{Inspect, Probe};
 use timely::worker::Worker;
 use timely::WorkerConfig;
 
-use crate::compile::{BodyOp, ReadKey, RuleIr, Slot};
+use crate::compile::{ReadKey, Slot};
 
 /// A signed `(row, weight)` delta for one relation (`+1` inserted, `-1`
 /// retracted), with rows as plain `Vec<u32>`.
@@ -170,46 +172,52 @@ impl JoinPlan {
 /// Supported rules have one or more table atoms, atom arity at most [`W`], and
 /// no more than [`W`] simultaneously live body variables. Body primitives are
 /// evaluated later by the host interpreter, so they do not become DD operators.
-pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
+pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
     use hashbrown::HashSet;
 
     let mut body_vars = HashSet::new();
     let mut atoms: Vec<PlanAtom> = Vec::new();
 
-    for op in &rule.body {
-        match op {
-            BodyOp::Atom(atom) => {
-                if atom.slots.len() > W {
-                    return Err(format!("atom arity {} > W {}", atom.slots.len(), W));
+    for atom in &rule.core.body.atoms {
+        match atom.head {
+            RuleBodyCall::Table { id, read } => {
+                if atom.args.len() > W {
+                    return Err(format!("atom arity {} > W {}", atom.args.len(), W));
                 }
-                for s in &atom.slots {
+                let slots = atom
+                    .args
+                    .iter()
+                    .map(Slot::from_term)
+                    .collect::<Result<Vec<_>, _>>()?;
+                for s in &slots {
                     if let Slot::Var(v) = s {
                         body_vars.insert(*v);
                     }
                 }
                 atoms.push(PlanAtom {
                     read_key: ReadKey {
-                        func: atom.func,
-                        mode: atom.read_mode,
+                        func: id,
+                        mode: read,
                     },
-                    slots: atom.slots.clone(),
+                    slots,
                 });
             }
             // The host replays body primitives over each completed table
             // binding. Their variables remain live through the projection.
-            BodyOp::Prim { .. } => {}
+            RuleBodyCall::Primitive { .. } => {}
         }
     }
 
     if atoms.is_empty() {
         return Err("no body table atoms (atom-less rule)".to_string());
     }
-    let projection = build_projection(&atoms, &rule.head, &rule.body).ok_or_else(|| {
-        format!(
-            "live body-variable frontier exceeds W {W} ({} distinct body variables)",
-            body_vars.len()
-        )
-    })?;
+    let projection = build_projection(&atoms, &rule.core.head.0, &rule.core.body.atoms)
+        .ok_or_else(|| {
+            format!(
+                "live body-variable frontier exceeds W {W} ({} distinct body variables)",
+                body_vars.len()
+            )
+        })?;
     Ok(JoinPlan { atoms, projection })
 }
 
@@ -236,8 +244,8 @@ struct ProjectionPlan {
 /// assignment: a column freed by a dead var is reused by a later var's birth.
 fn build_projection(
     atoms: &[PlanAtom],
-    head: &[crate::compile::HeadOp],
-    body: &[BodyOp],
+    head: &[GenericCoreAction<RuleActionCall, RuleVar, RuleValue>],
+    body: &[GenericAtom<RuleBodyCall, RuleVar, RuleValue>],
 ) -> Option<ProjectionPlan> {
     use hashbrown::HashSet;
     let n = atoms.len();
@@ -245,15 +253,12 @@ fn build_projection(
     // Variables the head / body prims read: these must survive to the end.
     let mut survivor: HashSet<u32> = HashSet::new();
     collect_head_vars(head, &mut survivor);
-    for op in body {
-        if let BodyOp::Prim { args, ret, .. } = op {
-            for s in args {
-                if let Slot::Var(v) = s {
-                    survivor.insert(*v);
+    for atom in body {
+        if matches!(atom.head, RuleBodyCall::Primitive { .. }) {
+            for term in &atom.args {
+                if let GenericAtomTerm::Var(_, variable) = term {
+                    survivor.insert(variable.id);
                 }
-            }
-            if let Slot::Var(v) = ret {
-                survivor.insert(*v);
             }
         }
     }
@@ -339,40 +344,44 @@ fn build_projection(
     })
 }
 
-/// Collect every variable a head op references into `out`.
-fn collect_head_vars(head: &[crate::compile::HeadOp], out: &mut hashbrown::HashSet<u32>) {
-    use crate::compile::HeadOp;
-    let add = |s: &Slot, out: &mut hashbrown::HashSet<u32>| {
-        if let Slot::Var(v) = s {
-            out.insert(*v);
+/// Collect every variable a head action references into `out`.
+fn collect_head_vars(
+    head: &[GenericCoreAction<RuleActionCall, RuleVar, RuleValue>],
+    out: &mut hashbrown::HashSet<u32>,
+) {
+    let add = |term: &GenericAtomTerm<RuleVar, RuleValue>, out: &mut hashbrown::HashSet<u32>| {
+        if let GenericAtomTerm::Var(_, variable) = term {
+            out.insert(variable.id);
         }
     };
-    for op in head {
-        match op {
-            HeadOp::Set { slots, .. }
-            | HeadOp::Remove { slots, .. }
-            | HeadOp::Subsume { slots, .. } => {
-                for s in slots {
-                    add(s, out);
+    for action in head {
+        match action {
+            GenericCoreAction::Let(_, variable, _, arguments) => {
+                for argument in arguments {
+                    add(argument, out);
+                }
+                out.insert(variable.id);
+            }
+            GenericCoreAction::LetAtomTerm(_, variable, term) => {
+                add(term, out);
+                out.insert(variable.id);
+            }
+            GenericCoreAction::Set(_, _, arguments, value) => {
+                for argument in arguments {
+                    add(argument, out);
+                }
+                add(value, out);
+            }
+            GenericCoreAction::Change(_, _, _, arguments) => {
+                for argument in arguments {
+                    add(argument, out);
                 }
             }
-            HeadOp::Lookup { args, ret, .. } => {
-                for s in args {
-                    add(s, out);
-                }
-                out.insert(*ret);
+            GenericCoreAction::Union(_, lhs, rhs) => {
+                add(lhs, out);
+                add(rhs, out);
             }
-            HeadOp::Call { args, ret, .. } => {
-                for s in args {
-                    add(s, out);
-                }
-                out.insert(*ret);
-            }
-            HeadOp::Union { l, r } => {
-                add(l, out);
-                add(r, out);
-            }
-            HeadOp::Panic(_) => {}
+            GenericCoreAction::Panic(..) => {}
         }
     }
 }
@@ -782,22 +791,73 @@ fn remap_merge_atom_into(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egglog_backend_trait::FunctionId;
+    use egglog_ast::{
+        core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreRule, Query},
+        span::Span,
+    };
+    use egglog_backend_trait::{
+        ColumnTy, FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleVar,
+    };
     use egglog_numeric_id::NumericId;
 
     fn live(func: FunctionId) -> ReadKey {
         ReadKey {
             func,
-            mode: crate::compile::ReadMode::Live,
+            mode: ReadMode::Live,
         }
     }
 
-    fn body_atom(func: FunctionId, vars: impl IntoIterator<Item = u32>) -> BodyOp {
-        BodyOp::Atom(crate::compile::BodyAtom {
-            func,
-            slots: vars.into_iter().map(Slot::Var).collect(),
-            read_mode: crate::compile::ReadMode::Live,
-        })
+    fn variable(id: u32) -> GenericAtomTerm<RuleVar, RuleValue> {
+        GenericAtomTerm::Var(
+            Span::Panic,
+            RuleVar {
+                id,
+                name: format!("v{id}").into_boxed_str(),
+                ty: ColumnTy::Id,
+            },
+        )
+    }
+
+    fn body_atom(
+        func: FunctionId,
+        vars: impl IntoIterator<Item = u32>,
+    ) -> GenericAtom<RuleBodyCall, RuleVar, RuleValue> {
+        GenericAtom {
+            span: Span::Panic,
+            head: RuleBodyCall::Table {
+                id: func,
+                read: ReadMode::Live,
+            },
+            args: vars.into_iter().map(variable).collect(),
+        }
+    }
+
+    fn test_rule(
+        name: &str,
+        body: Vec<GenericAtom<RuleBodyCall, RuleVar, RuleValue>>,
+        output: FunctionId,
+        vars: impl IntoIterator<Item = u32>,
+    ) -> RuleSpec {
+        let mut terms = vars.into_iter().map(variable).collect::<Vec<_>>();
+        let value = terms.pop().expect("test output includes a value");
+        RuleSpec {
+            name: name.to_owned(),
+            seminaive: true,
+            no_decomp: false,
+            core: GenericCoreRule {
+                span: Span::Panic,
+                body: Query { atoms: body },
+                head: egglog_ast::core::GenericCoreActions::new(vec![GenericCoreAction::Set(
+                    Span::Panic,
+                    RuleActionCall::Table {
+                        id: output,
+                        name: "output".into(),
+                    },
+                    terms,
+                    value,
+                )]),
+            },
+        }
     }
 
     /// Build a `JoinPlan` from `(func, vars)` atoms, preserving every variable
@@ -813,14 +873,12 @@ mod tests {
             .collect();
         vars.sort_unstable();
         vars.dedup();
-        plan_join(&RuleIr {
-            name: "test join".to_string(),
+        plan_join(&test_rule(
+            "test join",
             body,
-            head: vec![crate::compile::HeadOp::Set {
-                func: FunctionId::new(u32::MAX),
-                slots: vars.into_iter().map(Slot::Var).collect(),
-            }],
-        })
+            FunctionId::new(u32::MAX),
+            vars,
+        ))
         .unwrap()
     }
 
@@ -831,15 +889,7 @@ mod tests {
         let body = (0..=W as u32)
             .map(|var| body_atom(func, [var, var + 1]))
             .collect();
-        let plan = plan_join(&RuleIr {
-            name: "wide chain".to_string(),
-            body,
-            head: vec![crate::compile::HeadOp::Set {
-                func,
-                slots: vec![Slot::Var(final_var)],
-            }],
-        })
-        .unwrap();
+        let plan = plan_join(&test_rule("wide chain", body, func, [final_var])).unwrap();
 
         assert_eq!(plan.var_order(), vec![final_var]);
         assert!(plan
@@ -852,15 +902,12 @@ mod tests {
     #[test]
     fn plan_rejects_live_variable_frontier_wider_than_row() {
         let func = FunctionId::new(0);
-        let head_vars: Vec<Slot> = (0..=W as u32).map(Slot::Var).collect();
-        let rule = RuleIr {
-            name: "wide frontier".to_string(),
-            body: vec![body_atom(func, 0..W as u32), body_atom(func, [0, W as u32])],
-            head: vec![crate::compile::HeadOp::Set {
-                func,
-                slots: head_vars,
-            }],
-        };
+        let rule = test_rule(
+            "wide frontier",
+            vec![body_atom(func, 0..W as u32), body_atom(func, [0, W as u32])],
+            func,
+            0..=W as u32,
+        );
 
         let error = plan_join(&rule)
             .err()

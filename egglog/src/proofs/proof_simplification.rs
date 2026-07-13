@@ -254,7 +254,7 @@ impl ProofStore {
         let mut changed = false;
 
         match &mut proof.justification {
-            Justification::Fiat | Justification::Eval => return proof_id,
+            Justification::Fiat => return proof_id,
             Justification::Rule { premise_proofs, .. } => {
                 for pid in premise_proofs.iter_mut() {
                     let mapped = f(self, *pid);
@@ -340,6 +340,8 @@ impl ProofStore {
                     changed = true;
                 }
             }
+            // No sub-proofs to remap; the result lives in the proposition.
+            Justification::Eval => return proof_id,
         }
 
         if !changed {

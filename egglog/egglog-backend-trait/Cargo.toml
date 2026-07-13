@@ -10,5 +10,6 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 egglog-bridge = { workspace = true }
+egglog-ast = { workspace = true }
 egglog-core-relations = { workspace = true }
 egglog-reports = { workspace = true }

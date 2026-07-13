@@ -1,6 +1,6 @@
 # An experimental differential-dataflow backend for egglog. It depends only on
-# the public `egglog-backend-trait` SPI plus the neutral
-# `egglog-core-relations`, so it can serve as an out-of-tree backend example.
+# the public backend SPI plus the neutral shared rule AST and core relations,
+# so it can serve as an out-of-tree backend example.
 [package]
 name = "egglog-experimental-dd"
 version = "0.1.0"
@@ -12,6 +12,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 egglog-backend-trait = { path = "../../egglog/egglog-backend-trait" }
+egglog-ast = { path = "../../egglog/egglog-ast" }
 egglog-core-relations = { path = "../../egglog/core-relations" }
 egglog-numeric-id = { path = "../../egglog/numeric-id" }
 hashbrown = "0.16"
@@ -33,4 +34,5 @@ harness = false
 # Differential Dataflow backend via `egglog::EGraph::with_backend(..)`.
 egglog = { path = "../../egglog", default-features = false }
 egglog-experimental = { path = "..", default-features = false }
+insta = "1.40"
 libtest-mimic = "0.8"
