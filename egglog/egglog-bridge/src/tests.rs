@@ -19,7 +19,8 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeFn, QueryEntry, add_expressions,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn, QueryEntry,
+    add_expressions,
     define_rule,
 };
 
@@ -1613,10 +1614,10 @@ fn self_referential_merge_union_find() {
         // unchanged, so the body stages the displaced edge unconditionally.
         n_identity_vals: Some(1),
         default: DefaultVal::Fail,
-        merge: MergeFn::Seq(vec![
-            MergeFn::TableInsert(uf_id, vec![max, min()]),
-            min(),
-        ]),
+        merge: MergeFn::Block {
+            actions: vec![MergeAction::Set(uf_id, vec![max, min()])],
+            result: Box::new(min()),
+        },
         name: "uf".into(),
         can_subsume: false,
     });

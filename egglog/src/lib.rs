@@ -852,35 +852,26 @@ impl EGraph {
         if merge.actions.is_empty() {
             return Ok(result);
         }
-        let mut effects = merge
+        // A value-producing action block: run the effects, then evaluate the result value(s).
+        let actions = merge
             .actions
             .iter()
             .map(|a| self.translate_merge_action(a))
             .collect::<Result<Vec<_>, _>>()?;
-        // Sequence the effects before the result value. A `Columns` result must stay the top-level
-        // merge, so the effects fold into its first column (they run once, when column 0 is
-        // computed).
-        Ok(match result {
-            MergeFn::Columns(mut cols) => {
-                let first = cols.remove(0);
-                effects.push(first);
-                cols.insert(0, MergeFn::Seq(effects));
-                MergeFn::Columns(cols)
-            }
-            other => {
-                effects.push(other);
-                MergeFn::Seq(effects)
-            }
+        Ok(MergeFn::Block {
+            actions,
+            result: Box::new(result),
         })
     }
 
-    /// Lower a single resolved merge action to a [`MergeFn`] effect. Only `set` is supported (as a
-    /// `TableInsert`); other actions are deferred to the interpreter rewrite.
+    /// Lower a single resolved merge action to a backend [`MergeAction`]. Only `set` is supported
+    /// for now; other actions (`let`/`union`/...) are deferred — the merge interpreter evaluates
+    /// value expressions positionally, so named `let` bindings need an env it doesn't yet carry.
     fn translate_merge_action(
         &self,
         action: &ResolvedAction,
-    ) -> Result<egglog_bridge::MergeFn, Error> {
-        use egglog_bridge::MergeFn;
+    ) -> Result<egglog_bridge::MergeAction, Error> {
+        use egglog_bridge::MergeAction;
         match action {
             GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
                 let backend_id = self
@@ -906,7 +897,7 @@ impl EGraph {
                     }
                     _ => args.push(self.translate_expr_to_mergefn(val)?),
                 }
-                Ok(MergeFn::TableInsert(backend_id, args))
+                Ok(MergeAction::Set(backend_id, args))
             }
             other => Err(Error::BackendError(format!(
                 "action `{other}` is not yet supported inside a :merge block (only `set` for now)"
@@ -930,7 +921,7 @@ impl EGraph {
         output: &ArcSort,
         num_outputs: usize,
     ) -> Result<Option<egglog_bridge::MergeFn>, Error> {
-        use egglog_bridge::MergeFn;
+        use egglog_bridge::{MergeAction, MergeFn};
         // Detected purely by shape: a term-constructor view with an eq-sort first output and a
         // second (proof) output. This shape is only ever emitted by the proof encoder, so we don't
         // gate on `proofs_enabled` — that lets a re-parsed desugared program (run in a fresh, non-
@@ -1000,19 +991,16 @@ impl EGraph {
         let min_pf = || MergeFn::Primitive(orient_min, orient_args());
         // Trans(max_vp, Sym(min_vp)) : max_ec = min_ec (view proofs put the eclass on the left). The
         // identity-column guard (col 0) skips this merge when the two eclasses are already equal, so
-        // the body stages the union unconditionally.
-        let edge = MergeFn::Construct(
+        // the block stages the union unconditionally.
+        let edge = MergeFn::Lookup(
             trans_id,
-            vec![max_pf(), MergeFn::Construct(sym_id, vec![min_pf()], vec![])],
-            vec![],
+            vec![max_pf(), MergeFn::Lookup(sym_id, vec![min_pf()])],
         );
-        // Keep the smaller eclass and its proof; stage the union edge into @UF.
-        let col0 = MergeFn::Seq(vec![
-            MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
-            min_ec(),
-        ]);
-        let col1 = min_pf();
-        Ok(Some(MergeFn::Columns(vec![col0, col1])))
+        // Stage the union edge into @UF; the merged value is (smaller eclass, its view proof).
+        Ok(Some(MergeFn::Block {
+            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
+            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
+        }))
     }
 
     /// Build the self-referential union-find `:merge` for the encoding's single
@@ -1033,7 +1021,7 @@ impl EGraph {
         uf_id: egglog_bridge::FunctionId,
         num_outputs: usize,
     ) -> Result<egglog_bridge::MergeFn, Error> {
-        use egglog_bridge::MergeFn;
+        use egglog_bridge::{MergeAction, MergeFn};
         let resolve = |name: &str| -> Result<ExternalFunctionId, Error> {
             self.type_info
                 .get_prims(name)
@@ -1052,10 +1040,10 @@ impl EGraph {
             // parent is unchanged, so the body records the displaced edge unconditionally.
             let min = || MergeFn::Primitive(min_id, vec![MergeFn::Old, MergeFn::New]);
             let max = MergeFn::Primitive(max_id, vec![MergeFn::Old, MergeFn::New]);
-            return Ok(MergeFn::Seq(vec![
-                MergeFn::TableInsert(uf_id, vec![max, min()]),
-                min(),
-            ]));
+            return Ok(MergeFn::Block {
+                actions: vec![MergeAction::Set(uf_id, vec![max, min()])],
+                result: Box::new(min()),
+            });
         }
         // Proof branch: value col 0 = parent, col 1 = proof (`key = parent`).
         let backend_id = |name: &str| -> Result<egglog_bridge::FunctionId, Error> {
@@ -1088,19 +1076,16 @@ impl EGraph {
         let min_pf = || MergeFn::Primitive(orient_min, orient_args());
         // Trans(Sym(max_pf), min_pf) : max_ec = min_ec (UF proofs put the key on the left). The
         // identity-column guard (col 0, the parent) skips this merge when the parent is unchanged,
-        // so the body stages the displaced edge unconditionally.
-        let edge = MergeFn::Construct(
+        // so the block stages the displaced edge unconditionally.
+        let edge = MergeFn::Lookup(
             trans_id,
-            vec![MergeFn::Construct(sym_id, vec![max_pf()], vec![]), min_pf()],
-            vec![],
+            vec![MergeFn::Lookup(sym_id, vec![max_pf()]), min_pf()],
         );
-        // Keep the smaller parent and its proof; stage the displaced edge back into @UF.
-        let col0 = MergeFn::Seq(vec![
-            MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
-            min_ec(),
-        ]);
-        let col1 = min_pf();
-        Ok(MergeFn::Columns(vec![col0, col1]))
+        // Stage the displaced edge back into @UF; the merged value is (smaller parent, its proof).
+        Ok(MergeFn::Block {
+            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
+            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
+        })
     }
 
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
