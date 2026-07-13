@@ -1237,16 +1237,17 @@ impl MergeFn {
         );
 
         Box::new(move |state, cur, new, out| {
-            // Identity/payload columns: if this collision leaves every identity value column
-            // unchanged, keep the existing row and skip the merge — a payload-only difference is not
-            // a real conflict. (Inert unless the function declares payload columns.)
-            if schema_math.n_identity_vals < schema_math.n_vals() {
+            // Identity/payload columns: when a collision leaves every identity value column
+            // unchanged it is not a real value conflict, so keep the existing value columns instead
+            // of running the per-column merges (which would, e.g., stage a spurious union). A
+            // subsume-flag change is still applied below, so this stays correct for subsumable
+            // functions. Inert unless the function declares payload columns.
+            let identity_unchanged = {
                 let id_lo = schema_math.n_keys;
                 let id_hi = id_lo + schema_math.n_identity_vals;
-                if cur[id_lo..id_hi] == new[id_lo..id_hi] {
-                    return false;
-                }
-            }
+                schema_math.n_identity_vals < schema_math.n_vals()
+                    && cur[id_lo..id_hi] == new[id_lo..id_hi]
+            };
 
             let timestamp = new[schema_math.ts_col()];
 
@@ -1256,7 +1257,11 @@ impl MergeFn {
             // column's merge may reference any output column via `OldCol`/`NewCol`.
             let mut merged_vals = SmallVec::<[Value; 4]>::new();
             for (i, col_merge) in resolved.iter().enumerate() {
-                let out_val = col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp);
+                let out_val = if identity_unchanged {
+                    cur[schema_math.val_col(i)]
+                } else {
+                    col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp)
+                };
                 changed |= cur[schema_math.val_col(i)] != out_val;
                 merged_vals.push(out_val);
             }
