@@ -1,0 +1,15 @@
+[package]
+name = "egglog-backend-trait"
+version.workspace = true
+edition.workspace = true
+description = "A backend-agnostic interface (the `Backend` trait) for driving an egglog e-graph, so third parties can plug in their own execution engine."
+repository.workspace = true
+keywords.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+egglog-bridge = { workspace = true }
+egglog-ast = { workspace = true }
+egglog-core-relations = { workspace = true }
+egglog-reports = { workspace = true }

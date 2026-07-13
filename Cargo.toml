@@ -5,6 +5,7 @@ members = [
   "egglog/concurrency",
   "egglog/core-relations",
   "egglog/egglog-ast",
+  "egglog/egglog-backend-trait",
   "egglog/egglog-bridge",
   "egglog/egglog-reports",
   "egglog/numeric-id",
@@ -12,6 +13,7 @@ members = [
   "egglog/src/sort/add_primitive",
   "egglog/wasm-example",
   "egglog-experimental",
+  "egglog-experimental/dd",
 ]
 
 [workspace.package]
@@ -81,6 +83,7 @@ egglog-numeric-id = { path = "egglog/numeric-id", version = "2.0.0" }
 egglog-union-find = { path = "egglog/union-find", version = "2.0.0" }
 egglog-add-primitive = { path = "egglog/src/sort/add_primitive", version = "2.0.0" }
 egglog-reports = { path = "egglog/egglog-reports", version = "2.0.0" }
+egglog-backend-trait = { path = "egglog/egglog-backend-trait", version = "2.0.0" }
 egglog = { path = "egglog", default-features = false, version = "2.0.0" }
 
 ######################

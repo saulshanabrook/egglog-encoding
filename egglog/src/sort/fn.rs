@@ -13,6 +13,7 @@ use std::any::TypeId;
 use std::sync::Mutex;
 
 use crate::exec_state::Internal;
+use egglog_backend_trait::BackendExt;
 use enum_map::EnumMap;
 
 use super::*;
@@ -152,11 +153,11 @@ impl Sort for FunctionSort {
         &self.name
     }
 
-    fn column_ty(&self, _backend: &egglog_bridge::EGraph) -> ColumnTy {
+    fn column_ty(&self, _base_values: &BaseValues) -> ColumnTy {
         ColumnTy::Id
     }
 
-    fn register_type(&self, backend: &mut egglog_bridge::EGraph) {
+    fn register_type(&self, backend: &mut dyn egglog_backend_trait::Backend) {
         backend.register_container_ty::<FunctionContainer>();
         backend
             .base_values_mut()

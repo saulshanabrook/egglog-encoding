@@ -102,7 +102,6 @@ pub(crate) struct Query {
     uf_table: TableId,
     id_counter: CounterId,
     ts_counter: CounterId,
-    rule_id: RuleId,
     vars: DenseIdMap<VariableId, VarInfo>,
     atoms: Vec<(TableId, Vec<QueryEntry>, SchemaMath)>,
     /// The builders for queries in this module essentially wrap the lower-level
@@ -123,9 +122,22 @@ pub(crate) struct Query {
 }
 
 pub struct RuleBuilder<'a> {
-    egraph: &'a mut EGraph,
+    resources: RuleResources<'a>,
     desc: Arc<str>,
     query: Query,
+}
+
+struct RuleResources<'a> {
+    egraph: &'a mut EGraph,
+    external_funcs: Vec<ExternalFunctionId>,
+}
+
+impl Drop for RuleResources<'_> {
+    fn drop(&mut self) {
+        for func in std::mem::take(&mut self.external_funcs) {
+            self.egraph.free_external_func(func);
+        }
+    }
 }
 
 impl EGraph {
@@ -135,15 +147,16 @@ impl EGraph {
         let uf_table = self.uf_table;
         let id_counter = self.id_counter;
         let ts_counter = self.timestamp_counter;
-        let rule_id = self.rules.reserve_slot();
         RuleBuilder {
-            egraph: self,
+            resources: RuleResources {
+                egraph: self,
+                external_funcs: Vec::new(),
+            },
             desc: Arc::from(desc),
             query: Query {
                 uf_table,
                 id_counter,
                 ts_counter,
-                rule_id,
                 seminaive,
                 sole_focus: None,
                 vars: Default::default(),
@@ -157,18 +170,31 @@ impl EGraph {
 
     /// Remove a rewrite rule from this [`EGraph`].
     pub fn free_rule(&mut self, id: RuleId) {
-        self.rules.take(id);
+        if let Some(info) = self.rules.take(id) {
+            for func in info.owned_external_funcs {
+                self.free_external_func(func);
+            }
+        }
     }
 }
 
 impl RuleBuilder<'_> {
+    fn new_panic_lazy(
+        &mut self,
+        message: impl FnOnce() -> String + Send + 'static,
+    ) -> ExternalFunctionId {
+        let panic = self.resources.egraph.new_panic_lazy(message);
+        self.resources.external_funcs.push(panic);
+        panic
+    }
+
     fn add_callback(&mut self, cb: impl Brc + 'static) {
         self.query.add_rule.push(Box::new(cb));
     }
 
     /// Access the underlying egraph within the builder.
     pub fn egraph(&self) -> &EGraph {
-        self.egraph
+        self.resources.egraph
     }
 
     /// Register a runtime panic with a custom message and return its
@@ -179,7 +205,9 @@ impl RuleBuilder<'_> {
     ///
     /// [`call_external_func`]: Self::call_external_func
     pub fn new_panic(&mut self, message: String) -> crate::ExternalFunctionId {
-        self.egraph.new_panic(message)
+        let panic = self.resources.egraph.new_panic(message);
+        self.resources.external_funcs.push(panic);
+        panic
     }
 
     pub(crate) fn set_plan_strategy(&mut self, strategy: PlanStrategy) {
@@ -295,15 +323,16 @@ impl RuleBuilder<'_> {
         if self.query.atoms.len() == 1 {
             self.query.plan_strategy = PlanStrategy::MinCover;
         }
-        let res = self.query.rule_id;
+        let res = self.resources.egraph.rules.reserve_slot();
         let info = RuleInfo {
             last_run_at: Timestamp::new(0),
             query: self.query,
+            owned_external_funcs: std::mem::take(&mut self.resources.external_funcs),
             cached_plan: None,
             desc: self.desc,
         };
         debug!("created rule {res:?} / {}", info.desc);
-        self.egraph.rules.insert(res, info);
+        self.resources.egraph.rules.insert(res, info);
         res
     }
 
@@ -355,7 +384,7 @@ impl RuleBuilder<'_> {
     ) -> AtomId {
         let mut atom = entries.to_vec();
         let schema_math = if let Some(func) = func {
-            let info = &self.egraph.funcs[func];
+            let info = &self.resources.egraph.funcs[func];
             assert_eq!(info.schema.len(), entries.len());
             SchemaMath {
                 subsume: info.can_subsume,
@@ -394,7 +423,7 @@ impl RuleBuilder<'_> {
         let args = args.to_vec();
         let res = self.new_var(ret_ty);
         // External functions that fail on the RHS of a rule should cause a panic.
-        let panic_fn = self.egraph.new_panic_lazy(panic_msg);
+        let panic_fn = self.new_panic_lazy(panic_msg);
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let args = inner.convert_all(&args);
             let var = rb.call_external_with_fallback(func, &args, panic_fn, &[])?;
@@ -413,7 +442,7 @@ impl RuleBuilder<'_> {
         entries: &[QueryEntry],
         is_subsumed: Option<bool>,
     ) -> Result<AtomId> {
-        let info = &self.egraph.funcs[func];
+        let info = &self.resources.egraph.funcs[func];
         let schema = &info.schema;
         if schema.len() != entries.len() {
             return Err(anyhow::Error::from(RuleBuilderError::ArityMismatch {
@@ -483,7 +512,7 @@ impl RuleBuilder<'_> {
             },
             || "subsumed a nonextestent row!".to_string(),
         );
-        let info = &self.egraph.funcs[func];
+        let info = &self.resources.egraph.funcs[func];
         let schema_math = SchemaMath {
             subsume: info.can_subsume,
             func_cols: info.schema.len(),
@@ -529,7 +558,7 @@ impl RuleBuilder<'_> {
         panic_msg: impl FnOnce() -> String + Send + 'static,
     ) -> Variable {
         let entries = entries.to_vec();
-        let info = &self.egraph.funcs[func];
+        let info = &self.resources.egraph.funcs[func];
         let res = self
             .query
             .vars
@@ -581,7 +610,7 @@ impl RuleBuilder<'_> {
                 })
             }
             DefaultVal::Fail => {
-                let panic_func = self.egraph.new_panic_lazy(panic_msg);
+                let panic_func = self.new_panic_lazy(panic_msg);
                 Box::new(move |inner, rb| {
                     let dst_vars = inner.convert_all(&entries);
                     let var = rb.lookup_with_fallback(
@@ -670,7 +699,7 @@ impl RuleBuilder<'_> {
         entries: &[QueryEntry],
         subsume_entry: QueryEntry,
     ) {
-        let info = &self.egraph.funcs[func];
+        let info = &self.resources.egraph.funcs[func];
         let table = info.table;
         let entries = entries.to_vec();
         let schema_math = SchemaMath {
@@ -693,7 +722,7 @@ impl RuleBuilder<'_> {
 
     /// Remove the value of a function from the database.
     pub fn remove(&mut self, table: FunctionId, entries: &[QueryEntry]) {
-        let table = self.egraph.funcs[table].table;
+        let table = self.resources.egraph.funcs[table].table;
         let entries = entries.to_vec();
         let cb: BuildRuleCallback = Box::new(move |inner, rb| {
             let dst_vars = inner.convert_all(&entries);
@@ -704,7 +733,7 @@ impl RuleBuilder<'_> {
 
     /// Panic with a given message.
     pub fn panic(&mut self, message: String) {
-        let panic = self.egraph.new_panic(message.clone());
+        let panic = self.new_panic(message);
         let ret_ty = ColumnTy::Id;
         let res = self.new_var(ret_ty);
         self.query.add_rule.push(Box::new(move |inner, rb| {

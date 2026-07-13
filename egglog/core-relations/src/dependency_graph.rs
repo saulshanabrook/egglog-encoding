@@ -52,6 +52,15 @@ impl DependencyGraph {
         self.levels.get_or_default(level).insert(table);
     }
 
+    pub(crate) fn remove_last_table(&mut self, table: TableId) {
+        let level = self
+            .to_level
+            .take(table)
+            .expect("removed table must be registered in the dependency graph");
+        self.levels[level].shift_remove(&table);
+        self.write_deps.take(table);
+    }
+
     pub(crate) fn strata(&self) -> impl Iterator<Item = &IndexSet<TableId>> {
         self.levels.iter().map(|(_, tables)| tables)
     }

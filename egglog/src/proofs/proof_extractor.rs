@@ -2,6 +2,7 @@ use crate::ast::FunctionSubtype;
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
 use crate::{ArcSort, EGraph, Value};
+use egglog_backend_trait::BackendExt;
 
 /// Root-directed extraction for proof terms.
 ///
@@ -173,23 +174,29 @@ mod tests {
     use super::*;
 
     fn first_output(egraph: &EGraph, function_name: &str) -> Value {
-        let func = egraph.functions.get(function_name).unwrap();
+        let func = egraph
+            .functions
+            .get(function_name)
+            .unwrap_or_else(|| panic!("function `{function_name}` was not declared"));
         let mut value = None;
         egraph.backend.for_each_while(func.backend_id, |row| {
             value = Some(row.vals[func.extraction_output_index()]);
             false
         });
-        value.unwrap()
+        value.unwrap_or_else(|| panic!("function `{function_name}` has no rows"))
     }
 
     fn first_input(egraph: &EGraph, function_name: &str, input: usize) -> Value {
-        let func = egraph.functions.get(function_name).unwrap();
+        let func = egraph
+            .functions
+            .get(function_name)
+            .unwrap_or_else(|| panic!("function `{function_name}` was not declared"));
         let mut value = None;
         egraph.backend.for_each_while(func.backend_id, |row| {
             value = Some(row.vals[input]);
             false
         });
-        value.unwrap()
+        value.unwrap_or_else(|| panic!("function `{function_name}` has no rows"))
     }
 
     fn extract_to_string(egraph: &EGraph, value: Value, sort_name: &str) -> String {

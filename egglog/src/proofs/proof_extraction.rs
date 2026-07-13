@@ -2,7 +2,8 @@ use crate::ast::FunctionSubtype;
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
 use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
-use crate::{RawValues, Read, ResolvedCall, TermDag};
+use crate::{ResolvedCall, TermDag};
+use egglog_backend_trait::BackendExt;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -70,7 +71,7 @@ impl ProofInstrumentor<'_> {
                 )
             })
             .clone();
-        let proof_sort = self
+        let proof_function = self
             .egraph
             .functions
             .get(&proof_function_name)
@@ -79,14 +80,12 @@ impl ProofInstrumentor<'_> {
                     "proof table {proof_function_name} for constructor {} was not declared",
                     func.name
                 )
-            })
-            .schema
-            .output
-            .clone();
+            });
+        let proof_sort = proof_function.schema.output.clone();
         let proof_value = self
             .egraph
-            .update_unchecked(|fs| fs.lookup(&proof_function_name, RawValues(vec![witness_value])))
-            .unwrap()
+            .backend
+            .lookup_id(proof_function.backend_id, &[witness_value])
             .unwrap_or_else(|| panic!("no proof recorded for constructor {}", func.name));
 
         let proof_term_id = extract_root(self.egraph, &mut termdag, proof_value, proof_sort)
