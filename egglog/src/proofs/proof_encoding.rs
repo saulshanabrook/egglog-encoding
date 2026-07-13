@@ -308,8 +308,10 @@ impl<'a> ProofInstrumentor<'a> {
             "()".to_string()
         };
         let mut merge_fn_code = vec![];
+        // Proof instrumentation tracks the merged *value*; a `:merge` action block's effects are
+        // not proof-tracked (action-block merges under proofs are unsupported).
         let merge_fn_var = self.instrument_action_expr(
-            merge_fn,
+            &merge_fn.result,
             &mut merge_fn_code,
             &Justification::Merge(name.clone(), p1_fresh.clone(), p2_fresh.clone()),
         );

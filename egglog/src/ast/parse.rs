@@ -458,14 +458,44 @@ impl Parser {
                                 }
                                 merge = Some(None);
                             }
-                            (":merge", [e]) => {
+                            (":merge", args) => {
                                 if merge.is_some() {
                                     return error!(
                                         span,
                                         "conflicting merge options: :merge and :no-merge cannot both be specified"
                                     );
                                 }
-                                merge = Some(Some(self.parse_expr(e)?));
+                                // `:merge (<action>* <result-expr>)`: a value-producing action
+                                // block. When the block's first element is itself a list it is an
+                                // action block — the last element is the merged value, the earlier
+                                // ones are actions run first (with old/new bound). Otherwise the
+                                // block is an ordinary result expression: the common back-compatible
+                                // `:merge (max old new)` / `:merge new` (an expression always has an
+                                // atom head, so this is unambiguous).
+                                let [arg] = args else {
+                                    return error!(
+                                        span,
+                                        ":merge takes a single result expression or action block: `:merge (<action>* <expr>)`"
+                                    );
+                                };
+                                let m = match arg {
+                                    Sexp::List(items, _)
+                                        if matches!(items.first(), Some(Sexp::List(..))) =>
+                                    {
+                                        let (result_sexp, action_sexps) =
+                                            items.split_last().unwrap();
+                                        let mut actions = Vec::new();
+                                        for a in action_sexps {
+                                            actions.extend(self.parse_action(a)?);
+                                        }
+                                        GenericMerge {
+                                            actions: GenericActions(actions),
+                                            result: self.parse_expr(result_sexp)?,
+                                        }
+                                    }
+                                    _ => GenericMerge::result_only(self.parse_expr(arg)?),
+                                };
+                                merge = Some(Some(m));
                             }
                             (":internal-hidden", []) => hidden = true,
                             (":internal-let", []) => let_binding = true,
@@ -497,7 +527,8 @@ impl Parser {
                     }]
                 }
                 _ => {
-                    let a = "(function <name> (<input sort>*) <output sort> :merge <expr>)";
+                    let a =
+                        "(function <name> (<input sort>*) <output sort> :merge <action>* <expr>)";
                     let b = "(function <name> (<input sort>*) <output sort> :no-merge)";
                     return error!(span, "usages:\n{a}\n{b}");
                 }

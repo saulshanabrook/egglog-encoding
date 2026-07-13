@@ -835,18 +835,36 @@ impl TypeInfo {
             bound_vars.insert("new", (fdecl.span.clone(), outputs[0].clone()));
         }
 
+        // A `:merge` is a value-producing action block: the `actions` run (writes are allowed, but
+        // live DB reads would be untracked by seminaive rule execution), then `result` produces the
+        // merged value(s). Both are typechecked with `old`/`new` (`old0`/`new0`/... for tuple)
+        // bound; the actions go through the same action typechecker as rule bodies.
         let merge = match &fdecl.merge {
-            // Merge expressions run as part of action-side table updates: writes are allowed, but
-            // live DB reads would be untracked by seminaive rule execution.
-            Some(merge) if is_tuple => {
-                Some(self.typecheck_tuple_merge(symbol_gen, fdecl, merge, &outputs, &bound_vars)?)
+            Some(merge) => {
+                let actions = self.typecheck_standalone_actions(
+                    symbol_gen,
+                    &merge.actions,
+                    &bound_vars,
+                    Context::Write,
+                )?;
+                let result = if is_tuple {
+                    self.typecheck_tuple_merge(
+                        symbol_gen,
+                        fdecl,
+                        &merge.result,
+                        &outputs,
+                        &bound_vars,
+                    )?
+                } else {
+                    self.typecheck_standalone_expr(
+                        symbol_gen,
+                        &merge.result,
+                        &bound_vars,
+                        Context::Write,
+                    )?
+                };
+                Some(ResolvedMerge { actions, result })
             }
-            Some(merge) => Some(self.typecheck_standalone_expr(
-                symbol_gen,
-                merge,
-                &bound_vars,
-                Context::Write,
-            )?),
             None => None,
         };
 

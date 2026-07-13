@@ -42,6 +42,20 @@ pub struct GenericActions<Head: Clone + Display, Leaf: Clone + PartialEq + Eq + 
     pub Vec<GenericAction<Head, Leaf>>,
 );
 
+/// The `:merge` of a function: a *value-producing action block*. On a functional-dependency
+/// conflict, the `actions` run (with `old`/`new` — or `old0`/`new0`/... for tuple outputs — bound
+/// to the conflicting values), then `result` is evaluated to the merged value(s). A plain
+/// `:merge <expr>` has no actions (see [`GenericMerge::result_only`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GenericMerge<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    pub actions: GenericActions<Head, Leaf>,
+    pub result: GenericExpr<Head, Leaf>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum GenericAction<Head, Leaf>
 where

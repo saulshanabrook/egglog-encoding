@@ -13,8 +13,8 @@ use crate::core::{
 };
 use crate::*;
 pub use egglog_ast::generic_ast::{
-    Change, GenericAction, GenericActions, GenericExpr, GenericFact, GenericRule, Literal,
-    RuleEvalMode,
+    Change, GenericAction, GenericActions, GenericExpr, GenericFact, GenericMerge, GenericRule,
+    Literal, RuleEvalMode,
 };
 pub use egglog_ast::span::{RustSpan, Span};
 use egglog_ast::util::ListDisplay;
@@ -719,7 +719,7 @@ where
         span: Span,
         name: String,
         schema: Schema,
-        merge: Option<GenericExpr<Head, Leaf>>,
+        merge: Option<GenericMerge<Head, Leaf>>,
         hidden: bool,
         let_binding: bool,
         term_constructor: Option<String>,
@@ -1273,7 +1273,7 @@ where
     pub schema: Schema,
     /// Resolved schema after typechecking is stored here, otherwise "".
     pub resolved_schema: Head,
-    pub merge: Option<GenericExpr<Head, Leaf>>,
+    pub merge: Option<GenericMerge<Head, Leaf>>,
     pub cost: Option<DefaultCost>,
     pub unextractable: bool,
     /// Hidden functions are excluded from print-size output.
@@ -1370,7 +1370,7 @@ impl FunctionDecl {
         span: Span,
         name: String,
         schema: Schema,
-        merge: Option<GenericExpr<String, String>>,
+        merge: Option<GenericMerge<String, String>>,
     ) -> Self {
         Self {
             name,
@@ -1615,6 +1615,9 @@ pub(crate) type ResolvedAction = GenericAction<ResolvedCall, ResolvedVar>;
 pub type Actions = GenericActions<String, String>;
 pub(crate) type ResolvedActions = GenericActions<ResolvedCall, ResolvedVar>;
 pub(crate) type MappedActions<Head, Leaf> = GenericActions<CorrespondingVar<Head, Leaf>, Leaf>;
+
+pub type Merge = GenericMerge<String, String>;
+pub type ResolvedMerge = GenericMerge<ResolvedCall, ResolvedVar>;
 
 pub type Rule = GenericRule<String, String>;
 pub(crate) type ResolvedRule = GenericRule<ResolvedCall, ResolvedVar>;

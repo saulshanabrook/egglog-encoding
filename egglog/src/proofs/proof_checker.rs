@@ -58,13 +58,14 @@ pub(crate) fn run_merge(
         if let GenericNCommand::Function(func_decl) = cmd
             && func_decl.name == func_name
         {
-            // run the merge function for this function using eval_expr
-            let expr = func_decl.merge.as_ref().ok_or_else(|| {
+            // run the merge function for this function using eval_expr. The proof checker only
+            // evaluates the merged value; action-block merges aren't used under proofs.
+            let merge = func_decl.merge.as_ref().ok_or_else(|| {
                 ProofCheckError::from(ProofCheckErrorKind::FunctionNotFound {
                     function_name: func_name.to_string(),
                 })
             })?;
-            return eval_expr_with_subst("merge_function", expr, term_dag, &subst);
+            return eval_expr_with_subst("merge_function", &merge.result, term_dag, &subst);
         }
     }
     Err(ProofCheckErrorKind::FunctionNotFound {

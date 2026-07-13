@@ -831,6 +831,89 @@ impl EGraph {
         }
     }
 
+    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
+    /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
+    /// first as effects. Only `set` actions are lowered for now — the remaining action forms are
+    /// deferred to the merge-as-actions interpreter rewrite (step 3).
+    fn translate_merge_to_mergefn(
+        &self,
+        merge: &ResolvedMerge,
+    ) -> Result<egglog_bridge::MergeFn, Error> {
+        use egglog_bridge::MergeFn;
+        // Lower the result value (a `(values ...)` result becomes one column per element).
+        let result = match &merge.result {
+            GenericExpr::Call(_, ResolvedCall::Values(_), cols) => MergeFn::Columns(
+                cols.iter()
+                    .map(|e| self.translate_expr_to_mergefn(e))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            expr => self.translate_expr_to_mergefn(expr)?,
+        };
+        if merge.actions.is_empty() {
+            return Ok(result);
+        }
+        let mut effects = merge
+            .actions
+            .iter()
+            .map(|a| self.translate_merge_action(a))
+            .collect::<Result<Vec<_>, _>>()?;
+        // Sequence the effects before the result value. A `Columns` result must stay the top-level
+        // merge, so the effects fold into its first column (they run once, when column 0 is
+        // computed).
+        Ok(match result {
+            MergeFn::Columns(mut cols) => {
+                let first = cols.remove(0);
+                effects.push(first);
+                cols.insert(0, MergeFn::Seq(effects));
+                MergeFn::Columns(cols)
+            }
+            other => {
+                effects.push(other);
+                MergeFn::Seq(effects)
+            }
+        })
+    }
+
+    /// Lower a single resolved merge action to a [`MergeFn`] effect. Only `set` is supported (as a
+    /// `TableInsert`); other actions are deferred to the interpreter rewrite.
+    fn translate_merge_action(
+        &self,
+        action: &ResolvedAction,
+    ) -> Result<egglog_bridge::MergeFn, Error> {
+        use egglog_bridge::MergeFn;
+        match action {
+            GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
+                let backend_id = self
+                    .functions
+                    .get(&f.name)
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "merge action sets unknown function `{}`",
+                            f.name
+                        ))
+                    })?
+                    .backend_id;
+                let mut args = keys
+                    .iter()
+                    .map(|k| self.translate_expr_to_mergefn(k))
+                    .collect::<Result<Vec<_>, _>>()?;
+                // A tuple-output target is set with `(values ...)`; expand it into value columns.
+                match val {
+                    GenericExpr::Call(_, ResolvedCall::Values(_), cols) => {
+                        for c in cols {
+                            args.push(self.translate_expr_to_mergefn(c)?);
+                        }
+                    }
+                    _ => args.push(self.translate_expr_to_mergefn(val)?),
+                }
+                Ok(MergeFn::TableInsert(backend_id, args))
+            }
+            other => Err(Error::BackendError(format!(
+                "action `{other}` is not yet supported inside a :merge block (only `set` for now)"
+            ))),
+        }
+    }
+
     /// Build the native congruence `:merge` for a term-encoding constructor view
     /// `(children) -> (eclass, view_proof)` (proof mode). Returns `Ok(None)` for any function that
     /// isn't such a view, leaving the ordinary merge lowering in place. Once the view shape matches,
@@ -1076,14 +1159,7 @@ impl EGraph {
             match decl.subtype {
                 FunctionSubtype::Constructor => MergeFn::UnionId,
                 FunctionSubtype::Custom => match &decl.merge {
-                    // A tuple-output merge is a `(values e0 e1 ...)` form: each `ei` becomes the merge
-                    // for output column `i`.
-                    Some(GenericExpr::Call(_, ResolvedCall::Values(_), cols)) => MergeFn::Columns(
-                        cols.iter()
-                            .map(|e| self.translate_expr_to_mergefn(e))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    ),
-                    Some(expr) => self.translate_expr_to_mergefn(expr)?,
+                    Some(merge) => self.translate_merge_to_mergefn(merge)?,
                     // No merge clause: assert equality per output column.
                     None if num_outputs > 1 => {
                         MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
