@@ -447,7 +447,6 @@ impl EGraph {
         MergeTransaction::new(self, sets).run()
     }
 
-
     /// Move every live row of `f` whose LEADING columns equal `prefix` into the
     /// `subsumed` side-set (a "soft delete"): the row stays in the table — still
     /// counted by `table_size`, still visible to `for_each` and to
@@ -637,11 +636,17 @@ impl<'a> MergeTransaction<'a> {
     }
 
     fn run(mut self) -> Result<bool> {
+        let result = self.run_inner();
+        if result.is_err() {
+            self.eg.next_id = self.next_id_at_start;
+        }
+        result
+    }
+
+    fn run_inner(&mut self) -> Result<bool> {
         while !self.pending.is_empty() {
             let mut wave = std::mem::take(&mut self.pending);
-            wave.sort_by_key(|(function, _)| {
-                (self.eg.info(*function).merge_level, function.rep())
-            });
+            wave.sort_by_key(|(function, _)| (self.eg.info(*function).merge_level, function.rep()));
             for (function, row) in wave {
                 self.apply_set(function, &row)?;
             }
@@ -670,9 +675,7 @@ impl<'a> MergeTransaction<'a> {
                     replacements.push((key.clone(), current.located()));
                 }
             }
-            self.changed |= self
-                .eg
-                .replace_located_rows(function, n_keys, replacements);
+            self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
         }
 
         Ok(self.changed || self.eg.next_id != self.next_id_at_start)
@@ -702,13 +705,7 @@ impl<'a> MergeTransaction<'a> {
         self.states[&function].current.get(key).cloned()
     }
 
-    fn set_current(
-        &mut self,
-        function: FunctionId,
-        n_keys: usize,
-        key: Row,
-        current: CurrentRow,
-    ) {
+    fn set_current(&mut self, function: FunctionId, n_keys: usize, key: Row, current: CurrentRow) {
         self.ensure_state(function, n_keys);
         let state = self
             .states
@@ -749,8 +746,8 @@ impl<'a> MergeTransaction<'a> {
             return Ok(());
         };
 
-        let identity_unchanged = n_identity_vals
-            .is_some_and(|count| old.values[..count] == incoming[..count]);
+        let identity_unchanged =
+            n_identity_vals.is_some_and(|count| old.values[..count] == incoming[..count]);
         let merged = if identity_unchanged {
             old.values.clone()
         } else {
@@ -882,14 +879,7 @@ impl<'a> MergeTransaction<'a> {
                 if old[self_col] == new[self_col] {
                     return Ok(old[self_col]);
                 }
-                let key = self.eval_args(
-                    arguments,
-                    owner,
-                    old,
-                    new,
-                    self_col,
-                    environment,
-                )?;
+                let key = self.eval_args(arguments, owner, old, new, self_col, environment)?;
                 self.lookup_or_insert(*function, &key)?
                     .map(|values| values[0])
                     .ok_or_else(|| {
@@ -901,14 +891,7 @@ impl<'a> MergeTransaction<'a> {
                     })
             }
             MergeExpr::Lookup(function, arguments) => {
-                let key = self.eval_args(
-                    arguments,
-                    owner,
-                    old,
-                    new,
-                    self_col,
-                    environment,
-                )?;
+                let key = self.eval_args(arguments, owner, old, new, self_col, environment)?;
                 Ok(self
                     .lookup_or_insert(*function, &key)?
                     .map_or(old[self_col], |values| values[0]))
@@ -1435,6 +1418,42 @@ mod tests {
     }
 
     #[test]
+    fn failed_tuple_merge_rolls_back_fresh_ids_and_staged_rows() {
+        let mut eg = EGraph::new();
+        let fresh = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::FreshId,
+                merge: MergeFn::Old,
+                name: "fresh".to_string(),
+                can_subsume: false,
+            },
+        );
+        let f = tuple_function(
+            &mut eg,
+            "failing tuple",
+            MergeFn::Columns(vec![
+                MergeFn::Lookup(fresh, vec![MergeFn::Const(Value::new(7))]),
+                MergeFn::AssertEq,
+            ]),
+            None,
+            false,
+        );
+        eg.insert_live_row(f, row(&[1, 10, 20]));
+        let next_id = eg.next_id;
+
+        let error = eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap_err();
+
+        assert!(error.to_string().contains("illegal merge attempted"));
+        assert_eq!(eg.next_id, next_id);
+        assert!(eg.mirror[&fresh].is_empty());
+        assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 20])]));
+    }
+
+    #[test]
     fn identity_column_guard_skips_payload_only_conflicts() {
         let mut eg = EGraph::new();
         let f = tuple_function(
@@ -1538,11 +1557,7 @@ mod tests {
         );
         eg.insert_live_row(trigger, row(&[0]));
         let mut rule = TestRule::new("tuple set");
-        rule.query_table(
-            trigger,
-            &[constant(0, ColumnTy::Id)],
-            Some(false),
-        );
+        rule.query_table(trigger, &[constant(0, ColumnTy::Id)], Some(false));
         rule.set_values(
             tuple,
             &[constant(1, ColumnTy::Id)],

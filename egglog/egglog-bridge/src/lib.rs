@@ -1514,10 +1514,7 @@ enum ResolvedMergeAction {
     },
     /// `(let x <value>)`: evaluate `value` and push it onto the environment (its slot equals the
     /// current environment length, since `let`s run in slot order).
-    Let {
-        slot: usize,
-        value: ResolvedMergeFn,
-    },
+    Let { slot: usize, value: ResolvedMergeFn },
     /// `(union a b)`: stage a union of the two eclasses into the union-find.
     Union {
         a: ResolvedMergeFn,
@@ -1948,7 +1945,10 @@ impl TableAction {
 
     /// Subsume a row in this table.
     pub fn subsume(&self, state: &mut ExecutionState, key: impl Iterator<Item = Value>) {
-        assert!(self.table_math.subsume, "table does not support subsumption");
+        assert!(
+            self.table_math.subsume,
+            "table does not support subsumption"
+        );
         let ts = Value::from_usize(state.read_counter(self.timestamp));
         let mut scratch = key.collect::<SmallVec<[_; 8]>>();
         let values = self

@@ -712,8 +712,7 @@ impl<'a> ProofInstrumentor<'a> {
                 let ci = child(i);
                 let rebuilt = format!("c{i}_rebuilt_");
                 let value_prim = self.ensure_container_rebuild(ty);
-                let (query_view, _pf) =
-                    self.query_view_and_get_proof(&fdecl.name, &children_vec);
+                let (query_view, _pf) = self.query_view_and_get_proof(&fdecl.name, &children_vec);
                 let mut updated = children_vec.clone();
                 updated[i] = rebuilt.clone();
                 let updated_view = self.update_view(&fdecl.name, &updated, "()");
@@ -797,8 +796,7 @@ impl<'a> ProofInstrumentor<'a> {
                 let cproof = self.term_proof_name(ty.name());
                 let mut updated = children_vars.clone();
                 updated[i] = rebuilt.clone();
-                let updated_view =
-                    self.update_fd_view(&fdecl.name, &updated, &eclass_var, &new_pf);
+                let updated_view = self.update_fd_view(&fdecl.name, &updated, &eclass_var, &new_pf);
                 let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
                 rules.push_str(&format!(
                     "(rule ({query_view}

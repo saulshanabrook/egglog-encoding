@@ -30,8 +30,8 @@ expression: proof_snapshot
       (Sym (= (Holds (set-of (A))) t0) prf1)
       prf1))
   (substitution
-    (@v34 (A))
-    (@v35 (set-of (A)))
-    (@v36 (A))
-    (@v37 (set-of (A)))
-    (@v33 (A))))
+    (@v51 (set-of (A)))
+    (@v47 (A))
+    (@v48 (A))
+    (@v50 (A))
+    (@v49 (set-of (A)))))

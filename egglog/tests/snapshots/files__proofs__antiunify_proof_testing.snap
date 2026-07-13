@@ -7,105 +7,61 @@ expression: proof_snapshot
 (let t2 (Add (Num 3) (Var "y")))
 (let t3 (AU t1 t2))
 (let t4 (AU (Var "x") (Var "y")))
-(let t5 (Add t0 t4))
-(let t6 (AU t0 t0))
-(let t7 (Add t6 t4))
-(let t8 (Add t0 (Var "x")))
-(let t9 (Add t0 (Var "y")))
-(let prf0 (Fiat (= t3 t3)))
-(let prf1 (Fiat (= t2 t2)))
-(let prf2
+(let t5 (AU t0 t0))
+(let t6 (Add t5 t4))
+(let t7 (Add t0 (Var "x")))
+(let t8 (Add t0 (Var "y")))
+(let prf0
   (Rule
                   (= (Num 3) t0)
                   (name "(rewrite (Add (Num x) (Num y)) (Num (+ x y)))")
                   (premises (Fiat (= t0 t0)))
                   (substitution (@rewrite_var__1 t0) (x 1) (y 2))))
-(let t10
+(let t9
   (premises
             (Congr
-              (= t3 (AU t8 t9))
+              (= t3 (AU t7 t8))
               (Congr
-                (= t3 (AU t8 t2))
-                prf0
+                (= t3 (AU t7 t2))
+                (Fiat (= t3 t3))
                 (Sym
-                  (= t1 t8)
+                  (= t1 t7)
                   (Rule
-                    (= t8 t1)
+                    (= t7 t1)
                     (name "(rewrite (Add x y) (Add y x))")
                     (premises (Fiat (= t1 t1)))
                     (substitution (y t0) (x (Var "x")) (@rewrite_var__ t1))))
                 0)
-              (Congr (= t2 t9) prf1 prf2 0)
+              (Congr (= t2 t8) (Fiat (= t2 t2)) prf0 0)
               1)))
-(let t11 (@rewrite_var__3 t3))
-(let t12 (substitution t11 (a t0) (d (Var "y")) (b (Var "x")) (c t0)))
-(let t13 (Add t4 t6))
-(let t14 (Add (Var "y") t0))
-(let t15 (Add (Var "y") (Num 3)))
-(let t16 (premises prf1))
-(let t17
+(let t10
   (substitution
-                            (y (Var "y"))
-                            (x (Num 3))
-                            (@rewrite_var__ t2)))
+            (@rewrite_var__3 t3)
+            (a t0)
+            (d (Var "y"))
+            (b (Var "x"))
+            (c t0)))
 (Congr
   (= t3 (Add (Num 3) t4))
-  (Trans
-    (= t3 t5)
+  (Congr
+    (= t3 (Add t0 t4))
     (Sym
-      (= t3 t7)
+      (= t3 t6)
       (Rule
-        (= t7 t3)
+        (= t6 t3)
         (name "(rewrite (AU (Add a b) (Add c d)) (Add (AU a c) (AU b d)))")
-        t10
-        t12))
-    (Congr
-      (= t7 t5)
-      (Rule
-        (= t7 t7)
-        (name "(rewrite (Add x y) (Add y x))")
-        (premises
-          (Sym
-            (= t3 t13)
-            (Rule
-              (= t13 t3)
-              (name
-                "(rewrite (AU (Add a b) (Add c d)) (Add (AU a c) (AU b d)))")
-              (premises
-                (Congr
-                  (= t3 (AU t1 t14))
-                  prf0
-                  (Trans
-                    (= t2 t14)
-                    (Sym
-                      (= t2 t15)
-                      (Rule
-                        (= t15 t2)
-                        (name "(rewrite (Add x y) (Add y x))")
-                        t16
-                        t17))
-                    (Congr
-                      (= t15 t14)
-                      (Rule
-                        (= t15 t15)
-                        (name "(rewrite (Add x y) (Add y x))")
-                        t16
-                        t17)
-                      prf2
-                      1))
-                  1))
-              (substitution t11 (a (Var "x")) (d t0) (b t0) (c (Var "y"))))))
-        (substitution (y t6) (x t4) (@rewrite_var__ t3)))
-      (Rule
-        (= t6 t0)
-        (name "(rewrite (AU x x) x)")
-        (premises
-          (Rule
-            (= t6 t6)
-            (name "(rewrite (AU (Add a b) (Add c d)) (Add (AU a c) (AU b d)))")
-            t10
-            t12))
-        (substitution (@rewrite_var__2 t6) (x t0)))
-      0))
-  (Sym (= t0 (Num 3)) prf2)
+        t9
+        t10))
+    (Rule
+      (= t5 t0)
+      (name "(rewrite (AU x x) x)")
+      (premises
+        (Rule
+          (= t5 t5)
+          (name "(rewrite (AU (Add a b) (Add c d)) (Add (AU a c) (AU b d)))")
+          t9
+          t10))
+      (substitution (@rewrite_var__2 t5) (x t0)))
+    0)
+  (Sym (= t0 (Num 3)) prf0)
   0)

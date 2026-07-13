@@ -21,8 +21,7 @@ use once_cell::sync::Lazy;
 
 use crate::{
     ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn, QueryEntry,
-    TableAction,
-    add_expressions, define_rule,
+    TableAction, add_expressions, define_rule,
 };
 
 #[test]
@@ -1938,9 +1937,9 @@ fn tuple_subsume_preserves_all_outputs() {
     let first = egraph.base_values_mut().get(10_i64);
     let second = egraph.base_values_mut().get(20_i64);
     let action = TableAction::new(&egraph, f);
-    egraph.db.with_execution_state(|state| {
-        action.insert(state, [key, first, second].into_iter())
-    });
+    egraph
+        .db
+        .with_execution_state(|state| action.insert(state, [key, first, second].into_iter()));
     egraph.flush_updates();
     egraph
         .db
