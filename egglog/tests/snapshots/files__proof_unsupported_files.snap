@@ -21,6 +21,7 @@ herbie.egg
 interval.egg
 levenshtein-distance.egg
 looking_up_global.egg
+luminal-llama.egg
 map.egg
 math.egg
 merge-action-block.egg

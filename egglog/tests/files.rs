@@ -30,7 +30,6 @@ const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &[
     "eqsolve.egg",
     "hardboiled_conv1d_32.egg",
     "herbie.egg",
-    "luminal-llama.egg",
     "bool.egg",
     "container-fail.egg",
     "delete.egg",

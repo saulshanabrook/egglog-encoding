@@ -1,4 +1,11 @@
 
+; Adapted from pointer-analysis-benchmark/main.egg in the PLDI 2023 artifact
+; "Better Together: Unifying Datalog and Equality Saturation". The checked-in
+; facts use the first 100 rows of each relation in the postgresql-9.5.2
+; initdb.bc dataset. Three legacy functions are constructors here because
+; current egglog requires merge modes and rejects rule-body lookups on
+; :no-merge functions.
+
 ;; functions
 (relation function_name (String))
 (input function_name "function.csv")

@@ -74,6 +74,22 @@ fn proof_mode_inputs_rows_as_fiat_actions() {
 }
 
 #[test]
+fn proof_mode_rejects_fail_wrapped_input() {
+    let error = EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (relation Edge (String String))
+            (fail (input Edge "edges.tsv"))
+            "#,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+    assert!(error.to_string().contains("`fail` wrapping an `input` command"));
+}
+
+#[test]
 fn pointer_analysis_sample_passes_proof_checking() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -84,4 +100,17 @@ fn pointer_analysis_sample_passes_proof_checking() {
         std::fs::read_to_string(repository.join("benchmarks/pointer-analysis-small.egg")).unwrap();
 
     egraph.parse_and_run_program(None, &program).unwrap();
+}
+
+#[test]
+fn luminal_benchmark_passes_proof_checking() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("egglog crate should be inside the workspace");
+    let program = std::fs::read_to_string(repository.join("benchmarks/luminal-llama.egg")).unwrap();
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, &program)
+        .unwrap();
 }

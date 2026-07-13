@@ -93,7 +93,7 @@ DEFAULT_WORKLOADS = (
         "benchmarks/data/pointer-analysis-small",
     ),
     WorkloadConfig("egglog/tests/hardboiled_conv1d_32.egg"),
-    WorkloadConfig("egglog/tests/luminal-llama.egg"),
+    WorkloadConfig("benchmarks/luminal-llama.egg"),
     WorkloadConfig("egglog/tests/web-demo/herbie.egg"),
 )
 TARGET_WALL_TIME_CAPTION = (
@@ -232,6 +232,24 @@ def report_file_labels(files: Sequence[FileSpec]) -> dict[FileSpec, str]:
             path_labels = {path: path for path in paths}
         for file_spec in group:
             labels[file_spec] = path_labels[file_spec.display_path]
+
+    by_label: dict[str, list[FileSpec]] = {}
+    for file_spec in files:
+        by_label.setdefault(labels[file_spec], []).append(file_spec)
+    for label, group in by_label.items():
+        if len(group) == 1:
+            continue
+        fact_labels = {
+            file_spec: file_spec.fact_directory.name if file_spec.fact_directory is not None else "no-facts"
+            for file_spec in group
+        }
+        if len(set(fact_labels.values())) != len(group):
+            fact_labels = {
+                file_spec: str(file_spec.fact_directory) if file_spec.fact_directory is not None else "no-facts"
+                for file_spec in group
+            }
+        for file_spec in group:
+            labels[file_spec] = f"{label}:{fact_labels[file_spec]}"
     return labels
 
 
@@ -389,8 +407,13 @@ class CellSummary:
         return self.issue is None and self.mean is not None
 
 
-CellMap = dict[tuple[str, Backend, Treatment], CellSummary]
+CellKey = tuple[str, str, Backend, Treatment]
+CellMap = dict[CellKey, CellSummary]
 TargetCellMaps = dict[ResolvedTarget, CellMap]
+
+
+def cell_key(file_spec: FileSpec, backend: Backend, treatment: Treatment) -> CellKey:
+    return (file_spec.sha256, file_spec.fact_directory_sha256, backend, treatment)
 
 
 @dataclass(frozen=True)
@@ -2099,7 +2122,7 @@ def target_cell_summaries(
     chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, cell.backend, cell.treatment): summarize_cell(
+        cell_key(file_spec, cell.backend, cell.treatment): summarize_cell(
             selected_rows(
                 rows,
                 estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
@@ -2122,7 +2145,7 @@ def target_rss_cell_summaries(
     chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, cell.backend, cell.treatment): summarize_rss_cell(
+        cell_key(file_spec, cell.backend, cell.treatment): summarize_rss_cell(
             selected_rows(
                 rows,
                 estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
@@ -2145,8 +2168,8 @@ def target_suite_treatment_ratio(
     return suite_ratio(
         [
             (
-                baseline_cells[(file_spec.sha256, backend, treatment)],
-                candidate_cells[(file_spec.sha256, backend, treatment)],
+                baseline_cells[cell_key(file_spec, backend, treatment)],
+                candidate_cells[cell_key(file_spec, backend, treatment)],
             )
             for file_spec in spec.files
         ]
@@ -2163,8 +2186,8 @@ def treatment_file_cells(
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, backend, baseline_treatment)],
-            cell_map[(file_spec.sha256, backend, candidate_treatment)],
+            cell_map[cell_key(file_spec, backend, baseline_treatment)],
+            cell_map[cell_key(file_spec, backend, candidate_treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2180,8 +2203,8 @@ def target_treatment_file_cells(
     return [
         (
             file_spec,
-            baseline_cells[(file_spec.sha256, backend, treatment)],
-            candidate_cells[(file_spec.sha256, backend, treatment)],
+            baseline_cells[cell_key(file_spec, backend, treatment)],
+            candidate_cells[cell_key(file_spec, backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2197,8 +2220,8 @@ def backend_treatment_file_cells(
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, baseline_backend, treatment)],
-            cell_map[(file_spec.sha256, candidate_backend, treatment)],
+            cell_map[cell_key(file_spec, baseline_backend, treatment)],
+            cell_map[cell_key(file_spec, candidate_backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2612,8 +2635,8 @@ def per_file_wall_time_change_tables(
         for file_spec in spec.files:
             for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
-                    cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+                    cell_maps[baseline][cell_key(file_spec, cell.backend, cell.treatment)],
+                    cell_maps[target][cell_key(file_spec, cell.backend, cell.treatment)],
                 )
                 rows.append(
                     report_row(
@@ -2664,8 +2687,8 @@ def per_file_peak_rss_change_tables(
         for file_spec in spec.files:
             for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    rss_cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
-                    rss_cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+                    rss_cell_maps[baseline][cell_key(file_spec, cell.backend, cell.treatment)],
+                    rss_cell_maps[target][cell_key(file_spec, cell.backend, cell.treatment)],
                 )
                 rows.append(
                     report_row(
@@ -2716,8 +2739,8 @@ def per_file_backend_wall_time_change_tables(
             for file_spec in spec.files:
                 for treatment_index, treatment in enumerate(shared_treatments):
                     ratio = ratio_summary(
-                        cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
-                        cell_maps[target][(file_spec.sha256, backend, treatment)],
+                        cell_maps[target][cell_key(file_spec, baseline_backend, treatment)],
+                        cell_maps[target][cell_key(file_spec, backend, treatment)],
                     )
                     rows.append(
                         report_row(
@@ -2758,7 +2781,11 @@ def per_file_backend_peak_rss_change_tables(
     baseline_backend = spec.backends[0]
     file_labels = report_file_labels(spec.files)
     baseline_has_rss = {
-        target: any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == baseline_backend)
+        target: any(
+            cell.samples
+            for (_, _, cell_backend, _), cell in rss_cell_maps[target].items()
+            if cell_backend == baseline_backend
+        )
         for target in targets
     }
     tables: list[ReportTableData] = []
@@ -2767,15 +2794,19 @@ def per_file_backend_peak_rss_change_tables(
             shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
             if not shared_treatments:
                 continue
-            candidate_has_rss = any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == backend)
+            candidate_has_rss = any(
+                cell.samples
+                for (_, _, cell_backend, _), cell in rss_cell_maps[target].items()
+                if cell_backend == backend
+            )
             if not baseline_has_rss[target] and not candidate_has_rss:
                 continue
             rows: list[tuple[str, ...]] = []
             for file_spec in spec.files:
                 for treatment_index, treatment in enumerate(shared_treatments):
                     ratio = ratio_summary(
-                        rss_cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
-                        rss_cell_maps[target][(file_spec.sha256, backend, treatment)],
+                        rss_cell_maps[target][cell_key(file_spec, baseline_backend, treatment)],
+                        rss_cell_maps[target][cell_key(file_spec, backend, treatment)],
                     )
                     rows.append(
                         report_row(
@@ -3233,7 +3264,7 @@ def target_wall_time_table_data(cell_map: CellMap, target: ResolvedTarget, spec:
         issue_parts: list[str] = []
         row_values = [file_labels[file_spec]]
         for cell in cells:
-            summary = cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            summary = cell_map[cell_key(file_spec, cell.backend, cell.treatment)]
             row_values.append(format_seconds_summary(summary))
             if summary.issue is not None:
                 issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
@@ -3286,8 +3317,8 @@ def overhead_ratios_table_data(
         for backend in spec.backends:
             for baseline_treatment, candidate_treatment, _ in ratio_columns[backend]:
                 ratio = ratio_summary(
-                    cell_map[(file_spec.sha256, backend, baseline_treatment)],
-                    cell_map[(file_spec.sha256, backend, candidate_treatment)],
+                    cell_map[cell_key(file_spec, backend, baseline_treatment)],
+                    cell_map[cell_key(file_spec, backend, candidate_treatment)],
                 )
                 row_values.append(format_ratio_summary(ratio))
         rows.append(tuple(row_values))
@@ -3327,7 +3358,7 @@ def target_peak_rss_table_data(
         issue_parts: list[str] = []
         row_values = [file_labels[file_spec]]
         for cell in cells:
-            summary = rss_cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            summary = rss_cell_map[cell_key(file_spec, cell.backend, cell.treatment)]
             row_values.append(format_bytes_summary(summary))
             if summary.issue is not None:
                 issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")

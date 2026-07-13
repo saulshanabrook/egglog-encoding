@@ -132,7 +132,7 @@ If no files are provided, the default target benchmark suite is:
 - `benchmarks/pointer-analysis-small.egg`, with its checked-in sample data in
   `benchmarks/data/pointer-analysis-small`
 - `egglog/tests/hardboiled_conv1d_32.egg`
-- `egglog/tests/luminal-llama.egg`
+- `benchmarks/luminal-llama.egg`
 - `egglog/tests/web-demo/herbie.egg`
 
 These six files are proof-compatible representative examples under the current
@@ -146,9 +146,9 @@ treatments complete within the standard timeout.
 | --- | --- | --- |
 | Math | Existing synthetic stress fixture | Existing checks and proof snapshots |
 | eggcc 2mm | Existing bounded container fixture | Existing checks and proof snapshots |
-| Pointer analysis | 100-row samples for 23 input relations | Known `constant_points_to` row is derived |
+| Pointer analysis | 100-row samples for 23 input relations; three legacy function declarations become constructors because current egglog requires merge modes and disallows rule-body lookup on `:no-merge` functions | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
-| Luminal | Static Llama graph from `egglog_repro` commit `7fb0194812b5b11e41a286d8b55e48e3b0bfcd66` | `t712` is checked after kernel lowering |
+| Luminal | Static Llama graph imported from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
 | Herbie | Static engine proxy; no end-to-end Racket orchestration or FPCore corpus | All 14 existing checks run through the proof checker |
 
 Relative file paths are resolved relative to the directory where `./bench.py`

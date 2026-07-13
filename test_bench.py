@@ -30,6 +30,7 @@ def make_record(
     max_rss_bytes: int | None = None,
     binary_sha256: str = "sha256:bin",
     file_sha256: str = "sha256:file",
+    fact_directory_sha256: str = "",
     backend: bench.Backend = "main",
     treatment: bench.Treatment = "off",
     timeout_sec: int = 120,
@@ -49,7 +50,7 @@ def make_record(
         "file_path": "file.egg",
         "file_sha256": file_sha256,
         "fact_directory_path": None,
-        "fact_directory_sha256": "",
+        "fact_directory_sha256": fact_directory_sha256,
         "backend": backend,
         "treatment": treatment,
         "timeout_sec": timeout_sec,
@@ -532,7 +533,7 @@ def test_default_workloads_are_the_six_research_cases() -> None:
         "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
         "benchmarks/pointer-analysis-small.egg",
         "egglog/tests/hardboiled_conv1d_32.egg",
-        "egglog/tests/luminal-llama.egg",
+        "benchmarks/luminal-llama.egg",
         "egglog/tests/web-demo/herbie.egg",
     )
     pointer = next(file for file in files if file.display_path == "benchmarks/pointer-analysis-small.egg")
@@ -552,6 +553,55 @@ def test_report_file_labels_use_filenames_and_disambiguate_collisions() -> None:
         first: "alpha/shared.egg",
         second: "nested/shared.egg",
     }
+
+
+def test_report_file_labels_disambiguate_fact_directories() -> None:
+    first = bench.FileSpec(
+        "query.egg",
+        ROOT / "query.egg",
+        "sha256:query",
+        ROOT / "facts-a",
+        "sha256:facts-a",
+    )
+    second = bench.FileSpec(
+        "query.egg",
+        ROOT / "query.egg",
+        "sha256:query",
+        ROOT / "facts-b",
+        "sha256:facts-b",
+    )
+
+    assert bench.report_file_labels((first, second)) == {
+        first: "query.egg:facts-a",
+        second: "query.egg:facts-b",
+    }
+
+
+def test_cell_summaries_distinguish_fact_directories() -> None:
+    first = bench.FileSpec("query.egg", ROOT / "query.egg", "sha256:query", ROOT / "facts-a", "sha256:facts-a")
+    second = bench.FileSpec("query.egg", ROOT / "query.egg", "sha256:query", ROOT / "facts-b", "sha256:facts-b")
+    spec = bench.BenchmarkSpec(files=(first, second), treatments=("off",), rounds=1, timeout_sec=120)
+    rows = make_rows(
+        make_record(
+            0,
+            started_at="2026-07-04T12:00:00Z",
+            file_sha256="sha256:query",
+            fact_directory_sha256="sha256:facts-a",
+            wall_sec=1.0,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-04T12:00:01Z",
+            file_sha256="sha256:query",
+            fact_directory_sha256="sha256:facts-b",
+            wall_sec=2.0,
+        ),
+    )
+
+    summaries = bench.target_cell_summaries(rows, make_target(), spec)
+
+    assert summaries[bench.cell_key(first, "main", "off")].mean == pytest.approx(1.0)
+    assert summaries[bench.cell_key(second, "main", "off")].mean == pytest.approx(2.0)
 
 
 def test_workload_argument_rejects_missing_file_or_fact_directory() -> None:
@@ -944,6 +994,7 @@ def test_render_report_backend_summary_highlights_best_file() -> None:
     )
 
     output = stream.getvalue()
+    assert "Per-file backend peak RSS change vs main" in output
     assert "DD vs main wall time" in output
     assert "DD vs main peak RSS" in output
     assert "Faster files" in output
