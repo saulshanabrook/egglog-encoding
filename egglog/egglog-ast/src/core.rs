@@ -41,8 +41,6 @@ impl<Leaf: Hash, Constant: Hash> Hash for GenericAtomTerm<Leaf, Constant> {
     }
 }
 
-pub type AtomTerm = GenericAtomTerm<String>;
-
 impl<Leaf, Constant> GenericAtomTerm<Leaf, Constant> {
     pub fn span(&self) -> &Span {
         match self {
@@ -77,8 +75,6 @@ pub struct GenericAtom<Head, Leaf, Constant = Literal> {
     pub head: Head,
     pub args: Vec<GenericAtomTerm<Leaf, Constant>>,
 }
-
-pub type Atom<Head> = GenericAtom<Head, String>;
 
 impl<Head: Display, Constant: Display> Display for GenericAtom<Head, String, Constant> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -181,8 +177,6 @@ pub enum GenericCoreAction<Head, Leaf, Constant = Literal> {
     ),
     Panic(Span, String),
 }
-
-pub type CoreAction = GenericCoreAction<String, String>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GenericCoreActions<Head, Leaf, Constant = Literal>(

@@ -195,12 +195,11 @@ impl EGraph {
             ));
         }
 
+        let mut rules = Vec::new();
         let rulesets = std::mem::take(&mut self.rulesets);
+        collect_rules(ruleset, &rulesets, &mut rules);
         let mut schedulers = std::mem::take(&mut self.schedulers);
         let result = (|| -> Result<RunReport, Error> {
-            let mut rules = Vec::new();
-            collect_rules(ruleset, &rulesets, &mut rules);
-
             // Step 1: build all the query/action rules and worklist if have not already
             let record = &mut schedulers[scheduler_id];
             for (id, rule) in &rules {

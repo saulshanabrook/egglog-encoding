@@ -18,8 +18,7 @@ use crate::{
     *,
 };
 pub use egglog_ast::core::{
-    Atom, AtomTerm, CoreAction, GenericAtom, GenericAtomTerm, GenericCoreAction,
-    GenericCoreActions, GenericCoreRule, Query,
+    GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreActions, GenericCoreRule, Query,
 };
 use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
@@ -32,6 +31,9 @@ pub(crate) enum HeadOrEq<Head> {
 }
 
 pub(crate) type StringOrEq = HeadOrEq<String>;
+pub type AtomTerm = GenericAtomTerm<String>;
+pub type Atom<Head> = GenericAtom<Head, String>;
+pub type CoreAction = GenericCoreAction<String, String>;
 
 impl From<String> for StringOrEq {
     fn from(value: String) -> Self {
@@ -241,7 +243,7 @@ impl IsFunc for String {
 
 pub type ResolvedAtomTerm = GenericAtomTerm<ResolvedVar>;
 
-fn resolved_atom_term_output(term: &ResolvedAtomTerm) -> ArcSort {
+fn atom_term_sort(term: &ResolvedAtomTerm) -> ArcSort {
     match term {
         GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => {
             variable.sort.clone()
@@ -858,10 +860,7 @@ impl ResolvedRuleExt for ResolvedRule {
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
             ResolvedCall::Primitive(SpecializedPrimitive {
                 prim_with_id: value_eq.clone(),
-                input: vec![
-                    resolved_atom_term_output(at1),
-                    resolved_atom_term_output(at2),
-                ],
+                input: vec![atom_term_sort(at1), atom_term_sort(at2)],
                 output: UnitSort.to_arcsort(),
             })
         };
