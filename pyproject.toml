@@ -3,12 +3,18 @@ name = "egglog-encoding"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+    "eval-live[render]",
     "numpy>=2.0",
     "pandas>=2.2",
     "pandera[pandas,mypy]>=0.26",
     "rich>=13.7",
     "scipy>=1.14",
 ]
+
+# Dev source: use the sibling checkout so local eval-live changes are picked up
+# without a push. Repin to a git commit before merging (CI checks out only this repo).
+[tool.uv.sources]
+eval-live = { path = "../eval-live", editable = true }
 
 [dependency-groups]
 dev = [
@@ -31,6 +37,10 @@ pretty = true
 
 [[tool.mypy.overrides]]
 module = ["scipy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["eval_live", "eval_live.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

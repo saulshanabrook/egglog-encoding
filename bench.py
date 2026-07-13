@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import math
 import os
 import re
 import resource
@@ -16,15 +15,12 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TextIO, cast
+from typing import Any, TextIO, cast
 
 import numpy as np
 import pandas as pd
-import pandera.pandas as pa
-from pandera.typing import DataFrame, Series
-from rich import box
+from pandera.typing import DataFrame
 from rich.console import Console
-from rich.markup import escape
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -34,16 +30,35 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
-from rich.text import Text
-from rich.tree import Tree
-from scipy import stats
 
-Status = Literal["success", "timed-out", "failure"]
-Treatment = Literal["off", "term", "proofs"]
+from cli import render_report
+from models import (
+    BenchmarkSpec,
+    EstimateKey,
+    FileSpec,
+    ReportDestination,
+    ResolvedTarget,
+    Status,
+    TargetRequest,
+    TargetRow,
+    Treatment,
+)
+from report_frame import (
+    ReportFrame,
+    persisted_report_columns,
+    report_columns,
+    validate_report_frame,
+)
+from tables import (
+    estimate_key_for,
+    selected_rows,
+    status_counts_for_rows,
+)
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
+DEFAULT_SERVE_PORT = 8000
 TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
@@ -53,37 +68,6 @@ DEFAULT_FILES = (
     "egglog/tests/web-demo/resolution.egg",
     "egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg",
 )
-TARGET_WALL_TIME_CAPTION = (
-    "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. "
-    "Wall-time change is derived from the ratio; negative is faster. Intervals are 95% CIs."
-)
-TARGET_PEAK_RSS_CAPTION = (
-    "Ratio is target / baseline. Values below 1x use less peak RSS; above 1x use more. "
-    "RSS change is derived from the ratio; negative uses less memory. Intervals are 95% CIs."
-)
-PROOF_OVERHEAD_CAPTION = "Within-target proof overhead. This is separate from target-vs-baseline wall-time change."
-RESULT_STYLES = {
-    "descriptive": "dim",
-    "established": "green",
-    "faster": "green",
-    "invalid": "bold red",
-    "less": "green",
-    "more": "red",
-    "not established": "red",
-    "point only": "dim",
-    "slower": "red",
-    "unclear": "yellow",
-}
-
-
-@dataclass(frozen=True)
-class TargetRow:
-    source: str
-    path: str
-    git_ref: str
-    git_sha: str
-    is_dirty: bool
-    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -102,119 +86,11 @@ class ErrorRow:
     signal: int | None = None
 
 
-class ReportFrame(pa.DataFrameModel):
-    class Config:
-        strict = True
-        coerce = True
-
-    row_index: Series[int] = pa.Field(ge=0)
-    started_at: Series[pd.Timestamp]
-    status: Series[str] = pa.Field(isin=["success", "timed-out", "failure"])
-    target_label: Series[str] = pa.Field(nullable=True)
-    target_source: Series[str]
-    target_path: Series[str]
-    target_git_ref: Series[str]
-    target_git_sha: Series[str]
-    target_is_dirty: Series[bool]
-    binary_sha256: Series[str]
-    file_path: Series[str]
-    file_sha256: Series[str]
-    treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
-    timeout_sec: Series[int] = pa.Field(gt=0)
-    wall_sec: Series[float] = pa.Field(nullable=True, ge=0)
-    user_sec: Series[float] = pa.Field(nullable=True, ge=0)
-    system_sec: Series[float] = pa.Field(nullable=True, ge=0)
-    cpu_wall_ratio: Series[float] = pa.Field(nullable=True, ge=0)
-    max_rss_bytes: Series[int] = pa.Field(nullable=True, ge=0, coerce=True)
-    error_exit_code: Series[int] = pa.Field(nullable=True, coerce=True)
-    error_signal: Series[int] = pa.Field(nullable=True, coerce=True)
-    error_message: Series[str] = pa.Field(nullable=True)
-
-    @pa.dataframe_check
-    def success_rows_have_wall_time(cls, frame: pd.DataFrame) -> pd.Series[Any]:  # type: ignore[misc]
-        return frame["status"].ne("success") | frame["wall_sec"].notna()
-
-    @pa.dataframe_check
-    def timeout_rows_have_no_timing(cls, frame: pd.DataFrame) -> pd.Series[Any]:  # type: ignore[misc]
-        timing_columns = ["wall_sec", "user_sec", "system_sec", "cpu_wall_ratio", "max_rss_bytes"]
-        return frame["status"].ne("timed-out") | frame[timing_columns].isna().all(axis=1)
-
-
-def report_columns() -> list[str]:
-    return list(ReportFrame.to_schema().columns)
-
-
-def persisted_report_columns() -> list[str]:
-    return [column for column in report_columns() if column != "row_index"]
-
-
-@dataclass(frozen=True)
-class FileSpec:
-    display_path: str
-    absolute_path: Path
-    sha256: str
-
-
-@dataclass(frozen=True)
-class BenchmarkSpec:
-    files: tuple[FileSpec, ...]
-    treatments: tuple[Treatment, ...]
-    rounds: int
-    timeout_sec: int
-
-
-@dataclass(frozen=True)
-class ReportDestination:
-    path: Path | None
-    stream: TextIO | None = None
-
-    @property
-    def display_path(self) -> str:
-        return "-" if self.path is None else str(self.path)
-
-
-@dataclass(frozen=True)
-class TargetRequest:
-    raw: str
-    source: str
-    label: str | None
-
-    @property
-    def is_label_lookup(self) -> bool:
-        return self.label is not None and self.source == ""
-
-
-@dataclass(frozen=True)
-class ResolvedTarget:
-    request: TargetRequest
-    row: TargetRow
-    binary_sha256: str
-    binary_path: Path | None
-
-    @property
-    def display_label(self) -> str:
-        if self.row.label:
-            return self.row.label
-        if self.row.git_ref != "HEAD":
-            return self.row.git_ref
-        if self.row.git_sha:
-            return self.row.git_sha[:12]
-        return Path(self.row.path).name
-
-
 @dataclass(frozen=True)
 class TimingResult:
     status: Status
     timing: TimingRow
     error: ErrorRow | None
-
-
-@dataclass(frozen=True)
-class EstimateKey:
-    binary_sha256: str
-    file_sha256: str
-    treatment: Treatment
-    timeout_sec: int
 
 
 @dataclass(frozen=True)
@@ -256,40 +132,9 @@ class DurationEstimate:
 
 
 @dataclass(frozen=True)
-class CellSummary:
-    rows: DataFrame[ReportFrame]
-    samples: tuple[float, ...]
-    status_counts: dict[str, int]
-    mean: float | None
-    ci_low: float | None
-    ci_high: float | None
-    issue: str | None
-
-    @property
-    def ok(self) -> bool:
-        return self.issue is None and self.mean is not None
-
-
-CellMap = dict[tuple[str, Treatment], CellSummary]
-TargetCellMaps = dict[ResolvedTarget, CellMap]
-
-
-@dataclass(frozen=True)
 class CollectionResult:
     rows: DataFrame[ReportFrame]
     fresh_rows: DataFrame[ReportFrame]
-
-
-@dataclass(frozen=True)
-class RatioSummary:
-    point: float | None
-    ci_low: float | None
-    ci_high: float | None
-    issue: str | None
-
-    @property
-    def ok(self) -> bool:
-        return self.issue is None and self.point is not None
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -329,6 +174,22 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--force-run",
         action="store_true",
         help="append fresh rows even when enough cached rows exist",
+    )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="serve an interactive eval-live report at http://localhost:<serve-port>",
+    )
+    parser.add_argument(
+        "--serve-port",
+        type=positive_int,
+        default=DEFAULT_SERVE_PORT,
+        help=f"port for the --serve eval-live server (default: {DEFAULT_SERVE_PORT})",
+    )
+    parser.add_argument(
+        "--dump-dir",
+        default=None,
+        help="dump eval-live tables (JSON + LaTeX) to this directory",
     )
     return parser.parse_args(argv)
 
@@ -514,10 +375,6 @@ def normalize_report_frame(frame: pd.DataFrame) -> DataFrame[ReportFrame]:
     return validate_report_frame(normalized)
 
 
-def validate_report_frame(frame: pd.DataFrame) -> DataFrame[ReportFrame]:
-    return DataFrame[ReportFrame](ReportFrame.validate(frame, lazy=True))
-
-
 def next_row_index(rows: DataFrame[ReportFrame]) -> int:
     if rows.empty:
         return 0
@@ -616,40 +473,6 @@ def find_label_pointer(rows: DataFrame[ReportFrame], label: str) -> pd.Series[An
         return None
     ordered = candidates.sort_values(["started_at", "row_index"], ascending=[False, False], kind="mergesort")
     return ordered.iloc[0]
-
-
-def selected_rows(
-    rows: DataFrame[ReportFrame],
-    key: EstimateKey,
-    rounds: int,
-) -> DataFrame[ReportFrame]:
-    matches = rows.loc[
-        rows["binary_sha256"].eq(key.binary_sha256)
-        & rows["file_sha256"].eq(key.file_sha256)
-        & rows["treatment"].eq(key.treatment)
-        & rows["timeout_sec"].eq(key.timeout_sec)
-    ]
-    latest = matches.sort_values(["started_at", "row_index"], ascending=[False, False], kind="mergesort").head(rounds)
-    selected = latest.sort_values(["started_at", "row_index"], kind="mergesort")
-    return validate_report_frame(selected.reset_index(drop=True))
-
-
-def status_counts_for_rows(rows: DataFrame[ReportFrame]) -> dict[str, int]:
-    return {str(status): int(count) for status, count in rows["status"].value_counts().sort_index().items()}
-
-
-def estimate_key_for(
-    target: ResolvedTarget,
-    file_spec: FileSpec,
-    treatment: Treatment,
-    timeout_sec: int,
-) -> EstimateKey:
-    return EstimateKey(
-        binary_sha256=target.binary_sha256,
-        file_sha256=file_spec.sha256,
-        treatment=treatment,
-        timeout_sec=timeout_sec,
-    )
 
 
 def build_collection_plan(
@@ -1277,805 +1100,6 @@ def collect_rows(
     return CollectionResult(rows=concat_report_frames([rows, fresh_rows]), fresh_rows=fresh_rows)
 
 
-def summarize_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
-    return summarize_metric_cell(rows, rounds, "wall_sec", "missing wall_sec")
-
-
-def summarize_rss_cell(rows: DataFrame[ReportFrame], rounds: int) -> CellSummary:
-    return summarize_metric_cell(rows, rounds, "max_rss_bytes", "missing max_rss_bytes")
-
-
-def summarize_metric_cell(
-    rows: DataFrame[ReportFrame],
-    rounds: int,
-    column: str,
-    missing_issue: str,
-) -> CellSummary:
-    status_counts = status_counts_for_rows(rows)
-    if len(rows) < rounds:
-        return CellSummary(
-            rows=rows,
-            samples=(),
-            status_counts=status_counts,
-            mean=None,
-            ci_low=None,
-            ci_high=None,
-            issue=f"missing {rounds - len(rows)} row(s)",
-        )
-    if status_counts.get("failure", 0):
-        return CellSummary(rows, (), status_counts, None, None, None, "failure row selected")
-    if status_counts.get("timed-out", 0):
-        return CellSummary(rows, (), status_counts, None, None, None, "timeout row selected")
-    samples = tuple(float(value) for value in rows.loc[rows[column].notna(), column].tolist())
-    if len(samples) != len(rows):
-        return CellSummary(rows, (), status_counts, None, None, None, missing_issue)
-    mean, ci_low, ci_high = mean_interval(samples)
-    return CellSummary(rows, samples, status_counts, mean, ci_low, ci_high, None)
-
-
-def mean_interval(samples: Sequence[float]) -> tuple[float, float | None, float | None]:
-    mean = float(np.mean(samples))
-    if len(samples) < 2:
-        return (mean, None, None)
-    variance = float(np.var(samples, ddof=1))
-    t_critical = float(stats.t.ppf(0.975, len(samples) - 1))
-    half_width = t_critical * math.sqrt(variance / len(samples))
-    return (mean, mean - half_width, mean + half_width)
-
-
-def ratio_summary(
-    baseline: CellSummary,
-    candidate: CellSummary,
-) -> RatioSummary:
-    if not baseline.ok:
-        return RatioSummary(None, None, None, baseline.issue or "baseline unavailable")
-    if not candidate.ok:
-        return RatioSummary(None, None, None, candidate.issue or "candidate unavailable")
-    return ratio_from_samples(baseline.samples, candidate.samples)
-
-
-def ratio_from_samples(
-    baseline_samples: Sequence[float],
-    candidate_samples: Sequence[float],
-) -> RatioSummary:
-    if len(baseline_samples) != len(candidate_samples):
-        return RatioSummary(None, None, None, "sample counts differ")
-    if len(baseline_samples) < 1:
-        return RatioSummary(None, None, None, "no samples")
-    baseline_mean = float(np.mean(baseline_samples))
-    candidate_mean = float(np.mean(candidate_samples))
-    if baseline_mean <= 0:
-        return RatioSummary(None, None, None, "baseline mean is not positive")
-    point = candidate_mean / baseline_mean
-    if len(baseline_samples) < 2:
-        return RatioSummary(point, None, None, "CI undefined for n < 2")
-    n = len(baseline_samples)
-    var_baseline_mean = float(np.var(baseline_samples, ddof=1)) / n
-    var_candidate_mean = float(np.var(candidate_samples, ddof=1)) / n
-    interval = fieller_interval(
-        baseline_mean,
-        candidate_mean,
-        var_baseline_mean,
-        var_candidate_mean,
-        df=n - 1,
-    )
-    if interval is None:
-        return RatioSummary(point, None, None, "Fieller interval undefined")
-    return RatioSummary(point, interval[0], interval[1], None)
-
-
-def fieller_interval(
-    baseline_mean: float,
-    candidate_mean: float,
-    baseline_mean_variance: float,
-    candidate_mean_variance: float,
-    df: int,
-) -> tuple[float, float] | None:
-    if baseline_mean <= 0 or df <= 0:
-        return None
-    t_critical = float(stats.t.ppf(0.975, df))
-    a = baseline_mean**2 - t_critical**2 * baseline_mean_variance
-    d = candidate_mean**2 - t_critical**2 * candidate_mean_variance
-    radicand = (baseline_mean * candidate_mean) ** 2 - a * d
-    if a <= 0 or radicand < 0:
-        return None
-    center = baseline_mean * candidate_mean / a
-    half_width = math.sqrt(radicand) / a
-    return (center - half_width, center + half_width)
-
-
-def suite_ratio(
-    file_cells: Sequence[tuple[CellSummary, CellSummary]],
-) -> RatioSummary:
-    if not file_cells:
-        return RatioSummary(None, None, None, "no files")
-    for baseline, candidate in file_cells:
-        if not baseline.ok:
-            return RatioSummary(None, None, None, baseline.issue or "baseline unavailable")
-        if not candidate.ok:
-            return RatioSummary(None, None, None, candidate.issue or "candidate unavailable")
-    sample_count = len(file_cells[0][0].samples)
-    if sample_count < 1:
-        return RatioSummary(None, None, None, "no samples")
-    if any(len(b.samples) != sample_count or len(c.samples) != sample_count for b, c in file_cells):
-        return RatioSummary(None, None, None, "sample counts differ")
-
-    baseline_means = [float(np.mean(b.samples)) for b, _ in file_cells]
-    candidate_means = [float(np.mean(c.samples)) for _, c in file_cells]
-    baseline_sum = float(sum(baseline_means))
-    candidate_sum = float(sum(candidate_means))
-    if baseline_sum <= 0:
-        return RatioSummary(None, None, None, "baseline mean is not positive")
-    point = candidate_sum / baseline_sum
-    if sample_count < 2:
-        return RatioSummary(point, None, None, "CI undefined for n < 2")
-
-    baseline_variance = sum(float(np.var(b.samples, ddof=1)) / sample_count for b, _ in file_cells)
-    candidate_variance = sum(float(np.var(c.samples, ddof=1)) / sample_count for _, c in file_cells)
-    interval = fieller_interval(
-        baseline_sum,
-        candidate_sum,
-        baseline_variance,
-        candidate_variance,
-        df=sample_count - 1,
-    )
-    if interval is None:
-        return RatioSummary(point, None, None, "Fieller interval undefined")
-    return RatioSummary(point, interval[0], interval[1], None)
-
-
-def geometric_mean_ratio(file_cells: Sequence[tuple[CellSummary, CellSummary]]) -> RatioSummary:
-    ratios: list[float] = []
-    for baseline, candidate in file_cells:
-        if not baseline.ok:
-            return RatioSummary(None, None, None, baseline.issue or "baseline unavailable")
-        if not candidate.ok:
-            return RatioSummary(None, None, None, candidate.issue or "candidate unavailable")
-        if baseline.mean is None or candidate.mean is None or baseline.mean <= 0:
-            return RatioSummary(None, None, None, "mean unavailable")
-        ratios.append(candidate.mean / baseline.mean)
-    if not ratios:
-        return RatioSummary(None, None, None, "no files")
-    return RatioSummary(float(math.exp(sum(math.log(value) for value in ratios) / len(ratios))), None, None, None)
-
-
-def target_cell_summaries(
-    rows: DataFrame[ReportFrame],
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-    treatments: Sequence[Treatment] | None = None,
-) -> CellMap:
-    chosen_treatments = spec.treatments if treatments is None else treatments
-    return {
-        (file_spec.sha256, treatment): summarize_cell(
-            selected_rows(
-                rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
-                spec.rounds,
-            ),
-            spec.rounds,
-        )
-        for file_spec in spec.files
-        for treatment in chosen_treatments
-    }
-
-
-def target_rss_cell_summaries(
-    rows: DataFrame[ReportFrame],
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-    treatments: Sequence[Treatment] | None = None,
-) -> CellMap:
-    chosen_treatments = spec.treatments if treatments is None else treatments
-    return {
-        (file_spec.sha256, treatment): summarize_rss_cell(
-            selected_rows(
-                rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
-                spec.rounds,
-            ),
-            spec.rounds,
-        )
-        for file_spec in spec.files
-        for treatment in chosen_treatments
-    }
-
-
-def target_suite_treatment_ratio(
-    baseline_cells: CellMap,
-    candidate_cells: CellMap,
-    spec: BenchmarkSpec,
-    treatment: Treatment,
-) -> RatioSummary:
-    return suite_ratio(
-        [
-            (
-                baseline_cells[(file_spec.sha256, treatment)],
-                candidate_cells[(file_spec.sha256, treatment)],
-            )
-            for file_spec in spec.files
-        ]
-    )
-
-
-def treatment_file_cells(
-    cell_map: CellMap,
-    spec: BenchmarkSpec,
-    baseline_treatment: Treatment,
-    candidate_treatment: Treatment,
-) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
-    return [
-        (
-            file_spec,
-            cell_map[(file_spec.sha256, baseline_treatment)],
-            cell_map[(file_spec.sha256, candidate_treatment)],
-        )
-        for file_spec in spec.files
-    ]
-
-
-def target_treatment_file_cells(
-    baseline_cells: CellMap,
-    candidate_cells: CellMap,
-    spec: BenchmarkSpec,
-    treatment: Treatment,
-) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
-    return [
-        (
-            file_spec,
-            baseline_cells[(file_spec.sha256, treatment)],
-            candidate_cells[(file_spec.sha256, treatment)],
-        )
-        for file_spec in spec.files
-    ]
-
-
-def ratio_pairs(file_cells: Sequence[tuple[FileSpec, CellSummary, CellSummary]]) -> list[tuple[FileSpec, RatioSummary]]:
-    return [(file_spec, ratio_summary(baseline, candidate)) for file_spec, baseline, candidate in file_cells]
-
-
-def summary_pairs(
-    file_cells: Sequence[tuple[FileSpec, CellSummary, CellSummary]],
-) -> list[tuple[CellSummary, CellSummary]]:
-    return [(baseline, candidate) for _, baseline, candidate in file_cells]
-
-
-def worst_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[FileSpec | None, RatioSummary]:
-    if not ratios:
-        return (None, RatioSummary(None, None, None, "no files"))
-    invalid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is None]
-    if invalid:
-        return invalid[0]
-    valid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is not None]
-    return max(valid, key=lambda item: item[1].point or 0.0)
-
-
-def format_estimate_or_interval(
-    point: float | None,
-    low: float | None,
-    high: float | None,
-    suffix: str,
-    digits: int,
-) -> str:
-    if point is None:
-        return "-"
-    point_text = f"{point:.{digits}f}{suffix}"
-    if low is None or high is None:
-        return point_text
-    return f"[{low:.{digits}f}{suffix}, {high:.{digits}f}{suffix}]"
-
-
-def format_seconds_summary(summary: CellSummary) -> str:
-    return format_estimate_or_interval(summary.mean, summary.ci_low, summary.ci_high, "s", 4)
-
-
-def format_bytes(value: float | None) -> str:
-    if value is None:
-        return "-"
-    units = ("B", "KiB", "MiB", "GiB")
-    amount = float(value)
-    unit = units[0]
-    for unit in units:
-        if amount < 1024 or unit == units[-1]:
-            break
-        amount /= 1024
-    if unit == "B":
-        return f"{int(amount)} B"
-    return f"{amount:.1f} {unit}"
-
-
-def format_bytes_summary(summary: CellSummary) -> str:
-    if summary.mean is None:
-        return "-"
-    point_text = format_bytes(summary.mean)
-    if summary.ci_low is None or summary.ci_high is None:
-        return point_text
-    return f"[{format_bytes(summary.ci_low)}, {format_bytes(summary.ci_high)}]"
-
-
-def format_ratio_summary(summary: RatioSummary) -> str:
-    return format_estimate_or_interval(summary.point, summary.ci_low, summary.ci_high, "x", 3)
-
-
-def format_wall_time_change(summary: RatioSummary) -> str:
-    return format_percent_change(summary)
-
-
-def format_percent_change(summary: RatioSummary) -> str:
-    point = None if summary.point is None else (summary.point - 1.0) * 100.0
-    low = None if summary.ci_low is None else (summary.ci_low - 1.0) * 100.0
-    high = None if summary.ci_high is None else (summary.ci_high - 1.0) * 100.0
-    return format_estimate_or_interval(point, low, high, "%", 1)
-
-
-def result_style(status: str) -> str:
-    return RESULT_STYLES.get(status, "")
-
-
-def styled_status(status: str, text: str | None = None) -> Text:
-    return Text(text or status, style=result_style(status))
-
-
-def comparison_result(summary: RatioSummary) -> str:
-    if summary.point is None:
-        return "invalid"
-    if summary.ci_low is None or summary.ci_high is None:
-        return "point only"
-    if summary.ci_high < 1:
-        return "faster"
-    if summary.ci_low > 1:
-        return "slower"
-    return "unclear"
-
-
-def format_comparison_result(summary: RatioSummary) -> Text:
-    result = comparison_result(summary)
-    if result == "invalid" and summary.issue is not None:
-        return styled_status(result, f"invalid: {summary.issue}")
-    return styled_status(result)
-
-
-def lower_is_better_result(summary: RatioSummary) -> str:
-    if summary.point is None:
-        return "invalid"
-    if summary.ci_low is None or summary.ci_high is None:
-        return "point only"
-    if summary.ci_high < 1:
-        return "less"
-    if summary.ci_low > 1:
-        return "more"
-    return "unclear"
-
-
-def format_lower_is_better_result(summary: RatioSummary) -> Text:
-    result = lower_is_better_result(summary)
-    if result == "invalid" and summary.issue is not None:
-        return styled_status(result, f"invalid: {summary.issue}")
-    return styled_status(result)
-
-
-def proof_gate_result(summary: RatioSummary) -> tuple[str, str]:
-    if summary.point is None:
-        return ("invalid", f"invalid: {summary.issue or 'unavailable'}")
-    if summary.ci_high is None:
-        return ("point only", "point only")
-    if summary.ci_high < 2:
-        return ("established", "<2x established")
-    return ("not established", "<2x not established")
-
-
-def format_proof_gate_result(summary: RatioSummary) -> Text:
-    status, text = proof_gate_result(summary)
-    return styled_status(status, text)
-
-
-def report_table(title: str, *, caption: str | None = None, show_lines: bool = False) -> Table:
-    return Table(
-        title=title,
-        title_style="bold",
-        caption=caption,
-        caption_style="dim",
-        caption_justify="left",
-        header_style="bold",
-        box=box.SIMPLE_HEAVY,
-        show_lines=show_lines,
-    )
-
-
-def render_report(
-    console: Console,
-    report_destination: ReportDestination,
-    rows: DataFrame[ReportFrame],
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    console.rule("[bold]Benchmark report[/bold]")
-    console.print(f"Report: [bold]{escape(report_destination.display_path)}[/bold]")
-    console.print(f"Selected rows per cell: [bold]{spec.rounds}[/bold]")
-
-    render_targets_tree(console, targets)
-
-    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
-    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
-    if len(targets) > 1:
-        render_per_file_wall_time_change(console, cell_maps, targets, spec)
-        render_per_file_peak_rss_change(console, rss_cell_maps, targets, spec)
-
-    for target in targets:
-        render_target_diagnostics(console, cell_maps[target], rss_cell_maps[target], target, spec)
-
-    render_benchmark_summary(console, cell_maps, rss_cell_maps, targets, spec)
-
-
-def render_targets_tree(console: Console, targets: Sequence[ResolvedTarget]) -> None:
-    tree = Tree("[bold]Targets[/bold]", guide_style="dim")
-    for index, target in enumerate(targets):
-        role = "target"
-        if len(targets) > 1:
-            role = "baseline" if index == 0 else "candidate"
-        dirty = "dirty" if target.row.is_dirty else "clean"
-        binary = target.binary_sha256.removeprefix("sha256:")[:12]
-        branch = tree.add(f"[bold]{role}[/bold] {escape(target.display_label)}")
-        branch.add(f"source: {escape(target.row.source)}")
-        branch.add(f"git: {target.row.git_sha[:12]} ({dirty})")
-        if target.row.git_ref != "HEAD":
-            branch.add(f"ref: {escape(target.row.git_ref)}")
-        branch.add(f"binary: {binary}")
-        branch.add(f"path: {escape(target.row.path)}")
-    console.print(tree)
-
-
-def render_per_file_wall_time_change(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    baseline = targets[0]
-    for target in targets[1:]:
-        table = report_table(
-            f"Per-file wall-time change vs {baseline.display_label}: {target.display_label}",
-            caption=TARGET_WALL_TIME_CAPTION,
-        )
-        table.add_column("File")
-        table.add_column("Treatment")
-        table.add_column("Time ratio", no_wrap=True)
-        table.add_column("Wall-time change", no_wrap=True)
-        table.add_column("Result")
-        for file_spec in spec.files:
-            for treatment_index, treatment in enumerate(spec.treatments):
-                ratio = ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, treatment)],
-                    cell_maps[target][(file_spec.sha256, treatment)],
-                )
-                table.add_row(
-                    file_spec.display_path if treatment_index == 0 else "",
-                    treatment,
-                    format_ratio_summary(ratio),
-                    format_wall_time_change(ratio),
-                    format_comparison_result(ratio),
-                    end_section=treatment_index == len(spec.treatments) - 1,
-                )
-        console.print(table)
-
-
-def render_per_file_peak_rss_change(
-    console: Console,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    baseline = targets[0]
-    baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
-    for target in targets[1:]:
-        if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
-            continue
-        table = report_table(
-            f"Per-file peak RSS change vs {baseline.display_label}: {target.display_label}",
-            caption=TARGET_PEAK_RSS_CAPTION,
-        )
-        table.add_column("File")
-        table.add_column("Treatment")
-        table.add_column("RSS ratio", no_wrap=True)
-        table.add_column("RSS change", no_wrap=True)
-        table.add_column("Result")
-        for file_spec in spec.files:
-            for treatment_index, treatment in enumerate(spec.treatments):
-                ratio = ratio_summary(
-                    rss_cell_maps[baseline][(file_spec.sha256, treatment)],
-                    rss_cell_maps[target][(file_spec.sha256, treatment)],
-                )
-                table.add_row(
-                    file_spec.display_path if treatment_index == 0 else "",
-                    treatment,
-                    format_ratio_summary(ratio),
-                    format_percent_change(ratio),
-                    format_lower_is_better_result(ratio),
-                    end_section=treatment_index == len(spec.treatments) - 1,
-                )
-        console.print(table)
-
-
-def render_benchmark_summary(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    console.rule("[bold]Benchmark summary[/bold]")
-    if len(targets) == 1:
-        render_single_target_summary(console, cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
-    else:
-        render_multi_target_summary(console, cell_maps, rss_cell_maps, targets, spec)
-
-
-def render_single_target_summary(
-    console: Console,
-    cell_map: CellMap,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    table = report_table(f"{target.display_label}: proof overhead summary", caption=PROOF_OVERHEAD_CAPTION)
-    table.add_column("Metric")
-    table.add_column("Ratio", no_wrap=True)
-    table.add_column("Change", no_wrap=True)
-    table.add_column("Worst file")
-    table.add_column("Worst ratio", no_wrap=True)
-    table.add_column("Result")
-    if "off" in spec.treatments and "proofs" in spec.treatments:
-        add_within_target_wall_summary_row(table, cell_map, spec, "off", "proofs", "wall proofs/off")
-        add_within_target_rss_summary_row(table, rss_cell_map, spec, "off", "proofs", "peak RSS proofs/off")
-    else:
-        table.add_row("no proof baseline", "-", "-", "-", "-", styled_status("descriptive", "select off and proofs"))
-    if "term" in spec.treatments and "proofs" in spec.treatments:
-        add_within_target_rss_summary_row(table, rss_cell_map, spec, "term", "proofs", "peak RSS proofs/term")
-    console.print(table)
-
-
-def add_within_target_wall_summary_row(
-    table: Table,
-    cell_map: CellMap,
-    spec: BenchmarkSpec,
-    baseline_treatment: Treatment,
-    candidate_treatment: Treatment,
-    label: str,
-) -> None:
-    file_cells = treatment_file_cells(cell_map, spec, baseline_treatment, candidate_treatment)
-    pairs = summary_pairs(file_cells)
-    summary = suite_ratio(pairs)
-    geometric = geometric_mean_ratio(pairs)
-    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-    table.add_row(
-        label,
-        format_ratio_summary(summary),
-        format_percent_change(summary),
-        format_worst_file(worst_file),
-        format_ratio_summary(worst),
-        format_proof_gate_result(summary)
-        if baseline_treatment == "off" and candidate_treatment == "proofs"
-        else format_comparison_result(summary),
-    )
-    table.add_row(
-        f"{label} geomean",
-        format_ratio_summary(geometric),
-        format_percent_change(geometric),
-        "-",
-        "-",
-        styled_status("descriptive", "descriptive"),
-    )
-
-
-def add_within_target_rss_summary_row(
-    table: Table,
-    rss_cell_map: CellMap,
-    spec: BenchmarkSpec,
-    baseline_treatment: Treatment,
-    candidate_treatment: Treatment,
-    label: str,
-) -> None:
-    file_cells = treatment_file_cells(rss_cell_map, spec, baseline_treatment, candidate_treatment)
-    pairs = summary_pairs(file_cells)
-    summary = suite_ratio(pairs)
-    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-    table.add_row(
-        label,
-        format_ratio_summary(summary),
-        format_percent_change(summary),
-        format_worst_file(worst_file),
-        format_ratio_summary(worst),
-        format_lower_is_better_result(summary),
-    )
-
-
-def render_multi_target_summary(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    baseline = targets[0]
-    wall_table = report_table(
-        f"Wall-time summary vs {baseline.display_label}",
-        caption=TARGET_WALL_TIME_CAPTION,
-    )
-    wall_table.add_column("Target")
-    wall_table.add_column("Treatment")
-    wall_table.add_column("Wall-time change", no_wrap=True)
-    wall_table.add_column("Geomean", no_wrap=True)
-    wall_table.add_column("Worst file")
-    wall_table.add_column("Worst ratio", no_wrap=True)
-    wall_table.add_column("Result")
-    for target in targets[1:]:
-        for treatment in spec.treatments:
-            file_cells = target_treatment_file_cells(cell_maps[baseline], cell_maps[target], spec, treatment)
-            pairs = summary_pairs(file_cells)
-            suite = suite_ratio(pairs)
-            geometric = geometric_mean_ratio(pairs)
-            worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-            wall_table.add_row(
-                target.display_label,
-                treatment,
-                format_wall_time_change(suite),
-                format_ratio_summary(geometric),
-                format_worst_file(worst_file),
-                format_ratio_summary(worst),
-                format_comparison_result(suite),
-            )
-    console.print(wall_table)
-
-    rss_table = report_table(
-        f"Peak RSS summary vs {baseline.display_label}",
-        caption=TARGET_PEAK_RSS_CAPTION,
-    )
-    rss_table.add_column("Target")
-    rss_table.add_column("Treatment")
-    rss_table.add_column("RSS change", no_wrap=True)
-    rss_table.add_column("Geomean", no_wrap=True)
-    rss_table.add_column("Worst file")
-    rss_table.add_column("Worst ratio", no_wrap=True)
-    rss_table.add_column("Result")
-    for target in targets[1:]:
-        for treatment in spec.treatments:
-            file_cells = target_treatment_file_cells(rss_cell_maps[baseline], rss_cell_maps[target], spec, treatment)
-            pairs = summary_pairs(file_cells)
-            summary = suite_ratio(pairs)
-            geometric = geometric_mean_ratio(pairs)
-            worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
-            rss_table.add_row(
-                target.display_label,
-                treatment,
-                format_percent_change(summary),
-                format_ratio_summary(geometric),
-                format_worst_file(worst_file),
-                format_ratio_summary(worst),
-                format_lower_is_better_result(summary),
-            )
-    console.print(rss_table)
-
-
-def format_worst_file(file_spec: FileSpec | None) -> str:
-    return "-" if file_spec is None else file_spec.display_path
-
-
-def render_target_diagnostics(
-    console: Console,
-    cell_map: CellMap,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    render_overhead_ratios(console, cell_map, target, spec)
-
-    means_table = report_table(
-        f"{target.display_label}: per-file wall time",
-        caption="Within-target wall-time estimates. These are not target-vs-baseline ratios.",
-    )
-    means_table.add_column("File")
-    for treatment in spec.treatments:
-        means_table.add_column(treatment, no_wrap=True)
-    means_rows: list[tuple[list[str], str]] = []
-    has_mean_issues = False
-    for file_spec in spec.files:
-        issue_parts: list[str] = []
-        row_values = [file_spec.display_path]
-        for treatment in spec.treatments:
-            cell = cell_map[(file_spec.sha256, treatment)]
-            row_values.append(format_seconds_summary(cell))
-            if cell.issue is not None:
-                issue_parts.append(f"{treatment}: {cell.issue}")
-        issue_text = "; ".join(issue_parts)
-        has_mean_issues = has_mean_issues or bool(issue_text)
-        means_rows.append((row_values, issue_text))
-    if has_mean_issues:
-        means_table.add_column("Issue")
-    for row_values, issue_text in means_rows:
-        if has_mean_issues:
-            row_values.append(issue_text)
-        means_table.add_row(*row_values)
-    console.print(means_table)
-
-    render_peak_rss_diagnostics(console, rss_cell_map, target, spec)
-
-
-def render_overhead_ratios(
-    console: Console,
-    cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    ratio_columns = ratio_specs(spec.treatments)
-    if not ratio_columns:
-        return
-    ratio_table = report_table(
-        f"{target.display_label}: overhead ratios",
-        caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
-    )
-    ratio_table.add_column("File")
-    for _, _, ratio_name in ratio_columns:
-        ratio_table.add_column(ratio_name, no_wrap=True)
-    for file_spec in spec.files:
-        row_values = [file_spec.display_path]
-        for baseline_treatment, candidate_treatment, _ in ratio_columns:
-            ratio = ratio_summary(
-                cell_map[(file_spec.sha256, baseline_treatment)],
-                cell_map[(file_spec.sha256, candidate_treatment)],
-            )
-            row_values.append(format_ratio_summary(ratio))
-        ratio_table.add_row(*row_values)
-    console.print(ratio_table)
-
-
-def render_peak_rss_diagnostics(
-    console: Console,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    if not any(cell.samples for cell in rss_cell_map.values()):
-        return
-    rss_table = report_table(
-        f"{target.display_label}: per-file peak RSS",
-        caption="Within-target peak resident set size estimates. These are separate from wall-time ratios.",
-    )
-    rss_table.add_column("File")
-    for treatment in spec.treatments:
-        rss_table.add_column(treatment, no_wrap=True)
-    rss_rows: list[tuple[list[str], str]] = []
-    has_rss_issues = False
-    for file_spec in spec.files:
-        issue_parts: list[str] = []
-        row_values = [file_spec.display_path]
-        for treatment in spec.treatments:
-            cell = rss_cell_map[(file_spec.sha256, treatment)]
-            row_values.append(format_bytes_summary(cell))
-            if cell.issue is not None:
-                issue_parts.append(f"{treatment}: {cell.issue}")
-        issue_text = "; ".join(issue_parts)
-        has_rss_issues = has_rss_issues or bool(issue_text)
-        rss_rows.append((row_values, issue_text))
-    if has_rss_issues:
-        rss_table.add_column("Issue")
-    for row_values, issue_text in rss_rows:
-        if has_rss_issues:
-            row_values.append(issue_text)
-        rss_table.add_row(*row_values)
-    console.print(rss_table)
-
-
-def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treatment, str], ...]:
-    specs: list[tuple[Treatment, Treatment, str]] = []
-    if "off" in treatments and "term" in treatments:
-        specs.append(("off", "term", "term/off"))
-    if "off" in treatments and "proofs" in treatments:
-        specs.append(("off", "proofs", "proofs/off"))
-    if "term" in treatments and "proofs" in treatments:
-        specs.append(("term", "proofs", "proofs/term"))
-    return tuple(specs)
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     output = RunnerOutput()
@@ -2126,6 +1150,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets,
             spec,
         )
+        if args.dump_dir is not None:
+            import web
+
+            web.dump_report(output.console, rows, spec, Path(args.dump_dir))
+        if args.serve:
+            import web
+
+            web.serve_report(output.console, rows, spec, args.serve_port)
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
         output.print_error(error)
         return 2
