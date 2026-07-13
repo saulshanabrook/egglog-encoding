@@ -10,11 +10,10 @@ pub(crate) struct EncodingState {
     pub uf_function: HashMap<String, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
-    /// Function name -> (hidden current-value function, input arity, optional
-    /// eq-sort output to canonicalize before setting). The current function
-    /// mirrors eager backend merge/no-merge behavior, so cleanup and RHS
-    /// lookups can observe the retained current value.
-    pub merge_current: HashMap<String, (String, usize, Option<String>)>,
+    /// Function name -> (hidden current-value function, input arity). The
+    /// current function mirrors eager backend merge/no-merge behavior, so
+    /// cleanup and RHS lookups can observe the retained current value.
+    pub merge_current: HashMap<String, (String, usize)>,
     /// Maps container sort name -> the name of its registered container-rebuild
     /// primitive (`ContainerRebuild`). Cached so each container sort gets
     /// a single rebuild primitive shared across all functions using it.
@@ -300,10 +299,10 @@ impl<'a> ProofInstrumentor<'a> {
             .parser
             .symbol_gen
             .fresh(&format!("{name}Current"));
-        self.egraph.proof_state.merge_current.insert(
-            name.clone(),
-            (current_name.clone(), child_names.len(), None),
-        );
+        self.egraph
+            .proof_state
+            .merge_current
+            .insert(name.clone(), (current_name.clone(), child_names.len()));
 
         let fresh_name = self.egraph.parser.symbol_gen.fresh("merge_rule");
         let cleanup_name = self.egraph.parser.symbol_gen.fresh("merge_cleanup");
@@ -368,7 +367,7 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             "".to_string()
         };
-        let term_and_proof = self.update_view(name, &updated, &proof_var, &mut merge_rhs_reads);
+        let term_and_proof = self.update_view(name, &updated, &proof_var);
         let cleanup_constructor = self.egraph.parser.symbol_gen.fresh("mergecleanup");
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("mergecleanupsort");
         let output_sort = fdecl.schema.output.clone();
@@ -435,7 +434,7 @@ impl<'a> ProofInstrumentor<'a> {
                             .proof_state
                             .merge_current
                             .get(&func_type.name)
-                            .map(|(current_name, _, _)| current_name.as_str())
+                            .map(|(current_name, _)| current_name.as_str())
                             .unwrap_or(func_type.name.as_str())
                     }
                     ResolvedCall::Func(func_type) => func_type.name.as_str(),
@@ -469,10 +468,10 @@ impl<'a> ProofInstrumentor<'a> {
                 .parser
                 .symbol_gen
                 .fresh(&format!("{name}Current"));
-            self.egraph.proof_state.merge_current.insert(
-                name.clone(),
-                (current_name.clone(), child_names.len(), None),
-            );
+            self.egraph
+                .proof_state
+                .merge_current
+                .insert(name.clone(), (current_name.clone(), child_names.len()));
             format!(
                 "(function {current_name} ({input_sorts}) {output_sort}
                     :no-merge
@@ -824,23 +823,11 @@ impl<'a> ProofInstrumentor<'a> {
             ("".to_string(), "()".to_string())
         };
 
-        let mut update_rhs_reads = false;
-        let updated_view = self.update_view(
-            &fdecl.name,
-            &children_updated,
-            &pf_var,
-            &mut update_rhs_reads,
-        );
+        let updated_view = self.update_view(&fdecl.name, &children_updated, &pf_var);
         let container_proof_bindings_str = container_proof_bindings.join("\n");
         let container_reflexive_sets_str = container_reflexive_sets.join("\n");
-        let eval_opt = if update_rhs_reads {
-            ":unsafe-seminaive"
-        } else {
-            ""
-        };
-
         // Make a single rule that updates the view when any child's leader differs.
-        let eval_opt = if has_container { " :naive" } else { eval_opt };
+        let eval_opt = if has_container { " :naive" } else { "" };
         let rule = format!(
             "(rule ({query_view}
                     {uf_query_str}
@@ -1251,8 +1238,7 @@ impl<'a> ProofInstrumentor<'a> {
                     );
                 };
 
-                let (add_code, _fv) =
-                    self.add_term_and_view(func_type, &exprs, justification, &mut rhs_reads);
+                let (add_code, _fv) = self.add_term_and_view(func_type, &exprs, justification);
                 res.extend(add_code);
             }
             ResolvedAction::Change(_span, change, h, generic_exprs) => {
@@ -1334,42 +1320,15 @@ impl<'a> ProofInstrumentor<'a> {
     /// Update the view with the given arguments.
     /// The arguments include the eclass for constructors.
     /// View is always a function (returning Proof or Unit).
-    fn update_view(
-        &mut self,
-        fname: &str,
-        args: &[String],
-        proof: &str,
-        rhs_reads: &mut bool,
-    ) -> String {
+    fn update_view(&mut self, fname: &str, args: &[String], proof: &str) -> String {
         let view_name = self.view_name(fname);
         let view_update = format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "));
-        if let Some((current_name, input_arity, canonical_output_sort)) =
+        if let Some((current_name, input_arity)) =
             self.egraph.proof_state.merge_current.get(fname).cloned()
             && args.len() == input_arity + 1
         {
             let inputs = ListDisplay(&args[..input_arity], " ");
             let output = &args[input_arity];
-            let output = if let Some(sort_name) = canonical_output_sort {
-                *rhs_reads = true;
-                let leader = self.fresh_var();
-                let uf_function_name = self.uf_function_name(&sort_name);
-                if self.egraph.proof_state.proofs_enabled {
-                    let pair = self.fresh_var();
-                    return format!(
-                        "{view_update}
-                         (let {pair} ({uf_function_name} {output}))
-                         (let {leader} (pair-first {pair}))
-                         (set ({current_name} {inputs}) {leader})"
-                    );
-                }
-                return format!(
-                    "{view_update}
-                     (let {leader} ({uf_function_name} {output}))
-                     (set ({current_name} {inputs}) {leader})"
-                );
-            } else {
-                output.clone()
-            };
             return format!("{view_update}\n(set ({current_name} {inputs}) {output})");
         }
         view_update
@@ -1386,7 +1345,6 @@ impl<'a> ProofInstrumentor<'a> {
         func_type: &FuncType,
         args: &[String],
         justification: &Justification,
-        rhs_reads: &mut bool,
     ) -> (Vec<String>, String) {
         // A fresh variable for the new term.
         let fv = self.fresh_var();
@@ -1448,7 +1406,7 @@ impl<'a> ProofInstrumentor<'a> {
         };
 
         res.push(proof_str);
-        res.push(self.update_view(&func_type.name, &args_with_fv, &view_proof_var, rhs_reads));
+        res.push(self.update_view(&func_type.name, &args_with_fv, &view_proof_var));
 
         // add to uf table to initialize eclass for constructors
         if func_type.subtype == FunctionSubtype::Constructor {
@@ -1496,7 +1454,7 @@ impl<'a> ProofInstrumentor<'a> {
                             if self.egraph.type_info.is_global(&func_type.name) {
                                 return format!("({} {})", func_type.name, ListDisplay(&args, " "));
                             }
-                            if let Some((current_name, input_arity, _)) = self
+                            if let Some((current_name, input_arity)) = self
                                 .egraph
                                 .proof_state
                                 .merge_current
@@ -1516,8 +1474,7 @@ impl<'a> ProofInstrumentor<'a> {
                                 "Found a function lookup in actions, should have been prevented by typechecking"
                             );
                         }
-                        let (add_code, fv) =
-                            self.add_term_and_view(func_type, &args, proof, rhs_reads);
+                        let (add_code, fv) = self.add_term_and_view(func_type, &args, proof);
                         res.extend(add_code);
 
                         fv

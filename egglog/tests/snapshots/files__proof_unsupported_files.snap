@@ -1,5 +1,5 @@
 ---
-source: egglog/tests/files.rs
+source: tests/files.rs
 expression: snapshot
 ---
 array.egg

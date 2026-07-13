@@ -840,7 +840,7 @@ impl Database {
         for other in notified.into_iter().filter(|other| *other != table) {
             self.notification_list.notify(other);
         }
-        self.deps.remove_table(table);
+        self.deps.remove_last_table(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
         true
     }

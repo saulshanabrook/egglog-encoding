@@ -6,7 +6,7 @@
 //! boxed slice of `u32` (egglog [`Value`] reps), exactly `arity` columns wide.
 //! `lookup_id` / `for_each` / `table_size` read the mirror.
 
-use egglog_backend_trait::{ExternalFunctionId, FunctionId, QueryEntry, Value};
+use egglog_backend_trait::{ExternalFunctionId, FunctionId, QueryEntry};
 
 /// Upper bound on relation arity (sanity check; the mirror row is
 /// variable-width, so this is generous).
@@ -62,29 +62,6 @@ pub enum MergeTree {
     Func(FunctionId, Vec<MergeTree>),
 }
 
-/// Pack a slice of `Value`s into a [`Row`] (exactly `vals.len()` columns).
-pub fn pack_row(vals: &[Value]) -> Row {
-    use egglog_numeric_id::NumericId;
-    assert!(
-        vals.len() <= MAX_ARITY,
-        "row arity {} exceeds {MAX_ARITY}",
-        vals.len()
-    );
-    vals.iter().map(|v| v.rep()).collect()
-}
-
-/// Read column `i` (0-based) out of a [`Row`].
-#[inline]
-pub fn row_col(r: &Row, i: usize) -> u32 {
-    r[i]
-}
-
-/// Unpack the first `arity` columns of a [`Row`] into a `Vec<Value>`.
-pub fn unpack_row(r: &Row, arity: usize) -> Vec<Value> {
-    use egglog_numeric_id::NumericId;
-    (0..arity).map(|i| Value::new(row_col(r, i))).collect()
-}
-
 /// One column reference in a rule body atom or head action: either a bound
 /// variable (identified by its [`egglog_backend_trait::VariableId`] rep) or a
 /// constant value.
@@ -125,16 +102,6 @@ pub enum ReadMode {
     All,
 }
 
-impl ReadMode {
-    pub fn from_filter(is_subsumed: Option<bool>) -> Self {
-        match is_subsumed {
-            Some(false) => ReadMode::Live,
-            Some(true) => ReadMode::Subsumed,
-            None => ReadMode::All,
-        }
-    }
-}
-
 /// A distinct DD input stream. The same logical relation can be read through
 /// multiple subsumption views in one fused ruleset, and those views must not be
 /// collapsed to one input.
@@ -154,27 +121,6 @@ pub struct BodyAtom {
     /// rows (the term encoder's `:internal-include-subsumed` congruence/rebuild
     /// rules, which must see subsumed rows to canonicalize them).
     pub read_mode: ReadMode,
-}
-
-impl BodyAtom {
-    pub fn from_entries(
-        func: FunctionId,
-        entries: &[QueryEntry],
-        is_subsumed: Option<bool>,
-    ) -> Self {
-        BodyAtom {
-            func,
-            slots: entries.iter().map(Slot::from_entry).collect(),
-            read_mode: ReadMode::from_filter(is_subsumed),
-        }
-    }
-
-    pub fn read_key(&self) -> ReadKey {
-        ReadKey {
-            func: self.func,
-            mode: self.read_mode,
-        }
-    }
 }
 
 /// One operation in a rule **body**, in emission order.

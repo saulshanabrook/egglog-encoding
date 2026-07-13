@@ -21,22 +21,17 @@ use crate::{
 // RuleBuilderOps for the bridge's RuleBuilder
 // ---------------------------------------------------------------------------
 
-/// Trait-object wrapper around the bridge's [`RuleBuilder`]; every op delegates.
-struct BridgeRuleBuilderOps<'a> {
-    inner: RuleBuilder<'a>,
-}
-
-impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
+impl RuleBuilderOps for RuleBuilder<'_> {
     fn new_var(&mut self, ty: ColumnTy) -> QueryEntry {
-        QueryEntry::Var(self.inner.new_var(ty))
+        QueryEntry::Var(self.new_var(ty))
     }
 
     fn new_var_named(&mut self, ty: ColumnTy, name: &str) -> QueryEntry {
-        self.inner.new_var_named(ty, name)
+        self.new_var_named(ty, name)
     }
 
     fn base_values(&self) -> &BaseValues {
-        self.inner.egraph().base_values()
+        self.egraph().base_values()
     }
 
     fn query_table(
@@ -45,9 +40,7 @@ impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
         entries: &[QueryEntry],
         is_subsumed: Option<bool>,
     ) -> Result<()> {
-        self.inner
-            .query_table(func, entries, is_subsumed)
-            .map(|_| ())
+        self.query_table(func, entries, is_subsumed).map(|_| ())
     }
 
     fn query_prim(
@@ -56,7 +49,7 @@ impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
         entries: &[QueryEntry],
         ret_ty: ColumnTy,
     ) -> Result<()> {
-        self.inner.query_prim(func, entries, ret_ty)
+        self.query_prim(func, entries, ret_ty)
     }
 
     fn call_external_func(
@@ -66,7 +59,7 @@ impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
         ret_ty: ColumnTy,
         panic_msg: PanicMsg,
     ) -> QueryEntry {
-        let var = self.inner.call_external_func(func, args, ret_ty, panic_msg);
+        let var = self.call_external_func(func, args, ret_ty, panic_msg);
         QueryEntry::Var(var)
     }
 
@@ -76,49 +69,45 @@ impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
         entries: &[QueryEntry],
         panic_msg: PanicMsg,
     ) -> QueryEntry {
-        let var = self.inner.lookup(func, entries, panic_msg);
+        let var = self.lookup(func, entries, panic_msg);
         QueryEntry::Var(var)
     }
 
     fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) -> Result<()> {
-        self.inner.subsume(func, entries);
+        self.subsume(func, entries);
         Ok(())
     }
 
     fn set(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        self.inner.set(func, entries);
+        self.set(func, entries);
     }
 
     fn remove(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        self.inner.remove(func, entries);
+        self.remove(func, entries);
     }
 
     fn union(&mut self, l: QueryEntry, r: QueryEntry) {
-        self.inner.union(l, r);
+        self.union(l, r);
     }
 
     fn panic(&mut self, message: String) {
-        self.inner.panic(message);
+        self.panic(message);
     }
 
     fn new_panic(&mut self, message: String) -> ExternalFunctionId {
-        self.inner.new_panic(message)
+        self.new_panic(message)
     }
 
     fn set_no_decomp(&mut self, no_decomp: bool) {
-        self.inner.set_no_decomp(no_decomp);
+        self.set_no_decomp(no_decomp);
     }
 
     fn build(self: Box<Self>) -> Result<RuleId> {
-        Ok(self.inner.build())
-    }
-
-    fn abort(self: Box<Self>) {
-        self.inner.abort();
+        Ok(RuleBuilder::build(*self))
     }
 
     fn backend_any(&self) -> Option<&dyn Any> {
-        Some(self.inner.egraph())
+        Some(self.egraph())
     }
 }
 
@@ -137,10 +126,6 @@ impl Backend for EGraph {
 
     fn clear_table(&mut self, func: FunctionId) {
         EGraph::clear_table(self, func);
-    }
-
-    fn for_each_dyn(&self, table: FunctionId, f: &mut dyn for<'r> FnMut(ScanEntry<'r>)) {
-        EGraph::for_each(self, table, f);
     }
 
     fn for_each_while_dyn(
@@ -171,17 +156,12 @@ impl Backend for EGraph {
         EGraph::lookup_id(self, func, key)
     }
 
-    fn with_execution_state_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) {
-        EGraph::with_execution_state(self, |es| f(es));
-    }
-
     fn with_execution_state_tracked_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) -> bool {
         EGraph::with_execution_state_tracked(self, |es| f(es)).1
     }
 
     fn new_rule<'a>(&'a mut self, desc: &str, seminaive: bool) -> Box<dyn RuleBuilderOps + 'a> {
-        let inner = EGraph::new_rule(self, desc, seminaive);
-        Box::new(BridgeRuleBuilderOps { inner })
+        Box::new(EGraph::new_rule(self, desc, seminaive))
     }
 
     fn free_rule(&mut self, id: RuleId) {

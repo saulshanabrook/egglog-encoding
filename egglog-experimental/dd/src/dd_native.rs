@@ -89,10 +89,6 @@ pub const W: usize = 48;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Row([u32; W]);
 
-/// The join key carried between DD `.join` stages: the shared bound columns
-/// packed into a fixed-width array (others 0). Same newtype as [`Row`].
-type Key = Row;
-
 impl std::ops::Index<usize> for Row {
     type Output = u32;
     #[inline]
@@ -143,14 +139,9 @@ impl<'de> serde::Deserialize<'de> for Row {
     }
 }
 
-fn empty_row() -> Row {
-    Row([0u32; W])
-}
-
 impl Default for Row {
-    #[inline]
     fn default() -> Self {
-        empty_row()
+        Row([0; W])
     }
 }
 
@@ -197,7 +188,10 @@ pub fn plan_join(rule: &RuleIr) -> Result<JoinPlan, String> {
                     }
                 }
                 atoms.push(PlanAtom {
-                    read_key: atom.read_key(),
+                    read_key: ReadKey {
+                        func: atom.func,
+                        mode: atom.read_mode,
+                    },
                     slots: atom.slots.clone(),
                 });
             }
@@ -300,7 +294,6 @@ fn build_projection(
     let mut free: Vec<usize> = Vec::new();
     let mut next: usize = 0;
     let mut step_col: Vec<HashMap<u32, usize>> = Vec::with_capacity(n);
-    let mut peak = 0usize;
     for i in 0..n {
         // Births first (so this atom's fresh vars get columns before we snapshot).
         for &v in &births[i] {
@@ -313,8 +306,7 @@ fn build_projection(
             };
             col_of.insert(v, c);
         }
-        peak = peak.max(col_of.len());
-        if peak > W {
+        if col_of.len() > W {
             return None;
         }
         // Snapshot the layout AT this step (after births, before deaths) — every
@@ -384,32 +376,6 @@ fn collect_head_vars(head: &[crate::compile::HeadOp], out: &mut hashbrown::HashS
         }
     }
 }
-
-// ===========================================================================
-// FusedDdJoin — ONE shared worker + ONE dataflow per RULESET
-// ===========================================================================
-//
-// A per-RULE design would spin up one timely `Worker` per rule, and a body
-// relation read by K rules would get K separate `InputSession`s (each fed the
-// same delta) + K separate arrangements stepped to fixpoint separately. Fusing
-// the whole ruleset into ONE worker + ONE dataflow with SHARED input
-// collections avoids that duplication.
-//
-// `FusedDdJoin` collapses this to ONE worker hosting ONE `worker.dataflow(...)`
-// scope for the whole ruleset (keyed by the sorted live rule-index list). Within
-// that scope:
-//   - every distinct body relation view across all rules gets one `InputSession`
-//     and one base `Collection`, shared by every atom occurrence that reads it;
-//   - input deltas are already set-semantic, so no `.distinct()` is needed;
-//   - right-side arrangements are shared by relation view and key projection.
-//   - each rule is a left-deep join sub-stream reading those shared collections,
-//     with its OWN `inspect_batch` capture into a per-rule `Rc<RefCell<Vec>>`.
-// Per nonempty delta phase, feed each relation once, advance and step the worker,
-// then drain each rule's capture buffer. The caller evaluates body primitives
-// and head actions host-side.
-//
-// The NEVER-CLEAR / fed-only-deltas invariant is preserved (the InputSessions
-// persist across epochs = genuinely incremental), as is the external epoch-drive.
 
 /// A fused, delta-fed body join for a WHOLE ruleset on a single shared timely
 /// `Worker`. Built once via [`FusedDdJoin::build`]; driven across epochs via
@@ -649,40 +615,6 @@ impl FusedDdJoin {
     /// CRUCIAL: the InputSessions are NEVER cleared — only the delta is pushed, so
     /// the DD arrangements persist and the join is genuinely incremental.
     pub fn step(&mut self, deltas: &DeltaMap) -> Result<StepOutput> {
-        // Every atom-bearing rule — congruence, user, and canonicalization — runs
-        // through the same symmetric incremental join: feed all deltas, take one
-        // sub-step, and capture every rule. No atom-bearing rule kind is special.
-        self.step_symmetric(deltas)
-    }
-
-    /// Step the SINGLE worker to `epoch`.
-    fn drive_to(&mut self, epoch: u32) {
-        for inp in self.inputs.values_mut() {
-            inp.advance_to(epoch);
-            inp.flush();
-        }
-        let probe = self.probe.clone();
-        self.worker.step_while(|| probe.less_than(&epoch));
-    }
-
-    /// Drain each rule's capture buffer; keep a rule's output into `accs` only if
-    /// `keep(rule)` (route a sub-step's output to the rules it is meant for).
-    fn drain_into(&self, accs: &mut [HashMap<Vec<u32>, isize>], keep: impl Fn(&FusedRule) -> bool) {
-        for (rule, acc) in self.rules.iter().zip(accs.iter_mut()) {
-            let drained: Vec<(Row, isize)> = rule.captured.borrow_mut().drain(..).collect();
-            if !keep(rule) {
-                continue;
-            }
-            for (row, w) in drained {
-                let key: Vec<u32> = (0..rule.n_vars).map(|i| row[i]).collect();
-                *acc.entry(key).or_insert(0) += w;
-            }
-        }
-    }
-
-    /// The symmetric incremental join: feed ALL deltas, one sub-step, capture
-    /// every rule.
-    fn step_symmetric(&mut self, deltas: &DeltaMap) -> Result<StepOutput> {
         let mut pushed = false;
         for (func, rows) in deltas {
             if let Some(inp) = self.inputs.get_mut(func) {
@@ -706,17 +638,32 @@ impl FusedDdJoin {
 
         let mut accs: Vec<HashMap<Vec<u32>, isize>> =
             (0..self.rules.len()).map(|_| HashMap::new()).collect();
-        self.drain_into(&mut accs, |_| true);
+        for (rule, acc) in self.rules.iter().zip(accs.iter_mut()) {
+            for (row, weight) in rule.captured.borrow_mut().drain(..) {
+                let key = (0..rule.n_vars).map(|i| row[i]).collect();
+                *acc.entry(key).or_insert(0) += weight;
+            }
+        }
         Ok(accs
             .into_iter()
             .map(|acc| acc.into_iter().filter(|(_, w)| *w != 0).collect())
             .collect())
     }
+
+    /// Step the SINGLE worker to `epoch`.
+    fn drive_to(&mut self, epoch: u32) {
+        for inp in self.inputs.values_mut() {
+            inp.advance_to(epoch);
+            inp.flush();
+        }
+        let probe = self.probe.clone();
+        self.worker.step_while(|| probe.less_than(&epoch));
+    }
 }
 
 /// Pack a slice of column values into a fixed-width row (0-padded).
 fn pack_row(vals: &[u32]) -> Row {
-    let mut a = empty_row();
+    let mut a = Row::default();
     for (i, v) in vals.iter().enumerate() {
         a[i] = *v;
     }
@@ -724,8 +671,8 @@ fn pack_row(vals: &[u32]) -> Row {
 }
 
 /// Build a join key from selected columns (packed into the low slots).
-fn pack_key(r: &Row, cols: &[usize]) -> Key {
-    let mut a = empty_row();
+fn pack_key(r: &Row, cols: &[usize]) -> Row {
+    let mut a = Row::default();
     for (i, &c) in cols.iter().enumerate() {
         a[i] = r[c];
     }
@@ -749,7 +696,7 @@ fn atom_vars(slots: &[Slot]) -> Vec<u32> {
 /// binding row under the first-step layout (or no row if a constraint
 /// fails). Returns a `Vec` for `flat_map`.
 fn bind_atom(r: &Row, slots: &[Slot], layout: &HashMap<u32, usize>) -> Vec<Row> {
-    let mut out = empty_row();
+    let mut out = Row::default();
     let mut local: HashMap<u32, u32> = HashMap::new();
     for (i, s) in slots.iter().enumerate() {
         let val = r[i];
@@ -787,7 +734,7 @@ fn remap_merge_atom_into(
     prev: &HashMap<u32, usize>,
     cur: &HashMap<u32, usize>,
 ) -> Vec<Row> {
-    let mut out = empty_row();
+    let mut out = Row::default();
     // Carry over every still-live var (present in `cur`) that the left row
     // already holds (present in `prev`). Atom-fresh vars are absent from `prev`,
     // so they are NOT copied here — they are written from `r` below.

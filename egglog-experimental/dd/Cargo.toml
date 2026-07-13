@@ -1,9 +1,6 @@
 # An experimental differential-dataflow backend for egglog. It depends only on
 # the public `egglog-backend-trait` SPI plus the neutral
 # `egglog-core-relations`, so it can serve as an out-of-tree backend example.
-#
-# It stays on edition 2021 (its differential-dataflow / timely dependency tree is
-# edition 2021); the workspace `resolver = "3"` supports the mixed edition.
 [package]
 name = "egglog-experimental-dd"
 version = "0.1.0"
@@ -22,7 +19,7 @@ log = "0.4"
 # Raw differential-dataflow + timely, used in-process by `dd_native.rs`.
 differential-dataflow = "=0.24.0"
 timely = "=0.30.0"
-serde = { version = "1", features = ["derive", "rc"] }
+serde = "1"
 
 [[test]]
 # Parity harness over egglog's .egg corpus: checks the DD backend against

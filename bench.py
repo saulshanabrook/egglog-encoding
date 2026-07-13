@@ -2245,10 +2245,7 @@ def format_comparison_result(summary: RatioSummary) -> Text:
 
 
 def comparison_result_text(summary: RatioSummary) -> str:
-    result = comparison_result(summary)
-    if result == "invalid" and summary.issue is not None:
-        return f"invalid: {summary.issue}"
-    return result
+    return format_comparison_result(summary).plain
 
 
 def lower_is_better_result(summary: RatioSummary) -> str:
@@ -2271,10 +2268,7 @@ def format_lower_is_better_result(summary: RatioSummary) -> Text:
 
 
 def lower_is_better_result_text(summary: RatioSummary) -> str:
-    result = lower_is_better_result(summary)
-    if result == "invalid" and summary.issue is not None:
-        return f"invalid: {summary.issue}"
-    return result
+    return format_lower_is_better_result(summary).plain
 
 
 def proof_gate_result(summary: RatioSummary) -> tuple[str, str]:
@@ -2969,24 +2963,6 @@ def display_backend(backend: Backend) -> str:
     return backend_spec(backend).display_name
 
 
-def backend_summary_title(spec: BenchmarkSpec, baseline_backend: Backend, metric: str) -> str:
-    if len(spec.backends) == 2:
-        return f"{display_backend(spec.backends[1])} vs {display_backend(baseline_backend)} {metric}"
-    return f"Backend {metric} summary vs {display_backend(baseline_backend)}"
-
-
-def backend_ratio_heading(spec: BenchmarkSpec, baseline_backend: Backend) -> str:
-    if len(spec.backends) == 2:
-        return f"{display_backend(spec.backends[1])}/{display_backend(baseline_backend)}"
-    return f"Candidate/{display_backend(baseline_backend)}"
-
-
-def backend_candidate_total_heading(spec: BenchmarkSpec) -> str:
-    if len(spec.backends) == 2:
-        return f"{display_backend(spec.backends[1])} total"
-    return "Candidate total"
-
-
 def backend_summary_table(
     cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
@@ -2994,9 +2970,16 @@ def backend_summary_table(
     metric: MetricSpec,
 ) -> ReportTableData:
     baseline_backend = spec.backends[0]
+    baseline_name = display_backend(baseline_backend)
     include_target = len(targets) > 1
-    ratio_heading = backend_ratio_heading(spec, baseline_backend)
-    candidate_total_heading = backend_candidate_total_heading(spec)
+    if len(spec.backends) == 2:
+        candidate_name = display_backend(spec.backends[1])
+        title = f"{candidate_name} vs {baseline_name} {metric.title}"
+    else:
+        candidate_name = "Candidate"
+        title = f"Backend {metric.title} summary vs {baseline_name}"
+    ratio_heading = f"{candidate_name}/{baseline_name}"
+    candidate_total_heading = f"{candidate_name} total"
     headers: list[str] = []
     if include_target:
         headers.append("Target")
@@ -3004,7 +2987,7 @@ def backend_summary_table(
         [
             "Backend",
             "Mode",
-            f"{display_backend(baseline_backend)} total",
+            f"{baseline_name} total",
             candidate_total_heading,
             ratio_heading,
             "Change",
@@ -3051,7 +3034,7 @@ def backend_summary_table(
                 )
                 rows.append(report_row(*row_values))
     right_aligned = {
-        f"{display_backend(baseline_backend)} total",
+        f"{baseline_name} total",
         candidate_total_heading,
         ratio_heading,
         "Change",
@@ -3060,7 +3043,7 @@ def backend_summary_table(
         "Best ratio",
     }
     return ReportTableData(
-        title=backend_summary_title(spec, baseline_backend, metric.title),
+        title=title,
         headers=tuple(headers),
         rows=tuple(rows),
         caption=metric.caption,

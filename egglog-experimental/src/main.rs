@@ -73,25 +73,18 @@ where
 fn parse_backend(value: Option<&str>) -> Result<Backend, String> {
     match value {
         Some("main") => Ok(Backend::Main),
-        Some("dd") => parse_dd_backend(),
+        #[cfg(feature = "dd-backend")]
+        Some("dd") => Ok(Backend::Dd),
+        #[cfg(not(feature = "dd-backend"))]
+        Some("dd") => Err(
+            "backend \"dd\" requires building egglog-experimental with --features dd-backend"
+                .to_string(),
+        ),
         Some(other) => Err(format!(
             "unknown backend {other:?}; expected one of: main, dd"
         )),
         None => Err("backend value must be valid UTF-8".to_string()),
     }
-}
-
-#[cfg(feature = "dd-backend")]
-fn parse_dd_backend() -> Result<Backend, String> {
-    Ok(Backend::Dd)
-}
-
-#[cfg(not(feature = "dd-backend"))]
-fn parse_dd_backend() -> Result<Backend, String> {
-    Err(
-        "backend \"dd\" requires building egglog-experimental with --features dd-backend"
-            .to_string(),
-    )
 }
 
 #[cfg(test)]

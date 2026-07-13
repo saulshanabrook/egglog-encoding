@@ -28,8 +28,8 @@ impl ContainerValue for PairContainer {
     }
 }
 
-/// The `(first, second)` children of a `(pair a b)` term; `None` for any other
-/// term.
+/// The `(first, second)` children of a `(pair a b)` term; `None` for any
+/// other term.
 fn pair_term_children(termdag: &TermDag, term: TermId) -> Option<(TermId, TermId)> {
     match termdag.get(term) {
         Term::App(head, children) if head == "pair" => match children.as_slice() {

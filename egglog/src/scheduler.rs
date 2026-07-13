@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use core_relations::{ExecutionState, ExternalFunction, ExternalFunctionId, Value};
 use egglog_backend_trait::BackendExt;
 use egglog_bridge::{
-    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, TableAction,
+    ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, QueryEntry, RuleId, TableAction,
 };
 use egglog_reports::RunReport;
 use numeric_id::define_id;
@@ -385,7 +385,10 @@ impl SchedulerRuleInfo {
         let free_vars = rule.head.get_free_vars().into_iter().collect::<Vec<_>>();
         let unit_type = egraph.backend.base_values().get_ty::<()>();
         let unit = egraph.backend.base_values().get(());
-        let unit_entry = egraph.backend.base_value_constant(());
+        let unit_entry = QueryEntry::Const {
+            val: unit,
+            ty: ColumnTy::Base(unit_type),
+        };
 
         let matches = Arc::new(Mutex::new(Vec::new()));
         let collect_matches = egraph
@@ -409,7 +412,7 @@ impl SchedulerRuleInfo {
             false, // seminaive query: Pure/Write contexts
         );
         if let Err(error) = qrule_builder.query(&rule.body, false) {
-            qrule_builder.abort();
+            drop(qrule_builder);
             return Err(build.rollback(egraph, error));
         }
         let entries = free_vars
@@ -431,7 +434,7 @@ impl SchedulerRuleInfo {
         let decided = egraph.backend.add_table(FunctionConfig {
             schema,
             default: DefaultVal::Const(unit),
-            merge: MergeFn::AssertEq,
+            merge: MergeFn::Old,
             name: "backend".to_string(),
             can_subsume: false,
         });
@@ -450,11 +453,11 @@ impl SchedulerRuleInfo {
             .collect::<Vec<_>>();
         entries.push(unit_entry);
         if let Err(error) = arule_builder.rb.query_table(decided, &entries, None) {
-            arule_builder.abort();
+            drop(arule_builder);
             return Err(build.rollback(egraph, Error::BackendError(error.to_string())));
         }
         if let Err(error) = arule_builder.actions(&rule.head) {
-            arule_builder.abort();
+            drop(arule_builder);
             return Err(build.rollback(egraph, error));
         }
         // Remove the entry as it's now done
@@ -500,16 +503,18 @@ mod test {
         (egraph, rule)
     }
 
-    fn backend_probe(egraph: &mut EGraph) -> (ExternalFunctionId, RuleId, FunctionId) {
-        let external =
+    fn backend_probe(egraph: &mut EGraph) -> ([ExternalFunctionId; 2], [RuleId; 2], FunctionId) {
+        let external = std::array::from_fn(|_| {
             egraph
                 .backend
                 .register_external_func(Box::new(core_relations::make_external_func(
                     |state: &mut ExecutionState<'_>, _args: &[Value]| {
                         Some(state.base_values().get(()))
                     },
-                )));
-        let rule = egraph.backend.new_rule("probe", false).build().unwrap();
+                )))
+        });
+        let rules =
+            std::array::from_fn(|_| egraph.backend.new_rule("probe", false).build().unwrap());
         let unit_type = egraph.backend.base_values().get_ty::<()>();
         let unit = egraph.backend.base_values().get(());
         let table = egraph.backend.add_table(FunctionConfig {
@@ -519,7 +524,7 @@ mod test {
             name: "probe".into(),
             can_subsume: false,
         });
-        (external, rule, table)
+        (external, rules, table)
     }
 
     fn assert_failed_construction_restores_backend(mut failed: EGraph, rule: &ResolvedCoreRule) {

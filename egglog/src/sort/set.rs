@@ -1,5 +1,4 @@
 use super::*;
-use crate::termdag::OrdTerm;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

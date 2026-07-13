@@ -64,27 +64,25 @@
 //! ## Advanced features are optional
 //!
 //! Capabilities that not every backend can offer — the seminaive-safe
-//! [`ActionRegistry`] ([`Backend::action_registry`]), container sorts,
-//! subsumption — are exposed as methods with **default** bodies (return `false`
-//! / `unimplemented!`). An implementer overrides only what it supports and
-//! advertises it through the `supports_*` flags; the frontend gates on those.
+//! [`ActionRegistry`] ([`Backend::action_registry`]) and container sorts — are
+//! exposed as methods with **default** bodies. An implementer overrides only
+//! what it supports and advertises it through the `supports_*` flags; the
+//! frontend gates on those.
 //!
 //! ## Ergonomic sugar
 //!
 //! The object-safe [`Backend`] methods take erased closures (`&mut dyn FnMut(..)`)
 //! and carry a `_dyn` suffix. Generic, ergonomic wrappers ([`BackendExt::for_each`],
-//! [`BackendExt::with_execution_state`], [`BackendExt::base_value_constant`], …)
-//! live on the [`BackendExt`] extension trait (a blanket impl over every
-//! `Backend`), so call sites read naturally — import `BackendExt` to use them.
+//! [`BackendExt::with_execution_state`], …) live on the [`BackendExt`] extension
+//! trait (a blanket impl over every `Backend`), so call sites read naturally —
+//! import `BackendExt` to use them.
 //!
 //! ## Relationship to `egglog-bridge`
 //!
 //! This crate depends on `egglog-bridge` and re-exports its vocabulary types
 //! ([`FunctionConfig`], [`MergeFn`], [`ColumnTy`], [`Value`], …) so an
 //! implementer imports them from here. It also provides the reference
-//! `impl Backend for egglog_bridge::EGraph` (see `backend_impl`). The only
-//! change to the bridge itself is a one-line re-export of `Variable` /
-//! `VariableId`, which a backend needs to construct [`QueryEntry::Var`].
+//! `impl Backend for egglog_bridge::EGraph` (see `backend_impl`).
 
 use std::any::{Any, TypeId};
 use std::sync::{Arc, RwLock};
@@ -148,10 +146,6 @@ pub trait Backend: Send + Sync {
 
     // -- iteration (object-safe; see `for_each` / `for_each_while` sugar) ----
 
-    /// Call `f` on every row in `table`. Object-safe form; prefer the
-    /// [`BackendExt::for_each`] sugar.
-    fn for_each_dyn(&self, table: FunctionId, f: &mut dyn for<'r> FnMut(ScanEntry<'r>));
-
     /// Iterate rows in `table`, stopping early when `f` returns `false`.
     /// Object-safe form; prefer the [`BackendExt::for_each_while`] sugar.
     fn for_each_while_dyn(
@@ -200,12 +194,8 @@ pub trait Backend: Send + Sync {
 
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 
-    /// Run `f` against a fresh execution state (for staging updates / calling
-    /// primitives). Object-safe form; prefer [`BackendExt::with_execution_state`].
-    fn with_execution_state_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>));
-
-    /// Like [`Backend::with_execution_state_dyn`], but returns whether `f`
-    /// staged any mutation. Object-safe form; prefer
+    /// Run `f` against a fresh execution state and return whether it staged any
+    /// mutation. Object-safe form; prefer
     /// [`BackendExt::with_execution_state_tracked`].
     fn with_execution_state_tracked_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) -> bool;
 
@@ -322,7 +312,7 @@ impl Clone for Box<dyn Backend> {
 /// Provided by a blanket impl for every `B: Backend + ?Sized`, so the sugar is
 /// available on `dyn Backend`, `Box<dyn Backend>`, and any concrete backend.
 /// Import this trait to call `for_each` / `with_execution_state` /
-/// `base_value_constant` / `register_container_ty` on a backend.
+/// `register_container_ty` on a backend.
 pub trait BackendExt {
     /// Call `f` on every row in `table`.
     fn for_each(&self, table: FunctionId, f: impl for<'r> FnMut(ScanEntry<'r>));
@@ -340,9 +330,6 @@ pub trait BackendExt {
         f: impl FnOnce(&mut ExecutionState<'_>) -> R,
     ) -> (R, bool);
 
-    /// Build a [`QueryEntry`] constant for a typed base value.
-    fn base_value_constant<T: BaseValue>(&self, x: T) -> QueryEntry;
-
     /// Register a container-value type `C`.
     ///
     /// Container registration wires the container into the backend's rebuild
@@ -352,14 +339,14 @@ pub trait BackendExt {
     /// on [`Backend`]. Registration is a no-op for backends that do not advertise
     /// container support.
     fn register_container_ty<C: ContainerValue>(&mut self);
-
-    /// Intern a container value `C`, returning its `Value` handle.
-    fn get_container_value<C: ContainerValue>(&mut self, val: C) -> Value;
 }
 
 impl<B: Backend + ?Sized> BackendExt for B {
     fn for_each(&self, table: FunctionId, mut f: impl for<'r> FnMut(ScanEntry<'r>)) {
-        self.for_each_dyn(table, &mut f);
+        self.for_each_while_dyn(table, &mut |row| {
+            f(row);
+            true
+        });
     }
 
     fn for_each_while(&self, table: FunctionId, mut f: impl for<'r> FnMut(ScanEntry<'r>) -> bool) {
@@ -367,13 +354,7 @@ impl<B: Backend + ?Sized> BackendExt for B {
     }
 
     fn with_execution_state<R>(&self, f: impl FnOnce(&mut ExecutionState<'_>) -> R) -> R {
-        let mut f = Some(f);
-        let mut out: Option<R> = None;
-        self.with_execution_state_dyn(&mut |es| {
-            let f = f.take().expect("with_execution_state closure called once");
-            out = Some(f(es));
-        });
-        out.expect("with_execution_state_dyn must invoke its closure exactly once")
+        self.with_execution_state_tracked(f).0
     }
 
     fn with_execution_state_tracked<R>(
@@ -394,13 +375,6 @@ impl<B: Backend + ?Sized> BackendExt for B {
         )
     }
 
-    fn base_value_constant<T: BaseValue>(&self, x: T) -> QueryEntry {
-        QueryEntry::Const {
-            val: self.base_values().get(x),
-            ty: ColumnTy::Base(self.base_values().get_ty::<T>()),
-        }
-    }
-
     fn register_container_ty<C: ContainerValue>(&mut self) {
         if let Some(bridge) = self.as_any_mut().downcast_mut::<egglog_bridge::EGraph>() {
             bridge.register_container_ty::<C>();
@@ -416,24 +390,15 @@ impl<B: Backend + ?Sized> BackendExt for B {
                 .register_type::<C>(counter, move |state, old, new| merge_fn(state, old, new));
         }
     }
-
-    fn get_container_value<C: ContainerValue>(&mut self, val: C) -> Value {
-        if let Some(bridge) = self.as_any_mut().downcast_mut::<egglog_bridge::EGraph>() {
-            bridge.get_container_value::<C>(val)
-        } else {
-            panic!("get_container_value is only supported on the reference bridge backend")
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
 // `RuleBuilderOps` — mirrors `egglog_bridge::RuleBuilder`
 // ---------------------------------------------------------------------------
 
-/// Operations on an in-progress rule. Mirrors the public surface of
-/// `egglog_bridge::RuleBuilder`: the reference impl is a thin passthrough; a
-/// custom backend accumulates these calls into its own IR and finalizes on
-/// [`RuleBuilderOps::build`].
+/// Operations the frontend needs while constructing a rule. The reference
+/// implementation delegates to `egglog_bridge::RuleBuilder`; another backend
+/// may accumulate the calls into its own IR before [`RuleBuilderOps::build`].
 pub trait RuleBuilderOps {
     /// Bind a new variable of the given type.
     fn new_var(&mut self, ty: ColumnTy) -> QueryEntry;
@@ -530,11 +495,6 @@ pub trait RuleBuilderOps {
     ///
     /// On failure, the builder must release any backend resources it reserved.
     fn build(self: Box<Self>) -> Result<RuleId>;
-
-    /// Abandon an unfinished rule and release any backend resources reserved
-    /// when the builder was created. Backends that reserve nothing may simply
-    /// drop `self`.
-    fn abort(self: Box<Self>);
 
     // -- optional: bridge-only escape hatch ---------------------------------
 

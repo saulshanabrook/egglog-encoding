@@ -338,20 +338,6 @@ impl<K: NumericId, V> DenseIdMapWithReuse<K, V> {
         }
     }
 
-    /// Release a slot returned by [`DenseIdMapWithReuse::reserve_slot`] before
-    /// a value was inserted into it.
-    pub fn release_reserved(&mut self, id: K) {
-        assert!(
-            !self.data.contains_key(id) && !self.free.contains(&id),
-            "slot must be reserved and unoccupied"
-        );
-        if id.inc() == self.data.next_id() {
-            self.data.pop_last(id);
-        } else {
-            self.free.push(id);
-        }
-    }
-
     /// Insert the given mapping into the table. You probably
     /// want to use [`DenseIdMapWithReuse::push`] instead, unless you need to use
     /// the key to build the value, in which case you can

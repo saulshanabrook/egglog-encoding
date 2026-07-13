@@ -5,8 +5,8 @@
 //!
 //! One `run_rules` call is one bounded egglog iteration. Each rule's body
 //! table-atom join runs on an in-process differential-dataflow dataflow
-//! ([`dd_native`]); body primitives and head actions are applied
-//! host-side ([`interpret`]) into a Rust-side materialized mirror of every
+//! (`dd_native`); body primitives and head actions are applied
+//! host-side (`interpret`) into a Rust-side materialized mirror of every
 //! relation. `for_each` / `lookup_id` / `table_size` read that mirror.
 //!
 //! ## Why this is a DD backend
@@ -33,13 +33,12 @@ use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
 
-pub mod compile;
-pub mod dd_native;
-mod external_func;
-pub mod interpret;
+mod compile;
+mod dd_native;
+mod interpret;
 mod rule_builder;
 
-use compile::{row_col, unpack_row, MergeMode, MergeTree, ReadKey, Row, RuleIr};
+use compile::{MergeMode, MergeTree, ReadKey, Row, RuleIr};
 
 type LocatedValue = (u32, RowLocation);
 type RowReplacement = (Box<[u32]>, LocatedValue);
@@ -53,17 +52,12 @@ mod dd_workers {
     /// boundary. The worker map is private to this module, and every accessor
     /// requires `&mut self`, so immutable backend operations cannot touch
     /// Timely's `Rc`/`RefCell` state.
+    #[derive(Default)]
     pub(super) struct DdWorkers {
         inner: HashMap<Vec<usize>, dd_native::FusedDdJoin>,
     }
 
     impl DdWorkers {
-        pub(super) fn new() -> Self {
-            Self {
-                inner: HashMap::new(),
-            }
-        }
-
         pub(super) fn contains_key(&mut self, key: &[usize]) -> bool {
             self.inner.contains_key(key)
         }
@@ -135,7 +129,6 @@ pub struct EGraph {
     db: Database,
     /// Monotonic fresh-id counter for `fresh_id` / `add_term`.
     pub(crate) next_id: u32,
-    report_level: ReportLevel,
     /// Atom-less rules (`(rule () …)`) fire ONCE; an entry here marks a rule
     /// index as already fired. The DD dataflow has no input relation to drive an
     /// atom-less body, so this fired-marker is the one piece of seminaive
@@ -171,12 +164,6 @@ struct CurrentValue {
     rows_for_key: usize,
 }
 
-impl CurrentValue {
-    fn located(self) -> LocatedValue {
-        (self.value, self.location)
-    }
-}
-
 impl Default for EGraph {
     fn default() -> Self {
         Self::new()
@@ -203,9 +190,8 @@ impl EGraph {
             db,
             // Start at 1 so id 0 stays a "null"/padding sentinel.
             next_id: 1,
-            report_level: ReportLevel::default(),
             seen: HashMap::new(),
-            dd_fused: DdWorkers::new(),
+            dd_fused: DdWorkers::default(),
             next_row_version: 1,
             live_versions: HashMap::new(),
             all_versions: HashMap::new(),
@@ -223,18 +209,6 @@ impl EGraph {
     /// Relation name for `f`, used in diagnostics and unsupported-shape errors.
     pub(crate) fn relation_name(&self, f: FunctionId) -> &str {
         &self.info(f).name
-    }
-
-    /// Inherent accessor for the embedded [`BaseValues`] registry (the frontend
-    /// extraction path threads `&BaseValues` through `reconstruct_termdag_base`).
-    pub fn base_values_inner(&self) -> &egglog_core_relations::BaseValues {
-        self.db.base_values()
-    }
-
-    /// Inherent accessor for the embedded [`Database`]'s container registry, so
-    /// the frontend extraction path can read interned container values.
-    pub fn container_values_inner(&self) -> &egglog_core_relations::ContainerValues {
-        self.db.container_values()
     }
 
     /// The functional-dependency merge mode of a function (from `add_table`).
@@ -288,7 +262,7 @@ impl EGraph {
         let mut orig: HashMap<Box<[u32]>, Option<CurrentValue>> = HashMap::new();
         for row in rows {
             let key: Box<[u32]> = row[..inputs_len].into();
-            let nv = row_col(row, inputs_len);
+            let nv = row[inputs_len];
             let existing = cur.get(&key).copied();
             orig.entry(key.clone()).or_insert(existing);
             let existing_value = existing.map(|current| current.value);
@@ -318,9 +292,10 @@ impl EGraph {
         // relation scan for every key.
         let mut replacements = Vec::new();
         for (key, old) in orig {
-            let new = cur[&key].located();
+            let current = cur[&key];
+            let new = (current.value, current.location);
             let already_normalized =
-                old.is_some_and(|current| current.rows_for_key == 1 && current.located() == new);
+                old.is_some_and(|old| old.rows_for_key == 1 && (old.value, old.location) == new);
             if !already_normalized {
                 replacements.push((key, new));
             }
@@ -343,7 +318,7 @@ impl EGraph {
         let mut newv: HashMap<Box<[u32]>, Vec<u32>> = HashMap::new();
         for row in rows {
             let key: Box<[u32]> = row[..inputs_len].into();
-            let v = row_col(row, inputs_len);
+            let v = row[inputs_len];
             match newv.get_mut(&key) {
                 Some(vs) => vs.push(v),
                 None => {
@@ -376,7 +351,7 @@ impl EGraph {
             }
             let new_val = acc.unwrap();
             let new = (new_val, location);
-            if Some(new) != old.map(CurrentValue::located) {
+            if Some(new) != old.map(|old| (old.value, old.location)) {
                 updates.push((key, new));
             }
         }
@@ -498,7 +473,7 @@ impl EGraph {
         ] {
             if let Some(rows) = store.get(&f) {
                 for row in rows.iter() {
-                    let value = row_col(row, inputs_len);
+                    let value = row[inputs_len];
                     let key: Box<[u32]> = row[..inputs_len].into();
                     cur.entry(key)
                         .and_modify(|current: &mut CurrentValue| {
@@ -529,7 +504,9 @@ impl EGraph {
         let keys = replacements.iter().map(|(key, _)| key.clone()).collect();
         self.remove_matching_keys(f, keylen, &keys);
         for (key, (value, location)) in replacements {
-            self.insert_located_row(f, location, row_with_value(&key, value));
+            let mut row = key.into_vec();
+            row.push(value);
+            self.insert_located_row(f, location, row.into_boxed_slice());
         }
         true
     }
@@ -596,12 +573,6 @@ impl EGraph {
     }
 }
 
-fn row_with_value(key: &[u32], value: u32) -> Row {
-    let mut row = key.to_vec();
-    row.push(value);
-    row.into_boxed_slice()
-}
-
 fn remove_keys_from_store(
     store: &mut HashMap<FunctionId, HashSet<Row>>,
     f: FunctionId,
@@ -650,12 +621,20 @@ fn update_version_map(
 mod tests {
     use super::*;
     use egglog_backend_trait::{
-        Backend, ColumnTy, DefaultVal, FunctionConfig, MergeFn, QueryEntry, Value,
+        Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, MergeFn,
+        QueryEntry, RuleId, Value,
     };
     use egglog_numeric_id::NumericId;
 
     fn row(vals: &[u32]) -> Row {
         vals.to_vec().into_boxed_slice()
+    }
+
+    fn constant(value: u32, ty: ColumnTy) -> QueryEntry {
+        QueryEntry::Const {
+            val: Value::new(value),
+            ty,
+        }
     }
 
     fn id_function(eg: &mut EGraph, name: &str, merge: MergeFn) -> FunctionId {
@@ -671,17 +650,120 @@ mod tests {
         )
     }
 
+    fn neq_primitive(eg: &mut EGraph) -> ExternalFunctionId {
+        Backend::register_external_func(
+            eg,
+            Box::new(egglog_core_relations::make_external_func(|_, args| {
+                (args[0] != args[1]).then_some(Value::new(0))
+            })),
+        )
+    }
+
+    fn max_primitive(eg: &mut EGraph) -> ExternalFunctionId {
+        Backend::register_external_func(
+            eg,
+            Box::new(egglog_core_relations::make_external_func(|_, args| {
+                Some(args[0].max(args[1]))
+            })),
+        )
+    }
+
+    fn self_join_tables(eg: &mut EGraph) -> (BaseValueId, FunctionId, FunctionId) {
+        let unit_ty = eg.db.base_values().get_ty::<()>();
+        let relation = Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "R".to_string(),
+                can_subsume: false,
+            },
+        );
+        let out = Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![
+                    ColumnTy::Id,
+                    ColumnTy::Id,
+                    ColumnTy::Id,
+                    ColumnTy::Base(unit_ty),
+                ],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "Out".to_string(),
+                can_subsume: false,
+            },
+        );
+        eg.insert_live_row(relation, row(&[1, 2, 0]));
+        eg.insert_live_row(relation, row(&[1, 3, 0]));
+        (unit_ty, relation, out)
+    }
+
+    fn path_compression_fixture(eg: &mut EGraph) -> (FunctionId, RuleId) {
+        let neq = neq_primitive(eg);
+        let unit_ty = eg.db.base_values().get_ty::<()>();
+        let uf = Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "UF".to_string(),
+                can_subsume: false,
+            },
+        );
+        let mut rb = Backend::new_rule(eg, "path_compress", true);
+        let a = rb.new_var(ColumnTy::Id);
+        let b = rb.new_var(ColumnTy::Id);
+        let c = rb.new_var(ColumnTy::Id);
+        let unit = constant(0, ColumnTy::Base(unit_ty));
+        rb.query_table(uf, &[a.clone(), b.clone(), unit.clone()], Some(false))
+            .unwrap();
+        rb.query_table(uf, &[b.clone(), c.clone(), unit.clone()], Some(false))
+            .unwrap();
+        rb.query_prim(
+            neq,
+            &[b.clone(), c.clone(), unit.clone()],
+            ColumnTy::Base(unit_ty),
+        )
+        .unwrap();
+        rb.remove(uf, &[a.clone(), b]);
+        rb.set(uf, &[a, c, unit]);
+        (uf, rb.build().unwrap())
+    }
+
+    fn write_order_tables(eg: &mut EGraph) -> (BaseValueId, FunctionId, FunctionId) {
+        let unit_ty = eg.db.base_values().get_ty::<()>();
+        let trigger = Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Base(unit_ty)],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: "Trigger".to_string(),
+                can_subsume: false,
+            },
+        );
+        let f = Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                default: DefaultVal::Fail,
+                merge: MergeFn::New,
+                name: "F".to_string(),
+                can_subsume: true,
+            },
+        );
+        eg.insert_live_row(trigger, row(&[0]));
+        (unit_ty, trigger, f)
+    }
+
     #[test]
     fn native_union_is_rejected_instead_of_silently_dropped() {
         let mut eg = EGraph::new();
-        let left = QueryEntry::Const {
-            val: Value::new(1),
-            ty: ColumnTy::Id,
-        };
-        let right = QueryEntry::Const {
-            val: Value::new(2),
-            ty: ColumnTy::Id,
-        };
+        let left = constant(1, ColumnTy::Id);
+        let right = constant(2, ColumnTy::Id);
         let rule = {
             let mut builder = Backend::new_rule(&mut eg, "native union", true);
             builder.union(left, right);
@@ -737,47 +819,14 @@ mod tests {
     #[test]
     fn same_table_self_join_produces_cross_pairs() {
         let mut eg = EGraph::new();
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let relation = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "R".to_string(),
-                can_subsume: false,
-            },
-        );
-        let out = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Base(unit_ty),
-                ],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "Out".to_string(),
-                can_subsume: false,
-            },
-        );
-        eg.insert_live_row(relation, row(&[1, 2, 0]));
-        eg.insert_live_row(relation, row(&[1, 3, 0]));
+        let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
             let mut rb = Backend::new_rule(&mut eg, "self_join", true);
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false))
@@ -795,10 +844,7 @@ mod tests {
     #[test]
     fn fused_ruleset_allows_mixed_read_modes_same_relation() {
         let mut eg = EGraph::new();
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
+        let unit_ty = eg.db.base_values().get_ty::<()>();
         let relation = Backend::add_table(
             &mut eg,
             FunctionConfig {
@@ -835,10 +881,7 @@ mod tests {
         let live_rule = {
             let mut rb = Backend::new_rule(&mut eg, "live_read", true);
             let x = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[x.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.set(live_out, &[x, unit]);
@@ -847,10 +890,7 @@ mod tests {
         let all_rule = {
             let mut rb = Backend::new_rule(&mut eg, "all_read", true);
             let x = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[x.clone(), unit.clone()], None)
                 .unwrap();
             rb.set(all_out, &[x, unit]);
@@ -868,59 +908,16 @@ mod tests {
     #[test]
     fn same_table_self_join_applies_primitive_guards() {
         let mut eg = EGraph::new();
-        let neq = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                (args[0] != args[1]).then_some(Value::new(0))
-            })),
-        );
-        let ordering_max = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                Some(args[0].max(args[1]))
-            })),
-        );
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let relation = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "R".to_string(),
-                can_subsume: false,
-            },
-        );
-        let out = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Base(unit_ty),
-                ],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "Out".to_string(),
-                can_subsume: false,
-            },
-        );
-        eg.insert_live_row(relation, row(&[1, 2, 0]));
-        eg.insert_live_row(relation, row(&[1, 3, 0]));
+        let neq = neq_primitive(&mut eg);
+        let ordering_max = max_primitive(&mut eg);
+        let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
             let mut rb = Backend::new_rule(&mut eg, "guarded_self_join", true);
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false))
@@ -950,49 +947,9 @@ mod tests {
     #[test]
     fn same_table_self_join_allows_independent_unit_outputs() {
         let mut eg = EGraph::new();
-        let neq = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                (args[0] != args[1]).then_some(Value::new(0))
-            })),
-        );
-        let ordering_max = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                Some(args[0].max(args[1]))
-            })),
-        );
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let relation = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "R".to_string(),
-                can_subsume: false,
-            },
-        );
-        let out = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Id,
-                    ColumnTy::Base(unit_ty),
-                ],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "Out".to_string(),
-                can_subsume: false,
-            },
-        );
-        eg.insert_live_row(relation, row(&[1, 2, 0]));
-        eg.insert_live_row(relation, row(&[1, 3, 0]));
+        let neq = neq_primitive(&mut eg);
+        let ordering_max = max_primitive(&mut eg);
+        let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
             let mut rb = Backend::new_rule(&mut eg, "unit_var_self_join", true);
@@ -1001,10 +958,7 @@ mod tests {
             let c = rb.new_var(ColumnTy::Id);
             let unit1 = rb.new_var(ColumnTy::Base(unit_ty));
             let unit2 = rb.new_var(ColumnTy::Base(unit_ty));
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(relation, &[a.clone(), b.clone(), unit1], Some(false))
                 .unwrap();
             rb.query_table(relation, &[a.clone(), c.clone(), unit2], Some(false))
@@ -1034,50 +988,7 @@ mod tests {
     #[test]
     fn incremental_self_join_retracts_old_path_edge() {
         let mut eg = EGraph::new();
-        let neq = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                (args[0] != args[1]).then_some(Value::new(0))
-            })),
-        );
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let uf = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "UF".to_string(),
-                can_subsume: false,
-            },
-        );
-
-        let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "path_compress", true);
-            let a = rb.new_var(ColumnTy::Id);
-            let b = rb.new_var(ColumnTy::Id);
-            let c = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
-            rb.query_table(uf, &[a.clone(), b.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_table(uf, &[b.clone(), c.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_prim(
-                neq,
-                &[b.clone(), c.clone(), unit.clone()],
-                ColumnTy::Base(unit_ty),
-            )
-            .unwrap();
-            rb.remove(uf, &[a.clone(), b]);
-            rb.set(uf, &[a, c, unit]);
-            rb.build().unwrap()
-        };
+        let (uf, rule) = path_compression_fixture(&mut eg);
 
         eg.insert_live_row(uf, row(&[40, 4, 0]));
         Backend::run_rules(&mut eg, &[rule]).unwrap();
@@ -1091,50 +1002,7 @@ mod tests {
     #[test]
     fn reinserted_same_row_refires_incremental_join() {
         let mut eg = EGraph::new();
-        let neq = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                (args[0] != args[1]).then_some(Value::new(0))
-            })),
-        );
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let uf = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "UF".to_string(),
-                can_subsume: false,
-            },
-        );
-
-        let rule = {
-            let mut rb = Backend::new_rule(&mut eg, "path_compress", true);
-            let a = rb.new_var(ColumnTy::Id);
-            let b = rb.new_var(ColumnTy::Id);
-            let c = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
-            rb.query_table(uf, &[a.clone(), b.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_table(uf, &[b.clone(), c.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_prim(
-                neq,
-                &[b.clone(), c.clone(), unit.clone()],
-                ColumnTy::Base(unit_ty),
-            )
-            .unwrap();
-            rb.remove(uf, &[a.clone(), b]);
-            rb.set(uf, &[a, c, unit]);
-            rb.build().unwrap()
-        };
+        let (uf, rule) = path_compression_fixture(&mut eg);
 
         eg.insert_live_row(uf, row(&[40, 4, 0]));
         eg.insert_live_row(uf, row(&[75, 40, 0]));
@@ -1152,49 +1020,16 @@ mod tests {
     #[test]
     fn same_iteration_remove_then_set_keeps_set_value() {
         let mut eg = EGraph::new();
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let trigger = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "Trigger".to_string(),
-                can_subsume: false,
-            },
-        );
-        let f = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id],
-                default: DefaultVal::Fail,
-                merge: MergeFn::New,
-                name: "F".to_string(),
-                can_subsume: true,
-            },
-        );
-        eg.insert_live_row(trigger, row(&[0]));
+        let (unit_ty, trigger, f) = write_order_tables(&mut eg);
         eg.insert_live_row(f, row(&[1, 9]));
 
         let rule = {
             let mut rb = Backend::new_rule(&mut eg, "remove_then_set", true);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
                 .unwrap();
-            let key = QueryEntry::Const {
-                val: Value::new(1),
-                ty: ColumnTy::Id,
-            };
-            let new = QueryEntry::Const {
-                val: Value::new(2),
-                ty: ColumnTy::Id,
-            };
+            let key = constant(1, ColumnTy::Id);
+            let new = constant(2, ColumnTy::Id);
             rb.remove(f, std::slice::from_ref(&key));
             rb.set(f, &[key, new]);
             rb.build().unwrap()
@@ -1209,48 +1044,15 @@ mod tests {
     #[test]
     fn same_iteration_set_then_subsume_ends_subsumed() {
         let mut eg = EGraph::new();
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
-        let trigger = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Base(unit_ty)],
-                default: DefaultVal::Fail,
-                merge: MergeFn::Old,
-                name: "Trigger".to_string(),
-                can_subsume: false,
-            },
-        );
-        let f = Backend::add_table(
-            &mut eg,
-            FunctionConfig {
-                schema: vec![ColumnTy::Id, ColumnTy::Id],
-                default: DefaultVal::Fail,
-                merge: MergeFn::New,
-                name: "F".to_string(),
-                can_subsume: true,
-            },
-        );
-        eg.insert_live_row(trigger, row(&[0]));
+        let (unit_ty, trigger, f) = write_order_tables(&mut eg);
 
         let rule = {
             let mut rb = Backend::new_rule(&mut eg, "set_then_subsume", true);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
                 .unwrap();
-            let key = QueryEntry::Const {
-                val: Value::new(1),
-                ty: ColumnTy::Id,
-            };
-            let value = QueryEntry::Const {
-                val: Value::new(2),
-                ty: ColumnTy::Id,
-            };
+            let key = constant(1, ColumnTy::Id);
+            let value = constant(2, ColumnTy::Id);
             rb.set(f, &[key.clone(), value]);
             rb.subsume(f, &[key]).unwrap();
             rb.build().unwrap()
@@ -1265,16 +1067,8 @@ mod tests {
     #[test]
     fn fused_delta_feed_does_not_expose_mixed_old_new_snapshots() {
         let mut eg = EGraph::new();
-        let neq = Backend::register_external_func(
-            &mut eg,
-            Box::new(egglog_core_relations::make_external_func(|_, args| {
-                (args[0] != args[1]).then_some(Value::new(0))
-            })),
-        );
-        let unit_ty = eg
-            .db
-            .base_values()
-            .get_ty_by_id(std::any::TypeId::of::<()>());
+        let neq = neq_primitive(&mut eg);
+        let unit_ty = eg.db.base_values().get_ty::<()>();
         let view = Backend::add_table(
             &mut eg,
             FunctionConfig {
@@ -1311,10 +1105,7 @@ mod tests {
         let view_first_rule = {
             let mut rb = Backend::new_rule(&mut eg, "view_first", true);
             let x = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(view, &[x.clone(), unit.clone()], Some(false))
                 .unwrap();
             rb.set(dummy, &[x, unit]);
@@ -1324,10 +1115,7 @@ mod tests {
             let mut rb = Backend::new_rule(&mut eg, "current_cleanup", true);
             let selected = rb.new_var(ColumnTy::Id);
             let old = rb.new_var(ColumnTy::Id);
-            let unit = QueryEntry::Const {
-                val: Value::new(0),
-                ty: ColumnTy::Base(unit_ty),
-            };
+            let unit = constant(0, ColumnTy::Base(unit_ty));
             rb.query_table(current, std::slice::from_ref(&selected), Some(false))
                 .unwrap();
             rb.query_table(view, &[selected.clone(), unit.clone()], Some(false))
@@ -1465,13 +1253,6 @@ impl Backend for EGraph {
 
     // -- iteration ----------------------------------------------------------
 
-    fn for_each_dyn(&self, table: FunctionId, f: &mut dyn for<'r> FnMut(ScanEntry<'r>)) {
-        self.for_each_while_dyn(table, &mut |row| {
-            f(row);
-            true
-        });
-    }
-
     fn for_each_while_dyn(
         &self,
         table: FunctionId,
@@ -1483,7 +1264,11 @@ impl Backend for EGraph {
         let live = self.mirror.get(&table).into_iter().flat_map(|s| s.iter());
         let subs = self.subsumed.get(&table).into_iter().flat_map(|s| s.iter());
         for (row, subsumed) in live.map(|r| (r, false)).chain(subs.map(|r| (r, true))) {
-            let vals = unpack_row(row, arity);
+            let vals = row[..arity]
+                .iter()
+                .copied()
+                .map(Value::new)
+                .collect::<Vec<_>>();
             let entry = ScanEntry {
                 vals: &vals,
                 subsumed,
@@ -1537,9 +1322,9 @@ impl Backend for EGraph {
         }
         let key: Vec<u32> = key.iter().map(|value| value.rep()).collect();
         let find = |rows: Option<&HashSet<Row>>| {
-            rows?.iter().find_map(|row| {
-                (row[..key.len()] == key[..]).then(|| Value::new(row_col(row, key.len())))
-            })
+            rows?
+                .iter()
+                .find_map(|row| (row[..key.len()] == key[..]).then(|| Value::new(row[key.len()])))
         };
         find(self.mirror.get(&func)).or_else(|| find(self.subsumed.get(&func)))
     }
@@ -1559,10 +1344,6 @@ impl Backend for EGraph {
         // to stage equality into the authoritative DD mirror, which is outside
         // this backend's current container contract.
         Some(Arc::new(|_state, old, new| std::cmp::min(old, new)))
-    }
-
-    fn with_execution_state_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) {
-        self.db.with_execution_state(|st| f(st));
     }
 
     fn with_execution_state_tracked_dyn(&self, f: &mut dyn FnMut(&mut ExecutionState<'_>)) -> bool {
@@ -1633,7 +1414,9 @@ impl Backend for EGraph {
 
     fn new_panic(&mut self, message: String) -> ExternalFunctionId {
         self.db
-            .add_external_function(Box::new(external_func::PanicFunc::new(message)))
+            .add_external_function(Box::new(egglog_core_relations::make_external_func(
+                move |_, _| panic!("{message}"),
+            )))
     }
 
     // -- capability flags ---------------------------------------------------
@@ -1659,9 +1442,7 @@ impl Backend for EGraph {
 
     // -- diagnostics --------------------------------------------------------
 
-    fn set_report_level(&mut self, level: ReportLevel) {
-        self.report_level = level;
-    }
+    fn set_report_level(&mut self, _level: ReportLevel) {}
 
     fn dump_debug_info(&self) {
         for (i, info) in self.relations.iter().enumerate() {

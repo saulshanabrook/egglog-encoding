@@ -196,6 +196,15 @@ def make_profile_case(
     return (request, target, artifact)
 
 
+def mock_profile_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+    request: bench.ProfileRequest,
+    target: bench.ResolvedTarget,
+) -> None:
+    monkeypatch.setattr(bench, "resolve_profile_request", lambda *args: request)
+    monkeypatch.setattr(bench, "resolve_profile_target", lambda *args: target)
+
+
 def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
     rows = make_rows(
         make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0),
@@ -1805,10 +1814,7 @@ def test_profile_cache_hit_on_non_macos_skips_cpu_summary_and_workload(
     request, target, artifact = make_profile_case(tmp_path)
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", platform)
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
     monkeypatch.setattr(bench, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
     monkeypatch.setattr(
@@ -1838,10 +1844,7 @@ def test_profile_cache_hit_on_non_macos_prints_markdown_handoff(
     request, target, artifact = make_profile_case(tmp_path, output_format="markdown")
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "linux")
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda *args: pytest.fail("summary should not run"))
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1863,10 +1866,7 @@ def test_profile_cache_hit_on_macos_prints_cpu_summary(
     write_profile(artifact)
     summary = make_cpu_summary()
     monkeypatch.setattr(bench.sys, "platform", "darwin")
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: summary)
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1891,10 +1891,7 @@ def test_profile_cache_hit_prints_github_markdown_summary(
     request, target, artifact = make_profile_case(tmp_path, top=1, output_format="markdown")
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "darwin")
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: make_cpu_summary())
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1926,10 +1923,7 @@ def test_profile_no_summary_prints_only_absolute_artifact_path(
     )
     write_profile(artifact)
     monkeypatch.setattr(bench.sys, "platform", "linux")
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
 
@@ -1947,10 +1941,7 @@ def test_profile_cache_hit_can_open_profile(monkeypatch: pytest.MonkeyPatch, tmp
     )
     write_profile(artifact)
     opened: list[Path] = []
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(bench, "open_samply_profile", lambda artifact, checkout_path: opened.append(artifact))
 
     bench.run_profile(argparse.Namespace(), bench.RunnerOutput(), ROOT, ROOT)
@@ -1976,10 +1967,7 @@ def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
         recorded.append((kwargs["artifact"], kwargs["iterations"]))
         return make_profile_data()
 
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(bench, "run_command", lambda *args, **kwargs: pytest.fail("calibration should not run"))
     monkeypatch.setattr(bench, "run_samply_record", fake_record)
 
@@ -1999,10 +1987,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
         recorded.append(kwargs["iterations"])
         return make_profile_data()
 
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(
         bench,
         "run_command",
@@ -2024,10 +2009,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
     tmp_path: Path,
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(
         bench,
         "run_command",
@@ -2045,10 +2027,7 @@ def test_profile_auto_iteration_cap_prints_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any
 ) -> None:
     request, target, _ = make_profile_case(tmp_path, force_run=True, show_summary=False)
-    monkeypatch.setattr(bench, "resolve_profile_request", lambda args, invocation_cwd: request)
-    monkeypatch.setattr(
-        bench, "resolve_profile_target", lambda request, backend, invocation_cwd, repo_root, output: target
-    )
+    mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(
         bench,
         "run_command",

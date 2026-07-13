@@ -433,25 +433,19 @@ impl EGraph {
             self.funcs.get(func).is_some(),
             "cannot remove unknown function {func:?}"
         );
-        anyhow::ensure!(
-            func.inc() == self.funcs.next_id(),
-            "can only remove the most recently registered function"
-        );
-
         let removed_action = TableAction::new(self, func);
-        let info = self
-            .funcs
-            .pop_last(func)
-            .ok_or_else(|| anyhow::anyhow!("function disappeared during rollback"))?;
+        let info = self.funcs.pop_last(func).ok_or_else(|| {
+            anyhow::anyhow!("can only remove the most recently registered function")
+        })?;
         if !self.db.remove_last_table(info.table) {
             self.funcs.insert(func, info);
             anyhow::bail!("function's backing table was not the most recently registered table");
         }
 
-        for rule in &info.incremental_rebuild_rules {
+        self.free_rule(info.nonincremental_rebuild_rule);
+        for rule in info.incremental_rebuild_rules.iter().rev() {
             self.free_rule(*rule);
         }
-        self.free_rule(info.nonincremental_rebuild_rule);
 
         let replacement = self
             .funcs
@@ -1029,6 +1023,7 @@ impl EGraph {
 struct RuleInfo {
     last_run_at: Timestamp,
     query: rule::Query,
+    owned_external_funcs: Vec<ExternalFunctionId>,
     cached_plan: Option<CachedPlanInfo>,
     desc: Arc<str>,
 }

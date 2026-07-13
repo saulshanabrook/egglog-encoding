@@ -71,19 +71,6 @@ impl ProofInstrumentor<'_> {
                 )
             })
             .clone();
-        let proof_sort = self
-            .egraph
-            .functions
-            .get(&proof_function_name)
-            .unwrap_or_else(|| {
-                panic!(
-                    "proof table {proof_function_name} for constructor {} was not declared",
-                    func.name
-                )
-            })
-            .schema
-            .output
-            .clone();
         let proof_function = self
             .egraph
             .functions
@@ -94,6 +81,7 @@ impl ProofInstrumentor<'_> {
                     func.name
                 )
             });
+        let proof_sort = proof_function.schema.output.clone();
         let proof_value = self
             .egraph
             .backend

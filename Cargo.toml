@@ -91,6 +91,7 @@ egglog = { path = "egglog", default-features = false, version = "2.0.0" }
 ######################
 wasm-bindgen = "0.2"
 
+
 [profile.dev]
 opt-level = 3
 debug = "line-tables-only"

@@ -11,5 +11,4 @@ license.workspace = true
 anyhow = { workspace = true }
 egglog-bridge = { workspace = true }
 egglog-core-relations = { workspace = true }
-egglog-numeric-id = { workspace = true }
 egglog-reports = { workspace = true }

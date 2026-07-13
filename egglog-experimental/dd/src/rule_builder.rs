@@ -13,7 +13,7 @@ use egglog_backend_trait::{
 };
 use egglog_numeric_id::NumericId;
 
-use crate::compile::{BodyAtom, BodyOp, HeadOp, RuleIr, Slot};
+use crate::compile::{BodyAtom, BodyOp, HeadOp, ReadMode, RuleIr, Slot};
 use crate::EGraph;
 
 /// Accumulates a rule's body ops and head ops, then registers them.
@@ -22,8 +22,6 @@ pub struct DdRuleBuilder<'a> {
     ir: RuleIr,
     /// Fresh variable counter, seeded above any caller-provided variable id.
     next_var: u32,
-    /// First error hit during accumulation; surfaced at `build()`.
-    deferred_err: Option<anyhow::Error>,
 }
 
 impl<'a> DdRuleBuilder<'a> {
@@ -32,11 +30,9 @@ impl<'a> DdRuleBuilder<'a> {
             egraph,
             ir: RuleIr {
                 name: desc.to_string(),
-                body: Vec::new(),
-                head: Vec::new(),
+                ..RuleIr::default()
             },
             next_var: 1 << 24, // keep builder-synthesized vars away from caller ids
-            deferred_err: None,
         }
     }
 
@@ -63,7 +59,7 @@ impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
     }
 
     fn base_values(&self) -> &BaseValues {
-        self.egraph.base_values_inner()
+        self.egraph.db.base_values()
     }
 
     fn query_table(
@@ -72,7 +68,15 @@ impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
         entries: &[QueryEntry],
         is_subsumed: Option<bool>,
     ) -> Result<()> {
-        let atom = BodyAtom::from_entries(func, entries, is_subsumed);
+        let atom = BodyAtom {
+            func,
+            slots: entries.iter().map(Slot::from_entry).collect(),
+            read_mode: match is_subsumed {
+                Some(false) => ReadMode::Live,
+                Some(true) => ReadMode::Subsumed,
+                None => ReadMode::All,
+            },
+        };
         self.ir.body.push(BodyOp::Atom(atom));
         Ok(())
     }
@@ -173,13 +177,8 @@ impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
 
     fn build(self: Box<Self>) -> Result<RuleId> {
         let this = *self;
-        if let Some(e) = this.deferred_err {
-            return Err(e);
-        }
         let id = RuleId::new(this.egraph.rules.len() as u32);
         this.egraph.rules.push(Some(this.ir));
         Ok(id)
     }
-
-    fn abort(self: Box<Self>) {}
 }

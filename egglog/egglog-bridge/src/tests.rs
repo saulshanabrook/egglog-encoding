@@ -24,13 +24,25 @@ use crate::{
 };
 
 #[test]
-fn aborted_rule_builder_releases_reserved_id() {
+fn dropped_rule_builder_releases_lazy_panic() {
     let mut egraph = EGraph::default();
-    let reusable = egraph.new_rule("initial", false).build();
-    egraph.free_rule(reusable);
-    egraph.new_rule("aborted", false).abort();
+    let unit_type = egraph.base_values_mut().register_type::<()>();
+    let register = |egraph: &mut EGraph| {
+        egraph.register_external_func(Box::new(make_external_func(
+            |state: &mut core_relations::ExecutionState<'_>, _args: &[Value]| {
+                Some(state.base_values().get(()))
+            },
+        )))
+    };
+    let target = register(&mut egraph);
+    let reusable = register(&mut egraph);
+    egraph.free_external_func(reusable);
 
-    assert_eq!(egraph.new_rule("replacement", false).build(), reusable);
+    let mut builder = egraph.new_rule("dropped", false);
+    builder.call_external_func(target, &[], ColumnTy::Base(unit_type), || "failed".into());
+    drop(builder);
+
+    assert_eq!(register(&mut egraph), reusable);
 }
 
 #[test]

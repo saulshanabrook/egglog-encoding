@@ -4169,26 +4169,26 @@
 
 
     ; Loop context unions
-
+    
 
     ; Function inlining unions
-
+    
 ) :ruleset initialization)
-(run initialization 1)
+(run initialization 1) 
 
 ; Schedule
 
 (run-schedule
    (repeat 3
-
+      
     ;; optimization rules use always-run helpers like SubTuple
     ;; These should be resolved before substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4197,7 +4197,7 @@
     ;; dead code can enable infinite new substitutions.
     ;; We run in 5 times, so no rules can do more than 5 substitutions.
     (repeat 5
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
 
@@ -4216,7 +4216,7 @@
         cleanup-drop
     )
 
-    (saturate
+    (saturate 
         (saturate type-helpers)
         type-analysis)
     (saturate is-resolved)
@@ -4230,12 +4230,12 @@
 
     ;; run type checking and indexing again
     ;; for newly created terms from substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4263,15 +4263,15 @@
       passthrough
       state-edge-passthrough)
     (repeat 2
-
+      
     ;; optimization rules use always-run helpers like SubTuple
     ;; These should be resolved before substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4280,7 +4280,7 @@
     ;; dead code can enable infinite new substitutions.
     ;; We run in 5 times, so no rules can do more than 5 substitutions.
     (repeat 5
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
 
@@ -4299,7 +4299,7 @@
         cleanup-drop
     )
 
-    (saturate
+    (saturate 
         (saturate type-helpers)
         type-analysis)
     (saturate is-resolved)
@@ -4313,12 +4313,12 @@
 
     ;; run type checking and indexing again
     ;; for newly created terms from substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4344,15 +4344,15 @@
     loop-iters-analysis
 
       swap-if)
-
+    
     ;; optimization rules use always-run helpers like SubTuple
     ;; These should be resolved before substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4361,7 +4361,7 @@
     ;; dead code can enable infinite new substitutions.
     ;; We run in 5 times, so no rules can do more than 5 substitutions.
     (repeat 5
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
 
@@ -4380,7 +4380,7 @@
         cleanup-drop
     )
 
-    (saturate
+    (saturate 
         (saturate type-helpers)
         type-analysis)
     (saturate is-resolved)
@@ -4394,12 +4394,12 @@
 
     ;; run type checking and indexing again
     ;; for newly created terms from substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4425,15 +4425,15 @@
     loop-iters-analysis
 
     rec-to-loop
-
+    
     ;; optimization rules use always-run helpers like SubTuple
     ;; These should be resolved before substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)
@@ -4442,7 +4442,7 @@
     ;; dead code can enable infinite new substitutions.
     ;; We run in 5 times, so no rules can do more than 5 substitutions.
     (repeat 5
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
 
@@ -4461,7 +4461,7 @@
         cleanup-drop
     )
 
-    (saturate
+    (saturate 
         (saturate type-helpers)
         type-analysis)
     (saturate is-resolved)
@@ -4475,12 +4475,12 @@
 
     ;; run type checking and indexing again
     ;; for newly created terms from substitution
-
+    
     (saturate
-        (saturate
+        (saturate 
             (saturate type-helpers)
             type-analysis)
-        (saturate
+        (saturate 
             (saturate type-helpers)
             always-run)
         error-checking)

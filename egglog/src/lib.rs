@@ -1247,36 +1247,31 @@ impl EGraph {
             }
         }
 
-        let compiled: Vec<(String, core::ResolvedCoreRule, egglog_bridge::RuleId)> = {
-            let core_rule = rule.to_canonicalized_core_rule(
-                &self.type_info,
-                &mut self.parser.symbol_gen,
-                union_to_set,
-            )?;
-            let (query, actions) = (&core_rule.body, &core_rule.head);
-            let rule_id = {
-                let mut rb = self.backend.new_rule(&rule.name, seminaive);
-                rb.set_no_decomp(no_decomp);
-                let mut translator =
-                    BackendRule::new(rb, &self.functions, &self.type_info, requires_read_context);
-                translator.query(query, rule.include_subsumed)?;
-                translator.actions(actions)?;
-                translator.build()
-            };
-            vec![(rule.name.clone(), core_rule, rule_id)]
+        let core_rule = rule.to_canonicalized_core_rule(
+            &self.type_info,
+            &mut self.parser.symbol_gen,
+            union_to_set,
+        )?;
+        let (query, actions) = (&core_rule.body, &core_rule.head);
+        let rule_id = {
+            let mut rb = self.backend.new_rule(&rule.name, seminaive);
+            rb.set_no_decomp(no_decomp);
+            let mut translator =
+                BackendRule::new(rb, &self.functions, &self.type_info, requires_read_context);
+            translator.query(query, rule.include_subsumed)?;
+            translator.actions(actions)?;
+            translator.build()
         };
 
         let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&rule.ruleset) else {
             unreachable!("ruleset was validated before compiling the rule")
         };
-        for (name, core_rule, rule_id) in compiled {
-            match rules.entry(name.clone()) {
-                indexmap::map::Entry::Occupied(_) => {
-                    panic!("Rule '{name}' was already present")
-                }
-                indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
-            };
-        }
+        match rules.entry(rule.name.clone()) {
+            indexmap::map::Entry::Occupied(_) => {
+                panic!("Rule '{}' was already present", rule.name)
+            }
+            indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
+        };
         Ok(rule.name)
     }
 
@@ -2956,10 +2951,6 @@ impl<'a> BackendRule<'a> {
         self.rb
             .build()
             .map_err(|error| Error::BackendError(error.to_string()))
-    }
-
-    fn abort(self) {
-        self.rb.abort();
     }
 
     fn build(self) -> egglog_bridge::RuleId {

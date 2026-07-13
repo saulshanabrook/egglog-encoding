@@ -33,7 +33,7 @@ use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
 
 use crate::compile::{
-    row_col, slot_lookup, BodyOp, HeadOp, MergeMode, ReadKey, ReadMode, Row, RuleIr, Slot,
+    slot_lookup, BodyOp, HeadOp, MergeMode, ReadKey, ReadMode, Row, RuleIr, Slot,
 };
 use crate::EGraph;
 
@@ -192,13 +192,8 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     // changes from `3` to `1` must keep `1`, not the sort-larger old value `3`.)
     let mut merge_by_func: HashMap<FunctionId, Vec<Row>> = HashMap::new();
     for (f, row) in sets {
-        let arity = eg.info(f).arity;
         let merge = eg.merge_mode(f);
-        let is_merge_fn = matches!(
-            merge,
-            MergeMode::Old | MergeMode::New | MergeMode::Min | MergeMode::Computed
-        );
-        if arity == 0 || !is_merge_fn {
+        if merge == MergeMode::Relation {
             changed |= eg.insert_live_row(f, row);
         } else {
             merge_by_func.entry(f).or_default().push(row);
@@ -291,12 +286,11 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleIr)]) -> Result<Vec<Vec<
     // equality; it does not prove that this call uses the original order.
     let (fused_rule_idxs, fused_body_reads): (Vec<usize>, Vec<Vec<ReadKey>>) = {
         let fused = eg.dd_fused.get(&key).expect("fused join present");
-        (
-            fused.rule_indices(),
-            (0..fused.rule_indices().len())
-                .map(|p| fused.rule_body_reads(p).to_vec())
-                .collect(),
-        )
+        let rule_idxs = fused.rule_indices();
+        let body_reads = (0..rule_idxs.len())
+            .map(|p| fused.rule_body_reads(p).to_vec())
+            .collect();
+        (rule_idxs, body_reads)
     };
     let fused_positions =
         fused_caller_positions(&atom_positions, &atom_rule_idxs, &fused_rule_idxs)?;
@@ -595,14 +589,14 @@ pub(crate) fn lookup_existing(
         let mut m: HashMap<Box<[u32]>, u32> = HashMap::with_capacity(live_len + subsumed_len);
         if let Some(set) = eg.mirror.get(&func) {
             for row in set.iter() {
-                let k: Box<[u32]> = (0..inputs_len).map(|i| row_col(row, i)).collect();
-                m.insert(k, row_col(row, inputs_len));
+                let k: Box<[u32]> = (0..inputs_len).map(|i| row[i]).collect();
+                m.insert(k, row[inputs_len]);
             }
         }
         if let Some(set) = eg.subsumed.get(&func) {
             for row in set.iter() {
-                let k: Box<[u32]> = (0..inputs_len).map(|i| row_col(row, i)).collect();
-                m.entry(k).or_insert(row_col(row, inputs_len));
+                let k: Box<[u32]> = (0..inputs_len).map(|i| row[i]).collect();
+                m.entry(k).or_insert(row[inputs_len]);
             }
         }
         m

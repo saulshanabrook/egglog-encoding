@@ -10,7 +10,7 @@ use ast::{
     MappedExprExt, ResolvedAction, ResolvedExpr, ResolvedFact, ResolvedRule, ResolvedVar, Rule,
     RuleEvalMode,
 };
-use core_relations::ExternalFunction;
+use core_relations::{ExternalFunction, make_external_func};
 use egglog_ast::generic_ast::GenericAction;
 use egglog_bridge::ActionRegistry;
 use enum_map::EnumMap;
@@ -108,21 +108,6 @@ impl<T: Clone + Send + Sync + 'static, S: RegistryWrap<T> + 'static> ExternalFun
     fn invoke(&self, exec_state: &mut ExecutionState, args: &[Value]) -> Option<Value> {
         let registry = self.registry.read().unwrap();
         S::invoke(&self.prim, exec_state, self.ctx, args, &registry)
-    }
-}
-
-#[derive(Clone)]
-struct NonExecutableRegistryPrim {
-    name: String,
-    ctx: Context,
-}
-
-impl ExternalFunction for NonExecutableRegistryPrim {
-    fn invoke(&self, _exec_state: &mut ExecutionState, _args: &[Value]) -> Option<Value> {
-        panic!(
-            "primitive {} in {:?} context requires a backend action registry",
-            self.name, self.ctx
-        )
     }
 }
 
@@ -363,10 +348,10 @@ impl EGraph {
                     _wrap: std::marker::PhantomData,
                 })
             } else {
-                Box::new(NonExecutableRegistryPrim {
-                    name: x.name().to_owned(),
-                    ctx,
-                })
+                let name = x.name().to_owned();
+                Box::new(make_external_func(move |_state, _args| {
+                    panic!("primitive {name} in {ctx:?} context requires a backend action registry")
+                }))
             }
         });
     }
@@ -400,49 +385,28 @@ impl EGraph {
         // gets the same `ExternalFunctionId`.
         let mut eg: &mut EGraph = self;
         loop {
-            eg.register_primitive_local(
-                x.clone(),
-                validator.clone(),
-                valid_ctxs,
-                &mut build_wrapper,
-            );
+            let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
+            let name = primitive.name().to_owned();
+            let context_ids = EnumMap::from_fn(|ctx| {
+                valid_ctxs.contains(&ctx).then(|| {
+                    eg.backend
+                        .register_external_func(build_wrapper(x.clone(), ctx))
+                })
+            });
+            eg.type_info
+                .primitives
+                .entry(name)
+                .or_default()
+                .push(PrimitiveWithId {
+                    primitive,
+                    validator: validator.clone(),
+                    context_ids,
+                });
             match eg.proof_state.original_typechecking.as_deref_mut() {
                 Some(next) => eg = next,
                 None => break,
             }
         }
-    }
-
-    /// Register one primitive on THIS e-graph only (its `type_info` plus a
-    /// backend `ExternalFunctionId` per valid context). Non-generic over the
-    /// wrapper builder so the chain walk in [`register_per_context`] doesn't
-    /// recurse through ever-growing `&mut F` types.
-    fn register_primitive_local<T>(
-        &mut self,
-        x: T,
-        validator: Option<PrimitiveValidator>,
-        valid_ctxs: &[Context],
-        build_wrapper: &mut dyn FnMut(T, Context) -> Box<dyn ExternalFunction>,
-    ) where
-        T: Primitive + Clone,
-    {
-        let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
-        let name = primitive.name().to_owned();
-        let context_ids = EnumMap::from_fn(|ctx| {
-            valid_ctxs.contains(&ctx).then(|| {
-                self.backend
-                    .register_external_func(build_wrapper(x.clone(), ctx))
-            })
-        });
-        self.type_info
-            .primitives
-            .entry(name)
-            .or_default()
-            .push(PrimitiveWithId {
-                primitive,
-                validator,
-                context_ids,
-            });
     }
 }
 
