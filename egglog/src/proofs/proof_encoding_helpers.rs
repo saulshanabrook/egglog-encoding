@@ -51,7 +51,7 @@ pub(crate) struct EncodingNames {
 /// We may not know yet what terms we are instrumenting, so all but Proof leave that information to be filled in later.
 /// This is only used internally in this file, it's not part of the proof format.
 pub(crate) enum Justification {
-    Rule(String, String), // rule name and proof list
+    Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
     Proof(String),                 // existing proof
     Merge(String, String, String), // function name, proof1, proof2

@@ -100,7 +100,7 @@ impl<'a> ProofInstrumentor<'a> {
             let fiat_constructor = &self.proof_names().fiat_constructor;
             match justification {
                 Justification::Rule(rule_name, proof_list) => format!(
-                    "({rule_constructor} \"{rule_name}\" {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
+                    "({rule_constructor} {rule_name} {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
                 ),
                 Justification::Fiat => format!(
                     "({fiat_constructor} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
@@ -1290,7 +1290,7 @@ impl<'a> ProofInstrumentor<'a> {
         let fiat_constructor = &self.proof_names().fiat_constructor;
         match justification {
             Justification::Rule(rule_name, rule_proof) => format!(
-                "({rule_constructor} \"{rule_name}\" {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))"
+                "({rule_constructor} {rule_name} {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))"
             ),
             Justification::Fiat => {
                 format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))")
@@ -1375,7 +1375,7 @@ impl<'a> ProofInstrumentor<'a> {
             let proof = match justification {
                 Justification::Rule(rule_name, rule_proof) => {
                     format!(
-                        "({rule_constructor} \"{rule_name}\" {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))",
+                        "({rule_constructor} {rule_name} {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))",
                     )
                 }
                 Justification::Fiat => {
@@ -1539,15 +1539,22 @@ impl<'a> ProofInstrumentor<'a> {
         // so a rule with any needs a Read/Full action context (`eval_opt` below).
         let (facts, action_lookups, proof_str) = self.instrument_facts(&rule.body);
         let proof_var = self.fresh_var();
-        let proof = Justification::Rule(rule.name.clone(), proof_var.clone());
+        let rule_name_var = if self.egraph.proof_state.proofs_enabled {
+            self.egraph.parser.symbol_gen.fresh("rule_name")
+        } else {
+            "()".to_string()
+        };
+        let proof = Justification::Rule(rule_name_var.clone(), proof_var.clone());
         let reads_in_rhs = !action_lookups.is_empty();
-        // The looked-up proofs feed `proof_str`, so bind them first.
+        // The looked-up proofs feed `proof_str`, so bind them before the proof list.
         let action_lookups_str = ListDisplay(&action_lookups, "\n                    ");
         let proof_var_binding = if self.egraph.proof_state.proofs_enabled {
             format!(
-                "{action_lookups_str}
+                "(let {rule_name_var} \"{}\")
+                 {action_lookups_str}
                  (let {proof_var}
-                          {proof_str})"
+                          {proof_str})",
+                rule.name
             )
         } else {
             "".to_string()

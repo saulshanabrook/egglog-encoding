@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests {
-    use crate::ast::{ResolvedCommand, RuleEvalMode, sanitize_internal_names};
+    use crate::ast::{
+        Literal, ResolvedAction, ResolvedCommand, ResolvedExpr, RuleEvalMode,
+        sanitize_internal_names,
+    };
+    use crate::core::ResolvedCall;
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
         add_primitive_with_validator,
@@ -99,6 +103,106 @@ mod tests {
                 "proof encoding did not preserve :naive for:\n{source}"
             );
         }
+    }
+
+    #[test]
+    fn proof_encoding_hoists_unnamed_rule_name_in_actions() {
+        let source = r#"
+            (datatype VeryLongExpressionForRuleNameHoisting
+              (VeryLongLeafConstructorForRuleNameHoisting i64)
+              (VeryLongUnaryConstructorForRuleNameHoisting VeryLongExpressionForRuleNameHoisting)
+              (VeryLongBinaryConstructorForRuleNameHoisting
+                VeryLongExpressionForRuleNameHoisting
+                VeryLongExpressionForRuleNameHoisting))
+            (relation VeryLongSeedRelationForRuleNameHoisting
+              (VeryLongExpressionForRuleNameHoisting))
+
+            (VeryLongSeedRelationForRuleNameHoisting
+              (VeryLongLeafConstructorForRuleNameHoisting 1))
+
+            (rule
+              ((VeryLongSeedRelationForRuleNameHoisting original))
+              ((let wrapped
+                 (VeryLongUnaryConstructorForRuleNameHoisting original))
+               (let paired
+                 (VeryLongBinaryConstructorForRuleNameHoisting wrapped original))
+               (union wrapped paired)))
+
+            (run 1)
+            (prove
+              (= (VeryLongUnaryConstructorForRuleNameHoisting
+                   (VeryLongLeafConstructorForRuleNameHoisting 1))
+                 (VeryLongBinaryConstructorForRuleNameHoisting
+                   (VeryLongUnaryConstructorForRuleNameHoisting
+                     (VeryLongLeafConstructorForRuleNameHoisting 1))
+                   (VeryLongLeafConstructorForRuleNameHoisting 1))))
+        "#;
+
+        let mut egraph = EGraph::new_with_proofs();
+        let rule_constructor = egraph.proof_state.proof_names.rule_constructor.clone();
+        let commands = egraph.resolve_program(None, source).unwrap();
+        let rule = commands
+            .iter()
+            .find_map(|command| match command {
+                ResolvedCommand::Rule { rule }
+                    if rule
+                        .name
+                        .contains("VeryLongSeedRelationForRuleNameHoisting") =>
+                {
+                    Some(rule)
+                }
+                _ => None,
+            })
+            .expect("instrumented unnamed rule not found");
+        assert!(
+            rule.name.len() > 256,
+            "expected a long synthesized rule name"
+        );
+
+        let rule_name_vars = rule
+            .head
+            .0
+            .iter()
+            .filter_map(|action| match action {
+                ResolvedAction::Let(_, var, ResolvedExpr::Lit(_, Literal::String(value)))
+                    if value == &rule.name =>
+                {
+                    Some(var.name.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rule_name_vars.len(),
+            1,
+            "the synthesized rule name should be bound once in the actions"
+        );
+        let rule_name_var = rule_name_vars[0];
+
+        let mut rule_uses = 0;
+        rule.head.clone().visit_exprs(&mut |expr| {
+            if let ResolvedExpr::Call(_, ResolvedCall::Func(func), args) = &expr
+                && func.name == rule_constructor
+            {
+                rule_uses += 1;
+                assert!(
+                    matches!(
+                        args.first(),
+                        Some(ResolvedExpr::Var(_, var)) if var.name == rule_name_var
+                    ),
+                    "generated Rule constructor did not reuse the rule-name variable"
+                );
+            }
+            expr
+        });
+        assert!(
+            rule_uses > 1,
+            "expected the multi-action rule to emit multiple Rule constructors"
+        );
+
+        EGraph::new_with_proofs()
+            .parse_and_run_program(None, source)
+            .expect("hoisted rule-name proof should pass the checker");
     }
 
     #[test]
