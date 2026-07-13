@@ -1456,7 +1456,14 @@ impl MergeAction {
 }
 
 impl ResolvedMergeAction {
-    fn run(&self, state: &mut ExecutionState, cur: &[Value], new: &[Value], n_keys: usize, ts: Value) {
+    fn run(
+        &self,
+        state: &mut ExecutionState,
+        cur: &[Value],
+        new: &[Value],
+        n_keys: usize,
+        ts: Value,
+    ) {
         match self {
             ResolvedMergeAction::Set { table, args } => {
                 // Action value expressions use explicit `OldCol`/`NewCol`, so `self_col` is
