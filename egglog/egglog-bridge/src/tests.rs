@@ -1574,62 +1574,6 @@ fn panic_functions_trigger_early_stop() {
 }
 
 #[test]
-fn ifeq_merge_selects_branch() {
-    // `MergeFn::IfEq` chooses `then` or `els` from a runtime equality of merged columns. Here the
-    // merge keeps 100 when the OLD value is 5 and 200 otherwise, exercising both branches.
-    let mut egraph = EGraph::default();
-    let int_base = egraph.base_values_mut().register_type::<i64>();
-    let v5 = egraph.base_values_mut().get(5i64);
-    let v100 = egraph.base_values_mut().get(100i64);
-    let v200 = egraph.base_values_mut().get(200i64);
-    let f = egraph.add_table(FunctionConfig {
-        schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
-        n_vals: 1,
-        n_identity_vals: None,
-        default: DefaultVal::Fail,
-        merge: MergeFn::IfEq {
-            a: Box::new(MergeFn::Old),
-            b: Box::new(MergeFn::Const(v5)),
-            then: Box::new(MergeFn::Const(v100)),
-            els: Box::new(MergeFn::Const(v200)),
-        },
-        name: "f".into(),
-        can_subsume: false,
-    });
-
-    let c1 = egraph.base_value_constant(1i64);
-    let c2 = egraph.base_value_constant(2i64);
-    let c3 = egraph.base_value_constant(3i64);
-    let c5 = egraph.base_value_constant(5i64);
-    let c9 = egraph.base_value_constant(9i64);
-    let init = {
-        let mut rb = egraph.new_rule("init", true);
-        rb.set(f, &[c1.clone(), c5]); // f(1) = 5
-        rb.set(f, &[c2.clone(), c3]); // f(2) = 3
-        rb.build()
-    };
-    egraph.run_rules(&[init]).unwrap();
-    let conflict = {
-        let mut rb = egraph.new_rule("conflict", true);
-        rb.set(f, &[c1.clone(), c9.clone()]); // old 5 == 5  -> then -> 100
-        rb.set(f, &[c2.clone(), c9]); //         old 3 != 5  -> els  -> 200
-        rb.build()
-    };
-    egraph.run_rules(&[conflict]).unwrap();
-
-    let k1 = egraph.base_values_mut().get(1i64);
-    let k2 = egraph.base_values_mut().get(2i64);
-    assert_eq!(
-        egraph.base_values().unwrap::<i64>(egraph.lookup_id(f, &[k1]).unwrap()),
-        100
-    );
-    assert_eq!(
-        egraph.base_values().unwrap::<i64>(egraph.lookup_id(f, &[k2]).unwrap()),
-        200
-    );
-}
-
-#[test]
 fn self_referential_merge_union_find() {
     // A merge that writes back into its OWN table, like the term encoding's single-table UF. On a
     // conflicting parent it keeps the smaller endpoint and re-inserts the displaced edge into
@@ -1665,17 +1609,14 @@ fn self_referential_merge_union_find() {
     let uf = egraph.add_table(FunctionConfig {
         schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
         n_vals: 1,
-        n_identity_vals: None,
+        // The single parent column is the identity: the guard skips the merge when the parent is
+        // unchanged, so the body stages the displaced edge unconditionally.
+        n_identity_vals: Some(1),
         default: DefaultVal::Fail,
-        merge: MergeFn::IfEq {
-            a: Box::new(MergeFn::Old),
-            b: Box::new(MergeFn::New),
-            then: Box::new(MergeFn::Old),
-            els: Box::new(MergeFn::Seq(vec![
-                MergeFn::TableInsert(uf_id, vec![max, min()]),
-                min(),
-            ])),
-        },
+        merge: MergeFn::Seq(vec![
+            MergeFn::TableInsert(uf_id, vec![max, min()]),
+            min(),
+        ]),
         name: "uf".into(),
         can_subsume: false,
     });

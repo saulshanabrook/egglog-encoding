@@ -1130,14 +1130,6 @@ pub enum MergeFn {
     /// `args` evaluate to the key columns; the first value column (the output) is minted from the
     /// table's `FreshId` default and the remaining value columns are written from `value_args`.
     Construct(FunctionId, Vec<MergeFn>, Vec<MergeFn>),
-    /// If `a` and `b` evaluate equal, run and return `then`, otherwise run and return `els`.
-    /// General conditional for guarding merge-action bodies.
-    IfEq {
-        a: Box<MergeFn>,
-        b: Box<MergeFn>,
-        then: Box<MergeFn>,
-        els: Box<MergeFn>,
-    },
 }
 
 impl MergeFn {
@@ -1184,12 +1176,6 @@ impl MergeFn {
                     .chain(value_args.iter())
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
             }
-            IfEq { a, b, then, els } => {
-                a.fill_deps(egraph, read_deps, write_deps);
-                b.fill_deps(egraph, read_deps, write_deps);
-                then.fill_deps(egraph, read_deps, write_deps);
-                els.fill_deps(egraph, read_deps, write_deps);
-            }
             AssertEq | Old | New | OldCol(..) | NewCol(..) | Const(..) => {}
         }
     }
@@ -1216,12 +1202,6 @@ impl MergeFn {
                 .iter()
                 .chain(value_args.iter())
                 .for_each(|a| a.check_value_col_indices(n_vals, name)),
-            IfEq { a, b, then, els } => {
-                a.check_value_col_indices(n_vals, name);
-                b.check_value_col_indices(n_vals, name);
-                then.check_value_col_indices(n_vals, name);
-                els.check_value_col_indices(n_vals, name);
-            }
             AssertEq | Old | New | UnionId | Const(..) => {}
         }
     }
@@ -1402,12 +1382,6 @@ impl MergeFn {
                         .collect::<Vec<_>>(),
                 }
             }
-            MergeFn::IfEq { a, b, then, els } => ResolvedMergeFn::IfEq {
-                a: Box::new(a.resolve(function_name, egraph)),
-                b: Box::new(b.resolve(function_name, egraph)),
-                then: Box::new(then.resolve(function_name, egraph)),
-                els: Box::new(els.resolve(function_name, egraph)),
-            },
         }
     }
 }
@@ -1451,13 +1425,6 @@ enum ResolvedMergeFn {
         table: TableAction,
         args: Vec<ResolvedMergeFn>,
         value_args: Vec<ResolvedMergeFn>,
-    },
-    /// If `a == b` run `then`, otherwise run `els`.
-    IfEq {
-        a: Box<ResolvedMergeFn>,
-        b: Box<ResolvedMergeFn>,
-        then: Box<ResolvedMergeFn>,
-        els: Box<ResolvedMergeFn>,
     },
 }
 
@@ -1578,15 +1545,6 @@ impl ResolvedMergeFn {
                 table
                     .lookup_or_insert_multi(state, &key, &vals)
                     .unwrap_or(cur[n_keys + self_col])
-            }
-            ResolvedMergeFn::IfEq { a, b, then, els } => {
-                let av = a.run(state, cur, new, n_keys, self_col, ts);
-                let bv = b.run(state, cur, new, n_keys, self_col, ts);
-                if av == bv {
-                    then.run(state, cur, new, n_keys, self_col, ts)
-                } else {
-                    els.run(state, cur, new, n_keys, self_col, ts)
-                }
             }
         }
     }

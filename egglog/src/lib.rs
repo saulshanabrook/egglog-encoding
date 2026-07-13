@@ -476,6 +476,18 @@ impl Default for EGraph {
             if a > b { a } else { b }
         });
 
+        // Orientation helpers for the proof-encoding UF/view merges: given two `(value, proof)`
+        // pairs `(a, ap)` and `(b, bp)`, return the proof paired with the smaller / larger value
+        // (same value ordering as `ordering-min`/`ordering-max`). Polymorphic like the ordering
+        // prims, so each resolves to a single value-level external function and needs no `Proof`
+        // sort to exist — which keeps the encoding self-contained on a non-proof re-parse.
+        add_primitive!(&mut eg, "proof-of-min" = |a: #, ap: #, b: #, bp: #| -> # {
+            if a < b { ap } else { bp }
+        });
+        add_primitive!(&mut eg, "proof-of-max" = |a: #, ap: #, b: #, bp: #| -> # {
+            if a > b { ap } else { bp }
+        });
+
         eg.rulesets
             .insert("".into(), Ruleset::Rules(Default::default()));
 
@@ -884,45 +896,39 @@ impl EGraph {
             .get(&self.proof_state.proof_names.eq_sym_constructor)
             .ok_or_else(|| missing("the `Sym` proof constructor"))?
             .backend_id;
+        let orient_max =
+            resolve("proof-of-max").ok_or_else(|| missing("the `proof-of-max` primitive"))?;
+        let orient_min =
+            resolve("proof-of-min").ok_or_else(|| missing("the `proof-of-min` primitive"))?;
         // Column 0 = eclass, column 1 = view_proof (`eclass = f(children)`).
         let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
         let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        // The view proof paired with the larger / smaller eclass.
-        let max_pf = || MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(max_ec()),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(MergeFn::NewCol(1)),
+        // The view proof paired with the larger / smaller eclass (both prove `eclass = f(children)`),
+        // selected by eclass order via a pure primitive rather than a conditional merge node.
+        let orient_args = || {
+            vec![
+                MergeFn::OldCol(0),
+                MergeFn::OldCol(1),
+                MergeFn::NewCol(0),
+                MergeFn::NewCol(1),
+            ]
         };
-        let min_pf = || MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(min_ec()),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(MergeFn::NewCol(1)),
-        };
-        // Trans(max_vp, Sym(min_vp)) : max_ec = min_ec (view proofs put the eclass on the left).
+        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
+        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
+        // Trans(max_vp, Sym(min_vp)) : max_ec = min_ec (view proofs put the eclass on the left). The
+        // identity-column guard (col 0) skips this merge when the two eclasses are already equal, so
+        // the body stages the union unconditionally.
         let edge = MergeFn::Construct(
             trans_id,
             vec![max_pf(), MergeFn::Construct(sym_id, vec![min_pf()], vec![])],
             vec![],
         );
-        // Column 0: keep the smaller eclass; when the two differ, stage the union edge into @UF.
-        let col0 = MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(MergeFn::NewCol(0)),
-            then: Box::new(MergeFn::OldCol(0)),
-            els: Box::new(MergeFn::Seq(vec![
-                MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
-                min_ec(),
-            ])),
-        };
-        // Column 1: keep the proof paired with the smaller eclass.
-        let col1 = MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(MergeFn::NewCol(0)),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(min_pf()),
-        };
+        // Keep the smaller eclass and its proof; stage the union edge into @UF.
+        let col0 = MergeFn::Seq(vec![
+            MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
+            min_ec(),
+        ]);
+        let col1 = min_pf();
         Ok(Some(MergeFn::Columns(vec![col0, col1])))
     }
 
@@ -959,17 +965,14 @@ impl EGraph {
         let min_id = resolve("ordering-min")?;
         let max_id = resolve("ordering-max")?;
         if num_outputs == 1 {
+            // The identity guard (the single value column, the parent) skips this merge when the
+            // parent is unchanged, so the body records the displaced edge unconditionally.
             let min = || MergeFn::Primitive(min_id, vec![MergeFn::Old, MergeFn::New]);
             let max = MergeFn::Primitive(max_id, vec![MergeFn::Old, MergeFn::New]);
-            return Ok(MergeFn::IfEq {
-                a: Box::new(MergeFn::Old),
-                b: Box::new(MergeFn::New),
-                then: Box::new(MergeFn::Old),
-                els: Box::new(MergeFn::Seq(vec![
-                    MergeFn::TableInsert(uf_id, vec![max, min()]),
-                    min(),
-                ])),
-            });
+            return Ok(MergeFn::Seq(vec![
+                MergeFn::TableInsert(uf_id, vec![max, min()]),
+                min(),
+            ]));
         }
         // Proof branch: value col 0 = parent, col 1 = proof (`key = parent`).
         let backend_id = |name: &str| -> Result<egglog_bridge::FunctionId, Error> {
@@ -984,42 +987,36 @@ impl EGraph {
         };
         let trans_id = backend_id(&self.proof_state.proof_names.eq_trans_constructor)?;
         let sym_id = backend_id(&self.proof_state.proof_names.eq_sym_constructor)?;
+        let orient_max = resolve("proof-of-max")?;
+        let orient_min = resolve("proof-of-min")?;
         let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
         let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        // The proof paired with the larger / smaller parent (both prove `key = that parent`).
-        let max_pf = || MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(max_ec()),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(MergeFn::NewCol(1)),
+        // The proof paired with the larger / smaller parent (both prove `key = that parent`),
+        // selected by parent order via a pure primitive rather than a conditional merge node.
+        let orient_args = || {
+            vec![
+                MergeFn::OldCol(0),
+                MergeFn::OldCol(1),
+                MergeFn::NewCol(0),
+                MergeFn::NewCol(1),
+            ]
         };
-        let min_pf = || MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(min_ec()),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(MergeFn::NewCol(1)),
-        };
-        // Trans(Sym(max_pf), min_pf) : max_ec = min_ec (UF proofs put the key on the left).
+        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
+        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
+        // Trans(Sym(max_pf), min_pf) : max_ec = min_ec (UF proofs put the key on the left). The
+        // identity-column guard (col 0, the parent) skips this merge when the parent is unchanged,
+        // so the body stages the displaced edge unconditionally.
         let edge = MergeFn::Construct(
             trans_id,
             vec![MergeFn::Construct(sym_id, vec![max_pf()], vec![]), min_pf()],
             vec![],
         );
-        let col0 = MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(MergeFn::NewCol(0)),
-            then: Box::new(MergeFn::OldCol(0)),
-            els: Box::new(MergeFn::Seq(vec![
-                MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
-                min_ec(),
-            ])),
-        };
-        let col1 = MergeFn::IfEq {
-            a: Box::new(MergeFn::OldCol(0)),
-            b: Box::new(MergeFn::NewCol(0)),
-            then: Box::new(MergeFn::OldCol(1)),
-            els: Box::new(min_pf()),
-        };
+        // Keep the smaller parent and its proof; stage the displaced edge back into @UF.
+        let col0 = MergeFn::Seq(vec![
+            MergeFn::TableInsert(uf_id, vec![max_ec(), min_ec(), edge]),
+            min_ec(),
+        ]);
+        let col1 = min_pf();
         Ok(MergeFn::Columns(vec![col0, col1]))
     }
 
@@ -1053,6 +1050,10 @@ impl EGraph {
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
+        // Identity/payload guard: the encoding's UF and congruence-view merges are idempotent on an
+        // unchanged eclass/parent (value column 0), so they opt into skip-on-unchanged — which is
+        // what lets them drop their equality guard. Ordinary functions keep the default (no guard).
+        let mut n_identity_vals = None;
         let merge = if self
             .proof_state
             .self_merge_uf_functions
@@ -1062,12 +1063,14 @@ impl EGraph {
             // `(S) -> (S, Proof)`): override the placeholder source `:merge` with the
             // native self-referential merge, dispatched on value-column count. Its own
             // backend id is the id `add_table` (below) will assign, peeked deterministically.
+            n_identity_vals = Some(1);
             let uf_id = self.backend.peek_next_function_id();
             self.build_uf_self_merge(uf_id, num_outputs)?
         } else if let Some(m) = self.native_congruence_merge(decl, &outputs[0], num_outputs)? {
             // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
             // a native :merge that stages the congruence edge into the per-sort UF table, instead of
             // a rule-encoded self-join.
+            n_identity_vals = Some(1);
             m
         } else {
             match decl.subtype {
@@ -1096,7 +1099,7 @@ impl EGraph {
                 .map(|sort| sort.column_ty(&self.backend))
                 .collect(),
             n_vals: num_outputs,
-            n_identity_vals: None,
+            n_identity_vals,
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
                 FunctionSubtype::Custom => DefaultVal::Fail,
