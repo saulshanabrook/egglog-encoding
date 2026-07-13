@@ -423,6 +423,56 @@ impl EGraph {
         self.db.clear_table(table_id);
     }
 
+    /// Remove the most recently registered function and its backing table.
+    ///
+    /// This is a rollback operation for callers whose later registration work
+    /// failed. It rejects older functions because later rules or merge
+    /// callbacks may already depend on them.
+    pub fn remove_last_table(&mut self, func: FunctionId) -> Result<()> {
+        anyhow::ensure!(
+            self.funcs.get(func).is_some(),
+            "cannot remove unknown function {func:?}"
+        );
+        anyhow::ensure!(
+            func.inc() == self.funcs.next_id(),
+            "can only remove the most recently registered function"
+        );
+
+        let removed_action = TableAction::new(self, func);
+        let info = self
+            .funcs
+            .pop_last(func)
+            .ok_or_else(|| anyhow::anyhow!("function disappeared during rollback"))?;
+        if !self.db.remove_last_table(info.table) {
+            self.funcs.insert(func, info);
+            anyhow::bail!("function's backing table was not the most recently registered table");
+        }
+
+        for rule in &info.incremental_rebuild_rules {
+            self.free_rule(*rule);
+        }
+        self.free_rule(info.nonincremental_rebuild_rule);
+
+        let replacement = self
+            .funcs
+            .iter()
+            .filter(|(_, candidate)| candidate.name == info.name)
+            .map(|(id, _)| TableAction::new(self, id))
+            .last();
+        let mut registry = self.action_registry.write().unwrap();
+        if registry.table_actions.get(info.name.as_ref()) == Some(&removed_action) {
+            match replacement {
+                Some(action) => {
+                    registry.register_table(info.name.to_string(), action);
+                }
+                None => {
+                    registry.table_actions.remove(info.name.as_ref());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Read the contents of the given function.
     ///
     /// The callback `f` is called with each row and its subsumption status.

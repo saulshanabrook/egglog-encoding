@@ -162,6 +162,11 @@ impl EGraph {
 }
 
 impl RuleBuilder<'_> {
+    /// Abandon this builder and release its reserved rule id.
+    pub fn abort(self) {
+        self.egraph.rules.release_reserved(self.query.rule_id);
+    }
+
     fn add_callback(&mut self, cb: impl Brc + 'static) {
         self.query.add_rule.push(Box::new(cb));
     }

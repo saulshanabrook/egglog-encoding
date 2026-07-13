@@ -149,6 +149,14 @@ impl<K: NumericId, V> DenseIdMap<K, V> {
         self.data.get_mut(key.index()).unwrap().take()
     }
 
+    /// Remove `key` if it is the final slot in the map.
+    pub fn pop_last(&mut self, key: K) -> Option<V> {
+        if key.inc() != self.next_id() {
+            return None;
+        }
+        self.data.pop().flatten()
+    }
+
     /// Get the current mapping for `key` in the table, or insert the value
     /// returned by `f` and return a mutable reference to it.
     pub fn get_or_insert(&mut self, key: K, f: impl FnOnce() -> V) -> &mut V {
@@ -327,6 +335,20 @@ impl<K: NumericId, V> DenseIdMapWithReuse<K, V> {
                 self.data.reserve_space(res);
                 res
             }
+        }
+    }
+
+    /// Release a slot returned by [`DenseIdMapWithReuse::reserve_slot`] before
+    /// a value was inserted into it.
+    pub fn release_reserved(&mut self, id: K) {
+        assert!(
+            !self.data.contains_key(id) && !self.free.contains(&id),
+            "slot must be reserved and unoccupied"
+        );
+        if id.inc() == self.data.next_id() {
+            self.data.pop_last(id);
+        } else {
+            self.free.push(id);
         }
     }
 

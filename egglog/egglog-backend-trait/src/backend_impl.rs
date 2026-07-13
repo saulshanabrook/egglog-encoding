@@ -113,6 +113,10 @@ impl RuleBuilderOps for BridgeRuleBuilderOps<'_> {
         Ok(self.inner.build())
     }
 
+    fn abort(self: Box<Self>) {
+        self.inner.abort();
+    }
+
     fn backend_any(&self) -> Option<&dyn Any> {
         Some(self.inner.egraph())
     }

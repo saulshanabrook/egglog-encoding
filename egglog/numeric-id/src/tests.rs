@@ -1,4 +1,4 @@
-use crate::{DenseIdMap, IdVec, NumericId, define_id};
+use crate::{DenseIdMap, DenseIdMapWithReuse, IdVec, NumericId, define_id};
 
 define_id!(pub(crate) Id, u32, "a unique id");
 
@@ -42,6 +42,29 @@ fn basic_id_map() {
         to_vec(&map),
         vec![(Id::from_usize(2), "two"), (Id::from_usize(4), "four")]
     );
+}
+
+#[test]
+fn pop_last_only_removes_the_final_slot() {
+    let mut map = DenseIdMap::<Id, &'static str>::new();
+    let first = map.push("zero");
+    let second = map.push("one");
+
+    assert_eq!(map.pop_last(first), None);
+    assert_eq!(map.pop_last(second), Some("one"));
+    assert_eq!(map.next_id(), second);
+}
+
+#[test]
+fn release_reserved_reuses_the_slot() {
+    let mut map = DenseIdMapWithReuse::<Id, &'static str>::default();
+    let reserved = map.reserve_slot();
+    map.release_reserved(reserved);
+
+    let reused = map.reserve_slot();
+    let following = map.reserve_slot();
+    assert_eq!(reused, reserved);
+    assert_ne!(following, reused);
 }
 
 #[test]

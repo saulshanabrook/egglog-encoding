@@ -527,7 +527,14 @@ pub trait RuleBuilderOps {
     fn set_no_decomp(&mut self, _no_decomp: bool) {}
 
     /// Finalize the rule, returning its [`RuleId`].
+    ///
+    /// On failure, the builder must release any backend resources it reserved.
     fn build(self: Box<Self>) -> Result<RuleId>;
+
+    /// Abandon an unfinished rule and release any backend resources reserved
+    /// when the builder was created. Backends that reserve nothing may simply
+    /// drop `self`.
+    fn abort(self: Box<Self>);
 
     // -- optional: bridge-only escape hatch ---------------------------------
 

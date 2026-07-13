@@ -180,4 +180,6 @@ impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
         this.egraph.rules.push(Some(this.ir));
         Ok(id)
     }
+
+    fn abort(self: Box<Self>) {}
 }

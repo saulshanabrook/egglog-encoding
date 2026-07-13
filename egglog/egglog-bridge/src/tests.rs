@@ -23,6 +23,52 @@ use crate::{
     define_rule,
 };
 
+#[test]
+fn aborted_rule_builder_releases_reserved_id() {
+    let mut egraph = EGraph::default();
+    let reusable = egraph.new_rule("initial", false).build();
+    egraph.free_rule(reusable);
+    egraph.new_rule("aborted", false).abort();
+
+    assert_eq!(egraph.new_rule("replacement", false).build(), reusable);
+}
+
+#[test]
+fn removing_last_table_restores_shadowed_registry_entry_and_id() {
+    let mut egraph = EGraph::default();
+    let unit_type = egraph.base_values_mut().register_type::<()>();
+    let unit = egraph.base_values().get(());
+    let config = || FunctionConfig {
+        schema: vec![ColumnTy::Base(unit_type)],
+        default: DefaultVal::Const(unit),
+        merge: MergeFn::AssertEq,
+        name: "temporary".into(),
+        can_subsume: false,
+    };
+
+    let original = egraph.add_table(config());
+    let original_action = egraph
+        .action_registry()
+        .read()
+        .unwrap()
+        .lookup_table("temporary")
+        .unwrap()
+        .clone();
+    let temporary = egraph.add_table(config());
+
+    egraph.remove_last_table(temporary).unwrap();
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("temporary"),
+        Some(&original_action)
+    );
+    assert_eq!(egraph.add_table(config()), temporary);
+    assert_ne!(original, temporary);
+}
+
 /// Run a simple associativity/commutativity test.
 ///
 /// The `can_subsume` argument is only used to enable subsumption on the underlying tables created

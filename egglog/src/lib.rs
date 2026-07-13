@@ -2952,9 +2952,18 @@ impl<'a> BackendRule<'a> {
         Ok(())
     }
 
-    fn build(self) -> egglog_bridge::RuleId {
+    fn try_build(self) -> Result<egglog_bridge::RuleId, Error> {
         self.rb
             .build()
+            .map_err(|error| Error::BackendError(error.to_string()))
+    }
+
+    fn abort(self) {
+        self.rb.abort();
+    }
+
+    fn build(self) -> egglog_bridge::RuleId {
+        self.try_build()
             .unwrap_or_else(|err| panic!("rule build failed: {err}"))
     }
 }
