@@ -437,6 +437,10 @@ pub enum ProofEncodingUnsupportedReason {
     NaiveEqSortPrimitiveFact,
     #[error("tuple-output functions are not supported by the term/proof encoding.")]
     TupleOutputFunction,
+    #[error(
+        "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
+    )]
+    MergeActionBlock,
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -520,6 +524,16 @@ pub(crate) fn command_supports_proof_encoding(
         && schema.is_tuple_output()
     {
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
+    }
+
+    // A `:merge` action block runs actions before its result; the proof encoding only instruments
+    // the merged value, so mark it unsupported rather than emit silently-incomplete proofs.
+    if let crate::ast::GenericCommand::Function {
+        merge: Some(merge), ..
+    } = command
+        && !merge.actions.is_empty()
+    {
+        return Err(ProofEncodingUnsupportedReason::MergeActionBlock);
     }
 
     // Check all expressions for primitives without validators

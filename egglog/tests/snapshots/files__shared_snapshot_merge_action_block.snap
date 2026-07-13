@@ -1,0 +1,6 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+((discarded 1)
+ (f 1))

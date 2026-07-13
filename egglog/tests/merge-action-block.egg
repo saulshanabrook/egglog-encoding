@@ -1,0 +1,12 @@
+; A value-producing `:merge` action block. Syntax: `:merge (<action>* <result-expr>)` — the
+; actions run first (with `old`/`new` bound), then the result is the merged value. Here, on a
+; conflict `f` records the discarded (smaller) value into a side function and keeps the larger.
+(function discarded (i64) i64 :merge new)
+(function f (i64) i64 :merge ((set (discarded (min old new)) 1) (max old new)))
+
+(set (f 0) 5)
+(set (f 0) 3)
+
+(check (= (f 0) 5))          ; the result kept the larger value
+(check (= (discarded 3) 1))  ; the action recorded the discarded (smaller) value
+(fail (check (= (discarded 5) 1)))
