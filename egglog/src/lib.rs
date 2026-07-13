@@ -1096,6 +1096,7 @@ impl EGraph {
                 .map(|sort| sort.column_ty(&self.backend))
                 .collect(),
             n_vals: num_outputs,
+            n_identity_vals: num_outputs,
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
                 FunctionSubtype::Custom => DefaultVal::Fail,

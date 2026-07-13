@@ -196,6 +196,11 @@ pub struct FunctionConfig {
     /// The number of value (output) columns; the remaining leading columns are keys. Must be at
     /// least 1 and at most `schema.len()`. A tuple-output function has more than one.
     pub n_vals: usize,
+    /// How many of the leading value columns are *identity* columns (participate in FD-conflict
+    /// detection); the rest are *payload*, carried alongside but not identifying. When a key
+    /// collision leaves the identity columns unchanged, the existing row is kept and the merge is
+    /// not run. Must be in `1..=n_vals`; use `n_vals` (the common case) for "all columns identity".
+    pub n_identity_vals: usize,
     /// The behavior of the function when lookups are made on keys not currently present.
     pub default: DefaultVal,
     /// How to resolve FD conflicts for the function.
@@ -507,6 +512,7 @@ impl EGraph {
         let FunctionConfig {
             schema,
             n_vals,
+            n_identity_vals,
             default,
             merge,
             name,
@@ -525,6 +531,10 @@ impl EGraph {
             "function {name} declares {n_vals} value columns but has {} columns total",
             schema.len()
         );
+        assert!(
+            (1..=n_vals).contains(&n_identity_vals),
+            "function {name} declares {n_identity_vals} identity columns but has {n_vals} value columns"
+        );
         merge.check_value_col_indices(n_vals, &name);
         let to_rebuild: Vec<ColumnId> = schema
             .iter()
@@ -537,6 +547,7 @@ impl EGraph {
             subsume: can_subsume,
             n_keys,
             func_cols: schema.len(),
+            n_identity_vals,
         };
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
@@ -554,6 +565,7 @@ impl EGraph {
             table: table_id,
             schema: schema.clone(),
             n_keys,
+            n_identity_vals,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -1035,6 +1047,8 @@ struct FunctionInfo {
     /// The number of key (input) columns. The remaining columns of `schema` are value/return
     /// columns (one for most functions, more for tuple-output functions).
     n_keys: usize,
+    /// How many leading value columns are identity columns (see [`FunctionConfig::n_identity_vals`]).
+    n_identity_vals: usize,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
@@ -1048,6 +1062,7 @@ impl FunctionInfo {
             subsume: self.can_subsume,
             n_keys: self.n_keys,
             func_cols: self.schema.len(),
+            n_identity_vals: self.n_identity_vals,
         }
     }
 }
@@ -1222,6 +1237,17 @@ impl MergeFn {
         );
 
         Box::new(move |state, cur, new, out| {
+            // Identity/payload columns: if this collision leaves every identity value column
+            // unchanged, keep the existing row and skip the merge — a payload-only difference is not
+            // a real conflict. (Inert unless the function declares payload columns.)
+            if schema_math.n_identity_vals < schema_math.n_vals() {
+                let id_lo = schema_math.n_keys;
+                let id_hi = id_lo + schema_math.n_identity_vals;
+                if cur[id_lo..id_hi] == new[id_lo..id_hi] {
+                    return false;
+                }
+            }
+
             let timestamp = new[schema_math.ts_col()];
 
             let mut changed = false;
@@ -1973,6 +1999,8 @@ struct SchemaMath {
     n_keys: usize,
     /// The number of columns in the function (keys plus all value/return columns).
     func_cols: usize,
+    /// How many leading value columns are identity columns (see [`FunctionConfig::n_identity_vals`]).
+    n_identity_vals: usize,
 }
 
 /// A struct containing possible non-key portions of a table row. To be used with
