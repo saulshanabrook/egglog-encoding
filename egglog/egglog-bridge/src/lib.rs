@@ -196,11 +196,12 @@ pub struct FunctionConfig {
     /// The number of value (output) columns; the remaining leading columns are keys. Must be at
     /// least 1 and at most `schema.len()`. A tuple-output function has more than one.
     pub n_vals: usize,
-    /// How many of the leading value columns are *identity* columns (participate in FD-conflict
-    /// detection); the rest are *payload*, carried alongside but not identifying. When a key
-    /// collision leaves the identity columns unchanged, the existing row is kept and the merge is
-    /// not run. Must be in `1..=n_vals`; use `n_vals` (the common case) for "all columns identity".
-    pub n_identity_vals: usize,
+    /// Opt-in identity-column guard. `Some(k)` marks the first `k` value columns (`k` in
+    /// `1..=n_vals`) as *identity*: when a key collision leaves those columns unchanged the merge is
+    /// skipped and the existing row is kept (a subsume-flag change still applies). `None` (the
+    /// default) runs the merge on every collision, preserving arbitrary/non-idempotent merge
+    /// semantics. Only opt in for merges that are idempotent on equal inputs (`merge(x, x) == x`).
+    pub n_identity_vals: Option<usize>,
     /// The behavior of the function when lookups are made on keys not currently present.
     pub default: DefaultVal,
     /// How to resolve FD conflicts for the function.
@@ -531,10 +532,12 @@ impl EGraph {
             "function {name} declares {n_vals} value columns but has {} columns total",
             schema.len()
         );
-        assert!(
-            (1..=n_vals).contains(&n_identity_vals),
-            "function {name} declares {n_identity_vals} identity columns but has {n_vals} value columns"
-        );
+        if let Some(k) = n_identity_vals {
+            assert!(
+                (1..=n_vals).contains(&k),
+                "function {name} declares {k} identity columns but has {n_vals} value columns"
+            );
+        }
         merge.check_value_col_indices(n_vals, &name);
         let to_rebuild: Vec<ColumnId> = schema
             .iter()
@@ -1047,8 +1050,8 @@ struct FunctionInfo {
     /// The number of key (input) columns. The remaining columns of `schema` are value/return
     /// columns (one for most functions, more for tuple-output functions).
     n_keys: usize,
-    /// How many leading value columns are identity columns (see [`FunctionConfig::n_identity_vals`]).
-    n_identity_vals: usize,
+    /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
+    n_identity_vals: Option<usize>,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
@@ -1242,11 +1245,12 @@ impl MergeFn {
             // of running the per-column merges (which would, e.g., stage a spurious union). A
             // subsume-flag change is still applied below, so this stays correct for subsumable
             // functions. Inert unless the function declares payload columns.
-            let identity_unchanged = {
-                let id_lo = schema_math.n_keys;
-                let id_hi = id_lo + schema_math.n_identity_vals;
-                schema_math.n_identity_vals < schema_math.n_vals()
-                    && cur[id_lo..id_hi] == new[id_lo..id_hi]
+            let identity_unchanged = match schema_math.n_identity_vals {
+                Some(k) => {
+                    let id_lo = schema_math.n_keys;
+                    cur[id_lo..id_lo + k] == new[id_lo..id_lo + k]
+                }
+                None => false,
             };
 
             let timestamp = new[schema_math.ts_col()];
@@ -2004,8 +2008,8 @@ struct SchemaMath {
     n_keys: usize,
     /// The number of columns in the function (keys plus all value/return columns).
     func_cols: usize,
-    /// How many leading value columns are identity columns (see [`FunctionConfig::n_identity_vals`]).
-    n_identity_vals: usize,
+    /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
+    n_identity_vals: Option<usize>,
 }
 
 /// A struct containing possible non-key portions of a table row. To be used with

@@ -16,7 +16,7 @@ fn main() {
         let int_base = egraph.base_values_mut().register_type::<i64>();
         let num_table = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -25,7 +25,7 @@ fn main() {
         });
         let add_table = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id; 3],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,

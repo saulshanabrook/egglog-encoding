@@ -363,9 +363,8 @@ impl RuleBuilder<'_> {
                 subsume: subsume_entry.is_some(),
                 n_keys: entries.len().saturating_sub(1),
                 func_cols: entries.len(),
-                // This atom has a single value column and no merge guard runs off it, so all
-                // value columns are identity.
-                n_identity_vals: entries.len() - entries.len().saturating_sub(1),
+                // No merge runs off this fallback schema, so no identity guard.
+                n_identity_vals: None,
             }
         };
         schema_math.write_table_row(

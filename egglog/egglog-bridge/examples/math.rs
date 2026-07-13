@@ -21,7 +21,7 @@ fn main() {
         // tables
         let diff = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -30,7 +30,7 @@ fn main() {
         });
         let integral = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -40,7 +40,7 @@ fn main() {
 
         let add = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -49,7 +49,7 @@ fn main() {
         });
         let sub = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -59,7 +59,7 @@ fn main() {
 
         let mul = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -69,7 +69,7 @@ fn main() {
 
         let div = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -79,7 +79,7 @@ fn main() {
 
         let pow = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -89,7 +89,7 @@ fn main() {
 
         let ln = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -99,7 +99,7 @@ fn main() {
 
         let sqrt = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -109,7 +109,7 @@ fn main() {
 
         let sin = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -119,7 +119,7 @@ fn main() {
 
         let cos = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Id, ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -129,7 +129,7 @@ fn main() {
 
         let rat = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Base(rational_ty), ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
@@ -139,7 +139,7 @@ fn main() {
 
         let var = egraph.add_table(FunctionConfig {
         n_vals: 1,
-        n_identity_vals: 1,
+        n_identity_vals: None,
             schema: vec![ColumnTy::Base(string_ty), ColumnTy::Id],
             default: DefaultVal::FreshId,
             merge: MergeFn::UnionId,
