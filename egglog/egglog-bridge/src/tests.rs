@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     hash::Hash,
-    slice,
+    iter, slice,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -11,7 +11,8 @@ use std::{
 
 use crate::core_relations;
 use crate::core_relations::{
-    ContainerValue, ExternalFunctionId, Value, ValueRebuilder, make_external_func,
+    ContainerValue, ExternalFunctionId, SortedWritesTable, Value, ValueRebuilder,
+    make_external_func,
 };
 use crate::numeric_id::NumericId;
 use log::debug;
@@ -19,8 +20,8 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeFn, QueryEntry, add_expressions,
-    define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeFn, QueryEntry, TableAction,
+    add_expressions, define_rule,
 };
 
 #[test]
@@ -79,6 +80,97 @@ fn removing_last_table_restores_shadowed_registry_entry_and_id() {
     );
     assert_eq!(egraph.add_table(config()), temporary);
     assert_ne!(original, temporary);
+}
+
+#[test]
+fn removing_unknown_or_non_last_function_preserves_registrations() {
+    let mut egraph = EGraph::default();
+    let unit_type = egraph.base_values_mut().register_type::<()>();
+    let unit = egraph.base_values().get(());
+    let config = |name: &str| FunctionConfig {
+        schema: vec![ColumnTy::Base(unit_type)],
+        default: DefaultVal::Const(unit),
+        merge: MergeFn::AssertEq,
+        name: name.into(),
+        can_subsume: false,
+    };
+    let first = egraph.add_table(config("first"));
+    let second = egraph.add_table(config("second"));
+    let first_action = TableAction::new(&egraph, first);
+    let second_action = TableAction::new(&egraph, second);
+
+    assert!(egraph.remove_last_table(FunctionId::new(u32::MAX)).is_err());
+    assert_eq!(egraph.table_size(first), 0);
+    assert_eq!(egraph.table_size(second), 0);
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("first"),
+        Some(&first_action)
+    );
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("second"),
+        Some(&second_action)
+    );
+
+    assert!(egraph.remove_last_table(first).is_err());
+    assert_eq!(egraph.table_size(first), 0);
+    assert_eq!(egraph.table_size(second), 0);
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("first"),
+        Some(&first_action)
+    );
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("second"),
+        Some(&second_action)
+    );
+}
+
+#[test]
+fn failed_database_table_removal_restores_function_registration() {
+    let mut egraph = EGraph::default();
+    let unit_type = egraph.base_values_mut().register_type::<()>();
+    let unit = egraph.base_values().get(());
+    let function = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(unit_type)],
+        default: DefaultVal::Const(unit),
+        merge: MergeFn::AssertEq,
+        name: "function".into(),
+        can_subsume: false,
+    });
+    let action = TableAction::new(&egraph, function);
+    let blocker = egraph.db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+
+    assert!(egraph.remove_last_table(function).is_err());
+    assert_eq!(egraph.table_size(function), 0);
+    assert_eq!(
+        egraph
+            .action_registry()
+            .read()
+            .unwrap()
+            .lookup_table("function"),
+        Some(&action)
+    );
+    assert!(egraph.db.remove_last_table(blocker));
+    egraph.remove_last_table(function).unwrap();
 }
 
 /// Run a simple associativity/commutativity test.

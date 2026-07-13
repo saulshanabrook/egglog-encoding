@@ -125,7 +125,7 @@ pub struct EGraph {
     /// around allows us to cache external function ids with repeat panic messages and they can
     /// also serve as a debugging tool in the case that the number of panic messages grows without
     /// bound.
-    panic_funcs: HashMap<String, ExternalFunctionId>,
+    panic_funcs: HashMap<String, CachedPanic>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
@@ -136,6 +136,12 @@ pub struct EGraph {
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
+
+#[derive(Clone, Copy)]
+struct CachedPanic {
+    id: ExternalFunctionId,
+    references: usize,
+}
 
 impl Default for EGraph {
     fn default() -> Self {
@@ -156,13 +162,19 @@ impl Default for EGraph {
         // also seeds `panic_funcs` so a later `new_panic` with the
         // same message reuses the id.
         let panic_message: SideChannel<String> = Default::default();
-        let mut panic_funcs: HashMap<String, ExternalFunctionId> = Default::default();
+        let mut panic_funcs: HashMap<String, CachedPanic> = Default::default();
         let default_panic_msg = "primitive panicked".to_string();
         let default_panic_id = db.add_external_function(Box::new(Panic(
             default_panic_msg.clone(),
             panic_message.clone(),
         )));
-        panic_funcs.insert(default_panic_msg, default_panic_id);
+        panic_funcs.insert(
+            default_panic_msg,
+            CachedPanic {
+                id: default_panic_id,
+                references: 1,
+            },
+        );
 
         let union_action = UnionAction {
             table: uf_table,
@@ -291,7 +303,21 @@ impl EGraph {
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
-        self.db.free_external_function(func)
+        let mut free = true;
+        self.panic_funcs.retain(|_, cached| {
+            if cached.id != func {
+                true
+            } else if cached.references > 1 {
+                cached.references -= 1;
+                free = false;
+                true
+            } else {
+                false
+            }
+        });
+        if free {
+            self.db.free_external_function(func);
+        }
     }
 
     /// Generate a fresh id.
@@ -1607,13 +1633,15 @@ struct Panic(String, SideChannel<String>);
 impl EGraph {
     /// Create a new `ExternalFunction` that panics with the given message.
     pub fn new_panic(&mut self, message: String) -> ExternalFunctionId {
-        *self
-            .panic_funcs
-            .entry(message.to_string())
-            .or_insert_with(|| {
-                let panic = Panic(message, self.panic_message.clone());
-                self.db.add_external_function(Box::new(panic))
-            })
+        if let Some(cached) = self.panic_funcs.get_mut(&message) {
+            cached.references += 1;
+            return cached.id;
+        }
+        let panic = Panic(message.clone(), self.panic_message.clone());
+        let id = self.db.add_external_function(Box::new(panic));
+        self.panic_funcs
+            .insert(message, CachedPanic { id, references: 1 });
+        id
     }
 
     pub fn new_panic_lazy(

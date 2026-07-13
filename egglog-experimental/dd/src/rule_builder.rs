@@ -175,6 +175,10 @@ impl<'a> RuleBuilderOps for DdRuleBuilder<'a> {
         Backend::new_panic(self.egraph, message)
     }
 
+    fn free_external_func(&mut self, func: ExternalFunctionId) {
+        Backend::free_external_func(self.egraph, func);
+    }
+
     fn build(self: Box<Self>) -> Result<RuleId> {
         let this = *self;
         let id = RuleId::new(this.egraph.rules.len() as u32);

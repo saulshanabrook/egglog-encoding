@@ -487,6 +487,9 @@ pub trait RuleBuilderOps {
     /// its id (used, e.g., to bake a panic id into a wrapped function).
     fn new_panic(&mut self, message: String) -> ExternalFunctionId;
 
+    /// Release an external function registered while building this rule.
+    fn free_external_func(&mut self, func: ExternalFunctionId);
+
     /// Skip tree-decomposition during query planning for this rule
     /// (`:no-decomp`). Default no-op for backends that don't decompose.
     fn set_no_decomp(&mut self, _no_decomp: bool) {}

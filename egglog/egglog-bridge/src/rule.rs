@@ -208,6 +208,11 @@ impl RuleBuilder<'_> {
         self.resources.egraph.new_panic(message)
     }
 
+    /// Release an external function registered while building this rule.
+    pub fn free_external_func(&mut self, func: crate::ExternalFunctionId) {
+        self.resources.egraph.free_external_func(func);
+    }
+
     pub(crate) fn set_plan_strategy(&mut self, strategy: PlanStrategy) {
         self.query.plan_strategy = strategy;
     }

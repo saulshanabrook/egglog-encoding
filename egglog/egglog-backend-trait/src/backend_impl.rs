@@ -98,6 +98,10 @@ impl RuleBuilderOps for RuleBuilder<'_> {
         self.new_panic(message)
     }
 
+    fn free_external_func(&mut self, func: ExternalFunctionId) {
+        self.free_external_func(func);
+    }
+
     fn set_no_decomp(&mut self, no_decomp: bool) {
         self.set_no_decomp(no_decomp);
     }

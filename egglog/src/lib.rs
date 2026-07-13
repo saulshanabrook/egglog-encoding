@@ -2824,8 +2824,14 @@ impl<'a> BackendRule<'a> {
                 name,
                 prim,
                 panic_id,
-            )
-            .unwrap_or_else(|error| panic!("{error}"));
+            );
+            let resolved = match resolved {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    self.rb.free_external_func(panic_id);
+                    return Err(error);
+                }
+            };
 
             qe_args[0] = base_constant(self.rb.base_values(), resolved);
         }
@@ -3127,6 +3133,41 @@ mod tests {
         fn apply<'a, 'db>(&self, state: FullState<'a, 'db>, _args: &[Value]) -> Option<Value> {
             Some(state.base_values().get::<i64>(1))
         }
+    }
+
+    #[test]
+    fn unstable_fn_resolution_error_releases_panic_registration() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(sort Fn (UnstableFn (i64) i64))")
+            .unwrap();
+        let register_probe = |egraph: &mut EGraph| {
+            egraph
+                .backend
+                .register_external_func(Box::new(core_relations::make_external_func(
+                    |_state: &mut core_relations::ExecutionState<'_>, _args: &[Value]| None,
+                )))
+        };
+        let error = egraph
+            .parse_and_run_program(None, "(let $first (unstable-fn \"missing\"))")
+            .expect_err("missing unstable-fn target should return an error");
+        assert!(error.to_string().contains("No resolution for \"missing\""));
+        let reused = register_probe(&mut egraph);
+        egraph.backend.free_external_func(reused);
+
+        let message = "unstable-fn over `missing` was applied in a context where its wrapped \
+                       function is not valid for this call site, if in a rule, add :naive."
+            .to_string();
+        let shared = egraph.backend.new_panic(message);
+        assert_eq!(shared, reused);
+        let error = egraph
+            .parse_and_run_program(None, "(let $second (unstable-fn \"missing\"))")
+            .expect_err("missing unstable-fn target should return an error");
+        assert!(error.to_string().contains("No resolution for \"missing\""));
+        let occupied = register_probe(&mut egraph);
+        assert_ne!(occupied, shared);
+        egraph.backend.free_external_func(shared);
+        assert_eq!(register_probe(&mut egraph), shared);
     }
 
     #[test]
