@@ -78,7 +78,7 @@ TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
-    "egglog/tests/math-microbenchmark-mini.egg",
+    "egglog/tests/math-microbenchmark.egg",
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
