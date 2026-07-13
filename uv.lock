@@ -170,7 +170,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "eval-live", extras = ["render"], editable = "../eval-live" },
+    { name = "eval-live", extras = ["render"], git = "https://github.com/oflatt/eval-live?rev=e79759708ad890fdcea2f5ffd6e69492728be695" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pandera", extras = ["pandas", "mypy"], specifier = ">=0.26" },
@@ -189,7 +189,7 @@ dev = [
 [[package]]
 name = "eval-live"
 version = "0.1.0"
-source = { editable = "../eval-live" }
+source = { git = "https://github.com/oflatt/eval-live?rev=e79759708ad890fdcea2f5ffd6e69492728be695#e79759708ad890fdcea2f5ffd6e69492728be695" }
 dependencies = [
     { name = "rich" },
 ]
@@ -198,13 +198,6 @@ dependencies = [
 render = [
     { name = "matplotlib" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib", marker = "extra == 'render'", specifier = ">=3.5" },
-    { name = "rich", specifier = ">=13.7" },
-]
-provides-extras = ["render"]
 
 [[package]]
 name = "fonttools"

@@ -3,18 +3,13 @@ name = "egglog-encoding"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "eval-live[render]",
+    "eval-live[render] @ git+https://github.com/oflatt/eval-live@e79759708ad890fdcea2f5ffd6e69492728be695",
     "numpy>=2.0",
     "pandas>=2.2",
     "pandera[pandas,mypy]>=0.26",
     "rich>=13.7",
     "scipy>=1.14",
 ]
-
-# Dev source: use the sibling checkout so local eval-live changes are picked up
-# without a push. Repin to a git commit before merging (CI checks out only this repo).
-[tool.uv.sources]
-eval-live = { path = "../eval-live", editable = true }
 
 [dependency-groups]
 dev = [

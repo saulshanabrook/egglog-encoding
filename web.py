@@ -51,11 +51,17 @@ def report_data(rows: DataFrame[ReportFrame], spec: BenchmarkSpec) -> dict[str, 
     }
 
 
-def graph_script_source() -> str:
-    """Source of ``web_registry.py``, shipped to Pyodide as the graph script."""
+def graph_script_source(rows: DataFrame[ReportFrame], spec: BenchmarkSpec) -> str:
+    """``web_registry.py`` source with the present table set baked in as a preamble.
+
+    Registers exactly the tables present for this data (so no empty tables),
+    derived from the shared ``build_report_tables`` catalog.
+    """
     import web_registry
 
-    return Path(web_registry.__file__).read_text(encoding="utf-8")
+    present = web_registry.present_tables(report_data(rows, spec))
+    preamble = f"_PRESENT_TABLES = {present!r}\n\n"
+    return preamble + Path(web_registry.__file__).read_text(encoding="utf-8")
 
 
 def extra_modules() -> dict[str, str]:
@@ -106,7 +112,7 @@ def eval_live_page(data_json: str, name: str, graph_script: str, modules: dict[s
 
 def build_page(rows: DataFrame[ReportFrame], spec: BenchmarkSpec, name: str) -> bytes:
     data_json = json.dumps(report_data(rows, spec))
-    return eval_live_page(data_json, name, graph_script_source(), extra_modules())
+    return eval_live_page(data_json, name, graph_script_source(rows, spec), extra_modules())
 
 
 def serve_report(
@@ -147,9 +153,12 @@ def dump_report(console: Any, rows: DataFrame[ReportFrame], spec: BenchmarkSpec,
     """Render the registry's tables (JSON + LaTeX) into ``outdir``."""
     import eval_live
 
-    import web_registry  # noqa: F401  (populates eval_live.registry on import)
+    import web_registry
 
-    written = eval_live.registry.render_to_dir(report_data(rows, spec), str(outdir))
+    data = report_data(rows, spec)
+    reg = eval_live.Registry()
+    web_registry._register(reg, web_registry.present_tables(data))
+    written = reg.render_to_dir(data, str(outdir))
     console.print(f"Wrote {len(written)} eval-live artifact(s) to [bold]{outdir}[/bold]:")
     for path in written:
         console.print(f"  {path}")

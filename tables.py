@@ -8,7 +8,8 @@ terminal and eval-live views style them their own way. No pandera at runtime.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -22,6 +23,7 @@ from models import (
     FileSpec,
     RatioSummary,
     ResolvedTarget,
+    TargetCellMaps,
     Treatment,
 )
 
@@ -467,3 +469,363 @@ def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treat
     if "term" in treatments and "proofs" in treatments:
         specs.append(("term", "proofs", "proofs/term"))
     return tuple(specs)
+
+
+# ---------------------------------------------------------------------------
+# Report-table model: one definition per table, rendered by cli.py (Rich) and
+# web_registry.py (eval-live). A Cell is plain text or carries a result status
+# to style; columns and rows are neutral so both media show the same table.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Cell:
+    text: str
+    status: str | None = None  # result status for the renderer to style
+
+
+@dataclass(frozen=True)
+class Column:
+    label: str
+    numeric: bool = False  # CLI: no_wrap
+    drop_if_empty: bool = False  # CLI: omit when every rendered cell is blank
+
+
+@dataclass(frozen=True)
+class ReportTable:
+    web_name: str
+    caption: str | None
+    columns: tuple[Column, ...]
+    rows: tuple[dict[str, Cell], ...]
+    cli_title: Callable[[str | None], str]  # group value (or None) -> CLI title
+    cli_section: str = "diagnostic"  # CLI placement: "change" | "diagnostic" | "summary"
+    group_by: str | None = None  # CLI splits into one table per value of this column
+    merge: str | None = None  # CLI blanks repeats of this column and section-breaks per group
+
+
+def _comparison_cell(ratio: RatioSummary) -> Cell:
+    result = comparison_result(ratio)
+    if result == "invalid" and ratio.issue is not None:
+        return Cell(f"invalid: {ratio.issue}", "invalid")
+    return Cell(result, result)
+
+
+def _lower_is_better_cell(ratio: RatioSummary) -> Cell:
+    result = lower_is_better_result(ratio)
+    if result == "invalid" and ratio.issue is not None:
+        return Cell(f"invalid: {ratio.issue}", "invalid")
+    return Cell(result, result)
+
+
+def _proof_gate_cell(ratio: RatioSummary) -> Cell:
+    status, text = proof_gate_result(ratio)
+    return Cell(text, status)
+
+
+def _change_table(
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+    *,
+    rss: bool,
+) -> ReportTable | None:
+    if len(targets) < 2:
+        return None
+    baseline = targets[0]
+    if rss:
+        baseline_has = any(cell.samples for cell in cell_maps[baseline].values())
+    ratio_label, change_label = ("RSS ratio", "RSS change") if rss else ("Time ratio", "Wall-time change")
+    rows: list[dict[str, Cell]] = []
+    for target in targets[1:]:
+        if rss and not baseline_has and not any(cell.samples for cell in cell_maps[target].values()):
+            continue
+        for file_spec in spec.files:
+            for treatment in spec.treatments:
+                ratio = ratio_summary(
+                    cell_maps[baseline][(file_spec.sha256, treatment)],
+                    cell_maps[target][(file_spec.sha256, treatment)],
+                )
+                change = format_percent_change(ratio) if rss else format_wall_time_change(ratio)
+                result = _lower_is_better_cell(ratio) if rss else _comparison_cell(ratio)
+                rows.append(
+                    {
+                        "Target": Cell(target.display_label),
+                        "File": Cell(file_spec.display_path),
+                        "Treatment": Cell(treatment),
+                        ratio_label: Cell(format_ratio_summary(ratio)),
+                        change_label: Cell(change),
+                        "Result": result,
+                    }
+                )
+    if not rows:
+        return None
+    columns = (
+        Column("Target"),
+        Column("File"),
+        Column("Treatment"),
+        Column(ratio_label, numeric=True),
+        Column(change_label, numeric=True),
+        Column("Result"),
+    )
+    kind = "peak RSS" if rss else "wall-time"
+    caption = TARGET_PEAK_RSS_CAPTION if rss else TARGET_WALL_TIME_CAPTION
+    return ReportTable(
+        web_name=f"Per-file {kind} change",
+        caption=caption,
+        columns=columns,
+        rows=tuple(rows),
+        cli_title=lambda t: f"Per-file {kind} change vs {baseline.display_label}: {t}",
+        cli_section="change",
+        group_by="Target",
+        merge="File",
+    )
+
+
+def _overhead_table(
+    cell_maps: TargetCellMaps, targets: Sequence[ResolvedTarget], spec: BenchmarkSpec
+) -> ReportTable | None:
+    ratio_columns = ratio_specs(spec.treatments)
+    if not ratio_columns:
+        return None
+    rows: list[dict[str, Cell]] = []
+    for target in targets:
+        cell_map = cell_maps[target]
+        for file_spec in spec.files:
+            row = {"Target": Cell(target.display_label), "File": Cell(file_spec.display_path)}
+            for baseline_treatment, candidate_treatment, ratio_name in ratio_columns:
+                ratio = ratio_summary(
+                    cell_map[(file_spec.sha256, baseline_treatment)],
+                    cell_map[(file_spec.sha256, candidate_treatment)],
+                )
+                row[ratio_name] = Cell(format_ratio_summary(ratio))
+            rows.append(row)
+    columns = (Column("Target"), Column("File")) + tuple(Column(name, numeric=True) for _, _, name in ratio_columns)
+    return ReportTable(
+        web_name="Overhead ratios",
+        caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
+        columns=columns,
+        rows=tuple(rows),
+        cli_title=lambda t: f"{t}: overhead ratios",
+        group_by="Target",
+    )
+
+
+def _means_table(
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+    *,
+    rss: bool,
+) -> ReportTable | None:
+    format_cell = format_bytes_summary if rss else format_seconds_summary
+    rows: list[dict[str, Cell]] = []
+    for target in targets:
+        cell_map = cell_maps[target]
+        if rss and not any(cell.samples for cell in cell_map.values()):
+            continue
+        for file_spec in spec.files:
+            issues: list[str] = []
+            row = {"Target": Cell(target.display_label), "File": Cell(file_spec.display_path)}
+            for treatment in spec.treatments:
+                cell = cell_map[(file_spec.sha256, treatment)]
+                row[treatment] = Cell(format_cell(cell))
+                if cell.issue is not None:
+                    issues.append(f"{treatment}: {cell.issue}")
+            row["Issue"] = Cell("; ".join(issues))
+            rows.append(row)
+    if not rows:
+        return None
+    columns = (
+        (Column("Target"), Column("File"))
+        + tuple(Column(t, numeric=True) for t in spec.treatments)
+        + (Column("Issue", drop_if_empty=True),)
+    )
+    kind = "peak RSS" if rss else "wall time"
+    caption = (
+        "Within-target peak resident set size estimates. These are separate from wall-time ratios."
+        if rss
+        else "Within-target wall-time estimates. These are not target-vs-baseline ratios."
+    )
+    return ReportTable(
+        web_name=f"Per-file {kind}",
+        caption=caption,
+        columns=columns,
+        rows=tuple(rows),
+        cli_title=lambda t: f"{t}: per-file {kind}",
+        group_by="Target",
+    )
+
+
+def _wall_summary_rows(
+    cell_map: CellMap, spec: BenchmarkSpec, baseline_treatment: Treatment, candidate_treatment: Treatment, label: str
+) -> list[dict[str, Cell]]:
+    file_cells = treatment_file_cells(cell_map, spec, baseline_treatment, candidate_treatment)
+    pairs = summary_pairs(file_cells)
+    summary = suite_ratio(pairs)
+    geometric = geometric_mean_ratio(pairs)
+    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+    result = (
+        _proof_gate_cell(summary)
+        if baseline_treatment == "off" and candidate_treatment == "proofs"
+        else _comparison_cell(summary)
+    )
+    return [
+        {
+            "Metric": Cell(label),
+            "Ratio": Cell(format_ratio_summary(summary)),
+            "Change": Cell(format_percent_change(summary)),
+            "Worst file": Cell(format_worst_file(worst_file)),
+            "Worst ratio": Cell(format_ratio_summary(worst)),
+            "Result": result,
+        },
+        {
+            "Metric": Cell(f"{label} geomean"),
+            "Ratio": Cell(format_ratio_summary(geometric)),
+            "Change": Cell(format_percent_change(geometric)),
+            "Worst file": Cell("-"),
+            "Worst ratio": Cell("-"),
+            "Result": Cell("descriptive", "descriptive"),
+        },
+    ]
+
+
+def _rss_summary_row(
+    rss_cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_treatment: Treatment,
+    candidate_treatment: Treatment,
+    label: str,
+) -> dict[str, Cell]:
+    file_cells = treatment_file_cells(rss_cell_map, spec, baseline_treatment, candidate_treatment)
+    pairs = summary_pairs(file_cells)
+    summary = suite_ratio(pairs)
+    worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+    return {
+        "Metric": Cell(label),
+        "Ratio": Cell(format_ratio_summary(summary)),
+        "Change": Cell(format_percent_change(summary)),
+        "Worst file": Cell(format_worst_file(worst_file)),
+        "Worst ratio": Cell(format_ratio_summary(worst)),
+        "Result": _lower_is_better_cell(summary),
+    }
+
+
+def _proof_summary_table(
+    cell_maps: TargetCellMaps, rss_cell_maps: TargetCellMaps, targets: Sequence[ResolvedTarget], spec: BenchmarkSpec
+) -> ReportTable:
+    target = targets[0]
+    cell_map = cell_maps[target]
+    rss_cell_map = rss_cell_maps[target]
+    rows: list[dict[str, Cell]] = []
+    if "off" in spec.treatments and "proofs" in spec.treatments:
+        rows.extend(_wall_summary_rows(cell_map, spec, "off", "proofs", "wall proofs/off"))
+        rows.append(_rss_summary_row(rss_cell_map, spec, "off", "proofs", "peak RSS proofs/off"))
+    else:
+        rows.append(
+            {
+                "Metric": Cell("no proof baseline"),
+                "Ratio": Cell("-"),
+                "Change": Cell("-"),
+                "Worst file": Cell("-"),
+                "Worst ratio": Cell("-"),
+                "Result": Cell("select off and proofs", "descriptive"),
+            }
+        )
+    if "term" in spec.treatments and "proofs" in spec.treatments:
+        rows.append(_rss_summary_row(rss_cell_map, spec, "term", "proofs", "peak RSS proofs/term"))
+    columns = (
+        Column("Metric"),
+        Column("Ratio", numeric=True),
+        Column("Change", numeric=True),
+        Column("Worst file"),
+        Column("Worst ratio", numeric=True),
+        Column("Result"),
+    )
+    return ReportTable(
+        web_name="Proof overhead summary",
+        caption=PROOF_OVERHEAD_CAPTION,
+        columns=columns,
+        rows=tuple(rows),
+        cli_title=lambda _: f"{target.display_label}: proof overhead summary",
+        cli_section="summary",
+    )
+
+
+def _target_summary_table(
+    cell_maps: TargetCellMaps,
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+    *,
+    rss: bool,
+) -> ReportTable:
+    baseline = targets[0]
+    change_label = "RSS change" if rss else "Wall-time change"
+    rows: list[dict[str, Cell]] = []
+    for target in targets[1:]:
+        for treatment in spec.treatments:
+            file_cells = target_treatment_file_cells(cell_maps[baseline], cell_maps[target], spec, treatment)
+            pairs = summary_pairs(file_cells)
+            summary = suite_ratio(pairs)
+            geometric = geometric_mean_ratio(pairs)
+            worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
+            change = format_percent_change(summary) if rss else format_wall_time_change(summary)
+            result = _lower_is_better_cell(summary) if rss else _comparison_cell(summary)
+            rows.append(
+                {
+                    "Target": Cell(target.display_label),
+                    "Treatment": Cell(treatment),
+                    change_label: Cell(change),
+                    "Geomean": Cell(format_ratio_summary(geometric)),
+                    "Worst file": Cell(format_worst_file(worst_file)),
+                    "Worst ratio": Cell(format_ratio_summary(worst)),
+                    "Result": result,
+                }
+            )
+    columns = (
+        Column("Target"),
+        Column("Treatment"),
+        Column(change_label, numeric=True),
+        Column("Geomean", numeric=True),
+        Column("Worst file"),
+        Column("Worst ratio", numeric=True),
+        Column("Result"),
+    )
+    kind = "Peak RSS" if rss else "Wall-time"
+    caption = TARGET_PEAK_RSS_CAPTION if rss else TARGET_WALL_TIME_CAPTION
+    return ReportTable(
+        web_name=f"{kind} summary",
+        caption=caption,
+        columns=columns,
+        rows=tuple(rows),
+        cli_title=lambda _: f"{kind} summary vs {baseline.display_label}",
+        cli_section="summary",
+    )
+
+
+def build_report_tables(
+    rows: DataFrame[ReportFrame],
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+    *,
+    validate: bool = True,
+) -> list[ReportTable]:
+    """Build every report table once, from a single computation of the cell maps.
+
+    To add a table, write a builder and append it here — the CLI (by
+    ``cli_section``) and the eval-live web/dump both pick it up automatically.
+    ``None`` entries (a table that does not apply to this data) are dropped.
+    """
+    cell_maps = {t: target_cell_summaries(rows, t, spec, validate=validate) for t in targets}
+    rss_cell_maps = {t: target_rss_cell_summaries(rows, t, spec, validate=validate) for t in targets}
+    multi = len(targets) > 1
+    candidates = [
+        _change_table(cell_maps, targets, spec, rss=False),
+        _change_table(rss_cell_maps, targets, spec, rss=True),
+        _overhead_table(cell_maps, targets, spec),
+        _means_table(cell_maps, targets, spec, rss=False),
+        _means_table(rss_cell_maps, targets, spec, rss=True),
+        None if multi else _proof_summary_table(cell_maps, rss_cell_maps, targets, spec),
+        _target_summary_table(cell_maps, targets, spec, rss=False) if multi else None,
+        _target_summary_table(rss_cell_maps, targets, spec, rss=True) if multi else None,
+    ]
+    return [table for table in candidates if table is not None]

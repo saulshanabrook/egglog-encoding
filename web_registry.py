@@ -1,13 +1,16 @@
-"""eval-live registry for the benchmark report (web view + on-disk dump).
+"""eval-live registry for the report tables — a generic loop, no per-table code.
 
-Runs both in Python (``render_to_dir`` for ``--dump-dir``) and in the browser
-(its source is the Pyodide graph script; tables recompute as the user filters).
-Numbers come from ``tables.py`` — the same compute the CLI uses. Spec and targets
-are derived from the rows; validation is skipped (pandera is unavailable in-browser).
+Registers every table from ``tables.build_report_tables`` so adding a table in
+``tables.py`` makes it appear in the web view and ``--dump-dir`` automatically.
+Runs in Python (dump) and as the Pyodide graph script (web); the set of tables to
+register is baked in as ``_PRESENT_TABLES`` by ``web.graph_script_source`` (web) or
+passed to ``_register`` (dump). Rows are recomputed from the (filtered) data, so
+validation is skipped — pandera is unavailable in-browser.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,9 +34,13 @@ STATUS_STYLE: dict[str, Any] = {
     "descriptive": {"dim": True},
 }
 
+_last: dict[str, Any] = {"data": None, "catalog": None}
 
-def _styled(status: str, text: str | None = None) -> dict[str, Any]:
-    return {"text": text or status, "style": STATUS_STYLE.get(status)}
+
+def _web_cell(cell: tables.Cell) -> Any:
+    if cell.status is None:
+        return cell.text
+    return {"text": cell.text, "style": STATUS_STYLE.get(cell.status)}
 
 
 def _reconstruct(data: dict[str, Any]) -> tuple[pd.DataFrame, models.BenchmarkSpec, list[models.ResolvedTarget]]:
@@ -80,14 +87,29 @@ def _reconstruct(data: dict[str, Any]) -> tuple[pd.DataFrame, models.BenchmarkSp
     return frame, spec, targets
 
 
-def _cell_maps(
-    data: dict[str, Any], *, rss: bool
-) -> tuple[models.BenchmarkSpec, list[models.ResolvedTarget], dict[Any, Any]]:
-    frame, spec, targets = _reconstruct(data)
-    summarize = tables.target_rss_cell_summaries if rss else tables.target_cell_summaries
-    # The browser passes a plain (unvalidated) DataFrame here by design.
-    cell_maps = {target: summarize(cast("Any", frame), target, spec, validate=False) for target in targets}
-    return spec, targets, cell_maps
+def _catalog(data: dict[str, Any]) -> list[tables.ReportTable]:
+    if _last["data"] is not data:  # one build per render pass (all table fns share the data object)
+        frame, spec, targets = _reconstruct(data)
+        _last["data"] = data
+        _last["catalog"] = tables.build_report_tables(cast("Any", frame), targets, spec, validate=False)
+    return cast("list[tables.ReportTable]", _last["catalog"])
+
+
+def present_tables(data: dict[str, Any]) -> list[tuple[str, str | None]]:
+    """The (web_name, caption) of every table present for this data."""
+    return [(table.web_name, table.caption) for table in _catalog(data)]
+
+
+def _web_rows(table: tables.ReportTable) -> list[dict[str, Any]]:
+    dropped = {
+        column.label
+        for column in table.columns
+        if column.drop_if_empty and all(not row[column.label].text for row in table.rows)
+    }
+    return [
+        {column.label: _web_cell(row[column.label]) for column in table.columns if column.label not in dropped}
+        for row in table.rows
+    ]
 
 
 def _narrow_by_file_treatment(filtered_rows: list[dict[str, Any]], data: dict[str, Any]) -> dict[str, Any]:
@@ -101,150 +123,23 @@ def _narrow_by_file_treatment(filtered_rows: list[dict[str, Any]], data: dict[st
     return {**data, "Benchmark report": kept}
 
 
-def per_file_wall_time(data: dict[str, Any]) -> list[dict[str, Any]]:
-    spec, targets, cell_maps = _cell_maps(data, rss=False)
-    rows: list[dict[str, Any]] = []
-    for target in targets:
-        for file_spec in spec.files:
-            for treatment in spec.treatments:
-                cell = cell_maps[target][(file_spec.sha256, treatment)]
-                rows.append(
-                    {
-                        "Target": target.display_label,
-                        "File": file_spec.display_path,
-                        "Treatment": treatment,
-                        "Wall time": tables.format_seconds_summary(cell),
-                        "Issue": cell.issue or "",
-                    }
-                )
-    return rows
-
-
-def per_file_peak_rss(data: dict[str, Any]) -> list[dict[str, Any]]:
-    spec, targets, cell_maps = _cell_maps(data, rss=True)
-    if not any(cell.samples for cmap in cell_maps.values() for cell in cmap.values()):
+def _make_fn(web_name: str) -> Callable[[dict[str, Any]], list[dict[str, Any]]]:
+    def fn(data: dict[str, Any]) -> list[dict[str, Any]]:
+        for table in _catalog(data):
+            if table.web_name == web_name:
+                return _web_rows(table)
         return []
-    rows: list[dict[str, Any]] = []
-    for target in targets:
-        for file_spec in spec.files:
-            for treatment in spec.treatments:
-                cell = cell_maps[target][(file_spec.sha256, treatment)]
-                rows.append(
-                    {
-                        "Target": target.display_label,
-                        "File": file_spec.display_path,
-                        "Treatment": treatment,
-                        "Peak RSS": tables.format_bytes_summary(cell),
-                    }
-                )
-    return rows
+
+    return fn
 
 
-def overhead_ratios(data: dict[str, Any]) -> list[dict[str, Any]]:
-    spec, targets, cell_maps = _cell_maps(data, rss=False)
-    ratio_columns = tables.ratio_specs(spec.treatments)
-    if not ratio_columns:
-        return []
-    rows: list[dict[str, Any]] = []
-    for target in targets:
-        cell_map = cell_maps[target]
-        for file_spec in spec.files:
-            row: dict[str, Any] = {"Target": target.display_label, "File": file_spec.display_path}
-            for baseline_treatment, candidate_treatment, ratio_name in ratio_columns:
-                ratio = tables.ratio_summary(
-                    cell_map[(file_spec.sha256, baseline_treatment)],
-                    cell_map[(file_spec.sha256, candidate_treatment)],
-                )
-                row[ratio_name] = tables.format_ratio_summary(ratio)
-            rows.append(row)
-    return rows
+def _register(reg: Any, present: list[tuple[str, str | None]]) -> None:
+    for web_name, caption in present:
+        reg.table(web_name, _make_fn(web_name), _narrow_by_file_treatment, caption=caption)
 
 
-def wall_time_change(data: dict[str, Any]) -> list[dict[str, Any]]:
-    spec, targets, cell_maps = _cell_maps(data, rss=False)
-    if len(targets) < 2:
-        return []
-    baseline = targets[0]
-    rows: list[dict[str, Any]] = []
-    for target in targets[1:]:
-        for file_spec in spec.files:
-            for treatment in spec.treatments:
-                ratio = tables.ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, treatment)],
-                    cell_maps[target][(file_spec.sha256, treatment)],
-                )
-                rows.append(
-                    {
-                        "Target": target.display_label,
-                        "File": file_spec.display_path,
-                        "Treatment": treatment,
-                        "Time ratio": tables.format_ratio_summary(ratio),
-                        "Wall-time change": tables.format_wall_time_change(ratio),
-                        "Result": _styled(tables.comparison_result(ratio)),
-                    }
-                )
-    return rows
-
-
-def peak_rss_change(data: dict[str, Any]) -> list[dict[str, Any]]:
-    spec, targets, cell_maps = _cell_maps(data, rss=True)
-    if len(targets) < 2 or not any(cell.samples for cmap in cell_maps.values() for cell in cmap.values()):
-        return []
-    baseline = targets[0]
-    rows: list[dict[str, Any]] = []
-    for target in targets[1:]:
-        for file_spec in spec.files:
-            for treatment in spec.treatments:
-                ratio = tables.ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, treatment)],
-                    cell_maps[target][(file_spec.sha256, treatment)],
-                )
-                rows.append(
-                    {
-                        "Target": target.display_label,
-                        "File": file_spec.display_path,
-                        "Treatment": treatment,
-                        "RSS ratio": tables.format_ratio_summary(ratio),
-                        "RSS change": tables.format_percent_change(ratio),
-                        "Result": _styled(tables.lower_is_better_result(ratio)),
-                    }
-                )
-    return rows
-
-
-def build_registry() -> Any:
-    reg = eval_live.Registry()
-    reg.table(
-        "Per-file wall time",
-        per_file_wall_time,
-        _narrow_by_file_treatment,
-        caption="Within-target wall-time estimates (mean with 95% CI). Not target-vs-baseline ratios.",
-    )
-    reg.table(
-        "Per-file peak RSS",
-        per_file_peak_rss,
-        _narrow_by_file_treatment,
-        caption="Within-target peak resident set size estimates.",
-    )
-    reg.table(
-        "Overhead ratios",
-        overhead_ratios,
-        _narrow_by_file_treatment,
-        caption="Within-target treatment ratios. Not target-vs-baseline wall-time change.",
-    )
-    reg.table(
-        "Wall-time change vs baseline",
-        wall_time_change,
-        _narrow_by_file_treatment,
-        caption=tables.TARGET_WALL_TIME_CAPTION,
-    )
-    reg.table(
-        "Peak RSS change vs baseline",
-        peak_rss_change,
-        _narrow_by_file_treatment,
-        caption=tables.TARGET_PEAK_RSS_CAPTION,
-    )
-    return reg
-
-
-eval_live.registry = build_registry()
+_present = globals().get("_PRESENT_TABLES")
+if _present is not None:  # graph-script (web) path: register the baked-in table set
+    _registry = eval_live.Registry()
+    _register(_registry, _present)
+    eval_live.registry = _registry
