@@ -38,7 +38,7 @@ pub(crate) mod rule;
 #[cfg(test)]
 mod tests;
 
-pub use rule::{Function, QueryEntry, RuleBuilder};
+pub use rule::{Function, QueryEntry, RuleBuilder, Variable, VariableId};
 use thiserror::Error;
 
 /// A live registry of action handles for use by typed primitives.
@@ -125,7 +125,7 @@ pub struct EGraph {
     /// around allows us to cache external function ids with repeat panic messages and they can
     /// also serve as a debugging tool in the case that the number of panic messages grows without
     /// bound.
-    panic_funcs: HashMap<String, ExternalFunctionId>,
+    panic_funcs: HashMap<String, CachedPanic>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
@@ -136,6 +136,12 @@ pub struct EGraph {
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
+
+#[derive(Clone, Copy)]
+struct CachedPanic {
+    id: ExternalFunctionId,
+    references: usize,
+}
 
 impl Default for EGraph {
     fn default() -> Self {
@@ -156,13 +162,19 @@ impl Default for EGraph {
         // also seeds `panic_funcs` so a later `new_panic` with the
         // same message reuses the id.
         let panic_message: SideChannel<String> = Default::default();
-        let mut panic_funcs: HashMap<String, ExternalFunctionId> = Default::default();
+        let mut panic_funcs: HashMap<String, CachedPanic> = Default::default();
         let default_panic_msg = "primitive panicked".to_string();
         let default_panic_id = db.add_external_function(Box::new(Panic(
             default_panic_msg.clone(),
             panic_message.clone(),
         )));
-        panic_funcs.insert(default_panic_msg, default_panic_id);
+        panic_funcs.insert(
+            default_panic_msg,
+            CachedPanic {
+                id: default_panic_id,
+                references: 1,
+            },
+        );
 
         let union_action = UnionAction {
             table: uf_table,
@@ -291,7 +303,21 @@ impl EGraph {
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
-        self.db.free_external_function(func)
+        let mut free = true;
+        self.panic_funcs.retain(|_, cached| {
+            if cached.id != func {
+                true
+            } else if cached.references > 1 {
+                cached.references -= 1;
+                free = false;
+                true
+            } else {
+                false
+            }
+        });
+        if free {
+            self.db.free_external_function(func);
+        }
     }
 
     /// Generate a fresh id.
@@ -421,6 +447,50 @@ impl EGraph {
     pub fn clear_table(&mut self, func: FunctionId) {
         let table_id = self.funcs[func].table;
         self.db.clear_table(table_id);
+    }
+
+    /// Remove the most recently registered function and its backing table.
+    ///
+    /// This is a rollback operation for callers whose later registration work
+    /// failed. It rejects older functions because later rules or merge
+    /// callbacks may already depend on them.
+    pub fn remove_last_table(&mut self, func: FunctionId) -> Result<()> {
+        anyhow::ensure!(
+            self.funcs.get(func).is_some(),
+            "cannot remove unknown function {func:?}"
+        );
+        let removed_action = TableAction::new(self, func);
+        let info = self.funcs.pop_last(func).ok_or_else(|| {
+            anyhow::anyhow!("can only remove the most recently registered function")
+        })?;
+        if !self.db.remove_last_table(info.table) {
+            self.funcs.insert(func, info);
+            anyhow::bail!("function's backing table was not the most recently registered table");
+        }
+
+        self.free_rule(info.nonincremental_rebuild_rule);
+        for rule in info.incremental_rebuild_rules.iter().rev() {
+            self.free_rule(*rule);
+        }
+
+        let replacement = self
+            .funcs
+            .iter()
+            .filter(|(_, candidate)| candidate.name == info.name)
+            .map(|(id, _)| TableAction::new(self, id))
+            .last();
+        let mut registry = self.action_registry.write().unwrap();
+        if registry.table_actions.get(info.name.as_ref()) == Some(&removed_action) {
+            match replacement {
+                Some(action) => {
+                    registry.register_table(info.name.to_string(), action);
+                }
+                None => {
+                    registry.table_actions.remove(info.name.as_ref());
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Read the contents of the given function.
@@ -979,6 +1049,7 @@ impl EGraph {
 struct RuleInfo {
     last_run_at: Timestamp,
     query: rule::Query,
+    owned_external_funcs: Vec<ExternalFunctionId>,
     cached_plan: Option<CachedPlanInfo>,
     desc: Arc<str>,
 }
@@ -1562,13 +1633,15 @@ struct Panic(String, SideChannel<String>);
 impl EGraph {
     /// Create a new `ExternalFunction` that panics with the given message.
     pub fn new_panic(&mut self, message: String) -> ExternalFunctionId {
-        *self
-            .panic_funcs
-            .entry(message.to_string())
-            .or_insert_with(|| {
-                let panic = Panic(message, self.panic_message.clone());
-                self.db.add_external_function(Box::new(panic))
-            })
+        if let Some(cached) = self.panic_funcs.get_mut(&message) {
+            cached.references += 1;
+            return cached.id;
+        }
+        let panic = Panic(message.clone(), self.panic_message.clone());
+        let id = self.db.add_external_function(Box::new(panic));
+        self.panic_funcs
+            .insert(message, CachedPanic { id, references: 1 });
+        id
     }
 
     pub fn new_panic_lazy(
@@ -1582,10 +1655,8 @@ impl EGraph {
 }
 
 impl ExternalFunction for Panic {
-    fn invoke(&self, state: &mut core_relations::ExecutionState, args: &[Value]) -> Option<Value> {
+    fn invoke(&self, state: &mut core_relations::ExecutionState, _args: &[Value]) -> Option<Value> {
         // TODO (egglog feature): change this to support interpolating panic messages
-        assert!(args.is_empty());
-
         state.trigger_early_stop();
         let mut guard = self.1.lock().unwrap();
         if guard.is_none() {

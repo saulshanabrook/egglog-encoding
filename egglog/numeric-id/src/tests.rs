@@ -45,6 +45,17 @@ fn basic_id_map() {
 }
 
 #[test]
+fn pop_last_only_removes_the_final_slot() {
+    let mut map = DenseIdMap::<Id, &'static str>::new();
+    let first = map.push("zero");
+    let second = map.push("one");
+
+    assert_eq!(map.pop_last(first), None);
+    assert_eq!(map.pop_last(second), Some("one"));
+    assert_eq!(map.next_id(), second);
+}
+
+#[test]
 fn get_or_insert() {
     let mut map = DenseIdMap::<Id, &'static str>::new();
     let id = Id::from_usize(3);

@@ -862,11 +862,11 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
         self.0.name()
     }
 
-    fn column_ty(&self, backend: &egglog_bridge::EGraph) -> ColumnTy {
-        ColumnTy::Base(backend.base_values().get_ty::<T::Base>())
+    fn column_ty(&self, base_values: &BaseValues) -> ColumnTy {
+        ColumnTy::Base(base_values.get_ty::<T::Base>())
     }
 
-    fn register_type(&self, backend: &mut egglog_bridge::EGraph) {
+    fn register_type(&self, backend: &mut dyn egglog_backend_trait::Backend) {
         backend.base_values_mut().register_type::<T::Base>();
     }
 
@@ -939,11 +939,11 @@ impl<T: ContainerSort> Sort for ContainerSortImpl<T> {
         self.0.name()
     }
 
-    fn column_ty(&self, _backend: &egglog_bridge::EGraph) -> ColumnTy {
+    fn column_ty(&self, _base_values: &BaseValues) -> ColumnTy {
         ColumnTy::Id
     }
 
-    fn register_type(&self, backend: &mut egglog_bridge::EGraph) {
+    fn register_type(&self, backend: &mut dyn egglog_backend_trait::Backend) {
         backend.register_container_ty::<T::Container>();
     }
 
@@ -1038,6 +1038,23 @@ mod tests {
         ",
         )?;
         Ok(egraph)
+    }
+
+    #[test]
+    fn add_primitive_under_term_encoding() -> Result<(), Error> {
+        // A primitive registered through the Rust API AFTER construction must
+        // reach the term-encoding typechecker (a separate e-graph), not just the
+        // running e-graph — otherwise the encoder reports it as unbound.
+        let mut egraph = EGraph::new_with_term_encoding();
+        add_literal_prim!(&mut egraph, "tripleit" = |x: i64| -> i64 { x * 3 });
+        egraph.parse_and_run_program(
+            None,
+            "(function f (i64) i64 :merge (min old new))
+(set (f 0) (tripleit 7))
+(run 1)
+(check (= (f 0) 21))",
+        )?;
+        Ok(())
     }
 
     #[test]

@@ -13,6 +13,8 @@ import pandas as pd
 import pandera.pandas as pa
 from pandera.typing import DataFrame, Series
 
+from models import BACKEND_SPECS
+
 
 class ReportFrame(pa.DataFrameModel):
     class Config:
@@ -31,6 +33,7 @@ class ReportFrame(pa.DataFrameModel):
     binary_sha256: Series[str]
     file_path: Series[str]
     file_sha256: Series[str]
+    backend: Series[str] = pa.Field(isin=list(BACKEND_SPECS))
     treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
     timeout_sec: Series[int] = pa.Field(gt=0)
     wall_sec: Series[float] = pa.Field(nullable=True, ge=0)

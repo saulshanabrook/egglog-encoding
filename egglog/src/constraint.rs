@@ -1,7 +1,7 @@
 use crate::{
     core::{
         Atom, CoreAction, CoreRule, GenericCoreActions, GenericCoreRule, HeadOrEq, Query,
-        StringOrEq,
+        QueryConstraints, StringOrEq,
     },
     *,
 };
@@ -805,8 +805,17 @@ impl Problem<AtomTerm, ArcSort> {
     }
 }
 
-impl CoreAction {
-    pub(crate) fn get_constraints(
+trait CoreActionConstraints {
+    fn get_constraints(
+        &self,
+        typeinfo: &TypeInfo,
+        symbol_gen: &mut SymbolGen,
+        ctx: crate::Context,
+    ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError>;
+}
+
+impl CoreActionConstraints for CoreAction {
+    fn get_constraints(
         &self,
         typeinfo: &TypeInfo,
         symbol_gen: &mut SymbolGen,
@@ -875,8 +884,16 @@ impl CoreAction {
     }
 }
 
-impl Atom<StringOrEq> {
-    pub(crate) fn get_constraints(
+pub(crate) trait AtomConstraints {
+    fn get_constraints(
+        &self,
+        type_info: &TypeInfo,
+        ctx: crate::Context,
+    ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError>;
+}
+
+impl AtomConstraints for Atom<StringOrEq> {
+    fn get_constraints(
         &self,
         type_info: &TypeInfo,
         ctx: crate::Context,
@@ -1169,8 +1186,7 @@ pub(crate) fn grounded_check(
 
     let range = rule
         .body
-        .get_vars()
-        .into_iter()
+        .vars()
         .map(|v| ResolvedAtomTerm::Var(rule.span.clone(), v))
         .collect();
     let mut problem: Problem<ResolvedAtomTerm, ()> = Problem {

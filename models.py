@@ -17,7 +17,11 @@ if TYPE_CHECKING:
     from report_frame import ReportFrame
 
 Status = Literal["success", "timed-out", "failure"]
+Backend = str
 Treatment = Literal["off", "term", "proofs"]
+BuildProfile = Literal["release", "profiling"]
+OutputFormat = Literal["rich", "markdown"]
+TableAlignment = Literal["left", "right"]
 
 # Result classification vocabulary shared by the classifiers and both renderers.
 # Meaning is centralized here; the Rich (cli) and CSS (eval-live) style maps that
@@ -49,6 +53,29 @@ RESULT_STATUSES: tuple[ResultStatus, ...] = (
 
 
 @dataclass(frozen=True)
+class BackendSpec:
+    """A named build+run variant of the egglog binary.
+
+    ``cargo_features`` are the ``cargo build --features`` needed to produce a binary
+    that supports the backend; ``flags`` are extra workload CLI flags; ``treatments``
+    restricts which treatments the backend can run.
+    """
+
+    display_name: str
+    treatments: tuple[Treatment, ...]
+    flags: tuple[str, ...]
+    cargo_features: tuple[str, ...] = ()
+
+
+BACKEND_SPECS: dict[Backend, BackendSpec] = {
+    "main": BackendSpec("main", ("off", "term", "proofs"), ()),
+    "dd": BackendSpec("DD", ("term", "proofs"), ("--backend", "dd"), ("dd-backend",)),
+}
+
+DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
+
+
+@dataclass(frozen=True)
 class TargetRow:
     source: str
     path: str
@@ -71,6 +98,15 @@ class BenchmarkSpec:
     treatments: tuple[Treatment, ...]
     rounds: int
     timeout_sec: int
+    backends: tuple[Backend, ...] = DEFAULT_BACKENDS
+
+
+@dataclass(frozen=True)
+class BenchmarkCell:
+    """The ``(backend, treatment)`` unit of iteration for a benchmark run."""
+
+    backend: Backend
+    treatment: Treatment
 
 
 @dataclass(frozen=True)
@@ -118,6 +154,7 @@ class EstimateKey:
     file_sha256: str
     treatment: Treatment
     timeout_sec: int
+    backend: Backend = "main"
 
 
 @dataclass(frozen=True)
@@ -135,7 +172,7 @@ class CellSummary:
         return self.issue is None and self.mean is not None
 
 
-CellMap = dict[tuple[str, Treatment], CellSummary]
+CellMap = dict[tuple[str, Backend, Treatment], CellSummary]
 TargetCellMaps = dict[ResolvedTarget, CellMap]
 
 
@@ -182,6 +219,7 @@ class ReportSelection:
     targets: tuple[ReportTarget, ...]
     files: tuple[ReportFile, ...]
     treatments: tuple[Treatment, ...]
+    backends: tuple[Backend, ...]
     rounds: int
     timeout_sec: int
 
@@ -203,6 +241,7 @@ def build_report_selection(targets: Sequence[ResolvedTarget], spec: BenchmarkSpe
         ),
         files=tuple(ReportFile(sha256=file.sha256, display_path=file.display_path) for file in spec.files),
         treatments=spec.treatments,
+        backends=spec.backends,
         rounds=spec.rounds,
         timeout_sec=spec.timeout_sec,
     )
@@ -214,6 +253,7 @@ def report_selection_to_dict(selection: ReportSelection) -> dict[str, Any]:
         "targets": [asdict(target) for target in selection.targets],
         "files": [asdict(file) for file in selection.files],
         "treatments": list(selection.treatments),
+        "backends": list(selection.backends),
         "rounds": selection.rounds,
         "timeout_sec": selection.timeout_sec,
     }
@@ -224,6 +264,7 @@ def report_selection_from_dict(data: dict[str, Any]) -> ReportSelection:
         targets=tuple(ReportTarget(**target) for target in data["targets"]),
         files=tuple(ReportFile(**file) for file in data["files"]),
         treatments=cast("tuple[Treatment, ...]", tuple(data["treatments"])),
+        backends=cast("tuple[Backend, ...]", tuple(data.get("backends", ("main",)))),
         rounds=int(data["rounds"]),
         timeout_sec=int(data["timeout_sec"]),
     )
@@ -256,5 +297,75 @@ def selection_spec(selection: ReportSelection) -> BenchmarkSpec:
         for file in selection.files
     )
     return BenchmarkSpec(
-        files=files, treatments=selection.treatments, rounds=selection.rounds, timeout_sec=selection.timeout_sec
+        files=files,
+        treatments=selection.treatments,
+        rounds=selection.rounds,
+        timeout_sec=selection.timeout_sec,
+        backends=selection.backends,
+    )
+
+
+def backend_spec(backend: Backend) -> BackendSpec:
+    try:
+        return BACKEND_SPECS[backend]
+    except KeyError as error:
+        raise ValueError(f"unknown backend: {backend}") from error
+
+
+def backend_supports_treatment(backend: Backend, treatment: Treatment) -> bool:
+    return treatment in backend_spec(backend).treatments
+
+
+def supported_treatments(backend: Backend) -> tuple[Treatment, ...]:
+    return backend_spec(backend).treatments
+
+
+def backend_flags(backend: Backend) -> list[str]:
+    return list(backend_spec(backend).flags)
+
+
+def backend_cargo_features(backends: Sequence[Backend]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(feature for backend in backends for feature in backend_spec(backend).cargo_features))
+
+
+def backend_treatment_cells(
+    backends: Sequence[Backend],
+    treatments: Sequence[Treatment],
+) -> tuple[BenchmarkCell, ...]:
+    cells: list[BenchmarkCell] = []
+    requested = ",".join(treatments)
+    for backend in backends:
+        backend_cells = tuple(
+            BenchmarkCell(backend, treatment)
+            for treatment in treatments
+            if backend_supports_treatment(backend, treatment)
+        )
+        if not backend_cells:
+            supported = ",".join(supported_treatments(backend))
+            raise ValueError(
+                f"backend {backend} has no supported treatments in requested set {requested}; "
+                f"supported treatments: {supported}"
+            )
+        cells.extend(backend_cells)
+    return tuple(cells)
+
+
+def benchmark_cells(spec: BenchmarkSpec) -> tuple[BenchmarkCell, ...]:
+    return backend_treatment_cells(spec.backends, spec.treatments)
+
+
+def backend_has_treatment(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> bool:
+    return any(cell.backend == backend and cell.treatment == treatment for cell in benchmark_cells(spec))
+
+
+def shared_backend_treatments(
+    spec: BenchmarkSpec,
+    baseline_backend: Backend,
+    candidate_backend: Backend,
+) -> tuple[Treatment, ...]:
+    return tuple(
+        treatment
+        for treatment in spec.treatments
+        if backend_supports_treatment(baseline_backend, treatment)
+        and backend_supports_treatment(candidate_backend, treatment)
     )

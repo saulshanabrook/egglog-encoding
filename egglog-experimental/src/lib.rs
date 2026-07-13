@@ -89,6 +89,17 @@ pub fn new_experimental_egraph_with_proofs() -> EGraph {
     new_experimental_egraph_for_proofs().with_proofs_enabled()
 }
 
+pub fn new_experimental_egraph_with_backend_for_proofs(backend: Box<dyn Backend>) -> EGraph {
+    let mut egraph = EGraph::with_backend(backend);
+    add_experimental_extensions(&mut egraph, false);
+    let typechecker = new_experimental_egraph_for_proofs();
+    egraph.with_term_encoding_typechecker(typechecker)
+}
+
+pub fn new_experimental_egraph_with_backend_and_proofs(backend: Box<dyn Backend>) -> EGraph {
+    new_experimental_egraph_with_backend_for_proofs(backend).with_proofs_enabled()
+}
+
 pub fn new_experimental_egraph_with_proof_testing() -> EGraph {
     new_experimental_egraph_with_proofs().with_proof_testing()
 }
