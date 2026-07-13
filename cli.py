@@ -78,7 +78,7 @@ def render_report(
     # Diagnostics are interleaved per target (overhead, means, RSS for each).
     for target in targets:
         for table in sections["diagnostic"]:
-            render_report_table(console, table, only_group=target.display_label)
+            render_report_table(console, table, only_group=target.binary_sha256)
 
     console.rule("[bold]Benchmark summary[/bold]")
     for table in sections["summary"]:
@@ -86,23 +86,26 @@ def render_report(
 
 
 def render_report_table(console: Console, table: ReportTable, *, only_group: str | None = None) -> None:
+    """Render a table to the console. Grouped tables split into one Rich table per
+    ``group_keys`` identity (so same-labeled targets stay separate); the title uses
+    the display label from the ``group_by`` column."""
     group_by = table.group_by
     if group_by is None:
         _render_group(console, table, table.cli_title(None), table.columns, list(table.rows))
         return
     order: list[str] = []
     buckets: dict[str, list[dict[str, Cell]]] = {}
-    for row in table.rows:
-        value = row[group_by].text
-        if value not in buckets:
-            buckets[value] = []
-            order.append(value)
-        buckets[value].append(row)
+    for identity, row in zip(table.group_keys, table.rows, strict=True):
+        if identity not in buckets:
+            buckets[identity] = []
+            order.append(identity)
+        buckets[identity].append(row)
     columns = tuple(column for column in table.columns if column.label != group_by)
-    for value in order:
-        if only_group is not None and value != only_group:
+    for identity in order:
+        if only_group is not None and identity != only_group:
             continue
-        _render_group(console, table, table.cli_title(value), columns, buckets[value])
+        rows = buckets[identity]
+        _render_group(console, table, table.cli_title(rows[0][group_by].text), columns, rows)
 
 
 def _render_group(

@@ -497,9 +497,10 @@ class ReportTable:
     caption: str | None
     columns: tuple[Column, ...]
     rows: tuple[dict[str, Cell], ...]
-    cli_title: Callable[[str | None], str]  # group value (or None) -> CLI title
+    cli_title: Callable[[str | None], str]  # group label (or None) -> CLI title
     cli_section: str = "diagnostic"  # CLI placement: "change" | "diagnostic" | "summary"
-    group_by: str | None = None  # CLI splits into one table per value of this column
+    group_by: str | None = None  # column the CLI drops when splitting into per-group tables
+    group_keys: tuple[str, ...] = ()  # per-row grouping identity (parallel to rows); CLI groups on this
     merge: str | None = None  # CLI blanks repeats of this column and section-breaks per group
 
 
@@ -536,6 +537,7 @@ def _change_table(
         baseline_has = any(cell.samples for cell in cell_maps[baseline].values())
     ratio_label, change_label = ("RSS ratio", "RSS change") if rss else ("Time ratio", "Wall-time change")
     rows: list[dict[str, Cell]] = []
+    group_keys: list[str] = []
     for target in targets[1:]:
         if rss and not baseline_has and not any(cell.samples for cell in cell_maps[target].values()):
             continue
@@ -557,6 +559,7 @@ def _change_table(
                         "Result": result,
                     }
                 )
+                group_keys.append(target.binary_sha256)
     if not rows:
         return None
     columns = (
@@ -577,6 +580,7 @@ def _change_table(
         cli_title=lambda t: f"Per-file {kind} change vs {baseline.display_label}: {t}",
         cli_section="change",
         group_by="Target",
+        group_keys=tuple(group_keys),
         merge="File",
     )
 
@@ -588,6 +592,7 @@ def _overhead_table(
     if not ratio_columns:
         return None
     rows: list[dict[str, Cell]] = []
+    group_keys: list[str] = []
     for target in targets:
         cell_map = cell_maps[target]
         for file_spec in spec.files:
@@ -599,6 +604,7 @@ def _overhead_table(
                 )
                 row[ratio_name] = Cell(format_ratio_summary(ratio))
             rows.append(row)
+            group_keys.append(target.binary_sha256)
     columns = (Column("Target"), Column("File")) + tuple(Column(name, numeric=True) for _, _, name in ratio_columns)
     return ReportTable(
         web_name="Overhead ratios",
@@ -607,6 +613,7 @@ def _overhead_table(
         rows=tuple(rows),
         cli_title=lambda t: f"{t}: overhead ratios",
         group_by="Target",
+        group_keys=tuple(group_keys),
     )
 
 
@@ -619,6 +626,7 @@ def _means_table(
 ) -> ReportTable | None:
     format_cell = format_bytes_summary if rss else format_seconds_summary
     rows: list[dict[str, Cell]] = []
+    group_keys: list[str] = []
     for target in targets:
         cell_map = cell_maps[target]
         if rss and not any(cell.samples for cell in cell_map.values()):
@@ -633,6 +641,7 @@ def _means_table(
                     issues.append(f"{treatment}: {cell.issue}")
             row["Issue"] = Cell("; ".join(issues))
             rows.append(row)
+            group_keys.append(target.binary_sha256)
     if not rows:
         return None
     columns = (
@@ -653,6 +662,7 @@ def _means_table(
         rows=tuple(rows),
         cli_title=lambda t: f"{t}: per-file {kind}",
         group_by="Target",
+        group_keys=tuple(group_keys),
     )
 
 

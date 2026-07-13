@@ -3,7 +3,7 @@ name = "egglog-encoding"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "eval-live[render] @ git+https://github.com/oflatt/eval-live@e79759708ad890fdcea2f5ffd6e69492728be695",
+    "eval-live[render] @ git+https://github.com/oflatt/eval-live@50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f",
     "numpy>=2.0",
     "pandas>=2.2",
     "pandera[pandas,mypy]>=0.26",
@@ -39,7 +39,7 @@ module = ["eval_live", "eval_live.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["test_bench.py"]
+testpaths = ["test_bench.py", "test_web.py"]
 
 [tool.ruff]
 target-version = "py312"

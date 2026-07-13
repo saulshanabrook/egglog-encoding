@@ -170,7 +170,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "eval-live", extras = ["render"], git = "https://github.com/oflatt/eval-live?rev=e79759708ad890fdcea2f5ffd6e69492728be695" },
+    { name = "eval-live", extras = ["render"], git = "https://github.com/oflatt/eval-live?rev=50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pandera", extras = ["pandas", "mypy"], specifier = ">=0.26" },
@@ -189,7 +189,7 @@ dev = [
 [[package]]
 name = "eval-live"
 version = "0.1.0"
-source = { git = "https://github.com/oflatt/eval-live?rev=e79759708ad890fdcea2f5ffd6e69492728be695#e79759708ad890fdcea2f5ffd6e69492728be695" }
+source = { git = "https://github.com/oflatt/eval-live?rev=50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f#50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f" }
 dependencies = [
     { name = "rich" },
 ]

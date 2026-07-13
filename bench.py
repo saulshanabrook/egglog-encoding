@@ -42,6 +42,7 @@ from models import (
     TargetRequest,
     TargetRow,
     Treatment,
+    build_report_selection,
 )
 from report_frame import (
     ReportFrame,
@@ -1150,14 +1151,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             targets,
             spec,
         )
-        if args.dump_dir is not None:
+        if args.dump_dir is not None or args.serve:
             import web
 
-            web.dump_report(output.console, rows, spec, Path(args.dump_dir))
-        if args.serve:
-            import web
-
-            web.serve_report(output.console, rows, spec, args.serve_port)
+            selection = build_report_selection(targets, spec)
+            if args.dump_dir is not None:
+                web.dump_report(output.console, rows, selection, Path(args.dump_dir))
+            if args.serve:
+                web.serve_report(output.console, rows, selection, args.serve_port)
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
         output.print_error(error)
         return 2

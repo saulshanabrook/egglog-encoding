@@ -1,17 +1,17 @@
 """eval-live registry for the report tables — a generic loop, no per-table code.
 
 Registers every table from ``tables.build_report_tables`` so adding a table in
-``tables.py`` makes it appear in the web view and ``--dump-dir`` automatically.
-Runs in Python (dump) and as the Pyodide graph script (web); the set of tables to
-register is baked in as ``_PRESENT_TABLES`` by ``web.graph_script_source`` (web) or
-passed to ``_register`` (dump). Rows are recomputed from the (filtered) data, so
-validation is skipped — pandera is unavailable in-browser.
+``tables.py`` appears in the web view and ``--dump-dir`` automatically. Runs in
+Python (dump) and as the Pyodide graph script (web). The authoritative scope
+(``ReportSelection``) and the present table set are baked in by the host as
+``_SELECTION`` / ``_PRESENT_TABLES``; the browser never reconstructs scope from
+rows. Rows are recomputed from the (filtered) data with validation skipped —
+pandera is unavailable in-browser.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, cast
 
 import eval_live
@@ -34,7 +34,14 @@ STATUS_STYLE: dict[str, Any] = {
     "descriptive": {"dim": True},
 }
 
+_scope: dict[str, Any] = {"targets": [], "spec": None}
 _last: dict[str, Any] = {"data": None, "catalog": None}
+
+
+def configure(selection: models.ReportSelection) -> None:
+    """Set the authoritative scope used to recompute tables (targets + spec)."""
+    _scope["targets"] = models.selection_targets(selection)
+    _scope["spec"] = models.selection_spec(selection)
 
 
 def _web_cell(cell: tables.Cell) -> Any:
@@ -43,55 +50,17 @@ def _web_cell(cell: tables.Cell) -> Any:
     return {"text": cell.text, "style": STATUS_STYLE.get(cell.status)}
 
 
-def _reconstruct(data: dict[str, Any]) -> tuple[pd.DataFrame, models.BenchmarkSpec, list[models.ResolvedTarget]]:
-    records = data.get("Benchmark report", [])
-    metadata = data.get("metadata") or [{}]
-    rounds = int(metadata[0].get("rounds", 1) or 1)
-    frame = pd.DataFrame(records)
-
-    files: list[models.FileSpec] = []
-    seen_files: set[str] = set()
-    targets: list[models.ResolvedTarget] = []
-    seen_targets: set[str] = set()
-    present_treatments: set[str] = set()
-    timeout = 120
-    for rec in records:
-        present_treatments.add(rec["treatment"])
-        timeout = int(rec["timeout_sec"])
-        file_sha = rec["file_sha256"]
-        if file_sha not in seen_files:
-            seen_files.add(file_sha)
-            files.append(
-                models.FileSpec(display_path=rec["file_path"], absolute_path=Path(rec["file_path"]), sha256=file_sha)
-            )
-        binary = rec["binary_sha256"]
-        if binary not in seen_targets:
-            seen_targets.add(binary)
-            row = models.TargetRow(
-                source=rec["target_source"],
-                path=rec["target_path"],
-                git_ref=rec["target_git_ref"],
-                git_sha=rec["target_git_sha"],
-                is_dirty=bool(rec["target_is_dirty"]),
-                label=rec.get("target_label"),
-            )
-            request = models.TargetRequest(
-                raw=rec["target_source"], source=rec["target_source"], label=rec.get("target_label")
-            )
-            targets.append(models.ResolvedTarget(request=request, row=row, binary_sha256=binary, binary_path=None))
-
-    treatments = cast(
-        "tuple[models.Treatment, ...]", tuple(t for t in ("off", "term", "proofs") if t in present_treatments)
-    )
-    spec = models.BenchmarkSpec(files=tuple(files), treatments=treatments, rounds=rounds, timeout_sec=timeout)
-    return frame, spec, targets
-
-
 def _catalog(data: dict[str, Any]) -> list[tables.ReportTable]:
     if _last["data"] is not data:  # one build per render pass (all table fns share the data object)
-        frame, spec, targets = _reconstruct(data)
+        records = data.get("Benchmark report", [])
         _last["data"] = data
-        _last["catalog"] = tables.build_report_tables(cast("Any", frame), targets, spec, validate=False)
+        if records and _scope["spec"] is not None:
+            frame = pd.DataFrame(records)
+            _last["catalog"] = tables.build_report_tables(
+                cast("Any", frame), _scope["targets"], _scope["spec"], validate=False
+            )
+        else:
+            _last["catalog"] = []
     return cast("list[tables.ReportTable]", _last["catalog"])
 
 
@@ -112,13 +81,23 @@ def _web_rows(table: tables.ReportTable) -> list[dict[str, Any]]:
     ]
 
 
-def _narrow_by_file_treatment(filtered_rows: list[dict[str, Any]], data: dict[str, Any]) -> dict[str, Any]:
-    files = {r["File"] for r in filtered_rows if "File" in r}
-    treatments = {r["Treatment"] for r in filtered_rows if "Treatment" in r}
+def _narrow_raw_rows(filtered_rows: list[dict[str, Any]], data: dict[str, Any]) -> dict[str, Any]:
+    """Narrow raw rows to those matching the visible computed rows (File/Treatment/Target).
+
+    An empty set of visible rows narrows to nothing (not a wildcard).
+    """
+    if not filtered_rows:
+        return {**data, "Benchmark report": []}
+    files = {row["File"] for row in filtered_rows if "File" in row}
+    treatments = {row["Treatment"] for row in filtered_rows if "Treatment" in row}
+    labels = {row["Target"] for row in filtered_rows if "Target" in row}
+    target_shas = {target.binary_sha256 for target in _scope["targets"] if target.display_label in labels}
     kept = [
         rec
         for rec in data.get("Benchmark report", [])
-        if (not files or rec["file_path"] in files) and (not treatments or rec["treatment"] in treatments)
+        if (not files or rec["file_path"] in files)
+        and (not treatments or rec["treatment"] in treatments)
+        and (not labels or rec["binary_sha256"] in target_shas)
     ]
     return {**data, "Benchmark report": kept}
 
@@ -135,11 +114,12 @@ def _make_fn(web_name: str) -> Callable[[dict[str, Any]], list[dict[str, Any]]]:
 
 def _register(reg: Any, present: list[tuple[str, str | None]]) -> None:
     for web_name, caption in present:
-        reg.table(web_name, _make_fn(web_name), _narrow_by_file_treatment, caption=caption)
+        reg.table(web_name, _make_fn(web_name), _narrow_raw_rows, caption=caption)
 
 
-_present = globals().get("_PRESENT_TABLES")
-if _present is not None:  # graph-script (web) path: register the baked-in table set
+_selection = globals().get("_SELECTION")
+if _selection is not None:  # graph-script (web) path: configure scope + register the baked table set
+    configure(models.report_selection_from_dict(_selection))
     _registry = eval_live.Registry()
-    _register(_registry, _present)
+    _register(_registry, globals().get("_PRESENT_TABLES", []))
     eval_live.registry = _registry

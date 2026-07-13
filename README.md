@@ -153,6 +153,11 @@ The benchmark CLI exposes the routine collection and reporting options:
   `off,term,proofs`.
 - `--force-run`: append new observations even when enough matching rows already
   exist.
+- `--serve`: after reporting, serve an interactive eval-live report at
+  `http://localhost:<serve-port>` (recomputes tables live as you filter).
+- `--serve-port <n>`: port for `--serve` (loopback only). Default: `8000`.
+- `--dump-dir <path>`: after reporting, write the eval-live tables to `<path>` as
+  JSON and LaTeX.
 
 ### Treatments
 
@@ -551,10 +556,10 @@ Python checks are run as separate commands:
 
 ```bash
 uv lock --check
-uv run --locked ruff format --check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py
-uv run --locked ruff check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py
-uv run --locked mypy bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py
+uv run --locked ruff format --check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
+uv run --locked ruff check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
+uv run --locked mypy bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
 uv run --locked pytest -q
 ```
 
-Use `uv run ruff format bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py` to apply formatting locally.
+Use `uv run ruff format bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py` to apply formatting locally.
