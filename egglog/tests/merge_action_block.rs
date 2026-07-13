@@ -1,6 +1,6 @@
-//! Integration tests for value-producing `:merge` action blocks: a `:merge` may run actions (e.g.
-//! `set`) before its result expression, with `old`/`new` bound. Syntax: `:merge (<action>* <expr>)`
-//! (a bare `:merge <expr>` is the no-actions case).
+//! Integration tests for value-producing `:merge` action blocks: a `:merge` may run actions
+//! (`let`, `set`, `union`) before its result expression, with `old`/`new` bound. Syntax:
+//! `:merge (<action>* <expr>)` (a bare `:merge <expr>` is the no-actions case).
 
 use egglog::EGraph;
 
@@ -39,13 +39,57 @@ fn merge_action_block_plain_expr_still_works() {
 }
 
 #[test]
+fn merge_action_block_let_binding() {
+    // A `let` binds an intermediate value that later actions and the result can reference.
+    run(r#"
+        (function discarded (i64) i64 :merge new)
+        (function f (i64) i64
+          :merge ((let smaller (min old new))
+                  (let larger (max old new))
+                  (set (discarded smaller) 1)
+                  larger))
+        (set (f 0) 5)
+        (set (f 0) 3)
+        (check (= (f 0) 5))          ; result is the `let`-bound larger value
+        (check (= (discarded 3) 1))  ; the `set` used the `let`-bound smaller value
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn merge_action_block_union() {
+    // A `union` action unifies the two conflicting eclasses of an eq-sort function.
+    run(r#"
+        (datatype Color (Red) (Green))
+        (function pick (i64) Color :merge ((union old new) old))
+        (set (pick 0) (Red))
+        (set (pick 0) (Green))
+        (check (= (Red) (Green)))
+    "#)
+    .unwrap();
+}
+
+#[test]
+fn merge_action_block_let_in_tuple_merge() {
+    // A `let` is in scope for a tuple-output `(values ...)` result too.
+    run(r#"
+        (function iv (i64) (i64 i64)
+          :merge ((let lo (max old0 new0))
+                  (values lo (min old1 new1))))
+        (set (iv 0) (values 1 9))
+        (set (iv 0) (values 4 2))
+        (check (= (values 4 2) (iv 0)))  ; lo = max(1,4) = 4, hi = min(9,2) = 2
+    "#)
+    .unwrap();
+}
+
+#[test]
 fn merge_action_block_rejects_unsupported_action() {
-    // Only `set` actions are lowered for now; other actions (here `let`) are a clear error until
-    // the merge-as-actions interpreter lands.
-    let err = run("(function g (i64) i64 :merge ((let x (+ old new)) old))").unwrap_err();
+    // `set`/`let`/`union` are supported; other actions (here `panic`) are not meaningful during a
+    // merge and are a clear error.
+    let err = run(r#"(function g (i64) i64 :merge ((panic "boom") old))"#).unwrap_err();
     assert!(
-        err.to_string()
-            .contains("not yet supported inside a :merge"),
+        err.to_string().contains("not supported inside a :merge"),
         "expected an unsupported-action error, got: {err}"
     );
 }

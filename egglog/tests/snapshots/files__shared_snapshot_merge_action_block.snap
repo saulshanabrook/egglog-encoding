@@ -2,5 +2,8 @@
 source: egglog/tests/files.rs
 expression: snapshot_content_across_treatments
 ---
-((discarded 1)
- (f 1))
+((Green 1)
+ (Red 1)
+ (discarded 1)
+ (f 1)
+ (pick 1))

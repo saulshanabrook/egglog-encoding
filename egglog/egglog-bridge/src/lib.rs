@@ -1108,6 +1108,9 @@ pub enum MergeFn {
     OldCol(usize),
     /// The new value of the `i`th value column.
     NewCol(usize),
+    /// The value bound by a preceding `let` action in a [`MergeFn::Block`], identified by its slot
+    /// (0-based, assigned in block order). Reads the per-invocation merge environment.
+    LetVar(usize),
     /// Always overwrite the new value for the given function with a constant. This is more useful
     /// as a "base case" in a more complicated merge function (e.g. one that clamps a value between
     /// 1 and 100) than it is as a standalone merge function.
@@ -1135,6 +1138,14 @@ pub enum MergeAction {
     /// `(set (f keys...) vals...)` inside a merge: stage a full row (`args` = keys ++ values) into
     /// the function's table, respecting that table's own merge.
     Set(FunctionId, Vec<MergeFn>),
+    /// `(let x <value>)` inside a merge: evaluate `value` and bind it to `slot` of the merge
+    /// environment (slots are assigned in block order), so later actions and the result can read it
+    /// via [`MergeFn::LetVar`].
+    Let { slot: usize, value: MergeFn },
+    /// `(union a b)` inside a merge: union the two eclasses (stages into the union-find). Only
+    /// meaningful for eq-sort outputs; action-block merges are rejected under proofs, so this never
+    /// runs against the proof union-find.
+    Union(MergeFn, MergeFn),
 }
 
 impl MergeFn {
@@ -1176,7 +1187,7 @@ impl MergeFn {
                     .for_each(|a| a.fill_deps(egraph, read_deps, write_deps));
                 result.fill_deps(egraph, read_deps, write_deps);
             }
-            AssertEq | Old | New | OldCol(..) | NewCol(..) | Const(..) => {}
+            AssertEq | Old | New | OldCol(..) | NewCol(..) | LetVar(..) | Const(..) => {}
         }
     }
 
@@ -1203,7 +1214,7 @@ impl MergeFn {
                     .for_each(|a| a.check_value_col_indices(n_vals, name));
                 result.check_value_col_indices(n_vals, name);
             }
-            AssertEq | Old | New | UnionId | Const(..) => {}
+            AssertEq | Old | New | UnionId | LetVar(..) | Const(..) => {}
         }
     }
 
@@ -1249,10 +1260,15 @@ impl MergeFn {
 
             let timestamp = new[schema_math.ts_col()];
 
+            // Environment for `let`-bound values, filled by `Let` actions in slot order and read by
+            // `LetVar` in later actions / the result. Empty (no allocation) unless the block uses
+            // `let`.
+            let mut env = SmallVec::<[Value; 4]>::new();
+
             // Run the block's side effects once, before computing the merged values.
             if !identity_unchanged {
                 for action in &actions {
-                    action.run(state, cur, new, schema_math.n_keys, timestamp);
+                    action.run(state, cur, new, schema_math.n_keys, timestamp, &mut env);
                 }
             }
 
@@ -1265,7 +1281,7 @@ impl MergeFn {
                 let out_val = if identity_unchanged {
                     cur[schema_math.val_col(i)]
                 } else {
-                    col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp)
+                    col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp, &env)
                 };
                 changed |= cur[schema_math.val_col(i)] != out_val;
                 merged_vals.push(out_val);
@@ -1316,6 +1332,7 @@ impl MergeFn {
             MergeFn::New => ResolvedMergeFn::New,
             MergeFn::OldCol(i) => ResolvedMergeFn::OldCol(*i),
             MergeFn::NewCol(i) => ResolvedMergeFn::NewCol(*i),
+            MergeFn::LetVar(slot) => ResolvedMergeFn::LetVar(*slot),
             MergeFn::Columns(_) => {
                 panic!("nested Columns merge is not supported (Columns must be top-level)")
             }
@@ -1385,6 +1402,8 @@ enum ResolvedMergeFn {
     New,
     OldCol(usize),
     NewCol(usize),
+    /// Read slot `.0` of the per-invocation merge environment (a preceding `let`).
+    LetVar(usize),
     AssertEq {
         panic: ExternalFunctionId,
     },
@@ -1416,6 +1435,18 @@ enum ResolvedMergeAction {
         table: TableAction,
         args: Vec<ResolvedMergeFn>,
     },
+    /// `(let x <value>)`: evaluate `value` and push it onto the environment (its slot equals the
+    /// current environment length, since `let`s run in slot order).
+    Let {
+        slot: usize,
+        value: ResolvedMergeFn,
+    },
+    /// `(union a b)`: stage a union of the two eclasses into the union-find.
+    Union {
+        a: ResolvedMergeFn,
+        b: ResolvedMergeFn,
+        uf_table: TableId,
+    },
 }
 
 impl MergeAction {
@@ -1431,6 +1462,12 @@ impl MergeAction {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
             }
+            MergeAction::Let { value, .. } => value.fill_deps(egraph, read_deps, write_deps),
+            MergeAction::Union(a, b) => {
+                a.fill_deps(egraph, read_deps, write_deps);
+                b.fill_deps(egraph, read_deps, write_deps);
+                write_deps.insert(egraph.uf_table);
+            }
         }
     }
 
@@ -1439,6 +1476,11 @@ impl MergeAction {
             MergeAction::Set(_, args) => args
                 .iter()
                 .for_each(|a| a.check_value_col_indices(n_vals, name)),
+            MergeAction::Let { value, .. } => value.check_value_col_indices(n_vals, name),
+            MergeAction::Union(a, b) => {
+                a.check_value_col_indices(n_vals, name);
+                b.check_value_col_indices(n_vals, name);
+            }
         }
     }
 
@@ -1450,6 +1492,15 @@ impl MergeAction {
                     .iter()
                     .map(|arg| arg.resolve(function_name, egraph))
                     .collect::<Vec<_>>(),
+            },
+            MergeAction::Let { slot, value } => ResolvedMergeAction::Let {
+                slot: *slot,
+                value: value.resolve(function_name, egraph),
+            },
+            MergeAction::Union(a, b) => ResolvedMergeAction::Union {
+                a: a.resolve(function_name, egraph),
+                b: b.resolve(function_name, egraph),
+                uf_table: egraph.uf_table,
             },
         }
     }
@@ -1463,16 +1514,31 @@ impl ResolvedMergeAction {
         new: &[Value],
         n_keys: usize,
         ts: Value,
+        env: &mut SmallVec<[Value; 4]>,
     ) {
+        // Action value expressions use explicit `OldCol`/`NewCol`, so `self_col` is irrelevant
+        // (pass 0).
         match self {
             ResolvedMergeAction::Set { table, args } => {
-                // Action value expressions use explicit `OldCol`/`NewCol`, so `self_col` is
-                // irrelevant (pass 0). `insert` respects the target table's own merge.
+                // `insert` respects the target table's own merge.
                 let row = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, 0, ts))
+                    .map(|arg| arg.run(state, cur, new, n_keys, 0, ts, env))
                     .collect::<Vec<_>>();
                 table.insert(state, row.into_iter());
+            }
+            ResolvedMergeAction::Let { slot, value } => {
+                let v = value.run(state, cur, new, n_keys, 0, ts, env);
+                // `let`s run in slot order, so the new binding lands at `slot`.
+                debug_assert_eq!(*slot, env.len());
+                env.push(v);
+            }
+            ResolvedMergeAction::Union { a, b, uf_table } => {
+                let av = a.run(state, cur, new, n_keys, 0, ts, env);
+                let bv = b.run(state, cur, new, n_keys, 0, ts, env);
+                if av != bv {
+                    state.stage_insert(*uf_table, &[av, bv, ts]);
+                }
             }
         }
     }
@@ -1484,7 +1550,8 @@ impl ResolvedMergeFn {
     /// `cur` and `new` are the full conflicting rows. `n_keys` is the number of key columns, so
     /// value column `i` lives at `cur[n_keys + i]`. `Old`/`New` refer to `self_col`'s value, while
     /// `OldCol`/`NewCol` reference an explicit column — this lets a tuple-output column's merge
-    /// read any other output column.
+    /// read any other output column. `env` holds `let`-bound values (read by `LetVar`).
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         state: &mut ExecutionState,
@@ -1493,6 +1560,7 @@ impl ResolvedMergeFn {
         n_keys: usize,
         self_col: usize,
         ts: Value,
+        env: &[Value],
     ) -> Value {
         match self {
             ResolvedMergeFn::Const(v) => *v,
@@ -1500,6 +1568,7 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::New => new[n_keys + self_col],
             ResolvedMergeFn::OldCol(i) => cur[n_keys + i],
             ResolvedMergeFn::NewCol(i) => new[n_keys + i],
+            ResolvedMergeFn::LetVar(slot) => env[*slot],
             ResolvedMergeFn::AssertEq { panic } => {
                 let (cur, new) = (cur[n_keys + self_col], new[n_keys + self_col]);
                 if cur != new {
@@ -1526,7 +1595,7 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::Primitive { prim, args, panic } => {
                 let args = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
                     .collect::<Vec<_>>();
 
                 match state.call_external_func(*prim, &args) {
@@ -1546,7 +1615,7 @@ impl ResolvedMergeFn {
 
                 let args = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
                     .collect::<Vec<_>>();
 
                 // Merge functions dispatch to another function that may be
@@ -1563,7 +1632,7 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::Lookup { table, args } => {
                 let key = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
                     .collect::<SmallVec<[Value; 4]>>();
                 // A constructor mints its (single) output on miss; no extra value columns.
                 table

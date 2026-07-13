@@ -17,6 +17,11 @@
   with a `(values ...)` clause whose `i`-th element merges column `i` using the bound variables
   `old0`, `new0`, `old1`, `new1`, .... Tuple outputs are only allowed for plain functions (not
   constructors, relations, or view tables) and are not supported by the term/proof encoding.
+- **`:merge` action blocks.** A `:merge` may be a value-producing action block
+  `:merge (<action>* <result-expr>)`: the actions run first (with `old`/`new` bound), then the
+  trailing expression is the merged value. Actions may be `let` (bind an intermediate value used by
+  later actions or the result), `set` (write another function), or `union` (unify two eclasses). A
+  bare `:merge <expr>` (no actions) is unchanged.
 - Built-in keywords (most command, action, and schedule heads such as `function`, `set`, `union`,
   `rule`, `run`, ..., plus the tuple constructor `values`) are now reserved and may no longer be
   used as user identifiers (function/sort/constructor/relation/variant names or variables). Names

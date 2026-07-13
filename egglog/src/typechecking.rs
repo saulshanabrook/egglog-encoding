@@ -847,19 +847,36 @@ impl TypeInfo {
                     &bound_vars,
                     Context::Write,
                 )?;
+                // The result is evaluated after the actions, so any `let`-bound variable is in
+                // scope for it. Extend the binding with each `let`'s solved type before checking
+                // the result. `let_bindings` owns the names so `result_scope` can borrow them.
+                let let_bindings: Vec<(String, Span, ArcSort)> = actions
+                    .0
+                    .iter()
+                    .filter_map(|a| match a {
+                        GenericAction::Let(span, var, _) => {
+                            Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut result_scope = bound_vars.clone();
+                for (name, span, sort) in &let_bindings {
+                    result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
+                }
                 let result = if is_tuple {
                     self.typecheck_tuple_merge(
                         symbol_gen,
                         fdecl,
                         &merge.result,
                         &outputs,
-                        &bound_vars,
+                        &result_scope,
                     )?
                 } else {
                     self.typecheck_standalone_expr(
                         symbol_gen,
                         &merge.result,
-                        &bound_vars,
+                        &result_scope,
                         Context::Write,
                     )?
                 };
