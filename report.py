@@ -75,7 +75,7 @@ BACKEND_PEAK_RSS_CAPTION = (
 )
 
 
-PROOF_OVERHEAD_CAPTION = "Within-backend proof overhead. This is separate from target-vs-baseline wall-time change."
+PROOF_OVERHEAD_CAPTION = "Within-backend proof overhead. This is not backend-vs-main performance."
 
 
 def format_estimate_or_interval(
@@ -252,7 +252,6 @@ def _change_table(
     if len(targets) < 2:
         return None
     baseline = targets[0]
-    multi_backend = len(spec.backends) > 1
     if rss:
         baseline_has = any(cell.samples for cell in cell_maps[baseline].values())
     ratio_label, change_label = ("RSS ratio", "RSS change") if rss else ("Time ratio", "Wall-time change")
@@ -269,10 +268,12 @@ def _change_table(
                 )
                 change = format_percent_change(ratio) if rss else format_wall_time_change(ratio)
                 result = _lower_is_better_cell(ratio) if rss else _comparison_cell(ratio)
-                row: dict[str, Cell] = {"Target": Cell(target.display_label), "File": Cell(file_spec.display_path)}
-                if multi_backend:
-                    row["Backend"] = Cell(display_backend(cell.backend))
-                row["Treatment"] = Cell(cell.treatment)
+                row: dict[str, Cell] = {
+                    "Target": Cell(target.display_label),
+                    "File": Cell(file_spec.display_path),
+                    "Backend": Cell(cell.backend),
+                    "Treatment": Cell(cell.treatment),
+                }
                 row[ratio_label] = Cell(format_ratio_summary(ratio))
                 row[change_label] = Cell(change)
                 row["Result"] = result
@@ -280,10 +281,10 @@ def _change_table(
                 group_keys.append(target.binary_sha256)
     if not rows:
         return None
-    columns: tuple[Column, ...] = (Column("Target"), Column("File"))
-    if multi_backend:
-        columns += (Column("Backend"),)
-    columns += (
+    columns: tuple[Column, ...] = (
+        Column("Target"),
+        Column("File"),
+        Column("Backend"),
         Column("Treatment"),
         Column(ratio_label, numeric=True),
         Column(change_label, numeric=True),
@@ -304,78 +305,74 @@ def _change_table(
     )
 
 
-def _backend_change_table(
+def _const_title(title: str) -> Callable[[str | None], str]:
+    return lambda _group: title
+
+
+def _backend_change_tables(
     cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     *,
     rss: bool,
-) -> ReportTable | None:
-    """Per-file candidate-backend-vs-baseline-backend change, per target."""
+) -> list[ReportTable]:
+    """One candidate-vs-baseline-backend change table per (target, candidate backend)."""
     if len(spec.backends) < 2:
-        return None
+        return []
     baseline_backend = spec.backends[0]
     ratio_label, change_label = ("RSS ratio", "RSS change") if rss else ("Time ratio", "Wall-time change")
-    rows: list[dict[str, Cell]] = []
-    group_keys: list[str] = []
+    kind = "peak RSS" if rss else "wall-time"
+    caption = BACKEND_PEAK_RSS_CAPTION if rss else BACKEND_WALL_TIME_CAPTION
+    tables: list[ReportTable] = []
     for target in targets:
         cell_map = cell_maps[target]
         if rss and not any(cell.samples for cell in cell_map.values()):
             continue
         for candidate_backend in spec.backends[1:]:
             treatments = shared_backend_treatments(spec, baseline_backend, candidate_backend)
-            for treatment in treatments:
-                file_cells = backend_treatment_file_cells(
-                    cell_map, spec, baseline_backend, candidate_backend, treatment
-                )
-                for file_spec, baseline_cell, candidate_cell in file_cells:
-                    ratio = ratio_summary(baseline_cell, candidate_cell)
+            if not treatments:
+                continue
+            rows: list[dict[str, Cell]] = []
+            for file_spec in spec.files:
+                for treatment_index, treatment in enumerate(treatments):
+                    ratio = ratio_summary(
+                        cell_map[(file_spec.sha256, baseline_backend, treatment)],
+                        cell_map[(file_spec.sha256, candidate_backend, treatment)],
+                    )
                     change = format_percent_change(ratio) if rss else format_wall_time_change(ratio)
                     result = _lower_is_better_cell(ratio) if rss else _comparison_cell(ratio)
                     rows.append(
                         {
-                            "Target": Cell(target.display_label),
-                            "Backend": Cell(
-                                f"{display_backend(candidate_backend)} vs {display_backend(baseline_backend)}"
-                            ),
-                            "File": Cell(file_spec.display_path),
+                            "File": Cell(file_spec.display_path if treatment_index == 0 else ""),
                             "Treatment": Cell(treatment),
                             ratio_label: Cell(format_ratio_summary(ratio)),
                             change_label: Cell(change),
                             "Result": result,
                         }
                     )
-                    group_keys.append(target.binary_sha256)
-    if not rows:
-        return None
-    columns = (
-        Column("Target"),
-        Column("Backend"),
-        Column("File"),
-        Column("Treatment"),
-        Column(ratio_label, numeric=True),
-        Column(change_label, numeric=True),
-        Column("Result"),
-    )
-    kind = "peak RSS" if rss else "wall-time"
-    caption = BACKEND_PEAK_RSS_CAPTION if rss else BACKEND_WALL_TIME_CAPTION
-    return ReportTable(
-        web_name=f"Per-file backend {kind} change",
-        caption=caption,
-        columns=columns,
-        rows=tuple(rows),
-        cli_title=lambda t: f"Per-file backend {kind} change: {t}",
-        cli_section="change",
-        group_by="Target",
-        group_keys=tuple(group_keys),
-        merge="Backend",
-    )
+            title = f"Per-file backend {kind} change vs {baseline_backend}: {target.display_label} {candidate_backend}"
+            tables.append(
+                ReportTable(
+                    web_name=title,
+                    caption=caption,
+                    columns=(
+                        Column("File"),
+                        Column("Treatment"),
+                        Column(ratio_label, numeric=True),
+                        Column(change_label, numeric=True),
+                        Column("Result"),
+                    ),
+                    rows=tuple(rows),
+                    cli_title=_const_title(title),
+                    cli_section="change",
+                )
+            )
+    return tables
 
 
 def _overhead_table(
     cell_maps: TargetCellMaps, targets: Sequence[ResolvedTarget], spec: BenchmarkSpec
 ) -> ReportTable | None:
-    multi_backend = len(spec.backends) > 1
     ratio_columns: list[tuple[Backend, Treatment, Treatment, str]] = []
     for backend in spec.backends:
         for baseline_treatment, candidate_treatment, ratio_name in ratio_specs_for_backend(spec, backend):
@@ -398,11 +395,7 @@ def _overhead_table(
             rows.append(row)
             group_keys.append(target.binary_sha256)
     columns = (Column("Target"), Column("File")) + tuple(Column(label, numeric=True) for *_, label in ratio_columns)
-    caption = (
-        "Within-backend treatment ratios. These are not target-vs-baseline wall-time change."
-        if multi_backend
-        else "Within-target treatment ratios. These are not target-vs-baseline wall-time change."
-    )
+    caption = "Within-target treatment ratios. These are not target-vs-baseline wall-time change."
     return ReportTable(
         web_name="Overhead ratios",
         caption=caption,
@@ -591,7 +584,6 @@ def _target_summary_table(
     rss: bool,
 ) -> ReportTable:
     baseline = targets[0]
-    multi_backend = len(spec.backends) > 1
     change_label = "RSS change" if rss else "Wall-time change"
     rows: list[dict[str, Cell]] = []
     for target in targets[1:]:
@@ -605,20 +597,20 @@ def _target_summary_table(
             worst_file, worst = worst_file_ratio(ratio_pairs(file_cells))
             change = format_percent_change(summary) if rss else format_wall_time_change(summary)
             result = _lower_is_better_cell(summary) if rss else _comparison_cell(summary)
-            row: dict[str, Cell] = {"Target": Cell(target.display_label)}
-            if multi_backend:
-                row["Backend"] = Cell(display_backend(cell.backend))
-            row["Treatment"] = Cell(cell.treatment)
+            row: dict[str, Cell] = {
+                "Target": Cell(target.display_label),
+                "Backend": Cell(cell.backend),
+                "Treatment": Cell(cell.treatment),
+            }
             row[change_label] = Cell(change)
             row["Geomean"] = Cell(format_ratio_summary(geometric))
             row["Worst file"] = Cell(format_worst_file(worst_file))
             row["Worst ratio"] = Cell(format_ratio_summary(worst))
             row["Result"] = result
             rows.append(row)
-    columns: tuple[Column, ...] = (Column("Target"),)
-    if multi_backend:
-        columns += (Column("Backend"),)
-    columns += (
+    columns: tuple[Column, ...] = (
+        Column("Target"),
+        Column("Backend"),
         Column("Treatment"),
         Column(change_label, numeric=True),
         Column("Geomean", numeric=True),
@@ -660,15 +652,24 @@ def _backend_summary_table(
     if len(spec.backends) < 2:
         return None
     baseline_backend = spec.backends[0]
-    multi_target = len(targets) > 1
+    baseline_name = display_backend(baseline_backend)
+    include_target = len(targets) > 1
+    if len(spec.backends) == 2:
+        candidate_name = display_backend(spec.backends[1])
+        title = f"{candidate_name} vs {baseline_name} {metric.title}"
+    else:
+        candidate_name = "Candidate"
+        title = f"Backend {metric.title} summary vs {baseline_name}"
+    baseline_total_heading = f"{baseline_name} total"
+    candidate_total_heading = f"{candidate_name} total"
+    ratio_heading = f"{candidate_name}/{baseline_name}"
     rows: list[dict[str, Cell]] = []
     for target in targets:
         cell_map = cell_maps[target]
         if metric.omit_without_samples and not any(cell.samples for cell in cell_map.values()):
             continue
         for candidate_backend in spec.backends[1:]:
-            treatments = shared_backend_treatments(spec, baseline_backend, candidate_backend)
-            for treatment in treatments:
+            for treatment in shared_backend_treatments(spec, baseline_backend, candidate_backend):
                 file_cells = backend_treatment_file_cells(
                     cell_map, spec, baseline_backend, candidate_backend, treatment
                 )
@@ -677,16 +678,16 @@ def _backend_summary_table(
                 geometric = geometric_mean_ratio(pairs)
                 ratio_list = ratio_pairs(file_cells)
                 best_file, best = best_file_ratio(ratio_list)
-                baseline_total = suite_total_mean([b for _, b, _ in file_cells])
-                candidate_total = suite_total_mean([c for _, _, c in file_cells])
                 row: dict[str, Cell] = {}
-                if multi_target:
+                if include_target:
                     row["Target"] = Cell(target.display_label)
-                row["Backend"] = Cell(display_backend(candidate_backend))
+                row["Backend"] = Cell(candidate_backend)
                 row["Mode"] = Cell(treatment)
-                row[f"{display_backend(baseline_backend)} total"] = Cell(metric.format_total(baseline_total))
-                row["Candidate total"] = Cell(metric.format_total(candidate_total))
-                row["Ratio"] = Cell(format_ratio_summary(summary))
+                row[baseline_total_heading] = Cell(metric.format_total(suite_total_mean([b for _, b, _ in file_cells])))
+                row[candidate_total_heading] = Cell(
+                    metric.format_total(suite_total_mean([c for _, _, c in file_cells]))
+                )
+                row[ratio_heading] = Cell(format_ratio_summary(summary))
                 row["Change"] = Cell(metric.format_change(summary))
                 row["File geomean"] = Cell(format_ratio_summary(geometric))
                 row[metric.file_count_heading] = Cell(format_better_file_count(count_better_files(ratio_list)))
@@ -696,15 +697,13 @@ def _backend_summary_table(
                 rows.append(row)
     if not rows:
         return None
-    columns: tuple[Column, ...] = ()
-    if multi_target:
-        columns += (Column("Target"),)
+    columns: tuple[Column, ...] = (Column("Target"),) if include_target else ()
     columns += (
         Column("Backend"),
         Column("Mode"),
-        Column(f"{display_backend(baseline_backend)} total", numeric=True),
-        Column("Candidate total", numeric=True),
-        Column("Ratio", numeric=True),
+        Column(baseline_total_heading, numeric=True),
+        Column(candidate_total_heading, numeric=True),
+        Column(ratio_heading, numeric=True),
         Column("Change", numeric=True),
         Column("File geomean", numeric=True),
         Column(metric.file_count_heading, numeric=True),
@@ -712,11 +711,6 @@ def _backend_summary_table(
         Column("Best ratio", numeric=True),
         Column("Best result"),
     )
-    if len(spec.backends) == 2:
-        candidate = display_backend(spec.backends[1])
-        title = f"{candidate} vs {display_backend(baseline_backend)} {metric.title}"
-    else:
-        title = f"Backend {metric.title} summary vs {display_backend(baseline_backend)}"
     return ReportTable(
         web_name=title,
         caption=metric.caption,
@@ -777,12 +771,16 @@ def build_report_tables(
     candidates: list[ReportTable | None] = [
         _change_table(cell_maps, targets, spec, rss=False),
         _change_table(rss_cell_maps, targets, spec, rss=True),
-        _backend_change_table(cell_maps, targets, spec, rss=False),
-        _backend_change_table(rss_cell_maps, targets, spec, rss=True),
-        _overhead_table(cell_maps, targets, spec),
-        _means_table(cell_maps, targets, spec, rss=False),
-        _means_table(rss_cell_maps, targets, spec, rss=True),
     ]
+    candidates.extend(_backend_change_tables(cell_maps, targets, spec, rss=False))
+    candidates.extend(_backend_change_tables(rss_cell_maps, targets, spec, rss=True))
+    candidates.extend(
+        [
+            _overhead_table(cell_maps, targets, spec),
+            _means_table(cell_maps, targets, spec, rss=False),
+            _means_table(rss_cell_maps, targets, spec, rss=True),
+        ]
+    )
     candidates.extend(_backend_summary_tables(cell_maps, rss_cell_maps, targets, spec))
     candidates.extend(
         [
@@ -804,28 +802,82 @@ def markdown_escape_cell(value: str) -> str:
     )
 
 
-def _visible_columns(table: ReportTable) -> list[Column]:
-    visible: list[Column] = []
-    for column in table.columns:
-        if column.drop_if_empty and all(not row.get(column.label, Cell("")).text for row in table.rows):
-            continue
-        visible.append(column)
-    return visible
+def _visible_columns(columns: Sequence[Column], rows: Sequence[dict[str, Cell]]) -> list[Column]:
+    return [
+        column
+        for column in columns
+        if not (column.drop_if_empty and all(not row.get(column.label, Cell("")).text for row in rows))
+    ]
+
+
+def _gfm_table(
+    title: str,
+    columns: Sequence[Column],
+    rows: Sequence[dict[str, Cell]],
+    caption: str | None,
+    *,
+    heading_level: int = 3,
+) -> str:
+    lines = [
+        f"{'#' * heading_level} {title}",
+        "",
+        "| " + " | ".join(markdown_escape_cell(column.label) for column in columns) + " |",
+        "| " + " | ".join("---:" if column.numeric else "---" for column in columns) + " |",
+    ]
+    for row in rows:
+        lines.append(
+            "| " + " | ".join(markdown_escape_cell(row.get(column.label, Cell("")).text) for column in columns) + " |"
+        )
+    if caption:
+        lines.extend(["", f"*{markdown_escape_cell(caption)}*"])
+    return "\n".join(lines)
 
 
 def render_markdown_table(table: ReportTable, *, heading_level: int = 3) -> str:
-    columns = _visible_columns(table)
-    heading = "#" * heading_level
-    lines = [f"{heading} {table.web_name}", ""]
-    lines.append("| " + " | ".join(markdown_escape_cell(column.label) for column in columns) + " |")
-    lines.append("| " + " | ".join("---:" if column.numeric else "---" for column in columns) + " |")
-    for row in table.rows:
-        cells = [markdown_escape_cell(row.get(column.label, Cell("")).text) for column in columns]
-        lines.append("| " + " | ".join(cells) + " |")
-    if table.caption:
-        lines.append("")
-        lines.append(f"_{markdown_escape_cell(table.caption)}_")
-    return "\n".join(lines)
+    return _gfm_table(
+        table.web_name,
+        _visible_columns(table.columns, table.rows),
+        table.rows,
+        table.caption,
+        heading_level=heading_level,
+    )
+
+
+def _merge_blanked(rows: list[dict[str, Cell]], merge_label: str) -> list[dict[str, Cell]]:
+    blanked: list[dict[str, Cell]] = []
+    for index, row in enumerate(rows):
+        new_row = dict(row)
+        if index > 0 and rows[index - 1][merge_label].text == row[merge_label].text:
+            new_row[merge_label] = Cell("")
+        blanked.append(new_row)
+    return blanked
+
+
+def _markdown_groups(table: ReportTable, *, only_group: str | None = None) -> list[str]:
+    """Render a ReportTable to one or more GFM tables, mirroring the terminal's
+    per-group splitting so markdown headings and columns match the CLI layout."""
+    if table.group_by is None:
+        columns = _visible_columns(table.columns, table.rows)
+        return [_gfm_table(table.cli_title(None), columns, table.rows, table.caption)]
+    order: list[str] = []
+    buckets: dict[str, list[dict[str, Cell]]] = {}
+    for identity, row in zip(table.group_keys, table.rows, strict=True):
+        if identity not in buckets:
+            buckets[identity] = []
+            order.append(identity)
+        buckets[identity].append(row)
+    grouped_columns = [column for column in table.columns if column.label != table.group_by]
+    out: list[str] = []
+    for identity in order:
+        if only_group is not None and identity != only_group:
+            continue
+        rows = buckets[identity]
+        if table.merge is not None:
+            rows = _merge_blanked(rows, table.merge)
+        columns = _visible_columns(grouped_columns, rows)
+        title = table.cli_title(rows[0][table.group_by].text)
+        out.append(_gfm_table(title, columns, rows, table.caption))
+    return out
 
 
 def benchmark_command_block(command_argv: Sequence[str]) -> str:
@@ -833,24 +885,26 @@ def benchmark_command_block(command_argv: Sequence[str]) -> str:
 
 
 def _targets_markdown(targets: Sequence[ResolvedTarget]) -> str:
-    lines = ["## Targets", "", "| Role | Label | Git ref | Dirty | Binary |", "| --- | --- | --- | --- | --- |"]
+    rows: list[dict[str, Cell]] = []
     for index, target in enumerate(targets):
-        role = "baseline" if index == 0 else "candidate"
-        lines.append(
-            "| "
-            + " | ".join(
-                markdown_escape_cell(value)
-                for value in (
-                    role,
-                    target.display_label,
-                    target.row.git_ref,
-                    "yes" if target.row.is_dirty else "no",
-                    target.binary_sha256.removeprefix("sha256:")[:16],
-                )
-            )
-            + " |"
+        role = "target"
+        if len(targets) > 1:
+            role = "baseline" if index == 0 else "candidate"
+        git = target.row.git_sha[:12]
+        if target.row.git_ref != "HEAD":
+            git = f"{git} ({target.row.git_ref})"
+        rows.append(
+            {
+                "Role": Cell(role),
+                "Label": Cell(target.display_label),
+                "Git": Cell(git),
+                "Dirty": Cell("yes" if target.row.is_dirty else "no"),
+                "Binary": Cell(target.binary_sha256.removeprefix("sha256:")[:12]),
+                "Path": Cell(target.row.path),
+            }
         )
-    return "\n".join(lines)
+    columns = [Column("Role"), Column("Label"), Column("Git"), Column("Dirty"), Column("Binary"), Column("Path")]
+    return _gfm_table("Targets", columns, rows, None, heading_level=2)
 
 
 def render_markdown_report(
@@ -860,14 +914,40 @@ def render_markdown_report(
     spec: BenchmarkSpec,
     command_argv: Sequence[str] | None = None,
 ) -> str:
-    """Full markdown report rendered from the same ReportTable catalog the CLI and web use."""
+    """Full markdown report rendered from the same ReportTable catalog the CLI and web use.
+
+    Mirrors the terminal layout: per-group tables under ``## Comparisons`` /
+    ``## Target Diagnostics`` (interleaved per target) / ``## Benchmark Summary``.
+    """
+    tables = build_report_tables(rows, targets, spec)
+    sections: dict[str, list[ReportTable]] = {"change": [], "diagnostic": [], "summary": []}
+    for table in tables:
+        sections[table.cli_section].append(table)
+
     parts: list[str] = []
     if command_argv is not None:
         parts.append(benchmark_command_block(command_argv))
-    parts.append(
-        f"# Benchmark Report\n\nReport: `{report_destination.display_path}`  \nSelected rows per cell: {spec.rounds}"
-    )
+    parts.append("# Benchmark Report")
+    parts.append(f"- Report: `{report_destination.display_path}`\n- Selected rows per cell: `{spec.rounds}`")
     parts.append(_targets_markdown(targets))
-    for table in build_report_tables(rows, targets, spec):
-        parts.append(render_markdown_table(table))
-    return "\n\n".join(part for part in parts if part)
+
+    comparison_parts: list[str] = []
+    for table in sections["change"]:
+        comparison_parts.extend(_markdown_groups(table))
+    if comparison_parts:
+        parts.append("## Comparisons")
+        parts.extend(comparison_parts)
+
+    diagnostic_parts: list[str] = []
+    for target in targets:
+        for table in sections["diagnostic"]:
+            diagnostic_parts.extend(_markdown_groups(table, only_group=target.binary_sha256))
+    if diagnostic_parts:
+        parts.append("## Target Diagnostics")
+        parts.extend(diagnostic_parts)
+
+    parts.append("## Benchmark Summary")
+    for table in sections["summary"]:
+        parts.extend(_markdown_groups(table))
+
+    return "\n\n".join(part.strip() for part in parts if part.strip())

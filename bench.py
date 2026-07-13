@@ -29,6 +29,7 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
@@ -82,7 +83,7 @@ PROFILE_SAMPLY_RATE_HZ = 1000
 TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
-    "egglog/tests/math-microbenchmark.egg",
+    "egglog/tests/math-microbenchmark-mini.egg",
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
@@ -1335,12 +1336,9 @@ def emit_collection_plan(
     estimate_model: EstimateModel,
 ) -> None:
     total_estimate = collection_plan_estimate(plan, estimate_model)
-    multi_backend = len({cell.backend for cell in plan.cells}) > 1
     table = Table(title=f"{plan.target.display_label}: cache and estimate plan")
-    table.add_column("File")
-    if multi_backend:
-        table.add_column("Backend")
-    table.add_column("Treatment")
+    table.add_column("File", overflow="fold")
+    table.add_column("Cell", no_wrap=True)
     table.add_column("Cached")
     table.add_column("Missing")
     table.add_column("Statuses")
@@ -1351,11 +1349,9 @@ def emit_collection_plan(
         process_mean = estimate_model.process_mean(cell.estimate_key)
         status_counts = status_counts_for_rows(cell.selected_cached_rows)
         statuses = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items())) or "-"
-        backend_cells = (cell.backend,) if multi_backend else ()
         table.add_row(
             cell.file.display_path,
-            *backend_cells,
-            cell.treatment,
+            f"{cell.backend}/{cell.treatment}",
             f"{len(cell.selected_cached_rows)}/{cell.required_rows}",
             str(cell.missing_observations),
             statuses,
@@ -1441,7 +1437,7 @@ def collect_rows(
         else:
             remaining_processes.pop(key, None)
 
-    def run_loop(progress: Progress | None = None, process_task: Any | None = None) -> None:
+    def run_loop(progress: Progress, process_task: TaskID) -> None:
         nonlocal next_index, completed_observations
         for round_index in range(max_deficit):
             for cell in plan.cells:
@@ -1456,8 +1452,6 @@ def collect_rows(
                 label = collection_label(cell_file, cell_backend, cell_treatment, round_index, required_rounds)
 
                 def update_progress(current: str, advance: int = 0) -> None:
-                    if progress is None or process_task is None:
-                        return
                     progress.update(
                         process_task,
                         advance=advance,
@@ -1494,7 +1488,6 @@ def collect_rows(
                 fresh_frames.append(fresh_frame)
                 next_index += 1
                 completed_observations += 1
-                assert progress is not None
                 progress.console.print(f"  {label}: fresh {format_timing_result(result)}")
                 update_progress(
                     f"rows {completed_observations}/{total_observations}; last {format_timing_result(result)}"

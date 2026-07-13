@@ -457,7 +457,7 @@ def test_render_markdown_table_is_github_pipe_table() -> None:
         cli_title=lambda _: "Example",
     )
     output = report.render_markdown_table(table)
-    assert output == "### Example\n\n| Name | Count |\n| --- | ---: |\n| x\\|y | 3 |\n\n_caption \\| text_"
+    assert output == "### Example\n\n| Name | Count |\n| --- | ---: |\n| x\\|y | 3 |\n\n*caption \\| text*"
 
 
 def _multi_backend_rows() -> tuple[Any, models.ResolvedTarget, models.BenchmarkSpec]:
@@ -483,7 +483,7 @@ def _multi_backend_rows() -> tuple[Any, models.ResolvedTarget, models.BenchmarkS
 def test_build_report_tables_adds_backend_tables_only_when_multiple_backends() -> None:
     rows, target, spec = _multi_backend_rows()
     multi_names = {table.web_name for table in report.build_report_tables(rows, [target], spec)}
-    assert "Per-file backend wall-time change" in multi_names
+    assert any(name.startswith("Per-file backend wall-time change") for name in multi_names)
     assert "DD vs main wall time" in multi_names
 
     single_spec = make_spec(("main",))
