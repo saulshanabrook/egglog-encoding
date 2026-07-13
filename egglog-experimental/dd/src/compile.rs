@@ -4,9 +4,6 @@ use egglog_ast::core::GenericAtomTerm;
 use egglog_backend_trait::{ExternalFunctionId, FunctionId, ReadMode, RuleValue, RuleVar};
 use egglog_numeric_id::NumericId;
 
-/// Upper bound on relation arity.
-pub const MAX_ARITY: usize = 64;
-
 /// Variable-width row stored in the host-side relation mirror.
 pub type Row = Box<[u32]>;
 

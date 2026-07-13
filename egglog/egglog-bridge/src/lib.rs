@@ -1655,10 +1655,8 @@ impl EGraph {
 }
 
 impl ExternalFunction for Panic {
-    fn invoke(&self, state: &mut core_relations::ExecutionState, args: &[Value]) -> Option<Value> {
+    fn invoke(&self, state: &mut core_relations::ExecutionState, _args: &[Value]) -> Option<Value> {
         // TODO (egglog feature): change this to support interpolating panic messages
-        assert!(args.is_empty());
-
         state.trigger_early_stop();
         let mut guard = self.1.lock().unwrap();
         if guard.is_none() {

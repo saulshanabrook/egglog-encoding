@@ -25,7 +25,7 @@ use crate::{
 };
 
 #[test]
-fn dropped_rule_builder_releases_lazy_panic() {
+fn dropped_rule_builder_releases_panics() {
     let mut egraph = EGraph::default();
     let unit_type = egraph.base_values_mut().register_type::<()>();
     let register = |egraph: &mut EGraph| {
@@ -43,6 +43,39 @@ fn dropped_rule_builder_releases_lazy_panic() {
     builder.call_external_func(target, &[], ColumnTy::Base(unit_type), || "failed".into());
     drop(builder);
 
+    assert_eq!(register(&mut egraph), reusable);
+    egraph.free_external_func(reusable);
+
+    let mut builder = egraph.new_rule("dropped", false);
+    assert_eq!(builder.new_panic("direct panic".into()), reusable);
+    drop(builder);
+    assert_eq!(register(&mut egraph), reusable);
+    egraph.free_external_func(reusable);
+
+    let mut builder = egraph.new_rule("dropped", false);
+    builder.panic("rule panic".into());
+    drop(builder);
+    assert_eq!(register(&mut egraph), reusable);
+    egraph.free_external_func(reusable);
+
+    let mut builder = egraph.new_rule("dropped", false);
+    let first = builder.new_panic("shared panic".into());
+    let second = builder.new_panic("shared panic".into());
+    assert_eq!(first, reusable);
+    assert_eq!(second, reusable);
+    drop(builder);
+    assert_eq!(register(&mut egraph), reusable);
+    egraph.free_external_func(reusable);
+
+    let rule = {
+        let mut builder = egraph.new_rule("built", false);
+        builder.panic("built panic".into());
+        builder.build()
+    };
+    let occupied = register(&mut egraph);
+    assert_ne!(occupied, reusable);
+    egraph.free_external_func(occupied);
+    egraph.free_rule(rule);
     assert_eq!(register(&mut egraph), reusable);
 }
 
@@ -1635,7 +1668,7 @@ fn panic_functions_trigger_early_stop() {
     let panic_fn = super::Panic("panic".to_string(), channel.clone());
     let stopped = db.with_execution_state(|state| {
         assert!(!state.should_stop());
-        let res = core_relations::ExternalFunction::invoke(&panic_fn, state, &[]);
+        let res = core_relations::ExternalFunction::invoke(&panic_fn, state, &[Value::new(1)]);
         assert!(res.is_none());
         state.should_stop()
     });

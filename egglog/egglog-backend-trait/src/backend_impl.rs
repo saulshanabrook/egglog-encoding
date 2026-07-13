@@ -226,15 +226,11 @@ impl Backend for EGraph {
         Box::new(self.clone())
     }
 
-    fn action_registry(&self) -> &Arc<RwLock<ActionRegistry>> {
-        EGraph::action_registry(self)
+    fn action_registry(&self) -> Option<&Arc<RwLock<ActionRegistry>>> {
+        Some(EGraph::action_registry(self))
     }
 
     fn supports_containers(&self) -> bool {
-        true
-    }
-
-    fn supports_action_registry(&self) -> bool {
         true
     }
 

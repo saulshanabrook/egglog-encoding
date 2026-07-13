@@ -10,7 +10,7 @@ use ast::{
     MappedExprExt, ResolvedAction, ResolvedExpr, ResolvedFact, ResolvedRule, ResolvedVar, Rule,
     RuleEvalMode,
 };
-use core_relations::{ExternalFunction, make_external_func};
+use core_relations::ExternalFunction;
 use egglog_ast::generic_ast::GenericAction;
 use egglog_bridge::ActionRegistry;
 use enum_map::EnumMap;
@@ -290,9 +290,14 @@ impl EGraph {
     where
         T: PurePrim + Clone,
     {
-        self.register_per_context(x, validator, PureState::valid_contexts(), |x, ctx| {
-            Box::new(PurePrimWrapper { prim: x, ctx })
-        });
+        self.register_per_context(
+            x,
+            validator,
+            PureState::valid_contexts(),
+            |backend, x, ctx| {
+                backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
+            },
+        );
     }
 
     /// Register a [`WritePrim`]. Pass `None` for the validator if not
@@ -335,23 +340,19 @@ impl EGraph {
         T: Primitive + Clone,
         S: RegistryWrap<T> + 'static,
     {
-        let registry = self
-            .backend
-            .supports_action_registry()
-            .then(|| self.backend.action_registry().clone());
-        self.register_per_context(x, validator, valid_ctxs, move |x, ctx| {
-            if let Some(registry) = &registry {
-                Box::new(RegistryPrimWrapper::<T, S> {
+        self.register_per_context(x, validator, valid_ctxs, |backend, x, ctx| {
+            if let Some(registry) = backend.action_registry().cloned() {
+                backend.register_external_func(Box::new(RegistryPrimWrapper::<T, S> {
                     prim: x,
-                    registry: registry.clone(),
+                    registry,
                     ctx,
                     _wrap: std::marker::PhantomData,
-                })
+                }))
             } else {
                 let name = x.name().to_owned();
-                Box::new(make_external_func(move |_state, _args| {
-                    panic!("primitive {name} in {ctx:?} context requires a backend action registry")
-                }))
+                backend.new_panic(format!(
+                    "primitive {name} in {ctx:?} context requires a backend action registry"
+                ))
             }
         });
     }
@@ -373,7 +374,7 @@ impl EGraph {
         mut build_wrapper: F,
     ) where
         T: Primitive + Clone,
-        F: FnMut(T, Context) -> Box<dyn ExternalFunction>,
+        F: FnMut(&mut dyn Backend, T, Context) -> ExternalFunctionId,
     {
         // Register on this e-graph AND every term-encoding typechecker down the
         // chain. Each typechecker is a separate e-graph that typechecks the
@@ -388,10 +389,9 @@ impl EGraph {
             let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
             let name = primitive.name().to_owned();
             let context_ids = EnumMap::from_fn(|ctx| {
-                valid_ctxs.contains(&ctx).then(|| {
-                    eg.backend
-                        .register_external_func(build_wrapper(x.clone(), ctx))
-                })
+                valid_ctxs
+                    .contains(&ctx)
+                    .then(|| build_wrapper(eg.backend.as_mut(), x.clone(), ctx))
             });
             eg.type_info
                 .primitives

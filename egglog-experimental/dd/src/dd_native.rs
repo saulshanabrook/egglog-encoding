@@ -3,7 +3,7 @@
 //!
 //! This is the only join path for the Differential Dataflow backend (driven by
 //! [`crate::interpret::run_iteration`]); there is no host nested-loop fallback.
-//! The caller panics on shapes it cannot lower; see [`plan_join`].
+//! Unsupported shapes are reported to the caller; see [`plan_join`].
 //!
 //! ## The join: one fused worker per ruleset
 //!
@@ -44,7 +44,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use differential_dataflow::input::InputSession;
 use egglog_ast::core::{GenericAtom, GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar};
@@ -162,13 +162,14 @@ struct PlanAtom {
 
 impl JoinPlan {
     /// The variable id at each captured binding-row column, in column order.
+    #[cfg(test)]
     pub fn var_order(&self) -> Vec<u32> {
         self.projection.head_vars.clone()
     }
 }
 
 /// Build the join plan for `rule`, or `Err(reason)` if the DD dataflow cannot
-/// support its shape (the caller panics because there is no host fallback).
+/// support its shape.
 /// Supported rules have one or more table atoms, atom arity at most [`W`], and
 /// no more than [`W`] simultaneously live body variables. Body primitives are
 /// evaluated later by the host interpreter, so they do not become DD operators.
@@ -397,6 +398,9 @@ pub struct FusedDdJoin {
     /// Single probe on all rule outputs (they share the dataflow scope, so one
     /// probe gates the whole epoch's fixpoint).
     probe: ProbeHandle<u32>,
+    /// Distinct relation read views across the whole ruleset, in first-use
+    /// order. This is the authoritative host feed order for the fused worker.
+    reads: Vec<ReadKey>,
     /// The fused rules in caller-supplied build order. The sorted rule-index list
     /// identifies the ruleset cache entry but does not reorder these outputs.
     rules: Vec<FusedRule>,
@@ -405,18 +409,15 @@ pub struct FusedDdJoin {
 }
 
 /// One rule's lowering inside a [`FusedDdJoin`]: its rule index (for routing
-/// bindings to its head), its per-epoch output capture buffer, and its width.
+/// bindings to its head), its per-epoch output capture buffer, and the variable
+/// order used to unpack captured rows.
 struct FusedRule {
     idx: usize,
     /// This rule's per-epoch output binding-delta capture (`inspect_batch`
     /// appends `(row, weight)`; drained by [`FusedDdJoin::step`]).
     captured: CaptureBuf,
-    /// Number of surviving body variables packed into each captured row.
-    n_vars: usize,
-    /// Distinct relation read views this rule reads. Self-join fan-out is
-    /// handled at build time via the shared collection; this is only used by the
-    /// host to know which input deltas to feed for the rule.
-    body_reads: Vec<ReadKey>,
+    /// Variable ids packed into each captured row, in capture-column order.
+    var_order: Vec<u32>,
 }
 
 impl FusedDdJoin {
@@ -425,6 +426,9 @@ impl FusedDdJoin {
     /// rule — congruence, user, and canonicalization — runs through the same
     /// general fused join.
     pub fn build(plans: &[(usize, JoinPlan)]) -> Result<FusedDdJoin> {
+        if plans.is_empty() {
+            bail!("cannot build a fused DD join without any rule plans");
+        }
         let alloc = Allocator::Thread(Thread::default());
         let mut worker = Worker::new(
             WorkerConfig::default(),
@@ -448,27 +452,18 @@ impl FusedDdJoin {
             idx: usize,
             atoms: Vec<Vec<Slot>>,
             atom_reads: Vec<ReadKey>,
-            n_vars: usize,
-            body_reads: Vec<ReadKey>,
+            var_order: Vec<u32>,
             projection: ProjectionPlan,
         }
         let rule_plans: Vec<RulePlan> = plans
             .iter()
             .map(|(idx, plan)| {
                 let atom_reads: Vec<ReadKey> = plan.atoms.iter().map(|a| a.read_key).collect();
-                let mut body_reads: Vec<ReadKey> = Vec::new();
-                for &read in &atom_reads {
-                    if !body_reads.contains(&read) {
-                        body_reads.push(read);
-                    }
-                }
-                let n_vars = plan.projection.head_vars.len();
                 RulePlan {
                     idx: *idx,
                     atoms: plan.atoms.iter().map(|a| a.slots.clone()).collect(),
                     atom_reads,
-                    n_vars,
-                    body_reads,
+                    var_order: plan.projection.head_vars.clone(),
                     projection: plan.projection.clone(),
                 }
             })
@@ -486,9 +481,9 @@ impl FusedDdJoin {
         let reads_in = reads.clone();
         // The per-rule metadata `FusedRule` needs (kept here; the closure consumes
         // `rule_plans` for the dataflow build).
-        let rule_meta: Vec<(usize, usize, Vec<ReadKey>)> = rule_plans
+        let rule_meta: Vec<(usize, Vec<u32>)> = rule_plans
             .iter()
-            .map(|rp| (rp.idx, rp.n_vars, rp.body_reads.clone()))
+            .map(|rp| (rp.idx, rp.var_order.clone()))
             .collect();
 
         // The per-epoch input delta is already set-semantic: it comes from the
@@ -539,7 +534,9 @@ impl FusedDdJoin {
                             slots
                                 .iter()
                                 .position(|s| matches!(s, Slot::Var(x) if x == v))
-                                .expect("shared var present in atom")
+                                .expect(
+                                    "DD join invariant: a shared variable must occur in the joined atom",
+                                )
                         })
                         .collect();
 
@@ -589,11 +586,10 @@ impl FusedDdJoin {
         let rules: Vec<FusedRule> = rule_meta
             .into_iter()
             .zip(captures)
-            .map(|((idx, n_vars, body_reads), captured)| FusedRule {
+            .map(|((idx, var_order), captured)| FusedRule {
                 idx,
                 captured,
-                n_vars,
-                body_reads,
+                var_order,
             })
             .collect();
 
@@ -601,6 +597,7 @@ impl FusedDdJoin {
             worker,
             inputs,
             probe,
+            reads,
             rules,
             epoch: 0,
         })
@@ -611,9 +608,14 @@ impl FusedDdJoin {
         self.rules.iter().map(|r| r.idx).collect()
     }
 
-    /// The body relations the fused rule at build position `pos` reads.
-    pub fn rule_body_reads(&self, pos: usize) -> &[ReadKey] {
-        &self.rules[pos].body_reads
+    /// Distinct body relation read views across the ruleset, in first-use order.
+    pub fn read_keys(&self) -> &[ReadKey] {
+        &self.reads
+    }
+
+    /// Captured variable order for the fused rule at build position `pos`.
+    pub fn rule_var_order(&self, pos: usize) -> &[u32] {
+        &self.rules[pos].var_order
     }
 
     /// Feed one epoch of signed relation deltas into the SHARED inputs, advance
@@ -625,15 +627,19 @@ impl FusedDdJoin {
     /// the DD arrangements persist and the join is genuinely incremental.
     pub fn step(&mut self, deltas: &DeltaMap) -> Result<StepOutput> {
         let mut pushed = false;
-        for (func, rows) in deltas {
-            if let Some(inp) = self.inputs.get_mut(func) {
-                for (row, w) in rows {
-                    inp.update(pack_row(row), *w);
-                    pushed = true;
-                }
+        for (read, rows) in deltas {
+            let inp = self.inputs.get_mut(read).ok_or_else(|| {
+                anyhow!("DD invariant: received deltas for unplanned read view {read:?}")
+            })?;
+            for (row, w) in rows {
+                inp.update(pack_row(row)?, *w);
+                pushed = true;
             }
         }
-        let next_epoch = self.epoch + 1;
+        let next_epoch = self
+            .epoch
+            .checked_add(1)
+            .ok_or_else(|| anyhow!("DD worker epoch overflow"))?;
         if !pushed {
             self.epoch = next_epoch;
             return Ok(vec![Vec::new(); self.rules.len()]);
@@ -649,7 +655,7 @@ impl FusedDdJoin {
             (0..self.rules.len()).map(|_| HashMap::new()).collect();
         for (rule, acc) in self.rules.iter().zip(accs.iter_mut()) {
             for (row, weight) in rule.captured.borrow_mut().drain(..) {
-                let key = (0..rule.n_vars).map(|i| row[i]).collect();
+                let key = (0..rule.var_order.len()).map(|i| row[i]).collect();
                 *acc.entry(key).or_insert(0) += weight;
             }
         }
@@ -671,12 +677,18 @@ impl FusedDdJoin {
 }
 
 /// Pack a slice of column values into a fixed-width row (0-padded).
-fn pack_row(vals: &[u32]) -> Row {
+fn pack_row(vals: &[u32]) -> Result<Row> {
+    if vals.len() > W {
+        bail!(
+            "DD input row has {} columns, exceeding fixed row width {W}",
+            vals.len()
+        );
+    }
     let mut a = Row::default();
     for (i, v) in vals.iter().enumerate() {
         a[i] = *v;
     }
-    a
+    Ok(a)
 }
 
 /// Build a join key from selected columns (packed into the low slots).
@@ -880,6 +892,17 @@ mod tests {
             vars,
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn pack_row_checks_the_fixed_width_boundary() {
+        let values = (0..W as u32).collect::<Vec<_>>();
+        let packed = pack_row(&values).expect("a width-W row must fit");
+        assert_eq!(&packed.0[..], values.as_slice());
+
+        let error = pack_row(&[0; W + 1]).unwrap_err();
+        assert!(error.to_string().contains(&format!("{} columns", W + 1)));
+        assert!(error.to_string().contains(&format!("fixed row width {W}")));
     }
 
     #[test]

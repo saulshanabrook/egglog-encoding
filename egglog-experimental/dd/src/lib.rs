@@ -20,14 +20,16 @@
 
 use std::{
     any::{Any, TypeId},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
+use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeFn, ReportLevel, RuleId, RuleSetRun, RuleSpec, ScanEntry, Value,
+    IterationReport, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun,
+    RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -76,6 +78,11 @@ mod dd_workers {
         pub(super) fn retain(&mut self, mut keep: impl FnMut(&Vec<usize>) -> bool) {
             self.inner.retain(|key, _| keep(key));
         }
+
+        #[cfg(test)]
+        pub(super) fn is_empty(&mut self) -> bool {
+            self.inner.is_empty()
+        }
     }
 
     // SAFETY: `FusedDdJoin` does not expose or clone its Timely handles outside
@@ -93,6 +100,7 @@ use dd_workers::DdWorkers;
 // ---------------------------------------------------------------------------
 
 /// What we remember about each registered relation/function.
+#[derive(Clone)]
 pub(crate) struct RelationInfo {
     name: String,
     /// Number of columns (including the output column for functions).
@@ -149,6 +157,10 @@ pub struct EGraph {
     pub(crate) subsumed_versions: HashMap<FunctionId, HashMap<Row, u64>>,
     /// Per-ruleset, per-function version snapshot last fed to the fused DD join.
     pub(crate) dd_fused_fed_versions: HashMap<Vec<usize>, HashMap<ReadKey, HashMap<Row, u64>>>,
+    /// Deferred error channel used by panic primitives. The embedded database's
+    /// cloned external functions share this channel, matching the reference
+    /// bridge's panic-function behavior.
+    panic_message: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +209,7 @@ impl EGraph {
             all_versions: HashMap::new(),
             subsumed_versions: HashMap::new(),
             dd_fused_fed_versions: HashMap::new(),
+            panic_message: Default::default(),
         }
     }
 
@@ -209,6 +222,149 @@ impl EGraph {
     /// Relation name for `f`, used in diagnostics and unsupported-shape errors.
     pub(crate) fn relation_name(&self, f: FunctionId) -> &str {
         &self.info(f).name
+    }
+
+    /// Validate the backend-facing rule form once, before assigning a rule id.
+    /// The DD backend retains the accepted [`RuleSpec`] directly; this pass does
+    /// not introduce a second rule IR.
+    fn validate_rule(&self, rule: &RuleSpec) -> Result<()> {
+        let validate_terms =
+            |terms: &[GenericAtomTerm<RuleVar, RuleValue>], location: &str| -> Result<()> {
+                if let Some(GenericAtomTerm::Global(_, global)) = terms
+                    .iter()
+                    .find(|term| matches!(term, GenericAtomTerm::Global(..)))
+                {
+                    bail!(
+                        "DD backend cannot add rule {:?}: residual global {:?} in {location}",
+                        rule.name,
+                        global.name
+                    );
+                }
+                Ok(())
+            };
+        let relation = |id: FunctionId, location: &str| -> Result<&RelationInfo> {
+            self.relations.get(id.rep() as usize).ok_or_else(|| {
+                anyhow!(
+                    "DD backend cannot add rule {:?}: unregistered FunctionId({}) in {location}",
+                    rule.name,
+                    id.rep()
+                )
+            })
+        };
+
+        for atom in &rule.core.body.atoms {
+            match atom.head {
+                RuleBodyCall::Table { id, .. } => {
+                    if atom.args.len() > dd_native::W {
+                        bail!(
+                            "DD backend cannot add rule {:?}: body table atom has {} columns, exceeding fixed row width {}",
+                            rule.name,
+                            atom.args.len(),
+                            dd_native::W
+                        );
+                    }
+                    let info = relation(id, "rule body")?;
+                    if atom.args.len() != info.arity {
+                        bail!(
+                            "DD backend cannot add rule {:?}: body table atom for {:?} has {} columns, but relation `{}` has arity {}",
+                            rule.name,
+                            id,
+                            atom.args.len(),
+                            info.name,
+                            info.arity
+                        );
+                    }
+                    validate_terms(&atom.args, "rule body")?;
+                }
+                RuleBodyCall::Primitive { .. } => {
+                    if atom.args.is_empty() {
+                        bail!(
+                            "DD backend cannot add rule {:?}: body primitive has no return term",
+                            rule.name
+                        );
+                    }
+                    validate_terms(&atom.args, "rule body primitive")?;
+                }
+            }
+        }
+
+        for action in &rule.core.head.0 {
+            match action {
+                GenericCoreAction::Let(_, _, call, arguments) => {
+                    validate_terms(arguments, "rule action")?;
+                    if let RuleActionCall::Table { id, .. } = call {
+                        let info = relation(*id, "table lookup action")?;
+                        let Some(expected) = info.arity.checked_sub(1) else {
+                            bail!(
+                                "DD backend cannot add rule {:?}: cannot look up nullary relation `{}` as a function",
+                                rule.name,
+                                info.name
+                            );
+                        };
+                        if arguments.len() != expected {
+                            bail!(
+                                "DD backend cannot add rule {:?}: lookup on `{}` has {} arguments, expected {}",
+                                rule.name,
+                                info.name,
+                                arguments.len(),
+                                expected
+                            );
+                        }
+                    }
+                }
+                GenericCoreAction::LetAtomTerm(_, _, term) => {
+                    validate_terms(std::slice::from_ref(term), "rule let action")?;
+                }
+                GenericCoreAction::Set(_, call, arguments, value) => {
+                    let RuleActionCall::Table { id, .. } = call else {
+                        bail!(
+                            "DD backend cannot add rule {:?}: cannot set a primitive",
+                            rule.name
+                        );
+                    };
+                    validate_terms(arguments, "rule set action")?;
+                    validate_terms(std::slice::from_ref(value), "rule set action")?;
+                    let info = relation(*id, "set action")?;
+                    if arguments.len() + 1 != info.arity {
+                        bail!(
+                            "DD backend cannot add rule {:?}: set on `{}` writes {} columns, expected {}",
+                            rule.name,
+                            info.name,
+                            arguments.len() + 1,
+                            info.arity
+                        );
+                    }
+                }
+                GenericCoreAction::Change(_, _, call, arguments) => {
+                    let RuleActionCall::Table { id, .. } = call else {
+                        bail!(
+                            "DD backend cannot add rule {:?}: cannot delete or subsume a primitive",
+                            rule.name
+                        );
+                    };
+                    validate_terms(arguments, "rule change action")?;
+                    let info = relation(*id, "change action")?;
+                    if arguments.len() > info.arity {
+                        bail!(
+                            "DD backend cannot add rule {:?}: change on `{}` addresses {} columns, exceeding arity {}",
+                            rule.name,
+                            info.name,
+                            arguments.len(),
+                            info.arity
+                        );
+                    }
+                }
+                GenericCoreAction::Union(..) => {
+                    bail!(
+                        "DD backend cannot add rule {:?}: received a native union; term encoding must lower unions to @uf writes",
+                        rule.name
+                    );
+                }
+                GenericCoreAction::Panic(..) => {}
+            }
+        }
+
+        Ok(())
     }
 
     /// The functional-dependency merge mode of a function (from `add_table`).
@@ -224,9 +380,22 @@ impl EGraph {
         &self,
         id: ExternalFunctionId,
         args: &[Value],
-    ) -> Option<Value> {
-        self.db
-            .with_execution_state(|st| st.call_external_func(id, args))
+    ) -> Result<Option<Value>> {
+        let result = self
+            .db
+            .with_execution_state(|st| st.call_external_func(id, args));
+        if let Some(message) = self.take_panic_message() {
+            Err(anyhow!(message))
+        } else {
+            Ok(result)
+        }
+    }
+
+    fn take_panic_message(&self) -> Option<String> {
+        self.panic_message
+            .lock()
+            .expect("DD panic-message side channel must not be poisoned")
+            .take()
     }
 
     /// Allocate a fresh id (the interpreter's eq-sort constructor hash-cons uses
@@ -328,11 +497,12 @@ impl EGraph {
             }
         }
         // The merge tree, cloned out so the evaluator can borrow `&mut self`.
-        let tree = self
-            .info(f)
-            .merge_tree
-            .clone()
-            .expect("Computed merge has a merge tree");
+        let tree = self.info(f).merge_tree.clone().ok_or_else(|| {
+            anyhow!(
+                "DD relation metadata invariant: computed merge for `{}` has no merge tree",
+                self.relation_name(f)
+            )
+        })?;
         let mut lookup_index: HashMap<FunctionId, HashMap<Box<[u32]>, u32>> = HashMap::new();
         // Fold each touched key: start from the current value, fold in each new
         // value via the tree (`old` = accumulator, `new` = the value).
@@ -349,7 +519,7 @@ impl EGraph {
                     Some(c) => self.eval_merge_tree(&tree, c, nv, &mut lookup_index)?,
                 });
             }
-            let new_val = acc.unwrap();
+            let new_val = acc.expect("DD computed-merge invariant: touched key has a value");
             let new = (new_val, location);
             if Some(new) != old.map(|old| (old.value, old.location)) {
                 updates.push((key, new));
@@ -384,7 +554,7 @@ impl EGraph {
                     .map(|a| self.eval_merge_tree(a, old, new, index).map(Value::new))
                     .collect::<Result<_>>()?;
                 Ok(self
-                    .eval_prim_internal(*id, &argv)
+                    .eval_prim_internal(*id, &argv)?
                     .map(|v| v.rep())
                     .unwrap_or(old))
             }
@@ -429,7 +599,10 @@ impl EGraph {
             return false;
         }
         {
-            let live = self.mirror.get_mut(&f).unwrap();
+            let live = self
+                .mirror
+                .get_mut(&f)
+                .expect("DD mirror invariant: rows selected for subsumption remain registered");
             for r in &moved {
                 live.remove(r);
             }
@@ -620,6 +793,8 @@ fn update_version_map(
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
     use egglog_ast::{
         core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreRule, Query},
         generic_ast::Change,
@@ -640,11 +815,11 @@ mod tests {
     }
 
     impl TestRule {
-        fn new(name: &str, seminaive: bool) -> Self {
+        fn new(name: &str) -> Self {
             Self {
                 spec: RuleSpec {
                     name: name.to_owned(),
-                    seminaive,
+                    seminaive: true,
                     no_decomp: false,
                     core: GenericCoreRule {
                         span: Span::Panic,
@@ -669,12 +844,7 @@ mod tests {
             )
         }
 
-        fn query_table(
-            &mut self,
-            id: FunctionId,
-            args: &[RuleTerm],
-            is_subsumed: Option<bool>,
-        ) -> Result<()> {
+        fn query_table(&mut self, id: FunctionId, args: &[RuleTerm], is_subsumed: Option<bool>) {
             self.spec.core.body.atoms.push(GenericAtom {
                 span: Span::Panic,
                 head: RuleBodyCall::Table {
@@ -687,15 +857,9 @@ mod tests {
                 },
                 args: args.to_vec(),
             });
-            Ok(())
         }
 
-        fn query_prim(
-            &mut self,
-            id: ExternalFunctionId,
-            args: &[RuleTerm],
-            output: ColumnTy,
-        ) -> Result<()> {
+        fn query_prim(&mut self, id: ExternalFunctionId, args: &[RuleTerm], output: ColumnTy) {
             self.spec.core.body.atoms.push(GenericAtom {
                 span: Span::Panic,
                 head: RuleBodyCall::Primitive {
@@ -705,7 +869,6 @@ mod tests {
                 },
                 args: args.to_vec(),
             });
-            Ok(())
         }
 
         fn set(&mut self, id: FunctionId, entries: &[RuleTerm]) {
@@ -737,9 +900,8 @@ mod tests {
             self.change(id, entries, Change::Delete);
         }
 
-        fn subsume(&mut self, id: FunctionId, entries: &[RuleTerm]) -> Result<()> {
+        fn subsume(&mut self, id: FunctionId, entries: &[RuleTerm]) {
             self.change(id, entries, Change::Subsume);
-            Ok(())
         }
 
         fn union(&mut self, lhs: RuleTerm, rhs: RuleTerm) {
@@ -788,6 +950,19 @@ mod tests {
                 merge,
                 name: name.to_string(),
                 can_subsume: true,
+            },
+        )
+    }
+
+    fn id_table(eg: &mut EGraph, name: &str, arity: usize) -> FunctionId {
+        Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id; arity],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: name.to_string(),
+                can_subsume: false,
             },
         )
     }
@@ -855,21 +1030,18 @@ mod tests {
                 can_subsume: false,
             },
         );
-        let mut rb = TestRule::new("path_compress", true);
+        let mut rb = TestRule::new("path_compress");
         let a = rb.new_var(ColumnTy::Id);
         let b = rb.new_var(ColumnTy::Id);
         let c = rb.new_var(ColumnTy::Id);
         let unit = constant(0, ColumnTy::Base(unit_ty));
-        rb.query_table(uf, &[a.clone(), b.clone(), unit.clone()], Some(false))
-            .unwrap();
-        rb.query_table(uf, &[b.clone(), c.clone(), unit.clone()], Some(false))
-            .unwrap();
+        rb.query_table(uf, &[a.clone(), b.clone(), unit.clone()], Some(false));
+        rb.query_table(uf, &[b.clone(), c.clone(), unit.clone()], Some(false));
         rb.query_prim(
             neq,
             &[b.clone(), c.clone(), unit.clone()],
             ColumnTy::Base(unit_ty),
-        )
-        .unwrap();
+        );
         rb.remove(uf, &[a.clone(), b]);
         rb.set(uf, &[a, c, unit]);
         (uf, rb.build(eg))
@@ -902,18 +1074,95 @@ mod tests {
     }
 
     #[test]
-    fn native_union_is_rejected_instead_of_silently_dropped() {
+    fn native_union_is_rejected_when_rule_is_added() {
         let mut eg = EGraph::new();
         let left = constant(1, ColumnTy::Id);
         let right = constant(2, ColumnTy::Id);
-        let rule = {
-            let mut builder = TestRule::new("native union", true);
-            builder.union(left, right);
-            builder.build(&mut eg)
-        };
+        let mut builder = TestRule::new("native union");
+        builder.union(left, right);
 
-        let error = run_rules(&mut eg, &[rule]).unwrap_err();
+        let error = Backend::add_rule(&mut eg, builder.spec).unwrap_err();
         assert!(error.to_string().contains("received a native union"));
+    }
+
+    #[test]
+    fn table_and_rule_arity_match_fixed_dd_row_width() {
+        let mut eg = EGraph::new();
+        let wide = id_table(&mut eg, "wide", dd_native::W);
+
+        let mut boundary = TestRule::new("width boundary");
+        let boundary_args = (0..dd_native::W)
+            .map(|_| boundary.new_var(ColumnTy::Id))
+            .collect::<Vec<_>>();
+        boundary.query_table(wide, &boundary_args, Some(false));
+        Backend::add_rule(&mut eg, boundary.spec).expect("width-W rule must be admitted");
+
+        let mut too_wide_rule = TestRule::new("too wide");
+        let too_wide_args = (0..=dd_native::W)
+            .map(|_| too_wide_rule.new_var(ColumnTy::Id))
+            .collect::<Vec<_>>();
+        too_wide_rule.query_table(wide, &too_wide_args, Some(false));
+        let error = Backend::add_rule(&mut eg, too_wide_rule.spec).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains(&format!("{} columns", dd_native::W + 1)));
+        assert!(error
+            .to_string()
+            .contains(&format!("fixed row width {}", dd_native::W)));
+
+        let relation_count = eg.relations.len();
+        let oversized_table = catch_unwind(AssertUnwindSafe(|| {
+            id_table(&mut eg, "oversized", dd_native::W + 1)
+        }));
+        assert!(oversized_table.is_err());
+        assert_eq!(eg.relations.len(), relation_count);
+    }
+
+    #[test]
+    fn add_rule_rejects_residual_globals() {
+        let mut eg = EGraph::new();
+        let input = id_table(&mut eg, "input", 1);
+        let mut rule = TestRule::new("global");
+        let global = GenericAtomTerm::Global(
+            Span::Panic,
+            RuleVar {
+                id: 0,
+                name: "global".into(),
+                ty: ColumnTy::Id,
+            },
+        );
+        rule.query_table(input, &[global], Some(false));
+
+        let error = Backend::add_rule(&mut eg, rule.spec).unwrap_err();
+        assert!(error.to_string().contains("residual global"));
+    }
+
+    #[test]
+    fn join_planning_failure_is_returned_without_unwinding() {
+        let mut eg = EGraph::new();
+        let wide = id_table(&mut eg, "wide", dd_native::W);
+        let edge = id_table(&mut eg, "edge", 2);
+        let primitive = max_primitive(&mut eg);
+        let mut rule = TestRule::new("wide live frontier");
+        let vars = (0..=dd_native::W)
+            .map(|_| rule.new_var(ColumnTy::Id))
+            .collect::<Vec<_>>();
+        rule.query_table(wide, &vars[..dd_native::W], Some(false));
+        rule.query_table(
+            edge,
+            &[vars[0].clone(), vars[dd_native::W].clone()],
+            Some(false),
+        );
+        rule.query_prim(primitive, &vars, ColumnTy::Id);
+        let rule = rule.build(&mut eg);
+
+        let outcome = catch_unwind(AssertUnwindSafe(|| run_rules(&mut eg, &[rule])));
+        let error = outcome
+            .expect("unsupported join planning must not unwind")
+            .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("live body-variable frontier exceeds W 48"));
     }
 
     #[test]
@@ -964,15 +1213,13 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = TestRule::new("self_join", true);
+            let mut rb = TestRule::new("self_join");
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false))
-                .unwrap();
+            rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false));
+            rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false));
             rb.set(out, &[a, b, c, unit]);
             rb.build(&mut eg)
         };
@@ -1021,20 +1268,18 @@ mod tests {
         eg.insert_located_row(relation, RowLocation::Subsumed, row(&[2, 0]));
 
         let live_rule = {
-            let mut rb = TestRule::new("live_read", true);
+            let mut rb = TestRule::new("live_read");
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(relation, &[x.clone(), unit.clone()], Some(false))
-                .unwrap();
+            rb.query_table(relation, &[x.clone(), unit.clone()], Some(false));
             rb.set(live_out, &[x, unit]);
             rb.build(&mut eg)
         };
         let all_rule = {
-            let mut rb = TestRule::new("all_read", true);
+            let mut rb = TestRule::new("all_read");
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(relation, &[x.clone(), unit.clone()], None)
-                .unwrap();
+            rb.query_table(relation, &[x.clone(), unit.clone()], None);
             rb.set(all_out, &[x, unit]);
             rb.build(&mut eg)
         };
@@ -1048,6 +1293,44 @@ mod tests {
     }
 
     #[test]
+    fn fused_ruleset_cache_maps_reordered_rules_by_id() {
+        let mut eg = EGraph::new();
+        let input_a = id_table(&mut eg, "InputA", 2);
+        let input_b = id_table(&mut eg, "InputB", 3);
+        let output_a = id_table(&mut eg, "OutputA", 2);
+        let output_b = id_table(&mut eg, "OutputB", 2);
+
+        let rule_a = {
+            let mut rb = TestRule::new("rule_a");
+            let x = rb.new_var(ColumnTy::Id);
+            let y = rb.new_var(ColumnTy::Id);
+            rb.query_table(input_a, &[x.clone(), y.clone()], Some(false));
+            rb.set(output_a, &[y, x]);
+            rb.build(&mut eg)
+        };
+        let rule_b = {
+            let mut rb = TestRule::new("rule_b");
+            let p = rb.new_var(ColumnTy::Id);
+            let q = rb.new_var(ColumnTy::Id);
+            let r = rb.new_var(ColumnTy::Id);
+            rb.query_table(input_b, &[r.clone(), p.clone(), q], Some(false));
+            rb.set(output_b, &[p, r]);
+            rb.build(&mut eg)
+        };
+
+        eg.insert_live_row(input_a, row(&[1, 2]));
+        eg.insert_live_row(input_b, row(&[5, 3, 4]));
+        run_rules(&mut eg, &[rule_a, rule_b]).unwrap();
+
+        eg.insert_live_row(input_a, row(&[10, 20]));
+        eg.insert_live_row(input_b, row(&[50, 30, 40]));
+        run_rules(&mut eg, &[rule_b, rule_a]).unwrap();
+
+        assert!(eg.mirror[&output_a].contains(&row(&[20, 10])));
+        assert!(eg.mirror[&output_b].contains(&row(&[30, 50])));
+    }
+
+    #[test]
     fn same_table_self_join_applies_primitive_guards() {
         let mut eg = EGraph::new();
         let neq = neq_primitive(&mut eg);
@@ -1055,27 +1338,23 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = TestRule::new("guarded_self_join", true);
+            let mut rb = TestRule::new("guarded_self_join");
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false))
-                .unwrap();
+            rb.query_table(relation, &[a.clone(), b.clone(), unit.clone()], Some(false));
+            rb.query_table(relation, &[a.clone(), c.clone(), unit.clone()], Some(false));
             rb.query_prim(
                 neq,
                 &[b.clone(), c.clone(), unit.clone()],
                 ColumnTy::Base(unit_ty),
-            )
-            .unwrap();
+            );
             rb.query_prim(
                 ordering_max,
                 &[b.clone(), c.clone(), b.clone()],
                 ColumnTy::Id,
-            )
-            .unwrap();
+            );
             rb.set(out, &[a, b, c, unit]);
             rb.build(&mut eg)
         };
@@ -1094,29 +1373,25 @@ mod tests {
         let (unit_ty, relation, out) = self_join_tables(&mut eg);
 
         let rule = {
-            let mut rb = TestRule::new("unit_var_self_join", true);
+            let mut rb = TestRule::new("unit_var_self_join");
             let a = rb.new_var(ColumnTy::Id);
             let b = rb.new_var(ColumnTy::Id);
             let c = rb.new_var(ColumnTy::Id);
             let unit1 = rb.new_var(ColumnTy::Base(unit_ty));
             let unit2 = rb.new_var(ColumnTy::Base(unit_ty));
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(relation, &[a.clone(), b.clone(), unit1], Some(false))
-                .unwrap();
-            rb.query_table(relation, &[a.clone(), c.clone(), unit2], Some(false))
-                .unwrap();
+            rb.query_table(relation, &[a.clone(), b.clone(), unit1], Some(false));
+            rb.query_table(relation, &[a.clone(), c.clone(), unit2], Some(false));
             rb.query_prim(
                 neq,
                 &[b.clone(), c.clone(), unit.clone()],
                 ColumnTy::Base(unit_ty),
-            )
-            .unwrap();
+            );
             rb.query_prim(
                 ordering_max,
                 &[b.clone(), c.clone(), b.clone()],
                 ColumnTy::Id,
-            )
-            .unwrap();
+            );
             rb.set(out, &[a, b, c, unit]);
             rb.build(&mut eg)
         };
@@ -1160,16 +1435,60 @@ mod tests {
     }
 
     #[test]
+    fn clone_preserves_authoritative_state_and_rebuilds_transient_join() {
+        let mut eg = EGraph::new();
+        let (uf, rule) = path_compression_fixture(&mut eg);
+        eg.insert_live_row(uf, row(&[40, 4, 0]));
+        eg.insert_live_row(uf, row(&[75, 40, 0]));
+        run_rules(&mut eg, &[rule]).unwrap();
+        assert!(!eg.dd_fused.is_empty());
+        assert!(!eg.dd_fused_fed_versions.is_empty());
+        let panic = Backend::new_panic(&mut eg, "cloned panic".to_owned());
+
+        let mut cloned = Backend::clone_boxed(&eg);
+        let cloned = cloned
+            .as_any_mut()
+            .downcast_mut::<EGraph>()
+            .expect("DD clone must retain its concrete backend type");
+
+        assert!(cloned.dd_fused.is_empty());
+        assert!(cloned.dd_fused_fed_versions.is_empty());
+        assert_eq!(cloned.relations.len(), eg.relations.len());
+        assert_eq!(cloned.rules.len(), eg.rules.len());
+        assert_eq!(cloned.mirror, eg.mirror);
+        assert_eq!(cloned.subsumed, eg.subsumed);
+        assert_eq!(cloned.next_id, eg.next_id);
+        assert_eq!(cloned.next_row_version, eg.next_row_version);
+        assert_eq!(cloned.live_versions, eg.live_versions);
+        assert_eq!(cloned.all_versions, eg.all_versions);
+        assert_eq!(cloned.subsumed_versions, eg.subsumed_versions);
+
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            cloned.eval_prim_internal(panic, &[Value::new(7)])
+        }));
+        let error = outcome
+            .expect("a cloned panic primitive must not unwind")
+            .unwrap_err();
+        assert_eq!(error.to_string(), "cloned panic");
+
+        cloned.insert_live_row(uf, row(&[90, 75, 0]));
+        run_rules(cloned, &[rule]).unwrap();
+        assert!(cloned.mirror[&uf].contains(&row(&[90, 4, 0])));
+        assert!(!eg.mirror[&uf].contains(&row(&[90, 4, 0])));
+        assert!(!cloned.dd_fused.is_empty());
+        assert!(!cloned.dd_fused_fed_versions.is_empty());
+    }
+
+    #[test]
     fn same_iteration_remove_then_set_keeps_set_value() {
         let mut eg = EGraph::new();
         let (unit_ty, trigger, f) = write_order_tables(&mut eg);
         eg.insert_live_row(f, row(&[1, 9]));
 
         let rule = {
-            let mut rb = TestRule::new("remove_then_set", true);
+            let mut rb = TestRule::new("remove_then_set");
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
-                .unwrap();
+            rb.query_table(trigger, std::slice::from_ref(&unit), Some(false));
             let key = constant(1, ColumnTy::Id);
             let new = constant(2, ColumnTy::Id);
             rb.remove(f, std::slice::from_ref(&key));
@@ -1189,14 +1508,13 @@ mod tests {
         let (unit_ty, trigger, f) = write_order_tables(&mut eg);
 
         let rule = {
-            let mut rb = TestRule::new("set_then_subsume", true);
+            let mut rb = TestRule::new("set_then_subsume");
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(trigger, std::slice::from_ref(&unit), Some(false))
-                .unwrap();
+            rb.query_table(trigger, std::slice::from_ref(&unit), Some(false));
             let key = constant(1, ColumnTy::Id);
             let value = constant(2, ColumnTy::Id);
             rb.set(f, &[key.clone(), value]);
-            rb.subsume(f, &[key]).unwrap();
+            rb.subsume(f, &[key]);
             rb.build(&mut eg)
         };
 
@@ -1245,31 +1563,26 @@ mod tests {
         assert!(eg.apply_merge_sets(current, &[row(&[10])]).unwrap());
 
         let view_first_rule = {
-            let mut rb = TestRule::new("view_first", true);
+            let mut rb = TestRule::new("view_first");
             let x = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(view, &[x.clone(), unit.clone()], Some(false))
-                .unwrap();
+            rb.query_table(view, &[x.clone(), unit.clone()], Some(false));
             rb.set(dummy, &[x, unit]);
             rb.build(&mut eg)
         };
         let cleanup_rule = {
-            let mut rb = TestRule::new("current_cleanup", true);
+            let mut rb = TestRule::new("current_cleanup");
             let selected = rb.new_var(ColumnTy::Id);
             let old = rb.new_var(ColumnTy::Id);
             let unit = constant(0, ColumnTy::Base(unit_ty));
-            rb.query_table(current, std::slice::from_ref(&selected), Some(false))
-                .unwrap();
-            rb.query_table(view, &[selected.clone(), unit.clone()], Some(false))
-                .unwrap();
-            rb.query_table(view, &[old.clone(), unit.clone()], Some(false))
-                .unwrap();
+            rb.query_table(current, std::slice::from_ref(&selected), Some(false));
+            rb.query_table(view, &[selected.clone(), unit.clone()], Some(false));
+            rb.query_table(view, &[old.clone(), unit.clone()], Some(false));
             rb.query_prim(
                 neq,
                 &[selected.clone(), old.clone(), unit.clone()],
                 ColumnTy::Base(unit_ty),
-            )
-            .unwrap();
+            );
             rb.remove(view, &[old]);
             rb.build(&mut eg)
         };
@@ -1345,9 +1658,9 @@ impl Backend for EGraph {
         let id = FunctionId::new(self.relations.len() as u32);
         let arity = config.schema.len();
         assert!(
-            arity <= compile::MAX_ARITY,
-            "DD backend supports relations of arity <= {} (got {} for `{}`)",
-            compile::MAX_ARITY,
+            arity <= dd_native::W,
+            "DD backend fixed row width supports relations of arity <= {} (got {} for `{}`)",
+            dd_native::W,
             arity,
             config.name
         );
@@ -1495,6 +1808,7 @@ impl Backend for EGraph {
     // -- rule management ----------------------------------------------------
 
     fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
+        self.validate_rule(&rule)?;
         let id = RuleId::new(self.rules.len() as u32);
         self.rules.push(Some(rule));
         Ok(id)
@@ -1516,20 +1830,33 @@ impl Backend for EGraph {
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
         // One `run_rules` call = one bounded egglog iteration. The frontend calls
         // this N times for `(run N)`.
+        if let Some(message) = self.take_panic_message() {
+            return Err(anyhow!(message));
+        }
         if run.rules.is_empty() {
             return Ok(IterationReport::default());
         }
-        let live: Vec<usize> = run
+        let rules: Vec<(usize, RuleSpec)> = run
             .rules
             .iter()
             .map(|r| r.rep() as usize)
-            .filter(|&i| self.rules.get(i).map(|s| s.is_some()).unwrap_or(false))
+            .filter_map(|i| {
+                self.rules
+                    .get(i)
+                    .and_then(Option::as_ref)
+                    .cloned()
+                    .map(|rule| (i, rule))
+            })
             .collect();
-        if live.is_empty() {
+        if rules.is_empty() {
             return Ok(IterationReport::default());
         }
 
-        let changed = interpret::run_iteration(self, &live)?;
+        let changed = interpret::run_iteration(self, &rules);
+        if let Some(message) = self.take_panic_message() {
+            return Err(anyhow!(message));
+        }
+        let changed = changed?;
 
         let mut report = IterationReport::default();
         report.rule_set_report.changed = changed;
@@ -1556,9 +1883,19 @@ impl Backend for EGraph {
     }
 
     fn new_panic(&mut self, message: String) -> ExternalFunctionId {
+        let panic_message = Arc::clone(&self.panic_message);
         self.db
             .add_external_function(Box::new(egglog_core_relations::make_external_func(
-                move |_, _| panic!("{message}"),
+                move |state, _args| {
+                    state.trigger_early_stop();
+                    let mut pending = panic_message
+                        .lock()
+                        .expect("DD panic-message side channel must not be poisoned");
+                    if pending.is_none() {
+                        *pending = Some(message.clone());
+                    }
+                    None
+                },
             )))
     }
 
@@ -1567,21 +1904,13 @@ impl Backend for EGraph {
     fn requires_term_encoding(&self) -> bool {
         // This backend has no native union-find: congruence and rebuild are
         // lowered to ordinary rules over `@uf` tables by the term encoder. The
-        // frontend refuses to run this backend without that encoding, and the
-        // interpreter defensively errors if a native `GenericCoreAction::Union`
-        // reaches it.
+        // frontend refuses to run this backend without that encoding, and rule
+        // registration defensively rejects a native `GenericCoreAction::Union`.
         true
     }
 
     fn supports_containers(&self) -> bool {
         true
-    }
-
-    fn supports_action_registry(&self) -> bool {
-        // No egglog `ActionRegistry`. Ordinary primitives execute through the
-        // embedded `Database`; registry-backed read/write/full primitives that
-        // need live table access are outside this backend's current contract.
-        false
     }
 
     // -- diagnostics --------------------------------------------------------
@@ -1602,10 +1931,26 @@ impl Backend for EGraph {
     // -- cloning ------------------------------------------------------------
 
     fn clone_boxed(&self) -> Box<dyn Backend> {
-        // A running differential-dataflow dataflow can't be cloned; push/pop
-        // snapshot support (replaying the mirror + rule IR + relation metadata
-        // into a fresh engine) is not implemented.
-        unimplemented!("DD backend clone_boxed (push/pop) is not implemented")
+        // Timely workers are transient and cannot be cloned. The authoritative
+        // relation/rule/database/mirror/version state is copied, while workers
+        // and their fed-version snapshots start empty. The next `run_rules`
+        // lazily rebuilds the fused dataflow and feeds the cloned current state.
+        Box::new(Self {
+            relations: self.relations.clone(),
+            rules: self.rules.clone(),
+            mirror: self.mirror.clone(),
+            subsumed: self.subsumed.clone(),
+            db: self.db.clone(),
+            next_id: self.next_id,
+            seen: self.seen.clone(),
+            dd_fused: DdWorkers::default(),
+            next_row_version: self.next_row_version,
+            live_versions: self.live_versions.clone(),
+            all_versions: self.all_versions.clone(),
+            subsumed_versions: self.subsumed_versions.clone(),
+            dd_fused_fed_versions: HashMap::new(),
+            panic_message: Arc::clone(&self.panic_message),
+        })
     }
 
     // -- bridge-only escape hatch ------------------------------------------

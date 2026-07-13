@@ -18,8 +18,9 @@
 //!
 //! Per (proof-supporting) corpus file:
 //! - DD can't run it (an unsupported FEATURE — see [`KNOWN_UNSUPPORTED`]) →
-//!   passes only if listed; a new failure (or a listed file that starts working)
-//!   fails the harness so the list stays honest;
+//!   passes only if the returned error contains that file's expected diagnostic;
+//!   panics, new failures, and listed files that start working all fail the
+//!   harness so the list stays honest;
 //! - DD runs it and its normalized output equals egglog's snapshot → pass;
 //! - otherwise the normal insta assertion reports the mismatch.
 //!
@@ -62,26 +63,19 @@ const DEBUG_SUBSET: &[&str] = &[
 /// there are none). Listed explicitly so the harness fails if the set changes in
 /// either direction. Reasons:
 ///
-/// - push/pop (needs backend snapshotting / `clone_boxed`, which a live
-///   differential-dataflow dataflow cannot provide):
-///   `array`, `bdd`, `calc`, `container-fail`, `lambda`, `math`, `push-pop`.
 /// - container rebuild read primitives (registered through egglog's
 ///   `ActionRegistry`; DD has direct container storage but no registry
 ///   execution state for read primitives over its term-encoded mirror):
 ///   `container-proofs`, `datatypes`, `nested-container-dirty-propagation`,
 ///   `repro-querybug3`.
-const KNOWN_UNSUPPORTED: &[&str] = &[
-    "array.egg",
-    "bdd.egg",
-    "calc.egg",
-    "container-fail.egg",
-    "container-proofs.egg",
-    "datatypes.egg",
-    "lambda.egg",
-    "math.egg",
-    "nested-container-dirty-propagation.egg",
-    "push-pop.egg",
-    "repro-querybug3.egg",
+const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[
+    ("container-proofs.egg", "requires a backend action registry"),
+    ("datatypes.egg", "requires a backend action registry"),
+    (
+        "nested-container-dirty-propagation.egg",
+        "requires a backend action registry",
+    ),
+    ("repro-querybug3.egg", "requires a backend action registry"),
 ];
 
 /// Run `program` on DD and render its outputs with the SAME normalization
@@ -98,10 +92,14 @@ fn run_dd(file: &str, program: &str) -> Result<String, String> {
 }
 
 fn check(path: &PathBuf) -> Result<(), Failed> {
-    let name = path.file_name().unwrap().to_string_lossy().to_string();
+    let name = path
+        .file_name()
+        .ok_or_else(|| format!("corpus path has no file name: {}", path.display()))?
+        .to_string_lossy()
+        .to_string();
     let stem = path
         .file_stem()
-        .unwrap()
+        .ok_or_else(|| format!("corpus path has no file stem: {}", path.display()))?
         .to_string_lossy()
         .replace(['.', '-', ' '], "_");
 
@@ -116,40 +114,38 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
     let file = path.display().to_string();
     let dd = catch_unwind(AssertUnwindSafe(|| run_dd(&file, &program)));
 
-    let unsupported = KNOWN_UNSUPPORTED.contains(&name.as_str());
+    let expected_unsupported = KNOWN_UNSUPPORTED
+        .iter()
+        .find_map(|&(file, expected)| (file == name).then_some(expected));
     match dd {
-        // DD couldn't run it (unsupported feature or a panic). Fine only if
-        // documented; a new failure means the list is stale.
-        Ok(Err(err)) => {
-            if unsupported {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{name}: DD failed but is not in KNOWN_UNSUPPORTED — \
-                     add it (with the reason) or investigate the regression\n\
+        Ok(Err(err)) => match expected_unsupported {
+            Some(expected) if err.contains(expected) => Ok(()),
+            Some(expected) => Err(format!(
+                "{name}: DD returned the wrong controlled error for a known unsupported feature\n\
+                 expected diagnostic containing: {expected}\n\
+                 actual error: {err}"
+            )
+            .into()),
+            None => Err(format!(
+                "{name}: DD failed but is not in KNOWN_UNSUPPORTED — \
+                     add it with an expected controlled diagnostic or investigate the regression\n\
                      error: {err}"
-                )
-                .into())
-            }
-        }
+            )
+            .into()),
+        },
         Err(panic) => {
-            if unsupported {
-                Ok(())
-            } else {
-                let panic = panic
-                    .downcast_ref::<String>()
-                    .map(String::as_str)
-                    .or_else(|| panic.downcast_ref::<&str>().copied())
-                    .unwrap_or("<non-string panic payload>");
-                Err(format!(
-                    "{name}: DD panicked but is not in KNOWN_UNSUPPORTED — \
-                     add it (with the reason) or investigate the regression\n\
-                     panic: {panic}"
-                )
-                .into())
-            }
+            let panic = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("<non-string panic payload>");
+            Err(format!(
+                "{name}: DD panicked; unsupported cases must return their documented controlled error\n\
+                 panic: {panic}"
+            )
+            .into())
         }
-        Ok(Ok(_)) if unsupported => Err(format!(
+        Ok(Ok(_)) if expected_unsupported.is_some() => Err(format!(
             "{name} is listed in KNOWN_UNSUPPORTED but now runs — remove it from that list"
         )
         .into()),
@@ -164,38 +160,62 @@ fn check(path: &PathBuf) -> Result<(), Failed> {
     }
 }
 
-fn corpus() -> Vec<PathBuf> {
+fn corpus_from_dirs(dirs: &[&str]) -> Result<Vec<PathBuf>, String> {
     let mut v = vec![];
-    for dir in ["../../egglog/tests", "../../egglog/tests/web-demo"] {
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("egg") {
-                    let name = p.file_name().unwrap().to_string_lossy().to_string();
-                    let debug_ok = !cfg!(debug_assertions) || DEBUG_SUBSET.contains(&name.as_str());
-                    if !HANG.contains(&name.as_str()) && debug_ok {
-                        v.push(p);
-                    }
+    for dir in dirs {
+        let rd =
+            std::fs::read_dir(dir).map_err(|error| format!("read corpus dir {dir}: {error}"))?;
+        for entry in rd {
+            let entry =
+                entry.map_err(|error| format!("read entry in corpus dir {dir}: {error}"))?;
+            let p = entry.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("egg") {
+                let name = p
+                    .file_name()
+                    .ok_or_else(|| format!("corpus path has no file name: {}", p.display()))?
+                    .to_string_lossy()
+                    .to_string();
+                let debug_ok = !cfg!(debug_assertions) || DEBUG_SUBSET.contains(&name.as_str());
+                if !HANG.contains(&name.as_str()) && debug_ok {
+                    v.push(p);
                 }
             }
         }
     }
     v.sort();
-    v
+    if v.is_empty() {
+        return Err("DD corpus selection is empty".to_string());
+    }
+    Ok(v)
+}
+
+fn corpus() -> Result<Vec<PathBuf>, String> {
+    corpus_from_dirs(&["../../egglog/tests", "../../egglog/tests/web-demo"])
 }
 
 fn main() {
     let args = Arguments::from_args();
-    let trials = corpus()
-        .into_iter()
-        .map(|path| {
+    let mut trials = vec![
+        Trial::test("missing_corpus_directory_is_an_error", || {
+            corpus_from_dirs(&["__egglog_dd_missing_corpus_directory__"])
+                .expect_err("missing corpus directory must fail discovery");
+            Ok(())
+        }),
+        Trial::test("empty_corpus_selection_is_an_error", || {
+            corpus_from_dirs(&[]).expect_err("empty corpus selection must fail discovery");
+            Ok(())
+        }),
+    ];
+    match corpus() {
+        Ok(paths) => trials.extend(paths.into_iter().map(|path| {
             let name = path
                 .file_stem()
-                .unwrap()
+                .expect("validated corpus path must have a file stem")
                 .to_string_lossy()
                 .replace(['-', '.'], "_");
             Trial::test(name, move || check(&path))
-        })
-        .collect();
+        })),
+        Err(error) => trials.push(Trial::test("corpus_discovery", move || Err(error.into()))),
+    }
     libtest_mimic::run(&args, trials).exit();
 }

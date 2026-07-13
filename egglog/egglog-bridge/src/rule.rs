@@ -205,12 +205,9 @@ impl RuleBuilder<'_> {
     ///
     /// [`call_external_func`]: Self::call_external_func
     pub fn new_panic(&mut self, message: String) -> crate::ExternalFunctionId {
-        self.resources.egraph.new_panic(message)
-    }
-
-    /// Release an external function registered while building this rule.
-    pub fn free_external_func(&mut self, func: crate::ExternalFunctionId) {
-        self.resources.egraph.free_external_func(func);
+        let panic = self.resources.egraph.new_panic(message);
+        self.resources.external_funcs.push(panic);
+        panic
     }
 
     pub(crate) fn set_plan_strategy(&mut self, strategy: PlanStrategy) {
@@ -736,7 +733,7 @@ impl RuleBuilder<'_> {
 
     /// Panic with a given message.
     pub fn panic(&mut self, message: String) {
-        let panic = self.resources.egraph.new_panic(message.clone());
+        let panic = self.new_panic(message);
         let ret_ty = ColumnTy::Id;
         let res = self.new_var(ret_ty);
         self.query.add_rule.push(Box::new(move |inner, rb| {

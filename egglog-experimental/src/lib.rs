@@ -92,7 +92,7 @@ pub fn new_experimental_egraph_with_proofs() -> EGraph {
 pub fn new_experimental_egraph_with_backend_for_proofs(backend: Box<dyn Backend>) -> EGraph {
     let mut egraph = EGraph::with_backend(backend);
     add_experimental_extensions(&mut egraph, false);
-    let typechecker = new_experimental_egraph_for_proofs().with_term_encoding_enabled();
+    let typechecker = new_experimental_egraph_for_proofs();
     egraph.with_term_encoding_typechecker(typechecker)
 }
 
@@ -113,9 +113,7 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
 
     // Support for set cost
     add_set_cost(egraph);
-    if egraph.supports_action_registry() {
-        egraph.add_read_primitive(GetSizePrimitive, None);
-    }
+    egraph.add_read_primitive(GetSizePrimitive, None);
     egraph
         .type_info()
         .add_presort::<MaybeSort>(span!())
@@ -124,9 +122,7 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
         .type_info()
         .add_presort::<EitherSort>(span!())
         .unwrap();
-    if egraph.supports_action_registry() {
-        add_container_primitives(egraph);
-    }
+    add_container_primitives(egraph);
 
     // unstable-fresh! macro
     egraph

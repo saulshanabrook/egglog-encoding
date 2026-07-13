@@ -66,8 +66,7 @@
 //! Capabilities that not every backend can offer — the seminaive-safe
 //! [`ActionRegistry`] ([`Backend::action_registry`]) and container sorts — are
 //! exposed as methods with **default** bodies. An implementer overrides only
-//! what it supports and advertises it through the `supports_*` flags; the
-//! frontend gates on those.
+//! what it supports; the frontend gates on the returned capability.
 //!
 //! ## Ergonomic sugar
 //!
@@ -303,7 +302,11 @@ pub trait Backend: Send + Sync {
     /// Drop a user-defined primitive.
     fn free_external_func(&mut self, func: ExternalFunctionId);
 
-    /// Register a deferred-panic primitive; returns its id.
+    /// Register a deferred-panic primitive and return its id.
+    ///
+    /// The registered function must ignore any arguments supplied by its call
+    /// site, trigger the backend's normal early-stop path, and make the next
+    /// [`Backend::run_rules`] return the provided message as an error.
     fn new_panic(&mut self, message: String) -> ExternalFunctionId;
 
     // -- diagnostics --------------------------------------------------------
@@ -321,27 +324,20 @@ pub trait Backend: Send + Sync {
 
     // -- optional / advanced (default-provided) -----------------------------
 
-    /// Handle to the seminaive-safe [`ActionRegistry`] that registry-backed
-    /// primitives dispatch through.
+    /// The seminaive-safe [`ActionRegistry`] used by registry-backed
+    /// primitives, when this backend provides one.
     ///
-    /// Only backends whose primitives run against an in-memory
-    /// [`ExecutionState`] provide this (the reference bridge). Backends that
-    /// have no such registry return [`Backend::supports_action_registry`] =
-    /// `false` and leave this default (the frontend routes their primitives
-    /// through a registry-free path).
-    fn action_registry(&self) -> &Arc<RwLock<ActionRegistry>> {
-        unimplemented!("this backend has no action registry")
+    /// Backends without an in-memory action registry return `None`; the
+    /// frontend routes unsupported primitive calls through
+    /// [`Backend::new_panic`] so execution fails through the backend's normal
+    /// error channel.
+    fn action_registry(&self) -> Option<&Arc<RwLock<ActionRegistry>>> {
+        None
     }
 
     /// Whether this backend supports `Vec` / `Set` / `Map` / `MultiSet`
     /// container sorts.
     fn supports_containers(&self) -> bool {
-        false
-    }
-
-    /// Whether this backend exposes an in-memory [`ActionRegistry`]
-    /// ([`Backend::action_registry`]).
-    fn supports_action_registry(&self) -> bool {
         false
     }
 

@@ -20,8 +20,8 @@
 //! Relational table-atom joins are the only operations on the DD engine, and
 //! there is no host nested-loop fallback. Any rule the DD plan cannot lower (a
 //! binding row exceeding the fixed width cap [`crate::dd_native::W`], or any
-//! shape `plan_join` rejects) `panic!`s with a specific reason. Body primitives
-//! and head actions are applied host-side here.
+//! shape `plan_join` rejects) is reported as an error. Body primitives and head
+//! actions are applied host-side here.
 //!
 //! Primitives are invoked through `Database::with_execution_state`, so they see
 //! the same interned base `Value`s the frontend created and preserve bit-for-bit
@@ -114,18 +114,10 @@ enum Write {
 /// never-cleared `InputSession`s. Positive per-rule binding deltas become envs;
 /// body primitives and head actions then run host-side. Writes and FD merges are
 /// applied afterward so results are bit-exact.
-pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
+pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<bool> {
     // Every rule — including the term encoder's canonicalization rules — lowers
     // as an ordinary rule and joins on the fused DD worker; there is no special
     // casing for any rule kind.
-
-    // Collect each rule's index + IR up front (clone to avoid borrow conflicts
-    // while we also mutate the mirror via lookups). Every rule takes the same
-    // atom-rule path and joins on the fused DD worker.
-    let rules: Vec<(usize, RuleSpec)> = rule_idxs
-        .iter()
-        .filter_map(|&i| eg.rules.get(i).and_then(|r| r.clone()).map(|r| (i, r)))
-        .collect();
 
     // Snapshot the fresh-id counter: any hash-cons (`lookup_or_create`) this
     // call advances it, the O(1) signal that a new term row was created.
@@ -142,7 +134,7 @@ pub fn run_iteration(eg: &mut EGraph, rule_idxs: &[usize]) -> Result<bool> {
     // apply head actions in the original rule firing order. Atom-less rules
     // (`(rule () …)`) have no input relation to drive the DD dataflow, so they
     // stay host-side (fire once); they are computed inline below.
-    let envs_by_rule = fused_bindings(eg, &rules)?;
+    let envs_by_rule = fused_bindings(eg, rules)?;
 
     for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
         for mut env in envs {
@@ -271,8 +263,8 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
 
     // The fused join is keyed by the SORTED atom-bearing rule-index list (the
     // ruleset identity). Build it ONCE (lazily) per distinct ruleset, planning
-    // each rule. Any shape `plan_join` rejects PANICS (no host fallback; the DD
-    // dataflow is the only join path).
+    // each rule. Any shape `plan_join` rejects is returned as an error (there is
+    // no host fallback; the DD dataflow is the only join path).
     let mut key: Vec<usize> = atom_rule_idxs.clone();
     key.sort_unstable();
 
@@ -282,14 +274,13 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
         let mut plans: Vec<(usize, dd_native::JoinPlan)> = Vec::with_capacity(atom_positions.len());
         for (&pos, &idx) in atom_positions.iter().zip(atom_rule_idxs.iter()) {
             let rule = &rules[pos].1;
-            let plan = match dd_native::plan_join(rule) {
-                Ok(p) => p,
-                Err(reason) => panic!(
+            let plan = dd_native::plan_join(rule).map_err(|reason| {
+                anyhow!(
                     "Differential Dataflow join cannot lower rule {:?}: {reason} \
                      (no host fallback; the DD dataflow is the only join path)",
                     rule.name
-                ),
-            };
+                )
+            })?;
             plans.push((idx, plan));
         }
         let fused = dd_native::FusedDdJoin::build(&plans)?;
@@ -299,27 +290,19 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     // Capture the fused worker's build order and map each output slot back to
     // the current caller by stable rule id. The sorted cache key only proves set
     // equality; it does not prove that this call uses the original order.
-    let (fused_rule_idxs, fused_body_reads): (Vec<usize>, Vec<Vec<ReadKey>>) = {
-        let fused = eg.dd_fused.get(&key).expect("fused join present");
+    let (fused_rule_idxs, var_orders, all_reads): (Vec<usize>, Vec<Vec<u32>>, Vec<ReadKey>) = {
+        let fused = eg
+            .dd_fused
+            .get(&key)
+            .expect("DD cache invariant: fused join was inserted for this ruleset key");
         let rule_idxs = fused.rule_indices();
-        let body_reads = (0..rule_idxs.len())
-            .map(|p| fused.rule_body_reads(p).to_vec())
+        let var_orders = (0..rule_idxs.len())
+            .map(|p| fused.rule_var_order(p).to_vec())
             .collect();
-        (rule_idxs, body_reads)
+        (rule_idxs, var_orders, fused.read_keys().to_vec())
     };
     let fused_positions =
         fused_caller_positions(&atom_positions, &atom_rule_idxs, &fused_rule_idxs)?;
-
-    // Each atom-bearing rule's canonical var order (for env reconstruction).
-    let var_orders: Vec<Vec<u32>> = fused_positions
-        .iter()
-        .map(|&pos| {
-            let rule = &rules[pos].1;
-            dd_native::plan_join(rule)
-                .expect("plan re-derivable")
-                .var_order()
-        })
-        .collect();
 
     // Distinct relation read views across the whole ruleset. We diff versioned
     // current snapshots rather than plain row sets: if another ruleset removes and
@@ -327,14 +310,6 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     // end states but has a fresh version. Feeding `-row` then `+row` as separate
     // DD steps preserves the reference backend's hidden-timestamp behavior
     // without replaying transient rows that are no longer visible.
-    let mut all_reads: Vec<ReadKey> = Vec::new();
-    for bf in &fused_body_reads {
-        for &read in bf {
-            if !all_reads.contains(&read) {
-                all_reads.push(read);
-            }
-        }
-    }
     let mut removals_batch: DdDeltaRows = HashMap::new();
     let mut insertions_batch: DdDeltaRows = HashMap::new();
     {
@@ -390,7 +365,10 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     // change may require a removal phase followed by an insertion phase.
     let mut per_rule_bindings = vec![Vec::new(); fused_positions.len()];
     {
-        let fused = eg.dd_fused.get_mut(&key).expect("fused join present");
+        let fused = eg
+            .dd_fused
+            .get_mut(&key)
+            .expect("DD cache invariant: fused join was inserted for this ruleset key");
         for delta in &delta_batches {
             let stepped = fused.step(delta)?;
             for (acc, rows) in per_rule_bindings.iter_mut().zip(stepped) {
@@ -452,7 +430,7 @@ pub(crate) fn step_prim(
             .map(|term| term_value(term, &env).map(Value::new))
             .collect();
         let Some(argv) = resolved else { continue };
-        let result = eg.eval_prim_internal(id, &argv);
+        let result = eg.eval_prim_internal(id, &argv)?;
         let Some(result) = result else {
             // Primitive failed (e.g. `!=` of equal args) — prune.
             continue;
@@ -473,7 +451,9 @@ pub(crate) fn step_prim(
                     out.push(env);
                 }
             }
-            GenericAtomTerm::Global(..) => {}
+            GenericAtomTerm::Global(..) => {
+                unreachable!("DD rule validation must reject global primitive return terms")
+            }
         }
     }
     Ok(out)
@@ -515,7 +495,7 @@ fn apply_head(
                             .copied()
                             .map(Value::new)
                             .collect::<Vec<_>>();
-                        eg.eval_prim_internal(*id, &arguments)
+                        eg.eval_prim_internal(*id, &arguments)?
                     }
                 };
                 if let Some(result) = result {
@@ -563,7 +543,9 @@ fn term_value(term: &GenericAtomTerm<RuleVar, RuleValue>, env: &Env) -> Option<u
     match term {
         GenericAtomTerm::Var(_, variable) => env.get(&variable.id).copied(),
         GenericAtomTerm::Literal(_, value) => Some(value.value.rep()),
-        GenericAtomTerm::Global(..) => None,
+        GenericAtomTerm::Global(..) => {
+            unreachable!("DD rule validation must reject residual global terms")
+        }
     }
 }
 

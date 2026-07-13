@@ -584,8 +584,7 @@ impl EGraph {
     /// union-find. Re-typechecking after the encoder runs uses a default
     /// (bridge-backed) e-graph, so this backend need not implement typechecking.
     pub fn with_term_encoding(mut self) -> Self {
-        self.proof_state.original_typechecking =
-            Some(Box::new(EGraph::default().with_term_encoding_enabled()));
+        self.proof_state.original_typechecking = Some(Box::new(EGraph::default()));
         self
     }
 
@@ -1327,8 +1326,18 @@ impl EGraph {
     /// a [`ReadState`], so it can read but not write. Because this
     /// borrows `&self`, the closure and its callbacks may also call other
     /// `&self` methods such as [`EGraph::value_to_base`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the selected backend does not provide an action registry.
+    /// Use the fallible top-level table iteration methods for backend-generic
+    /// reads.
     pub fn read<R>(&self, f: impl FnOnce(ReadState<'_, '_>) -> R) -> R {
-        let registry = self.backend.action_registry().clone();
+        let registry = self
+            .backend
+            .action_registry()
+            .cloned()
+            .expect("EGraph::read requires a backend action registry");
         let guard = registry.read().unwrap();
         self.backend
             .with_execution_state_tracked(|es| f(ReadState::wrap(es, &guard, Context::Read)))
@@ -1341,34 +1350,94 @@ impl EGraph {
     pub fn function_entries(
         &self,
         name: &str,
-        f: impl FnMut(FunctionEntry<'_>),
+        mut f: impl FnMut(FunctionEntry<'_>),
     ) -> Result<(), Error> {
-        self.read(|rs| rs.function_entries(name, f))
+        self.function_entries_while(name, |entry| {
+            f(entry);
+            true
+        })
     }
 
     /// Like [`EGraph::function_entries`], but stops when `f` returns `false`.
     pub fn function_entries_while(
         &self,
         name: &str,
-        f: impl FnMut(FunctionEntry<'_>) -> bool,
+        mut f: impl FnMut(FunctionEntry<'_>) -> bool,
     ) -> Result<(), Error> {
-        self.read(|rs| rs.function_entries_while(name, f))
+        let function =
+            self.functions
+                .get(name)
+                .ok_or_else(|| crate::api::ApiError::MissingTable {
+                    name: name.to_owned(),
+                })?;
+        if function.subtype() != FunctionSubtype::Custom {
+            return Err(crate::api::ApiError::WrongSubtype {
+                name: name.to_owned(),
+                expected: "function",
+                actual: "constructor",
+            }
+            .into());
+        }
+        self.backend.for_each_while(function.backend_id, |row| {
+            let (output, inputs) = row
+                .vals
+                .split_last()
+                .expect("function row has at least an output column");
+            f(FunctionEntry {
+                inputs,
+                output: *output,
+                subsumed: row.subsumed,
+            })
+        });
+        Ok(())
     }
 
     /// Call `f` on each [`Enode`] of a constructor / relation table.
     /// Top-level form of [`Read::constructor_enodes`]; errors if `name`
     /// is a function or unregistered.
-    pub fn constructor_enodes(&self, name: &str, f: impl FnMut(Enode<'_>)) -> Result<(), Error> {
-        self.read(|rs| rs.constructor_enodes(name, f))
+    pub fn constructor_enodes(
+        &self,
+        name: &str,
+        mut f: impl FnMut(Enode<'_>),
+    ) -> Result<(), Error> {
+        self.constructor_enodes_while(name, |enode| {
+            f(enode);
+            true
+        })
     }
 
     /// Like [`EGraph::constructor_enodes`], but stops when `f` returns `false`.
     pub fn constructor_enodes_while(
         &self,
         name: &str,
-        f: impl FnMut(Enode<'_>) -> bool,
+        mut f: impl FnMut(Enode<'_>) -> bool,
     ) -> Result<(), Error> {
-        self.read(|rs| rs.constructor_enodes_while(name, f))
+        let function =
+            self.functions
+                .get(name)
+                .ok_or_else(|| crate::api::ApiError::MissingTable {
+                    name: name.to_owned(),
+                })?;
+        if function.subtype() != FunctionSubtype::Constructor {
+            return Err(crate::api::ApiError::WrongSubtype {
+                name: name.to_owned(),
+                expected: "constructor",
+                actual: "function",
+            }
+            .into());
+        }
+        self.backend.for_each_while(function.backend_id, |row| {
+            let (eclass, children) = row
+                .vals
+                .split_last()
+                .expect("constructor row has at least an eclass column");
+            f(Enode {
+                children,
+                eclass: *eclass,
+                subsumed: row.subsumed,
+            })
+        });
+        Ok(())
     }
 
     /// Remove every row from the named function in bulk.
@@ -2409,7 +2478,7 @@ impl EGraph {
     /// Whether this e-graph's backend exposes the in-memory action registry
     /// used by registry-backed primitives.
     pub fn supports_action_registry(&self) -> bool {
-        self.backend.supports_action_registry()
+        self.backend.action_registry().is_some()
     }
 
     /// Returns `true` if a user-defined command with the given name is
@@ -2502,7 +2571,9 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let registry = self.backend.action_registry().clone();
+        let registry = self.backend.action_registry().cloned().ok_or_else(|| {
+            Error::BackendError("EGraph::update requires a backend action registry".into())
+        })?;
         let guard = registry.read().unwrap();
         let (result, changed) = self
             .backend
