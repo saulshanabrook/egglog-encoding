@@ -1539,6 +1539,147 @@ fn panic_functions_trigger_early_stop() {
     assert_eq!(channel.lock().unwrap().as_deref(), Some("lazy panic"));
 }
 
+#[test]
+fn ifeq_merge_selects_branch() {
+    // `MergeFn::IfEq` chooses `then` or `els` from a runtime equality of merged columns. Here the
+    // merge keeps 100 when the OLD value is 5 and 200 otherwise, exercising both branches.
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let v5 = egraph.base_values_mut().get(5i64);
+    let v100 = egraph.base_values_mut().get(100i64);
+    let v200 = egraph.base_values_mut().get(200i64);
+    let f = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
+        n_vals: 1,
+        default: DefaultVal::Fail,
+        merge: MergeFn::IfEq {
+            a: Box::new(MergeFn::Old),
+            b: Box::new(MergeFn::Const(v5)),
+            then: Box::new(MergeFn::Const(v100)),
+            els: Box::new(MergeFn::Const(v200)),
+        },
+        name: "f".into(),
+        can_subsume: false,
+    });
+
+    let c1 = egraph.base_value_constant(1i64);
+    let c2 = egraph.base_value_constant(2i64);
+    let c3 = egraph.base_value_constant(3i64);
+    let c5 = egraph.base_value_constant(5i64);
+    let c9 = egraph.base_value_constant(9i64);
+    let init = {
+        let mut rb = egraph.new_rule("init", true);
+        rb.set(f, &[c1.clone(), c5]); // f(1) = 5
+        rb.set(f, &[c2.clone(), c3]); // f(2) = 3
+        rb.build()
+    };
+    egraph.run_rules(&[init]).unwrap();
+    let conflict = {
+        let mut rb = egraph.new_rule("conflict", true);
+        rb.set(f, &[c1.clone(), c9.clone()]); // old 5 == 5  -> then -> 100
+        rb.set(f, &[c2.clone(), c9]); //         old 3 != 5  -> els  -> 200
+        rb.build()
+    };
+    egraph.run_rules(&[conflict]).unwrap();
+
+    let k1 = egraph.base_values_mut().get(1i64);
+    let k2 = egraph.base_values_mut().get(2i64);
+    assert_eq!(
+        egraph.base_values().unwrap::<i64>(egraph.lookup_id(f, &[k1]).unwrap()),
+        100
+    );
+    assert_eq!(
+        egraph.base_values().unwrap::<i64>(egraph.lookup_id(f, &[k2]).unwrap()),
+        200
+    );
+}
+
+#[test]
+fn self_referential_merge_union_find() {
+    // A merge that writes back into its OWN table, like the term encoding's single-table UF. On a
+    // conflicting parent it keeps the smaller endpoint and re-inserts the displaced edge into
+    // itself. Exercises `peek_next_function_id`, `MergeFn::TableInsert` into self, `Seq`, and the
+    // backend's self-write buffer pre-seed.
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let min_func = egraph.register_external_func(Box::new(core_relations::make_external_func(
+        |state, vals| {
+            let [a, b] = vals else { return None };
+            let (a, b) = (
+                state.base_values().unwrap::<i64>(*a),
+                state.base_values().unwrap::<i64>(*b),
+            );
+            Some(state.base_values().get::<i64>(a.min(b)))
+        },
+    )));
+    let max_func = egraph.register_external_func(Box::new(core_relations::make_external_func(
+        |state, vals| {
+            let [a, b] = vals else { return None };
+            let (a, b) = (
+                state.base_values().unwrap::<i64>(*a),
+                state.base_values().unwrap::<i64>(*b),
+            );
+            Some(state.base_values().get::<i64>(a.max(b)))
+        },
+    )));
+
+    // The merge references the table itself, so reserve its id before creating it.
+    let uf_id = egraph.peek_next_function_id();
+    let min = || MergeFn::Primitive(min_func, vec![MergeFn::Old, MergeFn::New]);
+    let max = MergeFn::Primitive(max_func, vec![MergeFn::Old, MergeFn::New]);
+    let uf = egraph.add_table(FunctionConfig {
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
+        n_vals: 1,
+        default: DefaultVal::Fail,
+        merge: MergeFn::IfEq {
+            a: Box::new(MergeFn::Old),
+            b: Box::new(MergeFn::New),
+            then: Box::new(MergeFn::Old),
+            els: Box::new(MergeFn::Seq(vec![
+                MergeFn::TableInsert(uf_id, vec![max, min()]),
+                min(),
+            ])),
+        },
+        name: "uf".into(),
+        can_subsume: false,
+    });
+    assert_eq!(uf, uf_id, "peeked id must match the id add_table assigns");
+
+    let set_parent = |egraph: &mut EGraph, child: i64, parent: i64| {
+        let (c, p) = (
+            egraph.base_value_constant(child),
+            egraph.base_value_constant(parent),
+        );
+        let r = {
+            let mut rb = egraph.new_rule("set", true);
+            rb.set(uf, &[c, p]);
+            rb.build()
+        };
+        egraph.run_rules(&[r]).unwrap();
+    };
+    let parent_of = |egraph: &mut EGraph, node: i64| -> Option<i64> {
+        let k = egraph.base_values_mut().get(node);
+        egraph
+            .lookup_id(uf, &[k])
+            .map(|v| egraph.base_values().unwrap::<i64>(v))
+    };
+
+    // uf[5] = 3, then uf[5] = 1: the conflict keeps min (1) and re-inserts the displaced edge 3->1.
+    set_parent(&mut egraph, 5, 3);
+    set_parent(&mut egraph, 5, 1);
+    assert_eq!(parent_of(&mut egraph, 5), Some(1), "5 points at the smaller endpoint");
+    assert_eq!(
+        parent_of(&mut egraph, 3),
+        Some(1),
+        "displaced edge 3->1 must be re-inserted into uf itself (self-write)"
+    );
+
+    // A conflict where the new parent is larger: uf[3] = 2 keeps 1 and re-inserts 2->1.
+    set_parent(&mut egraph, 3, 2);
+    assert_eq!(parent_of(&mut egraph, 3), Some(1));
+    assert_eq!(parent_of(&mut egraph, 2), Some(1), "displaced edge 2->1 re-inserted");
+}
+
 const _: () = {
     const fn assert_send<T: Send>() {}
     assert_send::<EGraph>()
