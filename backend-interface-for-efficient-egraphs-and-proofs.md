@@ -10,7 +10,8 @@ for M1-M5.<br>
 introduced by `a1342d64`, rule-name hoisting, the full default math fixture,
 composed proof snapshots, and transactional DD error rollback. M6 and M7 remain
 measurements of the earlier equivalent dirty prototype based on `fc86c37`;
-they are not presented as measurements of the integrated commit.<br>
+they are not presented as measurements of the integrated commit. M8 is a fresh
+bounded comparison from clean integrated commit `412fb58`.<br>
 **Audience:** egglog contributors and backend implementers<br>
 **Authorship:** Drafted by an AI assistant, then reviewed against the source code,
 tests, benchmark artifacts, profiler evidence, and team meeting notes listed in
@@ -60,11 +61,13 @@ The current evidence supports the following answer:
   a stronger generic backend contract: explicit key/output arity, atomic access
   to complete old/new output tuples, effectful merge expressions, dependency
   ordering, and transactional table updates.[S1][S11]
-- That semantic result is not a performance result. On the bounded mini-math
-  comparison, DD remained `3.105x` main in proofs and `7.150x` main in term mode,
-  with much higher RSS. Full math timed out at 120 seconds, and eggcc reached a
+- That semantic result is not a performance result. On the fresh integrated
+  mini-math comparison, DD remained `3.511x` main in proofs and `4.171x` main
+  in term mode, with much higher RSS. The short main runs made the wall-time
+  intervals noisy, but not the direction of the memory result. Full math timed
+  out at 120 seconds in the earlier boundary probe, and eggcc reached a
   registry-backed container-rebuild boundary after 73 seconds and about 4.0
-  GiB RSS.[M6][M7]
+  GiB RSS.[M7][M8]
 - A full backend is therefore more than a generic join engine. In the current DD
   split, Differential Dataflow performs body-table joins; a Rust mirror and
   host interpreter remain authoritative for body primitives, ordered actions,
@@ -112,7 +115,7 @@ meet the `<2x` eggcc target. The DD experiment strengthens the semantic
 portability result while weakening any claim that generic joins plus a host-side
 merge interpreter are sufficient for performance. The combined evidence
 supports the proposed separation as the most credible next design, while
-leaving the central performance claim unproven.[M1][M2][M4][M5][M6][M7]
+leaving the central performance claim unproven.[M1][M2][M4][M5][M7][M8]
 
 ## What Changed in This Revision
 
@@ -136,7 +139,7 @@ backend on the enabled corpus and for focused DD witnesses to pass the checker.
 It was not enough for native UF or registry-backed read/write/full primitives,
 and it did not make DD competitive with main. Push/pop now works through a deep
 authoritative-state clone that reconstructs transient DD state; it is not a
-native dataflow snapshot.[S8][M6][M7]
+native dataflow snapshot.[S8][M7][M8]
 
 The implementation therefore clarifies three boundaries:
 
@@ -367,19 +370,22 @@ The review classifies the implementation choices as follows:
 | deep clone plus transient DD reconstruction | implemented compatibility path | specify snapshot/restore semantics and cost |
 | bridge `ActionRegistry` | current-backend mechanism | backend-neutral read/write execution session |
 
-The bounded performance result is negative. Three fresh samples per cell on
-`math-microbenchmark-mini` produced:[M6]
+The bounded performance result is negative. Three fresh samples per cell at the
+clean integrated commit `412fb58` on `math-microbenchmark-mini` produced:[M8]
 
 | Mode | main mean | DD mean | DD/main point | DD/main 95% CI |
 | --- | ---: | ---: | ---: | ---: |
-| term | `0.0558s` | `0.3990s` | `7.150x` | `[5.645x, 8.904x]` |
-| proofs | `0.1117s` | `0.3467s` | `3.105x` | `[2.366x, 3.848x]` |
+| term | `0.0838s` | `0.3494s` | `4.171x` | point only |
+| proofs | `0.0983s` | `0.3451s` | `3.511x` | `[1.955x, 16.362x]` |
 
-DD peak RSS was `243.6 MiB` in term mode and `231.8 MiB` in proofs mode,
-versus `21.1 MiB` and `42.6 MiB` for main. Within DD, `proofs/term` was
-`0.869x` with a wide `[0.633x, 1.165x]` interval. The defensible conclusion is
-not that proofs make DD faster; it is that the fixed DD/runtime cost dominates
-the incremental proof-payload cost in this short workload.[M6]
+DD peak RSS was `242.4 MiB` in term mode and `232.3 MiB` in proofs mode,
+versus `21.5 MiB` and `43.0 MiB` for main: DD/main was `11.293x` and `5.405x`,
+respectively. Within DD, `proofs/term` was `0.988x` with a
+`[0.887x, 1.102x]` interval. The main runs are close enough to the startup floor
+that the wall ratio is imprecise; the defensible conclusion is not that proofs
+make DD faster, but that fixed DD/runtime cost dominates incremental proof
+payload cost in this short workload. The earlier dirty-prototype M6 result had
+the same direction (`3.105x` DD/main in proofs) with a narrower interval.[M6][M8]
 
 Two one-sample boundary probes reinforce the distinction between semantic and
 full-system parity:[M7]
@@ -1130,10 +1136,10 @@ A useful working budget, not yet an accepted project requirement, is:
 RelationalV1 does not satisfy this criterion: its `1.32x` synthetic point ratio
 has no confidence interval, covers only one relation producer family, and omits
 the more expensive equality, merge, container, and materialization work.[M5]
-The DD compatibility result also does not satisfy it: DD was `3.105x` main in
-proof mode on the short mini-math probe, timed out on full math, and did not
-complete eggcc.[M6][M7] The only completion gate is still the full `<2x`
-frozen-fixture result.
+The DD compatibility result also does not satisfy it: integrated DD was
+`3.511x` main in proof mode on the short mini-math probe, while the earlier
+boundary run timed out on full math and did not complete eggcc.[M7][M8] The
+only completion gate is still the full `<2x` frozen-fixture result.
 
 ## Accepted Constraints
 
@@ -1205,8 +1211,9 @@ This section records the review pass applied to the report.
 
 - The five-fixture final wall-time and RSS results.[M1]
 - The eggcc off/term/proofs split and profile attribution.[M2]
-- The three-round DD/main mini-math wall-time and RSS comparison.[M6]
+- The earlier dirty-prototype DD/main mini-math comparison.[M6]
 - The full-math timeout and eggcc registry-boundary probe outcomes.[M7]
+- The clean integrated DD/main mini-math wall-time and RSS comparison.[M8]
 
 RelationalV1's timing is deliberately excluded from this category. Its values
 are focused point observations without retained sample vectors or confidence
@@ -1407,6 +1414,24 @@ recorded command and hashes to reproduce them.
     egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg
   ```
 
+- **[M8] Integrated DD/main mini-math comparison:** 12-row local report
+  `/tmp/pr13-dd-integrated-mini-20260713.jsonl`, SHA-256
+  `bd28740635b587953ae5f7067b720200f874cf4c919094a3402b1fa6e1052828`.
+  It contains three fresh samples for each of main/DD crossed with term/proofs
+  at clean commit `412fb580d293b38fe72bfb2057afba596829c9f3`, benchmark
+  binary SHA-256
+  `621025ec4f9bc8654106d307bf55761f41757d15b370ba2c9fd3f475873ea3c6`,
+  and workload SHA-256
+  `85b616bd104884035db922b24970d72023bc00255360651525beab9821e18223`.
+  Command:
+
+  ```shell
+  ./bench.py --rounds 3 --force-run \
+    --report /tmp/pr13-dd-integrated-mini-20260713.jsonl \
+    --backend main,dd --treatments term,proofs --timeout-sec 120 \
+    --format markdown egglog/tests/math-microbenchmark-mini.egg
+  ```
+
 The final benchmark command was:
 
 ```shell
@@ -1436,7 +1461,7 @@ The final benchmark command was:
 
 ### Sharing package
 
-The Markdown report is ready for team review on its own, but M1-M7 and N1 are
+The Markdown report is ready for team review on its own, but M1-M8 and N1 are
 local or excluded evidence. For an independently auditable distribution,
 attach:
 
@@ -1444,9 +1469,8 @@ attach:
 - `.codex/proof-overhead-under-2x.md` and the M1/M2 files named above;
 - the two content-addressed changed-file bundles and the H1 output-evidence
   bundle;
-- the M6/M7 JSONL reports and integrated implementation commit `32d5507`
-  (noting that those measurements were recorded from its earlier dirty
-  prototype);
+- the M6/M7 historical JSONL reports, the clean M8 JSONL report, and integrated
+  implementation commit `32d5507`;
 - the N1 meeting-notes attachment; and
 - the retained RelationalV1 record file if the recipient needs to rerun the
   standalone verifier rather than rely on its recorded hash and review.
