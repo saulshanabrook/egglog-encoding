@@ -3,7 +3,7 @@
 Serializes the active report scope (``ReportSelection``) plus only the rows that
 scope selects, assembles the page, and serves it on loopback. The tables and
 their live recompute live in ``web_registry.py`` (shipped to Pyodide as the graph
-script); ``models.py``/``tables.py`` ship as eval-live extra modules. Scope is
+script); ``models.py``/``analysis.py``/``report.py`` ship as eval-live extra modules. Scope is
 carried authoritatively — the browser never reconstructs it from historical rows.
 """
 
@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
+import analysis
 import models
 import report_frame
-import tables
 
 if TYPE_CHECKING:
     from pandera.typing import DataFrame
@@ -34,7 +34,7 @@ PYODIDE_CDN = "https://cdn.jsdelivr.net/pyodide/v0.27.5/full/pyodide.js"
 def _scoped_rows(rows: DataFrame[ReportFrame], selection: ReportSelection) -> DataFrame[ReportFrame]:
     """The rows the active report selects: latest ``rounds`` per (target, file, treatment)."""
     frames = [
-        tables.selected_rows(
+        analysis.selected_rows(
             rows,
             models.EstimateKey(target.binary_sha256, file.sha256, treatment, selection.timeout_sec),
             selection.rounds,
@@ -82,9 +82,12 @@ def graph_script_source(selection: ReportSelection, present: list[tuple[str, str
 
 def extra_modules() -> dict[str, str]:
     """Compute modules the graph script imports, written to the Pyodide FS."""
+    import report
+
     return {
         "models.py": Path(models.__file__).read_text(encoding="utf-8"),
-        "tables.py": Path(tables.__file__).read_text(encoding="utf-8"),
+        "analysis.py": Path(analysis.__file__).read_text(encoding="utf-8"),
+        "report.py": Path(report.__file__).read_text(encoding="utf-8"),
     }
 
 

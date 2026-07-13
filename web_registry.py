@@ -1,7 +1,7 @@
 """eval-live registry for the report tables — a generic loop, no per-table code.
 
-Registers every table from ``tables.build_report_tables`` so adding a table in
-``tables.py`` appears in the web view and ``--dump-dir`` automatically. Runs in
+Registers every table from ``report.build_report_tables`` so adding a table in
+``report.py`` appears in the web view and ``--dump-dir`` automatically. Runs in
 Python (dump) and as the Pyodide graph script (web). The authoritative scope
 (``ReportSelection``) and the present table set are baked in by the host as
 ``_SELECTION`` / ``_PRESENT_TABLES``; the browser never reconstructs scope from
@@ -18,7 +18,7 @@ import eval_live
 import pandas as pd
 
 import models
-import tables
+import report
 
 # Visual-only styles (eval-live keeps meaning caller-side): mirror the CLI palette.
 STATUS_STYLE: dict[str, Any] = {
@@ -44,24 +44,24 @@ def configure(selection: models.ReportSelection) -> None:
     _scope["spec"] = models.selection_spec(selection)
 
 
-def _web_cell(cell: tables.Cell) -> Any:
+def _web_cell(cell: report.Cell) -> Any:
     if cell.status is None:
         return cell.text
     return {"text": cell.text, "style": STATUS_STYLE.get(cell.status)}
 
 
-def _catalog(data: dict[str, Any]) -> list[tables.ReportTable]:
+def _catalog(data: dict[str, Any]) -> list[report.ReportTable]:
     if _last["data"] is not data:  # one build per render pass (all table fns share the data object)
         records = data.get("Benchmark report", [])
         _last["data"] = data
         if records and _scope["spec"] is not None:
             frame = pd.DataFrame(records)
-            _last["catalog"] = tables.build_report_tables(
+            _last["catalog"] = report.build_report_tables(
                 cast("Any", frame), _scope["targets"], _scope["spec"], validate=False
             )
         else:
             _last["catalog"] = []
-    return cast("list[tables.ReportTable]", _last["catalog"])
+    return cast("list[report.ReportTable]", _last["catalog"])
 
 
 def present_tables(data: dict[str, Any]) -> list[tuple[str, str | None]]:
@@ -69,7 +69,7 @@ def present_tables(data: dict[str, Any]) -> list[tuple[str, str | None]]:
     return [(table.web_name, table.caption) for table in _catalog(data)]
 
 
-def _web_rows(table: tables.ReportTable) -> list[dict[str, Any]]:
+def _web_rows(table: report.ReportTable) -> list[dict[str, Any]]:
     dropped = {
         column.label
         for column in table.columns

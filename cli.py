@@ -18,8 +18,8 @@ from rich.text import Text
 from rich.tree import Tree
 
 from models import BenchmarkSpec, ReportDestination, ResolvedTarget
+from report import Cell, Column, ReportTable, build_report_tables
 from report_frame import ReportFrame
-from tables import Cell, Column, ReportTable, build_report_tables
 
 RESULT_STYLES = {
     "descriptive": "dim",

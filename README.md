@@ -556,10 +556,10 @@ Python checks are run as separate commands:
 
 ```bash
 uv lock --check
-uv run --locked ruff format --check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
-uv run --locked ruff check bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
-uv run --locked mypy bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py
+uv run --locked ruff format --check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
+uv run --locked ruff check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
+uv run --locked mypy analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
 uv run --locked pytest -q
 ```
 
-Use `uv run ruff format bench.py cli.py models.py report_frame.py tables.py web.py web_registry.py test_bench.py test_web.py` to apply formatting locally.
+Use `uv run ruff format analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py` to apply formatting locally.

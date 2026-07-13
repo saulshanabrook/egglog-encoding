@@ -19,6 +19,34 @@ if TYPE_CHECKING:
 Status = Literal["success", "timed-out", "failure"]
 Treatment = Literal["off", "term", "proofs"]
 
+# Result classification vocabulary shared by the classifiers and both renderers.
+# Meaning is centralized here; the Rich (cli) and CSS (eval-live) style maps that
+# interpret these are renderer-specific.
+ResultStatus = Literal[
+    "faster",
+    "slower",
+    "less",
+    "more",
+    "unclear",
+    "established",
+    "not established",
+    "point only",
+    "invalid",
+    "descriptive",
+]
+RESULT_STATUSES: tuple[ResultStatus, ...] = (
+    "faster",
+    "slower",
+    "less",
+    "more",
+    "unclear",
+    "established",
+    "not established",
+    "point only",
+    "invalid",
+    "descriptive",
+)
+
 
 @dataclass(frozen=True)
 class TargetRow:

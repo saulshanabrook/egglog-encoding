@@ -31,6 +31,11 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from analysis import (
+    estimate_key_for,
+    selected_rows,
+    status_counts_for_rows,
+)
 from cli import render_report
 from models import (
     BenchmarkSpec,
@@ -49,11 +54,6 @@ from report_frame import (
     persisted_report_columns,
     report_columns,
     validate_report_frame,
-)
-from tables import (
-    estimate_key_for,
-    selected_rows,
-    status_counts_for_rows,
 )
 
 DEFAULT_REPORT = ".reports.jsonl"

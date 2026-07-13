@@ -14,7 +14,7 @@ from rich.console import Console
 import bench
 import cli
 import models
-import tables
+import report
 import web
 import web_registry
 
@@ -203,7 +203,7 @@ def test_terminal_and_web_cells_agree() -> None:
     targets = [make_target("sha256:base", "base"), make_target("sha256:cand", "cand")]
     selection = models.build_report_selection(targets, spec)
 
-    terminal_catalog = {t.web_name: t for t in tables.build_report_tables(rows, targets, spec)}
+    terminal_catalog = {t.web_name: t for t in report.build_report_tables(rows, targets, spec)}
     web_registry.configure(selection)
     data = web.report_data(rows, selection)
 
@@ -276,3 +276,10 @@ def test_graph_script_compiles() -> None:
 
     compile(script, "<graph_script>", "exec")  # raises SyntaxError if the future import isn't first
     assert "_SELECTION = {" in script and "_PRESENT_TABLES = [" in script
+
+
+def test_status_style_maps_cover_all_statuses() -> None:
+    # semantics are centralized (models.RESULT_STATUSES); each renderer's style map must cover them
+    for status in models.RESULT_STATUSES:
+        assert status in cli.RESULT_STYLES, f"cli.RESULT_STYLES missing {status!r}"
+        assert status in web_registry.STATUS_STYLE, f"web_registry.STATUS_STYLE missing {status!r}"

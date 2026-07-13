@@ -12,11 +12,12 @@ import pandera.errors as pa_errors
 import pytest
 from rich.console import Console
 
+import analysis
 import bench
 import cli
 import models
+import report
 import report_frame
-import tables
 
 ROOT = Path(__file__).resolve().parent
 
@@ -100,7 +101,7 @@ def test_selected_rows_uses_latest_timestamp_then_jsonl_order() -> None:
         make_record(2, started_at="2026-07-04T12:00:01Z", wall_sec=3.0),
     )
 
-    selected = tables.selected_rows(rows, models.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
+    selected = analysis.selected_rows(rows, models.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
 
     assert selected["row_index"].tolist() == [1, 2]
 
@@ -111,8 +112,8 @@ def test_timeout_counts_for_cache_but_invalidates_stats() -> None:
         make_record(1, started_at="2026-07-04T12:00:01Z", wall_sec=1.0),
     )
 
-    selected = tables.selected_rows(rows, models.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
-    summary = tables.summarize_cell(selected, 2)
+    selected = analysis.selected_rows(rows, models.EstimateKey("sha256:bin", "sha256:file", "off", 120), 2)
+    summary = analysis.summarize_cell(selected, 2)
 
     assert len(selected) == 2
     assert summary.issue == "timeout row selected"
@@ -120,7 +121,7 @@ def test_timeout_counts_for_cache_but_invalidates_stats() -> None:
 
 
 def test_ratio_from_samples_reports_fieller_interval() -> None:
-    summary = tables.ratio_from_samples(
+    summary = analysis.ratio_from_samples(
         [1.00, 1.05, 0.95, 1.02, 0.98],
         [1.45, 1.52, 1.48, 1.50, 1.55],
     )
@@ -133,28 +134,28 @@ def test_ratio_from_samples_reports_fieller_interval() -> None:
 
 
 def test_suite_ratio_sums_fixed_files() -> None:
-    baseline_a = tables.summarize_cell(
+    baseline_a = analysis.summarize_cell(
         make_rows(
             make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0),
             make_record(1, started_at="2026-07-04T12:00:01Z", wall_sec=1.2),
         ),
         2,
     )
-    candidate_a = tables.summarize_cell(
+    candidate_a = analysis.summarize_cell(
         make_rows(
             make_record(2, started_at="2026-07-04T12:00:00Z", wall_sec=2.0),
             make_record(3, started_at="2026-07-04T12:00:01Z", wall_sec=2.2),
         ),
         2,
     )
-    baseline_b = tables.summarize_cell(
+    baseline_b = analysis.summarize_cell(
         make_rows(
             make_record(4, started_at="2026-07-04T12:00:00Z", wall_sec=3.0),
             make_record(5, started_at="2026-07-04T12:00:01Z", wall_sec=3.2),
         ),
         2,
     )
-    candidate_b = tables.summarize_cell(
+    candidate_b = analysis.summarize_cell(
         make_rows(
             make_record(6, started_at="2026-07-04T12:00:00Z", wall_sec=4.0),
             make_record(7, started_at="2026-07-04T12:00:01Z", wall_sec=4.2),
@@ -162,7 +163,7 @@ def test_suite_ratio_sums_fixed_files() -> None:
         2,
     )
 
-    summary = tables.suite_ratio([(baseline_a, candidate_a), (baseline_b, candidate_b)])
+    summary = analysis.suite_ratio([(baseline_a, candidate_a), (baseline_b, candidate_b)])
 
     assert summary.point == pytest.approx((2.1 + 4.1) / (1.1 + 3.1))
 
@@ -199,10 +200,10 @@ def test_target_suite_treatment_ratio_compares_same_treatment_between_targets() 
             7, started_at="2026-07-04T12:00:01Z", binary_sha256="sha256:candidate", file_sha256="sha256:b", wall_sec=2.5
         ),
     )
-    base_cells = tables.target_cell_summaries(rows, base, spec)
-    candidate_cells = tables.target_cell_summaries(rows, candidate, spec)
+    base_cells = analysis.target_cell_summaries(rows, base, spec)
+    candidate_cells = analysis.target_cell_summaries(rows, candidate, spec)
 
-    ratio = tables.target_suite_treatment_ratio(base_cells, candidate_cells, spec, "off")
+    ratio = analysis.target_suite_treatment_ratio(base_cells, candidate_cells, spec, "off")
 
     assert ratio.point == pytest.approx((0.85 + 2.45) / (1.1 + 3.1))
     assert ratio.ci_low is not None
@@ -213,40 +214,40 @@ def test_summary_formatters_show_ranges_when_defined_and_points_otherwise() -> N
     empty_rows = bench.empty_report_frame()
 
     assert (
-        tables.format_seconds_summary(
+        report.format_seconds_summary(
             models.CellSummary(empty_rows, (), {}, mean=1.0, ci_low=0.75, ci_high=1.25, issue=None)
         )
         == "[0.7500s, 1.2500s]"
     )
     assert (
-        tables.format_ratio_summary(models.RatioSummary(point=2.0, ci_low=1.6, ci_high=2.6, issue=None))
+        report.format_ratio_summary(models.RatioSummary(point=2.0, ci_low=1.6, ci_high=2.6, issue=None))
         == "[1.600x, 2.600x]"
     )
     assert (
-        tables.format_ratio_summary(models.RatioSummary(point=2.0, ci_low=None, ci_high=None, issue=None)) == "2.000x"
+        report.format_ratio_summary(models.RatioSummary(point=2.0, ci_low=None, ci_high=None, issue=None)) == "2.000x"
     )
-    assert tables.format_bytes(512) == "512 B"
-    assert tables.format_bytes(2 * 1024 * 1024) == "2.0 MiB"
+    assert report.format_bytes(512) == "512 B"
+    assert report.format_bytes(2 * 1024 * 1024) == "2.0 MiB"
     assert (
-        tables.format_bytes_summary(
+        report.format_bytes_summary(
             models.CellSummary(empty_rows, (), {}, mean=2 * 1024 * 1024, ci_low=None, ci_high=None, issue=None)
         )
         == "2.0 MiB"
     )
     assert (
-        tables.format_wall_time_change(models.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None))
+        report.format_wall_time_change(models.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None))
         == "[-30.0%, -10.0%]"
     )
     assert (
-        tables.format_wall_time_change(models.RatioSummary(point=1.25, ci_low=None, ci_high=None, issue=None))
+        report.format_wall_time_change(models.RatioSummary(point=1.25, ci_low=None, ci_high=None, issue=None))
         == "25.0%"
     )
     assert (
-        tables.format_wall_time_change(models.RatioSummary(point=None, ci_low=None, ci_high=None, issue="invalid"))
+        report.format_wall_time_change(models.RatioSummary(point=None, ci_low=None, ci_high=None, issue="invalid"))
         == "-"
     )
-    assert tables.lower_is_better_result(models.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None)) == "less"
-    assert tables.lower_is_better_result(models.RatioSummary(point=1.2, ci_low=1.1, ci_high=1.3, issue=None)) == "more"
+    assert report.lower_is_better_result(models.RatioSummary(point=0.8, ci_low=0.7, ci_high=0.9, issue=None)) == "less"
+    assert report.lower_is_better_result(models.RatioSummary(point=1.2, ci_low=1.1, ci_high=1.3, issue=None)) == "more"
 
 
 def test_parse_target_variants() -> None:
