@@ -64,6 +64,14 @@ impl DependencyGraph {
     pub(crate) fn strata(&self) -> impl Iterator<Item = &IndexSet<TableId>> {
         self.levels.iter().map(|(_, tables)| tables)
     }
+    /// Whether this table's merge reads another table (has a read dependency). Tables with read
+    /// dependencies sit above level 0; tables with only write dependencies (or none) are at level
+    /// 0. Used to decide whether the dependency-agnostic `merge_simple` fast path is safe.
+    pub(crate) fn has_read_deps(&self, table: TableId) -> bool {
+        self.to_level
+            .get(table)
+            .is_some_and(|level| *level != LevelId::new(0))
+    }
     pub(crate) fn write_deps(&self, table: TableId) -> impl Iterator<Item = TableId> + '_ {
         self.write_deps
             .get(table)

@@ -386,14 +386,14 @@ impl RuleBuilder<'_> {
         let schema_math = if let Some(func) = func {
             let info = &self.resources.egraph.funcs[func];
             assert_eq!(info.schema.len(), entries.len());
-            SchemaMath {
-                subsume: info.can_subsume,
-                func_cols: info.schema.len(),
-            }
+            info.schema_math()
         } else {
             SchemaMath {
                 subsume: subsume_entry.is_some(),
+                n_keys: entries.len().saturating_sub(1),
                 func_cols: entries.len(),
+                // No merge runs off this fallback schema, so no identity guard.
+                n_identity_vals: None,
             }
         };
         schema_math.write_table_row(
@@ -502,8 +502,8 @@ impl RuleBuilder<'_> {
     ///
     /// `entries` should match the number of keys to the function.
     pub fn subsume(&mut self, func: FunctionId, entries: &[QueryEntry]) {
-        // First, insert a subsumed value if the tuple is new.
-        let ret = self.lookup_with_subsumed(
+        // Ensure the row exists (panics otherwise); its value is re-read per column below.
+        let _ret = self.lookup_with_subsumed(
             func,
             entries,
             QueryEntry::Const {
@@ -513,31 +513,34 @@ impl RuleBuilder<'_> {
             || "subsumed a nonextestent row!".to_string(),
         );
         let info = &self.resources.egraph.funcs[func];
-        let schema_math = SchemaMath {
-            subsume: info.can_subsume,
-            func_cols: info.schema.len(),
-        };
+        let schema_math = info.schema_math();
         assert!(info.can_subsume);
-        assert_eq!(entries.len() + 1, info.schema.len());
+        assert_eq!(entries.len(), schema_math.num_keys());
+        let n_vals = schema_math.n_vals();
         let entries = entries.to_vec();
         let table = info.table;
 
-        let ret: QueryEntry = ret.into();
         self.add_callback(move |inner, rb| {
             // Then, add a tuple subsuming the entry, but only if the entry isn't already subsumed.
-            // Look up the current subsume value.
-            let mut dst_entries = inner.convert_all(&entries);
+            let keys = inner.convert_all(&entries);
             let cur_subsume_val = rb.lookup(
                 table,
-                &dst_entries,
+                &keys,
                 ColumnId::from_usize(schema_math.subsume_col()),
             )?;
+            // Re-read every value column so subsumption preserves the whole row (tuple-output views
+            // carry more than one value, e.g. the e-class and its proof).
+            let mut dst_entries = keys.clone();
+            for i in 0..n_vals {
+                let v = rb.lookup(table, &keys, ColumnId::from_usize(schema_math.val_col(i)))?;
+                dst_entries.push(v.into());
+            }
             schema_math.write_table_row(
                 &mut dst_entries,
                 RowVals {
                     timestamp: inner.next_ts(),
                     subsume: Some(SUBSUMED.into()),
-                    ret_val: Some(inner.convert(&ret)),
+                    ret_val: None,
                 },
             );
             rb.insert_if_eq(
@@ -569,10 +572,7 @@ impl RuleBuilder<'_> {
             .to_var();
         let table = info.table;
         let id_counter = self.query.id_counter;
-        let schema_math = SchemaMath {
-            subsume: info.can_subsume,
-            func_cols: info.schema.len(),
-        };
+        let schema_math = info.schema_math();
         let cb: BuildRuleCallback = match info.default_val {
             DefaultVal::Const(_) | DefaultVal::FreshId => {
                 let wv: WriteVal = match &info.default_val {
@@ -702,10 +702,7 @@ impl RuleBuilder<'_> {
         let info = &self.resources.egraph.funcs[func];
         let table = info.table;
         let entries = entries.to_vec();
-        let schema_math = SchemaMath {
-            subsume: info.can_subsume,
-            func_cols: info.schema.len(),
-        };
+        let schema_math = info.schema_math();
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let mut dst_vars = inner.convert_all(&entries);
             schema_math.write_table_row(

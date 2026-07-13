@@ -78,6 +78,26 @@ fn dd_runs_proof_mode_pair_container_side_condition() {
     .unwrap();
 }
 
+#[test]
+fn dd_proof_mode_resolves_constructor_view_conflicts() {
+    let backend = Box::new(egglog_experimental_dd::EGraph::new());
+    let mut eg = egglog_experimental::new_experimental_egraph_with_backend_and_proofs(backend);
+    eg.parse_and_run_program(
+        None,
+        r#"
+        (datatype Expr (A) (B) (F Expr))
+        (let a (A))
+        (let b (B))
+        (let fa (F a))
+        (let fb (F b))
+        (union a b)
+        (run 5)
+        (prove (= fa fb))
+        "#,
+    )
+    .unwrap();
+}
+
 /// DD has no native union-find, so it must be paired with term encoding.
 /// Without it, the frontend refuses to run rather than silently drop `union`s.
 #[test]

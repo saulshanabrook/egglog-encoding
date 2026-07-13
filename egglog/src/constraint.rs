@@ -542,6 +542,21 @@ impl Assignment<AtomTerm, ArcSort> {
                     .iter()
                     .map(|arg| self.annotate_expr(arg, typeinfo, ctx))
                     .collect();
+                // The `values` tuple constructor resolves to `ResolvedCall::Values` carrying its
+                // element sorts. A tuple-output function call carries only its input columns here
+                // (its outputs live on the `values` side of the destructure/set), so it resolves
+                // from input types alone.
+                if head.as_str() == "values" {
+                    let sorts = args.iter().map(|arg| arg.output_type()).collect();
+                    return GenericExpr::Call(span.clone(), ResolvedCall::Values(sorts), args);
+                }
+                if let Some(ty) = typeinfo.get_func_type(head).filter(|t| t.is_tuple_output()) {
+                    let input_types: Vec<_> = args.iter().map(|arg| arg.output_type()).collect();
+                    let resolved_call =
+                        ResolvedCall::from_resolution_func_types(head, &input_types, typeinfo)
+                            .unwrap_or_else(|| ResolvedCall::Func(ty.clone()));
+                    return GenericExpr::Call(span.clone(), resolved_call, args);
+                }
                 let types: Vec<_> = args
                     .iter()
                     .map(|arg| arg.output_type())
@@ -621,12 +636,23 @@ impl Assignment<AtomTerm, ArcSort> {
                     .map(|child| self.annotate_expr(child, typeinfo, ctx))
                     .collect();
                 let rhs = self.annotate_expr(rhs, typeinfo, ctx);
-                let types: Vec<_> = children
-                    .iter()
-                    .map(|child| child.output_type())
-                    .chain(once(rhs.output_type()))
-                    .collect();
-                let resolved_call = ResolvedCall::from_resolution(head, &types, typeinfo, ctx);
+                // For a tuple-output function the `rhs` is a `(values ...)` form, so the function
+                // is resolved from its input columns alone.
+                let resolved_call = if let Some(ty) =
+                    typeinfo.get_func_type(head).filter(|t| t.is_tuple_output())
+                {
+                    let input_types: Vec<_> =
+                        children.iter().map(|child| child.output_type()).collect();
+                    ResolvedCall::from_resolution_func_types(head, &input_types, typeinfo)
+                        .unwrap_or_else(|| ResolvedCall::Func(ty.clone()))
+                } else {
+                    let types: Vec<_> = children
+                        .iter()
+                        .map(|child| child.output_type())
+                        .chain(once(rhs.output_type()))
+                        .collect();
+                    ResolvedCall::from_resolution(head, &types, typeinfo, ctx)
+                };
                 if !matches!(resolved_call, ResolvedCall::Func(_)) {
                     return Err(TypeError::UnboundFunction(head.clone(), span.clone()));
                 }
@@ -844,7 +870,7 @@ impl CoreActionConstraints for CoreAction {
                 }
 
                 let mut args = args.clone();
-                args.push(rhs.clone());
+                args.extend(rhs.iter().cloned());
 
                 Ok(get_literal_and_global_constraints(&args, typeinfo)
                     .chain(get_atom_application_constraints(
@@ -854,9 +880,16 @@ impl CoreActionConstraints for CoreAction {
             }
             CoreAction::Change(span, _change, head, args) => {
                 let mut args = args.clone();
-                // Add a dummy last output argument
-                let var = symbol_gen.fresh(head);
-                args.push(AtomTerm::Var(span.clone(), var));
+                // Add a dummy output argument per output column (tuple-output views have more than
+                // one), so the atom matches the function's full arity for constraint solving.
+                let num_outputs = typeinfo
+                    .get_func_type(head)
+                    .map(|t| t.num_outputs())
+                    .unwrap_or(1);
+                for _ in 0..num_outputs {
+                    let var = symbol_gen.fresh(head);
+                    args.push(AtomTerm::Var(span.clone(), var));
+                }
 
                 Ok(get_literal_and_global_constraints(&args, typeinfo)
                     .chain(get_atom_application_constraints(
@@ -934,11 +967,13 @@ fn get_atom_application_constraints(
     // `constraint::xor` means one and only one of the instantiation can hold.
     let mut xor_constraints: Vec<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>> = vec![];
 
-    // function atom constraints
+    // function atom constraints. A function atom carries all input columns followed by all output
+    // columns (more than one for a tuple-output function).
     if let Some(typ) = type_info.get_func_type(head) {
         let mut constraints = vec![];
+        let expected = typ.input.len() + typ.num_outputs();
         // arity mismatch
-        if typ.input.len() + 1 != args.len() {
+        if expected != args.len() {
             constraints.push(constraint::impossible(
                 ImpossibleConstraint::ArityMismatch {
                     atom: Atom {
@@ -946,15 +981,15 @@ fn get_atom_application_constraints(
                         head: head.to_owned(),
                         args: args.to_vec(),
                     },
-                    expected: typ.input.len() + 1,
+                    expected,
                 },
             ));
         } else {
             for (arg_typ, arg) in typ
                 .input
                 .iter()
+                .chain(typ.outputs.iter())
                 .cloned()
-                .chain(once(typ.output.clone()))
                 .zip(args.iter().cloned())
             {
                 constraints.push(constraint::assign(arg, arg_typ));
@@ -1197,7 +1232,9 @@ pub(crate) fn grounded_check(
     for atom in body.atoms.iter() {
         let mut add_global_and_literal = false;
         match &atom.head {
-            HeadOrEq::Head(ResolvedCall::Func(_)) => {
+            // `Values` never appears as a query atom head (tuple destructures are lowered to the
+            // underlying function atom), but it is grounded like a function if it ever did.
+            HeadOrEq::Head(ResolvedCall::Func(_) | ResolvedCall::Values(_)) => {
                 for arg in atom.args.iter() {
                     problem.constraints.push(assign(arg.clone(), ()));
                 }

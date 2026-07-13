@@ -86,7 +86,7 @@ fn proof_form_expr(
             ref span,
             ref head @ ResolvedCall::Func(FuncType {
                 subtype: FunctionSubtype::Custom,
-                ref output,
+                ref outputs,
                 ..
             }),
             ref args,
@@ -100,7 +100,7 @@ fn proof_form_expr(
                 span.clone(),
                 ResolvedVar {
                     name: fresh.fresh("n"),
-                    sort: output.clone(),
+                    sort: outputs[0].clone(),
                     is_global_ref: false,
                 },
             );
@@ -131,7 +131,7 @@ fn proof_form_expr(
                     // (but allow other primitives to stay inline)
                     ref arg_expr @ ResolvedExpr::Call(
                         ref arg_span,
-                        ResolvedCall::Func(FuncType { ref output, .. }),
+                        ResolvedCall::Func(FuncType { ref outputs, .. }),
                         ref inner_args,
                     ) => {
                         // First recursively normalize the inner arguments
@@ -145,7 +145,7 @@ fn proof_form_expr(
                             arg_span.clone(),
                             ResolvedVar {
                                 name: fresh.fresh("v"),
-                                sort: output.clone(),
+                                sort: outputs[0].clone(),
                                 is_global_ref: false,
                             },
                         );

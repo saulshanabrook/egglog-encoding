@@ -331,6 +331,67 @@ where
     }
 }
 
+impl<Head, Leaf> GenericMerge<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    /// A merge with no actions: just a result expression (the `:merge <expr>` form).
+    pub fn result_only(result: GenericExpr<Head, Leaf>) -> Self {
+        Self {
+            actions: GenericActions::default(),
+            result,
+        }
+    }
+
+    /// Applies `f` to every expression in the merge's actions and result.
+    pub fn visit_exprs(
+        self,
+        f: &mut impl FnMut(GenericExpr<Head, Leaf>) -> GenericExpr<Head, Leaf>,
+    ) -> Self {
+        Self {
+            actions: self.actions.visit_exprs(f),
+            result: self.result.visit_exprs(f),
+        }
+    }
+
+    /// Applies the `head` and `leaf` mappings to every symbol in the merge.
+    pub fn map_symbols<Head2, Leaf2>(
+        self,
+        head: &mut impl FnMut(Head) -> Head2,
+        leaf: &mut impl FnMut(Leaf) -> Leaf2,
+    ) -> GenericMerge<Head2, Leaf2>
+    where
+        Head2: Clone + Display,
+        Leaf2: Clone + PartialEq + Eq + Display + Hash,
+    {
+        GenericMerge {
+            actions: self.actions.map_symbols(head, leaf),
+            result: self.result.map_symbols(head, leaf),
+        }
+    }
+}
+
+impl<Head, Leaf> Display for GenericMerge<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        if self.actions.is_empty() {
+            // Result-only: `:merge <expr>`.
+            write!(f, "{}", self.result)
+        } else {
+            // Action block: `:merge (<action>* <result>)`.
+            write!(f, "(")?;
+            for action in self.actions.iter() {
+                write!(f, "{action} ")?;
+            }
+            write!(f, "{})", self.result)
+        }
+    }
+}
+
 impl<Head, Leaf> GenericAction<Head, Leaf>
 where
     Head: Clone + Display,

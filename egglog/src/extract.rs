@@ -562,7 +562,6 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 
     /// Find the canonical representative of a value using the union-find table.
     /// If no UF is registered for this sort, returns the original value.
-    /// The UF table stores (value, canonical) pairs - one hop lookup.
     fn find_canonical(&self, egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
         // Check if there's a UF registered for this sort
         let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
@@ -574,12 +573,28 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
             return value;
         };
 
-        // Single lookup in UF table - it's guaranteed to be one hop to canonical
+        // A single-key union-find is a self-referential function keyed by the element (the
+        // encoding's `UF_<Sort>`: `(S) -> S` in term mode, `(S) -> (S, Proof)` in proof mode), so
+        // `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
+        // leader. A two-key union-find is a `(child, parent)` relation (e.g. a user-provided
+        // `:internal-uf`), resolved with a one-hop scan. Dispatching on the key arity keeps both
+        // correct.
+        if uf_func.schema.input.len() == 1 {
+            let mut canonical = value;
+            loop {
+                match egraph.backend.lookup_id(uf_func.backend_id, &[canonical]) {
+                    Some(next) if next != canonical => canonical = next,
+                    _ => break,
+                }
+            }
+            return canonical;
+        }
+
+        // Two-key `(child, parent)` relation: one-hop lookup.
         let mut canonical = value;
         egraph
             .backend
             .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-                // UF table has (child, parent) as inputs
                 if row.vals[0] == value {
                     canonical = row.vals[1];
                 }
@@ -715,21 +730,30 @@ impl Function {
         }
     }
 
-    /// For view tables (with term_constructor), the effective output sort is the last input column.
-    /// For regular tables, it's the output sort.
+    /// Whether this is the proof-mode functional-dependency view `(children) -> (eclass, proof)`,
+    /// where the e-class is the first output column rather than the last input column.
+    fn is_fd_view(&self) -> bool {
+        self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
+    }
+
+    /// For view tables (with term_constructor), the effective output sort is the last input column
+    /// (old form) or the first output column (FD tuple view). For regular tables, it's the output.
     /// This is used by extraction to determine which sort a table produces values for.
     pub(crate) fn extraction_output_sort(&self) -> &ArcSort {
-        if self.decl.term_constructor.is_some() {
+        if self.is_fd_view() {
+            self.schema.output()
+        } else if self.decl.term_constructor.is_some() {
             self.schema.input.last().unwrap()
         } else {
-            &self.schema.output
+            self.schema.output()
         }
     }
 
     /// Returns the number of children for extraction purposes.
-    /// For view tables, this excludes the last column (the e-class).
+    /// For old-form view tables, this excludes the last input column (the e-class); FD tuple views
+    /// key on children only, so all inputs are children.
     pub(crate) fn extraction_num_children(&self) -> usize {
-        if self.decl.term_constructor.is_some() {
+        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
             self.schema.input.len() - 1
         } else {
             self.schema.input.len()
@@ -749,13 +773,12 @@ impl Function {
     /// For view tables, the e-class is the last input column (second-to-last in the row).
     /// For regular tables, it's the last column (the actual output).
     pub(crate) fn extraction_output_index(&self) -> usize {
-        if self.decl.term_constructor.is_some() {
-            // For view tables: input is [children..., eclass], output is view_sort
-            // Row is [children..., eclass, view_sort]
-            // We want eclass which is at index input.len() - 1
+        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
+            // Old-form view: row is [children..., eclass, view_sort]; eclass at input.len() - 1.
             self.schema.input.len() - 1
         } else {
-            // For regular tables: row is [inputs..., output]
+            // Regular table: [inputs..., output]. FD view: [children..., eclass, proof]; the eclass
+            // is the first output column, at index input.len().
             self.schema.input.len()
         }
     }
@@ -812,7 +835,7 @@ impl EGraph {
             .ok_or(TypeError::UnboundFunction(sym.to_owned(), span!()))?;
         let mut rootsorts = func.schema.input.clone();
         if include_output {
-            rootsorts.push(func.schema.output.clone());
+            rootsorts.extend(func.schema.outputs.iter().cloned());
         }
         let extractor = Extractor::compute_costs_from_rootsorts(
             Some(rootsorts),
@@ -840,11 +863,22 @@ impl EGraph {
                 }
                 inputs.push(termdag.app(sym.to_owned(), children));
                 if include_output {
-                    let value = row.vals[func.schema.input.len()];
-                    let sort = &func.schema.output;
-                    let (_, term) = extractor
-                        .extract_best_with_sort(self, &mut termdag, value, sort.clone())
-                        .unwrap_or_else(|| (0, termdag.var("Unextractable".into())));
+                    // Extract every output (value) column. A tuple-output function has more than
+                    // one; we display them wrapped in a `(values ...)` term to mirror the surface
+                    // syntax.
+                    let mut out_terms = Vec::new();
+                    for (i, sort) in func.schema.outputs.iter().enumerate() {
+                        let value = row.vals[func.schema.input.len() + i];
+                        let (_, term) = extractor
+                            .extract_best_with_sort(self, &mut termdag, value, sort.clone())
+                            .unwrap_or_else(|| (0, termdag.var("Unextractable".into())));
+                        out_terms.push(term);
+                    }
+                    let term = if out_terms.len() == 1 {
+                        out_terms.pop().unwrap()
+                    } else {
+                        termdag.app("values".to_owned(), out_terms)
+                    };
                     output.as_mut().unwrap().push(term);
                 }
                 true

@@ -1,0 +1,20 @@
+; Multi-output (tuple) function: an interval analysis whose lower bound merges with `max` and
+; whose upper bound merges with `min`, expressed as a single two-output function
+; `(Math) -> (i64 i64)`. The value columns are written with `(set (interval e) (values lo hi))`
+; and destructured with `(= (values lo hi) (interval e))`.
+(datatype Math (Num i64) (Add Math Math))
+
+(function interval (Math) (i64 i64)
+  :merge (values (max old0 new0) (min old1 new1)))
+
+(rule ((= e (Num n)))
+  ((set (interval e) (values n n))))
+(rule ((= e (Add a b))
+       (= (values alo ahi) (interval a))
+       (= (values blo bhi) (interval b)))
+  ((set (interval e) (values (+ alo blo) (+ ahi bhi)))))
+
+(let expr (Add (Num 1) (Num 2)))
+(run 10)
+(check (= (values 1 1) (interval (Num 1))))
+(check (= (values 3 3) (interval expr)))

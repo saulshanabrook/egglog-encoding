@@ -12,8 +12,8 @@
 //! 3. for every surviving binding, execute the head ops in order — `set` /
 //!    `remove` / `subsume` writes, RHS `lookup` (eq-sort constructor: create on
 //!    miss), RHS primitive `call`, `union`, `panic`;
-//! 4. apply all collected writes/removes to the mirror, folding each merge
-//!    function's `set`s into a single value per key by its merge mode.
+//! 4. apply all collected writes/removes to the mirror, evaluating full-row
+//!    function merges and merge-generated writes to a fixed point.
 //!
 //! ## The engine split
 //!
@@ -36,13 +36,14 @@ use egglog_backend_trait::{
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
 
-use crate::compile::{MergeMode, ReadKey, Row};
-use crate::EGraph;
+use crate::compile::{ReadKey, Row};
+use crate::{EGraph, TableDefault};
 
 /// Binding environment: variable id → bound `u32` value.
 pub(crate) type Env = HashMap<u32, u32>;
 
 type DdDeltaRows = HashMap<ReadKey, Vec<(Vec<u32>, isize)>>;
+type LookupIndex = HashMap<FunctionId, HashMap<Row, Row>>;
 
 /// Retractions batched per function: the key length plus the set of keys to
 /// remove, so one `retain` pass drops them all.
@@ -124,10 +125,10 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
     let next_id_at_start = eg.next_id;
 
     let mut writes: Vec<Write> = Vec::new();
-    // Iteration-scoped `key -> output` index for `lookup_or_create` (eq-sort
+    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
     // constructor hash-cons). Built lazily per function so repeated lookups in
     // one iteration are O(1) instead of rescanning the growing mirror each time.
-    let mut lookup_index: HashMap<FunctionId, HashMap<Box<[u32]>, u32>> = HashMap::new();
+    let mut lookup_index = LookupIndex::new();
 
     // Compute every rule's binding envs FIRST (so the whole atom-bearing ruleset
     // runs on one fused DD worker via `fused_bindings`), THEN
@@ -182,26 +183,10 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
         // and the subsumed side-set (a rebuilt-away subsumed row must not linger).
         changed |= eg.remove_matching_keys(f, keylen, &keys);
     }
-    // Apply sets. A plain relation (whole-row key) just inserts. A merge function
-    // (Old/New/Min) folds each new value against the CURRENT value for its key by
-    // the merge mode; the new values are folded in EMISSION order so `New`/`Old`
-    // are insertion-order-correct — the pre-set mirror value is the "old" one and
-    // the value set this call is the "new" one. (The mirror is an unordered
-    // `HashSet`, so a fold that sorted the candidate rows would pick the wrong
-    // winner for `New`/`Old`: e.g. a `New` merge of `@UF_Mf` where a leader
-    // changes from `3` to `1` must keep `1`, not the sort-larger old value `3`.)
-    let mut merge_by_func: HashMap<FunctionId, Vec<Row>> = HashMap::new();
-    for (f, row) in sets {
-        let merge = eg.merge_mode(f);
-        if merge == MergeMode::Relation {
-            changed |= eg.insert_live_row(f, row);
-        } else {
-            merge_by_func.entry(f).or_default().push(row);
-        }
-    }
-    for (f, rows) in merge_by_func {
-        changed |= eg.apply_merge_sets(f, &rows)?;
-    }
+    // The backend transaction retains head-emission order within a table,
+    // orders tables by merge-read dependencies, and processes merge-generated
+    // writes in subsequent waves until reaching a fixed point.
+    changed |= eg.apply_sets(sets)?;
     // Subsumes last: a row `set` this iteration can then be subsumed, and the
     // move reads the just-updated live mirror.
     for (f, prefix) in subsumes {
@@ -465,7 +450,7 @@ fn apply_head(
     head: &GenericCoreActions<RuleActionCall, RuleVar, RuleValue>,
     env: &mut Env,
     writes: &mut Vec<Write>,
-    lookup_index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
+    lookup_index: &mut LookupIndex,
 ) -> Result<()> {
     for action in &head.0 {
         match action {
@@ -478,16 +463,8 @@ fn apply_head(
                             .copied()
                             .map(Value::new)
                             .collect::<Vec<_>>();
-                        if eg.info(*id).lookup_mints {
-                            Some(lookup_or_create(eg, *id, &key, lookup_index))
-                        } else {
-                            Some(lookup_existing(eg, *id, &key, lookup_index).ok_or_else(|| {
-                                anyhow!(
-                                    "lookup on `{}` failed in rule action",
-                                    eg.relation_name(*id)
-                                )
-                            })?)
-                        }
+                        let values = lookup_or_create(eg, *id, &key, lookup_index)?;
+                        Some(Value::new(values[0]))
                     }
                     RuleActionCall::Primitive { id, .. } => {
                         let arguments = arguments
@@ -505,12 +482,12 @@ fn apply_head(
             GenericCoreAction::LetAtomTerm(_, variable, term) => {
                 env.insert(variable.id, resolve_term(term, env)?);
             }
-            GenericCoreAction::Set(_, call, arguments, value) => {
+            GenericCoreAction::Set(_, call, arguments, values) => {
                 let RuleActionCall::Table { id, .. } = call else {
                     return Err(anyhow!("DD backend cannot set a primitive"));
                 };
                 let mut row = resolve_terms(arguments, env)?;
-                row.push(resolve_term(value, env)?);
+                row.extend(resolve_terms(values, env)?);
                 writes.push(Write::Set(*id, row.into_boxed_slice()));
             }
             GenericCoreAction::Change(_, change, call, arguments) => {
@@ -565,54 +542,79 @@ pub(crate) fn lookup_or_create(
     eg: &mut EGraph,
     func: FunctionId,
     key: &[Value],
-    index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
-) -> Value {
-    if let Some(value) = lookup_existing(eg, func, key, index) {
-        return value;
+    index: &mut LookupIndex,
+) -> Result<Row> {
+    if let Some(values) = lookup_existing(eg, func, key, index) {
+        return Ok(values);
     }
-    let k: Box<[u32]> = key.iter().map(|v| v.rep()).collect();
-    let id = eg.fresh_id_internal();
-    index.entry(func).or_default().insert(k, id);
+    let (n_keys, _, default, _) = eg.function_spec(func);
+    if key.len() != n_keys {
+        return Err(anyhow!(
+            "lookup on `{}` has {} keys, expected {n_keys}",
+            eg.relation_name(func),
+            key.len()
+        ));
+    }
+    if eg.n_vals(func) != 1 {
+        return Err(anyhow!(
+            "lookup on tuple-output function `{}` cannot bind one value",
+            eg.relation_name(func)
+        ));
+    }
+    let value = match default {
+        TableDefault::FreshId => eg.fresh_id_internal(),
+        TableDefault::Const(value) => value,
+        TableDefault::Fail => {
+            return Err(anyhow!(
+                "lookup on `{}` failed in rule action",
+                eg.relation_name(func)
+            ));
+        }
+    };
+    let k: Row = key.iter().map(|value| value.rep()).collect();
+    let values: Row = vec![value].into_boxed_slice();
+    index.entry(func).or_default().insert(k, values.clone());
     let mut full: Vec<u32> = key.iter().map(|v| v.rep()).collect();
-    full.push(id);
-    let row: Row = full.into_boxed_slice();
+    full.push(value);
+    let row = full.into_boxed_slice();
     eg.insert_live_row(func, row);
-    Value::new(id)
+    Ok(values)
 }
 
-/// Look up the current output of `func` for input `key` without creating a row.
+/// Look up all current outputs of `func` for input `key` without creating a row.
 pub(crate) fn lookup_existing(
     eg: &EGraph,
     func: FunctionId,
     key: &[Value],
-    index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
-) -> Option<Value> {
-    let info = eg.info(func);
-    let inputs_len = info.arity.saturating_sub(1);
-    // Lazily build the key->output index for this function from live ∪ subsumed
+    index: &mut LookupIndex,
+) -> Option<Row> {
+    let n_keys = eg.n_keys(func);
+    // Lazily build the key->outputs index for this function from live ∪ subsumed
     // rows so repeated lookups within one iteration are O(1) instead of O(state)
     // scans. A subsumed constructor row is still the current table row in the
     // reference backend; looking it up must not mint a fresh visible row.
     let idx = index.entry(func).or_insert_with(|| {
         let live_len = eg.mirror.get(&func).map_or(0, |rows| rows.len());
         let subsumed_len = eg.subsumed.get(&func).map_or(0, |rows| rows.len());
-        let mut m: HashMap<Box<[u32]>, u32> = HashMap::with_capacity(live_len + subsumed_len);
+        let mut values_by_key = HashMap::with_capacity(live_len + subsumed_len);
         if let Some(set) = eg.mirror.get(&func) {
             for row in set.iter() {
-                let k: Box<[u32]> = (0..inputs_len).map(|i| row[i]).collect();
-                m.insert(k, row[inputs_len]);
+                let key: Row = row[..n_keys].into();
+                let values: Row = row[n_keys..].into();
+                values_by_key.insert(key, values);
             }
         }
         if let Some(set) = eg.subsumed.get(&func) {
             for row in set.iter() {
-                let k: Box<[u32]> = (0..inputs_len).map(|i| row[i]).collect();
-                m.entry(k).or_insert(row[inputs_len]);
+                let key: Row = row[..n_keys].into();
+                let values: Row = row[n_keys..].into();
+                values_by_key.entry(key).or_insert(values);
             }
         }
-        m
+        values_by_key
     });
-    let k: Box<[u32]> = key.iter().map(|v| v.rep()).collect();
-    idx.get(&k).copied().map(Value::new)
+    let key: Row = key.iter().map(|value| value.rep()).collect();
+    idx.get(&key).cloned()
 }
 
 #[cfg(test)]

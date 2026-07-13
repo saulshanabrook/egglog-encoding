@@ -28,8 +28,8 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
+    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -39,10 +39,10 @@ mod compile;
 mod dd_native;
 mod interpret;
 
-use compile::{MergeMode, MergeTree, ReadKey, Row};
+use compile::{MergeActionPlan, MergeExpr, MergeProgram, ReadKey, Row};
 
-type LocatedValue = (u32, RowLocation);
-type RowReplacement = (Box<[u32]>, LocatedValue);
+type LocatedValues = (Row, RowLocation);
+type RowReplacement = (Row, LocatedValues);
 
 mod dd_workers {
     use hashbrown::HashMap;
@@ -103,14 +103,22 @@ use dd_workers::DdWorkers;
 #[derive(Clone)]
 pub(crate) struct RelationInfo {
     name: String,
-    /// Number of columns (including the output column for functions).
+    /// Number of visible columns.
     pub(crate) arity: usize,
-    /// Whether RHS lookups may create a fresh output row on miss.
-    pub(crate) lookup_mints: bool,
-    /// How functional-dependency conflicts are resolved.
-    pub(crate) merge: MergeMode,
-    /// The evaluatable merge tree, when `merge` is [`MergeMode::Computed`].
-    pub(crate) merge_tree: Option<MergeTree>,
+    n_keys: usize,
+    merge: Arc<MergeProgram>,
+    default: TableDefault,
+    n_identity_vals: Option<usize>,
+    /// Read dependencies are registered before their owners, so this level
+    /// orders each pending merge wave from readable targets to readers.
+    merge_level: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TableDefault {
+    FreshId,
+    Fail,
+    Const(u32),
 }
 
 // ---------------------------------------------------------------------------
@@ -169,11 +177,24 @@ enum RowLocation {
     Subsumed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CurrentValue {
-    value: u32,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CurrentRow {
+    values: Row,
     location: RowLocation,
     rows_for_key: usize,
+}
+
+impl CurrentRow {
+    fn located(&self) -> LocatedValues {
+        (self.values.clone(), self.location)
+    }
+}
+
+#[derive(Default)]
+struct FunctionMergeState {
+    current: HashMap<Row, CurrentRow>,
+    original: HashMap<Row, Option<CurrentRow>>,
+    touched: Vec<Row>,
 }
 
 impl Default for EGraph {
@@ -294,13 +315,14 @@ impl EGraph {
                     validate_terms(arguments, "rule action")?;
                     if let RuleActionCall::Table { id, .. } = call {
                         let info = relation(*id, "table lookup action")?;
-                        let Some(expected) = info.arity.checked_sub(1) else {
+                        if info.arity - info.n_keys != 1 {
                             bail!(
-                                "DD backend cannot add rule {:?}: cannot look up nullary relation `{}` as a function",
+                                "DD backend cannot add rule {:?}: cannot bind tuple-output function `{}` as one value",
                                 rule.name,
                                 info.name
                             );
-                        };
+                        }
+                        let expected = info.n_keys;
                         if arguments.len() != expected {
                             bail!(
                                 "DD backend cannot add rule {:?}: lookup on `{}` has {} arguments, expected {}",
@@ -315,7 +337,7 @@ impl EGraph {
                 GenericCoreAction::LetAtomTerm(_, _, term) => {
                     validate_terms(std::slice::from_ref(term), "rule let action")?;
                 }
-                GenericCoreAction::Set(_, call, arguments, value) => {
+                GenericCoreAction::Set(_, call, arguments, values) => {
                     let RuleActionCall::Table { id, .. } = call else {
                         bail!(
                             "DD backend cannot add rule {:?}: cannot set a primitive",
@@ -323,14 +345,14 @@ impl EGraph {
                         );
                     };
                     validate_terms(arguments, "rule set action")?;
-                    validate_terms(std::slice::from_ref(value), "rule set action")?;
+                    validate_terms(values, "rule set action")?;
                     let info = relation(*id, "set action")?;
-                    if arguments.len() + 1 != info.arity {
+                    if arguments.len() + values.len() != info.arity {
                         bail!(
                             "DD backend cannot add rule {:?}: set on `{}` writes {} columns, expected {}",
                             rule.name,
                             info.name,
-                            arguments.len() + 1,
+                            arguments.len() + values.len(),
                             info.arity
                         );
                     }
@@ -367,23 +389,37 @@ impl EGraph {
         Ok(())
     }
 
-    /// The functional-dependency merge mode of a function (from `add_table`).
-    pub(crate) fn merge_mode(&self, f: FunctionId) -> MergeMode {
-        self.info(f).merge
+    pub(crate) fn function_spec(
+        &self,
+        function: FunctionId,
+    ) -> (usize, Arc<MergeProgram>, TableDefault, Option<usize>) {
+        let info = self.info(function);
+        (
+            info.n_keys,
+            Arc::clone(&info.merge),
+            info.default,
+            info.n_identity_vals,
+        )
     }
 
-    /// Evaluate a primitive through the embedded `Database` (the base-value /
-    /// primitive engine). Both the host interpreter and the DD join's
-    /// host-side primitive phase call this, so `Value`s are bit-for-bit
-    /// identical to the reference backend.
+    pub(crate) fn n_keys(&self, function: FunctionId) -> usize {
+        self.info(function).n_keys
+    }
+
+    pub(crate) fn n_vals(&self, function: FunctionId) -> usize {
+        self.info(function).arity - self.n_keys(function)
+    }
+
+    /// Evaluate a primitive through the embedded database. The deferred panic
+    /// channel turns bridge-style panic primitives back into backend errors.
     pub(crate) fn eval_prim_internal(
         &self,
         id: ExternalFunctionId,
-        args: &[Value],
+        arguments: &[Value],
     ) -> Result<Option<Value>> {
         let result = self
             .db
-            .with_execution_state(|st| st.call_external_func(id, args));
+            .with_execution_state(|state| state.call_external_func(id, arguments));
         if let Some(message) = self.take_panic_message() {
             Err(anyhow!(message))
         } else {
@@ -398,186 +434,19 @@ impl EGraph {
             .take()
     }
 
-    /// Allocate a fresh id (the interpreter's eq-sort constructor hash-cons uses
-    /// the same counter the trait's `fresh_id` advances).
     pub(crate) fn fresh_id_internal(&mut self) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
 
-    /// Apply this iteration's `set`s to a merge function `f`, folding each new
-    /// output value against the current value for its key by the merge mode.
-    /// Returns whether the mirror changed.
-    ///
-    /// `rows` is in EMISSION order, so the fold is insertion-order-correct: the
-    /// pre-set mirror value is the "old" value and each `rows` entry is a "new"
-    /// value applied in turn (`New` keeps the last, `Old` keeps the first/existing,
-    /// `Min` keeps the smallest, `Computed` evaluates the retained merge tree).
-    /// Current rows are read from live ∪ subsumed state, matching the reference
-    /// backend's single-table representation with a merged subsumed bit. A later
-    /// `set` of a subsumed key must merge with that row and remain subsumed; it
-    /// must not resurrect the row into ordinary matching.
-    pub(crate) fn apply_merge_sets(&mut self, f: FunctionId, rows: &[Row]) -> Result<bool> {
-        if matches!(self.merge_mode(f), MergeMode::Computed) {
-            return self.apply_computed_merge(f, rows);
-        }
-        let arity = self.info(f).arity;
-        let merge = self.merge_mode(f);
-        let inputs_len = arity - 1;
-        let mut cur = self.current_values_by_key(f, inputs_len);
-        // Fold new values in emission order, remembering each touched key's
-        // original value so the stale row can be retracted.
-        let mut orig: HashMap<Box<[u32]>, Option<CurrentValue>> = HashMap::new();
-        for row in rows {
-            let key: Box<[u32]> = row[..inputs_len].into();
-            let nv = row[inputs_len];
-            let existing = cur.get(&key).copied();
-            orig.entry(key.clone()).or_insert(existing);
-            let existing_value = existing.map(|current| current.value);
-            let merged = match (existing_value, merge) {
-                (None, _) => nv,
-                (Some(_), MergeMode::New) => nv,
-                (Some(c), MergeMode::Old) => c,
-                (Some(c), MergeMode::Min) => c.min(nv),
-                // Relation is filtered by the caller; Computed took the branch above.
-                (Some(c), MergeMode::Relation | MergeMode::Computed) => c,
-            };
-            let location = existing
-                .map(|current| current.location)
-                .unwrap_or(RowLocation::Live);
-            let rows_for_key = existing.map(|current| current.rows_for_key).unwrap_or(0);
-            cur.insert(
-                key,
-                CurrentValue {
-                    value: merged,
-                    location,
-                    rows_for_key,
-                },
-            );
-        }
-        // Apply the net change per touched key. The initial scan above also
-        // counted duplicate rows, so normalization does not need another full
-        // relation scan for every key.
-        let mut replacements = Vec::new();
-        for (key, old) in orig {
-            let current = cur[&key];
-            let new = (current.value, current.location);
-            let already_normalized =
-                old.is_some_and(|old| old.rows_for_key == 1 && (old.value, old.location) == new);
-            if !already_normalized {
-                replacements.push((key, new));
-            }
-        }
-        Ok(self.replace_located_rows(f, inputs_len, replacements))
+    /// Apply full-row sets in dependency-ordered waves. Merge-generated sets
+    /// enter the next wave and are processed until the transaction reaches a
+    /// fixed point.
+    pub(crate) fn apply_sets(&mut self, sets: Vec<(FunctionId, Row)>) -> Result<bool> {
+        MergeTransaction::new(self, sets).run()
     }
 
-    /// The [`MergeMode::Computed`] case of [`apply_merge_sets`]: fold each key's
-    /// conflicting values by EVALUATING the retained [`MergeTree`] (a primitive
-    /// like `(or old new)`, or a constructor that builds a term). Evaluation needs
-    /// `&mut self` (host-side primitive calls, e-node minting), so — unlike the
-    /// scalar path — it gathers the candidate values first, then reconciles the
-    /// mirror after the fold.
-    fn apply_computed_merge(&mut self, f: FunctionId, rows: &[Row]) -> Result<bool> {
-        let inputs_len = self.info(f).arity - 1;
-        let next_id_before = self.next_id;
-        let cur = self.current_values_by_key(f, inputs_len);
-        // Group new values by key in emission order.
-        let mut order: Vec<Box<[u32]>> = Vec::new();
-        let mut newv: HashMap<Box<[u32]>, Vec<u32>> = HashMap::new();
-        for row in rows {
-            let key: Box<[u32]> = row[..inputs_len].into();
-            let v = row[inputs_len];
-            match newv.get_mut(&key) {
-                Some(vs) => vs.push(v),
-                None => {
-                    order.push(key.clone());
-                    newv.insert(key, vec![v]);
-                }
-            }
-        }
-        // The merge tree, cloned out so the evaluator can borrow `&mut self`.
-        let tree = self.info(f).merge_tree.clone().ok_or_else(|| {
-            anyhow!(
-                "DD relation metadata invariant: computed merge for `{}` has no merge tree",
-                self.relation_name(f)
-            )
-        })?;
-        let mut lookup_index: HashMap<FunctionId, HashMap<Box<[u32]>, u32>> = HashMap::new();
-        // Fold each touched key: start from the current value, fold in each new
-        // value via the tree (`old` = accumulator, `new` = the value).
-        let mut updates: Vec<RowReplacement> = Vec::new();
-        for key in order {
-            let old = cur.get(&key).copied();
-            let location = old
-                .map(|current| current.location)
-                .unwrap_or(RowLocation::Live);
-            let mut acc = old.map(|current| current.value);
-            for &nv in &newv[&key] {
-                acc = Some(match acc {
-                    None => nv,
-                    Some(c) => self.eval_merge_tree(&tree, c, nv, &mut lookup_index)?,
-                });
-            }
-            let new_val = acc.expect("DD computed-merge invariant: touched key has a value");
-            let new = (new_val, location);
-            if Some(new) != old.map(|old| (old.value, old.location)) {
-                updates.push((key, new));
-            }
-        }
-        // Reconcile the mirror. A `Func` node that minted an e-node advanced
-        // `next_id` — that is itself a real change even if no value flipped.
-        let mut changed = self.next_id != next_id_before;
-        changed |= self.replace_located_rows(f, inputs_len, updates);
-        Ok(changed)
-    }
-
-    /// Evaluate a [`MergeTree`] against the two conflicting output values `old`
-    /// (accumulated) and `new` (incoming), returning the merged value. Primitives
-    /// run host-side via `eval_prim_internal`; a `Func` node hash-cons / mints a
-    /// constructor e-node via `lookup_or_create`, so a merge that builds a term
-    /// works.
-    fn eval_merge_tree(
-        &mut self,
-        node: &MergeTree,
-        old: u32,
-        new: u32,
-        index: &mut HashMap<FunctionId, HashMap<Box<[u32]>, u32>>,
-    ) -> Result<u32> {
-        match node {
-            MergeTree::Old => Ok(old),
-            MergeTree::New => Ok(new),
-            MergeTree::Const(v) => Ok(*v),
-            MergeTree::Prim(id, args) => {
-                let argv: Vec<Value> = args
-                    .iter()
-                    .map(|a| self.eval_merge_tree(a, old, new, index).map(Value::new))
-                    .collect::<Result<_>>()?;
-                Ok(self
-                    .eval_prim_internal(*id, &argv)?
-                    .map(|v| v.rep())
-                    .unwrap_or(old))
-            }
-            MergeTree::Func(func, args) => {
-                let key: Vec<Value> = args
-                    .iter()
-                    .map(|a| self.eval_merge_tree(a, old, new, index).map(Value::new))
-                    .collect::<Result<_>>()?;
-                if self.info(*func).lookup_mints {
-                    Ok(interpret::lookup_or_create(self, *func, &key, index).rep())
-                } else {
-                    interpret::lookup_existing(self, *func, &key, index)
-                        .map(|value| value.rep())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "lookup on `{}` failed in merge function",
-                                self.relation_name(*func)
-                            )
-                        })
-                }
-            }
-        }
-    }
 
     /// Move every live row of `f` whose LEADING columns equal `prefix` into the
     /// `subsumed` side-set (a "soft delete"): the row stays in the table — still
@@ -632,11 +501,7 @@ impl EGraph {
         inserted
     }
 
-    fn current_values_by_key(
-        &self,
-        f: FunctionId,
-        inputs_len: usize,
-    ) -> HashMap<Box<[u32]>, CurrentValue> {
+    fn current_rows_by_key(&self, f: FunctionId, n_keys: usize) -> HashMap<Row, CurrentRow> {
         let live_len = self.mirror.get(&f).map(|set| set.len()).unwrap_or(0);
         let subsumed_len = self.subsumed.get(&f).map(|set| set.len()).unwrap_or(0);
         let mut cur = HashMap::with_capacity(live_len + subsumed_len);
@@ -646,16 +511,16 @@ impl EGraph {
         ] {
             if let Some(rows) = store.get(&f) {
                 for row in rows.iter() {
-                    let value = row[inputs_len];
-                    let key: Box<[u32]> = row[..inputs_len].into();
+                    let values: Row = row[n_keys..].into();
+                    let key: Row = row[..n_keys].into();
                     cur.entry(key)
-                        .and_modify(|current: &mut CurrentValue| {
-                            current.value = value;
+                        .and_modify(|current: &mut CurrentRow| {
+                            current.values = values.clone();
                             current.location = location;
                             current.rows_for_key += 1;
                         })
-                        .or_insert(CurrentValue {
-                            value,
+                        .or_insert(CurrentRow {
+                            values,
                             location,
                             rows_for_key: 1,
                         });
@@ -676,10 +541,8 @@ impl EGraph {
         }
         let keys = replacements.iter().map(|(key, _)| key.clone()).collect();
         self.remove_matching_keys(f, keylen, &keys);
-        for (key, (value, location)) in replacements {
-            let mut row = key.into_vec();
-            row.push(value);
-            self.insert_located_row(f, location, row.into_boxed_slice());
+        for (key, (values, location)) in replacements {
+            self.insert_located_row(f, location, row_with_values(&key, &values));
         }
         true
     }
@@ -746,6 +609,357 @@ impl EGraph {
     }
 }
 
+/// Transaction-local function state for head writes and merge side effects.
+/// DD owns body joins; this host transaction preserves egglog's ordered merge
+/// semantics over complete key/value rows.
+struct MergeTransaction<'a> {
+    eg: &'a mut EGraph,
+    pending: Vec<(FunctionId, Row)>,
+    next_wave: Vec<(FunctionId, Row)>,
+    states: HashMap<FunctionId, FunctionMergeState>,
+    state_order: Vec<FunctionId>,
+    changed: bool,
+    next_id_at_start: u32,
+}
+
+impl<'a> MergeTransaction<'a> {
+    fn new(eg: &'a mut EGraph, sets: Vec<(FunctionId, Row)>) -> Self {
+        let next_id_at_start = eg.next_id;
+        Self {
+            eg,
+            pending: sets,
+            next_wave: Vec::new(),
+            states: HashMap::new(),
+            state_order: Vec::new(),
+            changed: false,
+            next_id_at_start,
+        }
+    }
+
+    fn run(mut self) -> Result<bool> {
+        while !self.pending.is_empty() {
+            let mut wave = std::mem::take(&mut self.pending);
+            wave.sort_by_key(|(function, _)| {
+                (self.eg.info(*function).merge_level, function.rep())
+            });
+            for (function, row) in wave {
+                self.apply_set(function, &row)?;
+            }
+            self.pending = std::mem::take(&mut self.next_wave);
+        }
+
+        let states = std::mem::take(&mut self.states);
+        for function in std::mem::take(&mut self.state_order) {
+            let state = states
+                .get(&function)
+                .expect("merge state order must reference initialized state");
+            let n_keys = self.eg.n_keys(function);
+            let mut replacements = Vec::new();
+            for key in &state.touched {
+                let current = state
+                    .current
+                    .get(key)
+                    .expect("a touched merge key must have a current row");
+                let original = state.original[key].as_ref();
+                let already_normalized = original.is_some_and(|old| {
+                    old.rows_for_key == 1
+                        && old.location == current.location
+                        && old.values == current.values
+                });
+                if !already_normalized {
+                    replacements.push((key.clone(), current.located()));
+                }
+            }
+            self.changed |= self
+                .eg
+                .replace_located_rows(function, n_keys, replacements);
+        }
+
+        Ok(self.changed || self.eg.next_id != self.next_id_at_start)
+    }
+
+    fn ensure_state(&mut self, function: FunctionId, n_keys: usize) {
+        if self.states.contains_key(&function) {
+            return;
+        }
+        self.state_order.push(function);
+        self.states.insert(
+            function,
+            FunctionMergeState {
+                current: self.eg.current_rows_by_key(function, n_keys),
+                ..FunctionMergeState::default()
+            },
+        );
+    }
+
+    fn current_row(
+        &mut self,
+        function: FunctionId,
+        n_keys: usize,
+        key: &[u32],
+    ) -> Option<CurrentRow> {
+        self.ensure_state(function, n_keys);
+        self.states[&function].current.get(key).cloned()
+    }
+
+    fn set_current(
+        &mut self,
+        function: FunctionId,
+        n_keys: usize,
+        key: Row,
+        current: CurrentRow,
+    ) {
+        self.ensure_state(function, n_keys);
+        let state = self
+            .states
+            .get_mut(&function)
+            .expect("merge state was initialized");
+        if !state.original.contains_key(&key) {
+            state
+                .original
+                .insert(key.clone(), state.current.get(&key).cloned());
+            state.touched.push(key.clone());
+        }
+        state.current.insert(key, current);
+    }
+
+    fn apply_set(&mut self, function: FunctionId, row: &[u32]) -> Result<()> {
+        let arity = self.eg.info(function).arity;
+        if row.len() != arity {
+            return Err(anyhow!(
+                "set on `{}` has {} columns, expected {arity}",
+                self.eg.relation_name(function),
+                row.len()
+            ));
+        }
+        let (n_keys, merge, _, n_identity_vals) = self.eg.function_spec(function);
+        let key: Row = row[..n_keys].into();
+        let incoming: Row = row[n_keys..].into();
+        let Some(old) = self.current_row(function, n_keys, &key) else {
+            self.set_current(
+                function,
+                n_keys,
+                key,
+                CurrentRow {
+                    values: incoming,
+                    location: RowLocation::Live,
+                    rows_for_key: 1,
+                },
+            );
+            return Ok(());
+        };
+
+        let identity_unchanged = n_identity_vals
+            .is_some_and(|count| old.values[..count] == incoming[..count]);
+        let merged = if identity_unchanged {
+            old.values.clone()
+        } else {
+            let mut environment = Vec::new();
+            for action in &merge.actions {
+                self.run_action(action, function, &old.values, &incoming, &mut environment)?;
+            }
+            let mut values = Vec::with_capacity(merge.results.len());
+            for (self_col, expression) in merge.results.iter().enumerate() {
+                values.push(self.eval(
+                    expression,
+                    function,
+                    &old.values,
+                    &incoming,
+                    self_col,
+                    &environment,
+                )?);
+            }
+            values.into_boxed_slice()
+        };
+
+        self.set_current(
+            function,
+            n_keys,
+            key,
+            CurrentRow {
+                values: merged,
+                location: old.location,
+                rows_for_key: 1,
+            },
+        );
+        Ok(())
+    }
+
+    fn run_action(
+        &mut self,
+        action: &MergeActionPlan,
+        owner: FunctionId,
+        old: &[u32],
+        new: &[u32],
+        environment: &mut Vec<u32>,
+    ) -> Result<()> {
+        match action {
+            MergeActionPlan::Set(function, arguments) => {
+                let row = self
+                    .eval_args(arguments, owner, old, new, 0, environment)?
+                    .into_boxed_slice();
+                self.next_wave.push((*function, row));
+            }
+            MergeActionPlan::Let { slot, value } => {
+                if *slot != environment.len() {
+                    return Err(anyhow!(
+                        "merge let slot {slot} for `{}` is out of order; expected {}",
+                        self.eg.relation_name(owner),
+                        environment.len()
+                    ));
+                }
+                let value = self.eval(value, owner, old, new, 0, environment)?;
+                environment.push(value);
+            }
+        }
+        Ok(())
+    }
+
+    fn eval_args(
+        &mut self,
+        arguments: &[MergeExpr],
+        owner: FunctionId,
+        old: &[u32],
+        new: &[u32],
+        self_col: usize,
+        environment: &[u32],
+    ) -> Result<Vec<u32>> {
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            values.push(self.eval(argument, owner, old, new, self_col, environment)?);
+        }
+        Ok(values)
+    }
+
+    fn eval(
+        &mut self,
+        expression: &MergeExpr,
+        owner: FunctionId,
+        old: &[u32],
+        new: &[u32],
+        self_col: usize,
+        environment: &[u32],
+    ) -> Result<u32> {
+        match expression {
+            MergeExpr::AssertEq => {
+                if old[self_col] != new[self_col] {
+                    return Err(anyhow!(
+                        "illegal merge attempted for function `{}`",
+                        self.eg.relation_name(owner)
+                    ));
+                }
+                Ok(old[self_col])
+            }
+            MergeExpr::UnionId => Ok(old[self_col].min(new[self_col])),
+            MergeExpr::Old => Ok(old[self_col]),
+            MergeExpr::New => Ok(new[self_col]),
+            MergeExpr::OldCol(index) => Ok(old[*index]),
+            MergeExpr::NewCol(index) => Ok(new[*index]),
+            MergeExpr::LetVar(slot) => environment.get(*slot).copied().ok_or_else(|| {
+                anyhow!(
+                    "merge for `{}` references unbound let slot {slot}",
+                    self.eg.relation_name(owner)
+                )
+            }),
+            MergeExpr::Const(value) => Ok(*value),
+            MergeExpr::Primitive(id, arguments) => {
+                let arguments = self
+                    .eval_args(arguments, owner, old, new, self_col, environment)?
+                    .into_iter()
+                    .map(Value::new)
+                    .collect::<Vec<_>>();
+                self.eg
+                    .eval_prim_internal(*id, &arguments)?
+                    .map(|value| value.rep())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "merge primitive failed for function `{}`",
+                            self.eg.relation_name(owner)
+                        )
+                    })
+            }
+            MergeExpr::Function(function, arguments) => {
+                if old[self_col] == new[self_col] {
+                    return Ok(old[self_col]);
+                }
+                let key = self.eval_args(
+                    arguments,
+                    owner,
+                    old,
+                    new,
+                    self_col,
+                    environment,
+                )?;
+                self.lookup_or_insert(*function, &key)?
+                    .map(|values| values[0])
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "lookup on `{}` failed in merge function for `{}`",
+                            self.eg.relation_name(*function),
+                            self.eg.relation_name(owner)
+                        )
+                    })
+            }
+            MergeExpr::Lookup(function, arguments) => {
+                let key = self.eval_args(
+                    arguments,
+                    owner,
+                    old,
+                    new,
+                    self_col,
+                    environment,
+                )?;
+                Ok(self
+                    .lookup_or_insert(*function, &key)?
+                    .map_or(old[self_col], |values| values[0]))
+            }
+        }
+    }
+
+    fn lookup_or_insert(&mut self, function: FunctionId, key: &[u32]) -> Result<Option<Row>> {
+        let (n_keys, _, default, _) = self.eg.function_spec(function);
+        if key.len() != n_keys {
+            return Err(anyhow!(
+                "lookup on `{}` has {} keys, expected {n_keys}",
+                self.eg.relation_name(function),
+                key.len()
+            ));
+        }
+        if let Some(current) = self.current_row(function, n_keys, key) {
+            return Ok(Some(current.values));
+        }
+        if self.eg.n_vals(function) != 1 {
+            return Err(anyhow!(
+                "lookup on missing tuple-output function `{}` needs explicit additional output values",
+                self.eg.relation_name(function)
+            ));
+        }
+        let value = match default {
+            TableDefault::FreshId => self.eg.fresh_id_internal(),
+            TableDefault::Const(value) => value,
+            TableDefault::Fail => return Ok(None),
+        };
+        let values = vec![value].into_boxed_slice();
+        self.set_current(
+            function,
+            n_keys,
+            key.into(),
+            CurrentRow {
+                values: values.clone(),
+                location: RowLocation::Live,
+                rows_for_key: 1,
+            },
+        );
+        Ok(Some(values))
+    }
+}
+
+fn row_with_values(key: &[u32], values: &[u32]) -> Row {
+    let mut row = key.to_vec();
+    row.extend_from_slice(values);
+    row.into_boxed_slice()
+}
+
 fn remove_keys_from_store(
     store: &mut HashMap<FunctionId, HashSet<Row>>,
     f: FunctionId,
@@ -801,9 +1015,9 @@ mod tests {
         span::Span,
     };
     use egglog_backend_trait::{
-        Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig, MergeFn,
-        ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
-        Value,
+        Backend, BaseValueId, ColumnTy, DefaultVal, ExternalFunctionId, FunctionConfig,
+        MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+        RuleValue, RuleVar, Value,
     };
     use egglog_numeric_id::NumericId;
 
@@ -873,14 +1087,18 @@ mod tests {
 
         fn set(&mut self, id: FunctionId, entries: &[RuleTerm]) {
             let (value, args) = entries.split_last().expect("set has a value");
+            self.set_values(id, args, std::slice::from_ref(value));
+        }
+
+        fn set_values(&mut self, id: FunctionId, keys: &[RuleTerm], values: &[RuleTerm]) {
             self.spec.core.head.0.push(GenericCoreAction::Set(
                 Span::Panic,
                 RuleActionCall::Table {
                     id,
                     name: "table".into(),
                 },
-                args.to_vec(),
-                value.clone(),
+                keys.to_vec(),
+                values.to_vec(),
             ));
         }
 
@@ -946,6 +1164,8 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge,
                 name: name.to_string(),
@@ -959,10 +1179,33 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id; arity],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: name.to_string(),
                 can_subsume: false,
+            },
+        )
+    }
+
+    fn tuple_function(
+        eg: &mut EGraph,
+        name: &str,
+        merge: MergeFn,
+        n_identity_vals: Option<usize>,
+        can_subsume: bool,
+    ) -> FunctionId {
+        Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+                n_vals: 2,
+                n_identity_vals,
+                default: DefaultVal::Fail,
+                merge,
+                name: name.to_string(),
+                can_subsume,
             },
         )
     }
@@ -991,6 +1234,8 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "R".to_string(),
@@ -1006,6 +1251,8 @@ mod tests {
                     ColumnTy::Id,
                     ColumnTy::Base(unit_ty),
                 ],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "Out".to_string(),
@@ -1024,6 +1271,8 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "UF".to_string(),
@@ -1053,6 +1302,8 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "Trigger".to_string(),
@@ -1063,6 +1314,8 @@ mod tests {
             eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::New,
                 name: "F".to_string(),
@@ -1166,12 +1419,165 @@ mod tests {
     }
 
     #[test]
+    fn tuple_merge_reads_all_old_and_new_columns_atomically() {
+        let mut eg = EGraph::new();
+        let f = tuple_function(
+            &mut eg,
+            "tuple",
+            MergeFn::Columns(vec![MergeFn::NewCol(1), MergeFn::OldCol(0)]),
+            None,
+            false,
+        );
+        eg.insert_live_row(f, row(&[1, 10, 20]));
+
+        assert!(eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap());
+        assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 40, 10])]));
+    }
+
+    #[test]
+    fn identity_column_guard_skips_payload_only_conflicts() {
+        let mut eg = EGraph::new();
+        let f = tuple_function(
+            &mut eg,
+            "guarded",
+            MergeFn::Columns(vec![MergeFn::NewCol(0), MergeFn::NewCol(1)]),
+            Some(1),
+            false,
+        );
+        eg.insert_live_row(f, row(&[1, 10, 100]));
+
+        assert!(!eg.apply_sets(vec![(f, row(&[1, 10, 200]))]).unwrap());
+        assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 100])]));
+
+        assert!(eg.apply_sets(vec![(f, row(&[1, 20, 300]))]).unwrap());
+        assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 20, 300])]));
+    }
+
+    #[test]
+    fn block_let_var_feeds_set_and_tuple_result() {
+        let mut eg = EGraph::new();
+        let side = id_function(&mut eg, "side", MergeFn::Old);
+        let max = max_primitive(&mut eg);
+        let f = tuple_function(
+            &mut eg,
+            "block",
+            MergeFn::Block {
+                actions: vec![
+                    MergeAction::Let {
+                        slot: 0,
+                        value: MergeFn::Primitive(
+                            max,
+                            vec![MergeFn::OldCol(0), MergeFn::NewCol(0)],
+                        ),
+                    },
+                    MergeAction::Set(
+                        side,
+                        vec![MergeFn::Const(Value::new(7)), MergeFn::LetVar(0)],
+                    ),
+                ],
+                result: Box::new(MergeFn::Columns(vec![
+                    MergeFn::LetVar(0),
+                    MergeFn::NewCol(1),
+                ])),
+            },
+            None,
+            false,
+        );
+        eg.insert_live_row(f, row(&[1, 10, 100]));
+
+        assert!(eg.apply_sets(vec![(f, row(&[1, 20, 200]))]).unwrap());
+        assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 20, 200])]));
+        assert_eq!(eg.mirror[&side], HashSet::from([row(&[7, 20])]));
+    }
+
+    #[test]
+    fn recursive_self_write_reaches_a_fixed_point() {
+        let mut eg = EGraph::new();
+        let max = max_primitive(&mut eg);
+        let uf = Backend::peek_next_function_id(&eg);
+        let actual = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: Some(1),
+                default: DefaultVal::Fail,
+                merge: MergeFn::Block {
+                    actions: vec![MergeAction::Set(
+                        uf,
+                        vec![
+                            MergeFn::Primitive(max, vec![MergeFn::Old, MergeFn::New]),
+                            MergeFn::UnionId,
+                        ],
+                    )],
+                    result: Box::new(MergeFn::UnionId),
+                },
+                name: "uf".to_string(),
+                can_subsume: false,
+            },
+        );
+        assert_eq!(actual, uf);
+
+        assert!(eg
+            .apply_sets(vec![(uf, row(&[5, 3])), (uf, row(&[5, 1]))])
+            .unwrap());
+        assert!(eg.mirror[&uf].contains(&row(&[5, 1])));
+        assert!(eg.mirror[&uf].contains(&row(&[3, 1])));
+    }
+
+    #[test]
+    fn tuple_rule_set_writes_all_value_columns() {
+        let mut eg = EGraph::new();
+        let trigger = id_table(&mut eg, "trigger", 1);
+        let tuple = tuple_function(
+            &mut eg,
+            "tuple-output",
+            MergeFn::Columns(vec![MergeFn::OldCol(0), MergeFn::OldCol(1)]),
+            None,
+            false,
+        );
+        eg.insert_live_row(trigger, row(&[0]));
+        let mut rule = TestRule::new("tuple set");
+        rule.query_table(
+            trigger,
+            &[constant(0, ColumnTy::Id)],
+            Some(false),
+        );
+        rule.set_values(
+            tuple,
+            &[constant(1, ColumnTy::Id)],
+            &[constant(10, ColumnTy::Id), constant(20, ColumnTy::Id)],
+        );
+        let rule = rule.build(&mut eg);
+
+        run_rules(&mut eg, &[rule]).unwrap();
+        assert_eq!(eg.mirror[&tuple], HashSet::from([row(&[1, 10, 20])]));
+    }
+
+    #[test]
+    fn tuple_merge_preserves_subsumed_status() {
+        let mut eg = EGraph::new();
+        let f = tuple_function(
+            &mut eg,
+            "subsumed tuple",
+            MergeFn::Columns(vec![MergeFn::NewCol(0), MergeFn::NewCol(1)]),
+            None,
+            true,
+        );
+        eg.subsumed.entry(f).or_default().insert(row(&[1, 10, 20]));
+
+        assert!(eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap());
+        assert!(eg.mirror[&f].is_empty());
+        assert_eq!(eg.subsumed[&f], HashSet::from([row(&[1, 30, 40])]));
+    }
+
+    #[test]
     fn merge_set_preserves_subsumed_status() {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
         eg.subsumed.entry(f).or_default().insert(row(&[1, 10]));
 
-        assert!(eg.apply_merge_sets(f, &[row(&[1, 11])]).unwrap());
+        assert!(eg.apply_sets(vec![(f, row(&[1, 11]))]).unwrap());
 
         assert!(!eg.mirror[&f].contains(&row(&[1, 11])));
         assert!(!eg.subsumed[&f].contains(&row(&[1, 10])));
@@ -1186,9 +1592,10 @@ mod tests {
         eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
 
         let mut lookup_index = HashMap::new();
-        let value = interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index);
+        let value =
+            interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index).unwrap();
 
-        assert_eq!(value.rep(), 7);
+        assert_eq!(value[0], 7);
         assert_eq!(eg.next_id, 100);
         assert!(eg.mirror[&f].is_empty());
     }
@@ -1200,7 +1607,7 @@ mod tests {
         eg.mirror.entry(f).or_default().insert(row(&[1, 10]));
         eg.subsumed.entry(f).or_default().insert(row(&[1, 11]));
 
-        assert!(eg.apply_merge_sets(f, &[row(&[1, 12])]).unwrap());
+        assert!(eg.apply_sets(vec![(f, row(&[1, 12]))]).unwrap());
 
         assert!(eg.mirror[&f].is_empty());
         assert_eq!(eg.subsumed[&f].len(), 1);
@@ -1238,6 +1645,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "R".to_string(),
@@ -1248,6 +1657,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "LiveOut".to_string(),
@@ -1258,6 +1669,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "AllOut".to_string(),
@@ -1533,6 +1946,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "View".to_string(),
@@ -1543,6 +1958,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::New,
                 name: "Current".to_string(),
@@ -1553,6 +1970,8 @@ mod tests {
             &mut eg,
             FunctionConfig {
                 schema: vec![ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                n_vals: 1,
+                n_identity_vals: None,
                 default: DefaultVal::Fail,
                 merge: MergeFn::Old,
                 name: "Dummy".to_string(),
@@ -1560,7 +1979,7 @@ mod tests {
             },
         );
         eg.insert_live_row(view, row(&[10, 0]));
-        assert!(eg.apply_merge_sets(current, &[row(&[10])]).unwrap());
+        assert!(eg.apply_sets(vec![(current, row(&[10]))]).unwrap());
 
         let view_first_rule = {
             let mut rb = TestRule::new("view_first");
@@ -1591,7 +2010,7 @@ mod tests {
         assert!(eg.mirror[&view].contains(&row(&[10, 0])));
 
         eg.insert_live_row(view, row(&[4, 0]));
-        assert!(eg.apply_merge_sets(current, &[row(&[4])]).unwrap());
+        assert!(eg.apply_sets(vec![(current, row(&[4]))]).unwrap());
 
         run_rules(&mut eg, &[view_first_rule, cleanup_rule]).unwrap();
 
@@ -1601,53 +2020,115 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
-// Merge-mode recognition (shared by `add_table`)
+// Merge-program translation (shared by `add_table`)
 // ---------------------------------------------------------------------------
 
-/// Map a single-output-column [`MergeFn`] to this backend's [`MergeMode`] (plus, for
-/// [`MergeMode::Computed`], the evaluatable [`MergeTree`]) that resolves its FD
-/// conflict:
-///   - `AssertEq` / `Old`     => keep the old value
-///   - `New`                  => keep the new value
-///   - `UnionId`              => lattice-min (the union-find leader)
-///   - `Primitive` / `Function` / `Const` => `Computed`: fold by evaluating the
-///     retained tree (`or`/`max`/`+`, or a constructor that builds a term)
-fn merge_mode_for(merge: &MergeFn) -> (MergeMode, Option<MergeTree>) {
+fn translate_merge_program(merge: MergeFn, n_vals: usize, name: &str) -> MergeProgram {
+    let (actions, result) = match merge {
+        MergeFn::Block { actions, result } => (actions, *result),
+        result => (Vec::new(), result),
+    };
+
+    let mut available_slots = 0;
+    let actions = actions
+        .into_iter()
+        .map(|action| match action {
+            MergeAction::Set(function, arguments) => MergeActionPlan::Set(
+                function,
+                arguments
+                    .into_iter()
+                    .map(|argument| {
+                        translate_merge_expr(argument, n_vals, name, available_slots)
+                    })
+                    .collect(),
+            ),
+            MergeAction::Let { slot, value } => {
+                assert_eq!(
+                    slot, available_slots,
+                    "merge for `{name}` declares let slot {slot}, expected {available_slots}"
+                );
+                let value = translate_merge_expr(value, n_vals, name, available_slots);
+                available_slots += 1;
+                MergeActionPlan::Let { slot, value }
+            }
+            MergeAction::Union(..) => panic!(
+                "DD backend does not support native union actions inside merge blocks for `{name}`; term encoding must lower equality effects to table writes"
+            ),
+        })
+        .collect::<Vec<_>>();
+
+    let results = match result {
+        MergeFn::Columns(columns) => columns,
+        result => vec![result],
+    };
+    assert_eq!(
+        results.len(),
+        n_vals,
+        "merge for `{name}` must produce {n_vals} value column(s), got {}",
+        results.len()
+    );
+    let results = results
+        .into_iter()
+        .map(|result| translate_merge_expr(result, n_vals, name, available_slots))
+        .collect::<Vec<_>>();
+    MergeProgram {
+        actions: actions.into_boxed_slice(),
+        results: results.into_boxed_slice(),
+    }
+}
+
+fn translate_merge_expr(
+    merge: MergeFn,
+    n_vals: usize,
+    name: &str,
+    available_slots: usize,
+) -> MergeExpr {
+    let translate = |merge| translate_merge_expr(merge, n_vals, name, available_slots);
     match merge {
-        MergeFn::AssertEq | MergeFn::Old => (MergeMode::Old, None),
-        MergeFn::New => (MergeMode::New, None),
-        MergeFn::UnionId => (MergeMode::Min, None),
-        MergeFn::Primitive(_, _) | MergeFn::Function(_, _) | MergeFn::Const(_) => {
-            (MergeMode::Computed, translate_merge_tree(merge))
+        MergeFn::AssertEq => MergeExpr::AssertEq,
+        MergeFn::UnionId => MergeExpr::UnionId,
+        MergeFn::Old => MergeExpr::Old,
+        MergeFn::New => MergeExpr::New,
+        MergeFn::OldCol(index) => {
+            assert!(
+                index < n_vals,
+                "merge for `{name}` references OldCol({index}) but has only {n_vals} value columns"
+            );
+            MergeExpr::OldCol(index)
+        }
+        MergeFn::NewCol(index) => {
+            assert!(
+                index < n_vals,
+                "merge for `{name}` references NewCol({index}) but has only {n_vals} value columns"
+            );
+            MergeExpr::NewCol(index)
+        }
+        MergeFn::LetVar(slot) => {
+            assert!(
+                slot < available_slots,
+                "merge for `{name}` references let slot {slot} before it is bound"
+            );
+            MergeExpr::LetVar(slot)
+        }
+        MergeFn::Const(value) => MergeExpr::Const(value.rep()),
+        MergeFn::Primitive(id, arguments) => {
+            MergeExpr::Primitive(id, arguments.into_iter().map(translate).collect())
+        }
+        MergeFn::Function(function, arguments) => {
+            MergeExpr::Function(function, arguments.into_iter().map(translate).collect())
+        }
+        MergeFn::Lookup(function, arguments) => {
+            MergeExpr::Lookup(function, arguments.into_iter().map(translate).collect())
+        }
+        MergeFn::Columns(_) => {
+            panic!("nested MergeFn::Columns is not supported for `{name}`")
+        }
+        MergeFn::Block { .. } => {
+            panic!("nested MergeFn::Block is not supported for `{name}`")
         }
     }
 }
 
-/// Translate a trait [`MergeFn`] into the evaluatable [`MergeTree`]. `UnionId`
-/// has no tree form (it is `MergeMode::Min`); it only appears nested if the term
-/// encoder builds one, in which case lattice-min is the faithful lowering.
-fn translate_merge_tree(merge: &MergeFn) -> Option<MergeTree> {
-    Some(match merge {
-        MergeFn::Old | MergeFn::AssertEq => MergeTree::Old,
-        MergeFn::New => MergeTree::New,
-        MergeFn::Const(v) => MergeTree::Const(v.rep()),
-        MergeFn::Primitive(id, args) => MergeTree::Prim(
-            *id,
-            args.iter()
-                .map(translate_merge_tree)
-                .collect::<Option<_>>()?,
-        ),
-        MergeFn::Function(f, args) => MergeTree::Func(
-            *f,
-            args.iter()
-                .map(translate_merge_tree)
-                .collect::<Option<_>>()?,
-        ),
-        MergeFn::UnionId => return None,
-    })
-}
-
-// ---------------------------------------------------------------------------
 // impl Backend
 // ---------------------------------------------------------------------------
 
@@ -1658,44 +2139,66 @@ impl Backend for EGraph {
         let id = FunctionId::new(self.relations.len() as u32);
         let arity = config.schema.len();
         assert!(
+            (1..=arity).contains(&config.n_vals),
+            "function `{}` declares {} output columns but has {arity} columns total",
+            config.name,
+            config.n_vals
+        );
+        assert!(
             arity <= dd_native::W,
             "DD backend fixed row width supports relations of arity <= {} (got {} for `{}`)",
             dd_native::W,
             arity,
             config.name
         );
-        // Relation vs function: a table is a **relation** (whole row is the key,
-        // no output column to merge) iff it is nullary OR its last column is
-        // `Unit` — the term encoder's view-table pattern
-        // `(function @XView (...) Unit :merge old)` AND ordinary relations.
-        // Otherwise the last column is a function OUTPUT, resolved by the merge
-        // mode. Detected via Unit — NOT `DefaultVal`, which is `Fail` for every
-        // custom function regardless of whether it has a real output column.
-        let output_is_unit = config.schema.last().is_some_and(|t| match t {
-            ColumnTy::Base(bv) => {
-                // `()` is pre-registered in `new`, so this never panics.
-                *bv == self
-                    .db
-                    .base_values()
-                    .get_ty_by_id(std::any::TypeId::of::<()>())
-            }
-            _ => false,
-        });
-        let has_output = arity > 0 && !output_is_unit;
-        let (merge, merge_tree) = if !has_output {
-            (MergeMode::Relation, None)
-        } else {
-            merge_mode_for(&config.merge)
+        if let Some(count) = config.n_identity_vals {
+            assert!(
+                (1..=config.n_vals).contains(&count),
+                "function `{}` declares {count} identity columns but has {} value columns",
+                config.name,
+                config.n_vals
+            );
+        }
+        let n_keys = arity - config.n_vals;
+        let default = match config.default {
+            DefaultVal::FreshId => TableDefault::FreshId,
+            DefaultVal::Fail => TableDefault::Fail,
+            DefaultVal::Const(value) => TableDefault::Const(value.rep()),
         };
+        let merge = Arc::new(translate_merge_program(
+            config.merge,
+            config.n_vals,
+            &config.name,
+        ));
+        let mut merge_level = 0;
+        merge.visit_read_dependencies(&mut |dependency| {
+            let dependency = self
+                .relations
+                .get(dependency.rep() as usize)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "merge for `{}` reads function id {} before it is registered",
+                        config.name,
+                        dependency.rep()
+                    )
+                });
+            merge_level = merge_level.max(dependency.merge_level + 1);
+        });
         self.relations.push(RelationInfo {
             name: config.name,
             arity,
-            lookup_mints: matches!(config.default, DefaultVal::FreshId),
+            n_keys,
             merge,
-            merge_tree,
+            default,
+            n_identity_vals: config.n_identity_vals,
+            merge_level,
         });
         self.mirror.insert(id, HashSet::new());
         id
+    }
+
+    fn peek_next_function_id(&self) -> FunctionId {
+        FunctionId::new(self.relations.len() as u32)
     }
 
     fn table_size(&self, table: FunctionId) -> usize {
@@ -1770,18 +2273,23 @@ impl Backend for EGraph {
         self.db.container_values()
     }
 
-    fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {
+    fn lookup_row(&self, func: FunctionId, key: &[Value]) -> Option<Vec<Value>> {
         let info = self.info(func);
-        if info.merge == MergeMode::Relation || key.len() + 1 != info.arity {
+        if key.len() != info.n_keys {
             return None;
         }
-        let key: Vec<u32> = key.iter().map(|value| value.rep()).collect();
+        let key = key.iter().map(|value| value.rep()).collect::<Vec<_>>();
         let find = |rows: Option<&HashSet<Row>>| {
             rows?
                 .iter()
-                .find_map(|row| (row[..key.len()] == key[..]).then(|| Value::new(row[key.len()])))
+                .find(|row| row[..key.len()] == key[..])
+                .map(|row| row[..info.arity].iter().copied().map(Value::new).collect())
         };
         find(self.mirror.get(&func)).or_else(|| find(self.subsumed.get(&func)))
+    }
+
+    fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {
+        self.lookup_row(func, key).map(|row| row[key.len()])
     }
 
     fn container_values_mut_dyn(&mut self) -> Option<&mut ContainerValues> {

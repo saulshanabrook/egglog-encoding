@@ -7,24 +7,82 @@ use egglog_numeric_id::NumericId;
 /// Variable-width row stored in the host-side relation mirror.
 pub type Row = Box<[u32]>;
 
-/// How a function resolves a functional-dependency conflict.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MergeMode {
-    Relation,
+/// A backend-neutral merge expression retained for host-side evaluation.
+#[derive(Clone, Debug)]
+pub enum MergeExpr {
+    AssertEq,
+    UnionId,
     Old,
     New,
-    Min,
-    Computed,
+    OldCol(usize),
+    NewCol(usize),
+    LetVar(usize),
+    Const(u32),
+    Primitive(ExternalFunctionId, Vec<MergeExpr>),
+    Function(FunctionId, Vec<MergeExpr>),
+    Lookup(FunctionId, Vec<MergeExpr>),
 }
 
-/// An evaluatable computed merge expression.
+impl MergeExpr {
+    pub fn visit_read_dependencies(&self, visit: &mut impl FnMut(FunctionId)) {
+        match self {
+            Self::Function(function, arguments) | Self::Lookup(function, arguments) => {
+                visit(*function);
+                for argument in arguments {
+                    argument.visit_read_dependencies(visit);
+                }
+            }
+            Self::Primitive(_, arguments) => {
+                for argument in arguments {
+                    argument.visit_read_dependencies(visit);
+                }
+            }
+            Self::AssertEq
+            | Self::UnionId
+            | Self::Old
+            | Self::New
+            | Self::OldCol(_)
+            | Self::NewCol(_)
+            | Self::LetVar(_)
+            | Self::Const(_) => {}
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
-pub enum MergeTree {
-    Old,
-    New,
-    Const(u32),
-    Prim(ExternalFunctionId, Vec<MergeTree>),
-    Func(FunctionId, Vec<MergeTree>),
+pub enum MergeActionPlan {
+    Set(FunctionId, Vec<MergeExpr>),
+    Let { slot: usize, value: MergeExpr },
+}
+
+impl MergeActionPlan {
+    pub fn visit_read_dependencies(&self, visit: &mut impl FnMut(FunctionId)) {
+        match self {
+            Self::Set(_, arguments) => {
+                for argument in arguments {
+                    argument.visit_read_dependencies(visit);
+                }
+            }
+            Self::Let { value, .. } => value.visit_read_dependencies(visit),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct MergeProgram {
+    pub actions: Box<[MergeActionPlan]>,
+    pub results: Box<[MergeExpr]>,
+}
+
+impl MergeProgram {
+    pub fn visit_read_dependencies(&self, visit: &mut impl FnMut(FunctionId)) {
+        for action in &self.actions {
+            action.visit_read_dependencies(visit);
+        }
+        for result in &self.results {
+            result.visit_read_dependencies(visit);
+        }
+    }
 }
 
 /// A physical column operand used by a DD join plan.

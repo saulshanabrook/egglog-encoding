@@ -154,14 +154,24 @@ fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
         return value;
     };
 
+    if uf_func.schema.input.len() == 1 {
+        let mut canonical = value;
+        loop {
+            let next = egraph
+                .backend
+                .lookup_row(uf_func.backend_id, &[canonical])
+                .map(|row| row[1]);
+            match next {
+                Some(next) if next != canonical => canonical = next,
+                _ => return canonical,
+            }
+        }
+    }
+
     let mut canonical = value;
     egraph
         .backend
         .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-            // The generated UF parent table is a normal custom function with
-            // can_subsume=false, so there are no subsumed UF rows to filter.
-            // This matches the public extractor's one-hop canonical scan.
-            // UF table has (child, parent) as inputs.
             if row.vals[0] == value {
                 canonical = row.vals[1];
             }

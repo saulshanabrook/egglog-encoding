@@ -118,10 +118,41 @@ impl Hash for SpecializedPrimitive {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ResolvedCall {
     Func(FuncType),
     Primitive(SpecializedPrimitive),
+    /// The `values` tuple constructor, used to destructure a tuple-output function's outputs in a
+    /// query (`(= (values a b) (f x))`) or to construct them in a `set` action
+    /// (`(set (f x) (values a b))`). Carries the output sorts. It never reaches the backend on its
+    /// own: it is always paired with a tuple-output function call when lowering to core.
+    Values(Vec<ArcSort>),
+}
+
+impl PartialEq for ResolvedCall {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ResolvedCall::Func(a), ResolvedCall::Func(b)) => a == b,
+            (ResolvedCall::Primitive(a), ResolvedCall::Primitive(b)) => a == b,
+            (ResolvedCall::Values(a), ResolvedCall::Values(b)) => {
+                a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.name() == y.name())
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ResolvedCall {}
+
+impl Hash for ResolvedCall {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        std::mem::discriminant(self).hash(state);
+        match self {
+            ResolvedCall::Func(f) => f.hash(state),
+            ResolvedCall::Primitive(p) => p.hash(state),
+            ResolvedCall::Values(sorts) => sorts.iter().for_each(|s| s.name().hash(state)),
+        }
+    }
 }
 
 impl ResolvedCall {
@@ -129,13 +160,18 @@ impl ResolvedCall {
         match self {
             ResolvedCall::Func(func) => &func.name,
             ResolvedCall::Primitive(prim) => prim.name(),
+            ResolvedCall::Values(_) => "values",
         }
     }
 
     pub fn output(&self) -> &ArcSort {
         match self {
-            ResolvedCall::Func(func) => &func.output,
+            ResolvedCall::Func(func) => func.output(),
             ResolvedCall::Primitive(prim) => prim.output(),
+            // `values` has no single output; its first column is returned only so that callers
+            // that incidentally ask for "a" sort do not panic. Tuple-output uses are routed
+            // specially before this is consulted.
+            ResolvedCall::Values(sorts) => &sorts[0],
         }
     }
 
@@ -145,10 +181,11 @@ impl ResolvedCall {
         match self {
             ResolvedCall::Func(func) => {
                 let mut types = func.input.clone();
-                types.push(func.output.clone());
+                types.extend(func.outputs.iter().cloned());
                 types
             }
             ResolvedCall::Primitive(prim) => prim.input().to_vec(),
+            ResolvedCall::Values(sorts) => sorts.clone(),
         }
     }
 
@@ -178,7 +215,7 @@ impl ResolvedCall {
         ctx: crate::Context,
     ) -> ResolvedCall {
         if let Some(ty) = typeinfo.get_func_type(head) {
-            let expected = ty.input.iter().chain(once(&ty.output)).map(|s| s.name());
+            let expected = ty.input.iter().chain(ty.outputs.iter()).map(|s| s.name());
             let actual = types.iter().map(|s| s.name());
             if expected.eq(actual) {
                 return ResolvedCall::Func(ty.clone());
@@ -213,6 +250,7 @@ impl Display for ResolvedCall {
         match self {
             ResolvedCall::Func(func) => write!(f, "{}", func.name),
             ResolvedCall::Primitive(prim) => write!(f, "{}", prim.name()),
+            ResolvedCall::Values(_) => write!(f, "values"),
         }
     }
 }
@@ -231,6 +269,7 @@ impl IsFunc for ResolvedCall {
         match self {
             ResolvedCall::Func(func) => type_info.is_constructor(&func.name),
             ResolvedCall::Primitive(_) => false,
+            ResolvedCall::Values(_) => false,
         }
     }
 }
@@ -241,6 +280,35 @@ impl IsFunc for String {
     }
 }
 
+/// Operations on a call head needed to lower the `values` tuple sugar. Implemented for both the
+/// unresolved (`String`) and resolved ([`ResolvedCall`]) head representations so that the same
+/// lowering code runs in both the type-checking and canonicalization passes.
+pub trait HeadOps {
+    /// Whether this head is the `values` tuple constructor.
+    fn is_values(&self) -> bool;
+    /// Whether this head is a tuple-output function (more than one output column).
+    fn is_tuple_output(&self, type_info: &TypeInfo) -> bool;
+}
+
+impl HeadOps for String {
+    fn is_values(&self) -> bool {
+        self == "values"
+    }
+    fn is_tuple_output(&self, type_info: &TypeInfo) -> bool {
+        type_info
+            .get_func_type(self)
+            .is_some_and(|t| t.is_tuple_output())
+    }
+}
+
+impl HeadOps for ResolvedCall {
+    fn is_values(&self) -> bool {
+        matches!(self, ResolvedCall::Values(_))
+    }
+    fn is_tuple_output(&self, _type_info: &TypeInfo) -> bool {
+        matches!(self, ResolvedCall::Func(f) if f.is_tuple_output())
+    }
+}
 pub type ResolvedAtomTerm = GenericAtomTerm<ResolvedVar>;
 
 fn atom_term_sort(term: &ResolvedAtomTerm) -> ArcSort {
@@ -284,7 +352,6 @@ impl QueryConstraints for Query<StringOrEq, String> {
 }
 
 pub(crate) type ResolvedCoreActions = GenericCoreActions<ResolvedCall, ResolvedVar>;
-
 /// Shared state that threads through lowering from surface actions to core actions.
 ///
 pub(crate) struct CoreActionContext<'a, Head, Leaf, FG> {
@@ -323,14 +390,14 @@ pub(crate) trait GenericActionsExt<Head, Leaf> {
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + HeadOps,
         Leaf: Clone + PartialEq + Eq + Display + Hash,
         FG: FreshGen<Head, Leaf>;
 }
 
 impl<Head, Leaf> GenericActionsExt<Head, Leaf> for GenericActions<Head, Leaf>
 where
-    Head: Clone + Display + IsFunc,
+    Head: Clone + Display + IsFunc + HeadOps,
     Leaf: Clone + PartialEq + Eq + Display + Hash,
 {
     #[allow(clippy::type_complexity)]
@@ -339,7 +406,7 @@ where
         ctx: &mut CoreActionContext<'_, Head, Leaf, FG>,
     ) -> Result<(GenericCoreActions<Head, Leaf>, MappedActions<Head, Leaf>), TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + HeadOps,
         Leaf: Clone + PartialEq + Eq + Display + Hash,
         FG: FreshGen<Head, Leaf>,
     {
@@ -376,7 +443,31 @@ where
                         let mapped_arg = arg.to_core_actions(ctx, &mut norm_actions)?;
                         mapped_args.push(mapped_arg);
                     }
-                    let mapped_expr = expr.to_core_actions(ctx, &mut norm_actions)?;
+                    // The value may be a `(values v...)` tuple (for a tuple-output function), which
+                    // contributes one output column per element; otherwise it is a single value.
+                    let (mapped_value, value_terms) = match expr {
+                        GenericExpr::Call(vspan, vhead, vargs) if vhead.is_values() => {
+                            let mut mapped = vec![];
+                            let mut terms = vec![];
+                            for v in vargs {
+                                let m = v.to_core_actions(ctx, &mut norm_actions)?;
+                                terms.push(m.get_corresponding_var_or_lit(typeinfo));
+                                mapped.push(m);
+                            }
+                            let dummy = ctx.fresh_gen.fresh(vhead);
+                            let mapped_call = GenericExpr::Call(
+                                vspan.clone(),
+                                CorrespondingVar::new(vhead.clone(), dummy),
+                                mapped,
+                            );
+                            (mapped_call, terms)
+                        }
+                        _ => {
+                            let m = expr.to_core_actions(ctx, &mut norm_actions)?;
+                            let term = m.get_corresponding_var_or_lit(typeinfo);
+                            (m, vec![term])
+                        }
+                    };
                     norm_actions.push(GenericCoreAction::Set(
                         span.clone(),
                         head.clone(),
@@ -384,14 +475,14 @@ where
                             .iter()
                             .map(|e| e.get_corresponding_var_or_lit(typeinfo))
                             .collect(),
-                        mapped_expr.get_corresponding_var_or_lit(typeinfo),
+                        value_terms,
                     ));
                     let v = ctx.fresh_gen.fresh(head);
                     mapped_actions.0.push(GenericAction::Set(
                         span.clone(),
                         CorrespondingVar::new(head.clone(), v),
                         mapped_args,
-                        mapped_expr,
+                        mapped_value,
                     ));
                 }
                 GenericAction::Change(span, change, head, args) => {
@@ -443,7 +534,8 @@ where
                                     .iter()
                                     .map(|e| e.get_corresponding_var_or_lit(typeinfo))
                                     .collect(),
-                                mapped_expr.get_corresponding_var_or_lit(typeinfo),
+                                // Constructors are single-output, so a single value column.
+                                vec![mapped_expr.get_corresponding_var_or_lit(typeinfo)],
                             ));
                             let v = ctx.fresh_gen.fresh(head);
                             mapped_actions.0.push(GenericAction::Set(
@@ -808,13 +900,13 @@ pub(crate) trait GenericRuleExt<Head, Leaf> {
         union_to_set_optimization: bool,
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + HeadOps,
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug;
 }
 
 impl<Head, Leaf> GenericRuleExt<Head, Leaf> for GenericRule<Head, Leaf>
 where
-    Head: Clone + Display + IsFunc,
+    Head: Clone + Display + IsFunc + HeadOps,
     Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
 {
     fn to_core_rule(
@@ -824,7 +916,7 @@ where
         union_to_set_optimization: bool,
     ) -> Result<GenericCoreRule<HeadOrEq<Head>, Head, Leaf>, TypeError>
     where
-        Head: Clone + Display + IsFunc,
+        Head: Clone + Display + IsFunc + HeadOps,
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
     {
         let (body, _correspondence) = Facts(self.body.clone()).to_query(typeinfo, fresh_gen);

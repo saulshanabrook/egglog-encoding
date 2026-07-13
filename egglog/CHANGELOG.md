@@ -5,6 +5,34 @@
 - Fix user-defined primitives (registered through the Rust API after construction) being reported as unbound under term encoding / proofs: primitive registration now also reaches the term-encoding typechecker, so the encoder can typecheck the encoded program. Previously callers had to manually register the primitive on `proof_state.original_typechecking` as well.
 - **Pluggable backend SPI.** `EGraph::with_backend(Box<dyn Backend>)` lets a third party drive the egglog frontend with their own backend (see the `egglog-backend-trait` crate and the `egglog-experimental-dd` example). A backend without a native union-find declares `Backend::requires_term_encoding()`; `EGraph::with_term_encoding()` opts such an e-graph into the term-encoding pipeline (congruence and rebuild lower to rules over `@uf` tables), and running a term-encoding-only backend without it now errors with `Error::BackendRequiresTermEncoding` instead of silently dropping `union`s.
 - Add `make nightly` and `scripts/nightly_bench.py`, a hyperfine-based benchmark harness that measures every `tests/**/*.egg` program at 1/2/4/8 threads and (where supported) in proof-testing mode, caps each run at a 2-minute timeout, skips sub-50ms programs, and emits an HTML dashboard (one row per benchmark, one column per configuration) for nightly.cs.washington.edu. The dashboard uses [eval-live](https://github.com/oflatt/eval-live) for interactive filtering and sorting.
+- **Single self-referential union-find (proof mode).** The proof term encoding now
+  represents each sort's union-find as one native-tuple function `@UF : (S) -> (S, Proof)`
+  (parent + a proof `key = parent`) with a self-referential `:merge`, replacing the former
+  two-table `@UF_S (S S) -> Proof` relation plus `@UF_Sf` index. Constructor-view congruence
+  and the UF self-merge both keep the smaller e-class and stage an oriented displaced edge,
+  so the `single_parent`/`uf_function_index` rules and per-term self-loop seeds are gone. This
+  mirrors the term (non-proof) encoding's single-table `@UF : (S) -> S`.
+- **Tuple-output functions.** A function may declare more than one output sort, e.g.
+  `(function interval (Math) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))`. Such a
+  function stores its outputs as separate value columns; the functional dependency is
+  `keys -> (value0, value1, ...)`. Outputs are destructured in queries with
+  `(= (values lo hi) (interval x))`, written with `(set (interval x) (values 0 100))`, and merged
+  with a `(values ...)` clause whose `i`-th element merges column `i` using the bound variables
+  `old0`, `new0`, `old1`, `new1`, .... Tuple outputs are only allowed for plain functions (not
+  constructors, relations, or view tables) and are not supported by the term/proof encoding.
+- **`:merge` action blocks.** A `:merge` may be a value-producing action block
+  `:merge (<action>* <result-expr>)`: the actions run first (with `old`/`new` bound), then the
+  trailing expression is the merged value. Actions may be `let` (bind an intermediate value used by
+  later actions or the result), `set` (write another function), or `union` (unify two eclasses). A
+  bare `:merge <expr>` (no actions) is unchanged.
+- Built-in keywords (most command, action, and schedule heads such as `function`, `set`, `union`,
+  `rule`, `run`, ..., plus the tuple constructor `values`) are now reserved and may no longer be
+  used as user identifiers (function/sort/constructor/relation/variant names or variables). Names
+  starting with `:` may not be used as identifiers (definition names), since that prefix marks
+  option keywords (`:merge`, `:cost`, ...); it is still accepted in expression position so command
+  macros can consume their own option markers (e.g. `:until`). The common-word commands `input` and
+  `output` are only partially reserved: they remain usable as variables, but not as definition names
+  or as the head of a call expression.
 - Add typed `EGraph` extension state that clones with `EGraph` and is restored by `push`/`pop`.
 - Fix custom scheduler queries so subsumed rows are not offered as fresh matches.
 - Report full source file paths in egglog span and error messages.

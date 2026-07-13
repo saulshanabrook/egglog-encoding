@@ -33,8 +33,6 @@ pub(crate) struct EncodingNames {
     /// For a given function symbol, the name of the function that converts to the AST type.
     pub(crate) sort_to_ast_constructor: HashMap<String, String>,
     pub(crate) fn_to_term_sort: HashMap<String, String>,
-    pub(crate) single_parent_ruleset_name: String,
-    pub(crate) uf_function_index_ruleset_name: String,
     pub(crate) pcons: String,
     pub(crate) pnil: String,
     // Ruleset names
@@ -75,8 +73,6 @@ impl EncodingNames {
             eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
             fn_to_term_sort: HashMap::default(),
-            single_parent_ruleset_name: symbol_gen.fresh("single_parent"),
-            uf_function_index_ruleset_name: symbol_gen.fresh("uf_function_index"),
             pcons: symbol_gen.fresh("PCons"),
             pnil: symbol_gen.fresh("PNil"),
             path_compress_ruleset_name: symbol_gen.fresh("parent"),
@@ -105,28 +101,6 @@ impl ProofInstrumentor<'_> {
         }
     }
 
-    pub(crate) fn uf_function_name(&mut self, sort: &str) -> String {
-        if let Some(name) = self.egraph.proof_state.uf_function.get(sort) {
-            name.clone()
-        } else {
-            let fresh_name = self.egraph.parser.symbol_gen.fresh(&format!("UF_{sort}f"));
-            self.egraph
-                .proof_state
-                .uf_function
-                .insert(sort.to_string(), fresh_name.clone());
-            fresh_name
-        }
-    }
-
-    /// Returns the name of the Pair sort used to bundle (leader, proof) in the UF function index.
-    /// Only used in proof mode.
-    pub(crate) fn uf_pair_sort_name(&mut self, sort: &str) -> String {
-        self.egraph
-            .parser
-            .symbol_gen
-            .fresh(&format!("UFPair_{sort}"))
-    }
-
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_program_from_string(None, input);
@@ -152,12 +126,8 @@ impl ProofInstrumentor<'_> {
             "(ruleset {})
              (ruleset {})
              (ruleset {})
-             (ruleset {})
-             (ruleset {})
              (ruleset {})",
             self.proof_names().path_compress_ruleset_name,
-            self.proof_names().single_parent_ruleset_name,
-            self.proof_names().uf_function_index_ruleset_name,
             self.proof_names().rebuilding_ruleset_name,
             self.proof_names().rebuilding_cleanup_ruleset_name,
             self.proof_names().delete_subsume_ruleset_name
@@ -491,6 +461,12 @@ pub enum ProofEncodingUnsupportedReason {
         "rule uses `:naive` with an eq-sort primitive in the body. Proof encoding can only look up proofs for primitive eq-sort fact results under seminaive-safe query evaluation."
     )]
     NaiveEqSortPrimitiveFact,
+    #[error("tuple-output functions are not supported by the term/proof encoding.")]
+    TupleOutputFunction,
+    #[error(
+        "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
+    )]
+    MergeActionBlock,
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -566,6 +542,23 @@ pub(crate) fn command_supports_proof_encoding(
         && rule.body.iter().any(fact_has_eq_sort_primitive_result)
     {
         return Err(ProofEncodingUnsupportedReason::NaiveEqSortPrimitiveFact);
+    }
+    // Tuple-output functions store multiple value columns, which the term/proof encoding (built
+    // around single-output constructor views) does not model.
+    if let crate::ast::GenericCommand::Function { schema, .. } = command
+        && schema.is_tuple_output()
+    {
+        return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
+    }
+
+    // A `:merge` action block runs actions before its result; the proof encoding only instruments
+    // the merged value, so mark it unsupported rather than emit silently-incomplete proofs.
+    if let crate::ast::GenericCommand::Function {
+        merge: Some(merge), ..
+    } = command
+        && !merge.actions.is_empty()
+    {
+        return Err(ProofEncodingUnsupportedReason::MergeActionBlock);
     }
     // Check all expressions for primitives without validators
     let mut all_primitives_have_validators = true;

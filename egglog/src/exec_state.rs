@@ -290,6 +290,9 @@ pub trait Core<'a, 'db: 'a>: Internal<'a, 'db> {
                 match resolved_call {
                     ResolvedCall::Primitive(primitive) => self.apply_primitive(primitive, &values),
                     ResolvedCall::Func(func) => self.apply_resolved_function(func, &values),
+                    ResolvedCall::Values(_) => {
+                        panic!("`values` cannot be evaluated as a single-valued expression")
+                    }
                 }
             }
         }
@@ -322,6 +325,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     fn lookup<K: IntoValues>(&self, name: &str, key: K) -> Result<Option<Value>, Error> {
         let action = lookup_action(self.registry(), name)?;
         check_subtype(name, &action, TableKind::Function, "function")?;
+        check_single_output(name, &action, "lookup")?;
         let key_values: ValueRow = key.into_values(self.base_values()).collect();
         check_arity(name, &action, key_values.len())?;
         Ok(action.lookup(self.es(), &key_values))
@@ -418,6 +422,7 @@ pub trait Read<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     ) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
         check_subtype(name, &action, TableKind::Function, "function")?;
+        check_single_output(name, &action, "function_entries")?;
         action.for_each_while(self.es(), |row| {
             let (output, inputs) = row
                 .vals
@@ -479,6 +484,7 @@ pub trait Write<'a, 'db: 'a>: Core<'a, 'db> + RegistrySealed<'a, 'db> {
     ) -> Result<(), Error> {
         let action = lookup_action(self.registry(), name)?;
         check_subtype(name, &action, TableKind::Function, "function")?;
+        check_single_output(name, &action, "set")?;
         let bv = self.base_values();
         let mut row: ValueRow = key.into_values(bv).collect();
         check_arity(name, &action, row.len())?;
@@ -582,6 +588,21 @@ fn check_arity(table: &str, action: &TableAction, got: usize) -> Result<(), Erro
         .into());
     }
     Ok(())
+}
+
+fn check_single_output(
+    name: &str,
+    action: &TableAction,
+    method: &'static str,
+) -> Result<(), Error> {
+    if action.output_arity() == 1 {
+        return Ok(());
+    }
+    Err(ApiError::TupleOutputUnsupported {
+        name: name.to_string(),
+        method,
+    }
+    .into())
 }
 
 fn apply_registered_function<'a, 'db: 'a>(

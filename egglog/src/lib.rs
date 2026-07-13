@@ -252,7 +252,7 @@ impl std::fmt::Display for CommandOutput {
                 write!(f, "Overall statistics:\n{run_report}")
             }
             CommandOutput::PrintFunction(function, termdag, terms_and_outputs, mode) => {
-                let out_is_unit = function.schema.output.name() == UnitSort.name();
+                let out_is_unit = function.schema.output().name() == UnitSort.name();
                 if *mode == PrintFunctionMode::CSV {
                     let mut wtr = Writer::from_writer(vec![]);
                     for (term_id, output) in terms_and_outputs {
@@ -406,17 +406,15 @@ impl Function {
 #[derive(Clone, Debug)]
 pub struct ResolvedSchema {
     pub input: Vec<ArcSort>,
-    pub output: ArcSort,
+    /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
+    /// ordinary functions have exactly one. Always non-empty.
+    pub outputs: Vec<ArcSort>,
 }
 
 impl ResolvedSchema {
-    /// Get the type at position `index`, counting the `output` sort as at position `input.len()`.
-    pub fn get_by_pos(&self, index: usize) -> Option<&ArcSort> {
-        if self.input.len() == index {
-            Some(&self.output)
-        } else {
-            self.input.get(index)
-        }
+    /// The primary (first) output sort.
+    pub fn output(&self) -> &ArcSort {
+        &self.outputs[0]
     }
 }
 
@@ -519,6 +517,18 @@ impl EGraph {
         });
         add_primitive!(&mut eg, "ordering-max" = |a: #, b: #| -> # {
             if a > b { a } else { b }
+        });
+
+        // Orientation helpers for the proof-encoding UF/view merges: given two `(value, proof)`
+        // pairs `(a, ap)` and `(b, bp)`, return the proof paired with the smaller / larger value
+        // (same value ordering as `ordering-min`/`ordering-max`). Polymorphic like the ordering
+        // prims, so each resolves to a single value-level external function and needs no `Proof`
+        // sort to exist — which keeps the encoding self-contained on a non-proof re-parse.
+        add_primitive!(&mut eg, "proof-of-min" = |a: #, ap: #, b: #, bp: #| -> # {
+            if a < b { ap } else { bp }
+        });
+        add_primitive!(&mut eg, "proof-of-max" = |a: #, ap: #, b: #, bp: #| -> # {
+            if a > b { ap } else { bp }
         });
 
         eg.rulesets
@@ -815,22 +825,37 @@ impl EGraph {
     fn translate_expr_to_mergefn(
         &self,
         expr: &ResolvedExpr,
+        lets: &HashMap<String, usize>,
     ) -> Result<egglog_bridge::MergeFn, Error> {
         match expr {
             GenericExpr::Lit(_, literal) => {
                 let val = literal_to_value(self.backend.base_values(), literal);
                 Ok(egglog_bridge::MergeFn::Const(val))
             }
-            GenericExpr::Var(span, resolved_var) => match resolved_var.name.as_str() {
-                "old" => Ok(egglog_bridge::MergeFn::Old),
-                "new" => Ok(egglog_bridge::MergeFn::New),
-                // NB: type-checking should already catch unbound variables here.
-                _ => Err(TypeError::Unbound(resolved_var.name.clone(), span.clone()).into()),
-            },
+            GenericExpr::Var(span, resolved_var) => {
+                let name = resolved_var.name.as_str();
+                // A `let`-bound variable resolves to its environment slot. Otherwise: single-output
+                // merges use `old`/`new`; tuple-output merges use `old0`, `new0`, `old1`, ... to
+                // refer to the old/new value of a specific output column.
+                if let Some(&slot) = lets.get(name) {
+                    Ok(egglog_bridge::MergeFn::LetVar(slot))
+                } else if name == "old" {
+                    Ok(egglog_bridge::MergeFn::Old)
+                } else if name == "new" {
+                    Ok(egglog_bridge::MergeFn::New)
+                } else if let Some(i) = name.strip_prefix("old").and_then(|s| s.parse().ok()) {
+                    Ok(egglog_bridge::MergeFn::OldCol(i))
+                } else if let Some(i) = name.strip_prefix("new").and_then(|s| s.parse().ok()) {
+                    Ok(egglog_bridge::MergeFn::NewCol(i))
+                } else {
+                    // NB: type-checking should already catch unbound variables here.
+                    Err(TypeError::Unbound(resolved_var.name.clone(), span.clone()).into())
+                }
+            }
             GenericExpr::Call(_, ResolvedCall::Func(f), args) => {
                 let translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg))
+                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(egglog_bridge::MergeFn::Function(
                     self.functions[&f.name].backend_id,
@@ -840,7 +865,7 @@ impl EGraph {
             GenericExpr::Call(_, ResolvedCall::Primitive(p), args) => {
                 let mut translated_args = args
                     .iter()
-                    .map(|arg| self.translate_expr_to_mergefn(arg))
+                    .map(|arg| self.translate_expr_to_mergefn(arg, lets))
                     .collect::<Result<Vec<_>, _>>()?;
                 if p.name() == "unstable-fn" {
                     let Some(GenericExpr::Lit(_, Literal::String(name))) = args.first() else {
@@ -875,7 +900,287 @@ impl EGraph {
                     translated_args,
                 ))
             }
+            // `(values ...)` never legitimately reaches here: a top-level tuple merge is
+            // destructured per column in `declare_function`, and any other `(values ...)` is
+            // rejected during type-checking. This arm only keeps the match exhaustive.
+            GenericExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::TypeError(
+                TypeError::TupleMergeNotValues("<merge>".to_owned(), span.clone()),
+            )),
         }
+    }
+
+    /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
+    /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
+    /// first as effects.
+    fn translate_merge_to_mergefn(
+        &self,
+        merge: &ResolvedMerge,
+    ) -> Result<egglog_bridge::MergeFn, Error> {
+        use egglog_bridge::MergeFn;
+        // Assign each `let`-bound variable an environment slot, in block order, so `set`/`union`
+        // args and the result can refer to it via `MergeFn::LetVar`. Built up front because the
+        // result is lowered before the actions.
+        let mut lets = HashMap::<String, usize>::default();
+        for action in merge.actions.iter() {
+            if let GenericAction::Let(_, var, _) = action {
+                let slot = lets.len();
+                lets.insert(var.name.as_str().to_owned(), slot);
+            }
+        }
+        // Lower the result value (a `(values ...)` result becomes one column per element).
+        let result = match &merge.result {
+            GenericExpr::Call(_, ResolvedCall::Values(_), cols) => MergeFn::Columns(
+                cols.iter()
+                    .map(|e| self.translate_expr_to_mergefn(e, &lets))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ),
+            expr => self.translate_expr_to_mergefn(expr, &lets)?,
+        };
+        if merge.actions.is_empty() {
+            return Ok(result);
+        }
+        // A value-producing action block: run the effects, then evaluate the result value(s).
+        let actions = merge
+            .actions
+            .iter()
+            .map(|a| self.translate_merge_action(a, &lets))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(MergeFn::Block {
+            actions,
+            result: Box::new(result),
+        })
+    }
+
+    /// Lower a single resolved merge action to a backend [`MergeAction`]. Supports `set`, `let`, and
+    /// `union`; other actions (`delete`/`panic`/`extract`/...) are not meaningful during a merge.
+    fn translate_merge_action(
+        &self,
+        action: &ResolvedAction,
+        lets: &HashMap<String, usize>,
+    ) -> Result<egglog_bridge::MergeAction, Error> {
+        use egglog_bridge::MergeAction;
+        match action {
+            GenericAction::Let(_, var, expr) => Ok(MergeAction::Let {
+                slot: lets[var.name.as_str()],
+                value: self.translate_expr_to_mergefn(expr, lets)?,
+            }),
+            GenericAction::Union(_, a, b) => Ok(MergeAction::Union(
+                self.translate_expr_to_mergefn(a, lets)?,
+                self.translate_expr_to_mergefn(b, lets)?,
+            )),
+            GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
+                let backend_id = self
+                    .functions
+                    .get(&f.name)
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "merge action sets unknown function `{}`",
+                            f.name
+                        ))
+                    })?
+                    .backend_id;
+                let mut args = keys
+                    .iter()
+                    .map(|k| self.translate_expr_to_mergefn(k, lets))
+                    .collect::<Result<Vec<_>, _>>()?;
+                // A tuple-output target is set with `(values ...)`; expand it into value columns.
+                match val {
+                    GenericExpr::Call(_, ResolvedCall::Values(_), cols) => {
+                        for c in cols {
+                            args.push(self.translate_expr_to_mergefn(c, lets)?);
+                        }
+                    }
+                    _ => args.push(self.translate_expr_to_mergefn(val, lets)?),
+                }
+                Ok(MergeAction::Set(backend_id, args))
+            }
+            other => Err(Error::BackendError(format!(
+                "action `{other}` is not supported inside a :merge block (only `set`, `let`, `union`)"
+            ))),
+        }
+    }
+
+    /// Build the native congruence `:merge` for a term-encoding constructor view
+    /// `(children) -> (eclass, view_proof)` (proof mode). Returns `Ok(None)` for any function that
+    /// isn't such a view, leaving the ordinary merge lowering in place. Once the view shape matches,
+    /// the proof-encoding metadata (`:internal-proof-names`/`:internal-uf`) must resolve; a missing
+    /// piece is a hard error rather than a silent fallback that would drop congruence.
+    ///
+    /// The view proofs are oriented `eclass = f(children)` (eclass on the LEFT). On an FD conflict
+    /// (two congruent terms share the same canonical children) the merge keeps the SMALLER eclass and
+    /// stages the oriented union edge `(@UF max_ec) = (values min_ec (Trans max_vp (Sym min_vp)))`
+    /// into the per-sort UF, so the single-table UF stays acyclic without a `single_parent` rule.
+    fn native_congruence_merge(
+        &self,
+        decl: &ResolvedFunctionDecl,
+        output: &ArcSort,
+        num_outputs: usize,
+    ) -> Result<Option<egglog_bridge::MergeFn>, Error> {
+        use egglog_bridge::{MergeAction, MergeFn};
+        // Detected purely by shape: a term-constructor view with an eq-sort first output and a
+        // second (proof) output. This shape is only ever emitted by the proof encoder, so we don't
+        // gate on `proofs_enabled` — that lets a re-parsed desugared program (run in a fresh, non-
+        // proof egraph) rebuild the same merge, which is what makes the encoding self-contained.
+        if !(decl.term_constructor.is_some() && num_outputs == 2 && output.is_eq_sort()) {
+            return Ok(None);
+        }
+        // The shape now uniquely identifies a proof-mode congruence view, so every lookup below is
+        // expected to succeed. If one doesn't, the encoding's `:internal-proof-names`/`:internal-uf`
+        // metadata is absent or stale; fail loudly instead of silently falling back to a merge that
+        // never resolves congruence.
+        let missing = |what: &str| {
+            Error::BackendError(format!(
+                "term-encoding congruence view `{}` cannot resolve {what}; the proof encoding's \
+                 :internal-proof-names/:internal-uf metadata is absent or stale",
+                decl.name
+            ))
+        };
+        let resolve = |name: &str| -> Option<ExternalFunctionId> {
+            self.type_info
+                .get_prims(name)
+                .and_then(|p| p.first())
+                .and_then(|p| p.context_ids[crate::Context::Write])
+        };
+        let min_id =
+            resolve("ordering-min").ok_or_else(|| missing("the `ordering-min` primitive"))?;
+        let max_id =
+            resolve("ordering-max").ok_or_else(|| missing("the `ordering-max` primitive"))?;
+        let uf_name = self
+            .proof_state
+            .uf_parent
+            .get(decl.schema.output())
+            .ok_or_else(|| missing("its per-sort union-find"))?;
+        let uf_id = self
+            .functions
+            .get(uf_name)
+            .ok_or_else(|| missing("its union-find function"))?
+            .backend_id;
+        let trans_id = self
+            .functions
+            .get(&self.proof_state.proof_names.eq_trans_constructor)
+            .ok_or_else(|| missing("the `Trans` proof constructor"))?
+            .backend_id;
+        let sym_id = self
+            .functions
+            .get(&self.proof_state.proof_names.eq_sym_constructor)
+            .ok_or_else(|| missing("the `Sym` proof constructor"))?
+            .backend_id;
+        let orient_max =
+            resolve("proof-of-max").ok_or_else(|| missing("the `proof-of-max` primitive"))?;
+        let orient_min =
+            resolve("proof-of-min").ok_or_else(|| missing("the `proof-of-min` primitive"))?;
+        // Column 0 = eclass, column 1 = view_proof (`eclass = f(children)`).
+        let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
+        let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
+        // The view proof paired with the larger / smaller eclass (both prove `eclass = f(children)`),
+        // selected by eclass order via a pure primitive rather than a conditional merge node.
+        let orient_args = || {
+            vec![
+                MergeFn::OldCol(0),
+                MergeFn::OldCol(1),
+                MergeFn::NewCol(0),
+                MergeFn::NewCol(1),
+            ]
+        };
+        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
+        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
+        // Trans(max_vp, Sym(min_vp)) : max_ec = min_ec (view proofs put the eclass on the left). The
+        // identity-column guard (col 0) skips this merge when the two eclasses are already equal, so
+        // the block stages the union unconditionally.
+        let edge = MergeFn::Lookup(
+            trans_id,
+            vec![max_pf(), MergeFn::Lookup(sym_id, vec![min_pf()])],
+        );
+        // Stage the union edge into @UF; the merged value is (smaller eclass, its view proof).
+        Ok(Some(MergeFn::Block {
+            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
+            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
+        }))
+    }
+
+    /// Build the self-referential union-find `:merge` for the encoding's single
+    /// per-sort UF function `@UF` (the whole union-find). `uf_id` is the
+    /// function's own backend id (see [`EGraph::peek_next_function_id`]).
+    /// `num_outputs` selects the encoding:
+    ///
+    /// - Term (`num_outputs == 1`), `@UF : (S) -> S`. To union `a, b`: `(set (@UF
+    ///   (ordering-max a b)) (ordering-min a b))`. On an FD conflict the merge
+    ///   keeps `ordering-min(old, new)` AND writes `(set (@UF ordering-max) ordering-min)`
+    ///   into ITS OWN table (recording the displaced edge; strictly decreasing, hence finite).
+    /// - Proof (`num_outputs == 2`), `@UF : (S) -> (S, Proof)`. Value column 0 is
+    ///   the parent, column 1 a proof `key = parent` (key on the LEFT). On a conflict
+    ///   the merge keeps the smaller parent and stages the oriented displaced edge
+    ///   `(@UF max_ec) = (values min_ec (Trans (Sym max_pf) min_pf))` into itself.
+    fn build_uf_self_merge(
+        &self,
+        uf_id: egglog_bridge::FunctionId,
+        num_outputs: usize,
+    ) -> Result<egglog_bridge::MergeFn, Error> {
+        use egglog_bridge::{MergeAction, MergeFn};
+        let resolve = |name: &str| -> Result<ExternalFunctionId, Error> {
+            self.type_info
+                .get_prims(name)
+                .and_then(|p| p.first())
+                .and_then(|p| p.context_ids[crate::Context::Write])
+                .ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "UF self-merge: primitive `{name}` not resolvable in write context"
+                    ))
+                })
+        };
+        let min_id = resolve("ordering-min")?;
+        let max_id = resolve("ordering-max")?;
+        if num_outputs == 1 {
+            // The identity guard (the single value column, the parent) skips this merge when the
+            // parent is unchanged, so the body records the displaced edge unconditionally.
+            let min = || MergeFn::Primitive(min_id, vec![MergeFn::Old, MergeFn::New]);
+            let max = MergeFn::Primitive(max_id, vec![MergeFn::Old, MergeFn::New]);
+            return Ok(MergeFn::Block {
+                actions: vec![MergeAction::Set(uf_id, vec![max, min()])],
+                result: Box::new(min()),
+            });
+        }
+        // Proof branch: value col 0 = parent, col 1 = proof (`key = parent`).
+        let backend_id = |name: &str| -> Result<egglog_bridge::FunctionId, Error> {
+            self.functions
+                .get(name)
+                .map(|f| f.backend_id)
+                .ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "UF self-merge: proof constructor `{name}` missing"
+                    ))
+                })
+        };
+        let trans_id = backend_id(&self.proof_state.proof_names.eq_trans_constructor)?;
+        let sym_id = backend_id(&self.proof_state.proof_names.eq_sym_constructor)?;
+        let orient_max = resolve("proof-of-max")?;
+        let orient_min = resolve("proof-of-min")?;
+        let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
+        let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
+        // The proof paired with the larger / smaller parent (both prove `key = that parent`),
+        // selected by parent order via a pure primitive rather than a conditional merge node.
+        let orient_args = || {
+            vec![
+                MergeFn::OldCol(0),
+                MergeFn::OldCol(1),
+                MergeFn::NewCol(0),
+                MergeFn::NewCol(1),
+            ]
+        };
+        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
+        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
+        // Trans(Sym(max_pf), min_pf) : max_ec = min_ec (UF proofs put the key on the left). The
+        // identity-column guard (col 0, the parent) skips this merge when the parent is unchanged,
+        // so the block stages the displaced edge unconditionally.
+        let edge = MergeFn::Lookup(
+            trans_id,
+            vec![MergeFn::Lookup(sym_id, vec![max_pf()]), min_pf()],
+        );
+        // Stage the displaced edge back into @UF; the merged value is (smaller parent, its proof).
+        Ok(MergeFn::Block {
+            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
+            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
+        })
     }
 
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
@@ -893,7 +1198,13 @@ impl EGraph {
             .iter()
             .map(get_sort)
             .collect::<Result<Vec<_>, _>>()?;
-        let output = get_sort(&decl.schema.output)?;
+        let outputs = decl
+            .schema
+            .outputs
+            .iter()
+            .map(get_sort)
+            .collect::<Result<Vec<_>, _>>()?;
+        let num_outputs = outputs.len();
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -902,30 +1213,61 @@ impl EGraph {
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
+        // Identity/payload guard: the encoding's UF and congruence-view merges are idempotent on an
+        // unchanged eclass/parent (value column 0), so they opt into skip-on-unchanged — which is
+        // what lets them drop their equality guard. Ordinary functions keep the default (no guard).
+        let mut n_identity_vals = None;
+        let merge = if self
+            .proof_state
+            .self_merge_uf_functions
+            .contains(&*decl.name)
+        {
+            // Single self-referential UF `@UF` (term `(S) -> S`, proof
+            // `(S) -> (S, Proof)`): override the placeholder source `:merge` with the
+            // native self-referential merge, dispatched on value-column count. Its own
+            // backend id is the id `add_table` (below) will assign, peeked deterministically.
+            n_identity_vals = Some(1);
+            let uf_id = self.backend.peek_next_function_id();
+            self.build_uf_self_merge(uf_id, num_outputs)?
+        } else if let Some(m) = self.native_congruence_merge(decl, &outputs[0], num_outputs)? {
+            // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
+            // a native :merge that stages the congruence edge into the per-sort UF table, instead of
+            // a rule-encoded self-join.
+            n_identity_vals = Some(1);
+            m
+        } else {
+            match decl.subtype {
+                FunctionSubtype::Constructor => MergeFn::UnionId,
+                FunctionSubtype::Custom => match &decl.merge {
+                    Some(merge) => self.translate_merge_to_mergefn(merge)?,
+                    // No merge clause: assert equality per output column.
+                    None if num_outputs > 1 => {
+                        MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
+                    }
+                    None => MergeFn::AssertEq,
+                },
+            }
+        };
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
             schema: input
                 .iter()
-                .chain([&output])
+                .chain(outputs.iter())
                 .map(|sort| sort.column_ty(self.backend.base_values()))
                 .collect(),
+            n_vals: num_outputs,
+            n_identity_vals,
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
                 FunctionSubtype::Custom => DefaultVal::Fail,
             },
-            merge: match decl.subtype {
-                FunctionSubtype::Constructor => MergeFn::UnionId,
-                FunctionSubtype::Custom => match &decl.merge {
-                    None => MergeFn::AssertEq,
-                    Some(expr) => self.translate_expr_to_mergefn(expr)?,
-                },
-            },
+            merge,
             name: decl.name.to_string(),
             can_subsume,
         });
 
         let function = Function {
             decl: decl.clone(),
-            schema: ResolvedSchema { input, output },
+            schema: ResolvedSchema { input, outputs },
             can_subsume,
             backend_id,
         };
@@ -1378,6 +1720,13 @@ impl EGraph {
             }
             .into());
         }
+        if function.schema.outputs.len() != 1 {
+            return Err(crate::api::ApiError::TupleOutputUnsupported {
+                name: name.to_owned(),
+                method: "function_entries",
+            }
+            .into());
+        }
         self.backend.for_each_while(function.backend_id, |row| {
             let (output, inputs) = row
                 .vals
@@ -1795,13 +2144,14 @@ impl EGraph {
                 proof_constructors,
                 ..
             } => {
-                // Restore the sort's UF tables into proof_state: the constructor
-                // for extraction's `find_canonical`, the index for container
-                // rebuild's leader lookups.
+                // Restore the sort's UF metadata into proof_state. A missing
+                // index marks PR #6's self-referential single-table UF.
                 if let Some((uf_ctor, uf_index)) = uf {
-                    self.proof_state.uf_parent.insert(name.clone(), uf_ctor);
-                    if let Some(uf_index) = uf_index {
-                        self.proof_state.uf_function.insert(name.clone(), uf_index);
+                    self.proof_state
+                        .uf_parent
+                        .insert(name.clone(), uf_ctor.clone());
+                    if uf_index.is_none() {
+                        self.proof_state.self_merge_uf_functions.insert(uf_ctor);
                     }
                 }
                 // If the sort has a :internal-proof-func field, store the mapping for proof lookup.
@@ -2059,9 +2409,11 @@ impl EGraph {
         }
 
         if function_type.subtype != FunctionSubtype::Constructor {
-            match func.schema.output.name() {
-                "i64" | "String" | "Unit" => {}
-                s => panic!("Unsupported type {s} for input"),
+            for sort in &func.schema.outputs {
+                match sort.name() {
+                    "i64" | "String" | "Unit" => {}
+                    s => panic!("Unsupported type {s} for input"),
+                }
             }
         }
 
@@ -2075,7 +2427,7 @@ impl EGraph {
 
         let mut row_schema = func.schema.input.clone();
         if function_type.subtype == FunctionSubtype::Custom {
-            row_schema.push(func.schema.output.clone());
+            row_schema.extend(func.schema.outputs.iter().cloned());
         }
 
         log::debug!("{row_schema:?}");
@@ -2698,7 +3050,7 @@ fn resolve_function_container_target_with_context(
                 .iter()
                 .zip(&expected_inputs)
                 .all(|(actual, expected)| actual.name() == expected.name());
-        if !inputs_match || func_type.output.name() != output.name() {
+        if !inputs_match || func_type.output().name() != output.name() {
             let expected_input_names = expected_inputs
                 .iter()
                 .map(|sort| sort.name())
@@ -2715,7 +3067,7 @@ fn resolve_function_container_target_with_context(
                 expected_input_names,
                 output.name(),
                 actual_input_names,
-                func_type.output.name(),
+                func_type.output().name(),
             )));
         }
 
@@ -2996,6 +3348,9 @@ impl<'a> BackendRule<'a> {
                         args,
                     )
                 }
+                ResolvedCall::Values(_) => {
+                    unreachable!("`values` is lowered to the underlying function atom before query")
+                }
             };
             self.body.atoms.push(core::GenericAtom {
                 span: atom.span.clone(),
@@ -3030,6 +3385,9 @@ impl<'a> BackendRule<'a> {
                                 args,
                             )
                         }
+                        ResolvedCall::Values(_) => {
+                            panic!("`values` cannot be bound as a single value")
+                        }
                     };
                     let variable = self.fresh_var(v);
                     self.head.0.push(core::GenericCoreAction::Let(
@@ -3056,13 +3414,18 @@ impl<'a> BackendRule<'a> {
                         core::GenericAtomTerm::Var(span.clone(), variable),
                     );
                 }
-                core::GenericCoreAction::Set(span, f, xs, y) => match f {
+                core::GenericCoreAction::Set(span, f, xs, ys) => match f {
                     ResolvedCall::Primitive(..) => {
                         return Err(Error::BackendError("cannot set a primitive".into()));
                     }
+                    ResolvedCall::Values(..) => {
+                        return Err(Error::BackendError(
+                            "`values` is not a settable function".into(),
+                        ));
+                    }
                     ResolvedCall::Func(f) => {
                         let arguments = self.args(xs)?;
-                        let value = self.entry(y)?;
+                        let values = self.args(ys)?;
                         self.head.0.push(core::GenericCoreAction::Set(
                             span.clone(),
                             RuleActionCall::Table {
@@ -3070,7 +3433,7 @@ impl<'a> BackendRule<'a> {
                                 name: f.name.clone().into_boxed_str(),
                             },
                             arguments,
-                            value,
+                            values,
                         ));
                     }
                 },
@@ -3078,6 +3441,11 @@ impl<'a> BackendRule<'a> {
                     ResolvedCall::Primitive(..) => {
                         return Err(Error::BackendError(
                             "cannot delete or subsume a primitive".into(),
+                        ));
+                    }
+                    ResolvedCall::Values(..) => {
+                        return Err(Error::BackendError(
+                            "`values` is not a changeable function".into(),
                         ));
                     }
                     ResolvedCall::Func(f) => {
@@ -3664,7 +4032,7 @@ mod tests {
             ResolvedExpr::Call(_, ResolvedCall::Func(func), children) => {
                 assert_eq!(func.name, "$x");
                 assert!(children.is_empty());
-                assert_eq!(func.output.name(), I64Sort.name());
+                assert_eq!(func.output().name(), I64Sort.name());
             }
             other => panic!("expected global function call rewrite, got {other:?}"),
         }

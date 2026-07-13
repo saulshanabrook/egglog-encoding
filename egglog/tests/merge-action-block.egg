@@ -1,0 +1,27 @@
+; A value-producing `:merge` action block. Syntax: `:merge (<action>* <result-expr>)` — the
+; actions run first (with `old`/`new` bound), then the trailing expression is the merged value.
+; Actions may be `let`, `set`, or `union`.
+;
+; Here, on a conflict `f` binds the smaller/larger values with `let`, records the discarded
+; (smaller) value into a side function with `set`, and keeps the larger as the merged value.
+(function discarded (i64) i64 :merge new)
+(function f (i64) i64
+  :merge ((let smaller (min old new))
+          (let larger (max old new))
+          (set (discarded smaller) 1)
+          larger))
+
+(set (f 0) 5)
+(set (f 0) 3)
+
+(check (= (f 0) 5))          ; the result kept the larger (`let`-bound) value
+(check (= (discarded 3) 1))  ; the `set` action recorded the discarded (smaller) value
+(fail (check (= (discarded 5) 1)))
+
+; A merge that `union`s the two conflicting outputs of an eq-sort function: on a conflict the two
+; eclasses are unified and the old value is kept.
+(datatype Color (Red) (Green))
+(function pick (i64) Color :merge ((union old new) old))
+(set (pick 0) (Red))
+(set (pick 0) (Green))
+(check (= (Red) (Green)))    ; the `union` action unified the conflicting values
