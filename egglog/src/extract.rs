@@ -675,9 +675,8 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 /// Find the canonical representative of a value using the sort's `:internal-uf`
 /// union-find, or return the value unchanged if the sort has none.
 ///
-/// The encoding's union-find is a function keyed by the element (`UF_<Sort>`:
-/// `(S) -> S` in term mode, `(S) -> (S, Proof)` in proof mode), so `lookup_id`
-/// returns the parent. Chase to a fixpoint; a miss means the value is its own
+/// The encoding's union-find is a function keyed by the element
+/// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`), so `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
 /// leader. A two-key union-find is a `(child, parent)` relation (a user-provided
 /// `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a one-hop scan.
 /// Dispatching on the key arity keeps both correct.
@@ -729,7 +728,7 @@ impl Function {
         }
     }
 
-    /// Whether this is the proof-mode functional-dependency view `(children) -> (eclass, proof)`,
+    /// Whether this is the functional-dependency view `(children) -> (eclass, {Unit|Proof})`,
     /// where the e-class is the first output column rather than the last input column.
     fn is_fd_view(&self) -> bool {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1

@@ -1009,28 +1009,34 @@ impl EGraph {
         }
     }
 
-    /// Build the native congruence `:merge` for a term-encoding constructor view
-    /// `(children) -> (eclass, view_proof)` (proof mode). Returns `Ok(None)` for any function that
+    /// Build the native congruence `:merge` for a proof-mode constructor view
+    /// `(children) -> (eclass, view_proof)`. Returns `Ok(None)` for any function that
     /// isn't such a view, leaving the ordinary merge lowering in place. Once the view shape matches,
     /// the proof-encoding metadata (`:internal-proof-names`/`:internal-uf`) must resolve; a missing
     /// piece is a hard error rather than a silent fallback that would drop congruence.
     ///
     /// The view proofs are oriented `eclass = f(children)` (eclass on the left). On an FD conflict
-    /// (two congruent terms share the same canonical children) the merge keeps the SMALLER eclass and
+    /// (two congruent terms share the same canonical children) the merge keeps the smaller eclass and
     /// stages the oriented union edge `(@UF max_ec) = (values min_ec (Trans max_vp (Sym min_vp)))`
     /// into the per-sort UF, so the single-table UF stays acyclic without a `single_parent` rule.
     fn native_congruence_merge(
         &self,
         decl: &ResolvedFunctionDecl,
-        output: &ArcSort,
+        outputs: &[ArcSort],
         num_outputs: usize,
     ) -> Result<Option<egglog_bridge::MergeFn>, Error> {
         use egglog_bridge::{MergeAction, MergeFn};
         // Detected purely by shape: a term-constructor view with an eq-sort first output and a
-        // second (proof) output. This shape is only ever emitted by the proof encoder, so we don't
-        // gate on `proofs_enabled` — that lets a re-parsed desugared program (run in a fresh, non-
-        // proof egraph) rebuild the same merge, which is what makes the encoding self-contained.
-        if !(decl.term_constructor.is_some() && num_outputs == 2 && output.is_eq_sort()) {
+        // second proof output (a `Unit` second column is a term-mode view, whose congruence
+        // merge is spelled out in its declaration). The proof shape is only ever emitted by the
+        // proof encoder, so we don't gate on `proofs_enabled` — that lets a re-parsed desugared
+        // program (run in a fresh, non-proof egraph) rebuild the same merge, which is what makes
+        // the encoding self-contained.
+        if !(decl.term_constructor.is_some()
+            && num_outputs == 2
+            && outputs[0].is_eq_sort()
+            && outputs[1].name() != "Unit")
+        {
             return Ok(None);
         }
         // The shape now uniquely identifies a proof-mode congruence view, so every lookup below is
@@ -1221,24 +1227,27 @@ impl EGraph {
             .proof_state
             .self_merge_uf_functions
             .contains(&*decl.name);
-        let merge = if is_encoding_uf && num_outputs == 2 {
-            // Proof-mode UF `@UF : (S) -> (S, Proof)`: the proof-composing merge isn't
-            // expressible in typechecked source (see `build_uf_self_merge`), so the
-            // declaration's `:merge (values old0 old1)` is shape-only and the real merge
-            // is built here.
+        // The encoding's UF and constructor views are `(keys) -> (value, {Unit|Proof})`
+        // tuples in both modes. With a `Unit` second column (term mode) the declaration
+        // carries its real merge as a `:merge` action block; with a `Proof` column the
+        // proof-composing merge isn't expressible in typechecked source and is built
+        // here, the source `:merge (values old0 old1)` being shape-only.
+        let proof_valued = |outputs: &[ArcSort]| outputs.len() == 2 && outputs[1].name() != "Unit";
+        let merge = if is_encoding_uf && proof_valued(&outputs) {
+            // Proof-mode UF `@UF : (S) -> (S, Proof)` (see `build_uf_self_merge`).
             n_identity_vals = Some(1);
             self.build_uf_self_merge(own_id)?
-        } else if let Some(m) = self.native_congruence_merge(decl, &outputs[0], num_outputs)? {
-            // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
+        } else if let Some(m) = self.native_congruence_merge(decl, &outputs, num_outputs)? {
+            // Proof-mode constructor view `(children) -> (eclass, proof)`: resolve congruence via
             // a :merge that stages the congruence edge into the per-sort UF table, instead of
             // a rule-encoded self-join.
             n_identity_vals = Some(1);
             m
         } else {
-            // Term-mode UF `@UF : (S) -> S` carries its real merge in the generated
-            // source (a `:merge` action block staging the displaced edge); it only opts
-            // into the identity guard here.
-            if is_encoding_uf && decl.merge.is_some() {
+            // Term-mode UF and constructor views carry their real merge in the
+            // generated source; they only opt into the identity guard here.
+            let is_term_view = decl.term_constructor.is_some() && num_outputs == 2;
+            if (is_encoding_uf || is_term_view) && decl.merge.is_some() {
                 n_identity_vals = Some(1);
             }
             match decl.subtype {
@@ -2151,7 +2160,7 @@ impl EGraph {
                 ..
             } => {
                 // Restore the sort's UF metadata into proof_state. A missing
-                // index marks the encoding's `(S) -> S` union-find function
+                // index marks the encoding's single-key union-find function
                 // (as opposed to a user-provided `(child, parent)` relation).
                 if let Some((uf_ctor, uf_index)) = uf {
                     self.proof_state
