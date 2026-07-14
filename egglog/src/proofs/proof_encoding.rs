@@ -1016,7 +1016,17 @@ impl<'a> ProofInstrumentor<'a> {
             }
             ResolvedFact::Fact(generic_expr) => {
                 let (_, proof) = self.instrument_fact_expr(generic_expr, res, action_lookups);
-                proof
+                if self.proofs_enabled()
+                    && matches!(
+                        generic_expr,
+                        ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
+                            if p.output().is_eq_container_sort()
+                    )
+                {
+                    format!("({})", self.proof_names().eval_constructor)
+                } else {
+                    proof
+                }
             }
         }
     }

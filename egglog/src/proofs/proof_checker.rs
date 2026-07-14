@@ -954,16 +954,20 @@ impl ProofStore {
     /// Check a container side condition by re-evaluating it against the rule
     /// body, rather than against a premise proposition. An unbound side is the
     /// side condition's output and is bound; otherwise both sides must evaluate
-    /// to the same container. Extends `subst` with any bound output.
+    /// to the same container. A standalone fact is evaluated only to validate
+    /// its container primitive. Extends `subst` with any bound output.
     fn check_side_condition(
         &mut self,
         fact: &ResolvedFact,
         subst: &mut HashMap<String, TermId>,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
-        let ResolvedFact::Eq(_, lhs, rhs) = fact else {
-            // `is_container_side_condition` only flags `Eq` facts.
-            return Ok(());
+        let (lhs, rhs) = match fact {
+            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
+            ResolvedFact::Fact(expr) => {
+                self.eval_side(expr, subst, rule_name)?;
+                return Ok(());
+            }
         };
         let lhs_val = self.eval_side(lhs, subst, rule_name)?;
         let rhs_val = self.eval_side(rhs, subst, rule_name)?;

@@ -239,7 +239,10 @@ fn tuple_merge_must_be_values_form() {
 fn tuple_output_input_command_loads_all_columns() {
     // `(input f file)` for a tuple-output function must load every output column, not just
     // the first, so a TSV row has `input + all outputs` fields.
-    let dir = std::env::temp_dir().join("egglog_tuple_output_input_test");
+    let dir = std::env::temp_dir().join(format!(
+        "egglog_tuple_output_input_test_{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("iv.tsv"), "1\t10\t20\n2\t30\t40\n").unwrap();
 

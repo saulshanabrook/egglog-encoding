@@ -48,7 +48,7 @@ another. It is:
 
 This restates the team-notes questions about how much performance requires
 native/generalized equality and custom rebuilding, and what minimal backend
-interface remains after those mechanisms move below the frontend.[N1]
+interface remains after those mechanisms move below the frontend.\[N1\]
 
 The current evidence supports the following answer:
 
@@ -56,29 +56,29 @@ The current evidence supports the following answer:
   **semantically**. The integrated DD backend now supports full output tuples,
   action-valued merges, dependency-ordered merge reads, generated writes to a
   fixed point, and proof-mode constructor conflicts without changing the proof
-  format or checker.[S11]
+  format or checker.\[S11\]
 - Tuple and merge support did **not** require a proof-format change. It required
   a stronger generic backend contract: explicit key/output arity, atomic access
   to complete old/new output tuples, effectful merge expressions, dependency
-  ordering, and transactional table updates.[S1][S11]
+  ordering, and transactional table updates.\[S1\]\[S11\]
 - That semantic result is not a performance result. On the fresh integrated
   mini-math comparison, DD remained `3.511x` main in proofs and `4.171x` main
   in term mode, with much higher RSS. The short main runs made the wall-time
   intervals noisy, but not the direction of the memory result. Full math timed
   out at 120 seconds in the earlier boundary probe, and eggcc reached a
   registry-backed container-rebuild boundary after 73 seconds and about 4.0
-  GiB RSS.[M7][M8]
+  GiB RSS.\[M7\]\[M8\]
 - A full backend is therefore more than a generic join engine. In the current DD
   split, Differential Dataflow performs body-table joins; a Rust mirror and
   host interpreter remain authoritative for body primitives, ordered actions,
-  merge behavior, subsumption, row generations, and lookup-or-insert.[S8][S11]
+  merge behavior, subsumption, row generations, and lookup-or-insert.\[S8\]\[S11\]
 - Backends should not know `Proof`, `ProofStore`, proof syntax, witness
-  rendering, or the proof checker. Those can remain shared.[S9]
+  rendering, or the proof checker. Those can remain shared.\[S9\]
 - If the expensive generated proof relations are removed, a full backend likely
   cannot remain completely unaware of causality: equality paths, merge winners,
   constructor creation, no-op operations, rebuild collisions, and mutations
   initiated through execution-state APIs occur inside backend-owned state
-  transitions.[S1][S3][M3][M4]
+  transitions.\[S1\]\[S3\]\[M3\]\[M4\]
 - The proposed middle layer is **generic evidence support**: every full backend
   carries fixed-width opaque tokens and reports typed semantic events, while a
   shared evidence runtime builds the causal DAG and materializes the proof
@@ -87,7 +87,7 @@ The current evidence supports the following answer:
 - `ExecutionState`-style operations and custom primitives are part of the
   architectural boundary, not an unrelated feature. The initial implementation
   may reject arbitrary stateful Rust callbacks in proof mode, but it must not
-  permit any mutation path that silently bypasses evidence collection.[S4][S6]
+  permit any mutation path that silently bypasses evidence collection.\[S4\]\[S6\]
 
 The concise research hypothesis is:
 
@@ -102,20 +102,20 @@ Two direct prototypes narrow, but do not close, this hypothesis:
   eager proof values. This is evidence that native equality/rebuild can expose
   the required causes, and evidence against retaining concrete proof rows in
   the semantic fixed point; it is not performance evidence for the proposed
-  interface.[M4]
+  interface.\[M4\]
 - A proof-format-free RelationalV1 recorder deterministically transported
   fixed-width cause IDs through one relation premise and committed insertion
   without callbacks or disabling parallel insertion. It missed its strict
   single-thread wall gate (`1.32x` observed versus `<1.25x`) and did not close
   every public mutation path. This is qualified semantic evidence, not a passed
-  performance or portability result.[M5]
+  performance or portability result.\[M5\]
 
 The measured implementation of the present generated encoding still does not
 meet the `<2x` eggcc target. The DD experiment strengthens the semantic
 portability result while weakening any claim that generic joins plus a host-side
 merge interpreter are sufficient for performance. The combined evidence
 supports the proposed separation as the most credible next design, while
-leaving the central performance claim unproven.[M1][M2][M4][M5][M7][M8]
+leaving the central performance claim unproven.\[M1\]\[M2\]\[M4\]\[M5\]\[M7\]\[M8\]
 
 ## What Changed in This Revision
 
@@ -132,14 +132,14 @@ than a proof-specific feature:
 - subsumed rows remain current for keyed lookup/merge and retain their location;
 - row generations refresh when a logical row is replaced; and
 - pure container primitives use backend-owned base/container registries without
-  requiring the bridge `ActionRegistry`.[S1][S11]
+  requiring the bridge `ActionRegistry`.\[S1\]\[S11\]
 
 This was enough for the existing term/proof encoding to run through the DD
 backend on the enabled corpus and for focused DD witnesses to pass the checker.
 It was not enough for native UF or registry-backed read/write/full primitives,
 and it did not make DD competitive with main. Push/pop now works through a deep
 authoritative-state clone that reconstructs transient DD state; it is not a
-native dataflow snapshot.[S8][M7][M8]
+native dataflow snapshot.\[S8\]\[M7\]\[M8\]
 
 The implementation therefore clarifies three boundaries:
 
@@ -174,7 +174,7 @@ The integrated DD implementation answers the semantic half of the research quest
 strongly than before: a backend does not need to understand the proof format to
 run proof-producing egglog programs. Proof tuples and action-valued merges can
 remain ordinary typed values and generic merge operations. The unchanged proof
-checker accepted the resulting witnesses on the tested cases.[S11]
+checker accepted the resulting witnesses on the tested cases.\[S11\]
 
 It does not answer the efficiency half. The current evidence does not support
 "incrementally move UF and rebuild, then keep the rest of the proof encoding"
@@ -184,7 +184,7 @@ required redesign is therefore narrower than replacing the entire egglog
 runtime, but broader than swapping two maintenance algorithms: remove proof
 objects and generated proof relations from the semantic fixed point, retain
 compact causal sidecars on native state, and materialize proofs lazily above the
-backend.[M2][M4]
+backend.\[M2\]\[M4\]
 
 The minimal **semantic backend** contract established by current code requires:
 
@@ -200,7 +200,7 @@ The minimal **semantic backend** contract established by current code requires:
 6. Primitive and container operations against the backend's authoritative
    execution state.
 7. Defined snapshot/restore behavior where push/pop is part of the supported
-   language.[S1][S8][S11]
+   language.\[S1\]\[S8\]\[S11\]
 
 For the proposed efficient, no-fallback **proof-capable backend**, the leading
 hypothesis adds:
@@ -221,12 +221,12 @@ selection, proof syntax, formatting, and checking. Thus a backend does **not**
 need native support for egglog proofs; the no-fallback hypothesis requires
 native support for causal e-graph operations. A joins-only API does not expose
 enough semantic outcomes to be the full backend API, as shown by the current DD
-split and the failed after-the-fact observer probe.[S8][M3]
+split and the failed after-the-fact observer probe.\[S8\]\[M3\]
 
 This remains a research conclusion, not a performance result. H2 shows that one
 narrow cause-transport family can be implemented without proof types or serial
 insertion, but it failed its local wall gate and did not close all public
-mutation paths.[M5] The next decisive implementation is a main-backend vertical
+mutation paths.\[M5\] The next decisive implementation is a main-backend vertical
 slice that combines native equality/rebuild, commit-fused causal receipts, and
 lazy proof materialization on real frozen fixtures. Only after that passes can
 a second full backend establish genuine swappability.
@@ -238,7 +238,7 @@ a second full backend establish genuine swappability.
 The final five-fixture benchmark at the accepted checkout used one optimized,
 single-threaded binary and six fresh samples per cell. Four fixtures were near or
 below the desired point ratio, but two failed the requirement that the upper end
-of the 95% confidence interval for `main/proofs / main/off` be below `2.0x`.[M1]
+of the 95% confidence interval for `main/proofs / main/off` be below `2.0x`.\[M1\]
 
 | Fixture | Mean off | Mean proofs | Point ratio | 95% CI | Result |
 | --- | ---: | ---: | ---: | ---: | --- |
@@ -249,16 +249,16 @@ of the 95% confidence interval for `main/proofs / main/off` be below `2.0x`.[M1]
 | `eggcc-2mm-pass1-merge-old` | `1.123064s` | `15.343593s` | `13.6623x` | `[13.403x, 13.929x]` | fail |
 
 The 95% CIs for mean eggcc peak RSS were `4.001-4.124 GiB` with proofs and
-`115.254-120.043 MiB` with proofs off.[M1]
+`115.254-120.043 MiB` with proofs off.\[M1\]
 
 The same audit reports that all focused proof-output tests, the full workspace
 test suite, Clippy, and the Python benchmark-runner checks passed. The timing
 results come from one Apple M4 host and one source commit; their confidence
 intervals estimate repeated-run uncertainty on that host, not variation across
-machines.[M1]
+machines.\[M1\]
 
 A separate controlled diagnostic compared `off`, term encoding without proof
-payloads, and full proofs on eggcc:[M2]
+payloads, and full proofs on eggcc:\[M2\]
 
 | Comparison | Point ratio | 95% CI | Mean increment |
 | --- | ---: | ---: | ---: |
@@ -269,7 +269,7 @@ Under the current architecture, approximately 54% of the measured off-to-proof
 increment came from structural term/view/UF machinery and 46% from enabling
 proof payloads. These increments are diagnostic partitions, not independent
 lower bounds: replacing the structural machinery may also reduce the cost of
-propagating proof data.[M2]
+propagating proof data.\[M2\]
 
 The profiles place substantial CPU in generated joins, canonicalization, hash
 indexes, table merging, containers, and rebuilding. No resolved final proof
@@ -278,7 +278,7 @@ claim that the observed cost is predominantly in maintaining and propagating
 the encoded state, rather than printing or checking the final proof. Application
 symbol coverage was high but incomplete, and the proofs profile contained one
 long recorded iteration, so the profile supports mechanism localization rather
-than a variance estimate or a categorical claim about every frame.[M2]
+than a variance estimate or a categorical claim about every frame.\[M2\]
 
 **Supported inference:** native equality and rebuilding are plausible necessary
 optimizations, but changing only those two mechanisms is not a credible complete
@@ -293,7 +293,7 @@ Commit `a1342d64` removes the earlier tuple/merge compatibility blocker on top
 of current main and PR #6. Commit `32d5507` adds failure-atomic fresh-ID rollback
 and records the composed proof-policy and witness snapshots. The implementation
 and focused regression tests are now part of the branch rather than an
-uncommitted experiment.[S11]
+uncommitted experiment.\[S11\]
 
 The implementation remains hybrid:
 
@@ -314,12 +314,12 @@ output against the same old/new tuples, orders table waves by declared
 later waves until a fixed point. It preserves a row's live/subsumed location and
 refreshes the row generation when the logical row changes. Scalar and tuple
 merges use the same recursive `MergeExpr`; there is no separate scalar fast
-path.[S1][S11]
+path.\[S1\]\[S11\]
 
 `MergeExpr::UnionId` is not native UF support: DD retains the smaller ID only as
 term-encoding compatibility, while the encoded UF merge emits the actual table
 writes. The frontend rejects DD without term encoding, so this behavior is not
-evidence of native equality parity.[S8][S11]
+evidence of native equality parity.\[S8\]\[S11\]
 
 This is direct evidence that tuple-valued proof data and action-valued merge
 semantics do not require a proof-format change. The proof format and checker
@@ -327,7 +327,7 @@ were unchanged. Replacing separate per-output generated UFs with one tuple UF
 did change 14 selected proof witnesses, so those snapshots were regenerated;
 all 170 proof cases still passed the existing checker. The required backend
 change was to make generic function semantics complete enough to carry the
-existing encoding.[S11]
+existing encoding.\[S11\]
 
 The integrated branch passed the following validation. These results are not
 retroactively attributed to the earlier M6/M7 performance artifacts:
@@ -347,14 +347,14 @@ The focused tests cover cross-column tuple reads, identity guards, block
 replacement, generation-sensitive incremental joins, clone reconstruction, and
 rollback of staged rows and fresh IDs after a failing tuple merge. Smoke tests
 exercise proof-mode tuple containers and a constructor-view conflict through
-the existing checker.[S11]
+the existing checker.\[S11\]
 
 A review search found no rule-name, ruleset-name, environment-variable, or
 backend-name semantic switches in the DD patch, and no scalar merge fast path.
 The remaining ordering assumption is structural: merge reads must name an
 already registered dependency, from which the prototype derives an acyclic
 level. A final IR should state that dependency graph and its cycle policy
-explicitly rather than leave registration order as an accidental API.[S11]
+explicitly rather than leave registration order as an accidental API.\[S11\]
 
 The review classifies the implementation choices as follows:
 
@@ -371,7 +371,7 @@ The review classifies the implementation choices as follows:
 | bridge `ActionRegistry` | current-backend mechanism | backend-neutral read/write execution session |
 
 The bounded performance result is negative. Three fresh samples per cell at the
-clean integrated commit `412fb58` on `math-microbenchmark-mini` produced:[M8]
+clean integrated commit `412fb58` on `math-microbenchmark-mini` produced:\[M8\]
 
 | Mode | main mean | DD mean | DD/main point | DD/main 95% CI |
 | --- | ---: | ---: | ---: | ---: |
@@ -385,10 +385,10 @@ respectively. Within DD, `proofs/term` was `0.988x` with a
 that the wall ratio is imprecise; the defensible conclusion is not that proofs
 make DD faster, but that fixed DD/runtime cost dominates incremental proof
 payload cost in this short workload. The earlier dirty-prototype M6 result had
-the same direction (`3.105x` DD/main in proofs) with a narrower interval.[M6][M8]
+the same direction (`3.105x` DD/main in proofs) with a narrower interval.\[M6\]\[M8\]
 
 Two one-sample boundary probes reinforce the distinction between semantic and
-full-system parity:[M7]
+full-system parity:\[M7\]
 
 - main completed full `math-microbenchmark` proofs in `7.98s`; DD timed out at
   120 seconds;
@@ -401,7 +401,7 @@ full-system parity:[M7]
 These are mechanism probes, not confidence-interval comparisons. The release
 corpus has no enabled known mismatches, but it still skips explicit hang and
 unsupported sets. Therefore it establishes parity only for the enabled corpus;
-it does not establish full DD parity.[S8][M7]
+it does not establish full DD parity.\[S8\]\[M7\]
 
 The architectural consequence is precise: the stronger table/merge contract is
 semantically sufficient for the tested proof encoding, but generic DD joins plus
@@ -415,7 +415,7 @@ An isolated ablation replaced the generated UF/rebuild path with native
 maintenance for `math-microbenchmark-mini` and a direct congruence canary. It
 removed the five targeted generated families from the desugared programs. The
 canary's proof snapshot exactly matched its baseline witness and passed the
-existing checker; focused non-proof regressions also passed.[M4]
+existing checker; focused non-proof regressions also passed.\[M4\]
 
 The first broader proof regression, `proofs/eqsolve_proof_testing`, did not
 finish after more than 80 seconds. Process sampling found live work in recursive
@@ -423,14 +423,14 @@ finish after more than 80 seconds. Process sampling found live work in recursive
 approximately 425.6 MiB peak memory. Structural UF/rebuild non-quiescence was
 not observed in that sample. Because the prototype still stored and transformed
 concrete proof objects in eager View/proof rows, no benchmark result from the
-ablation was valid.[M4]
+ablation was valid.\[M4\]
 
 The ablation therefore supports a narrower architectural conclusion: native
 equality and rebuilding need reason-producing operations, but concrete proof
 syntax must move out of the backend fixed point. It also exposed requirements
 for equality domains, preferred versus actual leaders, evidence-opaque columns,
 row rekeys, constructor-prefix collisions, same-ID container dirtiness, and a
-stable post-commit receipt boundary.[M4]
+stable post-commit receipt boundary.\[M4\]
 
 ### Fixed-width evidence transport is feasible but not yet accepted
 
@@ -439,26 +439,26 @@ relation premise, committed relation insertion, and deterministic duplicate
 arbitration. It used 8-byte opaque causes, 32-byte committed events, and
 backend-owned event pages. No proof-format types, observer callbacks, or
 table-to-database reentry appeared in the recording path, and normal parallel
-insertion remained enabled.[M5]
+insertion remained enabled.\[M5\]
 
 On the synthetic E0 case, 4,000,000 attempts produced 3,500,000 committed
 events. Two 112 MB reports were byte-identical; off and record state digests
 matched; and a standalone verifier checked sequential causes, premise
 references, and the recorded digests. The verifier is hash-authoritative rather
 than row-authoritative: records contain 64-bit hashes of run-local values, so
-the result does not prove collision-free row reconstruction.[M5]
+the result does not prove collision-free row reconstruction.\[M5\]
 
 The focused `-j1` checkpoint observed `1.32x` wall, `1.35x` user time, and
 approximately `1.13x` peak RSS for record versus off. These are point ratios,
 not confidence intervals, and the wall result failed the experiment's `<1.25x`
 gate. Maximal-thread measurements are useful only as mechanism diagnostics and
-do not replace the required single-thread result.[M5]
+do not replace the required single-thread result.\[M5\]
 
 Independent review also found that command-level rejection was tested but
 public mutation-path closure was incomplete: a Rust API such as
 `clear_function` could clear a recorded table without a deletion event. Higher
 arities can spill the prototype's inline buffers, compaction uses an unmeasured
-serial rehash, and repeated report draining is unproven.[M5]
+serial rehash, and repeated report draining is unproven.\[M5\]
 
 This result supports the feasibility of proof-format-free causal transport for
 one producer family. It does not validate the complete event vocabulary, the
@@ -474,18 +474,18 @@ The current term encoding removes source-level `union` operations and creates,
 per equality sort, explicit UF relations, a function-backed UF index, term
 tables, view tables, self-loop rows, and generated maintenance rules. Rebuild and
 congruence are also generated as rules, and proof values are stored directly in
-UF and view-table outputs.[S2]
+UF and view-table outputs.\[S2\]
 
 That transformation gives a backend-agnostic implementation over ordinary
 relations, but the benchmark above shows that this particular portability
-mechanism does not satisfy the eggcc performance target.[M1][M2]
+mechanism does not satisfy the eggcc performance target.\[M1\]\[M2\]
 
 ### The current backend API exposes values but not causes
 
 The current `Backend` trait deliberately exposes a small operational surface:
 table registration and scans, representative lookup, rule construction and
 execution, execution-state access, primitive registration, flushing, and
-snapshots.[S1]
+snapshots.\[S1\]
 
 Its proof-relevant methods return only value/state summaries:
 
@@ -494,18 +494,18 @@ Its proof-relevant methods return only value/state summaries:
   evidence;
 - `flush_updates` returns only whether state changed; and
 - rule-builder `set`, `remove`, `subsume`, and `union` operations return no
-  producer token or mutation outcome.[S1]
+  producer token or mutation outcome.\[S1\]
 
 Consequently, a proof implementation outside the backend cannot observe enough
 information to reconstruct all causes after execution. The current encoding
-works around that limitation by representing proof state as ordinary rows.[S2]
+works around that limitation by representing proof state as ordinary rows.\[S2\]
 
 ### Execution state is currently concrete and only partially portable
 
 `core-relations::ExecutionState` is a concrete view over the in-memory database.
 It exposes visible tables, external functions, base/container registries,
 predicted lookup-or-insert values, and staged insertion/removal buffers. Its
-mutations are applied later during table merge.[S3]
+mutations are applied later during table merge.\[S3\]
 
 Egglog's user-facing primitive API wraps that state in four capability types:
 
@@ -517,25 +517,25 @@ Egglog's user-facing primitive API wraps that state in four capability types:
 | full | yes | yes | `FullState` |
 
 The read/write/full wrappers dispatch table operations through a bridge-owned
-`ActionRegistry`; pure wrappers need only base/container registries.[S4] The
+`ActionRegistry`; pure wrappers need only base/container registries.\[S4\] The
 reference backend delegates its execution-state hook directly to the bridge's
-concrete state.[S5] The backend trait currently makes the action registry
+concrete state.\[S5\] The backend trait currently makes the action registry
 optional. DD can now execute pure container merge primitives through its own
 base/container registries, and ordinary expression primitives through an
 embedded core-relations database. It still rejects registry-backed
 read/write/full primitives because the embedded database is not the
-authoritative `mirror`/`subsumed` relation state.[S1][S8][S11]
+authoritative `mirror`/`subsumed` relation state.\[S1\]\[S8\]\[S11\]
 
 This is an observed blocker rather than a hypothetical one: the eggcc DD probe
 advanced through its pure container merge, then failed when
 `@container_rebuild` requested read access through the unavailable action
-registry.[M7]
+registry.\[M7\]
 
 Proof mode currently rejects `EGraph::update`, `rust_rule`, and
 `rust_rule_full` because their writes or callbacks bypass the proof-encoding
-pipeline. Tests enforce those errors.[S6] Pure expression primitives can
+pipeline. Tests enforce those errors.\[S6\] Pure expression primitives can
 participate in checked proofs only when they provide validators that the proof
-checker can re-run.[S7]
+checker can re-run.\[S7\]
 
 These are current implementation facts, not desired restrictions. They show
 that a clean backend contract must account for execution-state operations and
@@ -549,7 +549,7 @@ The current `Backend` trait asks an implementation to own table registration,
 rule execution, table reads, merge semantics, primitive dispatch, and snapshots.
 DD only delegates body-table matching to Differential Dataflow, so satisfying
 that trait required a second implementation of the reference runtime's merge,
-generation, subsumption, and action semantics around the join engine.[S1][S8]
+generation, subsumption, and action semantics around the join engine.\[S1\]\[S8\]
 
 There are two coherent architectures:
 
@@ -673,11 +673,11 @@ structure. A backend must implement:
 13. Snapshot/restore behavior for both ordinary state and recorded evidence.
 
 Items 1-6 now appear in the documented backend execution contract and are
-exercised by the DD tuple/merge implementation.[S1][S11] Items 7-10 are
+exercised by the DD tuple/merge implementation.\[S1\]\[S11\] Items 7-10 are
 motivated by current native behavior plus the native-maintenance ablation; the
 current public backend interface does not expose them as a portable,
-reason-producing contract.[S1][M4] The DD backend requires the term encoding
-because it has no native UF/rebuild implementation.[S8]
+reason-producing contract.\[S1\]\[M4\] The DD backend requires the term encoding
+because it has no native UF/rebuild implementation.\[S8\]
 
 Under this proposal, a backend that cannot connect an execution session to its
 authoritative live state is not fully conforming. The current DD implementation
@@ -686,7 +686,7 @@ execution-state operations target its mirror/dataflow state rather than only
 its embedded primitive database and native equality is supplied or explicitly
 excluded from a narrower profile. Its clone-based push/pop path satisfies the
 current frontend capability but does not settle the cost or representation of a
-general backend snapshot contract.[S8][M7]
+general backend snapshot contract.\[S8\]\[M7\]
 
 ## Generic Evidence Runtime
 
@@ -718,7 +718,7 @@ identified predicted rows, merge candidates, UF components, tombstones,
 container collisions, post-filter matches, and raw mutation paths as distinct
 sources of required evidence. That experiment was never performance-tested and
 is not evidence that the proposed representation is fast; it is evidence that
-the producer census must be typed and complete before measurement.[M3]
+the producer census must be typed and complete before measurement.\[M3\]
 
 RelationalV1 then implemented one such producer family. It demonstrated
 deterministic post-commit token assignment for source facts and one-premise
@@ -726,7 +726,7 @@ relation insertion without proof objects, callbacks, or serial insertion. Its
 single-thread wall checkpoint failed the selected `<1.25x` gate, and its public
 mutation closure was incomplete. The result supports the representation's
 narrow semantic feasibility while arguing for fusion with native table commit
-rather than a separate full-row arbitration pipeline.[M5]
+rather than a separate full-row arbitration pipeline.\[M5\]
 
 ### Shared typed event vocabulary
 
@@ -770,7 +770,7 @@ its physical layout while keeping token meaning and proof algorithms shared.
 A backend should not import or construct `Proof`, `RawProof`, `ProofStore`, or
 checker AST nodes. The current proof format already separates proof
 justifications from the runtime tables that produced them, which makes it a
-reasonable shared output target.[S9]
+reasonable shared output target.\[S9\]
 
 ## Equality Interface
 
@@ -813,20 +813,20 @@ explanation forest, persistent union history, or another representation.
 For a parent-edge implementation, equality evidence needs identity, inversion,
 and composition so path compression can replace a path with one composed token.
 The team notes describe generalized UF in similar terms: annotations on
-follower-to-leader edges and composition during path compression.[N1]
+follower-to-leader edges and composition during path compression.\[N1\]
 
 The native-maintenance ablation reproduced one checked congruence witness only
 after canonicalization returned both a value and a cause. It also exposed
 preferred/actual leader behavior, row rekeys, prefix collisions, same-ID dirty
 containers, and a post-commit boundary as semantic requirements. That is direct
 prototype evidence for the API shape, but not for its performance or
-completeness.[M4]
+completeness.\[M4\]
 
 The mutable canonicalization structure still cannot be the complete proof store
 if proof selection depends on historical or no-change operations. A separate
 immutable event graph can preserve those causes while edge tokens act as compact
 references or caches. This remains a design inference from first-witness
-requirements and the ablation, not a measured performance result.[M1][M3][M4]
+requirements and the ablation, not a measured performance result.\[M1\]\[M3\]\[M4\]
 
 ## Execution Sessions and Custom Primitives
 
@@ -834,7 +834,7 @@ requirements and the ablation, not a measured performance result.[M1][M3][M4]
 
 Rule actions are not the only way egglog state changes. Top-level APIs,
 constructor lookup-or-insert, container interning/rebuilding, merge functions,
-and custom primitives all use execution-state operations.[S3][S4]
+and custom primitives all use execution-state operations.\[S3\]\[S4\]
 
 If these paths bypass evidence collection, a backend can reach a state whose
 later derivations cannot be justified. Therefore, the target interface must
@@ -842,13 +842,13 @@ either record, explicitly trust, or reject every state-changing entry point.
 This closure property belongs in the initial architecture even if every
 operation is not enabled in the first release. RelationalV1's command guards
 did not satisfy this requirement because a public Rust mutation could still
-clear a recorded table without a deletion event.[M5]
+clear a recorded table without a deletion event.\[M5\]
 
 ### Backend-neutral execution session
 
 The concrete core-relations `ExecutionState` should not be the cross-backend
 contract: it directly exposes core-relations tables, buffers, counters, and
-predicted-value machinery.[S3] Instead, preserve the existing user-facing
+predicted-value machinery.\[S3\] Instead, preserve the existing user-facing
 capability split while changing what the wrappers delegate to:
 
 ```rust
@@ -880,7 +880,7 @@ The sketch omits row iteration, table-size inspection, counters, base-value
 conversion, container interning, and early-stop control for brevity. The current
 typed states expose those operations, so the eventual portable session must
 either include them with defined semantics or classify them explicitly as
-backend-local.[S3][S4]
+backend-local.\[S3\]\[S4\]
 
 `PureState`, `ReadState`, `WriteState`, and `FullState` can remain the public
 Rust API. They would wrap this backend-neutral session rather than a concrete
@@ -895,13 +895,13 @@ backend-neutral queries may use `EGraphBackend::query` under the same
 stable-view semantics. A direct backend/table escape hatch may exist for
 backend internals, but it cannot be reachable from the portable proof-capable
 surface. The conformance test is global mutation-path closure, not merely
-command-parser validation.[M5]
+command-parser validation.\[M5\]
 
 All backends should therefore support the same **execution-session semantics**;
 they should not be required to expose the same concrete core-relations
 `ExecutionState`. The current low-level `ExternalFunction` interface takes a
 concrete `&mut ExecutionState`, so it would either become an internal
-main-backend API or be adapted to the backend-neutral session.[S3]
+main-backend API or be adapted to the backend-neutral session.\[S3\]
 
 During a custom primitive invocation, the session can accumulate the evidence
 tokens of rows actually read and make the invocation token a dependency of any
@@ -936,7 +936,7 @@ distinguish three authority models:
 | trusted | host application explicitly declares the operation an assumption | check against declared trust boundary |
 
 The existing checker already uses validators for primitive expressions and
-rejects primitives without them in proof-compatible programs.[S7] It does not
+rejects primitives without them in proof-compatible programs.\[S7\] It does not
 currently provide a general certificate or trusted-stateful-primitive mechanism.
 
 Recommended first-version (`1.x`) scope:
@@ -949,7 +949,7 @@ Recommended first-version (`1.x`) scope:
   sequence of explicit external assumptions. The current `Fiat` checker accepts
   global-action equalities and reflexive literal equalities, so arbitrary API
   updates would require a synthetic source catalog or a checker-input
-  extension.[S6][S9]
+  extension.\[S6\]\[S9\]
 - **Deferred unless required for the first performance fixtures:** independent
   verification of arbitrary Rust `ReadPrim`, `WritePrim`, `FullPrim`,
   `rust_rule`, and `rust_rule_full` callbacks. Supporting these requires a
@@ -995,7 +995,7 @@ semantic commit points.
 
 The current execution contract includes ordered destructive updates, old/new
 merge arbitration, lookup-or-insert predictions, row generations, deletion,
-subsumption, and stable iteration views.[S1] A monotone provenance annotation on
+subsumption, and stable iteration views.\[S1\] A monotone provenance annotation on
 the final set of rows does not by itself specify the history or selected cause
 for these operations.
 
@@ -1010,7 +1010,7 @@ experimental result.
 
 **Not proposed.** It would maintain two proof implementations, preserve the
 complexity the research is trying to characterize, and retain a path already
-measured far above the eggcc target.[M1][M2]
+measured far above the eggcc target.\[M1\]\[M2\]
 
 The current encoding may be used temporarily as a differential oracle while the
 new implementation is incomplete. It should not execute in the final runtime or
@@ -1028,7 +1028,7 @@ integration. It would not answer whether proof production can be abstracted.
 **Not proposed as the main hypothesis.** An external observer cannot determine
 all backend-internal outcomes from final rows alone, including which merge
 candidate was retained, whether a constructor was created or found, which
-equality path canonicalization used, and why rebuild merged two rows.[S1][S3]
+equality path canonicalization used, and why rebuild merged two rows.\[S1\]\[S3\]
 An observer inserted into every internal operation becomes the evidence-aware
 interface proposed here.
 
@@ -1036,7 +1036,7 @@ interface proposed here.
 
 **Not proposed.** The API should require canonicalization and equality witnesses,
 not parent pointers or a particular annotation storage layout. Generalized UF is
-one important implementation and research comparison.[N1]
+one important implementation and research comparison.\[N1\]
 
 ## Research and Implementation Sequence
 
@@ -1050,7 +1050,7 @@ production proof paths.
 2. Promote the DD implementation's full-row, cross-column merge, dependency-order,
    fixed-point write, subsumption, and generation tests into a backend-neutral
    conformance suite; add predicted rows, equality, rebuilding, snapshots, and
-   execution sessions.[S11]
+   execution sessions.\[S11\]
 3. Keep the proof format and checker as the semantic oracle. Treat snapshot
    changes as reviewable witness changes that must remain checker-valid rather
    than requiring byte-for-byte identity.
@@ -1066,12 +1066,12 @@ production proof paths.
    require the existing checker to accept the materialized proof.
 5. Remove the generated UF/index/self-loop/rebuild rules **and all eager
    concrete proof/View rows** from this path. The H1 ablation showed that doing
-   only the first removal leaves proof extraction non-viable.[M4]
+   only the first removal leaves proof extraction non-viable.\[M4\]
 
 ### Phase 2: Rule and table provenance
 
 1. Fuse premise-token arbitration into native commit/index maintenance rather
-   than retaining RelationalV1's separate full-row pipeline.[M5]
+   than retaining RelationalV1's separate full-row pipeline.\[M5\]
 2. Carry premise tokens only for post-filter matches that reach actions.
 3. Add token-bearing lookup, constructor creation, set, merge, delete, and
    subsume outcomes.
@@ -1104,7 +1104,7 @@ been abstracted rather than merely moved out of the main backend.
 - Materialized proofs pass the existing checker.
 - Merge ordering, first-witness behavior, no-change operations, rebuild epochs,
   snapshots, containers, and seminaive generations have focused conformance
-  tests.[M1][M3][M4][M5]
+  tests.\[M1\]\[M3\]\[M4\]\[M5\]
 - Every public mutation path in recording mode either returns a producer token
   or rejects before side effects.
 - Backends contain no proof-format or checker types.
@@ -1121,7 +1121,7 @@ been abstracted rather than merely moved out of the main backend.
 
 The mission criterion remains an upper 95% confidence bound below `2.0x` for
 `main/proofs / main/off` on every frozen fixture using the repository benchmark
-methodology.[M1][S10]
+methodology.\[M1\]\[S10\]
 
 A useful working budget, not yet an accepted project requirement, is:
 
@@ -1135,10 +1135,10 @@ A useful working budget, not yet an accepted project requirement, is:
 
 RelationalV1 does not satisfy this criterion: its `1.32x` synthetic point ratio
 has no confidence interval, covers only one relation producer family, and omits
-the more expensive equality, merge, container, and materialization work.[M5]
+the more expensive equality, merge, container, and materialization work.\[M5\]
 The DD compatibility result also does not satisfy it: integrated DD was
 `3.511x` main in proof mode on the short mini-math probe, while the earlier
-boundary run timed out on full math and did not complete eggcc.[M7][M8] The
+boundary run timed out on full math and did not complete eggcc.\[M7\]\[M8\] The
 only completion gate is still the full `<2x` frozen-fixture result.
 
 ## Accepted Constraints
@@ -1186,57 +1186,57 @@ This section records the review pass applied to the report.
 ### Established by current source or tests
 
 - The current backend API and its stable-iteration, merge, generation, and
-  subsumption semantics.[S1]
-- The structure of the generated term/proof encoding.[S2]
-- The concrete `ExecutionState`, predicted-value, and staged-mutation model.[S3]
-- The typed primitive capability wrappers and bridge-owned action registry.[S4]
-- Current proof-mode rejection of update/Rust-rule APIs.[S6]
-- Validator-based checking of primitive expressions.[S7]
+  subsumption semantics.\[S1\]
+- The structure of the generated term/proof encoding.\[S2\]
+- The concrete `ExecutionState`, predicted-value, and staged-mutation model.\[S3\]
+- The typed primitive capability wrappers and bridge-owned action registry.\[S4\]
+- Current proof-mode rejection of update/Rust-rule APIs.\[S6\]
+- Validator-based checking of primitive expressions.\[S7\]
 - The DD backend's join/host split, lack of native UF, and lack of action-registry
-  support.[S8]
+  support.\[S8\]
 - Full tuple rows, atomic old/new tuple merge evaluation, effectful merge
   expressions, dependency-ordered reads, fixed-point generated writes, and
-  proof-checker parity on the tested DD cases.[S11]
+  proof-checker parity on the tested DD cases.\[S11\]
 - Pure container primitives can be backend-neutral over base/container
   registries; registry-backed read/write/full primitives still require an
-  authoritative execution-session integration.[S8][S11]
+  authoritative execution-session integration.\[S8\]\[S11\]
 - The native-maintenance ablation's checked congruence canary, value-plus-cause
   requirement, and failure of eager proof-row extraction on the broader proof
-  regression.[M4]
+  regression.\[M4\]
 - RelationalV1's deterministic commit-only cause transport, byte-identical
   reports, matching state digests, focused tests, and independent code-review
-  qualifications within its declared parsed-command subset.[M5]
+  qualifications within its declared parsed-command subset.\[M5\]
 
 ### Established by measurement
 
-- The five-fixture final wall-time and RSS results.[M1]
-- The eggcc off/term/proofs split and profile attribution.[M2]
-- The earlier dirty-prototype DD/main mini-math comparison.[M6]
-- The full-math timeout and eggcc registry-boundary probe outcomes.[M7]
-- The clean integrated DD/main mini-math wall-time and RSS comparison.[M8]
+- The five-fixture final wall-time and RSS results.\[M1\]
+- The eggcc off/term/proofs split and profile attribution.\[M2\]
+- The earlier dirty-prototype DD/main mini-math comparison.\[M6\]
+- The full-math timeout and eggcc registry-boundary probe outcomes.\[M7\]
+- The clean integrated DD/main mini-math wall-time and RSS comparison.\[M8\]
 
 RelationalV1's timing is deliberately excluded from this category. Its values
 are focused point observations without retained sample vectors or confidence
-intervals, and its `<1.25x` wall gate failed.[M5] M7 is included only as a
+intervals, and its `<1.25x` wall gate failed.\[M5\] M7 is included only as a
 measured boundary outcome; its one sample per cell cannot support a performance
 ratio or variance claim.
 
 ### Supported design inferences, not proven results
 
 - Native equality/rebuild without removing eager concrete proof rows is not a
-  viable completion path.[M2][M4]
+  viable completion path.\[M2\]\[M4\]
 - Under the no-generated-proof-relations hypothesis, a full backend likely must
   preserve causal tokens internally to avoid incomplete after-the-fact
-  observation.[M3][M5]
+  observation.\[M3\]\[M5\]
 - A typed event vocabulary is more appropriate than a final-row-only annotation
   for egglog's destructive and ordered operations.
 - A backend-neutral execution session is required for a clean cross-backend
-  custom-primitive and container-rebuild story.[S3][S4][M5][M7]
+  custom-primitive and container-rebuild story.\[S3\]\[S4\]\[M5\]\[M7\]
 - Evidence arbitration should be fused into native commit and maintenance
-  paths rather than layered as a second full-row pipeline.[M5]
+  paths rather than layered as a second full-row pipeline.\[M5\]
 - A DD integration that owns only joins should use a narrower join interface;
   presenting it as a full backend necessarily assigns it the remaining table
-  and transaction semantics.[S1][S8][S11]
+  and transaction semantics.\[S1\]\[S8\]\[S11\]
 
 ### Explicitly unproven
 
@@ -1250,7 +1250,7 @@ ratio or variance claim.
   backend.
 - That DD has full corpus parity, acceptable performance, native equality, or
   a native dataflow snapshot with measured restore cost. Its current deep-clone
-  compatibility path reconstructs transient DD workers.[S8][S11]
+  compatibility path reconstructs transient DD workers.\[S8\]\[S11\]
 - That arbitrary stateful Rust primitives can be independently verified without
   extending the current proof/checker contract.
 - That a second backend can implement the proposed contract with acceptably

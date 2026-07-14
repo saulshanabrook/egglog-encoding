@@ -113,4 +113,18 @@ mod tests {
     fn parses_enabled_dd_backend() {
         assert_eq!(parse_backend(Some("dd")), Ok(Backend::Dd));
     }
+
+    #[cfg(feature = "dd-backend")]
+    #[test]
+    fn extracts_enabled_dd_backend() {
+        let (backend, args) = extract_backend_arg([
+            OsString::from("--backend"),
+            OsString::from("dd"),
+            OsString::from("--term-encoding"),
+        ])
+        .unwrap();
+
+        assert_eq!(backend, Backend::Dd);
+        assert_eq!(args, vec![OsString::from("--term-encoding")]);
+    }
 }

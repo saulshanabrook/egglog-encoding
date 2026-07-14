@@ -333,6 +333,53 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    #[should_panic(expected = "Primitive 'proof-container-reject' validation failed")]
+    fn proof_checker_validates_container_primitive_facts() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (Mk))
+                (sort EqContainer (Vec E))
+                "#,
+            )
+            .unwrap();
+
+        let eq_container_sort = egraph
+            .type_info
+            .get_sort_by_name("EqContainer")
+            .expect("EqContainer sort")
+            .clone();
+        let validator = |_: &mut TermDag, _: &[TermId]| -> Option<TermId> { None };
+        add_primitive_with_validator!(
+            &mut egraph,
+            "proof-container-reject" = |x: # (eq_container_sort)| -> # (eq_container_sort) { x },
+            validator
+        );
+
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation SeedContainer (EqContainer))
+                (relation Done ())
+
+                (SeedContainer (vec-of (Mk)))
+
+                (rule ((SeedContainer ys)
+                       (proof-container-reject ys))
+                      ((Done))
+                      :name "reject-invalid-container-fact")
+
+                (run 1)
+                (prove (Done))
+                "#,
+            )
+            .unwrap();
+    }
+
     // A container constructed in the query body and not used in an action: the
     // binding fact's proof is the container's reflexive `Eval`, which the rule
     // check re-derives with the typed primitive.
