@@ -280,29 +280,38 @@ When proof tracking is enabled, the union-find keeps the same shape, but its pro
 column carries a real `Proof` instead of `()`:
 
 ```text
-(function UF_Math (Math) (Math Proof) :merge (values old0 old1) :unextractable :internal-hidden)
+(function UF_Math (Math) (Math Proof)
+    :merge ((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+            (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+            (set (UF_Math (ordering-max old0 new0))
+                 (values (ordering-min old0 new0) (Trans (Sym hi_pf_) lo_pf_)))
+            (values (ordering-min old0 new0) lo_pf_))
+    :unextractable :internal-hidden :internal-identity-vals 1)
 ```
 
 If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
-proves `k = p` (the key on the left). The `:merge` behaves as in term mode — keep the
-smaller parent, union the displaced one back into `UF_Math` — but also composes the
-proofs with `Trans`/`Sym`. It selects proofs with the `proof-of-min`/`proof-of-max`
-primitives, whose polymorphic type makes all arguments one sort; their mixed
-`S`/`Proof` call would not typecheck in source, so this merge is built in Rust
-(`EGraph::build_uf_self_merge`), which calls them at the value level, and the
-`:merge (values old0 old1)` above is only the declaration's shape. Path compression
-flattens chains via `Trans`.
+proves `k = p` (the key on the left). The `:merge` is the term-mode merge with the
+proofs riding along: `proof-of-min`/`proof-of-max` return the proof paired with the
+smaller/larger parent, the displaced edge stores `Trans (Sym hi_pf_) lo_pf_`
+(proving `larger parent = smaller parent`), and the smaller parent keeps its own
+proof. Path compression flattens chains via `Trans`.
 
 
 Similarly, the constructor view's proof column carries a proof of the row itself:
 
 ```text
-(function AddView (i64 i64) (Math Proof) :merge (values old0 old1) :internal-term-constructor Add)
+(function AddView (i64 i64) (Math Proof)
+    :merge ((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+            (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+            (set (UF_Math (ordering-max old0 new0))
+                 (values (ordering-min old0 new0) (Trans hi_pf_ (Sym lo_pf_))))
+            (values (ordering-min old0 new0) lo_pf_))
+    :internal-term-constructor Add :internal-identity-vals 1)
 ```
 
 The `proof` in `(values eclass proof)` proves `eclass = f(children)` (the eclass on
-the left). The congruence `:merge` again behaves as in term mode, composing the view
-proofs; it too is built in Rust (`EGraph::native_congruence_merge`).
+the left), which is why the `Trans`/`Sym` composition is flipped relative to the
+union-find's.
 
 
 ```text

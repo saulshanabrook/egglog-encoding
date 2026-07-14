@@ -28,10 +28,6 @@ pub(crate) struct EncodingState {
     pub original_typechecking: Option<Box<EGraph>>,
     pub proofs_enabled: bool,
     pub proof_testing: bool,
-    /// The per-sort union-find function names (`@UF`). In proof mode,
-    /// `declare_function` (lib.rs) builds their proof-composing merge
-    /// (see `EGraph::build_uf_self_merge`).
-    pub self_merge_uf_functions: HashSet<String>,
     pub proof_names: EncodingNames,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe
     /// whole-database baseline) instead of `:unsafe-seminaive`, so tests can
@@ -52,7 +48,6 @@ impl EncodingState {
             proofs_enabled: false,
             proof_names: EncodingNames::new(symbol_gen),
             proof_testing: false,
-            self_merge_uf_functions: HashSet::default(),
             force_proof_naive: false,
         }
     }
@@ -135,8 +130,7 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// Declare a sort's union-find `@UF : (S) -> (S, {Unit|Proof})`, mapping each
     /// term to its parent plus a proof `key = parent` (`()` in term mode). Its
-    /// `:merge` resolves conflicting parents (see `proof_encoding.md`); the
-    /// proof-mode merge is built in [`EGraph::build_uf_self_merge`]. Also emits
+    /// `:merge` resolves conflicting parents (see `proof_encoding.md`). Also emits
     /// the `path_compress` rule and, in proof mode, the per-sort `term_proof`
     /// table and AST constructor.
     fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<Command> {
@@ -152,13 +146,6 @@ impl<'a> ProofInstrumentor<'a> {
         let pb = self.egraph.parser.symbol_gen.fresh("uf_pb");
         let pc = self.egraph.parser.symbol_gen.fresh("uf_pc");
 
-        // Mark `@UF` so `declare_function` builds its proof-composing merge in
-        // proof mode.
-        self.egraph
-            .proof_state
-            .self_merge_uf_functions
-            .insert(uf_name.clone());
-
         let proof_tables = if proofs {
             let term_proof_name = self.term_proof_name(sort_name);
             let add_to_ast_code = self.add_to_ast(sort_name);
@@ -169,8 +156,20 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             String::new()
         };
+        // On a conflict, keep the smaller parent and union the displaced parent back
+        // into `@UF`. In proof mode the proofs ride along: `hi_pf_`/`lo_pf_` prove
+        // `key = larger parent` / `key = smaller parent`, so the displaced edge's
+        // proof is `Trans (Sym hi_pf_) lo_pf_ : larger = smaller`.
         let uf_merge = if proofs {
-            "(values old0 old1)".to_string()
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            format!(
+                "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+                  (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+                  (set ({uf_name} (ordering-max old0 new0))
+                       (values (ordering-min old0 new0) ({trans} ({sym} hi_pf_) lo_pf_)))
+                  (values (ordering-min old0 new0) lo_pf_))"
+            )
         } else {
             format!(
                 "((set ({uf_name} (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
@@ -473,13 +472,25 @@ impl<'a> ProofInstrumentor<'a> {
         // A constructor's view is a functional-dependency tuple
         // `(children) -> (eclass, {Unit|Proof})` whose `:merge` resolves congruence:
         // it keeps the smaller eclass and unions the two eclasses in the sort's
-        // `@UF`. In proof mode that merge is built in
-        // `EGraph::native_congruence_merge`. Custom functions keep the
-        // `(children eclass) -> {Unit|Proof}` form with a merge rule.
+        // `@UF`. Custom functions keep the `(children eclass) -> {Unit|Proof}` form
+        // with a merge rule.
         let fd_view = fdecl.subtype == FunctionSubtype::Constructor;
         let view_decl = if fd_view {
+            // Two rows conflicting on the same children are congruent: keep the
+            // smaller eclass and union the two eclasses in the sort's `@UF`. In
+            // proof mode the view proofs (`eclass = f(children)`) compose into the
+            // union edge's proof `Trans hi_pf_ (Sym lo_pf_) : larger = smaller`.
             let congruence_merge = if self.proofs_enabled() {
-                "(values old0 old1)".to_string()
+                let uf_name = self.uf_name(schema.output());
+                let trans = self.proof_names().eq_trans_constructor.clone();
+                let sym = self.proof_names().eq_sym_constructor.clone();
+                format!(
+                    "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+                      (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+                      (set ({uf_name} (ordering-max old0 new0))
+                           (values (ordering-min old0 new0) ({trans} hi_pf_ ({sym} lo_pf_))))
+                      (values (ordering-min old0 new0) lo_pf_))"
+                )
             } else {
                 let uf_name = self.uf_name(schema.output());
                 format!(

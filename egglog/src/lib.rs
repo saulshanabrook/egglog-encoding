@@ -519,17 +519,10 @@ impl EGraph {
             if a > b { a } else { b }
         });
 
-        // Orientation helpers for the proof-encoding UF/view merges: given two `(value, proof)`
-        // pairs `(a, ap)` and `(b, bp)`, return the proof paired with the smaller / larger value
-        // (same value ordering as `ordering-min`/`ordering-max`). Polymorphic like the ordering
-        // prims, so each resolves to a single value-level external function and needs no `Proof`
-        // sort to exist — which keeps the encoding self-contained on a non-proof re-parse.
-        add_primitive!(&mut eg, "proof-of-min" = |a: #, ap: #, b: #, bp: #| -> # {
-            if a < b { ap } else { bp }
-        });
-        add_primitive!(&mut eg, "proof-of-max" = |a: #, ap: #, b: #, bp: #| -> # {
-            if a > b { ap } else { bp }
-        });
+        // Orientation helpers for the proof-encoding UF/view merges; see
+        // [`crate::proofs::proof_encoding_helpers::OrientProof`].
+        eg.add_pure_primitive(proofs::proof_encoding_helpers::OrientProof::min(), None);
+        eg.add_pure_primitive(proofs::proof_encoding_helpers::OrientProof::max(), None);
 
         eg.rulesets
             .insert("".into(), Ruleset::Rules(Default::default()));
@@ -1008,180 +1001,6 @@ impl EGraph {
         }
     }
 
-    /// Build the native congruence `:merge` for a proof-mode constructor view
-    /// `(children) -> (eclass, view_proof)`. Returns `Ok(None)` for any function that
-    /// isn't such a view, leaving the ordinary merge lowering in place. Once the view shape matches,
-    /// the proof-encoding metadata (`:internal-proof-names`/`:internal-uf`) must resolve; a missing
-    /// piece is a hard error rather than a silent fallback that would drop congruence.
-    ///
-    /// The view proofs are oriented `eclass = f(children)` (eclass on the left). On an FD conflict
-    /// (two congruent terms share the same canonical children) the merge keeps the smaller eclass and
-    /// stages the oriented union edge `(@UF max_ec) = (values min_ec (Trans max_vp (Sym min_vp)))`
-    /// into the per-sort UF, so the single-table UF stays acyclic without a `single_parent` rule.
-    fn native_congruence_merge(
-        &self,
-        decl: &ResolvedFunctionDecl,
-        outputs: &[ArcSort],
-        num_outputs: usize,
-    ) -> Result<Option<egglog_bridge::MergeFn>, Error> {
-        use egglog_bridge::{MergeAction, MergeFn};
-        // Detected purely by shape: a term-constructor view with an eq-sort first output and a
-        // second proof output (a `Unit` second column is a term-mode view, whose congruence
-        // merge is spelled out in its declaration). Not gated on `proofs_enabled`, so a
-        // re-parsed desugared program rebuilds the same merge.
-        if !(decl.term_constructor.is_some()
-            && num_outputs == 2
-            && outputs[0].is_eq_sort()
-            && outputs[1].name() != "Unit")
-        {
-            return Ok(None);
-        }
-        // The shape now uniquely identifies a proof-mode congruence view, so every lookup below is
-        // expected to succeed. If one doesn't, the encoding's `:internal-proof-names`/`:internal-uf`
-        // metadata is absent or stale; fail loudly instead of silently falling back to a merge that
-        // never resolves congruence.
-        let missing = |what: &str| {
-            Error::BackendError(format!(
-                "term-encoding congruence view `{}` cannot resolve {what}; the proof encoding's \
-                 :internal-proof-names/:internal-uf metadata is absent or stale",
-                decl.name
-            ))
-        };
-        let resolve = |name: &str| -> Option<ExternalFunctionId> {
-            self.type_info
-                .get_prims(name)
-                .and_then(|p| p.first())
-                .and_then(|p| p.context_ids[crate::Context::Write])
-        };
-        let min_id =
-            resolve("ordering-min").ok_or_else(|| missing("the `ordering-min` primitive"))?;
-        let max_id =
-            resolve("ordering-max").ok_or_else(|| missing("the `ordering-max` primitive"))?;
-        let uf_name = self
-            .proof_state
-            .uf_parent
-            .get(decl.schema.output())
-            .ok_or_else(|| missing("its per-sort union-find"))?;
-        let uf_id = self
-            .functions
-            .get(uf_name)
-            .ok_or_else(|| missing("its union-find function"))?
-            .backend_id;
-        let trans_id = self
-            .functions
-            .get(&self.proof_state.proof_names.eq_trans_constructor)
-            .ok_or_else(|| missing("the `Trans` proof constructor"))?
-            .backend_id;
-        let sym_id = self
-            .functions
-            .get(&self.proof_state.proof_names.eq_sym_constructor)
-            .ok_or_else(|| missing("the `Sym` proof constructor"))?
-            .backend_id;
-        let orient_max =
-            resolve("proof-of-max").ok_or_else(|| missing("the `proof-of-max` primitive"))?;
-        let orient_min =
-            resolve("proof-of-min").ok_or_else(|| missing("the `proof-of-min` primitive"))?;
-        // Column 0 = eclass, column 1 = view_proof (`eclass = f(children)`).
-        let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        // The view proof paired with the larger / smaller eclass (both prove `eclass = f(children)`),
-        // selected by eclass order via a pure primitive rather than a conditional merge node.
-        let orient_args = || {
-            vec![
-                MergeFn::OldCol(0),
-                MergeFn::OldCol(1),
-                MergeFn::NewCol(0),
-                MergeFn::NewCol(1),
-            ]
-        };
-        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
-        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
-        // Trans(max_vp, Sym(min_vp)) : max_ec = min_ec (view proofs put the eclass on the left). The
-        // identity-column guard (col 0) skips this merge when the two eclasses are already equal, so
-        // the block stages the union unconditionally.
-        let edge = MergeFn::Lookup(
-            trans_id,
-            vec![max_pf(), MergeFn::Lookup(sym_id, vec![min_pf()])],
-        );
-        // Stage the union edge into @UF; the merged value is (smaller eclass, its view proof).
-        Ok(Some(MergeFn::Block {
-            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
-            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
-        }))
-    }
-
-    /// Build the proof-mode union-find `:merge` for the encoding's per-sort UF function
-    /// `@UF : (S) -> (S, Proof)`. Value column 0 is the parent, column 1 a proof
-    /// `key = parent` (key on the left). On a conflict the merge keeps the smaller
-    /// parent and stages the oriented displaced edge
-    /// `(@UF max_ec) = (values min_ec (Trans (Sym max_pf) min_pf))` into itself.
-    /// `uf_id` is the function's own backend id (see [`EGraph::peek_next_function_id`]).
-    ///
-    /// Built in Rust rather than spelled out in the generated source (as the
-    /// term-mode UF merge is): it selects proofs with `proof-of-min`/`proof-of-max`,
-    /// whose polymorphic type makes all arguments one sort, so their mixed
-    /// `(S, Proof, S, Proof)` call would not typecheck. Building the merge directly
-    /// calls them at the value level, where sorts don't apply.
-    fn build_uf_self_merge(
-        &self,
-        uf_id: egglog_bridge::FunctionId,
-    ) -> Result<egglog_bridge::MergeFn, Error> {
-        use egglog_bridge::{MergeAction, MergeFn};
-        let resolve = |name: &str| -> Result<ExternalFunctionId, Error> {
-            self.type_info
-                .get_prims(name)
-                .and_then(|p| p.first())
-                .and_then(|p| p.context_ids[crate::Context::Write])
-                .ok_or_else(|| {
-                    Error::BackendError(format!(
-                        "UF self-merge: primitive `{name}` not resolvable in write context"
-                    ))
-                })
-        };
-        let min_id = resolve("ordering-min")?;
-        let max_id = resolve("ordering-max")?;
-        let backend_id = |name: &str| -> Result<egglog_bridge::FunctionId, Error> {
-            self.functions
-                .get(name)
-                .map(|f| f.backend_id)
-                .ok_or_else(|| {
-                    Error::BackendError(format!(
-                        "UF self-merge: proof constructor `{name}` missing"
-                    ))
-                })
-        };
-        let trans_id = backend_id(&self.proof_state.proof_names.eq_trans_constructor)?;
-        let sym_id = backend_id(&self.proof_state.proof_names.eq_sym_constructor)?;
-        let orient_max = resolve("proof-of-max")?;
-        let orient_min = resolve("proof-of-min")?;
-        let max_ec = || MergeFn::Primitive(max_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        let min_ec = || MergeFn::Primitive(min_id, vec![MergeFn::OldCol(0), MergeFn::NewCol(0)]);
-        // The proof paired with the larger / smaller parent (both prove `key = that parent`),
-        // selected by parent order via a pure primitive rather than a conditional merge node.
-        let orient_args = || {
-            vec![
-                MergeFn::OldCol(0),
-                MergeFn::OldCol(1),
-                MergeFn::NewCol(0),
-                MergeFn::NewCol(1),
-            ]
-        };
-        let max_pf = || MergeFn::Primitive(orient_max, orient_args());
-        let min_pf = || MergeFn::Primitive(orient_min, orient_args());
-        // Trans(Sym(max_pf), min_pf) : max_ec = min_ec (UF proofs put the key on the left). The
-        // identity-column guard (col 0, the parent) skips this merge when the parent is unchanged,
-        // so the block stages the displaced edge unconditionally.
-        let edge = MergeFn::Lookup(
-            trans_id,
-            vec![MergeFn::Lookup(sym_id, vec![max_pf()]), min_pf()],
-        );
-        // Stage the displaced edge back into @UF; the merged value is (smaller parent, its proof).
-        Ok(MergeFn::Block {
-            actions: vec![MergeAction::Set(uf_id, vec![max_ec(), min_ec(), edge])],
-            result: Box::new(MergeFn::Columns(vec![min_ec(), min_pf()])),
-        })
-    }
-
     fn declare_function(&mut self, decl: &ResolvedFunctionDecl) -> Result<(), Error> {
         let get_sort = |name: &String| match self.type_info.get_sort_by_name(name) {
             Some(sort) => Ok(sort.clone()),
@@ -1215,35 +1034,16 @@ impl EGraph {
         // This function's backend id (the id `add_table` below will assign, peeked
         // deterministically), so its merge can write into its own table.
         let own_id = self.backend.peek_next_function_id();
-        // The proof encoding's UF and congruence-view merges select proofs with the
-        // `proof-of-min`/`proof-of-max` primitives, whose polymorphic type makes all
-        // arguments one sort — the mixed `(S, Proof, S, Proof)` call would not
-        // typecheck in a source `:merge`, so those merges are built here at the value
-        // level (their declarations' `:merge (values old0 old1)` is shape-only).
-        // Every other merge — including the term encoding's — lowers from the
-        // declaration.
-        let is_proof_uf = self
-            .proof_state
-            .self_merge_uf_functions
-            .contains(&*decl.name)
-            && num_outputs == 2
-            && outputs[1].name() != "Unit";
-        let merge = if is_proof_uf {
-            self.build_uf_self_merge(own_id)?
-        } else if let Some(m) = self.native_congruence_merge(decl, &outputs, num_outputs)? {
-            m
-        } else {
-            match decl.subtype {
-                FunctionSubtype::Constructor => MergeFn::UnionId,
-                FunctionSubtype::Custom => match &decl.merge {
-                    Some(merge) => self.translate_merge_to_mergefn(merge, (&decl.name, own_id))?,
-                    // No merge clause: assert equality per output column.
-                    None if num_outputs > 1 => {
-                        MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
-                    }
-                    None => MergeFn::AssertEq,
-                },
-            }
+        let merge = match decl.subtype {
+            FunctionSubtype::Constructor => MergeFn::UnionId,
+            FunctionSubtype::Custom => match &decl.merge {
+                Some(merge) => self.translate_merge_to_mergefn(merge, (&decl.name, own_id))?,
+                // No merge clause: assert equality per output column.
+                None if num_outputs > 1 => {
+                    MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
+                }
+                None => MergeFn::AssertEq,
+            },
         };
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
             schema: input
@@ -2142,16 +1942,11 @@ impl EGraph {
                 proof_constructors,
                 ..
             } => {
-                // Restore the sort's UF metadata into proof_state. A missing
-                // index marks the encoding's single-key union-find function
-                // (as opposed to a user-provided `(child, parent)` relation).
-                if let Some((uf_ctor, uf_index)) = uf {
+                // Restore the sort's UF metadata into proof_state.
+                if let Some((uf_ctor, _uf_index)) = uf {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
-                    if uf_index.is_none() {
-                        self.proof_state.self_merge_uf_functions.insert(uf_ctor);
-                    }
                 }
                 // If the sort has a :internal-proof-func field, store the mapping for proof lookup.
                 // This annotation is set by proof instrumentation and consumed here.
