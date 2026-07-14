@@ -20,9 +20,7 @@ fn main() {
     });
     #[cfg(feature = "dd-backend")]
     let args = if matches!(backend, Backend::Dd) {
-        args.into_iter()
-            .filter(|arg| arg.to_str() != Some("--term-encoding"))
-            .collect()
+        strip_term_encoding_arg(args)
     } else {
         args
     };
@@ -68,6 +66,15 @@ where
         }
     }
     Ok((backend, filtered))
+}
+
+/// The DD backend always runs under the term encoding, so `--term-encoding` is
+/// redundant there; drop it before handing the arguments to the CLI.
+#[cfg(feature = "dd-backend")]
+fn strip_term_encoding_arg(args: Vec<OsString>) -> Vec<OsString> {
+    args.into_iter()
+        .filter(|arg| arg.to_str() != Some("--term-encoding"))
+        .collect()
 }
 
 fn parse_backend(value: Option<&str>) -> Result<Backend, String> {
@@ -116,15 +123,15 @@ mod tests {
 
     #[cfg(feature = "dd-backend")]
     #[test]
-    fn extracts_enabled_dd_backend() {
-        let (backend, args) = extract_backend_arg([
-            OsString::from("--backend"),
-            OsString::from("dd"),
-            OsString::from("--term-encoding"),
-        ])
-        .unwrap();
-
+    fn dd_backend_arg_filtering_drops_term_encoding() {
+        let args = ["egglog", "--backend", "dd", "--term-encoding", "prog.egg"]
+            .into_iter()
+            .map(OsString::from);
+        let (backend, rest) = extract_backend_arg(args).unwrap();
         assert_eq!(backend, Backend::Dd);
-        assert_eq!(args, vec![OsString::from("--term-encoding")]);
+        assert_eq!(
+            strip_term_encoding_arg(rest),
+            vec![OsString::from("egglog"), OsString::from("prog.egg")]
+        );
     }
 }

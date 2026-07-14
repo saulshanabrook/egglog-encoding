@@ -780,6 +780,7 @@ pub fn add_function(
         let_binding: false,
         term_constructor: None,
         unextractable: false,
+        identity_vals: None,
     }])
 }
 

@@ -7,13 +7,16 @@ This makes proof production easier, since all equality reasoning is explicit and
   can be instrumented with proof tracking.
 The term encoding adds an explicit union-find structure per sort, and maintains it via
   rules that run during scheduled maintenance.
-Each sort's union-find is a single self-referential function `UF_<Sort> : (S) -> S` that maps
-  each term to its parent; a term with no entry is its own representative (identity-on-miss).
-Its native `:merge` (built in `EGraph::build_uf_self_merge`)
-  keeps the smaller endpoint on a conflict and unions the displaced parent back into `UF_<Sort>`,
-  so a single `set` performs a union.
+The union-find for a sort is a function `UF_<Sort>` that maps each term to its
+  parent; a term with no entry is its own representative.
+Unioning two terms is a `set` making one the parent of the other; the function's `:merge`
+  resolves the case where the term already had a different parent.
 For efficiency, every constructor becomes two tables:
-  a term table that stores the actual terms, and a view table storing representative terms along with their e-class (stored as the leader term).
+  a term table that stores the actual terms, and a view table mapping canonicalized
+  children to the e-class representative (the leader term).
+The encoding uses the same shapes with and without proof tracking:
+  union-find and view rows carry a proof column, which is `()` (of sort `Unit`)
+  when proofs are off.
 The term encoding enables proof tracking, done at the
   same time in this file.
 The encoding keeps the operational semantics equivalent to the standard encoding (for the
@@ -65,24 +68,30 @@ rebuild-time congruence (`rebuilding` + `rebuilding_cleanup`), and deferred dele
 
 ```text
 (sort Math :internal-uf UF_Math)
-(function UF_Math (Math) Math :merge (ordering-min old new) :unextractable :internal-hidden)
-(rule ((= b (UF_Math a))
-       (= c (UF_Math b))
+(function UF_Math (Math) (Math Unit)
+    :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
+            (values (ordering-min old0 new0) ()))
+    :unextractable :internal-hidden :internal-identity-vals 1)
+(rule ((= (values b pb) (UF_Math a))
+       (= (values c pc) (UF_Math b))
        (!= b c))
-      ((set (UF_Math a) c))
+      ((set (UF_Math a) (values c ())))
         :ruleset parent :name "uf_path_compress")
 ```
 
-*The union-find* for each sort is the single self-referential function `UF_<Sort>`,
-  mapping each term to its parent.
-`UF_<Sort>` is `(S) -> S` without proof tracking, or `(S) -> (S Proof)` with proof tracking
-  (the extra column carries a proof of the parent edge).
+*The union-find* for each sort is the function `UF_<Sort>`, mapping each term to its parent
+  (plus the proof column, `()` here).
 A term with no row is its own representative, so `UF_<Sort>` acts as an identity-on-miss lookup.
-The source `:merge (ordering-min old new)` above is only a placeholder that lets the function
-  typecheck; `declare_function` replaces it with the native self-referential merge
-  (see `EGraph::build_uf_self_merge`), which on a conflicting
-  parent keeps the smaller endpoint and unions the displaced one back into `UF_<Sort>`.
-A single `set` on `UF_<Sort>` therefore performs a union.
+To union `a` and `b`, the encoding runs
+  `(set (UF_<Sort> (ordering-max a b)) (values (ordering-min a b) ()))`.
+If the key already had a different parent, the `:merge` action block runs:
+  the key keeps the smaller of the two parents (the merge result),
+  and the `set` in the block unions the larger parent with the smaller one,
+  since both are equal to the key.
+The `:internal-identity-vals 1` annotation marks the parent column as the row's identity:
+  a merge whose parent is unchanged keeps the existing row without running the block.
+Without it, re-setting an existing edge would run the block and stage the same union
+  again, forever.
 
 *Union-find rules:*
 The only maintenance rule is path compression (in the `parent` ruleset), which flattens
@@ -96,7 +105,10 @@ We use the `ordering-max` and `ordering-min` egglog primitives
 ```text
 (sort view)
 (constructor Add (i64 i64) Math :unextractable :internal-hidden)
-(function AddView (i64 i64 Math) Unit :merge old :internal-term-constructor Add)
+(function AddView (i64 i64) (Math Unit)
+    :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
+            (values (ordering-min old0 new0) ()))
+    :internal-term-constructor Add :internal-identity-vals 1)
 (constructor to_delete_Add (i64 i64) view :internal-hidden)
 (constructor to_subsume_Add (i64 i64) view :internal-hidden)
 ```
@@ -104,42 +116,36 @@ We use the `ordering-max` and `ordering-min` egglog primitives
 Each constructor in the original program is expanded to
   a term table (`Add`), a view table (`AddView`), and helpers for deferred deletion/subsumption
   (`to_delete_Add`, `to_subsume_Add`).
-The view table is a function whose output type is `Unit` (without proof tracking)
-  or `Proof` (with proof tracking), with `:merge old`.
-A view table stores "canonicalized" terms and their e-class representative.
+The view table maps a term's canonicalized children to `(values eclass proof)`:
+  the representative term for its e-class, plus the proof column.
 A canonicalized term has representative terms for its children.
-The last column of the view table is the representative term for the e-class.
+Two view rows conflicting on the same children are congruent, so the view's `:merge`
+  resolves congruence directly: it keeps the smaller e-class and unions the two
+  e-classes in `UF_<Sort>` — no congruence rule is needed.
 The view tables are kept up to date during rebuilding.
 
 ```text
-(rule ((= v (AddView c0 c1 new))
-       (= v1 (AddView c0 c1 old))
-       (!= old new)
-       (= (ordering-max old new) new))
-      ((set (UF_Math (ordering-max new old)) (ordering-min new old)))
-        :ruleset rebuilding :name "congruence_rule" :internal-include-subsumed)
-(rule ((= v2 (AddView c0 c1 c2))
-       (= c2_leader (UF_Math c2))
-       (!= c2 c2_leader))
-      ((set (AddView c0 c1 c2_leader) ())
-       (delete (AddView c0 c1 c2)))
+(rule ((= (values v4 v5) (AddView c0 c1))
+       (= (values v6 v7) (UF_Math v4))
+       (!= v4 v6))
+      ((set (AddView c0 c1) (values v6 ())))
         :ruleset rebuilding :name "rebuild_rule" :internal-include-subsumed)
 ```
 
-For each constructor, we add a congruence rule and rebuild rules.
-The congruence rule adds an equality to the union-find when two constructor applications
-  have equal arguments.
-The rebuild rules keep the view pointing to representative terms.
-They are *fanned out*, one per eq-sort column (only `Add`'s `Math` output column here, since its
-  `i64` children are not eq-sorts): each rule replaces a single column with its `UF_<Sort>` leader
-  and re-sets the row.
+For each constructor, we add rebuild rules that keep the view canonical,
+  *fanned out* one per eq-sort column.
+`Add`'s `i64` children are not eq-sorts, so its only rebuild rule updates the e-class:
+  when the e-class has a `UF_<Sort>` parent, the rule re-sets the row with the leader
+  (the view's `:merge` keeps the smaller).
+A rule for an eq-sort child instead re-keys the row: it `set`s the view at the
+  canonicalized children and deletes the stale row.
 Because `UF_<Sort>` has no row for a canonical term (identity-on-miss), a column already at its
-  leader fails the `(!= c c_leader)` guard, so no self-loops or default lookups are needed.
+  leader simply doesn't match, so no self-loops or default lookups are needed.
 
 ```text
 (function v3 () Math :no-merge :unextractable :internal-let)
 (set (v3) (Add 1 2))
-(set (AddView 1 2 (v3)) ())
+(set (AddView 1 2) (values (v3) ()))
 ```
 
 Above is the desugaring for `(Add 1 2)`.
@@ -154,28 +160,28 @@ Since global variables are not allowed after this pass,
 
 
 ```text
-(rule ((= v5 (AddView a b v4)))
+(rule ((= (values v5 v6) (AddView a b)))
       ((let v7 (Add a b))
-       (set (AddView a b v7) ())
+       (set (AddView a b) (values v7 ()))
        (let v8 (Add b a))
-       (set (AddView b a v8) ())
-       (set (UF_Math (ordering-max v7 v8)) (ordering-min v7 v8)))
+       (set (AddView b a) (values v8 ()))
+       (set (UF_Math (ordering-max v7 v8)) (values (ordering-min v7 v8) ())))
        :name "commutativity")
 ```
 
 Here we have the instrumented commutativity rule.
 The query uses the view table to find the canonical e-node.
 The actions add to the term and view tables, then add an equality to the union-find.
-We add the equality with a single `set` on `UF_<Sort>`, using the `ordering-max` and
+We add the equality with a `set` on `UF_<Sort>`, using the `ordering-max` and
   `ordering-min` egglog primitives to deterministically choose the parent.
 
 
 
 
 ```text
-(check (= v7 (AddView 1 2 v8))
-       (= v9 (AddView 2 1 v10))
-       (= v8 v10))
+(check (= (values v9 v10) (AddView 1 2))
+       (= (values v11 v12) (AddView 2 1))
+       (= v9 v11))
 ```
 
 All queries use the view tables, including check commands.
@@ -184,13 +190,13 @@ This query checks that the e-class representatives for `(Add 1 2)` and `(Add 2 1
 
 ```text
 (rule ((to_delete_Add c0 c1)
-       (AddView c0 c1 out))
-      ((delete (AddView c0 c1 out))
+       (= (values e pf) (AddView c0 c1)))
+      ((delete (AddView c0 c1))
        (delete (to_delete_Add c0 c1)))
         :ruleset delete_subsume_ruleset :name "delete_rule")
 (rule ((to_subsume_Add c0 c1)
-       (AddView c0 c1 out))
-      ((subsume (AddView c0 c1 out)))
+       (= (values e pf) (AddView c0 c1)))
+      ((subsume (AddView c0 c1)))
         :ruleset delete_subsume_ruleset :name "delete_rule_subsume")
 
 (to_delete_Add 1 2)
@@ -270,30 +276,42 @@ The proof proves a proposition `t = t` for
   input term `t`.
 We store the oldest proof currently.
 
-When proof tracking is enabled, the single self-referential union-find carries a
-proof in a second value column:
+When proof tracking is enabled, the union-find keeps the same shape, but its proof
+column carries a real `Proof` instead of `()`:
 
 ```text
-(function UF_Math (Math) (Math Proof) :merge (values old0 old1) :unextractable :internal-hidden)
+(function UF_Math (Math) (Math Proof)
+    :merge ((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+            (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+            (set (UF_Math (ordering-max old0 new0))
+                 (values (ordering-min old0 new0) (Trans (Sym hi_pf_) lo_pf_)))
+            (values (ordering-min old0 new0) lo_pf_))
+    :unextractable :internal-hidden :internal-identity-vals 1)
 ```
 
 If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
-proves `k = p` (the key on the LEFT). The native self-referential `:merge` (built in
-`EGraph::build_uf_self_merge`) keeps the smaller parent on a conflict and stages the oriented
-displaced edge back into `UF_Math`, composing proofs with `Trans`/`Sym`. Path compression flattens
-cross-key chains via `Trans`.
+proves `k = p` (the key on the left). The `:merge` is the term-mode merge with the
+proofs riding along: `proof-of-min`/`proof-of-max` return the proof paired with the
+smaller/larger parent, the displaced edge stores `Trans (Sym hi_pf_) lo_pf_`
+(proving `larger parent = smaller parent`), and the smaller parent keeps its own
+proof. Path compression flattens chains via `Trans`.
 
 
-Similarly, the constructor view is a functional-dependency tuple carrying a proof:
+Similarly, the constructor view's proof column carries a proof of the row itself:
 
 ```text
-(function AddView (i64 i64) (Math Proof) :merge (values old0 old1) :internal-term-constructor Add)
+(function AddView (i64 i64) (Math Proof)
+    :merge ((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+            (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+            (set (UF_Math (ordering-max old0 new0))
+                 (values (ordering-min old0 new0) (Trans hi_pf_ (Sym lo_pf_))))
+            (values (ordering-min old0 new0) lo_pf_))
+    :internal-term-constructor Add :internal-identity-vals 1)
 ```
 
-The view maps a term's canonicalized children to `(eclass, proof)`, where `proof`
-proves `eclass = f(children)` (the eclass on the LEFT). Its native congruence `:merge`
-(built in `EGraph::native_congruence_merge`) keeps the smaller eclass on a functional-dependency
-conflict and stages the oriented union edge into `UF_Math`.
+The `proof` in `(values eclass proof)` proves `eclass = f(children)` (the eclass on
+the left), which is why the `Trans`/`Sym` composition is flipped relative to the
+union-find's.
 
 
 ```text
@@ -342,23 +360,21 @@ recanonicalized structurally when its elements' e-classes change. Take:
 (constructor Wrap (MathVec) Math)
 ```
 
-The `MathVec` argument of `Wrap` is a container column, so `Wrap`'s rebuild rule
+The `MathVec` argument of `Wrap` is a container column, so its rebuild rule
 canonicalizes it with a per-container *rebuild primitive* the encoding registers
-(here `MathVec_rebuild`), alongside the usual `UF_Mathf` lookup for the
-representative column:
+(here `MathVec_rebuild`); the e-class column gets the usual `UF_Math` rule:
 
 ```text
-(rule ((= v (WrapView c0 c1))
+(rule ((= (values e pf) (WrapView c0))
        (= c0_rebuilt (MathVec_rebuild c0))
-       (= c1_leader (UF_Mathf c1))
-       (guard (or (bool-!= c0 c0_rebuilt) (bool-!= c1 c1_leader))))
-      ((set (WrapView c0_rebuilt c1_leader) ())
-       (delete (WrapView c0 c1)))
-       :ruleset rebuilding :name "rebuild_rule" :naive)
+       (!= c0 c0_rebuilt))
+      ((set (WrapView c0_rebuilt) (values e ()))
+       (delete (WrapView c0)))
+       :ruleset rebuilding :naive :name "rebuild_rule" :internal-include-subsumed)
 ```
 
 The primitive clones the container, remaps each element to its union-find leader,
-and re-interns it. Because it reads the elements' `UF_<E>f` indices rather than
+and re-interns it. Because it reads the elements' `UF_<E>` tables rather than
 joining a tracked table, the rule is marked `:naive`: an element becoming equal
 to another produces no delta on the container's own view row, so the rule must
 rescan the view each round. Nested containers (e.g. `(Vec (Vec Math))`) rebuild

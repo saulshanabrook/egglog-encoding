@@ -20,11 +20,13 @@ pub(crate) fn desugar_command(
             let_binding,
             term_constructor,
             unextractable,
+            identity_vals,
         } => {
             let mut fdecl = FunctionDecl::function(span, name, schema, merge);
             fdecl.internal_hidden = hidden;
             fdecl.internal_let = let_binding;
             fdecl.term_constructor = term_constructor;
+            fdecl.identity_vals = identity_vals;
             // Functions with term_constructor are view tables that should be
             // extractable unless explicitly marked unextractable
             if fdecl.term_constructor.is_some() {

@@ -22,9 +22,10 @@ use thiserror::Error;
 
 /// A side condition is a rule-body fact that is just a container-producing
 /// primitive applied to bound variables — `(= v (vec-of e))`, `(= (set-of a)
-/// (set-of b))`, etc. Its proof is a bare [`Justification::Eval`] marker and it
-/// is verified by re-evaluation in [`ProofStore::check_side_condition`] rather
-/// than by matching a premise proposition.
+/// (set-of b))`, or a bare `(vec-of e)` guard. The encoder emits it with a bare
+/// [`Justification::Eval`] marker as its proof, and the checker verifies it by
+/// re-evaluation in [`ProofStore::check_side_condition`] rather than by matching
+/// a premise proposition. Both use this gate, so they cannot drift.
 pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
     fn is_container_primitive(expr: &ResolvedExpr) -> bool {
         matches!(
@@ -964,8 +965,10 @@ impl ProofStore {
     ) -> Result<(), ProofCheckError> {
         let (lhs, rhs) = match fact {
             ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
+            // A bare container-primitive fact binds nothing, but must still
+            // evaluate under the substitution for the premise to hold.
             ResolvedFact::Fact(expr) => {
-                self.eval_side(expr, subst, rule_name)?;
+                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
                 return Ok(());
             }
         };

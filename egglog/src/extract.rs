@@ -522,7 +522,7 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
         sort: ArcSort,
     ) -> Option<(C, TermId)> {
         // Canonicalize the value using the union-find if available (for term-encoding mode)
-        let canonical_value = self.find_canonical(egraph, value, &sort);
+        let canonical_value = find_canonical(egraph, value, &sort);
 
         match self.compute_cost_node(egraph, canonical_value, &sort) {
             Some(best_cost) => {
@@ -560,49 +560,6 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
         )
     }
 
-    /// Find the canonical representative of a value using the union-find table.
-    /// If no UF is registered for this sort, returns the original value.
-    fn find_canonical(&self, egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
-        // Check if there's a UF registered for this sort
-        let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
-            return value;
-        };
-
-        // Get the UF function
-        let Some(uf_func) = egraph.functions.get(uf_name) else {
-            return value;
-        };
-
-        // A single-key union-find is a self-referential function keyed by the element (the
-        // encoding's `UF_<Sort>`: `(S) -> S` in term mode, `(S) -> (S, Proof)` in proof mode), so
-        // `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
-        // leader. A two-key union-find is a `(child, parent)` relation (e.g. a user-provided
-        // `:internal-uf`), resolved with a one-hop scan. Dispatching on the key arity keeps both
-        // correct.
-        if uf_func.schema.input.len() == 1 {
-            let mut canonical = value;
-            loop {
-                match egraph.backend.lookup_id(uf_func.backend_id, &[canonical]) {
-                    Some(next) if next != canonical => canonical = next,
-                    _ => break,
-                }
-            }
-            return canonical;
-        }
-
-        // Two-key `(child, parent)` relation: one-hop lookup.
-        let mut canonical = value;
-        egraph
-            .backend
-            .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-                if row.vals[0] == value {
-                    canonical = row.vals[1];
-                }
-            });
-
-        canonical
-    }
-
     /// Extract variants of an e-class.
     ///
     /// The variants are selected by first picking `nvairants` e-nodes with the lowest cost from the e-class
@@ -619,7 +576,7 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 
         if sort.is_eq_sort() {
             // Canonicalize the value using the union-find if available
-            let canonical_value = self.find_canonical(egraph, value, &sort);
+            let canonical_value = find_canonical(egraph, value, &sort);
 
             let mut root_variants: Vec<(C, String, Vec<Value>)> = Vec::new();
 
@@ -715,6 +672,46 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
     }
 }
 
+/// Find the canonical representative of a value using the sort's `:internal-uf`
+/// union-find, or return the value unchanged if the sort has none.
+///
+/// The encoding's union-find is a function keyed by the element
+/// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`), so `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
+/// leader. A two-key union-find is a `(child, parent)` relation (a user-provided
+/// `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a one-hop scan.
+pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
+    let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
+        return value;
+    };
+
+    let Some(uf_func) = egraph.functions.get(uf_name) else {
+        return value;
+    };
+
+    if uf_func.schema.input.len() == 1 {
+        let mut canonical = value;
+        loop {
+            match egraph.backend.lookup_id(uf_func.backend_id, &[canonical]) {
+                Some(next) if next != canonical => canonical = next,
+                _ => break,
+            }
+        }
+        return canonical;
+    }
+
+    // Two-key `(child, parent)` relation: one-hop lookup.
+    let mut canonical = value;
+    egraph
+        .backend
+        .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
+            if row.vals[0] == value {
+                canonical = row.vals[1];
+            }
+        });
+
+    canonical
+}
+
 impl Function {
     /// Returns the extraction head cost for this table.
     /// View tables inherit the cost of their referenced hidden term constructor.
@@ -730,7 +727,7 @@ impl Function {
         }
     }
 
-    /// Whether this is the proof-mode functional-dependency view `(children) -> (eclass, proof)`,
+    /// Whether this is the functional-dependency view `(children) -> (eclass, {Unit|Proof})`,
     /// where the e-class is the first output column rather than the last input column.
     fn is_fd_view(&self) -> bool {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1

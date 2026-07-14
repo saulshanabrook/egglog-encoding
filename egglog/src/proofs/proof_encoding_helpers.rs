@@ -4,10 +4,10 @@
 use std::path::Path;
 
 use crate::{
-    EGraph, TypeInfo,
+    EGraph, TypeInfo, Value,
     ast::{
         Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, Schedule,
+        ResolvedExprExt, ResolvedFact, Schedule, Span,
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
@@ -48,12 +48,12 @@ pub(crate) struct EncodingNames {
 }
 
 /// Packages proof information for instrumenting actions.
-/// We may not know yet what terms we are instrumenting, so all but Proof leave that information to be filled in later.
+/// We may not know yet what terms we are instrumenting, so the justification leaves
+/// that information to be filled in later.
 /// This is only used internally in this file, it's not part of the proof format.
 pub(crate) enum Justification {
     Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
-    Proof(String),                 // existing proof
     Merge(String, String, String), // function name, proof1, proof2
 }
 
@@ -688,5 +688,88 @@ pub(crate) fn command_supports_proof_encoding(
             }
         }
         _ => Ok(()),
+    }
+}
+
+/// The `proof-of-min` / `proof-of-max` primitives: given two `(value, proof)`
+/// pairs `(a, ap)` and `(b, bp)`, return the proof paired with the smaller /
+/// larger value (same value ordering as `ordering-min`/`ordering-max`; a tie
+/// takes `bp`, matching those primitives keeping `b`). Typed
+/// `(T, P, T, P) -> P` for any sorts `T` and `P`, so the encoding's generated
+/// `:merge` blocks can pass sort values alongside their proofs.
+#[derive(Clone)]
+pub(crate) struct OrientProof {
+    name: String,
+    take_min: bool,
+}
+
+impl OrientProof {
+    pub(crate) fn min() -> Self {
+        Self {
+            name: "proof-of-min".into(),
+            take_min: true,
+        }
+    }
+
+    pub(crate) fn max() -> Self {
+        Self {
+            name: "proof-of-max".into(),
+            take_min: false,
+        }
+    }
+}
+
+impl crate::Primitive for OrientProof {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn crate::constraint::TypeConstraint> {
+        Box::new(OrientProofTypeConstraint {
+            name: self.name.clone(),
+            span: span.clone(),
+        })
+    }
+}
+
+impl crate::PurePrim for OrientProof {
+    fn apply<'a, 'db>(&self, _state: crate::PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [a, ap, b, bp] = args else {
+            return None;
+        };
+        let first = if self.take_min { a < b } else { a > b };
+        Some(if first { *ap } else { *bp })
+    }
+}
+
+struct OrientProofTypeConstraint {
+    name: String,
+    span: Span,
+}
+
+impl crate::constraint::TypeConstraint for OrientProofTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[crate::core::AtomTerm],
+        _typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, crate::ArcSort>>> {
+        // `(a ap b bp) -> out`: `a`/`b` share one sort; `ap`/`bp`/`out` another.
+        if arguments.len() != 5 {
+            return vec![crate::constraint::impossible(
+                crate::constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: crate::core::Atom {
+                        span: self.span.clone(),
+                        head: self.name.clone(),
+                        args: arguments.to_vec(),
+                    },
+                    expected: 5,
+                },
+            )];
+        }
+        vec![
+            crate::constraint::eq(arguments[2].clone(), arguments[0].clone()),
+            crate::constraint::eq(arguments[3].clone(), arguments[1].clone()),
+            crate::constraint::eq(arguments[4].clone(), arguments[1].clone()),
+        ]
     }
 }
