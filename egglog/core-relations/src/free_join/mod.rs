@@ -827,6 +827,24 @@ impl Database {
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(prev_len);
     }
 
+    /// Remove the most recently added table.
+    ///
+    /// This is intended for rolling back a failed higher-level registration.
+    /// It returns `false` without changing the database if `table` is not the
+    /// final table id.
+    pub fn remove_last_table(&mut self, table: TableId) -> bool {
+        let Some(info) = self.tables.pop_last(table) else {
+            return false;
+        };
+        let notified = self.notification_list.reset();
+        for other in notified.into_iter().filter(|other| *other != table) {
+            self.notification_list.notify(other);
+        }
+        self.deps.remove_last_table(table);
+        self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
+        true
+    }
+
     pub(crate) fn plan_query(&mut self, query: Query) -> Plan {
         plan::plan_query(query, ColumnCardEst::new(self))
     }

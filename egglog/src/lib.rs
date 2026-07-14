@@ -39,7 +39,13 @@ pub use egglog_add_primitive::add_primitive_with_validator;
 use egglog_ast::generic_ast::{Change, GenericExpr, Literal};
 use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
-use egglog_bridge::{ColumnTy, QueryEntry};
+/// The pluggable backend interface. Re-exported so downstream crates can
+/// implement their own backend (see [`EGraph::with_backend`]).
+pub use egglog_backend_trait::{Backend, BackendExt};
+use egglog_backend_trait::{
+    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+};
+use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{ReportLevel, RunReport};
@@ -70,7 +76,6 @@ use std::io::{Read as _, Write as _};
 use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
@@ -310,7 +315,7 @@ dyn_clone::clone_trait_object!(ExtensionStateValue);
 
 #[derive(Clone)]
 pub struct EGraph {
-    backend: egglog_bridge::EGraph,
+    backend: Box<dyn egglog_backend_trait::Backend>,
     pub parser: Parser,
     names: check_shadowing::Names,
     /// pushed_egraph forms a linked list of pushed egraphs.
@@ -426,10 +431,22 @@ impl Debug for Function {
 
 impl Default for EGraph {
     fn default() -> Self {
+        Self::with_backend(Box::new(egglog_bridge::EGraph::default()))
+    }
+}
+
+impl EGraph {
+    /// Construct an `EGraph` backed by the given [`Backend`] implementation.
+    ///
+    /// [`EGraph::default`] uses the in-memory reference backend
+    /// (`egglog_bridge::EGraph`); downstream crates can supply their own
+    /// backend (e.g. a differential-dataflow engine) by implementing
+    /// [`Backend`] and passing it here.
+    pub fn with_backend(backend: Box<dyn Backend>) -> Self {
         let mut parser = Parser::default();
         let proof_state = EncodingState::new(&mut parser.symbol_gen);
         let mut eg = Self {
-            backend: Default::default(),
+            backend,
             parser,
             names: Default::default(),
             pushed_egraph: Default::default(),
@@ -559,12 +576,34 @@ impl EGraph {
         self
     }
 
+    /// Enable the term-encoding pipeline for a custom backend.
+    ///
+    /// Relational backends without a native union-find require this:
+    /// congruence and rebuild are lowered to ordinary
+    /// rules over `@uf` tables instead of relying on the backend's own
+    /// union-find. Re-typechecking after the encoder runs uses a default
+    /// (bridge-backed) e-graph, so this backend need not implement typechecking.
+    pub fn with_term_encoding(mut self) -> Self {
+        self.proof_state.original_typechecking = Some(Box::new(EGraph::default()));
+        self
+    }
+
+    /// Enable the term-encoding pipeline for a custom backend, using the given
+    /// bridge-backed e-graph for parsing/typechecking before instrumentation.
+    #[doc(hidden)]
+    pub fn with_term_encoding_typechecker(mut self, typechecker: EGraph) -> Self {
+        self.proof_state.original_typechecking = Some(Box::new(typechecker));
+        self
+    }
+
     /// Enable proof generation on this e-graph.
     /// TODO proofs should be turned on during creation of the e-graph, not afterwards.
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_proofs_enabled(mut self) -> Self {
-        self = self.with_term_encoding_enabled();
+        if self.proof_state.original_typechecking.is_none() {
+            self = self.with_term_encoding_enabled();
+        }
         self.proof_state.proofs_enabled = true;
         self
     }
@@ -779,7 +818,7 @@ impl EGraph {
     ) -> Result<egglog_bridge::MergeFn, Error> {
         match expr {
             GenericExpr::Lit(_, literal) => {
-                let val = literal_to_value(&self.backend, literal);
+                let val = literal_to_value(self.backend.base_values(), literal);
                 Ok(egglog_bridge::MergeFn::Const(val))
             }
             GenericExpr::Var(span, resolved_var) => match resolved_var.name.as_str() {
@@ -809,17 +848,24 @@ impl EGraph {
                             "expected string literal after `unstable-fn`".into(),
                         ));
                     };
+                    let bridge = self
+                        .backend
+                        .as_any()
+                        .downcast_ref::<egglog_bridge::EGraph>()
+                        .ok_or_else(|| {
+                            Error::BackendError(
+                                "`unstable-fn` merge expressions require the reference bridge backend"
+                                    .into(),
+                            )
+                        })?;
+                    let panic_id = bridge.action_registry().read().unwrap().default_panic_id();
                     let resolved = resolve_function_container_target_with_context(
-                        &self.backend,
+                        bridge,
                         &self.functions,
                         &self.type_info,
                         name,
                         p,
-                        self.backend
-                            .action_registry()
-                            .read()
-                            .unwrap()
-                            .default_panic_id(),
+                        panic_id,
                     )?;
                     translated_args[0] =
                         egglog_bridge::MergeFn::Const(self.backend.base_values().get(resolved));
@@ -860,7 +906,7 @@ impl EGraph {
             schema: input
                 .iter()
                 .chain([&output])
-                .map(|sort| sort.column_ty(&self.backend))
+                .map(|sort| sort.column_ty(self.backend.base_values()))
                 .collect(),
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
@@ -1160,22 +1206,16 @@ impl EGraph {
 
         let iteration_report = self
             .backend
-            .run_rules(&rule_ids)
+            .run_rules(RuleSetRun {
+                name: Some(ruleset),
+                rules: &rule_ids,
+            })
             .map_err(|e| Error::BackendError(e.to_string()))?;
 
         Ok(RunReport::singleton(ruleset, iteration_report))
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
-        // Disable union_to_set optimization in proof or term encoding mode, since
-        // it expects only `union` on constructors (not set).
-        let core_rule = rule.to_canonicalized_core_rule(
-            &self.type_info,
-            &mut self.parser.symbol_gen,
-            self.proof_state.original_typechecking.is_none(),
-        )?;
-        let (query, actions) = (&core_rule.body, &core_rule.head);
-
         // The `:naive` rule option opts a single rule out of seminaive
         // evaluation. This widens primitive-context selection from
         // Pure/Write to Read/Full, so primitives that read or write the
@@ -1191,33 +1231,54 @@ impl EGraph {
                 RuleEvalMode::Naive | RuleEvalMode::UnsafeSeminaive
             );
 
+        // Disable union_to_set optimization in proof or term encoding mode, since
+        // it expects only `union` on constructors (not set).
+        let union_to_set = self.proof_state.original_typechecking.is_none();
+
+        match self.rulesets.get(&rule.ruleset) {
+            Some(Ruleset::Rules(_)) => {}
+            Some(Ruleset::Combined(_)) => {
+                return Err(Error::CombinedRulesetError(
+                    rule.ruleset.clone(),
+                    rule.span.clone(),
+                ));
+            }
+            None => {
+                return Err(Error::NoSuchRuleset(
+                    rule.ruleset.clone(),
+                    rule.span.clone(),
+                ));
+            }
+        }
+
+        let core_rule = rule.to_canonicalized_core_rule(
+            &self.type_info,
+            &mut self.parser.symbol_gen,
+            union_to_set,
+        )?;
+        let (query, actions) = (&core_rule.body, &core_rule.head);
         let rule_id = {
-            let mut rb = self.backend.new_rule(&rule.name, seminaive);
-            rb.set_no_decomp(no_decomp);
-            let mut translator =
-                BackendRule::new(rb, &self.functions, &self.type_info, requires_read_context);
-            translator.query(query, rule.include_subsumed);
+            let mut translator = BackendRule::new(
+                &mut *self.backend,
+                &self.functions,
+                &self.type_info,
+                requires_read_context,
+            );
+            translator.query(query, rule.include_subsumed)?;
             translator.actions(actions)?;
-            translator.build()
+            translator.try_build(&rule.name, seminaive, no_decomp, core_rule.span.clone())?
         };
 
-        if let Some(rules) = self.rulesets.get_mut(&rule.ruleset) {
-            match rules {
-                Ruleset::Rules(rules) => {
-                    match rules.entry(rule.name.clone()) {
-                        indexmap::map::Entry::Occupied(_) => {
-                            let name = rule.name;
-                            panic!("Rule '{name}' was already present")
-                        }
-                        indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
-                    };
-                    Ok(rule.name)
-                }
-                Ruleset::Combined(_) => Err(Error::CombinedRulesetError(rule.ruleset, rule.span)),
+        let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&rule.ruleset) else {
+            unreachable!("ruleset was validated before compiling the rule")
+        };
+        match rules.entry(rule.name.clone()) {
+            indexmap::map::Entry::Occupied(_) => {
+                panic!("Rule '{}' was already present", rule.name)
             }
-        } else {
-            Err(Error::NoSuchRuleset(rule.ruleset, rule.span))
-        }
+            indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
+        };
+        Ok(rule.name)
     }
 
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
@@ -1231,14 +1292,17 @@ impl EGraph {
         let (actions, _) = actions.to_core_actions(&mut ctx)?;
 
         let mut translator = BackendRule::new(
-            self.backend.new_rule("eval_actions", false),
+            &mut *self.backend,
             &self.functions,
             &self.type_info,
             true, // global action: Read/Full contexts (may read the DB)
         );
         translator.actions(&actions)?;
-        let id = translator.build();
-        let result = self.backend.run_rules(&[id]);
+        let id = translator.try_build("eval_actions", false, false, Span::Panic)?;
+        let result = self.backend.run_rules(RuleSetRun {
+            name: None,
+            rules: &[id],
+        });
         self.backend.free_rule(id);
 
         match result {
@@ -1262,8 +1326,18 @@ impl EGraph {
     /// a [`ReadState`], so it can read but not write. Because this
     /// borrows `&self`, the closure and its callbacks may also call other
     /// `&self` methods such as [`EGraph::value_to_base`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the selected backend does not provide an action registry.
+    /// Use the fallible top-level table iteration methods for backend-generic
+    /// reads.
     pub fn read<R>(&self, f: impl FnOnce(ReadState<'_, '_>) -> R) -> R {
-        let registry = self.backend.action_registry().clone();
+        let registry = self
+            .backend
+            .action_registry()
+            .cloned()
+            .expect("EGraph::read requires a backend action registry");
         let guard = registry.read().unwrap();
         self.backend
             .with_execution_state_tracked(|es| f(ReadState::wrap(es, &guard, Context::Read)))
@@ -1276,34 +1350,94 @@ impl EGraph {
     pub fn function_entries(
         &self,
         name: &str,
-        f: impl FnMut(FunctionEntry<'_>),
+        mut f: impl FnMut(FunctionEntry<'_>),
     ) -> Result<(), Error> {
-        self.read(|rs| rs.function_entries(name, f))
+        self.function_entries_while(name, |entry| {
+            f(entry);
+            true
+        })
     }
 
     /// Like [`EGraph::function_entries`], but stops when `f` returns `false`.
     pub fn function_entries_while(
         &self,
         name: &str,
-        f: impl FnMut(FunctionEntry<'_>) -> bool,
+        mut f: impl FnMut(FunctionEntry<'_>) -> bool,
     ) -> Result<(), Error> {
-        self.read(|rs| rs.function_entries_while(name, f))
+        let function =
+            self.functions
+                .get(name)
+                .ok_or_else(|| crate::api::ApiError::MissingTable {
+                    name: name.to_owned(),
+                })?;
+        if function.subtype() != FunctionSubtype::Custom {
+            return Err(crate::api::ApiError::WrongSubtype {
+                name: name.to_owned(),
+                expected: "function",
+                actual: "constructor",
+            }
+            .into());
+        }
+        self.backend.for_each_while(function.backend_id, |row| {
+            let (output, inputs) = row
+                .vals
+                .split_last()
+                .expect("function row has at least an output column");
+            f(FunctionEntry {
+                inputs,
+                output: *output,
+                subsumed: row.subsumed,
+            })
+        });
+        Ok(())
     }
 
     /// Call `f` on each [`Enode`] of a constructor / relation table.
     /// Top-level form of [`Read::constructor_enodes`]; errors if `name`
     /// is a function or unregistered.
-    pub fn constructor_enodes(&self, name: &str, f: impl FnMut(Enode<'_>)) -> Result<(), Error> {
-        self.read(|rs| rs.constructor_enodes(name, f))
+    pub fn constructor_enodes(
+        &self,
+        name: &str,
+        mut f: impl FnMut(Enode<'_>),
+    ) -> Result<(), Error> {
+        self.constructor_enodes_while(name, |enode| {
+            f(enode);
+            true
+        })
     }
 
     /// Like [`EGraph::constructor_enodes`], but stops when `f` returns `false`.
     pub fn constructor_enodes_while(
         &self,
         name: &str,
-        f: impl FnMut(Enode<'_>) -> bool,
+        mut f: impl FnMut(Enode<'_>) -> bool,
     ) -> Result<(), Error> {
-        self.read(|rs| rs.constructor_enodes_while(name, f))
+        let function =
+            self.functions
+                .get(name)
+                .ok_or_else(|| crate::api::ApiError::MissingTable {
+                    name: name.to_owned(),
+                })?;
+        if function.subtype() != FunctionSubtype::Constructor {
+            return Err(crate::api::ApiError::WrongSubtype {
+                name: name.to_owned(),
+                expected: "constructor",
+                actual: "function",
+            }
+            .into());
+        }
+        self.backend.for_each_while(function.backend_id, |row| {
+            let (eclass, children) = row
+                .vals
+                .split_last()
+                .expect("constructor row has at least an eclass column");
+            f(Enode {
+                children,
+                eclass: *eclass,
+                subsumed: row.subsumed,
+            })
+        });
+        Ok(())
     }
 
     /// Remove every row from the named function in bulk.
@@ -1431,18 +1565,43 @@ impl EGraph {
                                 .unwrap_or_else(|| Span::Panic)
                         )));
                     };
+                    if !self.backend.as_any().is::<egglog_bridge::EGraph>() {
+                        return Err(Error::BackendError(
+                            "`unstable-fn` is only supported on the reference bridge backend"
+                                .into(),
+                        ));
+                    }
                     let panic_id = self.backend.new_panic(format!(
                         "unstable-fn over `{name}` was applied in a context where its wrapped \
                          function is not valid for this call site, if in a rule, add :naive."
                     ));
-                    let resolved_function = resolve_function_container_target_with_context(
-                        &self.backend,
-                        &self.functions,
-                        &self.type_info,
-                        name,
-                        prim,
-                        panic_id,
-                    )?;
+                    let resolved_function = {
+                        let bridge = self
+                            .backend
+                            .as_any()
+                            .downcast_ref::<egglog_bridge::EGraph>()
+                            .ok_or_else(|| {
+                                Error::BackendError(
+                                    "`unstable-fn` is only supported on the reference bridge backend"
+                                        .into(),
+                                )
+                            })?;
+                        resolve_function_container_target_with_context(
+                            bridge,
+                            &self.functions,
+                            &self.type_info,
+                            name,
+                            prim,
+                            panic_id,
+                        )
+                    };
+                    let resolved_function = match resolved_function {
+                        Ok(resolved) => resolved,
+                        Err(error) => {
+                            self.backend.free_external_func(panic_id);
+                            return Err(error);
+                        }
+                    };
                     let fn_value = self.backend.base_values().get(resolved_function);
                     let binding_name = self.parser.symbol_gen.fresh("unstable_fn_target");
                     bindings.push((binding_name.clone(), fn_value));
@@ -1495,11 +1654,12 @@ impl EGraph {
             })));
 
         let mut translator = BackendRule::new(
-            self.backend.new_rule("eval_resolved_expr", false),
+            &mut *self.backend,
             &self.functions,
             &self.type_info,
             true, // global action: Read/Full contexts (may read the DB)
         );
+        translator.rollback_external_funcs.push(ext_id);
 
         let result_var = ResolvedVar {
             name: self.parser.symbol_gen.fresh("eval_resolved_expr"),
@@ -1521,16 +1681,20 @@ impl EGraph {
         let actions = actions.to_core_actions(&mut ctx)?.0;
         translator.actions(&actions)?;
 
-        let arg = translator.entry(&ResolvedAtomTerm::Var(span.clone(), result_var));
-        translator.rb.call_external_func(
+        let arg = translator.entry(&ResolvedAtomTerm::Var(span.clone(), result_var))?;
+        translator.call_external_func(
+            span.clone(),
             ext_id,
-            &[arg],
+            "eval_resolved_expr_result",
+            vec![arg],
             egglog_bridge::ColumnTy::Base(unit_id),
-            || "this function will never panic".to_string(),
         );
 
-        let id = translator.build();
-        let rule_result = self.backend.run_rules(&[id]);
+        let id = translator.try_build("eval_resolved_expr", false, false, span)?;
+        let rule_result = self.backend.run_rules(RuleSetRun {
+            name: None,
+            rules: &[id],
+        });
         self.backend.free_rule(id);
         self.backend.free_external_func(ext_id);
         let _ = rule_result.map_err(|e| {
@@ -1585,19 +1749,25 @@ impl EGraph {
             })));
 
         let mut translator = BackendRule::new(
-            self.backend.new_rule("check_facts", false),
+            &mut *self.backend,
             &self.functions,
             &self.type_info,
             true, // global query: Read context (may read the DB)
         );
-        translator.query(&query, true);
-        translator
-            .rb
-            .call_external_func(ext_id, &[], egglog_bridge::ColumnTy::Id, || {
-                "this function will never panic".to_string()
-            });
-        let id = translator.build();
-        let run_result = self.backend.run_rules(&[id]);
+        translator.rollback_external_funcs.push(ext_id);
+        translator.query(&query, true)?;
+        translator.call_external_func(
+            span.clone(),
+            ext_id,
+            "check_facts_match",
+            Vec::new(),
+            egglog_bridge::ColumnTy::Id,
+        );
+        let id = translator.try_build("check_facts", false, false, span.clone())?;
+        let run_result = self.backend.run_rules(RuleSetRun {
+            name: None,
+            rules: &[id],
+        });
         self.backend.free_rule(id);
         self.backend.free_external_func(ext_id);
         run_result.map_err(|e| Error::BackendError(e.to_string()))?;
@@ -1961,7 +2131,16 @@ impl EGraph {
 
         let num_facts = parsed_contents.len();
 
-        let table_action = egglog_bridge::TableAction::new(&self.backend, func.backend_id);
+        let bridge = self
+            .backend
+            .as_any()
+            .downcast_ref::<egglog_bridge::EGraph>()
+            .ok_or_else(|| {
+                Error::BackendError(
+                    "loading facts from a file requires the reference bridge backend".into(),
+                )
+            })?;
+        let table_action = egglog_bridge::TableAction::new(bridge, func.backend_id);
 
         if function_type.subtype != FunctionSubtype::Constructor {
             self.backend.with_execution_state(|es| {
@@ -2151,6 +2330,10 @@ impl EGraph {
     /// Run a program, represented as an AST.
     /// Return a list of messages.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
+        if self.backend.requires_term_encoding() && self.proof_state.original_typechecking.is_none()
+        {
+            return Err(Error::BackendRequiresTermEncoding);
+        }
         let res = self.process_program_internal(program, true)?;
         Ok(res.outputs)
     }
@@ -2292,6 +2475,12 @@ impl EGraph {
         self.functions.get(name)
     }
 
+    /// Whether this e-graph's backend exposes the in-memory action registry
+    /// used by registry-backed primitives.
+    pub fn supports_action_registry(&self) -> bool {
+        self.backend.action_registry().is_some()
+    }
+
     /// Returns `true` if a user-defined command with the given name is
     /// registered in this e-graph.
     pub fn has_command(&self, name: &str) -> bool {
@@ -2382,7 +2571,9 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
-        let registry = self.backend.action_registry().clone();
+        let registry = self.backend.action_registry().cloned().ok_or_else(|| {
+            Error::BackendError("EGraph::update requires a backend action registry".into())
+        })?;
         let guard = registry.read().unwrap();
         let (result, changed) = self
             .backend
@@ -2591,8 +2782,12 @@ fn resolve_function_container_target_with_context(
 }
 
 struct BackendRule<'a> {
-    rb: egglog_bridge::RuleBuilder<'a>,
-    entries: HashMap<core::ResolvedAtomTerm, QueryEntry>,
+    backend: &'a mut dyn Backend,
+    entries: HashMap<core::ResolvedAtomTerm, core::GenericAtomTerm<RuleVar, RuleValue>>,
+    next_var: u32,
+    body: core::Query<RuleBodyCall, RuleVar, RuleValue>,
+    head: core::GenericCoreActions<RuleActionCall, RuleVar, RuleValue>,
+    rollback_external_funcs: Vec<ExternalFunctionId>,
     functions: &'a IndexMap<String, Function>,
     type_info: &'a TypeInfo,
     /// Whether primitives may read the database. When true the per-phase
@@ -2604,17 +2799,21 @@ struct BackendRule<'a> {
 
 impl<'a> BackendRule<'a> {
     fn new(
-        rb: egglog_bridge::RuleBuilder<'a>,
+        backend: &'a mut dyn Backend,
         functions: &'a IndexMap<String, Function>,
         type_info: &'a TypeInfo,
         requires_read_context: bool,
     ) -> BackendRule<'a> {
         BackendRule {
-            rb,
+            backend,
             functions,
             type_info,
             requires_read_context,
             entries: Default::default(),
+            next_var: 0,
+            body: Default::default(),
+            head: Default::default(),
+            rollback_external_funcs: Vec::new(),
         }
     }
 
@@ -2645,19 +2844,40 @@ impl<'a> BackendRule<'a> {
         }
     }
 
-    fn entry(&mut self, x: &core::ResolvedAtomTerm) -> QueryEntry {
-        self.entries
-            .entry(x.clone())
-            .or_insert_with(|| match x {
-                core::GenericAtomTerm::Var(_, v) => self
-                    .rb
-                    .new_var_named(v.sort.column_ty(self.rb.egraph()), &v.name),
-                core::GenericAtomTerm::Literal(_, l) => literal_to_entry(self.rb.egraph(), l),
-                core::GenericAtomTerm::Global(..) => {
-                    panic!("Globals should have been desugared")
-                }
-            })
-            .clone()
+    fn fresh_var(&mut self, variable: &ResolvedVar) -> RuleVar {
+        let id = self.next_var;
+        self.next_var += 1;
+        RuleVar {
+            id,
+            name: variable.name.clone().into_boxed_str(),
+            ty: variable.sort.column_ty(self.backend.base_values()),
+        }
+    }
+
+    fn entry(
+        &mut self,
+        term: &core::ResolvedAtomTerm,
+    ) -> Result<core::GenericAtomTerm<RuleVar, RuleValue>, Error> {
+        if let Some(entry) = self.entries.get(term) {
+            return Ok(entry.clone());
+        }
+        let entry = match term {
+            core::GenericAtomTerm::Var(span, variable) => {
+                core::GenericAtomTerm::Var(span.clone(), self.fresh_var(variable))
+            }
+            core::GenericAtomTerm::Literal(span, literal) => core::GenericAtomTerm::Literal(
+                span.clone(),
+                literal_to_rule_value(self.backend.base_values(), literal),
+            ),
+            core::GenericAtomTerm::Global(span, variable) => {
+                return Err(Error::BackendError(format!(
+                    "{span}: global `{}` was not desugared before backend lowering",
+                    variable.name
+                )));
+            }
+        };
+        self.entries.insert(term.clone(), entry.clone());
+        Ok(entry)
     }
 
     fn func(&self, f: &typechecking::FuncType) -> egglog_bridge::FunctionId {
@@ -2669,164 +2889,352 @@ impl<'a> BackendRule<'a> {
         prim: &core::SpecializedPrimitive,
         args: &[core::ResolvedAtomTerm],
         ctx: crate::Context,
-    ) -> (ExternalFunctionId, Vec<QueryEntry>, ColumnTy) {
+    ) -> Result<
+        (
+            ExternalFunctionId,
+            Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
+            ColumnTy,
+        ),
+        Error,
+    > {
         // The typechecker has already checked that this primitive is
         // valid in `ctx`; pick the runtime id that stamps the same ctx
         // onto the state wrapper when invoked.
         let resolved_id = prim.external_id(ctx);
 
-        let mut qe_args = self.args(args);
+        let mut rule_args = self.args(args)?;
 
         if prim.name() == "unstable-fn" {
-            let core::ResolvedAtomTerm::Literal(_, Literal::String(ref name)) = args[0] else {
-                panic!("expected string literal after `unstable-fn`")
+            let Some(core::ResolvedAtomTerm::Literal(_, Literal::String(name))) = args.first()
+            else {
+                return Err(Error::BackendError(
+                    "expected string literal after `unstable-fn`".into(),
+                ));
             };
+            if self
+                .backend
+                .as_any()
+                .downcast_ref::<egglog_bridge::EGraph>()
+                .is_none()
+            {
+                return Err(Error::BackendError(
+                    "`unstable-fn` is only supported on the reference bridge backend".into(),
+                ));
+            }
             // Pre-register a panic id used by `FunctionContainer::apply`
             // when the wrapped function is applied in a context that
             // doesn't admit it. Triggered at runtime via the egglog
             // panic side channel so misuse surfaces as an `Err` from
             // `run_rules` rather than a thread unwind.
-            let panic_id = self.rb.new_panic(format!(
+            let panic_id = self.backend.new_panic(format!(
                 "unstable-fn over `{name}` was applied in a context where its wrapped \
                  function is not valid for this call site, if in a rule, add :naive."
             ));
+            self.rollback_external_funcs.push(panic_id);
+            let bridge = self
+                .backend
+                .as_any()
+                .downcast_ref::<egglog_bridge::EGraph>()
+                .ok_or_else(|| {
+                    Error::BackendError(
+                        "`unstable-fn` is only supported on the reference bridge backend".into(),
+                    )
+                })?;
             let resolved = resolve_function_container_target_with_context(
-                self.rb.egraph(),
+                bridge,
                 self.functions,
                 self.type_info,
                 name,
                 prim,
                 panic_id,
-            )
-            .unwrap_or_else(|err| panic!("{err}"));
-
-            qe_args[0] = self.rb.egraph().base_value_constant(resolved);
+            );
+            let resolved = resolved?;
+            rule_args[0] = core::GenericAtomTerm::Literal(
+                args[0].span().clone(),
+                base_rule_value(self.backend.base_values(), resolved),
+            );
         }
 
-        (
-            resolved_id,
-            qe_args,
-            prim.output().column_ty(self.rb.egraph()),
-        )
+        let output_ty = prim.output().column_ty(self.backend.base_values());
+        Ok((resolved_id, rule_args, output_ty))
     }
 
     fn args<'b>(
         &mut self,
         args: impl IntoIterator<Item = &'b core::ResolvedAtomTerm>,
-    ) -> Vec<QueryEntry> {
-        args.into_iter().map(|x| self.entry(x)).collect()
+    ) -> Result<Vec<core::GenericAtomTerm<RuleVar, RuleValue>>, Error> {
+        args.into_iter().map(|term| self.entry(term)).collect()
     }
 
-    fn query(&mut self, query: &core::Query<ResolvedCall, ResolvedVar>, include_subsumed: bool) {
+    fn query(
+        &mut self,
+        query: &core::Query<ResolvedCall, ResolvedVar>,
+        include_subsumed: bool,
+    ) -> Result<(), Error> {
         for atom in &query.atoms {
-            match &atom.head {
-                ResolvedCall::Func(f) => {
-                    let f = self.func(f);
-                    let args = self.args(&atom.args);
-                    let is_subsumed = match include_subsumed {
-                        true => None,
-                        false => Some(false),
-                    };
-                    self.rb.query_table(f, &args, is_subsumed).unwrap();
-                }
+            let (head, args) = match &atom.head {
+                ResolvedCall::Func(f) => (
+                    RuleBodyCall::Table {
+                        id: self.func(f),
+                        read: if include_subsumed {
+                            ReadMode::All
+                        } else {
+                            ReadMode::Live
+                        },
+                    },
+                    self.args(&atom.args)?,
+                ),
                 ResolvedCall::Primitive(p) => {
                     let ctx = self.query_context();
-                    let (p, args, ty) = self.prim(p, &atom.args, ctx);
-                    self.rb.query_prim(p, &args, ty).unwrap()
+                    let (id, args, output) = self.prim(p, &atom.args, ctx)?;
+                    (
+                        RuleBodyCall::Primitive {
+                            id,
+                            name: p.name().into(),
+                            output,
+                        },
+                        args,
+                    )
                 }
-            }
+            };
+            self.body.atoms.push(core::GenericAtom {
+                span: atom.span.clone(),
+                head,
+                args,
+            });
         }
+        Ok(())
     }
 
     fn actions(&mut self, actions: &core::ResolvedCoreActions) -> Result<(), Error> {
         for action in &actions.0 {
             match action {
                 core::GenericCoreAction::Let(span, v, f, args) => {
-                    let v = core::GenericAtomTerm::Var(span.clone(), v.clone());
-                    let y = match f {
-                        ResolvedCall::Func(f) => {
-                            let name = f.name.clone();
-                            let f = self.func(f);
-                            let args = self.args(args);
-                            let span = span.clone();
-                            self.rb.lookup(f, &args, move || {
-                                format!("{span}: lookup of function {name} failed")
-                            })
-                        }
+                    let (call, args) = match f {
+                        ResolvedCall::Func(f) => (
+                            RuleActionCall::Table {
+                                id: self.func(f),
+                                name: f.name.clone().into_boxed_str(),
+                            },
+                            self.args(args)?,
+                        ),
                         ResolvedCall::Primitive(p) => {
-                            let name = p.name().to_owned();
                             let ctx = self.action_context();
-                            let (p, args, ty) = self.prim(p, args, ctx);
-                            let span = span.clone();
-                            self.rb.call_external_func(p, &args, ty, move || {
-                                format!("{span}: call of primitive {name} failed")
-                            })
+                            let (id, args, output) = self.prim(p, args, ctx)?;
+                            (
+                                RuleActionCall::Primitive {
+                                    id,
+                                    name: p.name().into(),
+                                    output,
+                                },
+                                args,
+                            )
                         }
                     };
-                    self.entries.insert(v, y.into());
+                    let variable = self.fresh_var(v);
+                    self.head.0.push(core::GenericCoreAction::Let(
+                        span.clone(),
+                        variable.clone(),
+                        call,
+                        args,
+                    ));
+                    self.entries.insert(
+                        core::GenericAtomTerm::Var(span.clone(), v.clone()),
+                        core::GenericAtomTerm::Var(span.clone(), variable),
+                    );
                 }
                 core::GenericCoreAction::LetAtomTerm(span, v, x) => {
-                    let v = core::GenericAtomTerm::Var(span.clone(), v.clone());
-                    let x = self.entry(x);
-                    self.entries.insert(v, x);
+                    let value = self.entry(x)?;
+                    let variable = self.fresh_var(v);
+                    self.head.0.push(core::GenericCoreAction::LetAtomTerm(
+                        span.clone(),
+                        variable.clone(),
+                        value,
+                    ));
+                    self.entries.insert(
+                        core::GenericAtomTerm::Var(span.clone(), v.clone()),
+                        core::GenericAtomTerm::Var(span.clone(), variable),
+                    );
                 }
-                core::GenericCoreAction::Set(_, f, xs, y) => match f {
-                    ResolvedCall::Primitive(..) => panic!("runtime primitive set!"),
+                core::GenericCoreAction::Set(span, f, xs, y) => match f {
+                    ResolvedCall::Primitive(..) => {
+                        return Err(Error::BackendError("cannot set a primitive".into()));
+                    }
                     ResolvedCall::Func(f) => {
-                        let f = self.func(f);
-                        let args = self.args(xs.iter().chain([y]));
-                        self.rb.set(f, &args)
+                        let arguments = self.args(xs)?;
+                        let value = self.entry(y)?;
+                        self.head.0.push(core::GenericCoreAction::Set(
+                            span.clone(),
+                            RuleActionCall::Table {
+                                id: self.func(f),
+                                name: f.name.clone().into_boxed_str(),
+                            },
+                            arguments,
+                            value,
+                        ));
                     }
                 },
                 core::GenericCoreAction::Change(span, change, f, args) => match f {
-                    ResolvedCall::Primitive(..) => panic!("runtime primitive change!"),
+                    ResolvedCall::Primitive(..) => {
+                        return Err(Error::BackendError(
+                            "cannot delete or subsume a primitive".into(),
+                        ));
+                    }
                     ResolvedCall::Func(f) => {
                         let name = f.name.clone();
                         let can_subsume = self.functions[&f.name].can_subsume;
-                        let f = self.func(f);
-                        let args = self.args(args);
-                        match change {
-                            Change::Delete => self.rb.remove(f, &args),
-                            Change::Subsume if can_subsume => self.rb.subsume(f, &args),
-                            Change::Subsume => {
-                                return Err(Error::SubsumeMergeError(name, span.clone()));
-                            }
+                        if matches!(change, Change::Subsume) && !can_subsume {
+                            return Err(Error::SubsumeMergeError(name, span.clone()));
                         }
+                        let arguments = self.args(args)?;
+                        self.head.0.push(core::GenericCoreAction::Change(
+                            span.clone(),
+                            *change,
+                            RuleActionCall::Table {
+                                id: self.func(f),
+                                name: f.name.clone().into_boxed_str(),
+                            },
+                            arguments,
+                        ));
                     }
                 },
-                core::GenericCoreAction::Union(_, x, y) => {
-                    let x = self.entry(x);
-                    let y = self.entry(y);
-                    self.rb.union(x, y)
+                core::GenericCoreAction::Union(span, x, y) => {
+                    let x = self.entry(x)?;
+                    let y = self.entry(y)?;
+                    self.head
+                        .0
+                        .push(core::GenericCoreAction::Union(span.clone(), x, y));
                 }
-                core::GenericCoreAction::Panic(_, message) => self.rb.panic(message.clone()),
+                core::GenericCoreAction::Panic(span, message) => {
+                    self.head.0.push(core::GenericCoreAction::Panic(
+                        span.clone(),
+                        message.clone(),
+                    ));
+                }
             }
         }
         Ok(())
     }
 
-    fn build(self) -> egglog_bridge::RuleId {
-        self.rb.build()
+    fn query_table(
+        &mut self,
+        span: Span,
+        table: egglog_bridge::FunctionId,
+        entries: Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
+        read: ReadMode,
+    ) {
+        self.body.atoms.push(core::GenericAtom {
+            span,
+            head: RuleBodyCall::Table { id: table, read },
+            args: entries,
+        });
+    }
+
+    fn call_external_func(
+        &mut self,
+        span: Span,
+        id: ExternalFunctionId,
+        name: &str,
+        arguments: Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
+        output: ColumnTy,
+    ) -> core::GenericAtomTerm<RuleVar, RuleValue> {
+        let variable = RuleVar {
+            id: self.next_var,
+            name: format!("@{name}").into_boxed_str(),
+            ty: output,
+        };
+        self.next_var += 1;
+        self.head.0.push(core::GenericCoreAction::Let(
+            span.clone(),
+            variable.clone(),
+            RuleActionCall::Primitive {
+                id,
+                name: name.into(),
+                output,
+            },
+            arguments,
+        ));
+        core::GenericAtomTerm::Var(span, variable)
+    }
+
+    fn remove(
+        &mut self,
+        span: Span,
+        table: egglog_bridge::FunctionId,
+        name: &str,
+        arguments: Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
+    ) {
+        self.head.0.push(core::GenericCoreAction::Change(
+            span,
+            Change::Delete,
+            RuleActionCall::Table {
+                id: table,
+                name: name.into(),
+            },
+            arguments,
+        ));
+    }
+
+    fn try_build(
+        mut self,
+        name: &str,
+        seminaive: bool,
+        no_decomp: bool,
+        span: Span,
+    ) -> Result<egglog_bridge::RuleId, Error> {
+        let spec = RuleSpec {
+            name: name.to_owned(),
+            seminaive,
+            no_decomp,
+            core: core::GenericCoreRule {
+                span,
+                body: std::mem::take(&mut self.body),
+                head: std::mem::take(&mut self.head),
+            },
+        };
+        let result = self
+            .backend
+            .add_rule(spec)
+            .map_err(|error| Error::BackendError(error.to_string()));
+        if result.is_ok() {
+            self.rollback_external_funcs.clear();
+        }
+        result
     }
 }
 
-fn literal_to_entry(egraph: &egglog_bridge::EGraph, l: &Literal) -> QueryEntry {
-    match l {
-        Literal::Int(x) => egraph.base_value_constant::<i64>(*x),
-        Literal::Float(x) => egraph.base_value_constant::<sort::F>(x.into()),
-        Literal::String(x) => egraph.base_value_constant::<sort::S>(sort::S::new(x.clone())),
-        Literal::Bool(x) => egraph.base_value_constant::<bool>(*x),
-        Literal::Unit => egraph.base_value_constant::<()>(()),
+impl Drop for BackendRule<'_> {
+    fn drop(&mut self) {
+        for id in self.rollback_external_funcs.drain(..) {
+            self.backend.free_external_func(id);
+        }
     }
 }
 
-fn literal_to_value(egraph: &egglog_bridge::EGraph, l: &Literal) -> Value {
+fn base_rule_value<T: core_relations::BaseValue>(base_values: &BaseValues, x: T) -> RuleValue {
+    RuleValue {
+        value: base_values.get(x),
+        ty: ColumnTy::Base(base_values.get_ty::<T>()),
+    }
+}
+
+fn literal_to_rule_value(base_values: &BaseValues, l: &Literal) -> RuleValue {
     match l {
-        Literal::Int(x) => egraph.base_values().get::<i64>(*x),
-        Literal::Float(x) => egraph.base_values().get::<sort::F>(x.into()),
-        Literal::String(x) => egraph.base_values().get::<sort::S>(sort::S::new(x.clone())),
-        Literal::Bool(x) => egraph.base_values().get::<bool>(*x),
-        Literal::Unit => egraph.base_values().get::<()>(()),
+        Literal::Int(x) => base_rule_value::<i64>(base_values, *x),
+        Literal::Float(x) => base_rule_value::<sort::F>(base_values, x.into()),
+        Literal::String(x) => base_rule_value::<sort::S>(base_values, sort::S::new(x.clone())),
+        Literal::Bool(x) => base_rule_value::<bool>(base_values, *x),
+        Literal::Unit => base_rule_value::<()>(base_values, ()),
+    }
+}
+
+fn literal_to_value(base_values: &BaseValues, l: &Literal) -> Value {
+    match l {
+        Literal::Int(x) => base_values.get::<i64>(*x),
+        Literal::Float(x) => base_values.get::<sort::F>(x.into()),
+        Literal::String(x) => base_values.get::<sort::S>(sort::S::new(x.clone())),
+        Literal::Bool(x) => base_values.get::<bool>(*x),
+        Literal::Unit => base_values.get::<()>(()),
     }
 }
 
@@ -2852,6 +3260,10 @@ pub enum Error {
     CombinedRulesetError(String, Span),
     #[error("{0}")]
     BackendError(String),
+    #[error(
+        "This backend requires term encoding. Build the e-graph with `EGraph::with_backend(..).with_term_encoding()`."
+    )]
+    BackendRequiresTermEncoding,
     #[error("{0}\nTried to pop too much")]
     Pop(Span),
     #[error("{0}\nCommand should have failed.")]
@@ -2965,6 +3377,41 @@ mod tests {
         fn apply<'a, 'db>(&self, state: FullState<'a, 'db>, _args: &[Value]) -> Option<Value> {
             Some(state.base_values().get::<i64>(1))
         }
+    }
+
+    #[test]
+    fn unstable_fn_resolution_error_releases_panic_registration() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(sort Fn (UnstableFn (i64) i64))")
+            .unwrap();
+        let register_probe = |egraph: &mut EGraph| {
+            egraph
+                .backend
+                .register_external_func(Box::new(core_relations::make_external_func(
+                    |_state: &mut core_relations::ExecutionState<'_>, _args: &[Value]| None,
+                )))
+        };
+        let error = egraph
+            .parse_and_run_program(None, "(let $first (unstable-fn \"missing\"))")
+            .expect_err("missing unstable-fn target should return an error");
+        assert!(error.to_string().contains("No resolution for \"missing\""));
+        let reused = register_probe(&mut egraph);
+        egraph.backend.free_external_func(reused);
+
+        let message = "unstable-fn over `missing` was applied in a context where its wrapped \
+                       function is not valid for this call site, if in a rule, add :naive."
+            .to_string();
+        let shared = egraph.backend.new_panic(message);
+        assert_eq!(shared, reused);
+        let error = egraph
+            .parse_and_run_program(None, "(let $second (unstable-fn \"missing\"))")
+            .expect_err("missing unstable-fn target should return an error");
+        assert!(error.to_string().contains("No resolution for \"missing\""));
+        let occupied = register_probe(&mut egraph);
+        assert_ne!(occupied, shared);
+        egraph.backend.free_external_func(shared);
+        assert_eq!(register_probe(&mut egraph), shared);
     }
 
     #[test]

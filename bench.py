@@ -3,19 +3,22 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import math
 import os
 import re
 import resource
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TextIO, cast
+from typing import Any, Literal, TextIO, cast
 
 import numpy as np
 import pandas as pd
@@ -26,11 +29,13 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Table
 
+import samply_analysis
 from analysis import (
     estimate_key_for,
     selected_rows,
@@ -38,17 +43,26 @@ from analysis import (
 )
 from cli import render_report
 from models import (
+    BACKEND_SPECS,
+    DEFAULT_BACKENDS,
+    Backend,
     BenchmarkSpec,
+    BuildProfile,
     EstimateKey,
     FileSpec,
+    OutputFormat,
     ReportDestination,
     ResolvedTarget,
     Status,
     TargetRequest,
     TargetRow,
     Treatment,
+    backend_cargo_features,
+    backend_flags,
+    benchmark_cells,
     build_report_selection,
 )
+from report import render_markdown_report
 from report_frame import (
     ReportFrame,
     persisted_report_columns,
@@ -57,13 +71,19 @@ from report_frame import (
 )
 
 DEFAULT_REPORT = ".reports.jsonl"
+DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
 DEFAULT_SERVE_PORT = 8000
+DEFAULT_PROFILE_SECONDS = 10
+DEFAULT_PROFILE_TOP = 15
+MAX_PROFILE_ITERATIONS = 10_000
+PROFILE_CACHE_VERSION = "v1"
+PROFILE_SAMPLY_RATE_HZ = 1000
 TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
 DEFAULT_FILES = (
-    "egglog/tests/math-microbenchmark.egg",
+    "egglog/tests/math-microbenchmark-mini.egg",
     "egglog/tests/web-demo/rw-analysis.egg",
     "egglog/tests/integer_math.egg",
     "egglog/tests/web-demo/resolution.egg",
@@ -98,6 +118,7 @@ class TimingResult:
 class CellPlan:
     target: ResolvedTarget
     file: FileSpec
+    backend: Backend
     treatment: Treatment
     required_rows: int
     selected_cached_rows: DataFrame[ReportFrame]
@@ -138,7 +159,42 @@ class CollectionResult:
     fresh_rows: DataFrame[ReportFrame]
 
 
+@dataclass(frozen=True)
+class ProfileMode:
+    iterations: int | None
+    profile_seconds: int | None
+
+    @property
+    def cache_label(self) -> str:
+        if self.iterations is not None:
+            return f"i{self.iterations}"
+        assert self.profile_seconds is not None
+        return f"auto{self.profile_seconds}s"
+
+
+@dataclass(frozen=True)
+class ProfileRequest:
+    file: FileSpec
+    target_request: TargetRequest
+    backend: Backend
+    treatment: Treatment
+    timeout_sec: int
+    profiles_dir: Path
+    mode: ProfileMode
+    open_after: bool
+    force_run: bool
+    top: int = DEFAULT_PROFILE_TOP
+    show_summary: bool = True
+    output_format: OutputFormat = "rich"
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
+    if argv and argv[0] == "profile":
+        return parse_profile_args(argv[1:])
+    return parse_benchmark_args(argv)
+
+
+def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect or reuse egglog-experimental benchmark reports.",
     )
@@ -155,6 +211,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=f"JSONL report/cache path, or - for stdout (default: {DEFAULT_REPORT})",
     )
     parser.add_argument(
+        "--format",
+        choices=("rich", "markdown"),
+        default="rich",
+        help="final report format: rich to stderr, or markdown to stdout (default: rich)",
+    )
+    parser.add_argument(
         "--rounds",
         type=positive_int,
         default=DEFAULT_ROUNDS,
@@ -165,6 +227,11 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=positive_int,
         default=DEFAULT_TIMEOUT_SEC,
         help=f"per-process timeout in seconds (default: {DEFAULT_TIMEOUT_SEC})",
+    )
+    parser.add_argument(
+        "--backend",
+        default=",".join(DEFAULT_BACKENDS),
+        help=f"comma-separated backends: {', '.join(BACKEND_SPECS)} (default: {','.join(DEFAULT_BACKENDS)})",
     )
     parser.add_argument(
         "--treatments",
@@ -192,7 +259,89 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=None,
         help="dump eval-live tables (JSON + LaTeX) to this directory",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.format == "markdown" and args.report == "-":
+        parser.error("--format markdown cannot be combined with --report -")
+    args.command = "benchmark"
+    return args
+
+
+def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog=f"{Path(sys.argv[0]).name} profile",
+        description="Record or reuse a cached Samply CPU profile for one egglog workload.",
+    )
+    parser.add_argument("file", help="egglog file to profile")
+    parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="target source: ., /path, @git-ref, #pr, or label=source; cache-only label= is not supported",
+    )
+    parser.add_argument(
+        "--backend",
+        default="main",
+        help="single backend to profile (default: main)",
+    )
+    parser.add_argument(
+        "--treatment",
+        default="proofs",
+        help="single treatment to profile (default: proofs)",
+    )
+    iteration_group = parser.add_mutually_exclusive_group()
+    iteration_group.add_argument(
+        "--iterations",
+        type=positive_int,
+        default=None,
+        help="explicit Samply iteration count",
+    )
+    iteration_group.add_argument(
+        "--profile-seconds",
+        type=positive_int,
+        default=None,
+        help=f"target duration for automatic iteration selection (default: {DEFAULT_PROFILE_SECONDS})",
+    )
+    parser.add_argument(
+        "--profiles-dir",
+        default=DEFAULT_PROFILES_DIR,
+        help=f"profile cache directory (default: {DEFAULT_PROFILES_DIR})",
+    )
+    parser.add_argument(
+        "--top",
+        type=positive_int,
+        default=DEFAULT_PROFILE_TOP,
+        help=f"application functions to show in the macOS CPU summary (default: {DEFAULT_PROFILE_TOP})",
+    )
+    parser.add_argument(
+        "--no-summary",
+        action="store_true",
+        help="print only the profile artifact path",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("rich", "markdown"),
+        default="rich",
+        help="summary format: rich to stderr, or markdown to stdout (default: rich)",
+    )
+    parser.add_argument(
+        "--open",
+        action="store_true",
+        help="open the profile with samply load after recording or cache hit",
+    )
+    parser.add_argument(
+        "--force-run",
+        action="store_true",
+        help="record again and atomically replace the cached profile",
+    )
+    parser.add_argument(
+        "--timeout-sec",
+        type=positive_int,
+        default=DEFAULT_TIMEOUT_SEC,
+        help=f"per-workload timeout in seconds for calibration and profiling watchdog (default: {DEFAULT_TIMEOUT_SEC})",
+    )
+    args = parser.parse_args(argv)
+    args.command = "profile"
+    return args
 
 
 def positive_int(value: str) -> int:
@@ -218,6 +367,79 @@ def parse_treatments(value: str) -> tuple[Treatment, ...]:
     if not treatments:
         raise ValueError("at least one treatment is required")
     return tuple(treatments)
+
+
+def parse_backends(value: str) -> tuple[Backend, ...]:
+    backends: list[Backend] = []
+    seen: set[str] = set()
+    for raw in value.split(","):
+        item = raw.strip()
+        if not item:
+            continue
+        if item not in BACKEND_SPECS:
+            raise ValueError(f"unknown backend: {item}")
+        if item in seen:
+            raise ValueError(f"duplicate backend: {item}")
+        seen.add(item)
+        backends.append(item)
+    if not backends:
+        raise ValueError("at least one backend is required")
+    return tuple(backends)
+
+
+def parse_single_backend(value: str) -> Backend:
+    backends = parse_backends(value)
+    if len(backends) != 1:
+        raise ValueError("profile mode requires exactly one backend")
+    return backends[0]
+
+
+def parse_single_treatment(value: str) -> Treatment:
+    treatments = parse_treatments(value)
+    if len(treatments) != 1:
+        raise ValueError("profile mode requires exactly one treatment")
+    return treatments[0]
+
+
+def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
+    files = resolve_files([str(args.file)], invocation_cwd)
+    backend = parse_single_backend(str(args.backend))
+    treatment = parse_single_treatment(str(args.treatment))
+    target_specs = args.target if args.target is not None else ["."]
+    if len(target_specs) != 1:
+        raise ValueError("profile mode requires exactly one target")
+    if args.iterations is not None:
+        mode = ProfileMode(iterations=args.iterations, profile_seconds=None)
+    else:
+        profile_seconds = args.profile_seconds if args.profile_seconds is not None else DEFAULT_PROFILE_SECONDS
+        mode = ProfileMode(iterations=None, profile_seconds=profile_seconds)
+    profiles_dir = Path(str(args.profiles_dir)).expanduser()
+    if not profiles_dir.is_absolute():
+        profiles_dir = invocation_cwd / profiles_dir
+    request = ProfileRequest(
+        file=files[0],
+        target_request=parse_target(str(target_specs[0])),
+        backend=backend,
+        treatment=treatment,
+        timeout_sec=int(args.timeout_sec),
+        profiles_dir=profiles_dir,
+        mode=mode,
+        open_after=bool(args.open),
+        force_run=bool(args.force_run),
+        top=int(args.top),
+        show_summary=not bool(args.no_summary),
+        output_format=cast(OutputFormat, str(args.format)),
+    )
+    validate_spec(
+        BenchmarkSpec(
+            files=(request.file,),
+            treatments=(request.treatment,),
+            rounds=1,
+            timeout_sec=request.timeout_sec,
+            backends=(request.backend,),
+        )
+    )
+    return request
 
 
 def parse_target(raw: str) -> TargetRequest:
@@ -315,6 +537,7 @@ def file_contains_executable_prove_command(path: Path) -> bool:
 
 
 def validate_spec(spec: BenchmarkSpec) -> None:
+    benchmark_cells(spec)
     for file_spec in spec.files:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
@@ -364,10 +587,13 @@ def normalize_report_frame(frame: pd.DataFrame) -> DataFrame[ReportFrame]:
     extra = sorted(set(normalized.columns) - set(columns))
     if extra:
         raise ValueError(f"unexpected report column(s): {', '.join(extra)}")
+    if "backend" not in normalized.columns:
+        normalized["backend"] = "main"
     for column in columns:
         if column not in normalized.columns:
             normalized[column] = pd.NA
     normalized = normalized.loc[:, columns]
+    normalized["backend"] = normalized["backend"].fillna("main")
     normalized["started_at"] = pd.to_datetime(normalized["started_at"], utc=True, errors="raise")
     for column in ["wall_sec", "user_sec", "system_sec", "cpu_wall_ratio"]:
         normalized[column] = pd.to_numeric(normalized[column], errors="raise")
@@ -431,6 +657,7 @@ class EstimateModel:
                 file_sha256=str(record["file_sha256"]),
                 treatment=cast(Treatment, str(record["treatment"])),
                 timeout_sec=int(record["timeout_sec"]),
+                backend=cast(Backend, str(record["backend"])),
             )
             samples.setdefault(key, []).append(float(record["wall_sec"]))
         return cls(samples)
@@ -484,8 +711,8 @@ def build_collection_plan(
 ) -> CollectionPlan:
     cells: list[CellPlan] = []
     for file_spec in spec.files:
-        for treatment in spec.treatments:
-            estimate_key = estimate_key_for(target, file_spec, treatment, spec.timeout_sec)
+        for cell in benchmark_cells(spec):
+            estimate_key = estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec)
             cached = selected_rows(
                 rows,
                 estimate_key,
@@ -496,7 +723,8 @@ def build_collection_plan(
                 CellPlan(
                     target=target,
                     file=file_spec,
-                    treatment=treatment,
+                    backend=cell.backend,
+                    treatment=cell.treatment,
                     required_rows=spec.rounds,
                     selected_cached_rows=cached,
                     missing_observations=missing,
@@ -610,22 +838,60 @@ def target_row_for_request(
     )
 
 
-def build_target(row: TargetRow, output: RunnerOutput) -> tuple[Path, str]:
+def build_target(
+    row: TargetRow,
+    output: RunnerOutput,
+    build_profile: BuildProfile = "release",
+    cargo_features: Sequence[str] = (),
+) -> tuple[Path, str]:
     checkout_path = Path(row.path)
     output.build_start(row)
+    if build_profile == "release":
+        build_args = ["cargo", "build", "--release", "-p", "egglog-experimental"]
+    else:
+        build_args = ["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]
+    if cargo_features:
+        build_args.extend(("--features", ",".join(cargo_features)))
     subprocess.run(
-        ["cargo", "build", "--release", "-p", "egglog-experimental"],
+        build_args,
         cwd=checkout_path,
         check=True,
         stdout=sys.stderr,
         stderr=sys.stderr,
     )
     binary_name = "egglog-experimental.exe" if os.name == "nt" else "egglog-experimental"
-    binary_path = checkout_path / "target" / "release" / binary_name
+    binary_path = checkout_path / "target" / build_profile / binary_name
     if not binary_path.is_file():
-        raise FileNotFoundError(f"release binary was not produced: {binary_path}")
+        raise FileNotFoundError(f"{build_profile} binary was not produced: {binary_path}")
     binary_sha256 = sha256_file(binary_path)
     return (binary_path, binary_sha256)
+
+
+def materialize_target_request(request: TargetRequest, invocation_cwd: Path, repo_root: Path) -> TargetRow:
+    if request.is_label_lookup:
+        raise ValueError("cache-only target labels cannot be materialized without a cached report row")
+    if request.source.startswith("@"):
+        ref = request.source[1:]
+        if not ref:
+            raise ValueError(f"git target is missing a ref: {request.raw}")
+        checkout_path, git_ref_value = materialize_git_ref(repo_root, ref, request.label or ref)
+    elif parse_pr_number(request.source) is not None:
+        checkout_path, git_ref_value = materialize_pr_target(repo_root, request.source, request.label)
+    else:
+        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
+    return target_row_for_request(request, checkout_path, git_ref_value)
+
+
+def build_resolved_target(
+    request: TargetRequest,
+    row: TargetRow,
+    output: RunnerOutput,
+    build_profile: BuildProfile,
+    cargo_features: Sequence[str],
+) -> ResolvedTarget:
+    binary_path, binary_sha256 = build_target(row, output, build_profile, cargo_features)
+    row = replace(row, is_dirty=git_dirty(Path(row.path)))
+    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
 
 
 def resolve_target(
@@ -659,26 +925,23 @@ def resolve_target(
             )
         checkout_path, resolved_sha = materialize_git_ref(repo_root, str(pointer["target_git_sha"]), request.label)
         row = target_row_for_request(request, checkout_path, resolved_sha)
-        binary_path, binary_sha256 = build_target(row, output)
-        row = replace(row, is_dirty=git_dirty(checkout_path))
-        return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+        return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
 
-    if request.source.startswith("@"):
-        ref = request.source[1:]
-        if not ref:
-            raise ValueError(f"git target is missing a ref: {request.raw}")
-        checkout_path, resolved_sha = materialize_git_ref(repo_root, ref, request.label or ref)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    elif parse_pr_number(request.source) is not None:
-        checkout_path, resolved_sha = materialize_pr_target(repo_root, request.source, request.label)
-        row = target_row_for_request(request, checkout_path, resolved_sha)
-    else:
-        checkout_path, git_ref_value = resolve_path_target(request.source, invocation_cwd)
-        row = target_row_for_request(request, checkout_path, git_ref_value)
+    row = materialize_target_request(request, invocation_cwd, repo_root)
+    return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
 
-    binary_path, binary_sha256 = build_target(row, output)
-    row = replace(row, is_dirty=git_dirty(Path(row.path)))
-    return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
+
+def resolve_profile_target(
+    request: TargetRequest,
+    backend: Backend,
+    invocation_cwd: Path,
+    repo_root: Path,
+    output: RunnerOutput,
+) -> ResolvedTarget:
+    if request.is_label_lookup:
+        raise ValueError("profile mode does not support cache-only label= targets; use label=SOURCE")
+    row = materialize_target_request(request, invocation_cwd, repo_root)
+    return build_resolved_target(request, row, output, "profiling", backend_cargo_features((backend,)))
 
 
 def label_has_enough_rows(
@@ -687,10 +950,10 @@ def label_has_enough_rows(
     spec: BenchmarkSpec,
 ) -> bool:
     for file_spec in spec.files:
-        for treatment in spec.treatments:
+        for cell in benchmark_cells(spec):
             matches = selected_rows(
                 rows,
-                EstimateKey(binary_sha256, file_spec.sha256, treatment, spec.timeout_sec),
+                EstimateKey(binary_sha256, file_spec.sha256, cell.treatment, spec.timeout_sec, cell.backend),
                 spec.rounds,
             )
             if len(matches) < spec.rounds:
@@ -743,27 +1006,190 @@ def treatment_flags(treatment: Treatment) -> list[str]:
     return ["--proofs"]
 
 
-def run_process(
+def workload_command(
     binary_path: Path,
-    checkout_path: Path,
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
-    timeout_sec: int,
-) -> TimingResult:
-    command = [
+) -> list[str]:
+    return [
         str(binary_path),
         "--mode",
         "no-messages",
         "-j",
         "1",
+        *backend_flags(backend),
         *treatment_flags(treatment),
         str(file_spec.absolute_path),
     ]
-    return run_command(command, checkout_path, timeout_sec)
+
+
+def run_process(
+    binary_path: Path,
+    checkout_path: Path,
+    file_spec: FileSpec,
+    backend: Backend,
+    treatment: Treatment,
+    timeout_sec: int,
+) -> TimingResult:
+    return run_command(workload_command(binary_path, file_spec, backend, treatment), checkout_path, timeout_sec)
 
 
 def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
     return run_command([str(binary_path), "--help"], checkout_path, timeout_sec)
+
+
+def profile_hash_component(value: str) -> str:
+    return value.removeprefix("sha256:")
+
+
+def profile_cache_path(
+    profiles_dir: Path,
+    binary_sha256: str,
+    file_sha256: str,
+    backend: Backend,
+    treatment: Treatment,
+    mode: ProfileMode,
+) -> Path:
+    return (
+        profiles_dir
+        / PROFILE_CACHE_VERSION
+        / profile_hash_component(binary_sha256)
+        / profile_hash_component(file_sha256)
+        / f"{backend}-{treatment}-{mode.cache_label}.json.gz"
+    )
+
+
+def profile_cache_hit(path: Path) -> bool:
+    return path.is_file() and path.stat().st_size > 0
+
+
+def profile_display_path(path: Path, invocation_cwd: Path) -> Path:
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(invocation_cwd.resolve())
+    except ValueError:
+        return resolved
+
+
+def calculate_profile_iterations(
+    elapsed_seconds: float,
+    profile_seconds: int,
+    max_iterations: int = MAX_PROFILE_ITERATIONS,
+) -> tuple[int, bool]:
+    if elapsed_seconds <= 0:
+        return (max_iterations, True)
+    uncapped = max(1, math.ceil(profile_seconds * 1.10 / elapsed_seconds))
+    if uncapped > max_iterations:
+        return (max_iterations, True)
+    return (uncapped, False)
+
+
+def profile_name(
+    file_spec: FileSpec,
+    backend: Backend,
+    treatment: Treatment,
+    mode: ProfileMode,
+    iterations: int,
+    binary_sha256: str,
+) -> str:
+    stem = Path(file_spec.display_path).stem
+    file_hash = profile_hash_component(file_spec.sha256)[:8]
+    binary_hash = profile_hash_component(binary_sha256)[:8]
+    mode_label = mode.cache_label if mode.iterations is not None else f"auto>={mode.profile_seconds}s"
+    return f"{stem} {backend}/{treatment} {mode_label} x{iterations} [bin:{binary_hash} file:{file_hash}]"
+
+
+def profile_temp_path(artifact: Path) -> Path:
+    base_name = artifact.name.removesuffix(".json.gz")
+    return artifact.with_name(f".{base_name}.tmp-{uuid.uuid4().hex}.json.gz")
+
+
+def samply_executable() -> str:
+    executable = shutil.which("samply")
+    if executable is None:
+        raise FileNotFoundError("Install Samply with: cargo install --locked samply")
+    return executable
+
+
+def samply_record_command(
+    samply: str,
+    artifact: Path,
+    name: str,
+    iterations: int,
+    workload: Sequence[str],
+) -> list[str]:
+    return [
+        samply,
+        "record",
+        "--save-only",
+        "--rate",
+        str(PROFILE_SAMPLY_RATE_HZ),
+        "--reuse-threads",
+        "--iteration-count",
+        str(iterations),
+        "--profile-name",
+        name,
+        "--output",
+        str(artifact),
+        "--",
+        *workload,
+    ]
+
+
+def profile_record_timeout(timeout_sec: int, iterations: int) -> int:
+    return max(timeout_sec + 60, timeout_sec * iterations + 60)
+
+
+def run_samply_record(
+    *,
+    artifact: Path,
+    name: str,
+    iterations: int,
+    workload: Sequence[str],
+    checkout_path: Path,
+    timeout_sec: int,
+) -> dict[str, Any]:
+    temp_artifact = profile_temp_path(artifact)
+    temp_artifact.parent.mkdir(parents=True, exist_ok=True)
+    with suppress(FileNotFoundError):
+        temp_artifact.unlink()
+    command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
+    env = os.environ.copy()
+    env["RUST_LOG"] = "error"
+    try:
+        subprocess.run(
+            command,
+            cwd=checkout_path,
+            env=env,
+            check=True,
+            timeout=profile_record_timeout(timeout_sec, iterations),
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+        if not profile_cache_hit(temp_artifact):
+            raise ValueError(f"Samply did not produce a nonempty profile artifact: {temp_artifact}")
+        profile = samply_analysis.read_artifact(temp_artifact)
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(temp_artifact, artifact)
+        return profile
+    except BaseException:
+        with suppress(FileNotFoundError):
+            temp_artifact.unlink()
+        raise
+
+
+def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
+    try:
+        subprocess.run(
+            [samply_executable(), "load", str(artifact)],
+            cwd=checkout_path,
+            check=True,
+            stdout=sys.stderr,
+            stderr=sys.stderr,
+        )
+    except KeyboardInterrupt:
+        return
 
 
 def run_command(command: Sequence[str], checkout_path: Path, timeout_sec: int) -> TimingResult:
@@ -852,12 +1278,13 @@ def ru_maxrss_to_bytes(ru_maxrss: int, platform: str = sys.platform) -> int | No
 
 def collection_label(
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
     round_index: int,
     rounds: int,
 ) -> str:
     filename = Path(file_spec.display_path).name
-    return f"{filename} {treatment} {round_index + 1}/{rounds}"
+    return f"{filename} {backend}/{treatment} {round_index + 1}/{rounds}"
 
 
 def format_timing_result(result: TimingResult) -> str:
@@ -910,8 +1337,8 @@ def emit_collection_plan(
 ) -> None:
     total_estimate = collection_plan_estimate(plan, estimate_model)
     table = Table(title=f"{plan.target.display_label}: cache and estimate plan")
-    table.add_column("File")
-    table.add_column("Treatment")
+    table.add_column("File", overflow="fold")
+    table.add_column("Cell", no_wrap=True)
     table.add_column("Cached")
     table.add_column("Missing")
     table.add_column("Statuses")
@@ -924,7 +1351,7 @@ def emit_collection_plan(
         statuses = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items())) or "-"
         table.add_row(
             cell.file.display_path,
-            cell.treatment,
+            f"{cell.backend}/{cell.treatment}",
             f"{len(cell.selected_cached_rows)}/{cell.required_rows}",
             str(cell.missing_observations),
             statuses,
@@ -957,6 +1384,7 @@ def flat_report_record(
         "binary_sha256": target.binary_sha256,
         "file_path": cell.file.display_path,
         "file_sha256": cell.file.sha256,
+        "backend": cell.backend,
         "treatment": cell.treatment,
         "timeout_sec": spec.timeout_sec,
         "wall_sec": result.timing.wall_sec,
@@ -1009,22 +1437,21 @@ def collect_rows(
         else:
             remaining_processes.pop(key, None)
 
-    def run_loop(progress: Progress | None = None, process_task: Any | None = None) -> None:
+    def run_loop(progress: Progress, process_task: TaskID) -> None:
         nonlocal next_index, completed_observations
         for round_index in range(max_deficit):
             for cell in plan.cells:
                 if round_index >= cell.missing_observations:
                     continue
                 cell_file = cell.file
+                cell_backend = cell.backend
                 cell_treatment = cell.treatment
                 cell_key = cell.estimate_key
                 required_rounds = cell.missing_observations
                 observation_number = completed_observations + 1
-                label = collection_label(cell_file, cell_treatment, round_index, required_rounds)
+                label = collection_label(cell_file, cell_backend, cell_treatment, round_index, required_rounds)
 
                 def update_progress(current: str, advance: int = 0) -> None:
-                    if progress is None or process_task is None:
-                        return
                     progress.update(
                         process_task,
                         advance=advance,
@@ -1034,7 +1461,14 @@ def collect_rows(
 
                 update_progress(f"row {observation_number}/{total_observations} timed")
                 started_at = now_iso()
-                result = run_process(binary_path, Path(target.row.path), cell_file, cell_treatment, spec.timeout_sec)
+                result = run_process(
+                    binary_path,
+                    Path(target.row.path),
+                    cell_file,
+                    cell_backend,
+                    cell_treatment,
+                    spec.timeout_sec,
+                )
                 estimate_model.record_process(cell_key, result)
                 decrement_remaining(cell_key)
                 update_progress(
@@ -1054,7 +1488,6 @@ def collect_rows(
                 fresh_frames.append(fresh_frame)
                 next_index += 1
                 completed_observations += 1
-                assert progress is not None
                 progress.console.print(f"  {label}: fresh {format_timing_result(result)}")
                 update_progress(
                     f"rows {completed_observations}/{total_observations}; last {format_timing_result(result)}"
@@ -1101,14 +1534,128 @@ def collect_rows(
     return CollectionResult(rows=concat_report_frames([rows, fresh_rows]), fresh_rows=fresh_rows)
 
 
+def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: Path, repo_root: Path) -> None:
+    request = resolve_profile_request(args, invocation_cwd)
+    target = resolve_profile_target(request.target_request, request.backend, invocation_cwd, repo_root, output)
+    if target.binary_path is None:
+        raise ValueError(f"target {target.display_label} needs a profiling binary")
+    checkout_path = Path(target.row.path)
+    workload = workload_command(target.binary_path, request.file, request.backend, request.treatment)
+    artifact = profile_cache_path(
+        request.profiles_dir,
+        target.binary_sha256,
+        request.file.sha256,
+        request.backend,
+        request.treatment,
+        request.mode,
+    )
+    profile: dict[str, Any] | None = None
+    cache_status: Literal["hit", "recorded"] = "recorded"
+    if profile_cache_hit(artifact) and not request.force_run:
+        try:
+            profile = samply_analysis.read_artifact(artifact)
+        except ValueError as error:
+            output.console.print(f"[yellow]warning:[/yellow] ignoring invalid profile cache entry: {error}")
+        else:
+            cache_status = "hit"
+            output.console.print(f"[bold]Profile cache hit[/bold] {artifact}")
+
+    if profile is None:
+        iterations = request.mode.iterations
+        if iterations is None:
+            assert request.mode.profile_seconds is not None
+            output.console.print(
+                f"[bold]Calibrating[/bold] {request.file.display_path} "
+                f"{request.backend}/{request.treatment} for {request.mode.profile_seconds}s"
+            )
+            calibration = run_command(workload, checkout_path, request.timeout_sec)
+            if calibration.status != "success" or calibration.timing.wall_sec is None:
+                detail = calibration.error.message if calibration.error is not None else calibration.status
+                raise ValueError(f"profile calibration failed: {detail}")
+            iterations, capped = calculate_profile_iterations(
+                calibration.timing.wall_sec,
+                request.mode.profile_seconds,
+            )
+            output.console.print(
+                f"  calibration: {calibration.timing.wall_sec:.3f}s; recording {iterations} Samply iteration(s)"
+            )
+            if capped:
+                output.console.print(
+                    "[yellow]warning:[/yellow] maximum profile iterations reached; "
+                    "the profile may be shorter than the requested duration"
+                )
+
+        assert iterations is not None
+        name = profile_name(
+            request.file,
+            request.backend,
+            request.treatment,
+            request.mode,
+            iterations,
+            target.binary_sha256,
+        )
+        output.console.print(f"[bold]Recording profile[/bold] {artifact}")
+        profile = run_samply_record(
+            artifact=artifact,
+            name=name,
+            iterations=iterations,
+            workload=workload,
+            checkout_path=checkout_path,
+            timeout_sec=request.timeout_sec,
+        )
+        output.console.print(f"[bold]Profile written[/bold] {artifact}")
+
+    if request.show_summary:
+        display_artifact = profile_display_path(artifact, invocation_cwd)
+        summary: samply_analysis.ProfileCpuSummary | None = None
+        if sys.platform == "darwin":
+            try:
+                summary = samply_analysis.summarize(profile, target.binary_path)
+            except ValueError as error:
+                output.console.print(f"[yellow]warning:[/yellow] CPU profile summary unavailable: {error}")
+            if summary is not None:
+                for warning in summary.warnings:
+                    output.console.print(f"[yellow]warning:[/yellow] {warning}")
+        else:
+            output.console.print(
+                "[yellow]warning:[/yellow] CPU profile summaries are currently available on macOS only; "
+                "the Samply artifact was created normally."
+            )
+        report = samply_analysis.ProfileReport(
+            artifact=display_artifact,
+            cache_status=cache_status,
+            workload=request.file.display_path,
+            backend=request.backend,
+            treatment=request.treatment,
+            top=request.top,
+            cpu_summary=summary,
+        )
+        if request.output_format == "markdown":
+            rendered = samply_analysis.render_markdown(report)
+            sys.stdout.write(rendered + "\n")
+            sys.stdout.flush()
+        else:
+            samply_analysis.render_rich(output.console, report)
+    else:
+        sys.stdout.write(str(artifact.resolve()) + "\n")
+        sys.stdout.flush()
+    if request.open_after:
+        open_samply_profile(artifact, checkout_path)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+    raw_argv = tuple(sys.argv[1:] if argv is None else argv)
+    args = parse_args(raw_argv)
     output = RunnerOutput()
     try:
         script_root = Path(__file__).resolve().parent
-        treatments = parse_treatments(args.treatments)
         invocation_cwd = Path.cwd()
         repo_root = git_root_for_path(script_root)
+        if args.command == "profile":
+            run_profile(args, output, invocation_cwd, repo_root)
+            return 0
+        backends = parse_backends(args.backend)
+        treatments = parse_treatments(args.treatments)
         report_destination = resolve_report_destination(args.report, invocation_cwd)
         files = resolve_files(args.files, invocation_cwd)
         spec = BenchmarkSpec(
@@ -1116,6 +1663,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             treatments=treatments,
             rounds=args.rounds,
             timeout_sec=args.timeout_sec,
+            backends=backends,
         )
         validate_spec(spec)
         target_specs = args.target if args.target is not None else ["."]
@@ -1144,13 +1692,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             emit_collection_plan(output, plan, estimate_model)
             collection = collect_rows(rows, report_destination, plan, spec, output, estimate_model)
             rows = collection.rows
-        render_report(
-            output.console,
-            report_destination,
-            rows,
-            targets,
-            spec,
-        )
+        if args.format == "markdown":
+            sys.stdout.write(render_markdown_report(report_destination, rows, targets, spec, raw_argv) + "\n")
+        else:
+            render_report(
+                output.console,
+                report_destination,
+                rows,
+                targets,
+                spec,
+            )
         if args.dump_dir is not None or args.serve:
             import web
 
@@ -1159,7 +1710,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 web.dump_report(output.console, rows, selection, Path(args.dump_dir))
             if args.serve:
                 web.serve_report(output.console, rows, selection, args.serve_port)
-    except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
+    except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2
     return 0

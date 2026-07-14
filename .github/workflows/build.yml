@@ -23,9 +23,9 @@ jobs:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
       - run: uv lock --check
-      - run: uv run --locked ruff format --check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
-      - run: uv run --locked ruff check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
-      - run: uv run --locked mypy analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py
+      - run: uv run --locked ruff format --check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py test_backend.py
+      - run: uv run --locked ruff check analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py test_backend.py
+      - run: uv run --locked mypy analysis.py bench.py cli.py models.py report.py report_frame.py web.py web_registry.py test_bench.py test_web.py test_backend.py
       - run: uv run --locked pytest -q
 
   rust:

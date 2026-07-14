@@ -149,8 +149,14 @@ The benchmark CLI exposes the routine collection and reporting options:
 - `--rounds <n>`: fresh collection rounds per file and target, and matching
   report rows required per cache cell. Default: `6`.
 - `--timeout-sec <n>`: per-process timeout. Default: `120`.
+- `--backend <list>`: comma-separated backends to benchmark. Default: `main`.
+  Each backend is a build+run variant of the egglog binary (see Backends below);
+  measurements are indexed by `(backend, treatment)`.
 - `--treatments <list>`: comma-separated treatments. Default:
   `off,term,proofs`.
+- `--format <rich|markdown>`: final report format. `rich` (default) renders to
+  stderr; `markdown` writes a GitHub-flavored report to stdout (cannot be combined
+  with `--report -`).
 - `--force-run`: append new observations even when enough matching rows already
   exist.
 - `--serve`: after reporting, serve an interactive eval-live report at
@@ -171,6 +177,29 @@ The default treatment matrix is:
 appear in performance headlines.
 Use `--treatments proofs` when iterating on proof performance across two or more
 targets and you only need same-treatment proof-mode comparisons.
+
+### Backends
+
+A backend is a named build+run variant of the egglog binary. Benchmarks iterate the
+cartesian product of the requested `--backend`s and `--treatments`, restricted to the
+treatments each backend supports:
+
+- `main`: the default backend; no extra build features or workload flags; supports
+  `off`, `term`, and `proofs`.
+- `dd`: built with the `dd-backend` cargo feature and run with `--backend dd`;
+  supports `term` and `proofs`.
+
+With more than one backend, the report adds per-file and summary tables comparing each
+candidate backend against the first (baseline) backend for the shared treatments.
+
+### Profiling
+
+`./bench.py profile <file>` records (or reuses a cached) Samply CPU profile for a
+single `(backend, treatment)` workload. It builds a `profiling` binary, calibrates an
+iteration count (or takes `--iterations`), records with `samply record`, and caches the
+artifact under `--profiles-dir` (default `.profiles`). On macOS it also prints a
+per-function CPU summary; use `--format markdown` for a shareable summary, `--open` to
+launch the Samply viewer, and `--no-summary` to print only the artifact path.
 
 The measured command shape is:
 

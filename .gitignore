@@ -1,5 +1,6 @@
 /target/
 /.reports*.jsonl
+/.profiles/
 /.bench-worktrees/
 /.venv/
 /.mypy_cache/

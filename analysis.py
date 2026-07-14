@@ -14,6 +14,7 @@ import numpy as np
 from scipy import stats
 
 from models import (
+    Backend,
     BenchmarkSpec,
     CellMap,
     CellSummary,
@@ -22,6 +23,8 @@ from models import (
     RatioSummary,
     ResolvedTarget,
     Treatment,
+    backend_has_treatment,
+    backend_treatment_cells,
 )
 
 if TYPE_CHECKING:
@@ -40,6 +43,7 @@ def selected_rows(
     matches = rows.loc[
         rows["binary_sha256"].eq(key.binary_sha256)
         & rows["file_sha256"].eq(key.file_sha256)
+        & rows["backend"].eq(key.backend)
         & rows["treatment"].eq(key.treatment)
         & rows["timeout_sec"].eq(key.timeout_sec)
     ]
@@ -61,6 +65,7 @@ def status_counts_for_rows(rows: DataFrame[ReportFrame]) -> dict[str, int]:
 def estimate_key_for(
     target: ResolvedTarget,
     file_spec: FileSpec,
+    backend: Backend,
     treatment: Treatment,
     timeout_sec: int,
 ) -> EstimateKey:
@@ -69,6 +74,7 @@ def estimate_key_for(
         file_sha256=file_spec.sha256,
         treatment=treatment,
         timeout_sec=timeout_sec,
+        backend=backend,
     )
 
 
@@ -238,23 +244,25 @@ def target_cell_summaries(
     rows: DataFrame[ReportFrame],
     target: ResolvedTarget,
     spec: BenchmarkSpec,
+    backends: Sequence[Backend] | None = None,
     treatments: Sequence[Treatment] | None = None,
     *,
     validate: bool = True,
 ) -> CellMap:
+    chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, treatment): summarize_cell(
+        (file_spec.sha256, cell.backend, cell.treatment): summarize_cell(
             selected_rows(
                 rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
+                estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
                 spec.rounds,
                 validate=validate,
             ),
             spec.rounds,
         )
         for file_spec in spec.files
-        for treatment in chosen_treatments
+        for cell in backend_treatment_cells(chosen_backends, chosen_treatments)
     }
 
 
@@ -262,23 +270,25 @@ def target_rss_cell_summaries(
     rows: DataFrame[ReportFrame],
     target: ResolvedTarget,
     spec: BenchmarkSpec,
+    backends: Sequence[Backend] | None = None,
     treatments: Sequence[Treatment] | None = None,
     *,
     validate: bool = True,
 ) -> CellMap:
+    chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, treatment): summarize_rss_cell(
+        (file_spec.sha256, cell.backend, cell.treatment): summarize_rss_cell(
             selected_rows(
                 rows,
-                estimate_key_for(target, file_spec, treatment, spec.timeout_sec),
+                estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
                 spec.rounds,
                 validate=validate,
             ),
             spec.rounds,
         )
         for file_spec in spec.files
-        for treatment in chosen_treatments
+        for cell in backend_treatment_cells(chosen_backends, chosen_treatments)
     }
 
 
@@ -287,12 +297,13 @@ def target_suite_treatment_ratio(
     candidate_cells: CellMap,
     spec: BenchmarkSpec,
     treatment: Treatment,
+    backend: Backend = "main",
 ) -> RatioSummary:
     return suite_ratio(
         [
             (
-                baseline_cells[(file_spec.sha256, treatment)],
-                candidate_cells[(file_spec.sha256, treatment)],
+                baseline_cells[(file_spec.sha256, backend, treatment)],
+                candidate_cells[(file_spec.sha256, backend, treatment)],
             )
             for file_spec in spec.files
         ]
@@ -302,14 +313,15 @@ def target_suite_treatment_ratio(
 def treatment_file_cells(
     cell_map: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     baseline_treatment: Treatment,
     candidate_treatment: Treatment,
 ) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, baseline_treatment)],
-            cell_map[(file_spec.sha256, candidate_treatment)],
+            cell_map[(file_spec.sha256, backend, baseline_treatment)],
+            cell_map[(file_spec.sha256, backend, candidate_treatment)],
         )
         for file_spec in spec.files
     ]
@@ -319,13 +331,31 @@ def target_treatment_file_cells(
     baseline_cells: CellMap,
     candidate_cells: CellMap,
     spec: BenchmarkSpec,
+    backend: Backend,
     treatment: Treatment,
 ) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
     return [
         (
             file_spec,
-            baseline_cells[(file_spec.sha256, treatment)],
-            candidate_cells[(file_spec.sha256, treatment)],
+            baseline_cells[(file_spec.sha256, backend, treatment)],
+            candidate_cells[(file_spec.sha256, backend, treatment)],
+        )
+        for file_spec in spec.files
+    ]
+
+
+def backend_treatment_file_cells(
+    cell_map: CellMap,
+    spec: BenchmarkSpec,
+    baseline_backend: Backend,
+    candidate_backend: Backend,
+    treatment: Treatment,
+) -> list[tuple[FileSpec, CellSummary, CellSummary]]:
+    return [
+        (
+            file_spec,
+            cell_map[(file_spec.sha256, baseline_backend, treatment)],
+            cell_map[(file_spec.sha256, candidate_backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -351,6 +381,30 @@ def worst_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[F
     return max(valid, key=lambda item: item[1].point or 0.0)
 
 
+def best_file_ratio(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[FileSpec | None, RatioSummary]:
+    if not ratios:
+        return (None, RatioSummary(None, None, None, "no files"))
+    valid = [(file_spec, ratio) for file_spec, ratio in ratios if ratio.point is not None]
+    if valid:
+        return min(valid, key=lambda item: item[1].point or math.inf)
+    return ratios[0]
+
+
+def count_better_files(ratios: Sequence[tuple[FileSpec, RatioSummary]]) -> tuple[int, int]:
+    valid = [ratio for _, ratio in ratios if ratio.point is not None]
+    better = sum(1 for ratio in valid if ratio.ci_high is not None and ratio.ci_high < 1.0)
+    return (better, len(valid))
+
+
+def suite_total_mean(cells: Sequence[CellSummary]) -> float | None:
+    total = 0.0
+    for cell in cells:
+        if not cell.ok or cell.mean is None:
+            return None
+        total += cell.mean
+    return total
+
+
 def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treatment, str], ...]:
     specs: list[tuple[Treatment, Treatment, str]] = []
     if "off" in treatments and "term" in treatments:
@@ -360,3 +414,14 @@ def ratio_specs(treatments: Sequence[Treatment]) -> tuple[tuple[Treatment, Treat
     if "term" in treatments and "proofs" in treatments:
         specs.append(("term", "proofs", "proofs/term"))
     return tuple(specs)
+
+
+def ratio_specs_for_backend(
+    spec: BenchmarkSpec,
+    backend: Backend,
+) -> tuple[tuple[Treatment, Treatment, str], ...]:
+    return tuple(
+        ratio_spec
+        for ratio_spec in ratio_specs(spec.treatments)
+        if backend_has_treatment(spec, backend, ratio_spec[0]) and backend_has_treatment(spec, backend, ratio_spec[1])
+    )

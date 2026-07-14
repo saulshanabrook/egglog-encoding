@@ -12,12 +12,16 @@
 //! Most compiler-time optimizations are expected to be done over CoreRule format.
 use std::hash::Hasher;
 use std::marker::PhantomData;
-use std::ops::AddAssign;
 
-use crate::{constraint::grounded_check, *};
-use egglog_ast::generic_ast::{Change, GenericAction, GenericActions, GenericExpr};
+use crate::{
+    constraint::{AtomConstraints, grounded_check},
+    *,
+};
+pub use egglog_ast::core::{
+    GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreActions, GenericCoreRule, Query,
+};
+use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
-use egglog_ast::util::ListDisplay;
 use typechecking::{FuncType, PrimitiveValidator, PrimitiveWithId, TypeError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +31,9 @@ pub(crate) enum HeadOrEq<Head> {
 }
 
 pub(crate) type StringOrEq = HeadOrEq<String>;
+pub type AtomTerm = GenericAtomTerm<String>;
+pub type Atom<Head> = GenericAtom<Head, String>;
+pub type CoreAction = GenericCoreAction<String, String>;
 
 impl From<String> for StringOrEq {
     fn from(value: String) -> Self {
@@ -234,157 +241,29 @@ impl IsFunc for String {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum GenericAtomTerm<Leaf> {
-    Var(Span, Leaf),
-    Literal(Span, Literal),
-    Global(Span, Leaf),
-}
-
-// Ignores annotations for equality and hasing
-impl<Leaf> PartialEq for GenericAtomTerm<Leaf>
-where
-    Leaf: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (GenericAtomTerm::Var(_, v1), GenericAtomTerm::Var(_, v2)) => v1 == v2,
-            (GenericAtomTerm::Literal(_, l1), GenericAtomTerm::Literal(_, l2)) => l1 == l2,
-            (GenericAtomTerm::Global(_, g1), GenericAtomTerm::Global(_, g2)) => g1 == g2,
-            _ => false,
-        }
-    }
-}
-
-impl<Leaf> Eq for GenericAtomTerm<Leaf> where Leaf: Eq {}
-
-impl<Leaf> Hash for GenericAtomTerm<Leaf>
-where
-    Leaf: Hash,
-{
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        match self {
-            GenericAtomTerm::Var(_, v) => v.hash(state),
-            GenericAtomTerm::Literal(_, l) => l.hash(state),
-            GenericAtomTerm::Global(_, g) => g.hash(state),
-        }
-    }
-}
-
-pub type AtomTerm = GenericAtomTerm<String>;
 pub type ResolvedAtomTerm = GenericAtomTerm<ResolvedVar>;
 
-impl<Leaf> GenericAtomTerm<Leaf> {
-    pub fn span(&self) -> &Span {
-        match self {
-            GenericAtomTerm::Var(span, _) => span,
-            GenericAtomTerm::Literal(span, _) => span,
-            GenericAtomTerm::Global(span, _) => span,
+fn atom_term_sort(term: &ResolvedAtomTerm) -> ArcSort {
+    match term {
+        GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => {
+            variable.sort.clone()
         }
+        GenericAtomTerm::Literal(_, literal) => literal_sort(literal),
     }
 }
 
-impl<Leaf: Clone> GenericAtomTerm<Leaf> {
-    pub fn to_expr<Head>(&self) -> GenericExpr<Head, Leaf> {
-        match self {
-            GenericAtomTerm::Var(span, v) => GenericExpr::Var(span.clone(), v.clone()),
-            GenericAtomTerm::Literal(span, l) => GenericExpr::Lit(span.clone(), l.clone()),
-            GenericAtomTerm::Global(span, v) => GenericExpr::Var(span.clone(), v.clone()),
-        }
-    }
+pub(crate) trait QueryConstraints {
+    fn get_constraints(
+        &self,
+        type_info: &TypeInfo,
+        ctx: crate::Context,
+    ) -> Result<Vec<Box<dyn Constraint<AtomTerm, ArcSort>>>, TypeError>;
+
+    fn atom_terms(&self) -> HashSet<AtomTerm>;
 }
 
-impl ResolvedAtomTerm {
-    pub fn output(&self) -> ArcSort {
-        match self {
-            ResolvedAtomTerm::Var(_, v) => v.sort.clone(),
-            ResolvedAtomTerm::Literal(_, l) => literal_sort(l),
-            ResolvedAtomTerm::Global(_, v) => v.sort.clone(),
-        }
-    }
-}
-
-impl std::fmt::Display for AtomTerm {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AtomTerm::Var(_, v) => write!(f, "{v}"),
-            AtomTerm::Literal(_, lit) => write!(f, "{lit}"),
-            AtomTerm::Global(_, g) => write!(f, "{g}"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GenericAtom<Head, Leaf> {
-    pub span: Span,
-    pub head: Head,
-    pub args: Vec<GenericAtomTerm<Leaf>>,
-}
-
-pub type Atom<T> = GenericAtom<T, String>;
-
-impl<T: std::fmt::Display> std::fmt::Display for Atom<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "({} {}) ", self.head, ListDisplay(&self.args, " "))
-    }
-}
-
-impl<Head, Leaf> GenericAtom<Head, Leaf>
-where
-    Leaf: Clone + Eq + Hash,
-    Head: Clone,
-{
-    pub fn vars(&self) -> impl Iterator<Item = Leaf> + '_ {
-        self.args.iter().filter_map(|t| match t {
-            GenericAtomTerm::Var(_, v) => Some(v.clone()),
-            GenericAtomTerm::Literal(..) => None,
-            GenericAtomTerm::Global(..) => None,
-        })
-    }
-
-    fn subst(&mut self, subst: &HashMap<Leaf, GenericAtomTerm<Leaf>>) {
-        for arg in self.args.iter_mut() {
-            match arg {
-                GenericAtomTerm::Var(_, v) => {
-                    if let Some(at) = subst.get(v) {
-                        *arg = at.clone();
-                    }
-                }
-                GenericAtomTerm::Literal(..) => (),
-                GenericAtomTerm::Global(..) => (),
-            }
-        }
-    }
-}
-impl Atom<String> {
-    pub(crate) fn to_expr(&self) -> Expr {
-        let n = self.args.len();
-        Expr::Call(
-            self.span.clone(),
-            self.head.clone(),
-            self.args[0..n - 1]
-                .iter()
-                .map(|arg| arg.to_expr())
-                .collect(),
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Query<Head, Leaf> {
-    pub atoms: Vec<GenericAtom<Head, Leaf>>,
-}
-
-impl<Head, Leaf> Default for Query<Head, Leaf> {
-    fn default() -> Self {
-        Self {
-            atoms: Default::default(),
-        }
-    }
-}
-
-impl Query<StringOrEq, String> {
-    pub fn get_constraints(
+impl QueryConstraints for Query<StringOrEq, String> {
+    fn get_constraints(
         &self,
         type_info: &TypeInfo,
         ctx: crate::Context,
@@ -396,7 +275,7 @@ impl Query<StringOrEq, String> {
         Ok(constraints)
     }
 
-    pub(crate) fn atom_terms(&self) -> HashSet<AtomTerm> {
+    fn atom_terms(&self) -> HashSet<AtomTerm> {
         self.atoms
             .iter()
             .flat_map(|atom| atom.args.iter().cloned())
@@ -404,173 +283,7 @@ impl Query<StringOrEq, String> {
     }
 }
 
-impl<Head, Leaf> Query<Head, Leaf>
-where
-    Leaf: Eq + Clone + Hash,
-    Head: Clone,
-{
-    pub(crate) fn get_vars(&self) -> IndexSet<Leaf> {
-        self.atoms
-            .iter()
-            .flat_map(|atom| atom.vars())
-            .collect::<IndexSet<_>>()
-    }
-}
-
-impl<Head, Leaf> AddAssign for Query<Head, Leaf> {
-    fn add_assign(&mut self, rhs: Self) {
-        self.atoms.extend(rhs.atoms);
-    }
-}
-
-impl std::fmt::Display for Query<String, String> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for atom in &self.atoms {
-            writeln!(f, "{atom}")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Display for Query<ResolvedCall, String> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for atom in self.funcs() {
-            writeln!(f, "{atom}")?;
-        }
-        let filters: Vec<_> = self.filters().collect();
-        if !filters.is_empty() {
-            writeln!(f, "where ")?;
-            for filter in &filters {
-                writeln!(
-                    f,
-                    "({} {})",
-                    filter.head.prim_with_id.primitive.name(),
-                    ListDisplay(&filter.args, " ")
-                )?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<Leaf: Clone> Query<ResolvedCall, Leaf> {
-    pub fn filters(&self) -> impl Iterator<Item = GenericAtom<SpecializedPrimitive, Leaf>> + '_ {
-        self.atoms.iter().filter_map(|atom| match &atom.head {
-            ResolvedCall::Func(_) => None,
-            ResolvedCall::Primitive(head) => Some(GenericAtom {
-                span: atom.span.clone(),
-                head: head.clone(),
-                args: atom.args.clone(),
-            }),
-        })
-    }
-
-    pub fn funcs(&self) -> impl Iterator<Item = GenericAtom<String, Leaf>> + '_ {
-        self.atoms.iter().filter_map(|atom| match &atom.head {
-            ResolvedCall::Func(head) => Some(GenericAtom {
-                span: atom.span.clone(),
-                head: head.name.clone(),
-                args: atom.args.clone(),
-            }),
-            ResolvedCall::Primitive(_) => None,
-        })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum GenericCoreAction<Head, Leaf> {
-    Let(Span, Leaf, Head, Vec<GenericAtomTerm<Leaf>>),
-    LetAtomTerm(Span, Leaf, GenericAtomTerm<Leaf>),
-    Set(
-        Span,
-        Head,
-        Vec<GenericAtomTerm<Leaf>>,
-        GenericAtomTerm<Leaf>,
-    ),
-    Change(Span, Change, Head, Vec<GenericAtomTerm<Leaf>>),
-    Union(Span, GenericAtomTerm<Leaf>, GenericAtomTerm<Leaf>),
-    Panic(Span, String),
-}
-
-pub type CoreAction = GenericCoreAction<String, String>;
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct GenericCoreActions<Head, Leaf>(pub(crate) Vec<GenericCoreAction<Head, Leaf>>);
 pub(crate) type ResolvedCoreActions = GenericCoreActions<ResolvedCall, ResolvedVar>;
-
-impl<Head, Leaf> Default for GenericCoreActions<Head, Leaf> {
-    fn default() -> Self {
-        Self(vec![])
-    }
-}
-
-impl<Head, Leaf> GenericCoreActions<Head, Leaf>
-where
-    Leaf: Clone + Eq + Hash,
-{
-    pub(crate) fn subst(&mut self, subst: &HashMap<Leaf, GenericAtomTerm<Leaf>>) {
-        let actions = subst.iter().map(|(symbol, atom_term)| {
-            GenericCoreAction::LetAtomTerm(
-                atom_term.span().clone(),
-                symbol.clone(),
-                atom_term.clone(),
-            )
-        });
-        let existing_actions = std::mem::take(&mut self.0);
-        self.0 = actions.chain(existing_actions).collect();
-    }
-
-    fn new(actions: Vec<GenericCoreAction<Head, Leaf>>) -> GenericCoreActions<Head, Leaf> {
-        Self(actions)
-    }
-
-    pub(crate) fn get_free_vars(&self) -> HashSet<Leaf> {
-        let at_free_var = |at: &GenericAtomTerm<Leaf>| match at {
-            GenericAtomTerm::Var(_, v) => Some(v.clone()),
-            GenericAtomTerm::Literal(..) => None,
-            GenericAtomTerm::Global(..) => None,
-        };
-
-        let add_from_atom = |free_vars: &mut HashSet<Leaf>, at: &GenericAtomTerm<Leaf>| {
-            if let Some(v) = at_free_var(at) {
-                free_vars.insert(v);
-            }
-        };
-
-        let add_from_atoms = |free_vars: &mut HashSet<Leaf>, ats: &[GenericAtomTerm<Leaf>]| {
-            ats.iter().flat_map(&at_free_var).for_each(|v| {
-                free_vars.insert(v);
-            });
-        };
-
-        let mut free_vars = HashSet::default();
-        for action in self.0.iter().rev() {
-            match action {
-                GenericCoreAction::Let(_span, v, _, ats) => {
-                    add_from_atoms(&mut free_vars, ats);
-                    free_vars.remove(v);
-                }
-                GenericCoreAction::LetAtomTerm(_span, v, at) => {
-                    add_from_atom(&mut free_vars, at);
-                    free_vars.remove(v);
-                }
-                GenericCoreAction::Set(_span, _, ats, at) => {
-                    add_from_atoms(&mut free_vars, ats);
-                    add_from_atom(&mut free_vars, at);
-                }
-                GenericCoreAction::Change(_span, _change, _, ats) => {
-                    add_from_atoms(&mut free_vars, ats);
-                }
-                GenericCoreAction::Union(_span, at, at1) => {
-                    add_from_atom(&mut free_vars, at);
-                    add_from_atom(&mut free_vars, at1);
-                }
-                GenericCoreAction::Panic(_span, _) => {}
-            }
-        }
-        free_vars
-    }
-}
 
 /// Shared state that threads through lowering from surface actions to core actions.
 ///
@@ -890,38 +603,37 @@ where
     }
 }
 
-/// A [`GenericCoreRule`] represents a generalization of lowered form of a rule.
-/// Unlike other `Generic`-prefixed types, [`GenericCoreRule`] takes two `Head`
-/// parameters instead of one. This is because the `Head` parameter of `body` and
-/// `head` can be different. In particular, early in the compilation pipeline,
-/// `body` can contain `Eq` atoms, which denotes equality constraints, so the `Head`
-/// for `body` needs to be a `HeadOrEq<Head>`, while `head` does not have equality
-/// constraints.
-#[derive(Debug, Clone)]
-pub struct GenericCoreRule<HeadQ, HeadA, Leaf> {
-    pub span: Span,
-    pub body: Query<HeadQ, Leaf>,
-    pub head: GenericCoreActions<HeadA, Leaf>,
-}
-
 pub(crate) type CoreRule = GenericCoreRule<StringOrEq, String, String>;
 pub(crate) type ResolvedCoreRule = GenericCoreRule<ResolvedCall, ResolvedCall, ResolvedVar>;
 
-impl<Head1, Head2, Leaf> GenericCoreRule<Head1, Head2, Leaf>
+trait CoreRuleSubst<Leaf> {
+    fn subst(&mut self, subst: &HashMap<Leaf, GenericAtomTerm<Leaf>>);
+}
+
+impl<BodyCall, ActionCall, Leaf> CoreRuleSubst<Leaf> for GenericCoreRule<BodyCall, ActionCall, Leaf>
 where
-    Head1: Clone,
-    Head2: Clone,
     Leaf: Clone + Eq + Hash,
 {
-    pub fn subst(&mut self, subst: &HashMap<Leaf, GenericAtomTerm<Leaf>>) {
+    fn subst(&mut self, subst: &HashMap<Leaf, GenericAtomTerm<Leaf>>) {
         for atom in &mut self.body.atoms {
-            atom.subst(subst);
+            atom.substitute_with(&mut |variable| subst.get(variable).cloned());
         }
-        self.head.subst(subst);
+        let substitutions = subst.iter().map(|(variable, term)| {
+            GenericCoreAction::LetAtomTerm(term.span().clone(), variable.clone(), term.clone())
+        });
+        let actions = std::mem::take(&mut self.head.0);
+        self.head.0 = substitutions.chain(actions).collect();
     }
 }
 
-impl<Head, Leaf> GenericCoreRule<HeadOrEq<Head>, Head, Leaf>
+trait CanonicalizeCoreRule<Head, Leaf> {
+    fn canonicalize(
+        self,
+        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+    ) -> GenericCoreRule<Head, Head, Leaf>;
+}
+
+impl<Head, Leaf> CanonicalizeCoreRule<Head, Leaf> for GenericCoreRule<HeadOrEq<Head>, Head, Leaf>
 where
     Leaf: Eq + Clone + Hash + Debug,
     Head: Clone,
@@ -930,7 +642,7 @@ where
     /// In particular, it removes equality checks between variables and
     /// other arguments, and turns equality checks between non-variable arguments
     /// into a primitive equality check `value-eq`.
-    pub(crate) fn canonicalize(
+    fn canonicalize(
         self,
         // Users need to pass in a substitute for equality constraints.
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
@@ -1029,7 +741,14 @@ where
     eq_constraints
 }
 
-impl<Head, Leaf> GenericCoreRule<Head, Head, Leaf>
+trait RemoveDuplicateVars<Head, Leaf> {
+    fn remove_dup_vars(
+        self,
+        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+    ) -> Self;
+}
+
+impl<Head, Leaf> RemoveDuplicateVars<Head, Leaf> for GenericCoreRule<Head, Head, Leaf>
 where
     Leaf: Eq + Clone + Hash + Debug,
     Head: Clone + Eq + Hash,
@@ -1039,7 +758,7 @@ where
     /// For example, if we have two atoms `R(x, y, z1)` and `R(x, y, z2)`,
     /// then we can remove one of them and add an equality constraint `z1 = z2`.
     /// This is done until fixpoint, so it is kind of like rebuilding.
-    pub(crate) fn remove_dup_vars(
+    fn remove_dup_vars(
         mut self,
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
     ) -> Self {
@@ -1109,7 +828,7 @@ where
         Leaf: Clone + PartialEq + Eq + Display + Hash + Debug,
     {
         let (body, _correspondence) = Facts(self.body.clone()).to_query(typeinfo, fresh_gen);
-        let mut binding = body.get_vars();
+        let mut binding = body.vars().collect::<IndexSet<_>>();
         let mut ctx =
             CoreActionContext::new(typeinfo, &mut binding, fresh_gen, union_to_set_optimization);
         let (head, _correspondence) = self.head.to_core_actions(&mut ctx)?;
@@ -1141,7 +860,7 @@ impl ResolvedRuleExt for ResolvedRule {
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
             ResolvedCall::Primitive(SpecializedPrimitive {
                 prim_with_id: value_eq.clone(),
-                input: vec![at1.output(), at2.output()],
+                input: vec![atom_term_sort(at1), atom_term_sort(at2)],
                 output: UnitSort.to_arcsort(),
             })
         };

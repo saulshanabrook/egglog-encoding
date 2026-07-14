@@ -207,14 +207,6 @@ mod tests {
             "proof-container-id" = |x: # (eq_container_sort)| -> # (eq_container_sort) { x },
             validator
         );
-        let validator =
-            |_: &mut TermDag, args: &[TermId]| -> Option<TermId> { args.first().copied() };
-        let original_typechecking = egraph.proof_state.original_typechecking.as_mut().unwrap();
-        add_primitive_with_validator!(
-            &mut **original_typechecking,
-            "proof-container-id" = |x: # (eq_container_sort)| -> # (eq_container_sort) { x },
-            validator
-        );
 
         egraph
             .parse_and_run_program(

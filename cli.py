@@ -122,7 +122,7 @@ def _render_group(
     ]
     rich_table = report_table(title, caption=table.caption)
     for column in columns:
-        rich_table.add_column(column.label, no_wrap=column.numeric)
+        rich_table.add_column(column.label, no_wrap=column.numeric, justify="right" if column.numeric else "left")
     for index, row in enumerate(rows):
         cells: list[str | Text] = []
         for column in columns:
@@ -131,11 +131,7 @@ def _render_group(
             if table.merge == column.label and index > 0 and rows[index - 1][column.label].text == text:
                 text = ""
             cells.append(styled_status(cell.status, text) if cell.status is not None else text)
-        end_section = False
-        if table.merge is not None:
-            merge_text = row[table.merge].text
-            end_section = index + 1 == len(rows) or rows[index + 1][table.merge].text != merge_text
-        rich_table.add_row(*cells, end_section=end_section)
+        rich_table.add_row(*cells)
     console.print(rich_table)
 
 

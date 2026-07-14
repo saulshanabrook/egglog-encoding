@@ -3,7 +3,7 @@ use std::hash::Hasher;
 use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
 use crate::{
-    core::{CoreActionContext, CoreRule, GenericActionsExt, ResolvedCall},
+    core::{CoreActionContext, CoreRule, GenericActionsExt, QueryConstraints, ResolvedCall},
     *,
 };
 use ast::{
@@ -257,14 +257,22 @@ impl EGraph {
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
-        sort.register_type(&mut self.backend);
+        sort.register_type(self.backend.as_mut());
 
         let name = sort.name();
         match self.type_info.sorts.entry(name.to_owned()) {
             HEntry::Occupied(_) => Err(TypeError::SortAlreadyBound(name.to_owned(), span)),
             HEntry::Vacant(e) => {
                 e.insert(sort.clone());
+                // A sort's primitives already reach the term-encoding typechecker
+                // through its OWN `add_arcsort` when it typechecks the sort
+                // command, so don't propagate them again from here (that would
+                // double-register and make primitive resolution ambiguous).
+                // Detach the typechecker while the sort registers, so only direct
+                // `add_*_primitive` calls propagate to it.
+                let saved = self.proof_state.original_typechecking.take();
                 sort.register_primitives(self);
+                self.proof_state.original_typechecking = saved;
                 Ok(())
             }
         }
@@ -282,9 +290,14 @@ impl EGraph {
     where
         T: PurePrim + Clone,
     {
-        self.register_per_context(x, validator, PureState::valid_contexts(), |x, ctx| {
-            Box::new(PurePrimWrapper { prim: x, ctx })
-        });
+        self.register_per_context(
+            x,
+            validator,
+            PureState::valid_contexts(),
+            |backend, x, ctx| {
+                backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
+            },
+        );
     }
 
     /// Register a [`WritePrim`]. Pass `None` for the validator if not
@@ -327,14 +340,20 @@ impl EGraph {
         T: Primitive + Clone,
         S: RegistryWrap<T> + 'static,
     {
-        let registry = self.backend.action_registry().clone();
-        self.register_per_context(x, validator, valid_ctxs, move |x, ctx| {
-            Box::new(RegistryPrimWrapper::<T, S> {
-                prim: x,
-                registry: registry.clone(),
-                ctx,
-                _wrap: std::marker::PhantomData,
-            })
+        self.register_per_context(x, validator, valid_ctxs, |backend, x, ctx| {
+            if let Some(registry) = backend.action_registry().cloned() {
+                backend.register_external_func(Box::new(RegistryPrimWrapper::<T, S> {
+                    prim: x,
+                    registry,
+                    ctx,
+                    _wrap: std::marker::PhantomData,
+                }))
+            } else {
+                let name = x.name().to_owned();
+                backend.new_panic(format!(
+                    "primitive {name} in {ctx:?} context requires a backend action registry"
+                ))
+            }
         });
     }
 
@@ -355,25 +374,39 @@ impl EGraph {
         mut build_wrapper: F,
     ) where
         T: Primitive + Clone,
-        F: FnMut(T, Context) -> Box<dyn ExternalFunction>,
+        F: FnMut(&mut dyn Backend, T, Context) -> ExternalFunctionId,
     {
-        let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
-        let name = primitive.name().to_owned();
-        let context_ids = EnumMap::from_fn(|ctx| {
-            valid_ctxs.contains(&ctx).then(|| {
-                self.backend
-                    .register_external_func(build_wrapper(x.clone(), ctx))
-            })
-        });
-        self.type_info
-            .primitives
-            .entry(name)
-            .or_default()
-            .push(PrimitiveWithId {
-                primitive,
-                validator,
-                context_ids,
+        // Register on this e-graph AND every term-encoding typechecker down the
+        // chain. Each typechecker is a separate e-graph that typechecks the
+        // encoded program (see `typecheck_program`); a primitive added after
+        // construction is otherwise unknown to it and reported as unbound. A
+        // typechecker only typechecks and never evaluates, so the wrapper's
+        // runtime state is irrelevant there, and — since both e-graphs register
+        // the same built-ins during construction — a primitive added to both
+        // gets the same `ExternalFunctionId`.
+        let mut eg: &mut EGraph = self;
+        loop {
+            let primitive: Arc<dyn Primitive> = Arc::new(x.clone());
+            let name = primitive.name().to_owned();
+            let context_ids = EnumMap::from_fn(|ctx| {
+                valid_ctxs
+                    .contains(&ctx)
+                    .then(|| build_wrapper(eg.backend.as_mut(), x.clone(), ctx))
             });
+            eg.type_info
+                .primitives
+                .entry(name)
+                .or_default()
+                .push(PrimitiveWithId {
+                    primitive,
+                    validator: validator.clone(),
+                    context_ids,
+                });
+            match eg.proof_state.original_typechecking.as_deref_mut() {
+                Some(next) => eg = next,
+                None => break,
+            }
+        }
     }
 }
 
@@ -902,7 +935,7 @@ impl TypeInfo {
         let (query, mapped_query) = Facts(body.clone()).to_query(self, symbol_gen);
         constraints.extend(query.get_constraints(self, query_ctx)?);
 
-        let mut binding = query.get_vars();
+        let mut binding = query.vars().collect::<IndexSet<_>>();
         // We lower to core actions with `union_to_set_optimization`
         // later in the pipeline. For typechecking we do not need it.
         let mut ctx = CoreActionContext::new(self, &mut binding, symbol_gen, false);

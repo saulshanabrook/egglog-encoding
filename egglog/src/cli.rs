@@ -1,5 +1,7 @@
 use crate::*;
+use std::ffi::OsString;
 use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
+use std::str::FromStr;
 
 use clap::Parser;
 use env_logger::Env;
@@ -81,14 +83,27 @@ struct Args {
 /// This is what vanilla egglog uses, and custom egglog builds (i.e., "egglog batteries included")
 /// should also call this function.
 #[allow(clippy::disallowed_macros)]
-pub fn cli(mut egraph: EGraph) {
+pub fn cli(egraph: EGraph) {
+    cli_with_args(egraph, std::env::args_os());
+}
+
+/// Start a command-line interface with an explicit argv.
+///
+/// Custom binaries can pre-parse their own flags and pass the remaining
+/// arguments here while still using egglog's standard CLI behavior.
+#[allow(clippy::disallowed_macros)]
+pub fn cli_with_args<I, T>(mut egraph: EGraph, args: I)
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
     env_logger::Builder::from_env(Env::default().default_filter_or("warn"))
         .format_timestamp(None)
         .format_target(false)
         .parse_default_env()
         .init();
 
-    let args = Args::parse();
+    let args = Args::parse_from(args);
 
     if args.term_encoding {
         egraph = egraph.with_term_encoding_enabled();
