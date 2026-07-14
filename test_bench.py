@@ -159,6 +159,32 @@ def make_cpu_summary() -> samply_analysis.ProfileCpuSummary:
     )
 
 
+def make_dirty_git_repo(path: Path) -> tuple[str, Path]:
+    tracked = path / "tracked.txt"
+    (path / ".gitignore").write_text("/.bench-worktrees/\n", encoding="utf-8")
+    tracked.write_text("committed\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=path, check=True)
+    subprocess.run(["git", "add", ".gitignore", tracked.name], cwd=path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Benchmark Test",
+            "-c",
+            "user.email=benchmark@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+        cwd=path,
+        check=True,
+    )
+    sha = bench.git_sha(path)
+    tracked.write_text("dirty\n", encoding="utf-8")
+    return (sha, tracked)
+
+
 def make_profile_case(
     tmp_path: Path,
     *,
@@ -577,7 +603,7 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
 
     monkeypatch.setattr(bench.subprocess, "run", fake_run)
     monkeypatch.setattr(bench, "git_sha", fake_git_sha)
-    monkeypatch.setattr(bench, "find_worktree_for_sha", lambda repo, sha: None)
+    monkeypatch.setattr(bench, "find_clean_worktree_for_sha", lambda repo, sha: None)
 
     checkout_path, sha = bench.materialize_pr_target(tmp_path, "#33", "#33")
 
@@ -587,6 +613,46 @@ def test_materialize_pr_target_fetches_origin_pull_ref(
         ["git", "fetch", "origin", "+refs/pull/33/head:refs/remotes/origin/pr/33"],
         ["git", "worktree", "add", "--detach", str(tmp_path / ".bench-worktrees" / "33"), "abc123"],
     ]
+
+
+@pytest.mark.parametrize("source", ["@HEAD", "#33"])
+def test_explicit_git_sources_isolate_dirty_matching_worktree(
+    source: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sha, _ = make_dirty_git_repo(tmp_path)
+
+    if source == "#33":
+
+        def fake_fetch_pr_ref(repo: Path, number: int) -> str:
+            assert repo == tmp_path
+            assert number == 33
+            return "HEAD"
+
+        monkeypatch.setattr(bench, "fetch_pr_ref", fake_fetch_pr_ref)
+
+    row = bench.materialize_target_request(bench.parse_target(source), tmp_path, tmp_path)
+    checkout = Path(row.path)
+
+    assert checkout != tmp_path.resolve()
+    assert row.git_sha == sha
+    assert not row.is_dirty
+    assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "committed\n"
+
+
+@pytest.mark.parametrize("use_absolute_path", [False, True])
+def test_path_targets_retain_dirty_checkout(use_absolute_path: bool, tmp_path: Path) -> None:
+    sha, tracked = make_dirty_git_repo(tmp_path)
+    source = str(tmp_path) if use_absolute_path else "."
+
+    row = bench.materialize_target_request(bench.parse_target(source), tmp_path, tmp_path)
+
+    assert Path(row.path) == tmp_path.resolve()
+    assert row.git_ref == "HEAD"
+    assert row.git_sha == sha
+    assert row.is_dirty
+    assert tracked.read_text(encoding="utf-8") == "dirty\n"
 
 
 def test_target_resolvers_share_materialization_and_select_build_profile(

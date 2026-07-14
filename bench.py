@@ -1042,7 +1042,7 @@ def sanitize_label(value: str) -> str:
     return sanitized or "target"
 
 
-def find_worktree_for_sha(repo: Path, sha: str) -> Path | None:
+def find_clean_worktree_for_sha(repo: Path, sha: str) -> Path | None:
     output = run_text(["git", "worktree", "list", "--porcelain"], repo)
     current_path: Path | None = None
     current_head: str | None = None
@@ -1053,7 +1053,7 @@ def find_worktree_for_sha(repo: Path, sha: str) -> Path | None:
         elif line.startswith("HEAD "):
             current_head = line.removeprefix("HEAD ")
         elif not line:
-            if current_path is not None and current_head == sha:
+            if current_path is not None and current_head == sha and not git_dirty(current_path):
                 return current_path
             current_path = None
             current_head = None
@@ -1062,7 +1062,7 @@ def find_worktree_for_sha(repo: Path, sha: str) -> Path | None:
 
 def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[Path, str]:
     sha = git_sha(repo, ref)
-    existing = find_worktree_for_sha(repo, sha)
+    existing = find_clean_worktree_for_sha(repo, sha)
     if existing is not None:
         return (existing, sha)
 
@@ -1070,9 +1070,12 @@ def materialize_git_ref(repo: Path, ref: str, label_hint: str | None) -> tuple[P
     worktree_root = repo / ".bench-worktrees"
     path = worktree_root / base_name
     if path.exists():
-        if git_sha(path) == sha:
-            return (path, sha)
-        path = worktree_root / f"{base_name}-{sha[:12]}"
+        path_stem = f"{base_name}-{sha[:12]}"
+        path = worktree_root / path_stem
+        disambiguator = 2
+        while path.exists():
+            path = worktree_root / f"{path_stem}-{disambiguator}"
+            disambiguator += 1
     path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         ["git", "worktree", "add", "--detach", str(path), sha],
