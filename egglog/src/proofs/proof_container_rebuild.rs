@@ -20,6 +20,62 @@ pub(crate) fn uf_canon_prim_name(uf_name: &str) -> String {
 pub(crate) fn uf_canon_proof_prim_name(uf_name: &str) -> String {
     format!("{uf_name}_canon_proof")
 }
+pub(crate) fn view_col_prim_name(view_name: &str, col: usize) -> String {
+    format!("{view_name}_col{col}")
+}
+
+/// Register a view's per-value-column read primitives, one per output column:
+/// `<view>_col<i>(keys...) -> <col_i sort>` looks up the view row by key and
+/// returns value column `i`. Lets the single-rule rebuild read the view's
+/// `(eclass, proof)` on the RHS (action) instead of joining it in the body.
+pub(crate) fn register_view_read(
+    eg: &mut EGraph,
+    view_name: &str,
+    key_sorts: Vec<ArcSort>,
+    out_sorts: Vec<ArcSort>,
+) {
+    for (col, out) in out_sorts.into_iter().enumerate() {
+        eg.add_read_primitive(
+            ViewCol {
+                name: view_col_prim_name(view_name, col),
+                view_name: view_name.to_string(),
+                key_sorts: key_sorts.clone(),
+                out_sort: out,
+                col,
+            },
+            None,
+        );
+    }
+}
+
+/// Reads value column `col` of a view row by its key (see [`register_view_read`]).
+#[derive(Clone)]
+struct ViewCol {
+    name: String,
+    view_name: String,
+    key_sorts: Vec<ArcSort>,
+    out_sort: ArcSort,
+    col: usize,
+}
+
+impl Primitive for ViewCol {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        let mut sig = self.key_sorts.clone();
+        sig.push(self.out_sort.clone());
+        SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
+    }
+}
+
+impl ReadPrim for ViewCol {
+    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let action = state.registry().lookup_table(&self.view_name)?;
+        let values = action.lookup_values(state.es(), args)?;
+        Some(values[self.col])
+    }
+}
 
 /// Register an eq-sort's single-term canonicalization primitives so the
 /// single-rule rebuild can canonicalize each child in its action: `uf_canon`

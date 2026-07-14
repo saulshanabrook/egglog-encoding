@@ -777,12 +777,30 @@ impl<'a> ProofInstrumentor<'a> {
         let uf_name = self.uf_name(&vi.sort_name);
         let index_atom = format!("({} {follower} {keys_str})", vi.name);
         let uf_atom = format!("(= (values {leader} {leader_pf}) ({uf_name} {follower}))");
-        let (query_view, eclass_var, view_prf) = if fd {
-            let (q, e, p) = self.query_fd_view(&fdecl.name, key_vars);
-            (q, Some(e), p)
+        // For FD views, read the eclass/proof value columns on the RHS (via the
+        // per-column read primitives) instead of joining the tuple view in the
+        // body — the body then only searches the `@UF` delta and the index.
+        let (body_view, rhs_view_read, eclass_var, view_prf) = if fd {
+            use crate::proofs::proof_container_rebuild::view_col_prim_name;
+            let e = self.fresh_var();
+            let col0 = view_col_prim_name(&view_name, 0);
+            if proofs {
+                let vp = self.fresh_var();
+                let col1 = view_col_prim_name(&view_name, 1);
+                let read =
+                    format!("(let {e} ({col0} {keys_str}))\n(let {vp} ({col1} {keys_str}))\n");
+                (String::new(), read, Some(e), vp)
+            } else {
+                (
+                    String::new(),
+                    format!("(let {e} ({col0} {keys_str}))\n"),
+                    Some(e),
+                    "()".to_string(),
+                )
+            }
         } else {
             let (q, p) = self.query_view_and_get_proof(&fdecl.name, key_vars);
-            (q, None, p)
+            (q, String::new(), None, p)
         };
 
         // Action: canonicalize every eq-sort key column and fold its congruence
@@ -820,8 +838,9 @@ impl<'a> ProofInstrumentor<'a> {
             "(rule ({uf_atom}
                     (!= {follower} {leader})
                     {index_atom}
-                    {query_view})
+                    {body_view})
                  (
+                  {rhs_view_read}
                   {lets}
                   {updated_view}
                   (delete ({view_name} {keys_str}))

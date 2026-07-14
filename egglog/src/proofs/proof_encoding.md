@@ -167,17 +167,20 @@ The index is a `:merge` function rather than a relation so that a `set` and a `d
   do; a plain relation resolves that conflict differently and can drift out of sync with
   the view under concurrent re-keying.
 
-The single rebuild rule is driven by the `UF_<Sort>` edge and canonicalizes *every*
-  eq-sort child in its action with the `uf_canon` primitive (the child's `UF_<Sort>`
-  leader, or the child itself when it has no row — the identity-on-miss lookup a plain
-  fact can't express):
+The single rebuild rule is driven by the `UF_<Sort>` edge and the index alone; it reads
+  the view row's `(eclass, proof)` on the *right-hand side* with per-value-column read
+  primitives (`ConsView_col0` / `ConsView_col1`) rather than joining the view in the body.
+  It then canonicalizes *every* eq-sort child in its action with the `uf_canon` primitive
+  (the child's `UF_<Sort>` leader, or the child itself when it has no row — the
+  identity-on-miss lookup a plain fact can't express):
 
 ```text
 (rule ((= (values leader pf) (UF_Math follower))
        (!= follower leader)
-       (ConsIndex_Math follower c0 c1)
-       (= (values e vp) (ConsView c0 c1)))
-      ((let nc0 (uf_canon c0))
+       (ConsIndex_Math follower c0 c1))
+      ((let e  (ConsView_col0 c0 c1))
+       (let vp (ConsView_col1 c0 c1))
+       (let nc0 (uf_canon c0))
        (let nc1 (uf_canon c1))
        (set (ConsView nc0 nc1) (values e ()))
        (set (ConsIndex_Math nc0 nc0 nc1) ()) (set (ConsIndex_Math nc1 nc0 nc1) ())
@@ -186,15 +189,18 @@ The single rebuild rule is driven by the `UF_<Sort>` edge and canonicalizes *eve
        :ruleset rebuilding :unsafe-seminaive :name "rebuild_rule" :internal-include-subsumed)
 ```
 
-`uf_canon` reads `UF_<Sort>` in the action, so the rule is `:unsafe-seminaive`; the
-  driving `UF_<Sort>` delta and the index make that read sound (every child that changes
-  produces a delta the rule fires on). The `(!= follower leader)` guard is required: it
-  keeps the rule from re-keying a row to itself when `follower` is already its own leader,
-  a no-op the fixpoint would otherwise never stop repeating. In proof mode the action folds
-  one `Congr` step per child onto the view proof; reflexive (unchanged) children drop in the
-  proof simplifier. A constructor view keeps a separate rule for its eclass *value* (the
-  view `:merge` rewrites it without ever seeing the row key, so it cannot be indexed);
-  container columns rebuild structurally rather than through `UF_<Sort>`.
+Keeping the view out of the body matters for performance: joining the tuple view there
+  roughly doubles the rebuild's cost per firing, whereas the RHS reads are direct keyed
+  lookups. `uf_canon` and the view reads touch tables in the action, so the rule is
+  `:unsafe-seminaive`; the driving `UF_<Sort>` delta and the index make those reads sound
+  (every child that changes produces a delta the rule fires on). The `(!= follower leader)`
+  guard is required: it keeps the rule from re-keying a row to itself when `follower` is
+  already its own leader, a no-op the fixpoint would otherwise never stop repeating. In
+  proof mode the action folds one `Congr` step per child onto the view proof; reflexive
+  (unchanged) children drop in the proof simplifier. A constructor view keeps a separate
+  rule for its eclass *value* (the view `:merge` rewrites it without ever seeing the row
+  key, so it cannot be indexed); container columns rebuild structurally rather than through
+  `UF_<Sort>`.
 
 ```text
 (function v3 () Math :no-merge :unextractable :internal-let)

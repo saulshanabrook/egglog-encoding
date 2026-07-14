@@ -11,7 +11,8 @@
   per-column fan-out. Each child eq-sort gets a hidden `:merge` term→row index, and one
   rule (driven by a `UF` edge, joined against the index) re-canonicalizes the whole row
   with a `uf_canon` primitive — mirroring how a native rebuild iterates the e-nodes that
-  reference a changed e-class.
+  reference a changed e-class. The rule reads the view row's `(eclass, proof)` on the RHS
+  via per-value-column read primitives rather than joining the tuple view in the body.
 - **Tuple-output functions.** A function may declare more than one output sort, e.g.
   `(function interval (Math) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))`. Such a
   function stores its outputs as separate value columns; the functional dependency is
