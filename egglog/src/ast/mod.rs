@@ -190,6 +190,7 @@ where
                     let_binding: f.internal_let,
                     term_constructor: f.term_constructor.clone(),
                     unextractable: f.unextractable,
+                    identity_vals: f.identity_vals,
                 },
             },
             GenericNCommand::AddRuleset(span, name) => {
@@ -767,6 +768,10 @@ where
         let_binding: bool,
         term_constructor: Option<String>,
         unextractable: bool,
+        /// Marks the first `k` value columns as identity columns: a merge that
+        /// leaves them unchanged is skipped and the existing row kept. Only
+        /// valid for merges that are idempotent on equal inputs.
+        identity_vals: Option<usize>,
     },
 
     /// Using the `ruleset` command, defines a new
@@ -1066,6 +1071,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1084,6 +1090,9 @@ where
                 }
                 if let Some(tc) = term_constructor {
                     write!(f, " :internal-term-constructor {tc}")?;
+                }
+                if let Some(k) = identity_vals {
+                    write!(f, " :internal-identity-vals {k}")?;
                 }
                 write!(f, ")")
             }
@@ -1345,6 +1354,10 @@ where
     /// For view tables in proof encoding: the constructor to use for building
     /// terms from the first n-1 children during extraction.
     pub term_constructor: Option<String>,
+    /// `:internal-identity-vals k`: the first `k` value columns are identity
+    /// columns — a merge that leaves them unchanged is skipped and the existing
+    /// row kept. Only valid for merges that are idempotent on equal inputs.
+    pub identity_vals: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1443,6 +1456,7 @@ impl FunctionDecl {
             internal_let: false,
             span,
             term_constructor: None,
+            identity_vals: None,
         }
     }
 
@@ -1467,6 +1481,7 @@ impl FunctionDecl {
             internal_let: false,
             span,
             term_constructor: None,
+            identity_vals: None,
         }
     }
 }
@@ -1492,6 +1507,7 @@ where
             internal_let: self.internal_let,
             span: self.span,
             term_constructor: self.term_constructor,
+            identity_vals: self.identity_vals,
         }
     }
 }
@@ -1908,6 +1924,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -1920,6 +1937,7 @@ where
                 let_binding,
                 term_constructor: term_constructor.map(&mut *fun),
                 unextractable,
+                identity_vals,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, fun(name)),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
@@ -2002,6 +2020,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2011,6 +2030,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2145,6 +2165,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2154,6 +2175,7 @@ where
                 let_binding,
                 term_constructor,
                 unextractable,
+                identity_vals,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, name),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {

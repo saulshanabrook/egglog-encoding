@@ -679,7 +679,6 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 /// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`), so `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
 /// leader. A two-key union-find is a `(child, parent)` relation (a user-provided
 /// `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a one-hop scan.
-/// Dispatching on the key arity keeps both correct.
 pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
     let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
         return value;

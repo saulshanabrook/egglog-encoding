@@ -912,9 +912,8 @@ impl EGraph {
     /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
     /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
     /// first as effects.
-    /// `self_ref` names the function this merge belongs to and its (peeked) backend id, so a
-    /// merge action block can write into the table being declared — e.g. the term encoding's
-    /// union-find, whose merge stages the displaced parent edge back into itself.
+    /// `self_ref` names the function this merge belongs to and its (peeked) backend id,
+    /// so the merge can write into the table being declared.
     fn translate_merge_to_mergefn(
         &self,
         merge: &ResolvedMerge,
@@ -1028,10 +1027,8 @@ impl EGraph {
         use egglog_bridge::{MergeAction, MergeFn};
         // Detected purely by shape: a term-constructor view with an eq-sort first output and a
         // second proof output (a `Unit` second column is a term-mode view, whose congruence
-        // merge is spelled out in its declaration). The proof shape is only ever emitted by the
-        // proof encoder, so we don't gate on `proofs_enabled` — that lets a re-parsed desugared
-        // program (run in a fresh, non-proof egraph) rebuild the same merge, which is what makes
-        // the encoding self-contained.
+        // merge is spelled out in its declaration). Not gated on `proofs_enabled`, so a
+        // re-parsed desugared program rebuilds the same merge.
         if !(decl.term_constructor.is_some()
             && num_outputs == 2
             && outputs[0].is_eq_sort()
@@ -1120,11 +1117,11 @@ impl EGraph {
     /// `(@UF max_ec) = (values min_ec (Trans (Sym max_pf) min_pf))` into itself.
     /// `uf_id` is the function's own backend id (see [`EGraph::peek_next_function_id`]).
     ///
-    /// Unlike the term-mode UF, whose merge is spelled out as a `:merge` action block in
-    /// the generated source, this one must be built in Rust: selecting which proof goes
-    /// with the smaller/larger parent uses the `proof-of-min`/`proof-of-max` primitives,
-    /// whose all-arguments-equal polymorphic type can't be given the `(S, Proof, S, Proof)`
-    /// argument types in typechecked source.
+    /// Built in Rust rather than spelled out in the generated source (as the
+    /// term-mode UF merge is): it selects proofs with `proof-of-min`/`proof-of-max`,
+    /// whose polymorphic type makes all arguments one sort, so their mixed
+    /// `(S, Proof, S, Proof)` call would not typecheck. Building the merge directly
+    /// calls them at the value level, where sorts don't apply.
     fn build_uf_self_merge(
         &self,
         uf_id: egglog_bridge::FunctionId,
@@ -1215,41 +1212,27 @@ impl EGraph {
         };
 
         use egglog_bridge::{DefaultVal, MergeFn};
-        // Identity/payload guard: the encoding's UF and congruence-view merges are idempotent on an
-        // unchanged eclass/parent (value column 0), so they opt into skip-on-unchanged — which is
-        // what lets them drop their equality guard. Ordinary functions keep the default (no guard).
-        let mut n_identity_vals = None;
         // This function's backend id (the id `add_table` below will assign, peeked
-        // deterministically), so its merge can write into its own table — the encoding's
-        // UF merge stages the displaced parent edge back into the UF.
+        // deterministically), so its merge can write into its own table.
         let own_id = self.backend.peek_next_function_id();
-        let is_encoding_uf = self
+        // The proof encoding's UF and congruence-view merges select proofs with the
+        // `proof-of-min`/`proof-of-max` primitives, whose polymorphic type makes all
+        // arguments one sort — the mixed `(S, Proof, S, Proof)` call would not
+        // typecheck in a source `:merge`, so those merges are built here at the value
+        // level (their declarations' `:merge (values old0 old1)` is shape-only).
+        // Every other merge — including the term encoding's — lowers from the
+        // declaration.
+        let is_proof_uf = self
             .proof_state
             .self_merge_uf_functions
-            .contains(&*decl.name);
-        // The encoding's UF and constructor views are `(keys) -> (value, {Unit|Proof})`
-        // tuples in both modes. With a `Unit` second column (term mode) the declaration
-        // carries its real merge as a `:merge` action block; with a `Proof` column the
-        // proof-composing merge isn't expressible in typechecked source and is built
-        // here, the source `:merge (values old0 old1)` being shape-only.
-        let proof_valued = |outputs: &[ArcSort]| outputs.len() == 2 && outputs[1].name() != "Unit";
-        let merge = if is_encoding_uf && proof_valued(&outputs) {
-            // Proof-mode UF `@UF : (S) -> (S, Proof)` (see `build_uf_self_merge`).
-            n_identity_vals = Some(1);
+            .contains(&*decl.name)
+            && num_outputs == 2
+            && outputs[1].name() != "Unit";
+        let merge = if is_proof_uf {
             self.build_uf_self_merge(own_id)?
         } else if let Some(m) = self.native_congruence_merge(decl, &outputs, num_outputs)? {
-            // Proof-mode constructor view `(children) -> (eclass, proof)`: resolve congruence via
-            // a :merge that stages the congruence edge into the per-sort UF table, instead of
-            // a rule-encoded self-join.
-            n_identity_vals = Some(1);
             m
         } else {
-            // Term-mode UF and constructor views carry their real merge in the
-            // generated source; they only opt into the identity guard here.
-            let is_term_view = decl.term_constructor.is_some() && num_outputs == 2;
-            if (is_encoding_uf || is_term_view) && decl.merge.is_some() {
-                n_identity_vals = Some(1);
-            }
             match decl.subtype {
                 FunctionSubtype::Constructor => MergeFn::UnionId,
                 FunctionSubtype::Custom => match &decl.merge {
@@ -1269,7 +1252,7 @@ impl EGraph {
                 .map(|sort| sort.column_ty(self.backend.base_values()))
                 .collect(),
             n_vals: num_outputs,
-            n_identity_vals,
+            n_identity_vals: decl.identity_vals,
             default: match decl.subtype {
                 FunctionSubtype::Constructor => DefaultVal::FreshId,
                 FunctionSubtype::Custom => DefaultVal::Fail,

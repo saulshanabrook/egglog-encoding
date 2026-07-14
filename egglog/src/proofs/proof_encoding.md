@@ -71,7 +71,7 @@ rebuild-time congruence (`rebuilding` + `rebuilding_cleanup`), and deferred dele
 (function UF_Math (Math) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
-    :unextractable :internal-hidden)
+    :unextractable :internal-hidden :internal-identity-vals 1)
 (rule ((= (values b pb) (UF_Math a))
        (= (values c pc) (UF_Math b))
        (!= b c))
@@ -88,6 +88,10 @@ If the key already had a different parent, the `:merge` action block runs:
   the key keeps the smaller of the two parents (the merge result),
   and the `set` in the block unions the larger parent with the smaller one,
   since both are equal to the key.
+The `:internal-identity-vals 1` annotation marks the parent column as the row's identity:
+  a merge whose parent is unchanged keeps the existing row without running the block.
+Without it, re-setting an existing edge would run the block and stage the same union
+  again, forever.
 
 *Union-find rules:*
 The only maintenance rule is path compression (in the `parent` ruleset), which flattens
@@ -104,7 +108,7 @@ We use the `ordering-max` and `ordering-min` egglog primitives
 (function AddView (i64 i64) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
-    :internal-term-constructor Add)
+    :internal-term-constructor Add :internal-identity-vals 1)
 (constructor to_delete_Add (i64 i64) view :internal-hidden)
 (constructor to_subsume_Add (i64 i64) view :internal-hidden)
 ```
@@ -282,10 +286,12 @@ column carries a real `Proof` instead of `()`:
 If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
 proves `k = p` (the key on the left). The `:merge` behaves as in term mode — keep the
 smaller parent, union the displaced one back into `UF_Math` — but also composes the
-proofs with `Trans`/`Sym`. Selecting which proof goes with which parent isn't
-expressible in typechecked source, so this merge is built in Rust
-(`EGraph::build_uf_self_merge`) and the `:merge (values old0 old1)` above is only the
-declaration's shape. Path compression flattens chains via `Trans`.
+proofs with `Trans`/`Sym`. It selects proofs with the `proof-of-min`/`proof-of-max`
+primitives, whose polymorphic type makes all arguments one sort; their mixed
+`S`/`Proof` call would not typecheck in source, so this merge is built in Rust
+(`EGraph::build_uf_self_merge`), which calls them at the value level, and the
+`:merge (values old0 old1)` above is only the declaration's shape. Path compression
+flattens chains via `Trans`.
 
 
 Similarly, the constructor view's proof column carries a proof of the row itself:

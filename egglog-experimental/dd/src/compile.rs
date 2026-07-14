@@ -7,17 +7,12 @@ use egglog_numeric_id::NumericId;
 /// Variable-width row stored in the host-side relation mirror.
 pub type Row = Box<[u32]>;
 
-/// One expression node of a compiled merge program, mirroring the
-/// `egglog_bridge::MergeFn` every backend receives in its `FunctionConfig`
-/// (flattened by `translate_merge_program` in lib.rs for host-side row
-/// evaluation).
-///
-/// This is not the surface `Expr`: the frontend has already resolved variables
-/// to physical operands — `old`/`new` (`oldN`/`newN` for tuple outputs) to
-/// value-column reads, `let`-bound names to environment slots, constants to
-/// interned values. `AssertEq` and `UnionId` are not expressions at all but the
-/// merge policies of `:no-merge` functions and constructor tables, which have
-/// no source form.
+/// One expression node of a compiled merge program: the `egglog_bridge::MergeFn`
+/// received in `FunctionConfig`, flattened by `translate_merge_program` for
+/// host-side row evaluation. Variables are already resolved to physical operands
+/// (value columns, `let` slots, interned constants); `AssertEq` and `UnionId` are
+/// the merge policies of `:no-merge` functions and constructor tables, which have
+/// no expression form.
 #[derive(Clone, Debug)]
 pub enum MergeExpr {
     /// Panic unless the old and new values match (`:no-merge`).

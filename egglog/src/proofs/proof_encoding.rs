@@ -28,9 +28,9 @@ pub(crate) struct EncodingState {
     pub original_typechecking: Option<Box<EGraph>>,
     pub proofs_enabled: bool,
     pub proof_testing: bool,
-    /// The per-sort union-find function names (`@UF`). `declare_function`
-    /// (lib.rs) gives these the identity-column merge guard, and in proof mode
-    /// builds their proof-composing merge (see `EGraph::build_uf_self_merge`).
+    /// The per-sort union-find function names (`@UF`). In proof mode,
+    /// `declare_function` (lib.rs) builds their proof-composing merge
+    /// (see `EGraph::build_uf_self_merge`).
     pub self_merge_uf_functions: HashSet<String>,
     pub proof_names: EncodingNames,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe
@@ -133,17 +133,12 @@ impl<'a> ProofInstrumentor<'a> {
         self.declare_sort_eq(sort_name)
     }
 
-    /// Declare a sort's union-find: a function `@UF : (S) -> (S, {Unit|Proof})`
-    /// mapping each term to its parent, plus a proof `key = parent` (`()` in term
-    /// mode). Union `a, b` writes
-    /// `(set (@UF (ordering-max a b)) (values (ordering-min a b) proof))`; on a
-    /// conflict its `:merge` keeps the smaller parent and unions the displaced one
-    /// back into `@UF`. In term mode that merge is spelled out in the declaration;
-    /// in proof mode it also composes the proofs and is built in
-    /// [`EGraph::build_uf_self_merge`] (proof orientation isn't expressible in
-    /// typechecked source), so its `:merge (values old0 old1)` is shape-only.
-    /// A `path_compress` rule flattens chains, composing via `Trans` in proof mode.
-    /// Proof mode also emits the per-sort `term_proof` table and AST constructor.
+    /// Declare a sort's union-find `@UF : (S) -> (S, {Unit|Proof})`, mapping each
+    /// term to its parent plus a proof `key = parent` (`()` in term mode). Its
+    /// `:merge` resolves conflicting parents (see `proof_encoding.md`); the
+    /// proof-mode merge is built in [`EGraph::build_uf_self_merge`]. Also emits
+    /// the `path_compress` rule and, in proof mode, the per-sort `term_proof`
+    /// table and AST constructor.
     fn declare_sort_eq(&mut self, sort_name: &str) -> Vec<Command> {
         let proofs = self.proofs_enabled();
         let uf_name = self.uf_name(sort_name);
@@ -157,8 +152,8 @@ impl<'a> ProofInstrumentor<'a> {
         let pb = self.egraph.parser.symbol_gen.fresh("uf_pb");
         let pc = self.egraph.parser.symbol_gen.fresh("uf_pc");
 
-        // Mark `@UF` so `declare_function` gives its merge the identity-column
-        // guard, and in proof mode builds the proof-composing merge.
+        // Mark `@UF` so `declare_function` builds its proof-composing merge in
+        // proof mode.
         self.egraph
             .proof_state
             .self_merge_uf_functions
@@ -192,7 +187,7 @@ impl<'a> ProofInstrumentor<'a> {
 
         let code = format!(
             "{proof_tables}
-             (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden)
+             (function {uf_name} ({sort_name}) ({sort_name} {proof_type}) :merge {uf_merge} :unextractable :internal-hidden :internal-identity-vals 1)
              (rule ((= (values {b} {pb}) ({uf_name} {a}))
                     (= (values {c} {pc}) ({uf_name} {b}))
                     (!= {b} {c}))
@@ -221,9 +216,10 @@ impl<'a> ProofInstrumentor<'a> {
         let delete_subsume_ruleset = self.proof_names().delete_subsume_ruleset_name.clone();
         let fresh_name = self.egraph.parser.symbol_gen.fresh("delete_rule");
 
-        // The FD tuple view is keyed by children only, so match its value tuple to delete/subsume
-        // by key (the bridge re-reads every value column when subsuming a tuple-output view).
-        if self.is_fd_view(fdecl) {
+        // A constructor's FD tuple view is keyed by children only, so match its value
+        // tuple to delete/subsume by key (the bridge re-reads every value column when
+        // subsuming a tuple-output view).
+        if fdecl.subtype == FunctionSubtype::Constructor {
             let e = self.fresh_var();
             let pf = self.fresh_var();
             let e2 = self.fresh_var();
@@ -418,12 +414,6 @@ impl<'a> ProofInstrumentor<'a> {
     /// The view table stores child terms and their eclass.
     /// The view table is mutated using delete, but we never delete from term tables.
     /// We re-use the original name of the function for the term table.
-    /// Whether this function's view is the functional-dependency tuple view
-    /// `(children) -> (eclass, {Unit|Proof})` whose `:merge` resolves congruence.
-    fn is_fd_view(&self, fdecl: &ResolvedFunctionDecl) -> bool {
-        fdecl.subtype == FunctionSubtype::Constructor
-    }
-
     fn term_and_view(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
         let schema = &fdecl.schema;
         let out_type = schema.output().clone();
@@ -482,13 +472,11 @@ impl<'a> ProofInstrumentor<'a> {
         }
         // A constructor's view is a functional-dependency tuple
         // `(children) -> (eclass, {Unit|Proof})` whose `:merge` resolves congruence:
-        // two rows conflicting on the same children are congruent, so the merge
-        // keeps the smaller eclass and unions the two eclasses in the sort's `@UF`.
-        // In term mode the merge is spelled out here; in proof mode it also composes
-        // proofs and is built in `EGraph::native_congruence_merge` (its
-        // `:merge (values old0 old1)` is shape-only). Custom functions keep the
+        // it keeps the smaller eclass and unions the two eclasses in the sort's
+        // `@UF`. In proof mode that merge is built in
+        // `EGraph::native_congruence_merge`. Custom functions keep the
         // `(children eclass) -> {Unit|Proof}` form with a merge rule.
-        let fd_view = self.is_fd_view(fdecl);
+        let fd_view = fdecl.subtype == FunctionSubtype::Constructor;
         let view_decl = if fd_view {
             let congruence_merge = if self.proofs_enabled() {
                 "(values old0 old1)".to_string()
@@ -500,7 +488,7 @@ impl<'a> ProofInstrumentor<'a> {
                 )
             };
             format!(
-                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {congruence_merge} :internal-term-constructor {name}{view_flags})"
+                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {congruence_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         } else {
             format!(
@@ -526,162 +514,55 @@ impl<'a> ProofInstrumentor<'a> {
         "".to_string()
     }
 
-    /// Rules that update the views when children change.
-    fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
-        if self.is_fd_view(fdecl) {
-            self.rebuilding_rules_fd(fdecl)
-        } else {
-            self.rebuilding_rules_fanout(fdecl)
-        }
-    }
-
-    /// Rebuild rules for a custom function's all-key view
-    /// `(children eclass) -> {Unit|Proof}`, fanned out one rule per rebuildable
-    /// column (children and output alike). The single-key `@UF` has no row for a
-    /// canonical (root) node, so a column that is already canonical simply doesn't
-    /// match — no self-loops or default lookups needed. Each rule replaces one
-    /// column with its leader, re-setting the view row and deleting the stale one;
-    /// a row with several stale columns is canonicalized across rebuild iterations.
-    /// In proof mode each rule composes the updated view proof (`Congr`), and a
-    /// container update records the rebuilt container's `<CSort>Proof`.
-    fn rebuilding_rules_fanout(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
-        let proofs = self.proofs_enabled();
-        let types = fdecl.resolved_schema.view_types();
-        if !types
-            .iter()
-            .any(|t| t.is_eq_sort() || t.is_eq_container_sort())
-        {
-            return vec![];
-        }
-        let view_name = self.view_name(&fdecl.name);
-        let child = |i: usize| format!("c{i}_");
-        let children_vec: Vec<String> = (0..types.len()).map(child).collect();
-        let children = format!("{}", ListDisplay(&children_vec, " "));
-        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
-
-        let mut rules = String::new();
-        for (i, ty) in types.iter().enumerate() {
-            if ty.is_eq_container_sort() {
-                let ci = child(i);
-                let rebuilt = format!("c{i}_rebuilt_");
-                let value_prim = self.ensure_container_rebuild(ty);
-                let (query_view, view_prf) =
-                    self.query_view_and_get_proof(&fdecl.name, &children_vec);
-                let mut updated = children_vec.clone();
-                updated[i] = rebuilt.clone();
-                let (proof_lets, pf_arg, cproof_set) = if proofs {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let trans = self.proof_names().eq_trans_constructor.clone();
-                    let sym = self.proof_names().eq_sym_constructor.clone();
-                    let proof_prim = self.ensure_container_rebuild_proof(ty);
-                    let rebuild_pf = self.fresh_var();
-                    let new_pf = self.fresh_var();
-                    let cproof = self.term_proof_name(ty.name());
-                    (
-                        format!(
-                            "(let {rebuild_pf} ({proof_prim} {ci}))
-                             (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
-                        ),
-                        new_pf,
-                        format!(
-                            "(set ({cproof} {rebuilt}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
-                        ),
-                    )
-                } else {
-                    (String::new(), "()".to_string(), String::new())
-                };
-                let updated_view = self.update_view(&fdecl.name, &updated, &pf_arg);
-                let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-                rules.push_str(&format!(
-                    "(rule ({query_view}
-                            (= {rebuilt} ({value_prim} {ci}))
-                            (!= {ci} {rebuilt}))
-                         (
-                          {proof_lets}
-                          {updated_view}
-                          {cproof_set}
-                          (delete ({view_name} {children}))
-                         )
-                          :ruleset {rebuilding_ruleset} :naive :name \"{fresh_name}\" :internal-include-subsumed)\n"
-                ));
-                continue;
-            }
-            if !ty.is_eq_sort() {
-                continue;
-            }
-            let ci = child(i);
-            let leader = format!("c{i}_leader_");
-            let uf_name = self.uf_name(ty.name());
-            let (query_view, view_prf) = self.query_view_and_get_proof(&fdecl.name, &children_vec);
-            let uf_prf = self.fresh_var();
-            let (proof_lets, pf_arg) = if proofs {
-                let congr = self.proof_names().congr_constructor.clone();
-                let new_pf = self.fresh_var();
-                (
-                    format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
-                    new_pf,
-                )
-            } else {
-                (String::new(), "()".to_string())
-            };
-            let mut updated = children_vec.clone();
-            updated[i] = leader.clone();
-            let updated_view = self.update_view(&fdecl.name, &updated, &pf_arg);
-            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-            rules.push_str(&format!(
-                "(rule ({query_view}
-                        (= (values {leader} {uf_prf}) ({uf_name} {ci}))
-                        (!= {ci} {leader}))
-                     (
-                      {proof_lets}
-                      {updated_view}
-                      (delete ({view_name} {children}))
-                     )
-                      :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
-        }
-        self.parse_program(&rules)
-    }
-
-    /// Rebuild rules for a constructor's functional-dependency view
-    /// `(children) -> (eclass, {Unit|Proof})`, fanned out per eq-sort column: the
-    /// single-key `@UF` has no row for a canonical column, so a combined
-    /// all-columns join would stall when any column is already canonical.
+    /// Rebuild rules that keep a table's view canonical, fanned out one rule per
+    /// rebuildable column (a canonical column has no `@UF` row, so it simply
+    /// doesn't match). A stale column is replaced by its `@UF` leader (eq-sorts)
+    /// or its rebuilt container.
     ///
-    /// - A child update (`ci -> leader`) re-keys the row: `set` at the
-    ///   canonicalized children (triggering the congruence `:merge` on collision)
-    ///   and `delete` the stale row. In proof mode the new view proof is
-    ///   `Congr(view_prf, i, uf_pf)`.
-    /// - The eclass value update (`eclass -> leader`) keeps the same key, so it
-    ///   just `set`s the smaller eclass (the view `:merge` keeps the min) — no
-    ///   delete. In proof mode the proof is
-    ///   `Trans(Sym uf_pf, view_prf) : leader = f(children)`.
-    fn rebuilding_rules_fd(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
+    /// A constructor's functional-dependency view `(children) -> (eclass, {Unit|Proof})`
+    /// re-keys the row for a child update — `set` at the canonicalized children
+    /// (congruence resolves collisions), then `delete` — and re-`set`s the same key
+    /// for an eclass update (the view `:merge` keeps the min). A custom function's
+    /// all-key view `(children eclass) -> {Unit|Proof}` re-keys every column.
+    /// In proof mode each rule composes the updated view proof, and a container
+    /// update records the rebuilt container's `<CSort>Proof`.
+    fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
+        // Constructors use the FD view keyed by children; custom functions the all-key view.
+        let fd = fdecl.subtype == FunctionSubtype::Constructor;
         let proofs = self.proofs_enabled();
         let types = fdecl.resolved_schema.view_types();
-        // The last column is the eclass (output); the rest are children (keys).
         let n = types.len();
         let child = |i: usize| format!("c{i}_");
-        let children_vars: Vec<String> = (0..n - 1).map(child).collect();
-        let child_types = &types[..n - 1];
-        let eclass_type = &types[n - 1];
-
+        // Key columns of the view row: children for FD views, every column otherwise.
+        let n_keys = if fd { n - 1 } else { n };
+        let key_vars: Vec<String> = (0..n_keys).map(child).collect();
         let view_name = self.view_name(&fdecl.name);
-        let children_str = ListDisplay(&children_vars, " ");
+        let keys_str = format!("{}", ListDisplay(&key_vars, " "));
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
 
         let mut rules = String::new();
-        // One rule per rebuildable child (re-keys the row via delete + set).
-        for (i, ty) in child_types.iter().enumerate() {
-            if ty.is_eq_container_sort() {
-                let ci = child(i);
-                let rebuilt = format!("c{i}_rebuilt_");
+        // One rule per rebuildable key column (re-keys the row via set + delete).
+        for (i, ty) in types[..n_keys].iter().enumerate() {
+            let is_container = ty.is_eq_container_sort();
+            if !is_container && !ty.is_eq_sort() {
+                continue;
+            }
+            let ci = child(i);
+            let canon = format!("c{i}_canon_");
+            let (query_view, eclass_var, view_prf) = if fd {
+                let (q, e, p) = self.query_fd_view(&fdecl.name, &key_vars);
+                (q, Some(e), p)
+            } else {
+                let (q, p) = self.query_view_and_get_proof(&fdecl.name, &key_vars);
+                (q, None, p)
+            };
+            // Canonicalize the column with the container rebuild primitive or a `@UF`
+            // lookup, and build the proof pieces. Container-reading rules are `:naive`
+            // (the primitive reads `@UF` tables the rule doesn't join on).
+            let (canon_fact, naive, proof_lets, pf_arg, cproof_set) = if is_container {
                 let value_prim = self.ensure_container_rebuild(ty);
-                let (query_view, eclass_var, view_prf) =
-                    self.query_fd_view(&fdecl.name, &children_vars);
-                let mut updated = children_vars.clone();
-                updated[i] = rebuilt.clone();
-                let (proof_lets, pf_arg, cproof_set) = if proofs {
+                let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
+                if proofs {
                     let congr = self.proof_names().congr_constructor.clone();
                     let trans = self.proof_names().eq_trans_constructor.clone();
                     let sym = self.proof_names().eq_sym_constructor.clone();
@@ -690,98 +571,101 @@ impl<'a> ProofInstrumentor<'a> {
                     let new_pf = self.fresh_var();
                     let cproof = self.term_proof_name(ty.name());
                     (
+                        canon_fact,
+                        ":naive ",
                         format!(
                             "(let {rebuild_pf} ({proof_prim} {ci}))
                              (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
                         ),
                         new_pf,
                         format!(
-                            "(set ({cproof} {rebuilt}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
+                            "(set ({cproof} {canon}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
                         ),
                     )
                 } else {
-                    (String::new(), "()".to_string(), String::new())
-                };
-                let updated_view = self.update_fd_view(&fdecl.name, &updated, &eclass_var, &pf_arg);
-                let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-                rules.push_str(&format!(
-                    "(rule ({query_view}
-                            (= {rebuilt} ({value_prim} {ci}))
-                            (!= {ci} {rebuilt}))
-                         (
-                          {proof_lets}
-                          {updated_view}
-                          {cproof_set}
-                          (delete ({view_name} {children_str}))
-                         )
-                          :ruleset {rebuilding_ruleset} :naive :name \"{fresh_name}\" :internal-include-subsumed)\n"
-                ));
-                continue;
-            }
-            if !ty.is_eq_sort() {
-                continue;
-            }
-            let ci = child(i);
-            let leader = format!("c{i}_leader_");
-            let uf_name = self.uf_name(ty.name());
-            let (query_view, eclass_var, view_prf) =
-                self.query_fd_view(&fdecl.name, &children_vars);
+                    (
+                        canon_fact,
+                        ":naive ",
+                        String::new(),
+                        "()".to_string(),
+                        String::new(),
+                    )
+                }
+            } else {
+                let uf_name = self.uf_name(ty.name());
+                let uf_prf = self.fresh_var();
+                let canon_fact = format!("(= (values {canon} {uf_prf}) ({uf_name} {ci}))");
+                if proofs {
+                    let congr = self.proof_names().congr_constructor.clone();
+                    let new_pf = self.fresh_var();
+                    (
+                        canon_fact,
+                        "",
+                        format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
+                        new_pf,
+                        String::new(),
+                    )
+                } else {
+                    (
+                        canon_fact,
+                        "",
+                        String::new(),
+                        "()".to_string(),
+                        String::new(),
+                    )
+                }
+            };
+            let mut updated = key_vars.clone();
+            updated[i] = canon.clone();
+            let updated_view = match &eclass_var {
+                Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
+                None => self.update_view(&fdecl.name, &updated, &pf_arg),
+            };
+            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+            rules.push_str(&format!(
+                "(rule ({query_view}
+                        {canon_fact}
+                        (!= {ci} {canon}))
+                     (
+                      {proof_lets}
+                      {updated_view}
+                      {cproof_set}
+                      (delete ({view_name} {keys_str}))
+                     )
+                      :ruleset {rebuilding_ruleset} {naive}:name \"{fresh_name}\" :internal-include-subsumed)\n"
+            ));
+        }
+        // FD views: one rule for the eclass value (same key, `set` only; the view
+        // merge keeps the min).
+        if fd {
+            let eclass_uf_name = self.uf_name(types[n - 1].name());
+            let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
+            let eclass_canon = self.fresh_var();
             let uf_prf = self.fresh_var();
             let (proof_lets, pf_arg) = if proofs {
-                let congr = self.proof_names().congr_constructor.clone();
+                let trans = self.proof_names().eq_trans_constructor.clone();
+                let sym = self.proof_names().eq_sym_constructor.clone();
                 let new_pf = self.fresh_var();
                 (
-                    format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
+                    format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
                     new_pf,
                 )
             } else {
                 (String::new(), "()".to_string())
             };
-            let mut updated = children_vars.clone();
-            updated[i] = leader.clone();
-            let updated_view = self.update_fd_view(&fdecl.name, &updated, &eclass_var, &pf_arg);
+            let updated_view = self.update_fd_view(&fdecl.name, &key_vars, &eclass_canon, &pf_arg);
             let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
             rules.push_str(&format!(
                 "(rule ({query_view}
-                        (= (values {leader} {uf_prf}) ({uf_name} {ci}))
-                        (!= {ci} {leader}))
+                        (= (values {eclass_canon} {uf_prf}) ({eclass_uf_name} {eclass_var}))
+                        (!= {eclass_var} {eclass_canon}))
                      (
                       {proof_lets}
                       {updated_view}
-                      (delete ({view_name} {children_str}))
                      )
                       :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
             ));
         }
-        // One rule for the eclass value (same key, `set` only; the view merge keeps the min).
-        let eclass_uf_name = self.uf_name(eclass_type.name());
-        let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &children_vars);
-        let eclass_leader = self.fresh_var();
-        let uf_prf = self.fresh_var();
-        let (proof_lets, pf_arg) = if proofs {
-            let trans = self.proof_names().eq_trans_constructor.clone();
-            let sym = self.proof_names().eq_sym_constructor.clone();
-            let new_pf = self.fresh_var();
-            (
-                format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
-                new_pf,
-            )
-        } else {
-            (String::new(), "()".to_string())
-        };
-        let updated_view =
-            self.update_fd_view(&fdecl.name, &children_vars, &eclass_leader, &pf_arg);
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-        rules.push_str(&format!(
-            "(rule ({query_view}
-                    (= (values {eclass_leader} {uf_prf}) ({eclass_uf_name} {eclass_var}))
-                    (!= {eclass_var} {eclass_leader}))
-                 (
-                  {proof_lets}
-                  {updated_view}
-                 )
-                  :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
-        ));
         self.parse_program(&rules)
     }
 
@@ -801,7 +685,7 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// Subsumed-table rebuild: one rule per eq-sort column, mirroring
-    /// [`Self::rebuilding_rules_fanout`] (the single-key `@UF` has no row for a
+    /// [`Self::rebuilding_rules`] (the single-key `@UF` has no row for a
     /// canonical node, so a per-column lookup only fires when there is work).
     /// The `@UF` proof column is unused for subsumed rows.
     fn rebuilding_subsumed_rules_fanout(
