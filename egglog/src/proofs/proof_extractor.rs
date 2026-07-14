@@ -1,4 +1,5 @@
 use crate::ast::FunctionSubtype;
+use crate::extract::find_canonical;
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
 use crate::{ArcSort, EGraph, Value};
@@ -143,40 +144,6 @@ pub(crate) fn extract_root(
     sort: ArcSort,
 ) -> Option<TermId> {
     RootExtractor::new().extract(egraph, termdag, value, &sort)
-}
-
-fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
-    let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
-        return value;
-    };
-
-    let Some(uf_func) = egraph.functions.get(uf_name) else {
-        return value;
-    };
-
-    if uf_func.schema.input.len() == 1 {
-        let mut canonical = value;
-        loop {
-            let next = egraph
-                .backend
-                .lookup_row(uf_func.backend_id, &[canonical])
-                .map(|row| row[1]);
-            match next {
-                Some(next) if next != canonical => canonical = next,
-                _ => return canonical,
-            }
-        }
-    }
-
-    let mut canonical = value;
-    egraph
-        .backend
-        .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-            if row.vals[0] == value {
-                canonical = row.vals[1];
-            }
-        });
-    canonical
 }
 
 #[cfg(test)]

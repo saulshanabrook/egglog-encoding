@@ -7,19 +7,39 @@ use egglog_numeric_id::NumericId;
 /// Variable-width row stored in the host-side relation mirror.
 pub type Row = Box<[u32]>;
 
-/// A backend-neutral merge expression retained for host-side evaluation.
+/// One expression node of a compiled merge program, mirroring the
+/// `egglog_bridge::MergeFn` every backend receives in its `FunctionConfig`
+/// (flattened by `translate_merge_program` in lib.rs for host-side row
+/// evaluation).
+///
+/// This is not the surface `Expr`: the frontend has already resolved variables
+/// to physical operands — `old`/`new` (`oldN`/`newN` for tuple outputs) to
+/// value-column reads, `let`-bound names to environment slots, constants to
+/// interned values. `AssertEq` and `UnionId` are not expressions at all but the
+/// merge policies of `:no-merge` functions and constructor tables, which have
+/// no source form.
 #[derive(Clone, Debug)]
 pub enum MergeExpr {
+    /// Panic unless the old and new values match (`:no-merge`).
     AssertEq,
+    /// Resolve the conflict by congruence (constructor tables).
     UnionId,
+    /// The old value of the column being merged.
     Old,
+    /// The new value of the column being merged.
     New,
+    /// The old value of the `i`th output column (tuple-output merges).
     OldCol(usize),
+    /// The new value of the `i`th output column (tuple-output merges).
     NewCol(usize),
+    /// A `let`-bound value from the merge block, by environment slot.
     LetVar(usize),
     Const(u32),
     Primitive(ExternalFunctionId, Vec<MergeExpr>),
+    /// The value of a function call; a miss is an error unless the target
+    /// mints fresh ids.
     Function(FunctionId, Vec<MergeExpr>),
+    /// The value of a function call, defaulting on a miss instead of erroring.
     Lookup(FunctionId, Vec<MergeExpr>),
 }
 

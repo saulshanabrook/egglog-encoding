@@ -28,10 +28,9 @@ pub(crate) struct EncodingState {
     pub original_typechecking: Option<Box<EGraph>>,
     pub proofs_enabled: bool,
     pub proof_testing: bool,
-    /// Non-proof term encoding: the per-sort single self-referential union-find
-    /// function names (`@UF : (S) -> S`). `declare_function` (lib.rs) attaches
-    /// the native self-referential `:merge` (see `EGraph::build_uf_self_merge`)
-    /// to these, overriding their placeholder source `:merge`.
+    /// The per-sort union-find function names (`@UF`). `declare_function`
+    /// (lib.rs) gives these the identity-column merge guard, and in proof mode
+    /// builds their proof-composing merge (see `EGraph::build_uf_self_merge`).
     pub self_merge_uf_functions: HashSet<String>,
     pub proof_names: EncodingNames,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe
@@ -84,37 +83,31 @@ impl<'a> ProofInstrumentor<'a> {
         let uf_name = self.uf_name(type_name);
         let smaller = format!("(ordering-min {lhs} {rhs})");
         let larger = format!("(ordering-max {lhs} {rhs})");
-        // Non-proof: the union-find is a single self-referential function
-        // `@UF : (S) -> S` keyed by the larger endpoint; the native `:merge`
-        // resolves conflicts (keeps the min, unions the displaced parent).
+        // The union-find `@UF` is keyed by the larger endpoint; its `:merge`
+        // resolves conflicting parents.
         if !self.egraph.proof_state.proofs_enabled {
             return format!("(set ({uf_name} {larger}) {smaller})");
         }
-        let proof = if self.egraph.proof_state.proofs_enabled {
-            let to_ast_constructor = self
-                .proof_names()
-                .sort_to_ast_constructor
-                .get(type_name)
-                .unwrap();
-            let rule_constructor = &self.proof_names().rule_constructor;
-            let fiat_constructor = &self.proof_names().fiat_constructor;
-            match justification {
-                Justification::Rule(rule_name, proof_list) => format!(
-                    "({rule_constructor} {rule_name} {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
-                Justification::Fiat => format!(
-                    "({fiat_constructor} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
-                Justification::Merge(_func_name, _proof1, _proof2) => panic!(
-                    "Merge functions do not include union actions, so proof should not be by merge"
-                ),
-                Justification::Proof(existing_proof) => existing_proof.clone(),
-            }
-        } else {
-            "()".to_string()
+        let to_ast_constructor = self
+            .proof_names()
+            .sort_to_ast_constructor
+            .get(type_name)
+            .unwrap();
+        let rule_constructor = &self.proof_names().rule_constructor;
+        let fiat_constructor = &self.proof_names().fiat_constructor;
+        let proof = match justification {
+            Justification::Rule(rule_name, proof_list) => format!(
+                "({rule_constructor} {rule_name} {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
+            ),
+            Justification::Fiat => format!(
+                "({fiat_constructor} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
+            ),
+            Justification::Merge(_func_name, _proof1, _proof2) => panic!(
+                "Merge functions do not include union actions, so proof should not be by merge"
+            ),
+            Justification::Proof(existing_proof) => existing_proof.clone(),
         };
-        // Single self-referential UF `@UF : (S) -> (S, Proof)` keyed by the larger
-        // endpoint; value column 0 = smaller parent, column 1 = `proof` (larger = smaller).
+        // Proof-mode `@UF : (S) -> (S, Proof)`: the parent plus a proof `larger = smaller`.
         format!("(set ({uf_name} {larger}) (values {smaller} {proof}))")
     }
 
@@ -144,14 +137,16 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
-    /// Proof-mode `declare_sort`: the union-find is a SINGLE self-referential
-    /// function `@UF : (S) -> (S, Proof)` (native tuple, reusing `uf_name`). Value
-    /// column 0 is the parent, column 1 a proof `key = parent`. Union `a, b` writes
-    /// `(set (@UF (ordering-max a b)) (values (ordering-min a b) proof))`;
-    /// `declare_function` attaches the native self-referential `:merge` (see
-    /// [`EGraph::build_uf_self_merge`]), overriding the `:merge (values old0 old1)`
-    /// placeholder. A proof-composing `path_compress` rule flattens cross-key chains
-    /// via `Trans`. Also emits the per-sort `term_proof` table and AST constructor.
+    /// Proof-mode `declare_sort`: the union-find is a function
+    /// `@UF : (S) -> (S, Proof)` mapping each term to its parent and a proof
+    /// `key = parent`. Union `a, b` writes
+    /// `(set (@UF (ordering-max a b)) (values (ordering-min a b) proof))`; on a
+    /// conflict its `:merge` keeps the smaller parent and unions the displaced one
+    /// back into `@UF`, composing proofs. That merge is built in
+    /// [`EGraph::build_uf_self_merge`] (proof orientation isn't expressible in
+    /// typechecked source), so the `:merge (values old0 old1)` below is shape-only.
+    /// A proof-composing `path_compress` rule flattens chains via `Trans`. Also
+    /// emits the per-sort `term_proof` table and AST constructor.
     fn declare_sort_proof(&mut self, sort_name: &str) -> Vec<Command> {
         let uf_name = self.uf_name(sort_name);
         let proof_type = self.proof_type_str().to_string();
@@ -167,7 +162,7 @@ impl<'a> ProofInstrumentor<'a> {
         let pb = self.egraph.parser.symbol_gen.fresh("uf_pb");
         let pc = self.egraph.parser.symbol_gen.fresh("uf_pc");
 
-        // Mark `@UF` so `declare_function` attaches the native self-referential proof merge.
+        // Mark `@UF` so `declare_function` builds its proof-composing merge.
         self.egraph
             .proof_state
             .self_merge_uf_functions
@@ -190,15 +185,12 @@ impl<'a> ProofInstrumentor<'a> {
         self.parse_program(&code)
     }
 
-    /// Non-proof `declare_sort`: the whole union-find is a SINGLE
-    /// self-referential function `@UF : (S) -> S` (reusing `uf_name`), with a
-    /// native `:merge` (built in [`EGraph::build_uf_self_merge`], attached in
-    /// `declare_function`). Union `a, b` writes `(set (@UF (ordering-max a b))
-    /// (ordering-min a b))`; on an FD conflict the merge keeps the min and unions
-    /// the displaced parent back into `@UF`, so the `single_parent` /
-    /// `uf_function_index` rulesets are unnecessary. `path_compress` is kept to
-    /// flatten cross-key chains (the encoder reads `@UF` as a single
-    /// identity-on-miss lookup).
+    /// Term-mode `declare_sort`: the union-find is a function `@UF : (S) -> S`
+    /// mapping each term to its parent. Union `a, b` writes
+    /// `(set (@UF (ordering-max a b)) (ordering-min a b))`; on a conflict its
+    /// `:merge` keeps the smaller parent and unions the displaced one back into
+    /// `@UF`, so a `set` is all a union takes. A `path_compress` rule flattens
+    /// chains (the encoder reads `@UF` as an identity-on-miss lookup).
     fn declare_sort_non_proof(&mut self, sort_name: &str) -> Vec<Command> {
         let uf_name = self.uf_name(sort_name);
         let fresh_name = self.egraph.parser.symbol_gen.fresh("uf_path_compress");
@@ -207,18 +199,18 @@ impl<'a> ProofInstrumentor<'a> {
         let b = self.egraph.parser.symbol_gen.fresh("uf_b");
         let c = self.egraph.parser.symbol_gen.fresh("uf_c");
 
-        // Mark `@UF` so `declare_function` attaches the native self-referential
-        // merge instead of lowering the placeholder `:merge (ordering-min old new)`.
+        // Mark `@UF` so `declare_function` gives its merge the identity-column
+        // guard (skip when the parent is unchanged).
         self.egraph
             .proof_state
             .self_merge_uf_functions
             .insert(uf_name.clone());
 
-        // The source `:merge (ordering-min old new)` is a valid placeholder so the
-        // function typechecks; `declare_function` overrides it with the native
-        // self-referential merge (recursive parent-union).
         let code = format!(
-            "(function {uf_name} ({sort_name}) {sort_name} :merge (ordering-min old new) :unextractable :internal-hidden)
+            "(function {uf_name} ({sort_name}) {sort_name}
+                 :merge ((set ({uf_name} (ordering-max old new)) (ordering-min old new))
+                         (ordering-min old new))
+                 :unextractable :internal-hidden)
              (rule ((= {b} ({uf_name} {a}))
                     (= {c} ({uf_name} {b}))
                     (!= {b} {c}))
@@ -479,7 +471,7 @@ impl<'a> ProofInstrumentor<'a> {
                 &rebuilding_ruleset,
             )
         } else if self.native_merge_view(fdecl) {
-            // Congruence is resolved by the view's native `:merge`; no rule needed.
+            // Congruence is resolved by the view's `:merge`; no rule needed.
             String::new()
         } else {
             self.handle_congruence(fdecl, &child_names, &rebuilding_ruleset)
@@ -492,7 +484,7 @@ impl<'a> ProofInstrumentor<'a> {
     /// The view table is mutated using delete, but we never delete from term tables.
     /// We re-use the original name of the function for the term table.
     /// Whether this function's view is the proof-mode functional-dependency tuple view
-    /// `(children) -> (eclass, proof)` whose native `:merge` resolves congruence.
+    /// `(children) -> (eclass, proof)` whose `:merge` resolves congruence.
     fn native_merge_view(&self, fdecl: &ResolvedFunctionDecl) -> bool {
         fdecl.subtype == FunctionSubtype::Constructor && self.egraph.proof_state.proofs_enabled
     }
@@ -554,7 +546,7 @@ impl<'a> ProofInstrumentor<'a> {
             view_flags.push_str(" :internal-let");
         }
         // In proof mode, a constructor's view is a functional-dependency tuple
-        // `(children) -> (eclass, proof)` whose native `:merge` resolves congruence (see
+        // `(children) -> (eclass, proof)` whose `:merge` resolves congruence (see
         // `EGraph::native_congruence_merge`). Other functions keep the `(children eclass) -> proof`
         // form with a congruence/merge rule.
         let fd_view = self.native_merge_view(fdecl);
@@ -1597,9 +1589,8 @@ impl<'a> ProofInstrumentor<'a> {
         let rebuilding_cleanup_ruleset = self.proof_names().rebuilding_cleanup_ruleset_name.clone();
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let delete_ruleset = self.proof_names().delete_subsume_ruleset_name.clone();
-        // Both term and proof modes use a single self-referential `@UF` whose native
-        // `:merge` subsumes `single_parent` and makes `uf_function_index` dead, so only
-        // `path_compress` (flattening cross-key chains) remains as UF maintenance.
+        // The `@UF` `:merge` resolves conflicting parents itself, so only
+        // `path_compress` (flattening chains) remains as UF maintenance.
         self.parse_schedule(format!(
             "(seq
               (saturate

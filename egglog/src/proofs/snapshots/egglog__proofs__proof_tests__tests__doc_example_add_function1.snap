@@ -1,6 +1,5 @@
 ---
 source: egglog/src/proofs/proof_tests.rs
-assertion_line: 360
 expression: snapshot
 ---
 (ruleset __parent)
@@ -8,7 +7,7 @@ expression: snapshot
 (ruleset __rebuilding_cleanup)
 (ruleset __delete_subsume_ruleset)
 (sort Math :internal-uf __UF_Math)
-(function __UF_Math (Math) Math :merge (ordering-min old new) :unextractable :internal-hidden)
+(function __UF_Math (Math) Math :merge ((set (__UF_Math (ordering-max old new)) (ordering-min old new)) (ordering-min old new)) :unextractable :internal-hidden)
 (rule ((= __uf_b (__UF_Math __uf_a))
        (= __uf_c (__UF_Math __uf_b))
        (!= __uf_b __uf_c))

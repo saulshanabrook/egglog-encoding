@@ -912,9 +912,13 @@ impl EGraph {
     /// Lower a resolved `:merge` (a value-producing action block) to a backend [`MergeFn`], keeping
     /// the existing merge interpreter. The `result` produces the merged value(s); any `actions` run
     /// first as effects.
+    /// `self_ref` names the function this merge belongs to and its (peeked) backend id, so a
+    /// merge action block can write into the table being declared — e.g. the term encoding's
+    /// union-find, whose merge stages the displaced parent edge back into itself.
     fn translate_merge_to_mergefn(
         &self,
         merge: &ResolvedMerge,
+        self_ref: (&str, egglog_bridge::FunctionId),
     ) -> Result<egglog_bridge::MergeFn, Error> {
         use egglog_bridge::MergeFn;
         // Assign each `let`-bound variable an environment slot, in block order, so `set`/`union`
@@ -943,7 +947,7 @@ impl EGraph {
         let actions = merge
             .actions
             .iter()
-            .map(|a| self.translate_merge_action(a, &lets))
+            .map(|a| self.translate_merge_action(a, &lets, self_ref))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(MergeFn::Block {
             actions,
@@ -957,6 +961,7 @@ impl EGraph {
         &self,
         action: &ResolvedAction,
         lets: &HashMap<String, usize>,
+        self_ref: (&str, egglog_bridge::FunctionId),
     ) -> Result<egglog_bridge::MergeAction, Error> {
         use egglog_bridge::MergeAction;
         match action {
@@ -969,16 +974,20 @@ impl EGraph {
                 self.translate_expr_to_mergefn(b, lets)?,
             )),
             GenericAction::Set(_, ResolvedCall::Func(f), keys, val) => {
-                let backend_id = self
-                    .functions
-                    .get(&f.name)
-                    .ok_or_else(|| {
-                        Error::BackendError(format!(
-                            "merge action sets unknown function `{}`",
-                            f.name
-                        ))
-                    })?
-                    .backend_id;
+                // The function being declared is not in `functions` yet; its id was peeked.
+                let backend_id = if f.name == self_ref.0 {
+                    self_ref.1
+                } else {
+                    self.functions
+                        .get(&f.name)
+                        .ok_or_else(|| {
+                            Error::BackendError(format!(
+                                "merge action sets unknown function `{}`",
+                                f.name
+                            ))
+                        })?
+                        .backend_id
+                };
                 let mut args = keys
                     .iter()
                     .map(|k| self.translate_expr_to_mergefn(k, lets))
@@ -1006,7 +1015,7 @@ impl EGraph {
     /// the proof-encoding metadata (`:internal-proof-names`/`:internal-uf`) must resolve; a missing
     /// piece is a hard error rather than a silent fallback that would drop congruence.
     ///
-    /// The view proofs are oriented `eclass = f(children)` (eclass on the LEFT). On an FD conflict
+    /// The view proofs are oriented `eclass = f(children)` (eclass on the left). On an FD conflict
     /// (two congruent terms share the same canonical children) the merge keeps the SMALLER eclass and
     /// stages the oriented union edge `(@UF max_ec) = (values min_ec (Trans max_vp (Sym min_vp)))`
     /// into the per-sort UF, so the single-table UF stays acyclic without a `single_parent` rule.
@@ -1098,23 +1107,21 @@ impl EGraph {
         }))
     }
 
-    /// Build the self-referential union-find `:merge` for the encoding's single
-    /// per-sort UF function `@UF` (the whole union-find). `uf_id` is the
-    /// function's own backend id (see [`EGraph::peek_next_function_id`]).
-    /// `num_outputs` selects the encoding:
+    /// Build the proof-mode union-find `:merge` for the encoding's per-sort UF function
+    /// `@UF : (S) -> (S, Proof)`. Value column 0 is the parent, column 1 a proof
+    /// `key = parent` (key on the left). On a conflict the merge keeps the smaller
+    /// parent and stages the oriented displaced edge
+    /// `(@UF max_ec) = (values min_ec (Trans (Sym max_pf) min_pf))` into itself.
+    /// `uf_id` is the function's own backend id (see [`EGraph::peek_next_function_id`]).
     ///
-    /// - Term (`num_outputs == 1`), `@UF : (S) -> S`. To union `a, b`: `(set (@UF
-    ///   (ordering-max a b)) (ordering-min a b))`. On an FD conflict the merge
-    ///   keeps `ordering-min(old, new)` AND writes `(set (@UF ordering-max) ordering-min)`
-    ///   into ITS OWN table (recording the displaced edge; strictly decreasing, hence finite).
-    /// - Proof (`num_outputs == 2`), `@UF : (S) -> (S, Proof)`. Value column 0 is
-    ///   the parent, column 1 a proof `key = parent` (key on the LEFT). On a conflict
-    ///   the merge keeps the smaller parent and stages the oriented displaced edge
-    ///   `(@UF max_ec) = (values min_ec (Trans (Sym max_pf) min_pf))` into itself.
+    /// Unlike the term-mode UF, whose merge is spelled out as a `:merge` action block in
+    /// the generated source, this one must be built in Rust: selecting which proof goes
+    /// with the smaller/larger parent uses the `proof-of-min`/`proof-of-max` primitives,
+    /// whose all-arguments-equal polymorphic type can't be given the `(S, Proof, S, Proof)`
+    /// argument types in typechecked source.
     fn build_uf_self_merge(
         &self,
         uf_id: egglog_bridge::FunctionId,
-        num_outputs: usize,
     ) -> Result<egglog_bridge::MergeFn, Error> {
         use egglog_bridge::{MergeAction, MergeFn};
         let resolve = |name: &str| -> Result<ExternalFunctionId, Error> {
@@ -1130,17 +1137,6 @@ impl EGraph {
         };
         let min_id = resolve("ordering-min")?;
         let max_id = resolve("ordering-max")?;
-        if num_outputs == 1 {
-            // The identity guard (the single value column, the parent) skips this merge when the
-            // parent is unchanged, so the body records the displaced edge unconditionally.
-            let min = || MergeFn::Primitive(min_id, vec![MergeFn::Old, MergeFn::New]);
-            let max = MergeFn::Primitive(max_id, vec![MergeFn::Old, MergeFn::New]);
-            return Ok(MergeFn::Block {
-                actions: vec![MergeAction::Set(uf_id, vec![max, min()])],
-                result: Box::new(min()),
-            });
-        }
-        // Proof branch: value col 0 = parent, col 1 = proof (`key = parent`).
         let backend_id = |name: &str| -> Result<egglog_bridge::FunctionId, Error> {
             self.functions
                 .get(name)
@@ -1217,29 +1213,38 @@ impl EGraph {
         // unchanged eclass/parent (value column 0), so they opt into skip-on-unchanged — which is
         // what lets them drop their equality guard. Ordinary functions keep the default (no guard).
         let mut n_identity_vals = None;
-        let merge = if self
+        // This function's backend id (the id `add_table` below will assign, peeked
+        // deterministically), so its merge can write into its own table — the encoding's
+        // UF merge stages the displaced parent edge back into the UF.
+        let own_id = self.backend.peek_next_function_id();
+        let is_encoding_uf = self
             .proof_state
             .self_merge_uf_functions
-            .contains(&*decl.name)
-        {
-            // Single self-referential UF `@UF` (term `(S) -> S`, proof
-            // `(S) -> (S, Proof)`): override the placeholder source `:merge` with the
-            // native self-referential merge, dispatched on value-column count. Its own
-            // backend id is the id `add_table` (below) will assign, peeked deterministically.
+            .contains(&*decl.name);
+        let merge = if is_encoding_uf && num_outputs == 2 {
+            // Proof-mode UF `@UF : (S) -> (S, Proof)`: the proof-composing merge isn't
+            // expressible in typechecked source (see `build_uf_self_merge`), so the
+            // declaration's `:merge (values old0 old1)` is shape-only and the real merge
+            // is built here.
             n_identity_vals = Some(1);
-            let uf_id = self.backend.peek_next_function_id();
-            self.build_uf_self_merge(uf_id, num_outputs)?
+            self.build_uf_self_merge(own_id)?
         } else if let Some(m) = self.native_congruence_merge(decl, &outputs[0], num_outputs)? {
             // Term-encoding constructor view `(children) -> (eclass, proof)`: resolve congruence via
-            // a native :merge that stages the congruence edge into the per-sort UF table, instead of
+            // a :merge that stages the congruence edge into the per-sort UF table, instead of
             // a rule-encoded self-join.
             n_identity_vals = Some(1);
             m
         } else {
+            // Term-mode UF `@UF : (S) -> S` carries its real merge in the generated
+            // source (a `:merge` action block staging the displaced edge); it only opts
+            // into the identity guard here.
+            if is_encoding_uf && decl.merge.is_some() {
+                n_identity_vals = Some(1);
+            }
             match decl.subtype {
                 FunctionSubtype::Constructor => MergeFn::UnionId,
                 FunctionSubtype::Custom => match &decl.merge {
-                    Some(merge) => self.translate_merge_to_mergefn(merge)?,
+                    Some(merge) => self.translate_merge_to_mergefn(merge, (&decl.name, own_id))?,
                     // No merge clause: assert equality per output column.
                     None if num_outputs > 1 => {
                         MergeFn::Columns((0..num_outputs).map(|_| MergeFn::AssertEq).collect())
@@ -1264,6 +1269,7 @@ impl EGraph {
             name: decl.name.to_string(),
             can_subsume,
         });
+        debug_assert_eq!(backend_id, own_id);
 
         let function = Function {
             decl: decl.clone(),
@@ -2145,7 +2151,8 @@ impl EGraph {
                 ..
             } => {
                 // Restore the sort's UF metadata into proof_state. A missing
-                // index marks PR #6's self-referential single-table UF.
+                // index marks the encoding's `(S) -> S` union-find function
+                // (as opposed to a user-provided `(child, parent)` relation).
                 if let Some((uf_ctor, uf_index)) = uf {
                     self.proof_state
                         .uf_parent

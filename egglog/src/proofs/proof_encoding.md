@@ -7,11 +7,10 @@ This makes proof production easier, since all equality reasoning is explicit and
   can be instrumented with proof tracking.
 The term encoding adds an explicit union-find structure per sort, and maintains it via
   rules that run during scheduled maintenance.
-Each sort's union-find is a single self-referential function `UF_<Sort> : (S) -> S` that maps
-  each term to its parent; a term with no entry is its own representative (identity-on-miss).
-Its native `:merge` (built in `EGraph::build_uf_self_merge`)
-  keeps the smaller endpoint on a conflict and unions the displaced parent back into `UF_<Sort>`,
-  so a single `set` performs a union.
+The union-find for a sort is a function `UF_<Sort> : (S) -> S` that maps each term to its
+  parent; a term with no entry is its own representative.
+Unioning two terms is a `set` making one the parent of the other; the function's `:merge`
+  resolves the case where the term already had a different parent.
 For efficiency, every constructor becomes two tables:
   a term table that stores the actual terms, and a view table storing representative terms along with their e-class (stored as the leader term).
 The term encoding enables proof tracking, done at the
@@ -65,7 +64,10 @@ rebuild-time congruence (`rebuilding` + `rebuilding_cleanup`), and deferred dele
 
 ```text
 (sort Math :internal-uf UF_Math)
-(function UF_Math (Math) Math :merge (ordering-min old new) :unextractable :internal-hidden)
+(function UF_Math (Math) Math
+    :merge ((set (UF_Math (ordering-max old new)) (ordering-min old new))
+            (ordering-min old new))
+    :unextractable :internal-hidden)
 (rule ((= b (UF_Math a))
        (= c (UF_Math b))
        (!= b c))
@@ -73,16 +75,13 @@ rebuild-time congruence (`rebuilding` + `rebuilding_cleanup`), and deferred dele
         :ruleset parent :name "uf_path_compress")
 ```
 
-*The union-find* for each sort is the single self-referential function `UF_<Sort>`,
-  mapping each term to its parent.
-`UF_<Sort>` is `(S) -> S` without proof tracking, or `(S) -> (S Proof)` with proof tracking
-  (the extra column carries a proof of the parent edge).
+*The union-find* for each sort is the function `UF_<Sort>`, mapping each term to its parent.
 A term with no row is its own representative, so `UF_<Sort>` acts as an identity-on-miss lookup.
-The source `:merge (ordering-min old new)` above is only a placeholder that lets the function
-  typecheck; `declare_function` replaces it with the native self-referential merge
-  (see `EGraph::build_uf_self_merge`), which on a conflicting
-  parent keeps the smaller endpoint and unions the displaced one back into `UF_<Sort>`.
-A single `set` on `UF_<Sort>` therefore performs a union.
+To union `a` and `b`, the encoding runs `(set (UF_<Sort> (ordering-max a b)) (ordering-min a b))`.
+If the key already had a different parent, the `:merge` action block runs:
+  the key keeps the smaller of the two parents (the merge result),
+  and the `set` in the block unions the larger parent with the smaller one,
+  since both are equal to the key.
 
 *Union-find rules:*
 The only maintenance rule is path compression (in the `parent` ruleset), which flattens
@@ -166,7 +165,7 @@ Since global variables are not allowed after this pass,
 Here we have the instrumented commutativity rule.
 The query uses the view table to find the canonical e-node.
 The actions add to the term and view tables, then add an equality to the union-find.
-We add the equality with a single `set` on `UF_<Sort>`, using the `ordering-max` and
+We add the equality with a `set` on `UF_<Sort>`, using the `ordering-max` and
   `ordering-min` egglog primitives to deterministically choose the parent.
 
 
@@ -270,18 +269,19 @@ The proof proves a proposition `t = t` for
   input term `t`.
 We store the oldest proof currently.
 
-When proof tracking is enabled, the single self-referential union-find carries a
-proof in a second value column:
+When proof tracking is enabled, the union-find carries a proof in a second value column:
 
 ```text
 (function UF_Math (Math) (Math Proof) :merge (values old0 old1) :unextractable :internal-hidden)
 ```
 
 If term `k` has parent `p`, `(UF_Math k)` returns `(values p proof)` where `proof`
-proves `k = p` (the key on the LEFT). The native self-referential `:merge` (built in
-`EGraph::build_uf_self_merge`) keeps the smaller parent on a conflict and stages the oriented
-displaced edge back into `UF_Math`, composing proofs with `Trans`/`Sym`. Path compression flattens
-cross-key chains via `Trans`.
+proves `k = p` (the key on the left). As in term mode, the `:merge` keeps the smaller
+parent on a conflict and unions the displaced parent back into `UF_Math`, now also
+composing their proofs with `Trans`/`Sym`. Selecting which proof goes with which parent
+isn't expressible in typechecked source, so this merge is built in Rust
+(`EGraph::build_uf_self_merge`) and the `:merge (values old0 old1)` above is only the
+declaration's shape. Path compression flattens chains via `Trans`.
 
 
 Similarly, the constructor view is a functional-dependency tuple carrying a proof:
@@ -291,9 +291,10 @@ Similarly, the constructor view is a functional-dependency tuple carrying a proo
 ```
 
 The view maps a term's canonicalized children to `(eclass, proof)`, where `proof`
-proves `eclass = f(children)` (the eclass on the LEFT). Its native congruence `:merge`
-(built in `EGraph::native_congruence_merge`) keeps the smaller eclass on a functional-dependency
-conflict and stages the oriented union edge into `UF_Math`.
+proves `eclass = f(children)` (the eclass on the left). Two rows conflicting on the
+same children are congruent, so the view's `:merge` (also built in Rust, in
+`EGraph::native_congruence_merge`) keeps the smaller eclass and unions the two
+eclasses in `UF_Math`.
 
 
 ```text

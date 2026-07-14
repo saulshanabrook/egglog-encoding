@@ -961,9 +961,14 @@ impl ProofStore {
         subst: &mut HashMap<String, TermId>,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
-        let ResolvedFact::Eq(_, lhs, rhs) = fact else {
-            // `is_container_side_condition` only flags `Eq` facts.
-            return Ok(());
+        let (lhs, rhs) = match fact {
+            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
+            // A bare container-primitive fact binds nothing, but must still
+            // evaluate under the substitution for the premise to hold.
+            ResolvedFact::Fact(expr) => {
+                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
+                return Ok(());
+            }
         };
         let lhs_val = self.eval_side(lhs, subst, rule_name)?;
         let rhs_val = self.eval_side(rhs, subst, rule_name)?;
