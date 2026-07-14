@@ -4,6 +4,19 @@ use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
 use crate::*;
 
+/// A materialized rebuild index on a view, keyed on a referenced term of one
+/// eq-sort. The index table is `(ref, <all view key columns>) -> Unit`; for
+/// every view row it holds one entry per key column of `sort_name` (with that
+/// column's term as `ref`). `positions` are those key-column indices. The
+/// single-rule rebuild driven by an `@UF_<sort>` delta looks up the rows
+/// containing a term via `ref` (a key prefix).
+#[derive(Clone)]
+pub(crate) struct ViewIndex {
+    pub name: String,
+    pub sort_name: String,
+    pub positions: Vec<usize>,
+}
+
 // TODO refactor so that encoding state is optional on the e-graph, ProofNames not optional on EncodingState. Then we don't have to clone proof names everywhere.
 #[derive(Clone)]
 pub(crate) struct EncodingState {
@@ -22,11 +35,11 @@ pub(crate) struct EncodingState {
     /// discard stale proof-view candidates whenever the current value already
     /// has a proof witness.
     pub merge_current: HashMap<String, (String, usize)>,
-    /// Function name -> materialized rebuild indexes on its view. Each entry is
-    /// `(key position, index table name)` for a non-first eq-sort key column;
-    /// the index lets the rebuild query find rows containing a term by that
-    /// column via a key lookup instead of a scan (see `proof_encoding.md`).
-    pub view_index: HashMap<String, Vec<(usize, String)>>,
+    /// Function name -> materialized rebuild indexes on its view, one per
+    /// distinct eq-sort among the view's key columns. The single-rule rebuild is
+    /// driven by an `@UF` delta on a term joined against these indexes (see
+    /// `proof_encoding.md`).
+    pub view_index: HashMap<String, Vec<ViewIndex>>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -439,36 +452,64 @@ impl<'a> ProofInstrumentor<'a> {
     /// before the merge/congruence handling below), so the metadata is present.
     fn declare_view_indexes(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
         let types = fdecl.resolved_schema.view_types();
-        let n = types.len();
-        let n_keys = if fdecl.subtype == FunctionSubtype::Constructor {
-            n - 1
-        } else {
-            n
-        };
-        let positions = Self::view_index_positions(&types, n_keys);
+        let n_keys = Self::view_n_keys(fdecl, types.len());
+        // The index tables' trailing columns are all the view's key columns, in
+        // order; the leading column is the referenced term. Group the eq-sort key
+        // columns by sort — one index table each.
+        let key_sorts = types[..n_keys]
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut by_sort: Vec<(String, Vec<usize>)> = Vec::new();
+        for i in Self::view_index_positions(&types, n_keys) {
+            let sort = types[i].name().to_string();
+            match by_sort.iter_mut().find(|(s, _)| *s == sort) {
+                Some((_, positions)) => positions.push(i),
+                None => by_sort.push((sort, vec![i])),
+            }
+        }
         let mut decls = String::new();
         let mut entries = Vec::new();
-        for i in positions {
+        for (sort_name, positions) in by_sort {
             let index_name = self
                 .egraph
                 .parser
                 .symbol_gen
-                .fresh(&format!("{}Index{i}", fdecl.name));
-            let col_sorts = Self::index_row(&types[..n_keys], i)
-                .iter()
-                .map(|t| t.name().to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
+                .fresh(&format!("{}Index_{sort_name}", fdecl.name));
             decls.push_str(&format!(
-                "(function {index_name} ({col_sorts}) Unit :merge old :internal-hidden :unextractable)\n"
+                "(function {index_name} ({sort_name} {key_sorts}) Unit :merge old :internal-hidden :unextractable)\n"
             ));
-            entries.push((i, index_name));
+            entries.push(ViewIndex {
+                name: index_name,
+                sort_name,
+                positions,
+            });
         }
         self.egraph
             .proof_state
             .view_index
             .insert(fdecl.name.clone(), entries);
         decls
+    }
+
+    /// Names of the eq-sort canonicalization primitives (registered in
+    /// typechecking, see `proof_container_rebuild::register_uf_canon`).
+    fn uf_canon_name(&mut self, sort: &str) -> String {
+        crate::proofs::proof_container_rebuild::uf_canon_prim_name(&self.uf_name(sort))
+    }
+    fn uf_canon_proof_name(&mut self, sort: &str) -> String {
+        crate::proofs::proof_container_rebuild::uf_canon_proof_prim_name(&self.uf_name(sort))
+    }
+
+    /// Number of key columns of a view: children only for a constructor's FD
+    /// view, every column for a custom function's all-key view.
+    fn view_n_keys(fdecl: &ResolvedFunctionDecl, n: usize) -> usize {
+        if fdecl.subtype == FunctionSubtype::Constructor {
+            n - 1
+        } else {
+            n
+        }
     }
 
     /// Each function/constructor gets a term table and a view table.
@@ -593,187 +634,241 @@ impl<'a> ProofInstrumentor<'a> {
         "".to_string()
     }
 
-    /// Rebuild rules that keep a table's view canonical, fanned out one rule per
-    /// rebuildable column (a canonical column has no `@UF` row, so it simply
-    /// doesn't match). A stale column is replaced by its `@UF` leader (eq-sorts)
-    /// or its rebuilt container.
-    ///
-    /// A constructor's functional-dependency view `(children) -> (eclass, {Unit|Proof})`
-    /// re-keys the row for a child update — `set` at the canonicalized children
-    /// (congruence resolves collisions), then `delete` — and re-`set`s the same key
-    /// for an eclass update (the view `:merge` keeps the min). A custom function's
-    /// all-key view `(children eclass) -> {Unit|Proof}` re-keys every column.
-    /// In proof mode each rule composes the updated view proof, and a container
-    /// update records the rebuilt container's `<CSort>Proof`.
+    /// Rebuild rules that keep a view canonical. Eq-sort key columns are
+    /// canonicalized by a single rule per distinct child eq-sort, driven by an
+    /// `@UF` delta joined against that sort's term→row index: the rule looks up
+    /// the referencing rows by key and re-canonicalizes every eq-sort key column
+    /// in its action with the `uf_canon` primitive (leader-or-self), so it
+    /// replaces the old per-column fan-out. Container key columns keep a
+    /// per-column `:naive` rule (their rebuild primitive reads `@UF` tables the
+    /// rule doesn't join on, and a container term has no `@UF` delta to drive a
+    /// seminaive rule). A constructor's FD view additionally gets one rule for
+    /// its eclass value. In proof mode each rule composes the updated view proof.
     fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
-        // Constructors use the FD view keyed by children; custom functions the all-key view.
         let fd = fdecl.subtype == FunctionSubtype::Constructor;
-        let proofs = self.proofs_enabled();
         let types = fdecl.resolved_schema.view_types();
         let n = types.len();
+        let n_keys = Self::view_n_keys(fdecl, n);
         let child = |i: usize| format!("c{i}_");
-        // Key columns of the view row: children for FD views, every column otherwise.
-        let n_keys = if fd { n - 1 } else { n };
         let key_vars: Vec<String> = (0..n_keys).map(child).collect();
-        let view_name = self.view_name(&fdecl.name);
-        let keys_str = format!("{}", ListDisplay(&key_vars, " "));
-        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
 
-        // Materialized rebuild indexes for this view (see `declare_view_indexes`).
-        let index_entries = self
+        let mut rules = String::new();
+        // Container key columns: per-column `:naive` re-key (see doc above).
+        for (i, ty) in types[..n_keys].iter().enumerate() {
+            if ty.is_eq_container_sort() {
+                rules.push_str(&self.container_rebuild_rule(fdecl, &key_vars, i, ty, fd));
+            }
+        }
+        // Eq-sort key columns: one recanon rule per distinct child eq-sort.
+        let indexes = self
             .egraph
             .proof_state
             .view_index
             .get(&fdecl.name)
             .cloned()
             .unwrap_or_default();
-        // Every re-key deletes the old view row, so it must also drop that row's
-        // index entries (for all indexed columns, not just the one that changed).
-        let index_deletes_key = self.view_index_deletes(&fdecl.name, &key_vars);
-
-        let mut rules = String::new();
-        // One rule per rebuildable key column (re-keys the row via set + delete).
-        for (i, ty) in types[..n_keys].iter().enumerate() {
-            let is_container = ty.is_eq_container_sort();
-            if !is_container && !ty.is_eq_sort() {
-                continue;
-            }
-            let ci = child(i);
-            let canon = format!("c{i}_canon_");
-            let (query_view, eclass_var, view_prf) = if fd {
-                let (q, e, p) = self.query_fd_view(&fdecl.name, &key_vars);
-                (q, Some(e), p)
-            } else {
-                let (q, p) = self.query_view_and_get_proof(&fdecl.name, &key_vars);
-                (q, None, p)
-            };
-            // Canonicalize the column with the container rebuild primitive or a `@UF`
-            // lookup, and build the proof pieces. Container-reading rules are `:naive`
-            // (the primitive reads `@UF` tables the rule doesn't join on).
-            let (canon_fact, naive, proof_lets, pf_arg, cproof_set) = if is_container {
-                let value_prim = self.ensure_container_rebuild(ty);
-                let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
-                if proofs {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let trans = self.proof_names().eq_trans_constructor.clone();
-                    let sym = self.proof_names().eq_sym_constructor.clone();
-                    let proof_prim = self.ensure_container_rebuild_proof(ty);
-                    let rebuild_pf = self.fresh_var();
-                    let new_pf = self.fresh_var();
-                    let cproof = self.term_proof_name(ty.name());
-                    (
-                        canon_fact,
-                        ":naive ",
-                        format!(
-                            "(let {rebuild_pf} ({proof_prim} {ci}))
-                             (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
-                        ),
-                        new_pf,
-                        format!(
-                            "(set ({cproof} {canon}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
-                        ),
-                    )
-                } else {
-                    (
-                        canon_fact,
-                        ":naive ",
-                        String::new(),
-                        "()".to_string(),
-                        String::new(),
-                    )
-                }
-            } else {
-                let uf_name = self.uf_name(ty.name());
-                let uf_prf = self.fresh_var();
-                let canon_fact = format!("(= (values {canon} {uf_prf}) ({uf_name} {ci}))");
-                if proofs {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let new_pf = self.fresh_var();
-                    (
-                        canon_fact,
-                        "",
-                        format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
-                        new_pf,
-                        String::new(),
-                    )
-                } else {
-                    (
-                        canon_fact,
-                        "",
-                        String::new(),
-                        "()".to_string(),
-                        String::new(),
-                    )
-                }
-            };
-            let mut updated = key_vars.clone();
-            updated[i] = canon.clone();
-            let updated_view = match &eclass_var {
-                Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
-                None => self.update_view(&fdecl.name, &updated, &pf_arg),
-            };
-            // If this column has an index, join it so the rule finds the rows
-            // holding `ci` by key lookup (driven by the `@UF` delta) rather than
-            // scanning the view. Redundant with `query_view` for matching — both
-            // pin column `i` to `ci` — but it supplies the fast access path.
-            let index_atom = index_entries
-                .iter()
-                .find(|(pos, _)| *pos == i)
-                .map(|(_, index_name)| {
-                    format!(
-                        "({index_name} {})",
-                        ListDisplay(&Self::index_row(&key_vars, i), " ")
-                    )
-                })
-                .unwrap_or_default();
-            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-            rules.push_str(&format!(
-                "(rule ({query_view}
-                        {index_atom}
-                        {canon_fact}
-                        (!= {ci} {canon}))
-                     (
-                      {proof_lets}
-                      {updated_view}
-                      {cproof_set}
-                      (delete ({view_name} {keys_str}))
-                      {index_deletes_key}
-                     )
-                      :ruleset {rebuilding_ruleset} {naive}:name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
+        for vi in &indexes {
+            rules.push_str(&self.eq_sort_rebuild_rule(fdecl, &key_vars, &types, vi, fd));
         }
         // FD views: one rule for the eclass value (same key, `set` only; the view
         // merge keeps the min).
         if fd {
-            let eclass_uf_name = self.uf_name(types[n - 1].name());
-            let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
-            let eclass_canon = self.fresh_var();
-            let uf_prf = self.fresh_var();
-            let (proof_lets, pf_arg) = if proofs {
-                let trans = self.proof_names().eq_trans_constructor.clone();
-                let sym = self.proof_names().eq_sym_constructor.clone();
-                let new_pf = self.fresh_var();
-                (
-                    format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
-                    new_pf,
-                )
-            } else {
-                (String::new(), "()".to_string())
-            };
-            let updated_view = self.update_fd_view(&fdecl.name, &key_vars, &eclass_canon, &pf_arg);
-            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-            rules.push_str(&format!(
-                "(rule ({query_view}
-                        (= (values {eclass_canon} {uf_prf}) ({eclass_uf_name} {eclass_var}))
-                        (!= {eclass_var} {eclass_canon}))
-                     (
-                      {proof_lets}
-                      {updated_view}
-                     )
-                      :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
+            rules.push_str(&self.fd_eclass_rebuild_rule(fdecl, &key_vars, &types));
         }
         self.parse_program(&rules)
+    }
+
+    /// The `:naive` per-column rebuild for a container key column `i`: rebuild
+    /// the container with its primitive and re-key the row (`set` new, `delete`
+    /// old), maintaining the row's index entries alongside.
+    fn container_rebuild_rule(
+        &mut self,
+        fdecl: &ResolvedFunctionDecl,
+        key_vars: &[String],
+        i: usize,
+        ty: &ArcSort,
+        fd: bool,
+    ) -> String {
+        let proofs = self.proofs_enabled();
+        let view_name = self.view_name(&fdecl.name);
+        let keys_str = format!("{}", ListDisplay(key_vars, " "));
+        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
+        let index_deletes_key = self.view_index_deletes(&fdecl.name, key_vars);
+        let ci = &key_vars[i];
+        let canon = format!("c{i}_canon_");
+        let (query_view, eclass_var, view_prf) = if fd {
+            let (q, e, p) = self.query_fd_view(&fdecl.name, key_vars);
+            (q, Some(e), p)
+        } else {
+            let (q, p) = self.query_view_and_get_proof(&fdecl.name, key_vars);
+            (q, None, p)
+        };
+        let value_prim = self.ensure_container_rebuild(ty);
+        let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
+        let (proof_lets, pf_arg, cproof_set) = if proofs {
+            let congr = self.proof_names().congr_constructor.clone();
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            let proof_prim = self.ensure_container_rebuild_proof(ty);
+            let rebuild_pf = self.fresh_var();
+            let new_pf = self.fresh_var();
+            let cproof = self.term_proof_name(ty.name());
+            (
+                format!(
+                    "(let {rebuild_pf} ({proof_prim} {ci}))
+                     (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
+                ),
+                new_pf,
+                format!("(set ({cproof} {canon}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"),
+            )
+        } else {
+            (String::new(), "()".to_string(), String::new())
+        };
+        let mut updated = key_vars.to_vec();
+        updated[i] = canon.clone();
+        let updated_view = match &eclass_var {
+            Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
+            None => self.update_view(&fdecl.name, &updated, &pf_arg),
+        };
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+        format!(
+            "(rule ({query_view}
+                    {canon_fact}
+                    (!= {ci} {canon}))
+                 (
+                  {proof_lets}
+                  {updated_view}
+                  {cproof_set}
+                  (delete ({view_name} {keys_str}))
+                  {index_deletes_key}
+                 )
+                  :ruleset {rebuilding_ruleset} :naive :name \"{fresh_name}\" :internal-include-subsumed)\n"
+        )
+    }
+
+    /// The single-rule rebuild for a view's eq-sort key columns of one sort
+    /// (`vi`). Driven by an `@UF_<S>` delta on some referenced term joined
+    /// against `vi`'s term→row index (a key lookup, not a scan), it
+    /// re-canonicalizes *every* eq-sort key column of the row with `uf_canon` in
+    /// its action, re-keys the row, and (proof mode) folds one `@Congr` per
+    /// eq-sort column onto the view proof — reflexive (unchanged) columns drop in
+    /// the simplifier. The `uf_canon` action reads `@UF` tables, so the rule is
+    /// `:unsafe-seminaive`; the `@UF`/index body delta makes that read sound.
+    fn eq_sort_rebuild_rule(
+        &mut self,
+        fdecl: &ResolvedFunctionDecl,
+        key_vars: &[String],
+        types: &[ArcSort],
+        vi: &ViewIndex,
+        fd: bool,
+    ) -> String {
+        let proofs = self.proofs_enabled();
+        let view_name = self.view_name(&fdecl.name);
+        let keys_str = format!("{}", ListDisplay(key_vars, " "));
+        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
+        let index_deletes_key = self.view_index_deletes(&fdecl.name, key_vars);
+        let n_keys = key_vars.len();
+
+        // Body: `@UF_<S>` delta on the referenced term, its term→row index entry,
+        // and the view row (a key lookup for the eclass/proof).
+        let follower = self.fresh_var();
+        let leader = self.fresh_var();
+        let leader_pf = self.fresh_var();
+        let uf_name = self.uf_name(&vi.sort_name);
+        let index_atom = format!("({} {follower} {keys_str})", vi.name);
+        let uf_atom = format!("(= (values {leader} {leader_pf}) ({uf_name} {follower}))");
+        let (query_view, eclass_var, view_prf) = if fd {
+            let (q, e, p) = self.query_fd_view(&fdecl.name, key_vars);
+            (q, Some(e), p)
+        } else {
+            let (q, p) = self.query_view_and_get_proof(&fdecl.name, key_vars);
+            (q, None, p)
+        };
+
+        // Action: canonicalize every eq-sort key column and fold its congruence
+        // proof; non-eq-sort columns are carried over unchanged.
+        let mut lets = String::new();
+        let mut updated = key_vars.to_vec();
+        let mut proof_acc = view_prf.clone();
+        for j in 0..n_keys {
+            if types[j].is_eq_container_sort() || !types[j].is_eq_sort() {
+                continue;
+            }
+            let canon = format!("c{j}_canon_");
+            let canon_prim = self.uf_canon_name(types[j].name());
+            lets.push_str(&format!("(let {canon} ({canon_prim} {}))\n", key_vars[j]));
+            if proofs {
+                let proof_prim = self.uf_canon_proof_name(types[j].name());
+                let congr = self.proof_names().congr_constructor.clone();
+                let step_pf = self.fresh_var();
+                let new_acc = self.fresh_var();
+                lets.push_str(&format!(
+                    "(let {step_pf} ({proof_prim} {}))\n(let {new_acc} ({congr} {proof_acc} {j} {step_pf}))\n",
+                    key_vars[j]
+                ));
+                proof_acc = new_acc;
+            }
+            updated[j] = canon;
+        }
+        let pf_arg = if proofs { proof_acc } else { "()".to_string() };
+        let updated_view = match &eclass_var {
+            Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
+            None => self.update_view(&fdecl.name, &updated, &pf_arg),
+        };
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+        format!(
+            "(rule ({uf_atom}
+                    (!= {follower} {leader})
+                    {index_atom}
+                    {query_view})
+                 (
+                  {lets}
+                  {updated_view}
+                  (delete ({view_name} {keys_str}))
+                  {index_deletes_key}
+                 )
+                  :ruleset {rebuilding_ruleset} :unsafe-seminaive :name \"{fresh_name}\" :internal-include-subsumed)\n"
+        )
+    }
+
+    /// A constructor FD view's eclass-value rebuild: when the eclass has a
+    /// leader, re-`set` the same key with the leader (the view `:merge` keeps the
+    /// min). Same key, so the index is untouched.
+    fn fd_eclass_rebuild_rule(
+        &mut self,
+        fdecl: &ResolvedFunctionDecl,
+        key_vars: &[String],
+        types: &[ArcSort],
+    ) -> String {
+        let proofs = self.proofs_enabled();
+        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
+        let eclass_uf_name = self.uf_name(types[types.len() - 1].name());
+        let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, key_vars);
+        let eclass_canon = self.fresh_var();
+        let uf_prf = self.fresh_var();
+        let (proof_lets, pf_arg) = if proofs {
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            let new_pf = self.fresh_var();
+            (
+                format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
+                new_pf,
+            )
+        } else {
+            (String::new(), "()".to_string())
+        };
+        let updated_view = self.update_fd_view(&fdecl.name, key_vars, &eclass_canon, &pf_arg);
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+        format!(
+            "(rule ({query_view}
+                    (= (values {eclass_canon} {uf_prf}) ({eclass_uf_name} {eclass_var}))
+                    (!= {eclass_var} {eclass_canon}))
+                 (
+                  {proof_lets}
+                  {updated_view}
+                 )
+                  :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
+        )
     }
 
     /// Rules that update the to_subsume tables when children change. One rule per
@@ -1245,62 +1340,52 @@ impl<'a> ProofInstrumentor<'a> {
         )
     }
 
-    /// Key positions of a view that get a materialized rebuild index: a non-first
-    /// key column (position 0 is the view key's own prefix) whose type is a
-    /// non-container eq-sort (containers rebuild structurally, not via `@UF`).
+    /// Key positions of a view that get a materialized rebuild index: every
+    /// non-container eq-sort key column (containers rebuild structurally, not via
+    /// `@UF`). All such positions are indexed — including the first — because the
+    /// single-rule rebuild is driven by a `@UF` delta on any child and finds its
+    /// rows through the index.
     fn view_index_positions(types: &[ArcSort], n_keys: usize) -> Vec<usize> {
-        (1..n_keys)
+        (0..n_keys)
             .filter(|&i| !types[i].is_eq_container_sort() && types[i].is_eq_sort())
             .collect()
     }
 
-    /// Reorder a view's key columns so position `i` comes first, matching the
-    /// column order of its index table `(col_i, other key columns…)`.
-    fn index_row<T: Clone>(key: &[T], i: usize) -> Vec<T> {
-        std::iter::once(key[i].clone())
-            .chain(
-                key.iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .map(|(_, v)| v.clone()),
-            )
-            .collect()
-    }
-
-    /// Insert this view row into each of its rebuild indexes (see [`Self::view_index_positions`]).
-    /// `key` is the view's key columns (children for FD views, all columns otherwise).
+    /// Insert this view row into each of its rebuild indexes: one entry per
+    /// indexed key column, `(set (<index> key[pos] <full key>) ())` — the
+    /// referenced term first, then the whole key. `key` is the view's key
+    /// columns (children for FD views, all columns otherwise).
     fn view_index_inserts(&mut self, fname: &str, key: &[String]) -> String {
-        let Some(indexes) = self.egraph.proof_state.view_index.get(fname).cloned() else {
-            return String::new();
-        };
-        indexes
-            .iter()
-            .map(|(i, index_name)| {
-                format!(
-                    "(set ({index_name} {}) ())",
-                    ListDisplay(&Self::index_row(key, *i), " ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        self.view_index_ops(fname, key, |name, r, full| {
+            format!("(set ({name} {r} {full}) ())")
+        })
     }
 
     /// Delete this view row from each of its rebuild indexes, mirroring
     /// [`Self::view_index_inserts`]. Emitted wherever a view row is deleted.
     fn view_index_deletes(&mut self, fname: &str, key: &[String]) -> String {
+        self.view_index_ops(fname, key, |name, r, full| {
+            format!("(delete ({name} {r} {full}))")
+        })
+    }
+
+    fn view_index_ops(
+        &mut self,
+        fname: &str,
+        key: &[String],
+        op: impl Fn(&str, &str, &str) -> String,
+    ) -> String {
         let Some(indexes) = self.egraph.proof_state.view_index.get(fname).cloned() else {
             return String::new();
         };
-        indexes
-            .iter()
-            .map(|(i, index_name)| {
-                format!(
-                    "(delete ({index_name} {}))",
-                    ListDisplay(&Self::index_row(key, *i), " ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+        let full = format!("{}", ListDisplay(key, " "));
+        let mut out = Vec::new();
+        for vi in &indexes {
+            for &pos in &vi.positions {
+                out.push(op(&vi.name, &key[pos], &full));
+            }
+        }
+        out.join("\n")
     }
 
     /// Return some code adding to the view and term tables.

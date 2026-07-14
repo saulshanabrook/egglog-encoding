@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 266
 expression: proof_snapshot
 ---
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
@@ -28,9 +29,9 @@ expression: proof_snapshot
   (premises
     (Congr
       (= t1 (g* (IConst) (IConst)))
-      (Congr (= t1 (g* t0 (IConst))) (Fiat (= t1 t1)) prf0 1)
+      (Congr (= t1 (g* (IConst) t0)) (Fiat (= t1 t1)) prf0 0)
       prf0
-      0))
+      1))
   (substitution (@rewrite_var__2 t1) (a (IConst))))
 (Fiat (= () ()))
 (Fiat (= () ()))

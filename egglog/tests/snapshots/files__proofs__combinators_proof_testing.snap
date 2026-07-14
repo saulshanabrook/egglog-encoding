@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 266
 expression: proof_snapshot
 ---
 (let t0 (If (Var "x") (N 0) (N 1)))
@@ -275,9 +276,9 @@ expression: proof_snapshot
 (let t40 (substitution (cl t6) (cr (Comb (N 2))) (cx t9)))
 (let t41 (Uncomb (Comb (N 2))))
 (let t42 (Add t7 t41))
-(let t43 (Uncomb (Comb (N 0))))
-(let t44 (Uncomb (Comb (N 1))))
-(let t45 (If (Uncomb (CFConst)) t43 t44))
+(let t43 (Uncomb (Comb (N 1))))
+(let t44 (Uncomb (Comb (N 0))))
+(let t45 (If (Uncomb (CFConst)) t44 t43))
 (let t46 (CApp (CApp (CIfConst) (CFConst)) (Comb (N 0))))
 (let t47 (CApp (CIfConst) (Comb (Var "x"))))
 (let t48 (CApp t47 (Comb (N 0))))
@@ -417,16 +418,16 @@ expression: proof_snapshot
                                                     (substitution (x (N 0)) (n 0))))
 (let prf5 (Sym (= (Comb (N 0)) (CN 0)) prf4))
 (let t75 (cx (Comb (N 0))))
-(let t76 (CApp (CAbs "x" (CIfConst)) (CFConst)))
-(let t77 (CAbs "x" (Comb (Var "x"))))
-(let t78 (CApp t77 (CFConst)))
-(let t79 (CApp t76 t78))
+(let t76 (CAbs "x" (Comb (Var "x"))))
+(let t77 (CApp t76 (CFConst)))
+(let t78 (CApp (CAbs "x" (CIfConst)) (CFConst)))
+(let t79 (CApp t78 t77))
 (let t80
   (CApp
                                                 (CApp
                                                   (SConst)
                                                   (CAbs "x" (CIfConst)))
-                                                t77))
+                                                t76))
 (let t81
   (premises
                                                 (Rule
@@ -465,7 +466,7 @@ expression: proof_snapshot
                                         (cz (CFConst))
                                         (cx (CAbs "x" (CIfConst)))
                                         (@rewrite_var__16 t64)
-                                        (cy t77)))
+                                        (cy t76)))
 (Sym
   (= t3 (N 3))
   (Rule
@@ -519,9 +520,9 @@ expression: proof_snapshot
             (Congr
               (= t7 (If (FConst) (N 0) (N 1)))
               (Congr
-                (= t7 (If (Uncomb (CFConst)) (N 0) (N 1)))
+                (= t7 (If (FConst) (N 0) t43))
                 (Congr
-                  (= t7 (If (Uncomb (CFConst)) t43 (N 1)))
+                  (= t7 (If (FConst) t44 t43))
                   (Sym
                     (= t7 t45)
                     (Rule
@@ -644,7 +645,7 @@ expression: proof_snapshot
                             (Congr
                               (= t64 (CApp (CIfConst) (CFConst)))
                               (Congr
-                                (= t64 (CApp t76 (CFConst)))
+                                (= t64 (CApp (CIfConst) t77))
                                 (Sym
                                   (= t64 t79)
                                   (Rule
@@ -654,96 +655,96 @@ expression: proof_snapshot
                                     t83
                                     t84))
                                 (Rule
-                                  (= t78 (CFConst))
-                                  (name "(rewrite (CApp $I cx) cx)")
+                                  (= t78 (CIfConst))
+                                  (name "(rewrite (CApp (CApp $K cx) cy) cx)")
                                   (premises
                                     (Congr
-                                      (= t78 (CApp (IConst) (CFConst)))
+                                      (=
+                                        t78
+                                        (CApp
+                                          (CApp (KConst) (CIfConst))
+                                          (CFConst)))
                                       (Rule
                                         (= t78 t78)
                                         (name
                                           "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
                                         t83
                                         t84)
-                                      (Rule
-                                        (= t77 (IConst))
-                                        (name "(rewrite (CAbs v (CVar v)) $I)")
-                                        (premises
-                                          (Congr
-                                            (= t77 (CAbs "x" (CVar "x")))
+                                      (Sym
+                                        (=
+                                          (CAbs "x" (CIfConst))
+                                          (CApp (KConst) (CIfConst)))
+                                        (Rule
+                                          (=
+                                            (CApp (KConst) (CIfConst))
+                                            (CAbs "x" (CIfConst)))
+                                          (name
+                                            "(rewrite (CAbs v $CIf) (CApp $K $CIf))")
+                                          (premises
                                             (Rule
-                                              (= t77 t77)
+                                              (=
+                                                (CAbs "x" (CIfConst))
+                                                (CAbs "x" (CIfConst)))
                                               (name
                                                 "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
                                               t81
-                                              t82)
-                                            (Sym
-                                              (= (Comb (Var "x")) (CVar "x"))
-                                              (Rule
-                                                (= (CVar "x") (Comb (Var "x")))
-                                                (name
-                                                  "(rule ((= x (Var v)))
-      ((union (Comb x) (CVar v)))
-         )")
-                                                (premises
-                                                  (Fiat (= (Var "x") (Var "x"))))
-                                                (substitution
-                                                  (v "x")
-                                                  (x (Var "x")))))
-                                            1))
-                                        (substitution
-                                          (@rewrite_var__2 t77)
-                                          (v "x")))
+                                              t82))
+                                          (substitution
+                                            (@rewrite_var__7
+                                              (CAbs "x" (CIfConst)))
+                                            (v "x"))))
                                       0))
                                   (substitution
-                                    (@rewrite_var__14 t78)
-                                    (cx (CFConst))))
-                                1)
+                                    (@rewrite_var__15 t78)
+                                    (cx (CIfConst))
+                                    (cy (CFConst))))
+                                0)
                               (Rule
-                                (= t76 (CIfConst))
-                                (name "(rewrite (CApp (CApp $K cx) cy) cx)")
+                                (= t77 (CFConst))
+                                (name "(rewrite (CApp $I cx) cx)")
                                 (premises
                                   (Congr
-                                    (=
-                                      t76
-                                      (CApp
-                                        (CApp (KConst) (CIfConst))
-                                        (CFConst)))
+                                    (= t77 (CApp (IConst) (CFConst)))
                                     (Rule
-                                      (= t76 t76)
+                                      (= t77 t77)
                                       (name
                                         "(rewrite (CApp (CApp (CApp $S cx) cy) cz) (CApp (CApp cx cz) (CApp cy cz)))")
                                       t83
                                       t84)
-                                    (Sym
-                                      (=
-                                        (CAbs "x" (CIfConst))
-                                        (CApp (KConst) (CIfConst)))
-                                      (Rule
-                                        (=
-                                          (CApp (KConst) (CIfConst))
-                                          (CAbs "x" (CIfConst)))
-                                        (name
-                                          "(rewrite (CAbs v $CIf) (CApp $K $CIf))")
-                                        (premises
+                                    (Rule
+                                      (= t76 (IConst))
+                                      (name "(rewrite (CAbs v (CVar v)) $I)")
+                                      (premises
+                                        (Congr
+                                          (= t76 (CAbs "x" (CVar "x")))
                                           (Rule
-                                            (=
-                                              (CAbs "x" (CIfConst))
-                                              (CAbs "x" (CIfConst)))
+                                            (= t76 t76)
                                             (name
                                               "(rewrite (CAbs v (CApp x y)) (CApp (CApp $S (CAbs v x)) (CAbs v y)))")
                                             t81
-                                            t82))
-                                        (substitution
-                                          (@rewrite_var__7
-                                            (CAbs "x" (CIfConst)))
-                                          (v "x"))))
+                                            t82)
+                                          (Sym
+                                            (= (Comb (Var "x")) (CVar "x"))
+                                            (Rule
+                                              (= (CVar "x") (Comb (Var "x")))
+                                              (name
+                                                "(rule ((= x (Var v)))
+      ((union (Comb x) (CVar v)))
+         )")
+                                              (premises
+                                                (Fiat (= (Var "x") (Var "x"))))
+                                              (substitution
+                                                (v "x")
+                                                (x (Var "x")))))
+                                          1))
+                                      (substitution
+                                        (@rewrite_var__2 t76)
+                                        (v "x")))
                                     0))
                                 (substitution
-                                  (@rewrite_var__15 t76)
-                                  (cx (CIfConst))
-                                  (cy (CFConst))))
-                              0)
+                                  (@rewrite_var__14 t77)
+                                  (cx (CFConst))))
+                              1)
                             0)
                           0))
                       (substitution
@@ -752,16 +753,16 @@ expression: proof_snapshot
                         (cx t6)
                         (cf (Comb (N 1))))))
                   (Rule
-                    (= t44 (N 1))
+                    (= (Uncomb (CFConst)) (FConst))
                     (name
-                      "(rule ((= cx (CN n)))
-      ((union (Uncomb cx) (N n)))
+                      "(rule ((= cx $CF))
+      ((union (Uncomb cx) $F))
          )")
-                    (premises prf3)
-                    (substitution t62 (n 1)))
-                  2)
+                    (premises (Fiat (= (CFConst) (CFConst))))
+                    (substitution (cx (CFConst))))
+                  0)
                 (Rule
-                  (= t43 (N 0))
+                  (= t44 (N 0))
                   (name
                     "(rule ((= cx (CN n)))
       ((union (Uncomb cx) (N n)))
@@ -770,14 +771,14 @@ expression: proof_snapshot
                   (substitution t75 (n 0)))
                 1)
               (Rule
-                (= (Uncomb (CFConst)) (FConst))
+                (= t43 (N 1))
                 (name
-                  "(rule ((= cx $CF))
-      ((union (Uncomb cx) $F))
+                  "(rule ((= cx (CN n)))
+      ((union (Uncomb cx) (N n)))
          )")
-                (premises (Fiat (= (CFConst) (CFConst))))
-                (substitution (cx (CFConst))))
-              0))
+                (premises prf3)
+                (substitution t62 (n 1)))
+              2))
           (substitution (@rewrite_var__12 t7) (t (N 0)) (f (N 1))))
         0))
     (substitution (@rewrite_var__13 t3) (m 2) (n 1))))
