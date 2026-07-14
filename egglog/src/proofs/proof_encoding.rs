@@ -1,4 +1,5 @@
 #[doc = include_str!("proof_encoding.md")]
+use crate::proofs::proof_checker::is_container_side_condition;
 use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
 use crate::*;
@@ -754,6 +755,16 @@ impl<'a> ProofInstrumentor<'a> {
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
     ) -> String {
+        // A container side condition: a fact that builds a container with a
+        // primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`, or a bare
+        // `(vec-of e)` guard). The container has no carryable proof — emit the
+        // fact as-is so the e-graph computes it (its arguments are already
+        // bound), with the `Eval` marker as its proof; the checker verifies it
+        // by re-evaluation (see `check_side_condition`, which shares this gate).
+        if is_container_side_condition(fact) {
+            res.push(fact.to_string());
+            return format!("({})", self.proof_names().eval_constructor);
+        }
         match fact {
             // In proof normal form, this is the only way that function calls appear.
             ResolvedFact::Eq(
@@ -801,34 +812,13 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedFact::Eq(_span, left_expr, right_expr) => {
-                let is_container_prim = |e: &ResolvedExpr| {
-                    matches!(
-                        e,
-                        ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
-                            if p.output().is_eq_container_sort()
-                    )
-                };
-                // A container side condition: a fact that builds a container with
-                // a primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`).
-                // The container has no carryable proof — emit just the `Eval`
-                // marker and the query bindings; the checker re-evaluates the side
-                // condition (see `check_side_condition`).
-                if is_container_prim(left_expr) || is_container_prim(right_expr) {
-                    // A container side condition: emit the fact as-is so the
-                    // e-graph computes the container (its arguments are already
-                    // bound). Its proof is the `Eval` marker, checked by
-                    // re-evaluation (see `check_side_condition`).
-                    res.push(fact.to_string());
-                    format!("({})", self.proof_names().eval_constructor)
-                } else {
-                    let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups);
-                    let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
-                    res.push(format!("(= {v1} {v2})"));
-                    let sym = &self.proof_names().eq_sym_constructor;
-                    let trans = &self.proof_names().eq_trans_constructor;
+                let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups);
+                let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
+                res.push(format!("(= {v1} {v2})"));
+                let sym = &self.proof_names().eq_sym_constructor;
+                let trans = &self.proof_names().eq_trans_constructor;
 
-                    format!("({trans} ({sym} {p1}) {p2})",)
-                }
+                format!("({trans} ({sym} {p1}) {p2})",)
             }
             ResolvedFact::Fact(generic_expr) => {
                 let (_, proof) = self.instrument_fact_expr(generic_expr, res, action_lookups);
