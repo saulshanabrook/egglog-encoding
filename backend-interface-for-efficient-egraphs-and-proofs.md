@@ -313,10 +313,12 @@ output against the same old/new tuples, orders table waves by declared
 `Function`/`Lookup` read dependencies, and queues merge-generated writes for
 later waves until a fixed point. It preserves a row's live/subsumed location and
 refreshes the row generation when the logical row changes. Scalar and tuple
-merges use the same recursive `MergeExpr`; there is no separate scalar fast
-path.\[S1\]\[S11\]
+merges use the shared recursive `MergeFn` expression IR directly; there is no
+DD-local expression copy or separate scalar fast path. `old`/`new` and their
+numbered tuple forms are references into the merge environment, while operations
+such as `min` remain ordinary primitive calls.\[S1\]\[S11\]
 
-`MergeExpr::UnionId` is not native UF support: DD retains the smaller ID only as
+`MergeFn::UnionId` is not native UF support: DD retains the smaller ID only as
 term-encoding compatibility, while the encoded UF merge emits the actual table
 writes. The frontend rejects DD without term encoding, so this behavior is not
 evidence of native equality parity.\[S8\]\[S11\]
@@ -1309,9 +1311,9 @@ ratio or variance claim.
   use Fieller 95% intervals over equal-sized sample sets.
 - **[S11] DD tuple/action merge implementation and tests:**
   [`egglog-experimental/dd/src/compile.rs`](egglog-experimental/dd/src/compile.rs),
-  especially `MergeExpr` and `visit_read_dependencies`;
+  especially shared-`MergeFn` validation and dependency traversal;
   [`egglog-experimental/dd/src/lib.rs`](egglog-experimental/dd/src/lib.rs),
-  especially `MergeTransaction`, `translate_merge_program`, `add_table`, and the
+  especially `MergeTransaction`, direct `MergeFn` evaluation, `add_table`, and the
   adjacent unit tests; [`egglog-experimental/dd/src/interpret.rs`](egglog-experimental/dd/src/interpret.rs),
   especially tuple-aware head execution and lookup; proof/container smoke tests in
   [`egglog-experimental/dd/tests/smoke.rs`](egglog-experimental/dd/tests/smoke.rs);

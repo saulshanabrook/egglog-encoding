@@ -39,7 +39,7 @@ mod compile;
 mod dd_native;
 mod interpret;
 
-use compile::{MergeActionPlan, MergeExpr, MergeProgram, ReadKey, Row};
+use compile::{validate_merge, visit_merge_read_dependencies, ReadKey, Row};
 
 type LocatedValues = (Row, RowLocation);
 type RowReplacement = (Row, LocatedValues);
@@ -106,7 +106,7 @@ pub(crate) struct RelationInfo {
     /// Number of visible columns.
     pub(crate) arity: usize,
     n_keys: usize,
-    merge: Arc<MergeProgram>,
+    merge: Arc<MergeFn>,
     default: TableDefault,
     n_identity_vals: Option<usize>,
     /// Read dependencies are registered before their owners, so this level
@@ -392,7 +392,7 @@ impl EGraph {
     pub(crate) fn function_spec(
         &self,
         function: FunctionId,
-    ) -> (usize, Arc<MergeProgram>, TableDefault, Option<usize>) {
+    ) -> (usize, Arc<MergeFn>, TableDefault, Option<usize>) {
         let info = self.info(function);
         (
             info.n_keys,
@@ -751,20 +751,36 @@ impl<'a> MergeTransaction<'a> {
         let merged = if identity_unchanged {
             old.values.clone()
         } else {
+            let (actions, result) = match merge.as_ref() {
+                MergeFn::Block { actions, result } => (actions.as_slice(), result.as_ref()),
+                result => (&[][..], result),
+            };
             let mut environment = Vec::new();
-            for action in &merge.actions {
+            for action in actions {
                 self.run_action(action, function, &old.values, &incoming, &mut environment)?;
             }
-            let mut values = Vec::with_capacity(merge.results.len());
-            for (self_col, expression) in merge.results.iter().enumerate() {
-                values.push(self.eval(
+            let mut values = Vec::with_capacity(incoming.len());
+            match result {
+                MergeFn::Columns(results) => {
+                    for (self_col, expression) in results.iter().enumerate() {
+                        values.push(self.eval(
+                            expression,
+                            function,
+                            &old.values,
+                            &incoming,
+                            self_col,
+                            &environment,
+                        )?);
+                    }
+                }
+                expression => values.push(self.eval(
                     expression,
                     function,
                     &old.values,
                     &incoming,
-                    self_col,
+                    0,
                     &environment,
-                )?);
+                )?),
             }
             values.into_boxed_slice()
         };
@@ -784,20 +800,20 @@ impl<'a> MergeTransaction<'a> {
 
     fn run_action(
         &mut self,
-        action: &MergeActionPlan,
+        action: &MergeAction,
         owner: FunctionId,
         old: &[u32],
         new: &[u32],
         environment: &mut Vec<u32>,
     ) -> Result<()> {
         match action {
-            MergeActionPlan::Set(function, arguments) => {
+            MergeAction::Set(function, arguments) => {
                 let row = self
                     .eval_args(arguments, owner, old, new, 0, environment)?
                     .into_boxed_slice();
                 self.next_wave.push((*function, row));
             }
-            MergeActionPlan::Let { slot, value } => {
+            MergeAction::Let { slot, value } => {
                 if *slot != environment.len() {
                     return Err(anyhow!(
                         "merge let slot {slot} for `{}` is out of order; expected {}",
@@ -808,13 +824,14 @@ impl<'a> MergeTransaction<'a> {
                 let value = self.eval(value, owner, old, new, 0, environment)?;
                 environment.push(value);
             }
+            MergeAction::Union(..) => unreachable!("native merge unions are rejected by add_table"),
         }
         Ok(())
     }
 
     fn eval_args(
         &mut self,
-        arguments: &[MergeExpr],
+        arguments: &[MergeFn],
         owner: FunctionId,
         old: &[u32],
         new: &[u32],
@@ -830,7 +847,7 @@ impl<'a> MergeTransaction<'a> {
 
     fn eval(
         &mut self,
-        expression: &MergeExpr,
+        expression: &MergeFn,
         owner: FunctionId,
         old: &[u32],
         new: &[u32],
@@ -838,7 +855,7 @@ impl<'a> MergeTransaction<'a> {
         environment: &[u32],
     ) -> Result<u32> {
         match expression {
-            MergeExpr::AssertEq => {
+            MergeFn::AssertEq => {
                 if old[self_col] != new[self_col] {
                     return Err(anyhow!(
                         "illegal merge attempted for function `{}`",
@@ -847,19 +864,19 @@ impl<'a> MergeTransaction<'a> {
                 }
                 Ok(old[self_col])
             }
-            MergeExpr::UnionId => Ok(old[self_col].min(new[self_col])),
-            MergeExpr::Old => Ok(old[self_col]),
-            MergeExpr::New => Ok(new[self_col]),
-            MergeExpr::OldCol(index) => Ok(old[*index]),
-            MergeExpr::NewCol(index) => Ok(new[*index]),
-            MergeExpr::LetVar(slot) => environment.get(*slot).copied().ok_or_else(|| {
+            MergeFn::UnionId => Ok(old[self_col].min(new[self_col])),
+            MergeFn::Old => Ok(old[self_col]),
+            MergeFn::New => Ok(new[self_col]),
+            MergeFn::OldCol(index) => Ok(old[*index]),
+            MergeFn::NewCol(index) => Ok(new[*index]),
+            MergeFn::LetVar(slot) => environment.get(*slot).copied().ok_or_else(|| {
                 anyhow!(
                     "merge for `{}` references unbound let slot {slot}",
                     self.eg.relation_name(owner)
                 )
             }),
-            MergeExpr::Const(value) => Ok(*value),
-            MergeExpr::Primitive(id, arguments) => {
+            MergeFn::Const(value) => Ok(value.rep()),
+            MergeFn::Primitive(id, arguments) => {
                 let arguments = self
                     .eval_args(arguments, owner, old, new, self_col, environment)?
                     .into_iter()
@@ -875,7 +892,7 @@ impl<'a> MergeTransaction<'a> {
                         )
                     })
             }
-            MergeExpr::Function(function, arguments) => {
+            MergeFn::Function(function, arguments) => {
                 if old[self_col] == new[self_col] {
                     return Ok(old[self_col]);
                 }
@@ -890,11 +907,14 @@ impl<'a> MergeTransaction<'a> {
                         )
                     })
             }
-            MergeExpr::Lookup(function, arguments) => {
+            MergeFn::Lookup(function, arguments) => {
                 let key = self.eval_args(arguments, owner, old, new, self_col, environment)?;
                 Ok(self
                     .lookup_or_insert(*function, &key)?
                     .map_or(old[self_col], |values| values[0]))
+            }
+            MergeFn::Columns(_) | MergeFn::Block { .. } => {
+                unreachable!("nested merge programs are rejected by add_table")
             }
         }
     }
@@ -1415,6 +1435,30 @@ mod tests {
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 40, 10])]));
+    }
+
+    #[test]
+    #[should_panic(expected = "references OldCol(1) but has only 1 value columns")]
+    fn merge_rejects_out_of_range_output_column() {
+        let mut eg = EGraph::new();
+        id_function(&mut eg, "invalid column", MergeFn::OldCol(1));
+    }
+
+    #[test]
+    #[should_panic(expected = "declares let slot 1, expected 0")]
+    fn merge_rejects_out_of_order_let_slot() {
+        let mut eg = EGraph::new();
+        id_function(
+            &mut eg,
+            "invalid let",
+            MergeFn::Block {
+                actions: vec![MergeAction::Let {
+                    slot: 1,
+                    value: MergeFn::Old,
+                }],
+                result: Box::new(MergeFn::Old),
+            },
+        );
     }
 
     #[test]
@@ -2034,116 +2078,6 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Merge-program translation (shared by `add_table`)
-// ---------------------------------------------------------------------------
-
-fn translate_merge_program(merge: MergeFn, n_vals: usize, name: &str) -> MergeProgram {
-    let (actions, result) = match merge {
-        MergeFn::Block { actions, result } => (actions, *result),
-        result => (Vec::new(), result),
-    };
-
-    let mut available_slots = 0;
-    let actions = actions
-        .into_iter()
-        .map(|action| match action {
-            MergeAction::Set(function, arguments) => MergeActionPlan::Set(
-                function,
-                arguments
-                    .into_iter()
-                    .map(|argument| {
-                        translate_merge_expr(argument, n_vals, name, available_slots)
-                    })
-                    .collect(),
-            ),
-            MergeAction::Let { slot, value } => {
-                assert_eq!(
-                    slot, available_slots,
-                    "merge for `{name}` declares let slot {slot}, expected {available_slots}"
-                );
-                let value = translate_merge_expr(value, n_vals, name, available_slots);
-                available_slots += 1;
-                MergeActionPlan::Let { slot, value }
-            }
-            MergeAction::Union(..) => panic!(
-                "DD backend does not support native union actions inside merge blocks for `{name}`; term encoding must lower equality effects to table writes"
-            ),
-        })
-        .collect::<Vec<_>>();
-
-    let results = match result {
-        MergeFn::Columns(columns) => columns,
-        result => vec![result],
-    };
-    assert_eq!(
-        results.len(),
-        n_vals,
-        "merge for `{name}` must produce {n_vals} value column(s), got {}",
-        results.len()
-    );
-    let results = results
-        .into_iter()
-        .map(|result| translate_merge_expr(result, n_vals, name, available_slots))
-        .collect::<Vec<_>>();
-    MergeProgram {
-        actions: actions.into_boxed_slice(),
-        results: results.into_boxed_slice(),
-    }
-}
-
-fn translate_merge_expr(
-    merge: MergeFn,
-    n_vals: usize,
-    name: &str,
-    available_slots: usize,
-) -> MergeExpr {
-    let translate = |merge| translate_merge_expr(merge, n_vals, name, available_slots);
-    match merge {
-        MergeFn::AssertEq => MergeExpr::AssertEq,
-        MergeFn::UnionId => MergeExpr::UnionId,
-        MergeFn::Old => MergeExpr::Old,
-        MergeFn::New => MergeExpr::New,
-        MergeFn::OldCol(index) => {
-            assert!(
-                index < n_vals,
-                "merge for `{name}` references OldCol({index}) but has only {n_vals} value columns"
-            );
-            MergeExpr::OldCol(index)
-        }
-        MergeFn::NewCol(index) => {
-            assert!(
-                index < n_vals,
-                "merge for `{name}` references NewCol({index}) but has only {n_vals} value columns"
-            );
-            MergeExpr::NewCol(index)
-        }
-        MergeFn::LetVar(slot) => {
-            assert!(
-                slot < available_slots,
-                "merge for `{name}` references let slot {slot} before it is bound"
-            );
-            MergeExpr::LetVar(slot)
-        }
-        MergeFn::Const(value) => MergeExpr::Const(value.rep()),
-        MergeFn::Primitive(id, arguments) => {
-            MergeExpr::Primitive(id, arguments.into_iter().map(translate).collect())
-        }
-        MergeFn::Function(function, arguments) => {
-            MergeExpr::Function(function, arguments.into_iter().map(translate).collect())
-        }
-        MergeFn::Lookup(function, arguments) => {
-            MergeExpr::Lookup(function, arguments.into_iter().map(translate).collect())
-        }
-        MergeFn::Columns(_) => {
-            panic!("nested MergeFn::Columns is not supported for `{name}`")
-        }
-        MergeFn::Block { .. } => {
-            panic!("nested MergeFn::Block is not supported for `{name}`")
-        }
-    }
-}
-
 // impl Backend
 // ---------------------------------------------------------------------------
 
@@ -2180,13 +2114,10 @@ impl Backend for EGraph {
             DefaultVal::Fail => TableDefault::Fail,
             DefaultVal::Const(value) => TableDefault::Const(value.rep()),
         };
-        let merge = Arc::new(translate_merge_program(
-            config.merge,
-            config.n_vals,
-            &config.name,
-        ));
+        validate_merge(&config.merge, config.n_vals, &config.name);
+        let merge = Arc::new(config.merge);
         let mut merge_level = 0;
-        merge.visit_read_dependencies(&mut |dependency| {
+        visit_merge_read_dependencies(&merge, &mut |dependency| {
             let dependency = self
                 .relations
                 .get(dependency.rep() as usize)
