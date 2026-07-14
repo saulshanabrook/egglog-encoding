@@ -1168,23 +1168,7 @@ impl<'a> ProofInstrumentor<'a> {
 
         let (proof_str, view_proof_var) = if self.egraph.proof_state.proofs_enabled {
             let to_ast = self.fname_to_ast_name(&func_type.name);
-            let rule_constructor = &self.proof_names().rule_constructor;
-            let fiat_constructor = &self.proof_names().fiat_constructor;
-
-            let proof = match justification {
-                Justification::Rule(rule_name, rule_proof) => {
-                    format!(
-                        "({rule_constructor} {rule_name} {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))",
-                    )
-                }
-                Justification::Fiat => {
-                    format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))",)
-                }
-                Justification::Merge(fn_name, p1, p2) => {
-                    let merge_constructor = &self.proof_names().merge_fn_constructor;
-                    format!("({merge_constructor} \"{fn_name}\" {p1} {p2} ({to_ast} {fv}))",)
-                }
-            };
+            let proof = self.term_proof_for_justification(&fv, to_ast, justification);
 
             let proof_var = self.fresh_var();
             // add a proof for the constructor if needed

@@ -521,8 +521,23 @@ impl EGraph {
 
         // Orientation helpers for the proof-encoding UF/view merges; see
         // [`crate::proofs::proof_encoding_helpers::OrientProof`].
-        eg.add_pure_primitive(proofs::proof_encoding_helpers::OrientProof::min(), None);
-        eg.add_pure_primitive(proofs::proof_encoding_helpers::OrientProof::max(), None);
+        let orient_proof_validator = |take_min: bool| -> PrimitiveValidator {
+            Arc::new(move |_: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+                let [a, a_proof, b, b_proof] = args else {
+                    return None;
+                };
+                let take_first = if take_min { a < b } else { a > b };
+                Some(if take_first { *a_proof } else { *b_proof })
+            })
+        };
+        eg.add_pure_primitive(
+            proofs::proof_encoding_helpers::OrientProof::min(),
+            Some(orient_proof_validator(true)),
+        );
+        eg.add_pure_primitive(
+            proofs::proof_encoding_helpers::OrientProof::max(),
+            Some(orient_proof_validator(false)),
+        );
 
         eg.rulesets
             .insert("".into(), Ruleset::Rules(Default::default()));
@@ -1061,7 +1076,7 @@ impl EGraph {
             name: decl.name.to_string(),
             can_subsume,
         });
-        debug_assert_eq!(backend_id, own_id);
+        assert_eq!(backend_id, own_id);
 
         let function = Function {
             decl: decl.clone(),
@@ -3574,6 +3589,32 @@ mod tests {
         assert_ne!(occupied, shared);
         egraph.backend.free_external_func(shared);
         assert_eq!(register_probe(&mut egraph), shared);
+    }
+
+    #[test]
+    fn orient_proof_primitives_have_working_validators() {
+        let egraph = EGraph::default();
+        let validator = |name: &str| {
+            egraph.type_info.get_prims(name).unwrap()[0]
+                .validator
+                .clone()
+                .unwrap_or_else(|| panic!("primitive `{name}` has no validator"))
+        };
+        let mut term_dag = TermDag::default();
+        let a = term_dag.var("a".to_string());
+        let a_proof = term_dag.var("a-proof".to_string());
+        let b = term_dag.var("b".to_string());
+        let b_proof = term_dag.var("b-proof".to_string());
+        let args = [a, a_proof, b, b_proof];
+
+        assert_eq!(
+            validator("proof-of-min")(&mut term_dag, &args),
+            Some(a_proof)
+        );
+        assert_eq!(
+            validator("proof-of-max")(&mut term_dag, &args),
+            Some(b_proof)
+        );
     }
 
     #[test]
