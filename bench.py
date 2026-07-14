@@ -1053,7 +1053,12 @@ def find_clean_worktree_for_sha(repo: Path, sha: str) -> Path | None:
         elif line.startswith("HEAD "):
             current_head = line.removeprefix("HEAD ")
         elif not line:
-            if current_path is not None and current_head == sha and not git_dirty(current_path):
+            if (
+                current_path is not None
+                and current_head == sha
+                and current_path.is_dir()
+                and not git_dirty(current_path)
+            ):
                 return current_path
             current_path = None
             current_head = None

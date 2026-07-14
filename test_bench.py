@@ -5,6 +5,7 @@ import gzip
 import io
 import json
 import resource
+import shutil
 import signal
 import subprocess
 import sys
@@ -639,6 +640,19 @@ def test_explicit_git_sources_isolate_dirty_matching_worktree(
     assert row.git_sha == sha
     assert not row.is_dirty
     assert (checkout / "tracked.txt").read_text(encoding="utf-8") == "committed\n"
+
+
+def test_find_clean_worktree_for_sha_skips_manually_deleted_worktree(tmp_path: Path) -> None:
+    sha, _ = make_dirty_git_repo(tmp_path)
+    deleted_worktree = tmp_path.parent / f"{tmp_path.name}-deleted-worktree"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(deleted_worktree), sha],
+        cwd=tmp_path,
+        check=True,
+    )
+    shutil.rmtree(deleted_worktree)
+
+    assert bench.find_clean_worktree_for_sha(tmp_path, sha) is None
 
 
 @pytest.mark.parametrize("use_absolute_path", [False, True])
