@@ -23,9 +23,9 @@ Use this order for normal full validation:
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 uv lock --check
-uv run --locked ruff format --check bench.py test_bench.py
-uv run --locked ruff check bench.py test_bench.py
-uv run --locked mypy bench.py test_bench.py
+uv run --locked ruff format --check bench.py bench_web.py test_bench.py test_bench_web.py
+uv run --locked ruff check bench.py bench_web.py test_bench.py test_bench_web.py
+uv run --locked mypy bench.py bench_web.py test_bench.py test_bench_web.py
 uv run --locked pytest -q
 ```
 

@@ -16,6 +16,7 @@ import pytest
 from rich.console import Console
 
 import bench
+import bench_web
 import samply_analysis
 
 ROOT = Path(__file__).resolve().parent
@@ -93,6 +94,62 @@ def make_target(
         binary_sha256=binary_sha256,
         binary_path=binary_path,
     )
+
+
+def make_multi_target_backend_report_case() -> tuple[
+    bench.DataFrame[bench.ReportFrame],
+    tuple[bench.ResolvedTarget, bench.ResolvedTarget],
+    bench.BenchmarkSpec,
+]:
+    rows = make_rows(
+        make_record(
+            0,
+            started_at="2026-07-04T12:00:00Z",
+            binary_sha256="sha256:base",
+            backend="main",
+            treatment="term",
+            wall_sec=1.0,
+            max_rss_bytes=100,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-04T12:00:01Z",
+            binary_sha256="sha256:base",
+            backend="dd",
+            treatment="term",
+            wall_sec=2.0,
+            max_rss_bytes=200,
+        ),
+        make_record(
+            2,
+            started_at="2026-07-04T12:00:02Z",
+            binary_sha256="sha256:candidate",
+            backend="main",
+            treatment="term",
+            wall_sec=0.8,
+            max_rss_bytes=80,
+        ),
+        make_record(
+            3,
+            started_at="2026-07-04T12:00:03Z",
+            binary_sha256="sha256:candidate",
+            backend="dd",
+            treatment="term",
+            wall_sec=1.5,
+            max_rss_bytes=150,
+        ),
+    )
+    baseline = make_target(target_label="base", binary_sha256="sha256:base")
+    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    file_spec = bench.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    spec = bench.BenchmarkSpec(
+        files=(file_spec,),
+        treatments=("term",),
+        rounds=1,
+        timeout_sec=120,
+        backends=("main", "dd"),
+    )
+    return rows, (baseline, candidate), spec
 
 
 def make_profile_data() -> dict[str, Any]:
@@ -418,6 +475,8 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert benchmark_args.files == ["file.egg"]
     assert benchmark_args.rounds == 1
     assert benchmark_args.format == "rich"
+    assert not benchmark_args.serve
+    assert benchmark_args.serve_port is None
     assert profile_args.command == "profile"
     assert profile_args.file == "file.egg"
     assert profile_args.backend == "main"
@@ -439,6 +498,25 @@ def test_parse_profile_args_accepts_presentation_options() -> None:
 def test_parse_args_rejects_markdown_report_dash() -> None:
     with pytest.raises(SystemExit):
         bench.parse_args(["--format", "markdown", "--report", "-", "file.egg"])
+
+
+def test_parse_args_accepts_serve_with_default_or_explicit_port() -> None:
+    default = bench.parse_args(["--serve", "file.egg"])
+    explicit = bench.parse_args(["--serve", "--serve-port", "8123", "file.egg"])
+
+    assert default.serve_port == 8000
+    assert explicit.serve_port == 8123
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_parse_args_rejects_invalid_serve_port(port: str) -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["--serve", "--serve-port", port, "file.egg"])
+
+
+def test_parse_args_rejects_serve_port_without_serve() -> None:
+    with pytest.raises(SystemExit):
+        bench.parse_args(["--serve-port", "8123", "file.egg"])
 
 
 def test_parse_profile_args_rejects_iterations_with_profile_seconds() -> None:
@@ -723,6 +801,75 @@ def test_render_report_omits_empty_issue_column() -> None:
     )
 
     assert "Issue" not in stream.getvalue()
+
+
+def test_build_report_tables_groups_tables_in_render_order() -> None:
+    rows, targets, spec = make_multi_target_backend_report_case()
+
+    report_tables = bench.build_report_tables(rows, targets, spec)
+
+    assert report_tables.targets.title == "Targets"
+    assert tuple(table.title for table in report_tables.comparisons) == (
+        "Per-file wall-time change vs base: candidate",
+        "Per-file peak RSS change vs base: candidate",
+        "Per-file backend wall-time change vs main: base dd",
+        "Per-file backend wall-time change vs main: candidate dd",
+        "Per-file backend peak RSS change vs main: base dd",
+        "Per-file backend peak RSS change vs main: candidate dd",
+    )
+    assert tuple(table.title for table in report_tables.diagnostics) == (
+        "base: per-file wall time",
+        "base: per-file peak RSS",
+        "candidate: per-file wall time",
+        "candidate: per-file peak RSS",
+    )
+    assert tuple(table.title for table in report_tables.summaries) == (
+        "DD vs main wall time",
+        "DD vs main peak RSS",
+        "Wall-time summary vs base",
+        "Peak RSS summary vs base",
+    )
+    assert report_tables.all_tables() == (
+        report_tables.targets,
+        *report_tables.comparisons,
+        *report_tables.diagnostics,
+        *report_tables.summaries,
+    )
+
+
+def test_precomputed_report_tables_preserve_rich_and_markdown_output() -> None:
+    rows, targets, spec = make_multi_target_backend_report_case()
+    report_destination = bench.ReportDestination(path=Path("reports.jsonl"))
+    report_tables = bench.build_report_tables(rows, targets, spec)
+    built_stream = io.StringIO()
+    precomputed_stream = io.StringIO()
+
+    bench.render_report(
+        Console(file=built_stream, width=280, color_system=None),
+        report_destination,
+        rows,
+        targets,
+        spec,
+    )
+    bench.render_report(
+        Console(file=precomputed_stream, width=280, color_system=None),
+        report_destination,
+        rows,
+        targets,
+        spec,
+        report_tables,
+    )
+
+    assert precomputed_stream.getvalue() == built_stream.getvalue()
+    command_argv = ("--format", "markdown", "file.egg")
+    assert bench.render_markdown_report(
+        report_destination,
+        rows,
+        targets,
+        spec,
+        command_argv,
+        report_tables,
+    ) == bench.render_markdown_report(report_destination, rows, targets, spec, command_argv)
 
 
 def test_render_report_puts_single_target_summary_after_diagnostics() -> None:
@@ -1269,6 +1416,13 @@ def test_main_rich_report_remains_on_stderr_by_default(
     file_spec = bench.FileSpec("file.egg", benchmark_file, "sha256:file")
     rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
     target = make_target()
+    built_reports: list[bench.ReportTables] = []
+    original_build_report_tables = bench.build_report_tables
+
+    def tracked_build_report_tables(*args: Any, **kwargs: Any) -> bench.ReportTables:
+        report_tables = original_build_report_tables(*args, **kwargs)
+        built_reports.append(report_tables)
+        return report_tables
 
     monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
     monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
@@ -1285,6 +1439,7 @@ def test_main_rich_report_remains_on_stderr_by_default(
         "collect_rows",
         lambda current_rows, *args: bench.CollectionResult(current_rows, bench.empty_report_frame()),
     )
+    monkeypatch.setattr(bench, "build_report_tables", tracked_build_report_tables)
 
     result = bench.main(
         [
@@ -1301,8 +1456,62 @@ def test_main_rich_report_remains_on_stderr_by_default(
     captured = capsys.readouterr()
     assert result == 0
     assert captured.out == ""
+    assert len(built_reports) == 1
     assert "status line" in captured.err
     assert "Benchmark report" in captured.err
+
+
+def test_main_serve_hands_final_tables_to_web_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = bench.FileSpec("file.egg", benchmark_file, "sha256:file")
+    rows = make_rows(make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    target = make_target()
+    served: dict[str, Any] = {}
+
+    monkeypatch.setattr(bench, "git_root_for_path", lambda path: ROOT)
+    monkeypatch.setattr(bench, "resolve_files", lambda raw_files, invocation_cwd: (file_spec,))
+    monkeypatch.setattr(bench, "load_report", lambda destination: rows)
+    monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
+    monkeypatch.setattr(bench, "build_collection_plan", lambda *args: object())
+    monkeypatch.setattr(bench, "emit_collection_plan", lambda *args: None)
+    monkeypatch.setattr(
+        bench,
+        "collect_rows",
+        lambda current_rows, *args: bench.CollectionResult(current_rows, bench.empty_report_frame()),
+    )
+
+    def serve_report(tables: Any, *, port: int, console: Any) -> None:
+        served.update(tables=tuple(tables), port=port, console=console)
+
+    monkeypatch.setattr(bench_web, "serve_report", serve_report)
+
+    result = bench.main(
+        [
+            "--report",
+            str(tmp_path / "reports.jsonl"),
+            "--rounds",
+            "1",
+            "--treatments",
+            "off",
+            "--serve",
+            "--serve-port",
+            "8123",
+            "file.egg",
+        ]
+    )
+
+    assert result == 0
+    assert served["port"] == 8123
+    assert isinstance(served["console"], Console)
+    assert tuple(table.title for table in served["tables"]) == (
+        "Targets",
+        "abc123: per-file wall time",
+        "abc123: proof overhead summary",
+    )
 
 
 def test_report_dash_writes_rows_to_stream_and_does_not_load_cache() -> None:

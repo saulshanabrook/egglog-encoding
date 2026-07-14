@@ -77,6 +77,7 @@ name = "egglog-encoding"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "eval-live" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pandera", extra = ["mypy", "pandas"] },
@@ -94,6 +95,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "eval-live", git = "https://github.com/oflatt/eval-live?rev=50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pandera", extras = ["pandas", "mypy"], specifier = ">=0.26" },
@@ -107,6 +109,14 @@ dev = [
     { name = "pandas-stubs", specifier = ">=2.2" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.12" },
+]
+
+[[package]]
+name = "eval-live"
+version = "0.1.0"
+source = { git = "https://github.com/oflatt/eval-live?rev=50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f#50cff6f5a27deefa7f47a7684c7c8fbb95e65e7f" }
+dependencies = [
+    { name = "rich" },
 ]
 
 [[package]]

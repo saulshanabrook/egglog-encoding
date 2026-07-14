@@ -153,6 +153,15 @@ The benchmark CLI exposes the routine collection and reporting options:
   `off,term,proofs`.
 - `--force-run`: append new observations even when enough matching rows already
   exist.
+- `--serve`: after reporting, serve an eval-live browser view of the finalized
+  report tables at `http://127.0.0.1:<serve-port>` and open it in the default
+  browser.
+- `--serve-port <n>`: loopback port for `--serve`. Default: `8000`.
+
+Browser filters only hide or show the already-finalized rows within the table
+being filtered. They do not recompute statistics or ratios, and they do not
+change any other table. The browser view also omits the terminal tables'
+captions and semantic cell colors.
 
 ### Treatments
 
@@ -551,10 +560,11 @@ Python checks are run as separate commands:
 
 ```bash
 uv lock --check
-uv run --locked ruff format --check bench.py test_bench.py
-uv run --locked ruff check bench.py test_bench.py
-uv run --locked mypy bench.py test_bench.py
+uv run --locked ruff format --check bench.py bench_web.py test_bench.py test_bench_web.py
+uv run --locked ruff check bench.py bench_web.py test_bench.py test_bench_web.py
+uv run --locked mypy bench.py bench_web.py test_bench.py test_bench_web.py
 uv run --locked pytest -q
 ```
 
-Use `uv run ruff format bench.py test_bench.py` to apply formatting locally.
+Use `uv run ruff format bench.py bench_web.py test_bench.py test_bench_web.py` to
+apply formatting locally.

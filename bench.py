@@ -69,6 +69,7 @@ DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
+DEFAULT_SERVE_PORT = 8000
 DEFAULT_PROFILE_SECONDS = 10
 DEFAULT_PROFILE_TOP = 15
 MAX_PROFILE_ITERATIONS = 10_000
@@ -380,6 +381,17 @@ class ReportTableData:
 
 
 @dataclass(frozen=True)
+class ReportTables:
+    targets: ReportTableData
+    comparisons: tuple[ReportTableData, ...]
+    diagnostics: tuple[ReportTableData, ...]
+    summaries: tuple[ReportTableData, ...]
+
+    def all_tables(self) -> tuple[ReportTableData, ...]:
+        return (self.targets, *self.comparisons, *self.diagnostics, *self.summaries)
+
+
+@dataclass(frozen=True)
 class MetricSpec:
     title: str
     caption: str
@@ -445,9 +457,25 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="append fresh rows even when enough cached rows exist",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help=f"serve the finalized report tables at http://127.0.0.1:{DEFAULT_SERVE_PORT}",
+    )
+    parser.add_argument(
+        "--serve-port",
+        type=port_number,
+        default=None,
+        metavar="PORT",
+        help=f"loopback port for --serve (default: {DEFAULT_SERVE_PORT})",
+    )
     args = parser.parse_args(argv)
     if args.format == "markdown" and args.report == "-":
         parser.error("--format markdown cannot be combined with --report -")
+    if args.serve:
+        args.serve_port = DEFAULT_SERVE_PORT if args.serve_port is None else args.serve_port
+    elif args.serve_port is not None:
+        parser.error("--serve-port requires --serve")
     args.command = "benchmark"
     return args
 
@@ -534,6 +562,13 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def port_number(value: str) -> int:
+    parsed = int(value)
+    if not 1 <= parsed <= 65535:
+        raise argparse.ArgumentTypeError("must be between 1 and 65535")
     return parsed
 
 
@@ -2370,32 +2405,69 @@ def backend_metric_label(spec: BenchmarkSpec, backend: Backend, label: str) -> s
     return f"{backend} {label}"
 
 
+def build_report_tables(
+    rows: DataFrame[ReportFrame],
+    targets: Sequence[ResolvedTarget],
+    spec: BenchmarkSpec,
+) -> ReportTables:
+    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
+    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
+
+    comparisons: list[ReportTableData] = []
+    if len(targets) > 1:
+        comparisons.extend(per_file_wall_time_change_tables(cell_maps, targets, spec))
+        comparisons.extend(per_file_peak_rss_change_tables(rss_cell_maps, targets, spec))
+    if len(spec.backends) > 1:
+        comparisons.extend(per_file_backend_wall_time_change_tables(cell_maps, targets, spec))
+        comparisons.extend(per_file_backend_peak_rss_change_tables(rss_cell_maps, targets, spec))
+
+    diagnostics: list[ReportTableData] = []
+    for target in targets:
+        overhead = overhead_ratios_table_data(cell_maps[target], target, spec)
+        if overhead is not None:
+            diagnostics.append(overhead)
+        diagnostics.append(target_wall_time_table_data(cell_maps[target], target, spec))
+        peak_rss = target_peak_rss_table_data(rss_cell_maps[target], target, spec)
+        if peak_rss is not None:
+            diagnostics.append(peak_rss)
+
+    summaries = list(backend_summary_tables(cell_maps, rss_cell_maps, targets, spec))
+    if len(targets) == 1:
+        summaries.append(
+            single_target_summary_table_data(cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
+        )
+    else:
+        summaries.extend(multi_target_summary_tables(cell_maps, rss_cell_maps, targets, spec))
+
+    return ReportTables(
+        targets=targets_table_data(targets),
+        comparisons=tuple(comparisons),
+        diagnostics=tuple(diagnostics),
+        summaries=tuple(summaries),
+    )
+
+
 def render_report(
     console: Console,
     report_destination: ReportDestination,
     rows: DataFrame[ReportFrame],
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
+    report_tables: ReportTables | None = None,
 ) -> None:
+    tables = build_report_tables(rows, targets, spec) if report_tables is None else report_tables
     console.rule("[bold]Benchmark report[/bold]")
     console.print(f"Report: [bold]{escape(report_destination.display_path)}[/bold]")
     console.print(f"Selected rows per cell: [bold]{spec.rounds}[/bold]")
 
     render_targets_tree(console, targets)
 
-    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
-    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
-    if len(targets) > 1:
-        render_per_file_wall_time_change(console, cell_maps, targets, spec)
-        render_per_file_peak_rss_change(console, rss_cell_maps, targets, spec)
-    if len(spec.backends) > 1:
-        render_per_file_backend_wall_time_change(console, cell_maps, targets, spec)
-        render_per_file_backend_peak_rss_change(console, rss_cell_maps, targets, spec)
+    for table_data in (*tables.comparisons, *tables.diagnostics):
+        console.print(render_rich_table(table_data))
 
-    for target in targets:
-        render_target_diagnostics(console, cell_maps[target], rss_cell_maps[target], target, spec)
-
-    render_benchmark_summary(console, cell_maps, rss_cell_maps, targets, spec)
+    console.rule("[bold]Benchmark summary[/bold]")
+    for table_data in tables.summaries:
+        console.print(render_rich_table(table_data))
 
 
 def render_markdown_report(
@@ -2404,9 +2476,9 @@ def render_markdown_report(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     command_argv: Sequence[str] | None = None,
+    report_tables: ReportTables | None = None,
 ) -> str:
-    cell_maps = {target: target_cell_summaries(rows, target, spec) for target in targets}
-    rss_cell_maps = {target: target_rss_cell_summaries(rows, target, spec) for target in targets}
+    tables = build_report_tables(rows, targets, spec) if report_tables is None else report_tables
     parts = []
     if command_argv is not None:
         parts.append(benchmark_command_block(command_argv))
@@ -2414,43 +2486,20 @@ def render_markdown_report(
         [
             "# Benchmark Report",
             f"- Report: `{report_destination.display_path}`\n- Selected rows per cell: `{spec.rounds}`",
-            render_markdown_table(targets_table_data(targets), heading_level=2),
+            render_markdown_table(tables.targets, heading_level=2),
         ]
     )
 
-    comparison_tables: list[ReportTableData] = []
-    if len(targets) > 1:
-        comparison_tables.extend(per_file_wall_time_change_tables(cell_maps, targets, spec))
-        comparison_tables.extend(per_file_peak_rss_change_tables(rss_cell_maps, targets, spec))
-    if len(spec.backends) > 1:
-        comparison_tables.extend(per_file_backend_wall_time_change_tables(cell_maps, targets, spec))
-        comparison_tables.extend(per_file_backend_peak_rss_change_tables(rss_cell_maps, targets, spec))
-    if comparison_tables:
+    if tables.comparisons:
         parts.append("## Comparisons")
-        parts.extend(render_markdown_table(table_data) for table_data in comparison_tables)
+        parts.extend(render_markdown_table(table_data) for table_data in tables.comparisons)
 
-    diagnostic_tables: list[ReportTableData] = []
-    for target in targets:
-        overhead = overhead_ratios_table_data(cell_maps[target], target, spec)
-        if overhead is not None:
-            diagnostic_tables.append(overhead)
-        diagnostic_tables.append(target_wall_time_table_data(cell_maps[target], target, spec))
-        peak_rss = target_peak_rss_table_data(rss_cell_maps[target], target, spec)
-        if peak_rss is not None:
-            diagnostic_tables.append(peak_rss)
-    if diagnostic_tables:
+    if tables.diagnostics:
         parts.append("## Target Diagnostics")
-        parts.extend(render_markdown_table(table_data) for table_data in diagnostic_tables)
+        parts.extend(render_markdown_table(table_data) for table_data in tables.diagnostics)
 
-    summary_tables: list[ReportTableData] = list(backend_summary_tables(cell_maps, rss_cell_maps, targets, spec))
-    if len(targets) == 1:
-        summary_tables.append(
-            single_target_summary_table_data(cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
-        )
-    else:
-        summary_tables.extend(multi_target_summary_tables(cell_maps, rss_cell_maps, targets, spec))
     parts.append("## Benchmark Summary")
-    parts.extend(render_markdown_table(table_data) for table_data in summary_tables)
+    parts.extend(render_markdown_table(table_data) for table_data in tables.summaries)
     return "\n\n".join(part.strip() for part in parts if part.strip())
 
 
@@ -2536,16 +2585,6 @@ def per_file_wall_time_change_tables(
     return tuple(tables)
 
 
-def render_per_file_wall_time_change(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in per_file_wall_time_change_tables(cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
-
-
 def per_file_peak_rss_change_tables(
     rss_cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
@@ -2587,16 +2626,6 @@ def per_file_peak_rss_change_tables(
     return tuple(tables)
 
 
-def render_per_file_peak_rss_change(
-    console: Console,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in per_file_peak_rss_change_tables(rss_cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
-
-
 def per_file_backend_wall_time_change_tables(
     cell_maps: TargetCellMaps,
     targets: Sequence[ResolvedTarget],
@@ -2635,16 +2664,6 @@ def per_file_backend_wall_time_change_tables(
                 )
             )
     return tuple(tables)
-
-
-def render_per_file_backend_wall_time_change(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in per_file_backend_wall_time_change_tables(cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
 
 
 def per_file_backend_peak_rss_change_tables(
@@ -2692,31 +2711,6 @@ def per_file_backend_peak_rss_change_tables(
                 )
             )
     return tuple(tables)
-
-
-def render_per_file_backend_peak_rss_change(
-    console: Console,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in per_file_backend_peak_rss_change_tables(rss_cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
-
-
-def render_benchmark_summary(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    console.rule("[bold]Benchmark summary[/bold]")
-    render_backend_summary(console, cell_maps, rss_cell_maps, targets, spec)
-    if len(targets) == 1:
-        render_single_target_summary(console, cell_maps[targets[0]], rss_cell_maps[targets[0]], targets[0], spec)
-    else:
-        render_multi_target_summary(console, cell_maps, rss_cell_maps, targets, spec)
 
 
 def single_target_summary_table_data(
@@ -2792,16 +2786,6 @@ def single_target_summary_table_data(
         caption=PROOF_OVERHEAD_CAPTION,
         alignments=("left", "right", "right", "left", "right", "left"),
     )
-
-
-def render_single_target_summary(
-    console: Console,
-    cell_map: CellMap,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    console.print(render_rich_table(single_target_summary_table_data(cell_map, rss_cell_map, target, spec)))
 
 
 def within_target_wall_summary_rows(
@@ -2948,17 +2932,6 @@ def multi_target_summary_tables(
     )
 
 
-def render_multi_target_summary(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in multi_target_summary_tables(cell_maps, rss_cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
-
-
 def display_backend(backend: Backend) -> str:
     return backend_spec(backend).display_name
 
@@ -3092,31 +3065,8 @@ def backend_summary_tables(
     )
 
 
-def render_backend_summary(
-    console: Console,
-    cell_maps: TargetCellMaps,
-    rss_cell_maps: TargetCellMaps,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-) -> None:
-    for table_data in backend_summary_tables(cell_maps, rss_cell_maps, targets, spec):
-        console.print(render_rich_table(table_data))
-
-
 def format_worst_file(file_spec: FileSpec | None) -> str:
     return "-" if file_spec is None else file_spec.display_path
-
-
-def render_target_diagnostics(
-    console: Console,
-    cell_map: CellMap,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    render_overhead_ratios(console, cell_map, target, spec)
-    console.print(render_rich_table(target_wall_time_table_data(cell_map, target, spec)))
-    render_peak_rss_diagnostics(console, rss_cell_map, target, spec)
 
 
 def target_wall_time_table_data(cell_map: CellMap, target: ResolvedTarget, spec: BenchmarkSpec) -> ReportTableData:
@@ -3153,17 +3103,6 @@ def target_wall_time_table_data(cell_map: CellMap, target: ResolvedTarget, spec:
     )
 
 
-def render_overhead_ratios(
-    console: Console,
-    cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    table_data = overhead_ratios_table_data(cell_map, target, spec)
-    if table_data is not None:
-        console.print(render_rich_table(table_data))
-
-
 def overhead_ratios_table_data(
     cell_map: CellMap, target: ResolvedTarget, spec: BenchmarkSpec
 ) -> ReportTableData | None:
@@ -3192,17 +3131,6 @@ def overhead_ratios_table_data(
         caption="Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
         alignments=tuple("left" if index == 0 else "right" for index, _ in enumerate(headers)),
     )
-
-
-def render_peak_rss_diagnostics(
-    console: Console,
-    rss_cell_map: CellMap,
-    target: ResolvedTarget,
-    spec: BenchmarkSpec,
-) -> None:
-    table_data = target_peak_rss_table_data(rss_cell_map, target, spec)
-    if table_data is not None:
-        console.print(render_rich_table(table_data))
 
 
 def target_peak_rss_table_data(
@@ -3425,8 +3353,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             emit_collection_plan(output, plan, estimate_model)
             collection = collect_rows(rows, report_destination, plan, spec, output, estimate_model)
             rows = collection.rows
+        report_tables = build_report_tables(rows, targets, spec)
         if args.format == "markdown":
-            sys.stdout.write(render_markdown_report(report_destination, rows, targets, spec, raw_argv) + "\n")
+            sys.stdout.write(
+                render_markdown_report(
+                    report_destination,
+                    rows,
+                    targets,
+                    spec,
+                    raw_argv,
+                    report_tables,
+                )
+                + "\n"
+            )
         else:
             render_report(
                 output.console,
@@ -3434,6 +3373,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rows,
                 targets,
                 spec,
+                report_tables,
+            )
+        if args.serve:
+            import bench_web
+
+            sys.stdout.flush()
+            bench_web.serve_report(
+                report_tables.all_tables(),
+                port=args.serve_port,
+                console=output.console,
             )
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
