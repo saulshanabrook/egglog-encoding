@@ -7,6 +7,10 @@
 - Add `make nightly` and `scripts/nightly_bench.py`, a hyperfine-based benchmark harness that measures every `tests/**/*.egg` program at 1/2/4/8 threads and (where supported) in proof-testing mode, caps each run at a 2-minute timeout, skips sub-50ms programs, and emits an HTML dashboard (one row per benchmark, one column per configuration) for nightly.cs.washington.edu. The dashboard uses [eval-live](https://github.com/oflatt/eval-live) for interactive filtering and sorting.
 - Rework the term/proof encoding's union-find and congruence maintenance,
   substantially reducing proof-mode time and memory.
+- Add materialized rebuild indexes to the term/proof encoding. Each view's later
+  eq-sort key columns get a hidden `:merge` index table keyed on that column, so the
+  rebuild rule finds the rows containing a term by key lookup instead of scanning the
+  view (mirroring the per-child parent index a native rebuild maintains).
 - **Tuple-output functions.** A function may declare more than one output sort, e.g.
   `(function interval (Math) (i64 i64) :merge (values (max old0 new0) (min old1 new1)))`. Such a
   function stores its outputs as separate value columns; the functional dependency is

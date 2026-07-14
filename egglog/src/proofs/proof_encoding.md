@@ -142,6 +142,51 @@ A rule for an eq-sort child instead re-keys the row: it `set`s the view at the
 Because `UF_<Sort>` has no row for a canonical term (identity-on-miss), a column already at its
   leader simply doesn't match, so no self-loops or default lookups are needed.
 
+## Rebuild indexes
+
+The view is keyed by its children, so a rebuild driven by a `UF_<Sort>` edge on the
+  *first* child finds its rows by key prefix.
+For any *later* eq-sort child, the child is not a key prefix, so the same rule would
+  have to scan the view to find the rows holding that child.
+To avoid the scan, each later eq-sort child column gets a materialized *rebuild index*,
+  mirroring the per-child parent index a native rebuild maintains.
+Consider a constructor with two eq-sort children:
+
+```text
+(constructor Cons (Math Math) Math)
+(function ConsView1 (Math Math) Unit :merge old :internal-hidden :unextractable)
+```
+
+`ConsView1` mirrors `ConsView` keyed on the second child first: for each row
+  `(ConsView c0 c1)` it holds `(ConsView1 c1 c0)`.
+The encoding writes this entry wherever it writes the view and deletes it wherever it
+  deletes a view row, keeping the index in sync (subsumption keeps the row, so it
+  leaves the index alone).
+The index is a `:merge` function rather than a relation so that a `set` and a `delete`
+  of the same index key in one rebuild round resolve exactly as the view's own
+  `set`/`delete` do; a plain relation resolves that conflict differently and can drift
+  out of sync with the view under concurrent re-keying.
+The rebuild rule for the second child then finds the rows by key instead of scanning:
+
+```text
+(rule ((= (values leader pf) (UF_Math c1))
+       (ConsView1 c1 c0)
+       (= (values e vp) (ConsView c0 c1))
+       (!= c1 leader))
+      ((set (ConsView c0 leader) (values e ()))
+       (set (ConsView1 leader c0) ())
+       (delete (ConsView c0 c1))
+       (delete (ConsView1 c1 c0)))
+       :ruleset rebuilding :name "rebuild_rule" :internal-include-subsumed)
+```
+
+The index atom is redundant for matching (`ConsView` already pins the second child to
+  `c1`); it exists only to supply the key lookup.
+Only later eq-sort key columns are indexed: the first key column is already the view
+  key's prefix; a constructor view's eclass value is rewritten by the view `:merge`,
+  which never sees the row key, so no consistent index is possible for it; and container
+  columns rebuild structurally rather than through `UF_<Sort>`.
+
 ```text
 (function v3 () Math :no-merge :unextractable :internal-let)
 (set (v3) (Add 1 2))

@@ -22,6 +22,11 @@ pub(crate) struct EncodingState {
     /// discard stale proof-view candidates whenever the current value already
     /// has a proof witness.
     pub merge_current: HashMap<String, (String, usize)>,
+    /// Function name -> materialized rebuild indexes on its view. Each entry is
+    /// `(key position, index table name)` for a non-first eq-sort key column;
+    /// the index lets the rebuild query find rows containing a term by that
+    /// column via a key lookup instead of a scan (see `proof_encoding.md`).
+    pub view_index: HashMap<String, Vec<(usize, String)>>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -44,6 +49,7 @@ impl EncodingState {
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
             merge_current: HashMap::default(),
+            view_index: HashMap::default(),
             term_header_added: false,
             original_typechecking: None,
             proofs_enabled: false,
@@ -202,14 +208,10 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// Rules that execute deletion and subsumption based on the tables requesting the deletion/subsumption.
     fn delete_and_subsume(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        let child_names = fdecl
-            .schema
-            .input
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("c{i}_"))
-            .collect::<Vec<_>>()
-            .join(" ");
+        let child_vars: Vec<String> = (0..fdecl.schema.input.len())
+            .map(|i| format!("c{i}_"))
+            .collect();
+        let child_names = child_vars.join(" ");
         let to_delete_name = self.delete_name(&fdecl.name);
         let subsumed_name = self.subsumed_name(&fdecl.name);
         let view_name = self.view_name(&fdecl.name);
@@ -218,18 +220,21 @@ impl<'a> ProofInstrumentor<'a> {
 
         // A constructor's FD tuple view is keyed by children only, so match its value
         // tuple to delete/subsume by key (the bridge re-reads every value column when
-        // subsuming a tuple-output view).
+        // subsuming a tuple-output view). Subsumption keeps the row, so it leaves the
+        // rebuild indexes untouched; deletion drops the row's index entries with it.
         if fdecl.subtype == FunctionSubtype::Constructor {
             let e = self.fresh_var();
             let pf = self.fresh_var();
             let e2 = self.fresh_var();
             let pf2 = self.fresh_var();
+            let index_deletes = self.view_index_deletes(&fdecl.name, &child_vars);
             // Deletion removes the row by key; subsumption marks it subsumed (kept for size/proofs
             // but excluded from matching).
             return format!(
                 "(rule (({to_delete_name} {child_names})
                         (= (values {e} {pf}) ({view_name} {child_names})))
                        ((delete ({view_name} {child_names}))
+                        {index_deletes}
                         (delete ({to_delete_name} {child_names})))
                         :ruleset {delete_subsume_ruleset}
                         :name \"{fresh_name}\")
@@ -241,10 +246,16 @@ impl<'a> ProofInstrumentor<'a> {
             );
         }
 
+        // Custom function views are keyed by every column, so the deleted row's key is
+        // the children plus the output.
+        let mut all_keys = child_vars.clone();
+        all_keys.push("out".to_string());
+        let index_deletes = self.view_index_deletes(&fdecl.name, &all_keys);
         format!(
             "(rule (({to_delete_name} {child_names})
                     ({view_name} {child_names} out))
                    ((delete ({view_name} {child_names} out))
+                    {index_deletes}
                     (delete ({to_delete_name} {child_names})))
                     :ruleset {delete_subsume_ruleset}
                     :name \"{fresh_name}\")
@@ -339,6 +350,11 @@ impl<'a> ProofInstrumentor<'a> {
         let cleanup_constructor = self.egraph.parser.symbol_gen.fresh("mergecleanup");
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("mergecleanupsort");
         let output_sort = fdecl.schema.output().clone();
+        // Both cleanup rules delete the stale row keyed by `(children old)`, so
+        // its rebuild-index entries are removed alongside it.
+        let mut old_key = child_names.to_vec();
+        old_key.push("old".to_string());
+        let index_deletes_old = self.view_index_deletes(name, &old_key);
 
         // The first runs the merge function adding a new row.
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
@@ -367,14 +383,16 @@ impl<'a> ProofInstrumentor<'a> {
                         ({view_name} {child_names_str} merged)
                         ({view_name} {child_names_str} old)
                         (!= merged old))
-                       ((delete ({view_name} {child_names_str} old)))
+                       ((delete ({view_name} {child_names_str} old))
+                        {index_deletes_old})
                         :ruleset {rebuilding_cleanup_ruleset}
                         :name \"{cleanup_name}\")
                  (rule ((= selected ({current_name} {child_names_str}))
                         ({view_name} {child_names_str} selected)
                         ({view_name} {child_names_str} old)
                         (!= selected old))
-                       ((delete ({view_name} {child_names_str} old)))
+                       ((delete ({view_name} {child_names_str} old))
+                        {index_deletes_old})
                         :ruleset {rebuilding_cleanup_ruleset}
                         :name \"{current_cleanup_name}\")
                 ",
@@ -409,6 +427,50 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
+    /// Declare a materialized rebuild index for each non-first eq-sort key column
+    /// of a view, register it in [`EncodingState::view_index`], and return the
+    /// declarations. Each index `(col_i, other key columns…) -> carrier` mirrors
+    /// the view keyed on `col_i` first, so the rebuild query looks up the rows
+    /// containing a term in that column by key instead of scanning the view (see
+    /// `proof_encoding.md`). It is maintained by [`Self::view_index_inserts`] /
+    /// [`Self::view_index_deletes`] wherever the view is written or deleted.
+    ///
+    /// Must run before any view write for this function is instrumented (i.e.
+    /// before the merge/congruence handling below), so the metadata is present.
+    fn declare_view_indexes(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
+        let types = fdecl.resolved_schema.view_types();
+        let n = types.len();
+        let n_keys = if fdecl.subtype == FunctionSubtype::Constructor {
+            n - 1
+        } else {
+            n
+        };
+        let positions = Self::view_index_positions(&types, n_keys);
+        let mut decls = String::new();
+        let mut entries = Vec::new();
+        for i in positions {
+            let index_name = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh(&format!("{}Index{i}", fdecl.name));
+            let col_sorts = Self::index_row(&types[..n_keys], i)
+                .iter()
+                .map(|t| t.name().to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            decls.push_str(&format!(
+                "(function {index_name} ({col_sorts}) Unit :merge old :internal-hidden :unextractable)\n"
+            ));
+            entries.push((i, index_name));
+        }
+        self.egraph
+            .proof_state
+            .view_index
+            .insert(fdecl.name.clone(), entries);
+        decls
+    }
+
     /// Each function/constructor gets a term table and a view table.
     /// The term table stores underlying representative terms.
     /// The view table stores child terms and their eclass.
@@ -422,6 +484,10 @@ impl<'a> ProofInstrumentor<'a> {
         let view_name = self.view_name(&fdecl.name);
         let in_sorts = ListDisplay(schema.input.clone(), " ");
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("view");
+        // Declare and register rebuild indexes before instrumenting any view
+        // write for this function (the merge/congruence handling below writes
+        // the view and must emit index maintenance).
+        let index_decls = self.declare_view_indexes(fdecl);
         let delete_rule = self.delete_and_subsume(fdecl);
         let to_delete_name = self.delete_name(&fdecl.name);
         let subsumed_name = self.subsumed_name(&fdecl.name);
@@ -515,6 +581,7 @@ impl<'a> ProofInstrumentor<'a> {
             {view_decl}
             (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
             (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
+            {index_decls}
             {proof_constructors}
             {merge_rule}
             {delete_rule}",
@@ -551,6 +618,18 @@ impl<'a> ProofInstrumentor<'a> {
         let view_name = self.view_name(&fdecl.name);
         let keys_str = format!("{}", ListDisplay(&key_vars, " "));
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
+
+        // Materialized rebuild indexes for this view (see `declare_view_indexes`).
+        let index_entries = self
+            .egraph
+            .proof_state
+            .view_index
+            .get(&fdecl.name)
+            .cloned()
+            .unwrap_or_default();
+        // Every re-key deletes the old view row, so it must also drop that row's
+        // index entries (for all indexed columns, not just the one that changed).
+        let index_deletes_key = self.view_index_deletes(&fdecl.name, &key_vars);
 
         let mut rules = String::new();
         // One rule per rebuildable key column (re-keys the row via set + delete).
@@ -633,9 +712,24 @@ impl<'a> ProofInstrumentor<'a> {
                 Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
                 None => self.update_view(&fdecl.name, &updated, &pf_arg),
             };
+            // If this column has an index, join it so the rule finds the rows
+            // holding `ci` by key lookup (driven by the `@UF` delta) rather than
+            // scanning the view. Redundant with `query_view` for matching — both
+            // pin column `i` to `ci` — but it supplies the fast access path.
+            let index_atom = index_entries
+                .iter()
+                .find(|(pos, _)| *pos == i)
+                .map(|(_, index_name)| {
+                    format!(
+                        "({index_name} {})",
+                        ListDisplay(&Self::index_row(&key_vars, i), " ")
+                    )
+                })
+                .unwrap_or_default();
             let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
             rules.push_str(&format!(
                 "(rule ({query_view}
+                        {index_atom}
                         {canon_fact}
                         (!= {ci} {canon}))
                      (
@@ -643,6 +737,7 @@ impl<'a> ProofInstrumentor<'a> {
                       {updated_view}
                       {cproof_set}
                       (delete ({view_name} {keys_str}))
+                      {index_deletes_key}
                      )
                       :ruleset {rebuilding_ruleset} {naive}:name \"{fresh_name}\" :internal-include-subsumed)\n"
             ));
@@ -1116,15 +1211,19 @@ impl<'a> ProofInstrumentor<'a> {
     fn update_view(&mut self, fname: &str, args: &[String], proof: &str) -> String {
         let view_name = self.view_name(fname);
         let view_update = format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "));
+        // Custom function views are keyed by every column, so `args` are the key.
+        let index_update = self.view_index_inserts(fname, args);
         if let Some((current_name, input_arity)) =
             self.egraph.proof_state.merge_current.get(fname).cloned()
             && args.len() == input_arity + 1
         {
             let inputs = ListDisplay(&args[..input_arity], " ");
             let output = &args[input_arity];
-            return format!("{view_update}\n(set ({current_name} {inputs}) {output})");
+            return format!(
+                "{view_update}\n(set ({current_name} {inputs}) {output})\n{index_update}"
+            );
         }
-        view_update
+        format!("{view_update}\n{index_update}")
     }
 
     /// Write a row into a constructor's functional-dependency view
@@ -1138,10 +1237,70 @@ impl<'a> ProofInstrumentor<'a> {
         proof: &str,
     ) -> String {
         let view_name = self.view_name(fname);
+        // FD views are keyed by their children, so `children` are the key.
+        let index_update = self.view_index_inserts(fname, children);
         format!(
-            "(set ({view_name} {}) (values {eclass} {proof}))",
+            "(set ({view_name} {}) (values {eclass} {proof}))\n{index_update}",
             ListDisplay(children, " ")
         )
+    }
+
+    /// Key positions of a view that get a materialized rebuild index: a non-first
+    /// key column (position 0 is the view key's own prefix) whose type is a
+    /// non-container eq-sort (containers rebuild structurally, not via `@UF`).
+    fn view_index_positions(types: &[ArcSort], n_keys: usize) -> Vec<usize> {
+        (1..n_keys)
+            .filter(|&i| !types[i].is_eq_container_sort() && types[i].is_eq_sort())
+            .collect()
+    }
+
+    /// Reorder a view's key columns so position `i` comes first, matching the
+    /// column order of its index table `(col_i, other key columns…)`.
+    fn index_row<T: Clone>(key: &[T], i: usize) -> Vec<T> {
+        std::iter::once(key[i].clone())
+            .chain(
+                key.iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, v)| v.clone()),
+            )
+            .collect()
+    }
+
+    /// Insert this view row into each of its rebuild indexes (see [`Self::view_index_positions`]).
+    /// `key` is the view's key columns (children for FD views, all columns otherwise).
+    fn view_index_inserts(&mut self, fname: &str, key: &[String]) -> String {
+        let Some(indexes) = self.egraph.proof_state.view_index.get(fname).cloned() else {
+            return String::new();
+        };
+        indexes
+            .iter()
+            .map(|(i, index_name)| {
+                format!(
+                    "(set ({index_name} {}) ())",
+                    ListDisplay(&Self::index_row(key, *i), " ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Delete this view row from each of its rebuild indexes, mirroring
+    /// [`Self::view_index_inserts`]. Emitted wherever a view row is deleted.
+    fn view_index_deletes(&mut self, fname: &str, key: &[String]) -> String {
+        let Some(indexes) = self.egraph.proof_state.view_index.get(fname).cloned() else {
+            return String::new();
+        };
+        indexes
+            .iter()
+            .map(|(i, index_name)| {
+                format!(
+                    "(delete ({index_name} {}))",
+                    ListDisplay(&Self::index_row(key, *i), " ")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Return some code adding to the view and term tables.
