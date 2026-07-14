@@ -676,9 +676,11 @@ impl<C: Cost + Ord + Eq + Clone + Debug> Extractor<C> {
 /// union-find, or return the value unchanged if the sort has none.
 ///
 /// The encoding's union-find is a function keyed by the element
-/// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`), so `lookup_id` returns the parent. Chase to a fixpoint; a miss means the value is its own
-/// leader. A two-key union-find is a `(child, parent)` relation (a user-provided
-/// `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a one-hop scan.
+/// (`UF_<Sort> : (S) -> (S, {Unit|Proof})`). Rebuild saturates path compression,
+/// so `lookup_id` returns the leader in one hop; a miss means the value is its
+/// own leader. A two-key union-find is a `(child, parent)` relation (a
+/// user-provided `:internal-uf`, see `tests/uf-extraction.egg`), resolved with a
+/// one-hop scan.
 pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
     let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
         return value;
@@ -689,14 +691,10 @@ pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> V
     };
 
     if uf_func.schema.input.len() == 1 {
-        let mut canonical = value;
-        loop {
-            match egraph.backend.lookup_id(uf_func.backend_id, &[canonical]) {
-                Some(next) if next != canonical => canonical = next,
-                _ => break,
-            }
-        }
-        return canonical;
+        return egraph
+            .backend
+            .lookup_id(uf_func.backend_id, &[value])
+            .unwrap_or(value);
     }
 
     // Two-key `(child, parent)` relation: one-hop lookup.
@@ -887,5 +885,60 @@ impl EGraph {
         self.backend.for_each_while(func.backend_id, extract_row);
 
         Ok((inputs, output, termdag))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn term_encoding_rebuild_makes_canonical_lookup_one_hop() {
+        let mut egraph = EGraph::new_with_term_encoding();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort E)
+                (constructor A () E)
+                (constructor B () E)
+                (constructor C () E)
+                (relation Go ())
+                (Go)
+                (rule ((Go))
+                      ((union (A) (B))
+                       (union (B) (C))))
+                (run 1)
+                "#,
+            )
+            .unwrap();
+
+        let path_compressions: usize = egraph
+            .get_overall_run_report()
+            .num_matches_per_rule
+            .iter()
+            .filter(|(rule, _)| rule.as_ref().contains("uf_path_compress"))
+            .map(|(_, matches)| *matches)
+            .sum();
+        assert!(
+            path_compressions > 0,
+            "test must create a multi-edge UF chain"
+        );
+
+        let uf_name = &egraph.proof_state.uf_parent["E"];
+        let uf_id = egraph.functions[uf_name].backend_id;
+        let mut rows = Vec::new();
+        egraph
+            .backend
+            .for_each(uf_id, |row| rows.push(row.vals.to_vec()));
+        assert!(rows.len() >= 2);
+
+        let sort = egraph.get_sort_by_name("E").unwrap();
+        for row in rows {
+            let child = row[0];
+            let parent = row[1];
+            assert_eq!(egraph.backend.lookup_id(uf_id, &[parent]), None);
+            assert_eq!(find_canonical(&egraph, child, sort), parent);
+        }
     }
 }
