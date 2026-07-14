@@ -746,9 +746,10 @@ impl<'a> MergeTransaction<'a> {
             return Ok(());
         };
 
+        let values_unchanged = old.values == incoming;
         let identity_unchanged =
             n_identity_vals.is_some_and(|count| old.values[..count] == incoming[..count]);
-        let merged = if identity_unchanged {
+        let merged = if values_unchanged || identity_unchanged {
             old.values.clone()
         } else {
             let (actions, result) = match merge.as_ref() {
@@ -1495,6 +1496,37 @@ mod tests {
         assert_eq!(eg.next_id, next_id);
         assert!(eg.mirror[&fresh].is_empty());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 20])]));
+    }
+
+    #[test]
+    fn identical_row_skips_recursive_merge_actions() {
+        let mut eg = EGraph::new();
+        let function = Backend::peek_next_function_id(&eg);
+        let actual = Backend::add_table(
+            &mut eg,
+            FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Block {
+                    actions: vec![MergeAction::Set(
+                        function,
+                        vec![MergeFn::Const(Value::new(1)), MergeFn::Old],
+                    )],
+                    result: Box::new(MergeFn::Old),
+                },
+                name: "recursive".to_string(),
+                can_subsume: false,
+            },
+        );
+        assert_eq!(actual, function);
+        eg.insert_live_row(function, row(&[1, 10]));
+
+        let mut transaction = MergeTransaction::new(&mut eg, Vec::new());
+        transaction.apply_set(function, &[1, 10]).unwrap();
+
+        assert!(transaction.next_wave.is_empty());
     }
 
     #[test]
