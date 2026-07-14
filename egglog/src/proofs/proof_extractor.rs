@@ -1,4 +1,5 @@
 use crate::ast::FunctionSubtype;
+use crate::extract::find_canonical;
 use crate::termdag::{TermDag, TermId};
 use crate::util::{HashMap, HashSet};
 use crate::{ArcSort, EGraph, Value};
@@ -143,30 +144,6 @@ pub(crate) fn extract_root(
     sort: ArcSort,
 ) -> Option<TermId> {
     RootExtractor::new().extract(egraph, termdag, value, &sort)
-}
-
-fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> Value {
-    let Some(uf_name) = egraph.proof_state.uf_parent.get(sort.name()) else {
-        return value;
-    };
-
-    let Some(uf_func) = egraph.functions.get(uf_name) else {
-        return value;
-    };
-
-    let mut canonical = value;
-    egraph
-        .backend
-        .for_each(uf_func.backend_id, |row: egglog_bridge::ScanEntry| {
-            // The generated UF parent table is a normal custom function with
-            // can_subsume=false, so there are no subsumed UF rows to filter.
-            // This matches the public extractor's one-hop canonical scan.
-            // UF table has (child, parent) as inputs.
-            if row.vals[0] == value {
-                canonical = row.vals[1];
-            }
-        });
-    canonical
 }
 
 #[cfg(test)]

@@ -17,6 +17,10 @@ use egglog_ast::generic_ast::GenericExpr;
 ///    own side condition: `(WrapVec (vec-of e))` becomes `(= (vec-of e) v)`,
 ///    `(WrapVec v)`. Its proof is a contentless marker, which can't ride a
 ///    congruence step under the constructor.
+///
+/// A top-level primitive fact — an `Eq` on a primitive application or a bare
+/// guard like `(> (+ a 1) 5)` or `(vec-of e)` — is already in normal form (its
+/// arguments are normalized in place) and is verified by re-evaluation.
 pub(crate) fn proof_form(
     prog: Vec<ResolvedNCommand>,
     fresh: &mut SymbolGen,
@@ -86,7 +90,7 @@ fn proof_form_expr(
             ref span,
             ref head @ ResolvedCall::Func(FuncType {
                 subtype: FunctionSubtype::Custom,
-                ref output,
+                ref outputs,
                 ..
             }),
             ref args,
@@ -100,7 +104,7 @@ fn proof_form_expr(
                 span.clone(),
                 ResolvedVar {
                     name: fresh.fresh("n"),
-                    sort: output.clone(),
+                    sort: outputs[0].clone(),
                     is_global_ref: false,
                 },
             );
@@ -131,7 +135,7 @@ fn proof_form_expr(
                     // (but allow other primitives to stay inline)
                     ref arg_expr @ ResolvedExpr::Call(
                         ref arg_span,
-                        ResolvedCall::Func(FuncType { ref output, .. }),
+                        ResolvedCall::Func(FuncType { ref outputs, .. }),
                         ref inner_args,
                     ) => {
                         // First recursively normalize the inner arguments
@@ -145,7 +149,7 @@ fn proof_form_expr(
                             arg_span.clone(),
                             ResolvedVar {
                                 name: fresh.fresh("v"),
-                                sort: output.clone(),
+                                sort: outputs[0].clone(),
                                 is_global_ref: false,
                             },
                         );

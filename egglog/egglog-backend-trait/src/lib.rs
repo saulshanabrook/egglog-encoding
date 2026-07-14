@@ -95,7 +95,8 @@ mod backend_impl;
 // ---------------------------------------------------------------------------
 
 pub use egglog_bridge::{
-    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeFn, RuleId, ScanEntry,
+    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction, MergeFn, RuleId,
+    ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
@@ -209,6 +210,13 @@ pub trait Backend: Send + Sync {
     /// Register a function / relation / constructor and return its handle.
     fn add_table(&mut self, config: FunctionConfig) -> FunctionId;
 
+    /// The id that the next [`Backend::add_table`] call will assign.
+    ///
+    /// Merge action blocks use this to write back into the table being
+    /// declared. The caller must invoke `add_table` before registering any
+    /// other table.
+    fn peek_next_function_id(&self) -> FunctionId;
+
     /// Number of rows currently in the given function's table.
     fn table_size(&self, table: FunctionId) -> usize;
 
@@ -246,8 +254,12 @@ pub trait Backend: Send + Sync {
         None
     }
 
-    /// Read the output value for `key` from a function table without inserting
-    /// a missing row. Subsumed rows remain lookup-visible.
+    /// Lookup one function row by its key, returning keys followed by every
+    /// output column. Subsumed rows remain visible to this direct lookup.
+    fn lookup_row(&self, func: FunctionId, key: &[Value]) -> Option<Vec<Value>>;
+
+    /// Read the first output value for `key` without inserting a missing row.
+    /// Subsumed rows remain lookup-visible.
     fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value>;
 
     /// Allocate a fresh counter for container-value ids, for backends that can

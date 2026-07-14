@@ -31,6 +31,9 @@ impl ProofInstrumentor<'_> {
             ResolvedCall::Primitive(_) => {
                 return Err(ProveExistsError::PrimitivesUnsupported);
             }
+            ResolvedCall::Values(_) => {
+                return Err(ProveExistsError::RequiresConstructor);
+            }
         };
 
         let function = self
@@ -40,7 +43,7 @@ impl ProofInstrumentor<'_> {
             .unwrap_or_else(|| panic!("constructor {} is not declared", func.name));
 
         let backend_id = function.backend_id;
-        let output_sort = function.schema.output.clone();
+        let output_sort = function.schema.output().clone();
 
         let mut termdag = TermDag::default();
         let mut witness_value = None;
@@ -81,7 +84,7 @@ impl ProofInstrumentor<'_> {
                     func.name
                 )
             });
-        let proof_sort = proof_function.schema.output.clone();
+        let proof_sort = proof_function.schema.output().clone();
         let proof_value = self
             .egraph
             .backend

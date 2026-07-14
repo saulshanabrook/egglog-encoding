@@ -1,0 +1,9 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Rule
+  (= (Done (Mk 1)) (Done (Mk 1)))
+  (name "bare-container-guard")
+  (premises (Fiat (= (SeedElem (Mk 1)) (SeedElem (Mk 1)))) (Eval))
+  (substitution (e (Mk 1))))

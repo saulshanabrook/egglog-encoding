@@ -367,11 +367,13 @@ fn collect_head_vars(
                 add(term, out);
                 out.insert(variable.id);
             }
-            GenericCoreAction::Set(_, _, arguments, value) => {
+            GenericCoreAction::Set(_, _, arguments, values) => {
                 for argument in arguments {
                     add(argument, out);
                 }
-                add(value, out);
+                for value in values {
+                    add(value, out);
+                }
             }
             GenericCoreAction::Change(_, _, _, arguments) => {
                 for argument in arguments {
@@ -866,7 +868,7 @@ mod tests {
                         name: "output".into(),
                     },
                     terms,
-                    value,
+                    vec![value],
                 )]),
             },
         }

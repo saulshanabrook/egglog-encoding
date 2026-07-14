@@ -4,10 +4,10 @@
 use std::path::Path;
 
 use crate::{
-    EGraph, TypeInfo,
+    EGraph, TypeInfo, Value,
     ast::{
         Command, Expr, Fact, GenericCommand, ResolvedAction, ResolvedCommand, ResolvedExpr,
-        ResolvedExprExt, ResolvedFact, Schedule,
+        ResolvedExprExt, ResolvedFact, Schedule, Span,
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
@@ -33,8 +33,6 @@ pub(crate) struct EncodingNames {
     /// For a given function symbol, the name of the function that converts to the AST type.
     pub(crate) sort_to_ast_constructor: HashMap<String, String>,
     pub(crate) fn_to_term_sort: HashMap<String, String>,
-    pub(crate) single_parent_ruleset_name: String,
-    pub(crate) uf_function_index_ruleset_name: String,
     pub(crate) pcons: String,
     pub(crate) pnil: String,
     // Ruleset names
@@ -50,12 +48,12 @@ pub(crate) struct EncodingNames {
 }
 
 /// Packages proof information for instrumenting actions.
-/// We may not know yet what terms we are instrumenting, so all but Proof leave that information to be filled in later.
+/// We may not know yet what terms we are instrumenting, so the justification leaves
+/// that information to be filled in later.
 /// This is only used internally in this file, it's not part of the proof format.
 pub(crate) enum Justification {
-    Rule(String, String), // rule name and proof list
+    Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
-    Proof(String),                 // existing proof
     Merge(String, String, String), // function name, proof1, proof2
 }
 
@@ -75,8 +73,6 @@ impl EncodingNames {
             eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
             fn_to_term_sort: HashMap::default(),
-            single_parent_ruleset_name: symbol_gen.fresh("single_parent"),
-            uf_function_index_ruleset_name: symbol_gen.fresh("uf_function_index"),
             pcons: symbol_gen.fresh("PCons"),
             pnil: symbol_gen.fresh("PNil"),
             path_compress_ruleset_name: symbol_gen.fresh("parent"),
@@ -105,28 +101,6 @@ impl ProofInstrumentor<'_> {
         }
     }
 
-    pub(crate) fn uf_function_name(&mut self, sort: &str) -> String {
-        if let Some(name) = self.egraph.proof_state.uf_function.get(sort) {
-            name.clone()
-        } else {
-            let fresh_name = self.egraph.parser.symbol_gen.fresh(&format!("UF_{sort}f"));
-            self.egraph
-                .proof_state
-                .uf_function
-                .insert(sort.to_string(), fresh_name.clone());
-            fresh_name
-        }
-    }
-
-    /// Returns the name of the Pair sort used to bundle (leader, proof) in the UF function index.
-    /// Only used in proof mode.
-    pub(crate) fn uf_pair_sort_name(&mut self, sort: &str) -> String {
-        self.egraph
-            .parser
-            .symbol_gen
-            .fresh(&format!("UFPair_{sort}"))
-    }
-
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_program_from_string(None, input);
@@ -152,12 +126,8 @@ impl ProofInstrumentor<'_> {
             "(ruleset {})
              (ruleset {})
              (ruleset {})
-             (ruleset {})
-             (ruleset {})
              (ruleset {})",
             self.proof_names().path_compress_ruleset_name,
-            self.proof_names().single_parent_ruleset_name,
-            self.proof_names().uf_function_index_ruleset_name,
             self.proof_names().rebuilding_ruleset_name,
             self.proof_names().rebuilding_cleanup_ruleset_name,
             self.proof_names().delete_subsume_ruleset_name
@@ -491,6 +461,12 @@ pub enum ProofEncodingUnsupportedReason {
         "rule uses `:naive` with an eq-sort primitive in the body. Proof encoding can only look up proofs for primitive eq-sort fact results under seminaive-safe query evaluation."
     )]
     NaiveEqSortPrimitiveFact,
+    #[error("tuple-output functions are not supported by the term/proof encoding.")]
+    TupleOutputFunction,
+    #[error(
+        "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
+    )]
+    MergeActionBlock,
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -566,6 +542,23 @@ pub(crate) fn command_supports_proof_encoding(
         && rule.body.iter().any(fact_has_eq_sort_primitive_result)
     {
         return Err(ProofEncodingUnsupportedReason::NaiveEqSortPrimitiveFact);
+    }
+    // Tuple-output functions store multiple value columns, which the term/proof encoding (built
+    // around single-output constructor views) does not model.
+    if let crate::ast::GenericCommand::Function { schema, .. } = command
+        && schema.is_tuple_output()
+    {
+        return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
+    }
+
+    // A `:merge` action block runs actions before its result; the proof encoding only instruments
+    // the merged value, so mark it unsupported rather than emit silently-incomplete proofs.
+    if let crate::ast::GenericCommand::Function {
+        merge: Some(merge), ..
+    } = command
+        && !merge.actions.is_empty()
+    {
+        return Err(ProofEncodingUnsupportedReason::MergeActionBlock);
     }
     // Check all expressions for primitives without validators
     let mut all_primitives_have_validators = true;
@@ -695,5 +688,88 @@ pub(crate) fn command_supports_proof_encoding(
             }
         }
         _ => Ok(()),
+    }
+}
+
+/// The `proof-of-min` / `proof-of-max` primitives: given two `(value, proof)`
+/// pairs `(a, ap)` and `(b, bp)`, return the proof paired with the smaller /
+/// larger value (same value ordering as `ordering-min`/`ordering-max`; a tie
+/// takes `bp`, matching those primitives keeping `b`). Typed
+/// `(T, P, T, P) -> P` for any sorts `T` and `P`, so the encoding's generated
+/// `:merge` blocks can pass sort values alongside their proofs.
+#[derive(Clone)]
+pub(crate) struct OrientProof {
+    name: String,
+    take_min: bool,
+}
+
+impl OrientProof {
+    pub(crate) fn min() -> Self {
+        Self {
+            name: "proof-of-min".into(),
+            take_min: true,
+        }
+    }
+
+    pub(crate) fn max() -> Self {
+        Self {
+            name: "proof-of-max".into(),
+            take_min: false,
+        }
+    }
+}
+
+impl crate::Primitive for OrientProof {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn crate::constraint::TypeConstraint> {
+        Box::new(OrientProofTypeConstraint {
+            name: self.name.clone(),
+            span: span.clone(),
+        })
+    }
+}
+
+impl crate::PurePrim for OrientProof {
+    fn apply<'a, 'db>(&self, _state: crate::PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [a, ap, b, bp] = args else {
+            return None;
+        };
+        let first = if self.take_min { a < b } else { a > b };
+        Some(if first { *ap } else { *bp })
+    }
+}
+
+struct OrientProofTypeConstraint {
+    name: String,
+    span: Span,
+}
+
+impl crate::constraint::TypeConstraint for OrientProofTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[crate::core::AtomTerm],
+        _typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, crate::ArcSort>>> {
+        // `(a ap b bp) -> out`: `a`/`b` share one sort; `ap`/`bp`/`out` another.
+        if arguments.len() != 5 {
+            return vec![crate::constraint::impossible(
+                crate::constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: crate::core::Atom {
+                        span: self.span.clone(),
+                        head: self.name.clone(),
+                        args: arguments.to_vec(),
+                    },
+                    expected: 5,
+                },
+            )];
+        }
+        vec![
+            crate::constraint::eq(arguments[2].clone(), arguments[0].clone()),
+            crate::constraint::eq(arguments[3].clone(), arguments[1].clone()),
+            crate::constraint::eq(arguments[4].clone(), arguments[1].clone()),
+        ]
     }
 }

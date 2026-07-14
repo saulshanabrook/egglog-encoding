@@ -1,0 +1,17 @@
+; A bare container-primitive fact is a side condition: it is re-evaluated by
+; the proof checker (like `(= xs (vec-of e))`) rather than carrying a proof.
+
+(datatype E (Mk i64))
+(sort EVec (Vec E))
+(relation SeedElem (E))
+(relation Done (E))
+
+(SeedElem (Mk 1))
+
+(rule ((SeedElem e)
+       (vec-of e))
+      ((Done e))
+      :name "bare-container-guard")
+
+(run 2)
+(prove (Done (Mk 1)))

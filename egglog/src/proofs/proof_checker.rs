@@ -22,9 +22,10 @@ use thiserror::Error;
 
 /// A side condition is a rule-body fact that is just a container-producing
 /// primitive applied to bound variables — `(= v (vec-of e))`, `(= (set-of a)
-/// (set-of b))`, etc. Its proof is a bare [`Justification::Eval`] marker and it
-/// is verified by re-evaluation in [`ProofStore::check_side_condition`] rather
-/// than by matching a premise proposition.
+/// (set-of b))`, or a bare `(vec-of e)` guard. The encoder emits it with a bare
+/// [`Justification::Eval`] marker as its proof, and the checker verifies it by
+/// re-evaluation in [`ProofStore::check_side_condition`] rather than by matching
+/// a premise proposition. Both use this gate, so they cannot drift.
 pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
     fn is_container_primitive(expr: &ResolvedExpr) -> bool {
         matches!(
@@ -77,13 +78,14 @@ pub(crate) fn run_merge(
         if let GenericNCommand::Function(func_decl) = cmd
             && func_decl.name == func_name
         {
-            // run the merge function for this function using eval_expr
-            let expr = func_decl.merge.as_ref().ok_or_else(|| {
+            // run the merge function for this function using eval_expr. The proof checker only
+            // evaluates the merged value; action-block merges aren't used under proofs.
+            let merge = func_decl.merge.as_ref().ok_or_else(|| {
                 ProofCheckError::from(ProofCheckErrorKind::FunctionNotFound {
                     function_name: func_name.to_string(),
                 })
             })?;
-            return eval_expr_with_subst("merge_function", expr, term_dag, &subst);
+            return eval_expr_with_subst("merge_function", &merge.result, term_dag, &subst);
         }
     }
     Err(ProofCheckErrorKind::FunctionNotFound {
@@ -208,6 +210,7 @@ fn eval_expr_with_subst(
                     })
                 })?
             }
+            ResolvedCall::Values(_) => panic!("`values` is not supported in proofs"),
         },
     };
 
@@ -952,16 +955,22 @@ impl ProofStore {
     /// Check a container side condition by re-evaluating it against the rule
     /// body, rather than against a premise proposition. An unbound side is the
     /// side condition's output and is bound; otherwise both sides must evaluate
-    /// to the same container. Extends `subst` with any bound output.
+    /// to the same container. A standalone fact is evaluated only to validate
+    /// its container primitive. Extends `subst` with any bound output.
     fn check_side_condition(
         &mut self,
         fact: &ResolvedFact,
         subst: &mut HashMap<String, TermId>,
         rule_name: &str,
     ) -> Result<(), ProofCheckError> {
-        let ResolvedFact::Eq(_, lhs, rhs) = fact else {
-            // `is_container_side_condition` only flags `Eq` facts.
-            return Ok(());
+        let (lhs, rhs) = match fact {
+            ResolvedFact::Eq(_, lhs, rhs) => (lhs, rhs),
+            // A bare container-primitive fact binds nothing, but must still
+            // evaluate under the substitution for the premise to hold.
+            ResolvedFact::Fact(expr) => {
+                eval_expr_with_subst(rule_name, expr, &mut self.term_dag, subst)?;
+                return Ok(());
+            }
         };
         let lhs_val = self.eval_side(lhs, subst, rule_name)?;
         let rhs_val = self.eval_side(rhs, subst, rule_name)?;
@@ -1225,6 +1234,7 @@ impl ProofStore {
                             }
                         }
                     }
+                    ResolvedCall::Values(_) => panic!("`values` is not supported in proofs"),
                 }
             }
         }

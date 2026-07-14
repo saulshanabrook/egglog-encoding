@@ -548,11 +548,11 @@ def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     bench.validate_spec(spec)
 
 
-def test_default_files_use_dd_safe_math_microbenchmark() -> None:
+def test_default_files_use_full_math_microbenchmark() -> None:
     display_paths = tuple(file.display_path for file in bench.resolve_files([], ROOT))
 
-    assert "egglog/tests/math-microbenchmark-mini.egg" in display_paths
-    assert "egglog/tests/math-microbenchmark.egg" not in display_paths
+    assert "egglog/tests/math-microbenchmark.egg" in display_paths
+    assert "egglog/tests/math-microbenchmark-mini.egg" not in display_paths
 
 
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:

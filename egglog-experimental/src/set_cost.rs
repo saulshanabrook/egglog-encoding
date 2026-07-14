@@ -114,7 +114,7 @@ impl Macro<Vec<Command>> for SetCostDeclarations {
                     if !*unextractable {
                         let cost_table_name = get_cost_table_name(name);
                         let mut cost_table_schema = schema.clone();
-                        cost_table_schema.output = "i64".into();
+                        cost_table_schema.outputs = vec!["i64".into()];
                         cost_table_commands.push(Command::Function {
                             span: span.clone(),
                             name: cost_table_name,
@@ -124,6 +124,7 @@ impl Macro<Vec<Command>> for SetCostDeclarations {
                             let_binding: false,
                             term_constructor: None,
                             unextractable: false,
+                            identity_vals: None,
                         });
                     }
                 }
@@ -157,6 +158,7 @@ fn generate_cost_table_commands_from_variants(variants: &[Variant]) -> Vec<Comma
                 let_binding: false,
                 term_constructor: None,
                 unextractable: false,
+                identity_vals: None,
             }
         })
         .collect::<Vec<_>>()

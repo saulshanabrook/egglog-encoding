@@ -116,14 +116,38 @@ pub struct FuncType {
     pub name: String,
     pub subtype: FunctionSubtype,
     pub input: Vec<ArcSort>,
-    pub output: ArcSort,
+    /// The output (value-column) sorts, primary first. A tuple-output function has more than one;
+    /// ordinary functions have exactly one. Always non-empty.
+    pub outputs: Vec<ArcSort>,
+}
+
+impl FuncType {
+    /// The primary (first) output sort.
+    pub fn output(&self) -> &ArcSort {
+        &self.outputs[0]
+    }
+
+    /// The number of output (value) columns.
+    pub fn num_outputs(&self) -> usize {
+        self.outputs.len()
+    }
+
+    /// Whether this function has more than one output column.
+    pub fn is_tuple_output(&self) -> bool {
+        self.outputs.len() > 1
+    }
 }
 
 impl PartialEq for FuncType {
     fn eq(&self, other: &Self) -> bool {
         if self.name == other.name
             && self.subtype == other.subtype
-            && self.output.name() == other.output.name()
+            && self.num_outputs() == other.num_outputs()
+            && self
+                .outputs
+                .iter()
+                .zip(other.outputs.iter())
+                .all(|(a, b)| a.name() == b.name())
         {
             if self.input.len() != other.input.len() {
                 return false;
@@ -146,7 +170,9 @@ impl Hash for FuncType {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.name.hash(state);
         self.subtype.hash(state);
-        self.output.name().hash(state);
+        for out in &self.outputs {
+            out.name().hash(state);
+        }
         for inp in &self.input {
             inp.name().hash(state);
         }
@@ -431,7 +457,7 @@ impl EGraph {
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
-                    let output_sort = self.type_info.sorts.get(&fdecl.schema.output).unwrap();
+                    let output_sort = self.type_info.sorts.get(fdecl.schema.output()).unwrap();
                     self.type_info
                         .global_sorts
                         .insert(fdecl.name.clone(), output_sort.clone());
@@ -464,15 +490,10 @@ impl EGraph {
                 // run_command also does) so the container rebuild registration
                 // below can recover them — including this container's own proof
                 // table, which has not run yet.
-                if let Some((uf_ctor, uf_index)) = uf {
+                if let Some((uf_ctor, _uf_index)) = uf {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
-                    if let Some(uf_index) = uf_index {
-                        self.proof_state
-                            .uf_function
-                            .insert(name.clone(), uf_index.clone());
-                    }
                 }
                 if let Some(pf) = proof_func {
                     self.proof_state
@@ -533,6 +554,19 @@ impl EGraph {
                 )?)
             }
             NCommand::Extract(span, expr, variants) => {
+                // A tuple-output function returns more than one value, so it can't be extracted as a
+                // single term; surface a clear error instead of a confusing arity mismatch.
+                if let GenericExpr::Call(_, head, _) = expr
+                    && self
+                        .type_info
+                        .get_func_type(head)
+                        .is_some_and(|t| t.is_tuple_output())
+                {
+                    return Err(TypeError::CannotExtractTupleOutput(
+                        head.clone(),
+                        span.clone(),
+                    ));
+                }
                 let res_expr = self.type_info.typecheck_standalone_expr(
                     symbol_gen,
                     expr,
@@ -763,32 +797,30 @@ impl TypeInfo {
     }
 
     fn function_to_functype(&self, func: &FunctionDecl) -> Result<FuncType, TypeError> {
+        let resolve = |name: &String| -> Result<ArcSort, TypeError> {
+            self.sorts
+                .get(name)
+                .cloned()
+                .ok_or_else(|| TypeError::UndefinedSort(name.clone(), func.span.clone()))
+        };
         let input = func
             .schema
             .input
             .iter()
-            .map(|name| {
-                if let Some(sort) = self.sorts.get(name) {
-                    Ok(sort.clone())
-                } else {
-                    Err(TypeError::UndefinedSort(name.clone(), func.span.clone()))
-                }
-            })
+            .map(&resolve)
             .collect::<Result<Vec<_>, _>>()?;
-        let output = if let Some(sort) = self.sorts.get(&func.schema.output) {
-            Ok(sort.clone())
-        } else {
-            Err(TypeError::UndefinedSort(
-                func.schema.output.clone(),
-                func.span.clone(),
-            ))
-        }?;
+        let outputs = func
+            .schema
+            .outputs
+            .iter()
+            .map(&resolve)
+            .collect::<Result<Vec<_>, _>>()?;
 
         Ok(FuncType {
             name: func.name.clone(),
             subtype: func.subtype,
             input,
-            output: output.clone(),
+            outputs,
         })
     }
 
@@ -809,8 +841,13 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
-        // View tables (with term_constructor) must have at least one input (the e-class)
-        if fdecl.term_constructor.is_some() && fdecl.schema.input.is_empty() {
+        // View tables (with term_constructor) must have at least one input (the e-class), except the
+        // proof-mode functional-dependency tuple view `(children) -> (eclass, proof)`, which keys on
+        // children only (a 0-arg constructor's view then has no inputs).
+        if fdecl.term_constructor.is_some()
+            && fdecl.schema.input.is_empty()
+            && !fdecl.schema.is_tuple_output()
+        {
             return Err(TypeError::TermConstructorNoInputs(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
@@ -823,41 +860,162 @@ impl TypeInfo {
                 fdecl.span.clone(),
             ));
         }
-        let mut bound_vars = IndexMap::default();
-        let output_type = self.sorts.get(&fdecl.schema.output).unwrap();
-        if fdecl.subtype == FunctionSubtype::Constructor && !output_type.is_eq_sort() {
+        let outputs: Vec<ArcSort> = fdecl
+            .schema
+            .outputs
+            .iter()
+            .map(|name| self.sorts.get(name).unwrap().clone())
+            .collect();
+        let is_tuple = fdecl.schema.is_tuple_output();
+
+        // Tuple outputs are only meaningful for custom functions (which carry a functional
+        // dependency from keys to a tuple of values). Constructors mint a single e-class id, so they
+        // may not be tuple-output. Term-constructor *views* may be tuple-output: the proof-mode
+        // encoder emits `(children) -> (eclass, proof)` views (an internal-only annotation, so this
+        // can't be reached by user input).
+        if is_tuple && fdecl.subtype == FunctionSubtype::Constructor {
+            return Err(TypeError::TupleOutputNotAllowed(
+                fdecl.name.clone(),
+                fdecl.span.clone(),
+            ));
+        }
+        if fdecl.subtype == FunctionSubtype::Constructor && !outputs[0].is_eq_sort() {
             return Err(TypeError::ConstructorOutputNotSort(
                 fdecl.name.clone(),
                 fdecl.span.clone(),
             ));
         }
-        bound_vars.insert("old", (fdecl.span.clone(), output_type.clone()));
-        bound_vars.insert("new", (fdecl.span.clone(), output_type.clone()));
+
+        // For single-output functions the merge expression refers to `old`/`new`. For
+        // tuple-output functions it refers to `old0`, `new0`, `old1`, `new1`, ... (one pair per
+        // output column), and the whole merge is a `(values ...)` form.
+        let mut bound_vars = IndexMap::default();
+        let tuple_var_names: Vec<(String, String)> = (0..outputs.len())
+            .map(|i| (format!("old{i}"), format!("new{i}")))
+            .collect();
+        if is_tuple {
+            for (i, (old_name, new_name)) in tuple_var_names.iter().enumerate() {
+                bound_vars.insert(old_name.as_str(), (fdecl.span.clone(), outputs[i].clone()));
+                bound_vars.insert(new_name.as_str(), (fdecl.span.clone(), outputs[i].clone()));
+            }
+        } else {
+            bound_vars.insert("old", (fdecl.span.clone(), outputs[0].clone()));
+            bound_vars.insert("new", (fdecl.span.clone(), outputs[0].clone()));
+        }
+
+        // A `:merge` is a value-producing action block: the `actions` run (writes are allowed, but
+        // live DB reads would be untracked by seminaive rule execution), then `result` produces the
+        // merged value(s). Both are typechecked with `old`/`new` (`old0`/`new0`/... for tuple)
+        // bound; the actions go through the same action typechecker as rule bodies.
+        let merge = match &fdecl.merge {
+            Some(merge) => {
+                let actions = self.typecheck_standalone_actions(
+                    symbol_gen,
+                    &merge.actions,
+                    &bound_vars,
+                    Context::Write,
+                )?;
+                // The result is evaluated after the actions, so any `let`-bound variable is in
+                // scope for it. Extend the binding with each `let`'s solved type before checking
+                // the result. `let_bindings` owns the names so `result_scope` can borrow them.
+                let let_bindings: Vec<(String, Span, ArcSort)> = actions
+                    .0
+                    .iter()
+                    .filter_map(|a| match a {
+                        GenericAction::Let(span, var, _) => {
+                            Some((var.name.as_str().to_owned(), span.clone(), var.sort.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                let mut result_scope = bound_vars.clone();
+                for (name, span, sort) in &let_bindings {
+                    result_scope.insert(name.as_str(), (span.clone(), sort.clone()));
+                }
+                let result = if is_tuple {
+                    self.typecheck_tuple_merge(
+                        symbol_gen,
+                        fdecl,
+                        &merge.result,
+                        &outputs,
+                        &result_scope,
+                    )?
+                } else {
+                    self.typecheck_standalone_expr(
+                        symbol_gen,
+                        &merge.result,
+                        &result_scope,
+                        Context::Write,
+                    )?
+                };
+                Some(ResolvedMerge { actions, result })
+            }
+            None => None,
+        };
 
         Ok(ResolvedFunctionDecl {
             name: fdecl.name.clone(),
             subtype: fdecl.subtype,
             schema: fdecl.schema.clone(),
             resolved_schema: ResolvedCall::Func(self.func_types.get(&fdecl.name).unwrap().clone()),
-            merge: match &fdecl.merge {
-                // Merge expressions run as part of action-side table updates:
-                // writes are allowed, but live DB reads would be untracked by
-                // seminaive rule execution.
-                Some(merge) => Some(self.typecheck_standalone_expr(
-                    symbol_gen,
-                    merge,
-                    &bound_vars,
-                    Context::Write,
-                )?),
-                None => None,
-            },
+            merge,
             cost: fdecl.cost,
             unextractable: fdecl.unextractable,
             internal_hidden: fdecl.internal_hidden,
             internal_let: fdecl.internal_let,
             span: fdecl.span.clone(),
             term_constructor: fdecl.term_constructor.clone(),
+            identity_vals: fdecl.identity_vals,
         })
+    }
+
+    /// Typecheck the `(values e0 e1 ...)` merge of a tuple-output function. Each `ei` is checked
+    /// with `old0`/`new0`/... bound to the corresponding output columns, and must have the type of
+    /// output column `i`. The result is a resolved `values` call carrying the output sorts.
+    fn typecheck_tuple_merge(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        fdecl: &FunctionDecl,
+        merge: &Expr,
+        outputs: &[ArcSort],
+        bound_vars: &IndexMap<&str, (Span, ArcSort)>,
+    ) -> Result<ResolvedExpr, TypeError> {
+        let args = match merge {
+            GenericExpr::Call(_, head, args) if head.as_str() == "values" => args,
+            _ => {
+                return Err(TypeError::TupleMergeNotValues(
+                    fdecl.name.clone(),
+                    fdecl.span.clone(),
+                ));
+            }
+        };
+        if args.len() != outputs.len() {
+            return Err(TypeError::TupleMergeArity {
+                name: fdecl.name.clone(),
+                expected: outputs.len(),
+                actual: args.len(),
+                span: fdecl.span.clone(),
+            });
+        }
+        let mut resolved_args = Vec::with_capacity(args.len());
+        for (arg, expected) in args.iter().zip(outputs) {
+            let resolved =
+                self.typecheck_standalone_expr(symbol_gen, arg, bound_vars, Context::Write)?;
+            let actual = resolved.output_type();
+            if actual.name() != expected.name() {
+                return Err(TypeError::Mismatch {
+                    expr: arg.clone(),
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+            resolved_args.push(resolved);
+        }
+        Ok(GenericExpr::Call(
+            merge.span(),
+            ResolvedCall::Values(outputs.to_vec()),
+            resolved_args,
+        ))
     }
 
     fn typecheck_schedule(
@@ -1272,6 +1430,27 @@ pub enum TypeError {
         crate::GLOBAL_NAME_PREFIX
     )]
     GlobalMissingPrefix { name: String, span: Span },
+    #[error(
+        "{1}\nFunction {0} has a tuple output, which is only allowed for plain functions (not constructors, relations, or view tables)."
+    )]
+    TupleOutputNotAllowed(String, Span),
+    #[error(
+        "{1}\nThe :merge of tuple-output function {0} must be a `(values ...)` form with one expression per output column."
+    )]
+    TupleMergeNotValues(String, Span),
+    #[error(
+        "{span}\nThe :merge of tuple-output function {name} has {actual} columns but the function has {expected} output columns."
+    )]
+    TupleMergeArity {
+        name: String,
+        expected: usize,
+        actual: usize,
+        span: Span,
+    },
+    #[error(
+        "{1}\nCannot extract tuple-output function {0}: extraction yields a single term, but a tuple-output function has more than one output column. Read its columns in a rule with `(= (values ...) ({0} ...))` instead."
+    )]
+    CannotExtractTupleOutput(String, Span),
 }
 
 #[cfg(test)]

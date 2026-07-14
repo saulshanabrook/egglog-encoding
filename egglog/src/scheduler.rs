@@ -449,6 +449,8 @@ impl SchedulerRuleInfo {
 
         let decided = egraph.backend.add_table(FunctionConfig {
             schema,
+            n_vals: 1,
+            n_identity_vals: None,
             default: DefaultVal::Const(unit),
             merge: MergeFn::Old,
             name: "backend".to_string(),
@@ -553,6 +555,8 @@ mod test {
         let unit = egraph.backend.base_values().get(());
         let table = egraph.backend.add_table(FunctionConfig {
             schema: vec![ColumnTy::Base(unit_type)],
+            n_vals: 1,
+            n_identity_vals: None,
             default: DefaultVal::Const(unit),
             merge: MergeFn::AssertEq,
             name: "probe".into(),

@@ -3,9 +3,10 @@
 ## Sub-Agent Defaults
 
 When spawning sub-agents of any type (`default`, `explorer`, or `worker`), use
-`reasoning_effort: "xhigh"` by default. If a full-history fork is required and
-the spawn tool requires inherited fields to be omitted, rely on the parent
-session's `xhigh` reasoning effort instead.
+`reasoning_effort: "ultra"` by default. If the selected model does not support
+`ultra`, use its highest supported reasoning effort. If a full-history fork is
+required and the spawn tool requires inherited fields to be omitted, rely on
+the parent session's `ultra` reasoning effort instead.
 
 ## Workspace
 

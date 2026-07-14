@@ -52,6 +52,11 @@ pub enum ApiError {
         expected: usize,
         got: usize,
     },
+
+    #[error(
+        "table `{name}` has multiple output columns; `{method}` only supports single-output functions"
+    )]
+    TupleOutputUnsupported { name: String, method: &'static str },
 }
 
 mod sealed {

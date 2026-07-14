@@ -167,7 +167,7 @@ pub enum GenericCoreAction<Head, Leaf, Constant = Literal> {
         Span,
         Head,
         Vec<GenericAtomTerm<Leaf, Constant>>,
-        GenericAtomTerm<Leaf, Constant>,
+        Vec<GenericAtomTerm<Leaf, Constant>>,
     ),
     Change(Span, Change, Head, Vec<GenericAtomTerm<Leaf, Constant>>),
     Union(
@@ -227,11 +227,13 @@ impl<Head, Leaf, Constant> GenericCoreActions<Head, Leaf, Constant> {
                     add_term(&mut free, term);
                     free.retain(|candidate| candidate != variable);
                 }
-                GenericCoreAction::Set(_, _, arguments, value) => {
+                GenericCoreAction::Set(_, _, arguments, values) => {
                     for argument in arguments {
                         add_term(&mut free, argument);
                     }
-                    add_term(&mut free, value);
+                    for value in values {
+                        add_term(&mut free, value);
+                    }
                 }
                 GenericCoreAction::Change(_, _, _, arguments) => {
                     for argument in arguments {

@@ -1,0 +1,7 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+((Add 1)
+ (Num 2)
+ (interval 3))

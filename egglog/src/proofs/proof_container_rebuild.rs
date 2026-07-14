@@ -22,7 +22,7 @@ pub(crate) fn register_container_rebuild_from_spec(
     let Some(container_sort) = eg.get_sort_by_name(sort_name).cloned() else {
         return;
     };
-    // Each element eq-sort's UF index table, recovered from proof_state (filled
+    // Each element eq-sort's single UF table, recovered from proof_state (filled
     // by the element sorts' `:internal-uf` on re-parse) rather than the spec.
     let mut uf_names = HashMap::default();
     collect_element_uf_names(eg, &container_sort, &mut uf_names);
@@ -69,12 +69,12 @@ pub(crate) fn register_container_rebuild_from_spec(
     }
 }
 
-/// Each transitively-reachable eq-sort element's UF index table, from
-/// `proof_state.uf_function` (filled by element sorts' `:internal-uf`).
+/// Each transitively-reachable eq-sort element's single UF table, from
+/// `proof_state.uf_parent` (filled by element sorts' `:internal-uf`).
 fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<String, String>) {
     for elem in sort.inner_sorts() {
         if elem.is_eq_sort() {
-            if let Some(uf) = eg.proof_state.uf_function.get(elem.name()) {
+            if let Some(uf) = eg.proof_state.uf_parent.get(elem.name()) {
                 out.insert(elem.name().to_string(), uf.clone());
             }
         } else if elem.is_eq_container_sort() {
@@ -117,7 +117,7 @@ fn rebuild_with_leaders(
 /// Recursively canonicalize a container `value` of sort `sort` for the term
 /// encoding, returning the rebuilt interned value. Each element is resolved by
 /// a uniform per-child rule: an eq-sort element maps to its union-find leader
-/// (via `UF_<E>f`; in proof mode the index stores `(pair leader proof)`), a
+/// (via the single `UF_<E>` row), a
 /// container element is recursively rebuilt, and anything else is unchanged.
 fn rebuild_container_value_rec(
     state: &mut ReadState,
@@ -133,10 +133,9 @@ fn rebuild_container_value_rec(
     let mut leaders: HashMap<Value, Value> = HashMap::default();
     for (esort, eval) in &elements {
         let new = if esort.is_eq_sort() {
-            match self_lookup_leader(state, uf_names, esort, *eval, proof_mode)? {
-                Some(leader) => leader,
-                None => *eval,
-            }
+            lookup_uf_row(state, uf_names, esort, *eval, proof_mode)
+                .map(|(leader, _)| leader)
+                .unwrap_or(*eval)
         } else if esort.is_eq_container_sort() {
             rebuild_container_value_rec(state, esort, *eval, uf_names, proof_mode)?
         } else {
@@ -151,48 +150,37 @@ fn rebuild_container_value_rec(
     Some(rebuild_with_leaders(cvs, es, sort, value, &leaders))
 }
 
-/// Look up an eq-sort element's union-find leader, if a `UF_<E>f` row exists.
-/// In proof mode the index stores `(pair leader proof)`, so take `pair-first`.
-/// Returns `Ok(None)` when there is no UF row (element is its own leader).
-fn self_lookup_leader(
-    state: &mut ReadState,
+/// Look up an eq-sort element's single-UF row. The first value column is the
+/// leader; proof mode has a second value column containing `key = leader`.
+/// A missing row means the element is already a root.
+fn lookup_uf_row<'a, 'db: 'a, S>(
+    state: &S,
     uf_names: &HashMap<String, String>,
     esort: &ArcSort,
     eval: Value,
     proof_mode: bool,
-) -> Option<Option<Value>> {
-    let Some(uf_name) = uf_names.get(esort.name()) else {
-        return Some(None);
-    };
-    let Some(looked_up) = state
-        .lookup(uf_name, eval)
-        .expect("union-find index lookup failed")
-    else {
-        return Some(None);
-    };
-    let leader = if proof_mode {
-        state
-            .container_values()
-            .get_val::<crate::sort::PairContainer>(looked_up)?
-            .first
-    } else {
-        looked_up
-    };
-    Some(Some(leader))
+) -> Option<(Value, Option<Value>)>
+where
+    S: RegistrySealed<'a, 'db>,
+{
+    let uf_name = uf_names.get(esort.name())?;
+    let action = state.registry().lookup_table(uf_name)?;
+    let values = action.lookup_values(state.es(), &[eval])?;
+    Some((values[0], proof_mode.then(|| values[1])))
 }
 
 /// A term-encoding primitive that canonicalizes a container value's elements to
 /// their union-find leaders (recursing through nested containers). Registered
 /// per container sort by `ensure_container_rebuild` and
 /// invoked from the container-column arm of the rebuild rules. It reads the
-/// `UF_<E>f` tables, so it is only valid in a `:naive` rule (read-context body).
+/// single `UF_<E>` tables, so it is only valid in a `:naive` rule (read-context body).
 #[derive(Clone)]
 struct ContainerRebuild {
     name: String,
     container_sort: ArcSort,
-    /// element-sort name -> `UF_<E>f` table name (all reachable eq-sorts)
+    /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
     uf_names: HashMap<String, String>,
-    /// In proof mode the UF index returns `(pair leader proof)`; take pair-first.
+    /// Whether the single UF row has a second proof value column.
     proof_mode: bool,
 }
 
@@ -225,7 +213,7 @@ impl ReadPrim for ContainerRebuild {
 
 /// Proof-mode counterpart of [`ContainerRebuild`]: mints a `Congr` chain
 /// proving `old_container = rebuilt_container` (recursing through nested
-/// containers). Reads `UF_<E>f` (element equality proofs) and `<CSort>Proof`
+/// containers). Reads `UF_<E>` (element equality proofs) and `<CSort>Proof`
 /// (reflexive bases), mints `Congr`/`Trans`/`Sym` terms, and anchors a
 /// reflexive proof on each rebuilt container so it can be rebuilt again later.
 /// It is a [`FullPrim`], valid only in a `:naive` rule's action.
@@ -234,7 +222,7 @@ struct ContainerRebuildProof {
     name: String,
     container_sort: ArcSort,
     proof_sort: ArcSort,
-    /// element-sort name -> `UF_<E>f` table name (all reachable eq-sorts)
+    /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
     uf_names: HashMap<String, String>,
     /// container-sort name -> `<CSort>Proof` table name (all reachable containers)
     cproof_names: HashMap<String, String>,
@@ -293,21 +281,12 @@ fn rebuild_container_proof_rec(
     let mut child_proofs: Vec<(usize, Value)> = vec![];
     for (j, (esort, eval)) in elements.iter().enumerate() {
         if esort.is_eq_sort() {
-            if let Some(uf_name) = prim.uf_names.get(esort.name())
-                && let Some(pair_val) = state
-                    .lookup(uf_name, *eval)
-                    .expect("union-find index lookup failed")
+            if let Some((leader, Some(proof))) =
+                lookup_uf_row(state, &prim.uf_names, esort, *eval, true)
+                && leader != *eval
             {
-                let (leader, proof) = {
-                    let pc = state
-                        .container_values()
-                        .get_val::<crate::sort::PairContainer>(pair_val)?;
-                    (pc.first, pc.second)
-                };
-                if leader != *eval {
-                    leaders.insert(*eval, leader);
-                    child_proofs.push((j, proof));
-                }
+                leaders.insert(*eval, leader);
+                child_proofs.push((j, proof));
             }
         } else if esort.is_eq_container_sort() {
             let (rebuilt_child, child_proof) =

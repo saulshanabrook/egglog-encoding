@@ -775,11 +775,12 @@ pub fn add_function(
         span: span!(),
         name: name.to_owned(),
         schema,
-        merge,
+        merge: merge.map(GenericMerge::result_only),
         hidden: false,
         let_binding: false,
         term_constructor: None,
         unextractable: false,
+        identity_vals: None,
     }])
 }
 
@@ -826,7 +827,7 @@ macro_rules! datatype {
             stringify!($name),
             Schema {
                 input: vec![$(stringify!($args).to_owned()),*],
-                output: stringify!($sort).to_owned(),
+                outputs: vec![stringify!($sort).to_owned()],
             },
             [$($cost)*].first().copied(),
             false,

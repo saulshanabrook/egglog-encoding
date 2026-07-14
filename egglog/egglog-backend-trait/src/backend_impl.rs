@@ -104,12 +104,12 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 let entry = rule_entry(&mut builder, &mut variables, term)?;
                 variables.insert(variable.id, entry);
             }
-            GenericCoreAction::Set(_, call, arguments, value) => {
+            GenericCoreAction::Set(_, call, arguments, values) => {
                 let RuleActionCall::Table { id, .. } = call else {
                     bail!("cannot set a primitive")
                 };
                 let mut entries = rule_entries(&mut builder, &mut variables, arguments)?;
-                entries.push(rule_entry(&mut builder, &mut variables, value)?);
+                entries.extend(rule_entries(&mut builder, &mut variables, values)?);
                 builder.set(*id, &entries);
             }
             GenericCoreAction::Change(_, change, call, arguments) => {
@@ -143,6 +143,10 @@ impl Backend for EGraph {
         EGraph::add_table(self, config)
     }
 
+    fn peek_next_function_id(&self) -> FunctionId {
+        EGraph::peek_next_function_id(self)
+    }
+
     fn table_size(&self, table: FunctionId) -> usize {
         EGraph::table_size(self, table)
     }
@@ -173,6 +177,10 @@ impl Backend for EGraph {
 
     fn container_values(&self) -> &ContainerValues {
         EGraph::container_values(self)
+    }
+
+    fn lookup_row(&self, func: FunctionId, key: &[Value]) -> Option<Vec<Value>> {
+        EGraph::lookup_row(self, func, key)
     }
 
     fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {

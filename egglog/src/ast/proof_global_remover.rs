@@ -41,7 +41,7 @@ fn resolved_var_to_call(var: &ResolvedVar) -> ResolvedCall {
         name: var.name.clone(),
         subtype: FunctionSubtype::Constructor,
         input: vec![],
-        output: var.sort.clone(),
+        outputs: vec![var.sort.clone()],
     })
 }
 
@@ -79,14 +79,14 @@ fn remove_globals_cmd(cmd: ResolvedNCommand) -> Vec<ResolvedNCommand> {
                     name: name.name.clone(),
                     subtype: FunctionSubtype::Constructor,
                     input: vec![],
-                    output: ty.clone(),
+                    outputs: vec![ty.clone()],
                 });
                 let func_decl = ResolvedFunctionDecl {
                     name: name.name,
                     subtype: FunctionSubtype::Constructor,
                     schema: Schema {
                         input: vec![],
-                        output: ty.name().to_owned(),
+                        outputs: vec![ty.name().to_owned()],
                     },
                     resolved_schema: resolved_call.clone(),
                     merge: None,
@@ -96,6 +96,7 @@ fn remove_globals_cmd(cmd: ResolvedNCommand) -> Vec<ResolvedNCommand> {
                     internal_let: true,
                     span: span.clone(),
                     term_constructor: None,
+                    identity_vals: None,
                 };
                 vec![
                     GenericNCommand::Function(func_decl),
