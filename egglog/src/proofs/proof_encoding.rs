@@ -363,7 +363,8 @@ impl<'a> ProofInstrumentor<'a> {
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
         format!(
             "(function {current_name} ({input_sorts}) {output_sort}
-                    :merge {merge_fn}
+                    :merge ({merge_fn_code_str}
+                            {merge_fn_var})
                     :unextractable
                     :internal-hidden)
                  (sort {fresh_sort})
@@ -516,21 +517,15 @@ impl<'a> ProofInstrumentor<'a> {
         };
         let to_ast_view_sort = self.add_to_ast(&view_sort);
 
-        if self.egraph.proof_state.proofs_enabled {
-            self.egraph
-                .proof_state
-                .proof_names
-                .fn_to_term_sort
-                .insert(name.clone(), view_sort.clone());
-        }
+        // Record the term's eclass sort (its `view_sort`) so the creation site
+        // in `add_term_and_view` knows which `get-fresh!` to mint from. Needed in
+        // both term and proof mode now that terms are minted, not constructed.
+        self.egraph
+            .proof_state
+            .proof_names
+            .fn_to_term_sort
+            .insert(name.clone(), view_sort.clone());
         let merge_rule = self.handle_merge_or_congruence(fdecl);
-        // the term table has child_sorts as inputs
-        // the view table has child_sorts + the leader term for the eclass
-        // Propagate cost, unextractable, hidden, and internal_let flags from the original function
-        let mut term_flags = String::new();
-        if let Some(cost) = fdecl.cost {
-            term_flags.push_str(&format!(" :cost {cost}"));
-        }
         // View is always a function (returning Proof or Unit), with :merge old
         let proof_type = self.proof_type_str().to_string();
         let mut view_flags = String::new();
@@ -542,6 +537,11 @@ impl<'a> ProofInstrumentor<'a> {
         }
         if fdecl.internal_let {
             view_flags.push_str(" :internal-let");
+        }
+        // The view carries the user operation's extraction cost (the term table
+        // is a relation and can't carry `:cost`); the extractor reads it here.
+        if let Some(cost) = fdecl.cost {
+            view_flags.push_str(&format!(" :internal-cost {cost}"));
         }
         // A constructor's view is a functional-dependency tuple
         // `(children) -> (eclass, {Unit|Proof})` whose `:merge` resolves congruence:
@@ -584,7 +584,7 @@ impl<'a> ProofInstrumentor<'a> {
             "
             (sort {fresh_sort})
             {to_ast_view_sort}
-            (constructor {name} ({term_sorts}) {view_sort}{term_flags} :internal-hidden :unextractable)
+            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden)
             {view_decl}
             (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
             (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
@@ -1232,9 +1232,22 @@ impl<'a> ProofInstrumentor<'a> {
         // A fresh variable for the new term.
         let fv = self.fresh_var();
         let mut res = vec![];
-        // TODO might be able to get rid of this intermediate variable in encoding
+        // Mint a fresh eclass id and assert the term relation row
+        // `({name} children... eclass)`. The term table is a relation (no FD on
+        // the eclass), so every minted id keeps its row — congruent duplicates
+        // are reconciled by the view's `@UF`, not by discarding a row.
+        let view_sort = self
+            .egraph
+            .proof_state
+            .proof_names
+            .fn_to_term_sort
+            .get(&func_type.name)
+            .expect("term sort recorded in term_and_view")
+            .clone();
+        let get_fresh = crate::proofs::proof_fresh::get_fresh_prim_name(&view_sort);
+        res.push(format!("(let {fv} ({get_fresh}))"));
         res.push(format!(
-            "(let {fv} ({} {}))",
+            "(set ({} {} {fv}) ())",
             func_type.name,
             ListDisplay(args, " ")
         ));

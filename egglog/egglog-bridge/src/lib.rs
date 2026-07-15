@@ -335,6 +335,13 @@ impl EGraph {
         Value::from_usize(self.db.inc_counter(self.id_counter))
     }
 
+    /// The global counter that mints fresh eq-class ids (backing [`fresh_id`](Self::fresh_id)
+    /// and `DefaultVal::FreshId`). Exposed so a primitive can mint ids in the same space during
+    /// rule execution — used by the term/proof encoding's `get-fresh!` primitive.
+    pub fn id_counter(&self) -> CounterId {
+        self.id_counter
+    }
+
     /// Look up the canonical value for `val` in the union-find.
     ///
     /// If the value has never been inserted into the union-find, `val` is returned.

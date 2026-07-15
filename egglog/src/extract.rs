@@ -711,18 +711,12 @@ pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> V
 }
 
 impl Function {
-    /// Returns the extraction head cost for this table.
-    /// View tables inherit the cost of their referenced hidden term constructor.
-    pub(crate) fn extraction_head_cost(&self, egraph: &EGraph) -> DefaultCost {
-        if let Some(term_constructor) = &self.decl.term_constructor {
-            egraph
-                .functions
-                .get(term_constructor)
-                .and_then(|func| func.decl.cost)
-                .unwrap_or(DefaultCost::unit())
-        } else {
-            self.decl.cost.unwrap_or(DefaultCost::unit())
-        }
+    /// Returns the extraction head cost for this table. A view table carries its
+    /// term operation's cost via `:internal-cost` (the term table is a relation
+    /// that can't hold `:cost`); an ordinary constructor carries its own `:cost`.
+    /// Either way it is `decl.cost`.
+    pub(crate) fn extraction_head_cost(&self, _egraph: &EGraph) -> DefaultCost {
+        self.decl.cost.unwrap_or(DefaultCost::unit())
     }
 
     /// Whether this is the functional-dependency view `(children) -> (eclass, {Unit|Proof})`,

@@ -2,6 +2,7 @@ use std::hash::Hasher;
 
 use crate::Context;
 use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
+use crate::proofs::proof_fresh::register_get_fresh;
 use crate::{
     core::{CoreActionContext, CoreRule, GenericActionsExt, QueryConstraints, ResolvedCall},
     *,
@@ -517,6 +518,16 @@ impl EGraph {
                 // is re-parsed.
                 if let Some(spec) = container_rebuild {
                     register_container_rebuild_from_spec(self, name, spec);
+                }
+                // Terms and proofs of an eq-sort are minted as fresh relation
+                // rows under the term/proof encoding; register the sort's
+                // `get-fresh!` primitive so those mint sites resolve, both during
+                // encoding and when the desugared program is re-parsed.
+                if self
+                    .get_sort_by_name(name)
+                    .is_some_and(|s| s.is_eq_sort())
+                {
+                    register_get_fresh(self, name);
                 }
                 ResolvedNCommand::Sort {
                     span: span.clone(),

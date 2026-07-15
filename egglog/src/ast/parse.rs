@@ -508,6 +508,7 @@ impl Parser {
                     let mut term_constructor = None;
                     let mut unextractable = false;
                     let mut identity_vals = None;
+                    let mut cost = None;
                     for (key, val) in self.parse_options(rest)? {
                         match (key, val) {
                             (":no-merge", []) => {
@@ -568,6 +569,7 @@ impl Parser {
                                 identity_vals =
                                     Some(k.expect_uint::<usize>("identity value column count")?)
                             }
+                            (":internal-cost", [c]) => cost = Some(c.expect_uint("cost")?),
                             _ => return error!(span, "could not parse function options"),
                         }
                     }
@@ -589,6 +591,7 @@ impl Parser {
                         term_constructor,
                         unextractable,
                         identity_vals,
+                        cost,
                         span,
                     }]
                 }

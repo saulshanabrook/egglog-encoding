@@ -191,6 +191,7 @@ where
                     term_constructor: f.term_constructor.clone(),
                     unextractable: f.unextractable,
                     identity_vals: f.identity_vals,
+                    cost: f.cost,
                 },
             },
             GenericNCommand::AddRuleset(span, name) => {
@@ -772,6 +773,10 @@ where
         /// leaves them unchanged is skipped and the existing row kept. Only
         /// valid for merges that are idempotent on equal inputs.
         identity_vals: Option<usize>,
+        /// Extraction head cost, from `:internal-cost`. Used by view tables (whose
+        /// term table is a relation that can't carry a cost) to record the user
+        /// operation's cost for the extractor.
+        cost: Option<DefaultCost>,
     },
 
     /// Using the `ruleset` command, defines a new
@@ -1072,6 +1077,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1093,6 +1099,9 @@ where
                 }
                 if let Some(k) = identity_vals {
                     write!(f, " :internal-identity-vals {k}")?;
+                }
+                if let Some(c) = cost {
+                    write!(f, " :internal-cost {c}")?;
                 }
                 write!(f, ")")
             }
@@ -1925,6 +1934,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -1938,6 +1948,7 @@ where
                 term_constructor: term_constructor.map(&mut *fun),
                 unextractable,
                 identity_vals,
+                cost,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, fun(name)),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
@@ -2021,6 +2032,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2031,6 +2043,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2166,6 +2179,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2176,6 +2190,7 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, name),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {

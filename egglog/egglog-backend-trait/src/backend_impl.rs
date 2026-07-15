@@ -238,6 +238,10 @@ impl Backend for EGraph {
         Some(EGraph::action_registry(self))
     }
 
+    fn eclass_id_counter(&self) -> Option<crate::CounterId> {
+        Some(EGraph::id_counter(self))
+    }
+
     fn supports_containers(&self) -> bool {
         true
     }

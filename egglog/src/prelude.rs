@@ -781,6 +781,7 @@ pub fn add_function(
         term_constructor: None,
         unextractable: false,
         identity_vals: None,
+        cost: None,
     }])
 }
 

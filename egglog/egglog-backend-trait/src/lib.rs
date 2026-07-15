@@ -268,6 +268,13 @@ pub trait Backend: Send + Sync {
         None
     }
 
+    /// The counter that mints fresh eq-class ids, for a backend whose ids come from a counter
+    /// (the reference bridge). Backends with deterministic / structural ids return `None`.
+    /// Exposed so the term/proof encoding's `get-fresh!` primitive can mint fresh ids.
+    fn eclass_id_counter(&self) -> Option<CounterId> {
+        None
+    }
+
     /// Select the merge policy for a registered container type. Backends that
     /// advertise container support outside the reference bridge must provide
     /// this alongside a container registry and id counter.
