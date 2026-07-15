@@ -1161,24 +1161,35 @@ impl<'a> ProofInstrumentor<'a> {
     /// (wrapped by the AST constructor `to_ast`) proving `fv = fv`, from the
     /// surrounding [`Justification`]. Shared by constructor creation
     /// (`add_term_and_view`) and container creation.
+    /// Build the `t = t` (or merge/fiat) proof for a freshly created term `fv`,
+    /// emitting the proof-relation mints onto `stmts` and returning the proof var.
     fn term_proof_for_justification(
-        &self,
+        &mut self,
+        stmts: &mut Vec<String>,
         fv: &str,
         to_ast: &str,
         justification: &Justification,
     ) -> String {
-        let rule_constructor = &self.proof_names().rule_constructor;
-        let fiat_constructor = &self.proof_names().fiat_constructor;
+        let ast_sort = self.proof_names().ast_sort.clone();
+        let proof_sort = self.proof_sort();
         match justification {
-            Justification::Rule(rule_name, rule_proof) => format!(
-                "({rule_constructor} {rule_name} {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))"
-            ),
+            Justification::Rule(rule_name, rule_proof) => {
+                let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let a2 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let rule = self.proof_names().rule_constructor.clone();
+                self.mint(stmts, &rule, &format!("{rule_name} {rule_proof} {a1} {a2}"), &proof_sort)
+            }
             Justification::Fiat => {
-                format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))")
+                let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let a2 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let fiat = self.proof_names().fiat_constructor.clone();
+                self.mint(stmts, &fiat, &format!("{a1} {a2}"), &proof_sort)
             }
             Justification::Merge(fn_name, p1, p2) => {
-                let merge_constructor = &self.proof_names().merge_fn_constructor;
-                format!("({merge_constructor} \"{fn_name}\" {p1} {p2} ({to_ast} {fv}))")
+                let (p1, p2) = (p1.clone(), p2.clone());
+                let a = self.mint(stmts, to_ast, fv, &ast_sort);
+                let merge = self.proof_names().merge_fn_constructor.clone();
+                self.mint(stmts, &merge, &format!("\"{fn_name}\" {p1} {p2} {a}"), &proof_sort)
             }
         }
     }
@@ -1223,14 +1234,36 @@ impl<'a> ProofInstrumentor<'a> {
     ///
     /// Returns a vector of strings representing code to add and a variable for the created term.
     /// We could return the term itself, but this might make the encoding blow up the code.
+    /// Mint a fresh id of `out_sort` and assert the relation row
+    /// `({name} {args_joined} <fresh>)`, appending the `let`/`set` onto `stmts`
+    /// and returning the fresh variable. Terms and proofs are relations rather
+    /// than constructors, so an id is minted explicitly here rather than by a
+    /// constructor call; every minted id keeps its row (nothing is merged away).
+    fn mint(
+        &mut self,
+        stmts: &mut Vec<String>,
+        name: &str,
+        args_joined: &str,
+        out_sort: &str,
+    ) -> String {
+        let v = self.fresh_var();
+        let get_fresh = crate::proofs::proof_fresh::get_fresh_prim_name(out_sort);
+        stmts.push(format!("(let {v} ({get_fresh}))"));
+        stmts.push(format!("(set ({name} {args_joined} {v}) ())"));
+        v
+    }
+
+    /// The `Proof` datatype's sort name (mint target for proof relations).
+    fn proof_sort(&self) -> String {
+        self.proof_names().proof_datatype.clone()
+    }
+
     fn add_term_and_view(
         &mut self,
         func_type: &FuncType,
         args: &[String],
         justification: &Justification,
     ) -> (Vec<String>, String) {
-        // A fresh variable for the new term.
-        let fv = self.fresh_var();
         let mut res = vec![];
         // Mint a fresh eclass id and assert the term relation row
         // `({name} children... eclass)`. The term table is a relation (no FD on
@@ -1244,39 +1277,21 @@ impl<'a> ProofInstrumentor<'a> {
             .get(&func_type.name)
             .expect("term sort recorded in term_and_view")
             .clone();
-        let get_fresh = crate::proofs::proof_fresh::get_fresh_prim_name(&view_sort);
-        res.push(format!("(let {fv} ({get_fresh}))"));
-        res.push(format!(
-            "(set ({} {} {fv}) ())",
-            func_type.name,
-            ListDisplay(args, " ")
-        ));
+        let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
 
-        let (proof_str, view_proof_var) = if self.egraph.proof_state.proofs_enabled {
-            let to_ast = self.fname_to_ast_name(&func_type.name);
-            let proof = self.term_proof_for_justification(&fv, to_ast, justification);
-
-            let proof_var = self.fresh_var();
+        let view_proof_var = if self.egraph.proof_state.proofs_enabled {
+            let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+            let proof_var = self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
             // add a proof for the constructor if needed
-            let term_proof = if func_type.subtype == FunctionSubtype::Constructor {
+            if func_type.subtype == FunctionSubtype::Constructor {
                 let term_proof_constructor = self.term_proof_name(func_type.output().name());
-                format!("(set ({term_proof_constructor} {fv}) {proof_var})")
-            } else {
-                "".to_string()
-            };
-
-            (
-                format!(
-                    "(let {proof_var} {proof})
-                     {term_proof}"
-                ),
-                proof_var,
-            )
+                res.push(format!("(set ({term_proof_constructor} {fv}) {proof_var})"));
+            }
+            proof_var
         } else {
-            ("".to_string(), "()".to_string())
+            "()".to_string()
         };
 
-        res.push(proof_str);
         if func_type.subtype == FunctionSubtype::Constructor {
             // FD view: children are the key, the fresh term is the eclass value.
             res.push(self.update_fd_view(&func_type.name, args, &fv, &view_proof_var));
@@ -1368,10 +1383,10 @@ impl<'a> ProofInstrumentor<'a> {
                                     .get(&csort)
                                     .unwrap()
                                     .clone();
-                                let proof_str =
-                                    self.term_proof_for_justification(&fv, &to_ast, proof);
+                                let proof_var =
+                                    self.term_proof_for_justification(res, &fv, &to_ast, proof);
                                 let cproof = self.term_proof_name(&csort);
-                                res.push(format!("(set ({cproof} {fv}) {proof_str})"));
+                                res.push(format!("(set ({cproof} {fv}) {proof_var})"));
                             }
                         }
                         fv
