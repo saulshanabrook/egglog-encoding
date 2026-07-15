@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
-import ntpath
 import os
 import re
 import resource
@@ -468,7 +467,12 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "files",
         nargs="*",
-        help="egglog files to benchmark, optionally as FILE:FACT_DIRECTORY",
+        help="egglog files to benchmark",
+    )
+    parser.add_argument(
+        "--fact-directory",
+        default=None,
+        help="fact directory used by explicitly selected benchmark files",
     )
     parser.add_argument(
         "--target",
@@ -526,7 +530,12 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
         prog=f"{Path(sys.argv[0]).name} profile",
         description="Record or reuse a cached Samply CPU profile for one egglog workload.",
     )
-    parser.add_argument("file", help="egglog file to profile, optionally as FILE:FACT_DIRECTORY")
+    parser.add_argument("file", help="egglog file to profile")
+    parser.add_argument(
+        "--fact-directory",
+        default=None,
+        help="fact directory used by the profiled workload",
+    )
     parser.add_argument(
         "--target",
         action="append",
@@ -782,20 +791,17 @@ def git_dirty(cwd: Path) -> bool:
     return bool(run_text(["git", "status", "--porcelain"], cwd))
 
 
-def parse_workload_config(value: str) -> WorkloadConfig:
-    drive, _ = ntpath.splitdrive(value)
-    separator = value.find(":", len(drive))
-    if separator < 0:
-        return WorkloadConfig(value)
-    file = value[:separator]
-    fact_directory = value[separator + 1 :]
-    if not file or not fact_directory:
-        raise ValueError(f"invalid workload {value!r}; expected FILE:FACT_DIRECTORY")
-    return WorkloadConfig(file, fact_directory)
-
-
-def resolve_files(raw_files: Sequence[str], invocation_cwd: Path) -> tuple[FileSpec, ...]:
-    chosen = tuple(parse_workload_config(file) for file in raw_files) if raw_files else DEFAULT_WORKLOADS
+def resolve_files(
+    raw_files: Sequence[str],
+    invocation_cwd: Path,
+    fact_directory: str | None = None,
+) -> tuple[FileSpec, ...]:
+    if raw_files:
+        chosen = tuple(WorkloadConfig(file, fact_directory) for file in raw_files)
+    else:
+        if fact_directory is not None:
+            raise ValueError("--fact-directory requires at least one explicit benchmark file")
+        chosen = DEFAULT_WORKLOADS
     files: list[FileSpec] = []
     for workload in chosen:
         display_path = workload.file
@@ -863,7 +869,7 @@ def parse_single_treatment(value: str) -> Treatment:
 
 
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
-    files = resolve_files([str(args.file)], invocation_cwd)
+    files = resolve_files([str(args.file)], invocation_cwd, args.fact_directory)
     backend = parse_single_backend(str(args.backend))
     treatment = parse_single_treatment(str(args.treatment))
     target_specs = args.target if args.target is not None else ["."]
@@ -3533,7 +3539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         backends = parse_backends(args.backend)
         treatments = parse_treatments(args.treatments)
         report_destination = resolve_report_destination(args.report, invocation_cwd)
-        files = resolve_files(args.files, invocation_cwd)
+        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
         spec = BenchmarkSpec(
             files=files,
             treatments=treatments,

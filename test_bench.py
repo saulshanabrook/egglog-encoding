@@ -430,26 +430,16 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert profile_args.format == "rich"
 
 
-@pytest.mark.parametrize(
-    ("argument", "expected"),
-    [
-        (r"C:\bench\file.egg", bench.WorkloadConfig(r"C:\bench\file.egg")),
-        (
-            r"C:\bench\file.egg:D:\facts",
-            bench.WorkloadConfig(r"C:\bench\file.egg", r"D:\facts"),
-        ),
-        (r"file.egg:D:\facts", bench.WorkloadConfig("file.egg", r"D:\facts")),
-    ],
-)
-def test_benchmark_and_profile_cli_parse_windows_workloads(
-    argument: str,
-    expected: bench.WorkloadConfig,
-) -> None:
-    benchmark_args = bench.parse_args([argument])
-    profile_args = bench.parse_args(["profile", argument])
+def test_benchmark_and_profile_cli_accept_windows_fact_paths() -> None:
+    file = r"C:\bench\file.egg"
+    facts = r"D:\facts"
+    benchmark_args = bench.parse_args([file, "--fact-directory", facts])
+    profile_args = bench.parse_args(["profile", file, "--fact-directory", facts])
 
-    assert bench.parse_workload_config(benchmark_args.files[0]) == expected
-    assert bench.parse_workload_config(profile_args.file) == expected
+    assert benchmark_args.files == [file]
+    assert benchmark_args.fact_directory == facts
+    assert profile_args.file == file
+    assert profile_args.fact_directory == facts
 
 
 def test_parse_profile_args_accepts_presentation_options() -> None:
@@ -626,12 +616,6 @@ def test_cell_summaries_distinguish_fact_directories() -> None:
     assert summaries[bench.cell_key(second, "main", "off")].mean == pytest.approx(2.0)
 
 
-def test_workload_argument_rejects_missing_file_or_fact_directory() -> None:
-    for value in (":facts", "file.egg:"):
-        with pytest.raises(ValueError, match="expected FILE:FACT_DIRECTORY"):
-            bench.parse_workload_config(value)
-
-
 def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     benchmark = tmp_path / "input.egg"
     benchmark.write_text('(input Edge "edge.tsv")\n', encoding="utf-8")
@@ -639,10 +623,15 @@ def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     facts.mkdir()
     (facts / "edge.tsv").write_text("a\tb\n", encoding="utf-8")
 
-    (file_spec,) = bench.resolve_files(["input.egg:facts"], tmp_path)
+    (file_spec,) = bench.resolve_files(["input.egg"], tmp_path, "facts")
 
     assert file_spec.fact_directory == facts.resolve()
     assert file_spec.fact_directory_sha256 == bench.sha256_directory(facts)
+
+
+def test_fact_directory_requires_explicit_benchmark_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires at least one explicit benchmark file"):
+        bench.resolve_files([], tmp_path, "facts")
 
 
 def test_estimate_model_is_exact_only_and_updates_from_successful_processes() -> None:
@@ -1403,7 +1392,7 @@ def test_main_markdown_report_goes_to_stdout_and_status_to_stderr(
     monkeypatch.setattr(
         bench,
         "resolve_files",
-        lambda raw_files, invocation_cwd: (file_spec,),
+        lambda raw_files, invocation_cwd, fact_directory=None: (file_spec,),
     )
     monkeypatch.setattr(bench, "load_report", lambda destination: rows)
     monkeypatch.setattr(bench, "resolve_target", lambda *args: target)
@@ -1458,7 +1447,7 @@ def test_main_rich_report_remains_on_stderr_by_default(
     monkeypatch.setattr(
         bench,
         "resolve_files",
-        lambda raw_files, invocation_cwd: (file_spec,),
+        lambda raw_files, invocation_cwd, fact_directory=None: (file_spec,),
     )
     monkeypatch.setattr(bench, "load_report", lambda destination: rows)
     monkeypatch.setattr(bench, "resolve_target", lambda *args: target)

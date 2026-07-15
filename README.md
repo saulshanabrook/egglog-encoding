@@ -117,12 +117,12 @@ Behavior:
 
 ### Files
 
-Positional arguments are benchmark files. Append a fact directory after `:` for
-workloads containing `(input ...)` commands:
+Positional arguments are benchmark files. Use `--fact-directory` for workloads
+containing `(input ...)` commands:
 
 ```bash
 ./bench.py egglog/tests/foo.egg egglog/tests/bar.egg
-./bench.py benchmarks/pointer.egg:benchmarks/data/pointer
+./bench.py benchmarks/pointer.egg --fact-directory benchmarks/data/pointer
 ```
 
 If no files are provided, the default target benchmark suite is:
@@ -169,6 +169,9 @@ The benchmark CLI exposes the routine collection and reporting options:
 - `--rounds <n>`: fresh collection rounds per file and target, and matching
   report rows required per cache cell. Default: `6`.
 - `--timeout-sec <n>`: per-process timeout. Default: `120`.
+- `--fact-directory <path>`: fact directory used by explicitly selected
+  benchmark files. The default suite supplies its fixture-specific fact
+  directory internally.
 - `--treatments <list>`: comma-separated treatments. Default:
   `off,term,proofs`.
 - `--force-run`: append new observations even when enough matching rows already
