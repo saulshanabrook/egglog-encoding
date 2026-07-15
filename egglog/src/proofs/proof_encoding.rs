@@ -68,21 +68,23 @@ impl<'a> ProofInstrumentor<'a> {
         Self { egraph }.add_term_encoding_helper(program)
     }
 
-    pub(crate) fn expand_inputs_for_proof_checking(
+    pub(crate) fn lower_inputs(
         egraph: &EGraph,
-        program: &[ResolvedNCommand],
+        program: Vec<ResolvedNCommand>,
     ) -> Result<Vec<ResolvedNCommand>, Error> {
-        let mut expanded = program.to_vec();
+        let mut lowered = Vec::with_capacity(program.len());
         for command in program {
-            if let ResolvedNCommand::Input { span, name, file } = command {
-                expanded.extend(
+            if let ResolvedNCommand::Input { span, name, file } = &command {
+                lowered.extend(
                     Self::input_actions(egraph, span, name, file)?
                         .into_iter()
                         .map(ResolvedNCommand::CoreAction),
                 );
+            } else {
+                lowered.push(command);
             }
         }
-        Ok(expanded)
+        Ok(lowered)
     }
 
     /// Mark two things as equal, adding proof if proofs are enabled.
@@ -398,7 +400,7 @@ impl<'a> ProofInstrumentor<'a> {
         )
     }
 
-    /// Preserve native `:no-merge` semantics for custom functions.
+    /// Use native `:no-merge` for primitive outputs and compare UF leaders for eq-sort outputs.
     fn handle_no_merge_fn(
         &mut self,
         fdecl: &ResolvedFunctionDecl,
@@ -407,18 +409,11 @@ impl<'a> ProofInstrumentor<'a> {
         rebuilding_ruleset: &str,
     ) -> String {
         let name = &fdecl.name;
-        let view_name = self.view_name(name);
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
-        let input_sorts = ListDisplay(&fdecl.schema.input, " ");
-        let output_sort = fdecl.schema.output();
         let output_is_eq_sort = fdecl.resolved_schema.output().is_eq_sort();
 
-        // Primitive outputs can use the database's native functional-dependency
-        // check. Eq-sort outputs need canonical comparison because two distinct
-        // values may already represent the same e-class.
-        let current_decl = if output_is_eq_sort {
-            String::new()
-        } else {
+        if !output_is_eq_sort {
+            let input_sorts = ListDisplay(&fdecl.schema.input, " ");
+            let output_sort = fdecl.schema.output();
             let current_name = self
                 .egraph
                 .parser
@@ -428,29 +423,26 @@ impl<'a> ProofInstrumentor<'a> {
                 .proof_state
                 .merge_current
                 .insert(name.clone(), (current_name.clone(), child_names.len()));
-            format!(
+            return format!(
                 "(function {current_name} ({input_sorts}) {output_sort}
                     :no-merge
                     :unextractable
                     :internal-hidden)"
-            )
-        };
-        let conflict_guard = if output_is_eq_sort {
-            let uf_name = self.uf_name(fdecl.resolved_schema.output().name());
-            format!(
-                "(= (values old_leader_ old_proof_) ({uf_name} old))
-                 (= (values new_leader_ new_proof_) ({uf_name} new))
-                 (!= old_leader_ new_leader_)"
-            )
-        } else {
-            "(!= old new)".to_string()
-        };
+            );
+        }
+
+        // Distinct encoded values can already belong to the same e-class. Wait
+        // for their encoded UF leaders before deciding whether the conflict is real.
+        let view_name = self.view_name(name);
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
+        let uf_name = self.uf_name(fdecl.resolved_schema.output().name());
 
         format!(
-            "{current_decl}
-             (rule (({view_name} {child_names_str} old)
+            "(rule (({view_name} {child_names_str} old)
                     ({view_name} {child_names_str} new)
-                    {conflict_guard}
+                    (= (values old_leader_ old_proof_) ({uf_name} old))
+                    (= (values new_leader_ new_proof_) ({uf_name} new))
+                    (!= old_leader_ new_leader_)
                     (= (ordering-max old new) new))
                    ((panic \"Illegal merge attempted for function {name}\"))
                     :ruleset {rebuilding_ruleset}
@@ -482,12 +474,7 @@ impl<'a> ProofInstrumentor<'a> {
                     &rebuilding_ruleset,
                 )
             } else {
-                self.handle_no_merge_fn(
-                    fdecl,
-                    &child_names,
-                    &child_names_str,
-                    &rebuilding_ruleset,
-                )
+                self.handle_no_merge_fn(fdecl, &child_names, &child_names_str, &rebuilding_ruleset)
             }
         } else {
             // Congruence is resolved by the constructor view's `:merge`; no rule needed.
@@ -1569,20 +1556,6 @@ impl<'a> ProofInstrumentor<'a> {
         Ok(actions)
     }
 
-    fn instrument_input(
-        &mut self,
-        span: &Span,
-        name: &str,
-        file: &str,
-    ) -> Result<Vec<Command>, Error> {
-        let mut commands = vec![];
-        for action in Self::input_actions(self.egraph, span, name, file)? {
-            let instrumented = self.instrument_action(&action, &Justification::Fiat);
-            commands.extend(self.parse_program(&instrumented.join("\n")));
-        }
-        Ok(commands)
-    }
-
     fn term_encode_command(
         &mut self,
         command: &ResolvedNCommand,
@@ -1679,8 +1652,8 @@ impl<'a> ProofInstrumentor<'a> {
                 let last = res.pop().unwrap();
                 res.push(Command::Fail(span.clone(), Box::new(last)));
             }
-            ResolvedNCommand::Input { span, name, file } => {
-                res.extend(self.instrument_input(span, name, file)?);
+            ResolvedNCommand::Input { .. } => {
+                unreachable!("inputs should be lowered before term/proof instrumentation")
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)

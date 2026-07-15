@@ -49,28 +49,76 @@ fn proof_mode_command_macros_see_original_function_arities() {
 }
 
 #[test]
-fn proof_mode_inputs_rows_as_fiat_actions() {
+fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
     let directory = std::env::temp_dir().join(format!("egglog_proof_input_{}", std::process::id()));
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("edges.tsv"), "a\tb\nb\tc\n").unwrap();
     std::fs::write(directory.join("scores.tsv"), "a\t7\n").unwrap();
 
-    let mut egraph = EGraph::new_with_proofs().with_proof_testing();
-    egraph.fact_directory = Some(directory.clone());
-    let result = egraph.parse_and_run_program(
-        None,
-        r#"
-        (relation Edge (String String))
-        (function score (String) i64 :no-merge)
-        (input Edge "edges.tsv")
-        (input score "scores.tsv")
-        (check (Edge "a" "b"))
-        (check (= (score "a") 7))
-        "#,
-    );
+    for mut egraph in [
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph.fact_directory = Some(directory.clone());
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation Edge (String String))
+                (function score (String) i64 :no-merge)
+                (input Edge "edges.tsv")
+                (input score "scores.tsv")
+                (check (Edge "a" "b"))
+                (check (= (score "a") 7))
+                "#,
+            )
+            .unwrap();
+    }
 
     std::fs::remove_dir_all(directory).ok();
-    result.unwrap();
+}
+
+#[test]
+fn term_and_proof_modes_allow_no_merge_outputs_in_the_same_eclass() {
+    for mut egraph in [
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort Foo)
+                (function bar () Foo :no-merge)
+                (constructor baz () Foo)
+                (constructor qux () Foo)
+                (set (bar) (baz))
+                (union (baz) (qux))
+                (set (bar) (qux))
+                "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn term_and_proof_modes_reject_distinct_no_merge_primitive_outputs() {
+    for mut egraph in [
+        EGraph::new_with_term_encoding(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (function score () i64 :no-merge)
+                (set (score) 1)
+                (set (score) 2)
+                "#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("Illegal merge attempted"));
+    }
 }
 
 #[test]

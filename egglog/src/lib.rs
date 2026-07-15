@@ -2382,6 +2382,10 @@ impl EGraph {
                 desugared_before_proofs: vec![],
             })
         } else {
+            // Input expansion needs resolved schemas. Lower it once here so the
+            // encoded execution and proof checker consume the same fiat actions.
+            let resolved_before_proofs =
+                ProofInstrumentor::lower_inputs(self, resolved_before_proofs)?;
             // Now remove globals for actual execution (but NOT from desugared_commands)
             let typechecked_no_globals = proof_global_remover::remove_globals(
                 resolved_before_proofs.clone(),
@@ -2411,11 +2415,6 @@ impl EGraph {
 
                 new_typechecked.extend(desugared_typechecked);
             }
-            let resolved_before_proofs = if self.proof_state.proofs_enabled {
-                ProofInstrumentor::expand_inputs_for_proof_checking(self, &resolved_before_proofs)?
-            } else {
-                resolved_before_proofs
-            };
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
                 desugared_before_proofs: resolved_before_proofs,
