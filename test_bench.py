@@ -430,6 +430,28 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert profile_args.format == "rich"
 
 
+@pytest.mark.parametrize(
+    ("argument", "expected"),
+    [
+        (r"C:\bench\file.egg", bench.WorkloadConfig(r"C:\bench\file.egg")),
+        (
+            r"C:\bench\file.egg:D:\facts",
+            bench.WorkloadConfig(r"C:\bench\file.egg", r"D:\facts"),
+        ),
+        (r"file.egg:D:\facts", bench.WorkloadConfig("file.egg", r"D:\facts")),
+    ],
+)
+def test_benchmark_and_profile_cli_parse_windows_workloads(
+    argument: str,
+    expected: bench.WorkloadConfig,
+) -> None:
+    benchmark_args = bench.parse_args([argument])
+    profile_args = bench.parse_args(["profile", argument])
+
+    assert bench.parse_workload_config(benchmark_args.files[0]) == expected
+    assert bench.parse_workload_config(profile_args.file) == expected
+
+
 def test_parse_profile_args_accepts_presentation_options() -> None:
     args = bench.parse_args(["profile", "file.egg", "--top", "7", "--no-summary", "--format", "markdown", "--open"])
 

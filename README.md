@@ -280,6 +280,9 @@ Example row:
   "binary_sha256": "sha256:...",
   "file_path": "egglog/tests/foo.egg",
   "file_sha256": "sha256:...",
+  "fact_directory_path": null,
+  "fact_directory_sha256": "",
+  "backend": "main",
   "treatment": "proofs",
   "timeout_sec": 120,
   "wall_sec": 1.23,
@@ -306,8 +309,8 @@ The stderr output shows the cache plan and final selected observations.
 The cache plan reports cached rows, missing rows, selected cached statuses,
 exact-cell duration estimates, and estimated fresh collection time. Estimates
 use only successful rows with the same binary SHA-256, file SHA-256,
-fact-directory SHA-256, treatment, and timeout; if no exact successful rows
-exist, the estimate is reported as unknown rather than borrowing data from
+fact-directory SHA-256, backend, treatment, and timeout; if no exact successful
+rows exist, the estimate is reported as unknown rather than borrowing data from
 another target, binary, or input dataset.
 During fresh collection, `observations` are measured report rows and
 `subprocesses` are child process launches, including the one target startup
@@ -346,9 +349,9 @@ Collection and analysis behavior:
 - The runner builds each target with `cargo build --release` before deciding
   whether cached timing rows can be reused.
 - Cache identity comes from persisted fields: binary SHA-256, file SHA-256,
-  fact-directory SHA-256, treatment, and timeout. Target source, path, git ref,
-  git SHA, dirty flag, and fact-directory path are provenance/display fields;
-  they do not prevent reuse when the content hashes match.
+  fact-directory SHA-256, backend, treatment, and timeout. Target source, path,
+  git ref, git SHA, dirty flag, and fact-directory path are provenance/display
+  fields; they do not prevent reuse when the content hashes match.
 - Timeouts are incomplete cells. The report shows where timeouts happened, but
   does not compute percent improvement, ratio confidence intervals, suite-pass
   overhead, or geometric-mean overhead for comparisons that include timed-out

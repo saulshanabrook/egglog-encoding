@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import math
+import ntpath
 import os
 import re
 import resource
@@ -782,9 +783,12 @@ def git_dirty(cwd: Path) -> bool:
 
 
 def parse_workload_config(value: str) -> WorkloadConfig:
-    file, separator, fact_directory = value.partition(":")
-    if not separator:
-        return WorkloadConfig(file)
+    drive, _ = ntpath.splitdrive(value)
+    separator = value.find(":", len(drive))
+    if separator < 0:
+        return WorkloadConfig(value)
+    file = value[:separator]
+    fact_directory = value[separator + 1 :]
     if not file or not fact_directory:
         raise ValueError(f"invalid workload {value!r}; expected FILE:FACT_DIRECTORY")
     return WorkloadConfig(file, fact_directory)

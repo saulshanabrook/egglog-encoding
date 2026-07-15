@@ -54,6 +54,7 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(directory.join("edges.tsv"), "a\tb\nb\tc\n").unwrap();
     std::fs::write(directory.join("scores.tsv"), "a\t7\n").unwrap();
+    std::fs::write(directory.join("seen.tsv"), "a\n").unwrap();
 
     for mut egraph in [
         EGraph::new_with_term_encoding(),
@@ -66,10 +67,13 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
                 r#"
                 (relation Edge (String String))
                 (function score (String) i64 :no-merge)
+                (function seen (String) Unit :no-merge)
                 (input Edge "edges.tsv")
                 (input score "scores.tsv")
+                (input seen "seen.tsv")
                 (check (Edge "a" "b"))
                 (check (= (score "a") 7))
+                (check (= (seen "a") ()))
                 "#,
             )
             .unwrap();
@@ -135,6 +139,40 @@ fn proof_mode_rejects_fail_wrapped_input() {
 
     assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
     assert!(error.to_string().contains("`fail` wrapping an `input` command"));
+}
+
+#[test]
+fn proof_mode_rejects_fail_wrapped_set() {
+    let error = EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (function score () i64 :no-merge)
+            (fail (set (score) 1))
+            "#,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("exactly one atomic encoded command")
+    );
+}
+
+#[test]
+fn proof_mode_rejects_fail_wrapped_multi_operation_encoding() {
+    let error = EGraph::new_with_proofs()
+        .parse_and_run_program(None, "(fail (function score () i64 :no-merge))")
+        .unwrap_err();
+
+    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+    assert!(
+        error
+            .to_string()
+            .contains("exactly one atomic encoded command")
+    );
 }
 
 #[test]

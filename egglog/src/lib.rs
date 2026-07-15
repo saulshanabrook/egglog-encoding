@@ -2223,6 +2223,7 @@ impl EGraph {
         let contents = std::fs::read_to_string(&filename)
             .map_err(|error| Error::IoError(filename, error, span.clone()))?;
         let mut row_schema = function_type.input.clone();
+        // Relations desugar to constructors, so their implicit output is not a TSV column.
         if function_type.subtype == FunctionSubtype::Custom {
             row_schema.extend(function_type.outputs.iter().cloned());
         }
@@ -2232,6 +2233,10 @@ impl EGraph {
             let mut fields = line.split('\t').map(str::trim);
             let mut row = Vec::with_capacity(row_schema.len());
             for sort in &row_schema {
+                if sort.name() == "Unit" {
+                    row.push(Literal::Unit);
+                    continue;
+                }
                 let Some(raw) = fields.next() else {
                     break;
                 };
@@ -2246,7 +2251,6 @@ impl EGraph {
                         .map(Literal::Float)
                         .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
                     "String" => Literal::String(raw.to_owned()),
-                    "Unit" => Literal::Unit,
                     _ => unreachable!(),
                 };
                 row.push(literal);

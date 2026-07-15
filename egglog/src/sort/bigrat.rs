@@ -75,11 +75,7 @@ fn checked_bigrat_pow(a: Q, b: Q) -> Option<Q> {
 }
 
 fn checked_bigrat_log(a: Q) -> Option<Q> {
-    if a.is_one() {
-        Some(Q::new(BigRational::zero()))
-    } else {
-        todo!("log of bigrat")
-    }
+    a.is_one().then(|| Q::new(BigRational::zero()))
 }
 
 /// Rational numbers supporting these primitives:
@@ -119,7 +115,7 @@ impl BaseSort for BigRatSort {
             (!denom.is_zero()).then(|| bigrat_term(dag, BigRational::new(numer, denom)))
         };
         let pow_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_binary_validator(dag, args, |a, b| checked_bigrat_pow(Q::new(a), Q::new(b)).map(Q::into_inner));
-        let log_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_unary_validator(dag, args, |a| a.is_one().then(BigRational::zero));
+        let log_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_unary_validator(dag, args, |a| checked_bigrat_log(Q::new(a)).map(Q::into_inner));
         let lt_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_compare_validator(dag, args, |a, b| a < b);
         let gt_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_compare_validator(dag, args, |a, b| a > b);
 
@@ -136,7 +132,13 @@ impl BaseSort for BigRatSort {
         add_primitive_with_validator!(eg, "ceil" = |a: Q| -> Q { Q::new(a.0.ceil()) }, ceil_validator);
         add_primitive_with_validator!(eg, "round" = |a: Q| -> Q { Q::new(a.round()) }, round_validator);
 
-        add_primitive_with_validator!(eg, "bigrat" = |a: Z, b: Z| -> Q { Q::new(BigRational::new(a.0, b.0)) }, bigrat_validator);
+        add_primitive_with_validator!(eg, "bigrat" = |a: Z, b: Z| -?> Q {
+            if b.0.is_zero() {
+                None
+            } else {
+                Some(Q::new(BigRational::new(a.0, b.0)))
+            }
+        }, bigrat_validator);
         add_primitive!(eg, "numer" = |a: Q| -> Z { Z::new(a.numer().clone()) });
         add_primitive!(eg, "denom" = |a: Q| -> Z { Z::new(a.denom().clone()) });
         add_primitive!(eg, "to-f64" = |a: Q| -> F { F::new(OrderedFloat(a.to_f64().unwrap())) });
@@ -180,5 +182,31 @@ impl BaseSort for BigRatSort {
     ) -> TermId {
         let rat = base_values.unwrap::<Q>(value);
         bigrat_term(termdag, rat.0.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+
+    #[test]
+    fn unsupported_logarithm_is_partial() {
+        assert!(checked_bigrat_log(Q::new(BigRational::from_integer(2.into()))).is_none());
+    }
+
+    #[test]
+    fn zero_denominator_is_partial() {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            EGraph::default()
+                .parse_and_run_program(None, r#"(let $invalid (bigrat (bigint 1) (bigint 0)))"#)
+        }));
+
+        assert!(
+            result.is_ok(),
+            "bigrat must not panic on a zero denominator"
+        );
+        assert!(result.unwrap().is_err());
     }
 }

@@ -1648,9 +1648,18 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(Command::RunSchedule(self.instrument_schedule(schedule)));
             }
             ResolvedNCommand::Fail(span, cmd) => {
-                self.term_encode_command(cmd, res)?;
-                let last = res.pop().unwrap();
-                res.push(Command::Fail(span.clone(), Box::new(last)));
+                let mut encoded = vec![];
+                self.term_encode_command(cmd, &mut encoded)?;
+                if encoded.len() != 1 {
+                    return Err(Error::UnsupportedProofCommand {
+                        command: cmd.to_command().to_string(),
+                        reason: ProofEncodingUnsupportedReason::FailNonAtomicCommand,
+                    });
+                }
+                res.push(Command::Fail(
+                    span.clone(),
+                    Box::new(encoded.pop().unwrap()),
+                ));
             }
             ResolvedNCommand::Input { .. } => {
                 unreachable!("inputs should be lowered before term/proof instrumentation")

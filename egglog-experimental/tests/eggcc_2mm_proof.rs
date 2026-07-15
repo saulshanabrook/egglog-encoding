@@ -8,6 +8,8 @@ fn read_fixture(fixture_name: &str) -> String {
 
 #[test]
 fn eggcc_2mm_bounded_export_uses_container_helpers() {
+    // tests/files.rs executes this fixture in proof-testing mode; this test
+    // separately checks the imported workload's shape and provenance.
     let program = read_fixture("eggcc-2mm-pass1.egg");
 
     let non_comment_program = program
