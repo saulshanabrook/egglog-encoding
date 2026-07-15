@@ -2546,6 +2546,10 @@ impl EGraph {
         self.run_program(parsed)
     }
 
+    pub fn zz_report(&self) -> &egglog_reports::RunReport {
+        &self.overall_run_report
+    }
+
     /// Get the number of tuples in the database.
     ///
     pub fn num_tuples(&self) -> usize {

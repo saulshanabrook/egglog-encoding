@@ -721,7 +721,7 @@ impl Function {
 
     /// Whether this is the functional-dependency view `(children) -> (eclass, {Unit|Proof})`,
     /// where the e-class is the first output column rather than the last input column.
-    fn is_fd_view(&self) -> bool {
+    pub(crate) fn is_fd_view(&self) -> bool {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
     }
 

@@ -22,6 +22,11 @@ pub(crate) struct EncodingState {
     /// discard stale proof-view candidates whenever the current value already
     /// has a proof witness.
     pub merge_current: HashMap<String, (String, usize)>,
+    /// Term-construction side channel (proof mode): maps a constructor term's
+    /// canonical e-class var to `(natural e-class var, connector proof var)`,
+    /// where the connector proves `natural = canonical`. A parent term reads its
+    /// children's entries to build the natural term and its `Congr` connector.
+    pub nat_conn: HashMap<String, (String, Option<String>)>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -44,6 +49,7 @@ impl EncodingState {
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
             merge_current: HashMap::default(),
+            nat_conn: HashMap::default(),
             term_header_added: false,
             original_typechecking: None,
             proofs_enabled: false,
@@ -1416,10 +1422,6 @@ impl<'a> ProofInstrumentor<'a> {
         justification: &Justification,
     ) -> (Vec<String>, String) {
         let mut res = vec![];
-        // Mint a fresh eclass id and assert the term relation row
-        // `({name} children... eclass)`. The term table is a relation (no FD on
-        // the eclass), so every minted id keeps its row — congruent duplicates
-        // are reconciled by the view's `@UF`, not by discarding a row.
         let view_sort = self
             .egraph
             .proof_state
@@ -1428,39 +1430,60 @@ impl<'a> ProofInstrumentor<'a> {
             .get(&func_type.name)
             .expect("term sort recorded in term_and_view")
             .clone();
-        let fv = self.mint(
-            &mut res,
-            &func_type.name,
-            &ListDisplay(args, " ").to_string(),
-            &view_sort,
-        );
+        let proofs = self.egraph.proof_state.proofs_enabled;
 
-        let view_proof_var = if self.egraph.proof_state.proofs_enabled {
-            let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
-            let proof_var =
-                self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
-            // add a proof for the constructor if needed
-            if func_type.subtype == FunctionSubtype::Constructor {
-                let term_proof_constructor = self.term_proof_name(func_type.output().name());
-                res.push(format!("(set ({term_proof_constructor} {fv}) {proof_var})"));
-            }
-            proof_var
-        } else {
-            "()".to_string()
-        };
-
-        if func_type.subtype == FunctionSubtype::Constructor {
-            // FD view: children are the key, the fresh term is the eclass value.
-            res.push(self.update_fd_view(&func_type.name, args, &fv, &view_proof_var));
-        } else {
-            // Custom function: `args` already includes the output column.
+        // Custom functions (and globals-as-constructors): mint the row, record the
+        // term proof, update the (all-key) view. No canonicalization threading.
+        if func_type.subtype != FunctionSubtype::Constructor {
+            let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
+            let view_proof_var = if proofs {
+                let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+                self.term_proof_for_justification(&mut res, &fv, &to_ast, justification)
+            } else {
+                "()".to_string()
+            };
             res.push(self.update_view(&func_type.name, args, &view_proof_var));
+            return (res, fv);
         }
 
-        // No self-loop seed: the single-key `@UF` needs none — a root term simply has
-        // no `@UF` row (identity-on-miss), in both term and proof mode.
+        let view = self.view_name(&func_type.name);
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
 
-        (res, fv)
+        // Term-only: build the term with canonical children and canonicalize it to
+        // the view's e-class via `set-if-empty`; return that canonical id so
+        // parents build with canonical children (views stay canonical).
+        if !proofs {
+            let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
+            let canon = self.fresh_var();
+            res.push(format!(
+                "(let {canon} ({set_if_empty} {} {fv} ()))",
+                ListDisplay(args, " ")
+            ));
+            return (res, canon);
+        }
+
+        // Proof mode: build the term, record its term proof, and update the FD
+        // view (whose congruence `:merge` reconciles duplicate e-classes). Insertion
+        // -time canonicalization via `set-if-empty` is validated in term-only mode
+        // (−22% rebuild search) but not yet sound in proof mode: deduped "stray"
+        // terms are left unattached to the encoded `@UF`, and those strays leak into
+        // proofs (globals, prove-exists, extraction) as unbacked `Fiat` edges.
+        // Reconnecting them without reintroducing per-term `@UF` churn is a separate
+        // design task, so proof mode stays on the view-merge path.
+        let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
+        let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+        let proof_var = self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
+        let term_proof_constructor = self.term_proof_name(func_type.output().name());
+        res.push(format!("(set ({term_proof_constructor} {fv}) {proof_var})"));
+        // Canonicalize to the view's e-class. Orphan term-relation rows for the
+        // discarded fresh id are acceptable; the view proof bridges the canonical
+        // e-class back to this enode's form when a consumer needs it.
+        let canon = self.fresh_var();
+        res.push(format!(
+            "(let {canon} ({set_if_empty} {} {fv} {proof_var}))",
+            ListDisplay(args, " ")
+        ));
+        (res, canon)
     }
 
     /// Returns a query for (fname args) and a variable for the proof (or Unit) output.

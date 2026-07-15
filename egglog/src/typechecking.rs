@@ -455,6 +455,19 @@ impl EGraph {
         let command: ResolvedNCommand = match command {
             NCommand::Function(fdecl) => {
                 let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
+                // An FD view (function carrying `term_constructor` with a tuple
+                // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
+                // proof-column reader) so the encoding can canonicalize a term to
+                // the view's e-class at insertion time. Registered here so it
+                // survives re-parse of the desugared program.
+                if resolved.term_constructor.is_some()
+                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && ft.outputs.len() >= 2
+                {
+                    let (name, input, outputs) =
+                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
+                }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
