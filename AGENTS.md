@@ -64,5 +64,5 @@ on stderr.
   `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
-- Cache reuse is decided by binary SHA-256, file SHA-256, treatment, and
-  timeout.
+- Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory
+  SHA-256, backend, treatment, and timeout.

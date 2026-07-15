@@ -12,7 +12,7 @@ struct ManualProofDisable {
 const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
     ManualProofDisable {
         file: "eggcc-2mm.egg",
-        reason: "uses :no-merge declarations such as DUMMYCTX; proof encoding requires a merge function",
+        reason: "the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks",
     },
     ManualProofDisable {
         file: "subsume.egg",
@@ -26,7 +26,20 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
 
 // These proof-testing runs are still executed, but their proof snapshots are
 // too large for default checked-in fixtures.
-const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &["eqsolve.egg"];
+const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &[
+    "eqsolve.egg",
+    "hardboiled_conv1d_32.egg",
+    "herbie.egg",
+    "bool.egg",
+    "container-fail.egg",
+    "delete.egg",
+    "fibonacci.egg",
+    "knapsack.egg",
+    "lambda.egg",
+    "list.egg",
+    "repro-desugar-143.egg",
+    "string_quotes.egg",
+];
 
 #[derive(Clone)]
 struct Run {

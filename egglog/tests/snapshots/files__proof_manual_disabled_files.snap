@@ -2,6 +2,6 @@
 source: egglog/tests/files.rs
 expression: "snapshot.join(\"\\n\")"
 ---
-eggcc-2mm.egg: uses :no-merge declarations such as DUMMYCTX; proof encoding requires a merge function
+eggcc-2mm.egg: the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks
 subsume-relation.egg: proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches
 subsume.egg: proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches

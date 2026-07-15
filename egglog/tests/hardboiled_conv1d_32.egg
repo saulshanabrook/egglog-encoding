@@ -703,20 +703,6 @@
 (rule (
     (remove-aligned-bc-impl origin modified left right inv-left inv-right)
 
-    (= (Broadcast e1+ l) left)
-    (= (Broadcast e2+ l) right)
-    (!= l 1)
-    (has-type e1+ t)
-    (= broadcast-per (LanesInType t))
-) (
-    (let new-left (assemble-inv-ind l e1+ inv-left))
-    (let new-right (assemble-inv-ind l e2+ inv-right))
-    (union origin (unstable-app modified broadcast-per l new-left new-right))
-) :ruleset canonicalize)
-
-(rule (
-    (remove-aligned-bc-impl origin modified left right inv-left inv-right)
-
     (= (Ramp e1+ s1 l) left)
     (= (Broadcast e2+ l) right)
     (!= l 1)
@@ -859,40 +845,6 @@
            (= tot-lanes (/ old-tot-lanes m)))
     :ruleset assemble
     )
-
-(rule (
-    (= e (VectorReduce (UIntOrInt signed 32 out-lanes) (Add)
-        (Bop (Mul)
-            (Cast (UIntOrInt signed 32 tot-lanes) lhs)
-            (Cast (UIntOrInt signed 32 tot-lanes) rhs))))
-    (= lhs (Load (UIntOrInt signed 8 tot-lanes) lhs-name lhs-idx))
-    (= rhs (Load (UIntOrInt signed 8 tot-lanes) rhs-name rhs-idx))
-) (
-    (remove-aligned-bc e (unstable-fn "matrix-multiplication-int/uint-cont" signed lhs-name rhs-name out-lanes tot-lanes) lhs-idx rhs-idx)
-) :ruleset canonicalize)
-
-(rule (
-    (= e (VectorReduce (Float 32 out-lanes) (Add)
-        (Bop (Mul)
-            (Cast (Float 32 tot-lanes) lhs)
-            (Cast (Float 32 tot-lanes) rhs))))
-    (= lhs (Load (BFloat 16 tot-lanes) lhs-name lhs-idx))
-    (= rhs (Load (BFloat 16 tot-lanes) rhs-name rhs-idx))
-) (
-    (remove-aligned-bc e (unstable-fn "matrix-multiplication-float-cont" lhs-name rhs-name out-lanes tot-lanes) lhs-idx rhs-idx)
-) :ruleset canonicalize)
-
-(rule (
-    (= e (VectorReduce (Float 16 out-lanes) (Add)
-        (Bop (Mul)
-            lhs
-            rhs)))
-    (= lhs (Load (Float 16 tot-lanes) lhs-name lhs-idx))
-    (= rhs (Load (Float 16 tot-lanes) rhs-name rhs-idx))
-) (
-    (remove-aligned-bc e (unstable-fn "matrix-multiplication-float-16-cont" lhs-name rhs-name out-lanes tot-lanes) lhs-idx rhs-idx)
-) :ruleset canonicalize)
-
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Push down broadcasts
@@ -2156,6 +2108,30 @@
         (saturate (run typechecking))
         (run)
         (run amx)))
+
+(check (= collectstoresplaceholderoutputBBBeqsatBBB10
+  (Evaluate
+    (Call "wmma.store.d.sync.aligned.row.m32n8k16.f32" (Int 32 1)
+      (vec-of
+        (Var (Handle 1) (V "output"))
+        (Load (Float 32 256) (V "conv") (Ramp (IntImm 32 0) (IntImm 32 1) 256))
+        (Bop (Sub)
+          (Bop (Add)
+            (Bop (Mul)
+              (Bop (Add)
+                (Bop (Mul)
+                  (Var (Int 32 1) (V "output.s0.y.mmy.mmy"))
+                  (IntImm 32 2))
+                (Var (Int 32 1) (V "output.s0.y.mmy.base")))
+              (Var (Int 32 1) (V "output.stride.1")))
+            (Var (Int 32 1) (V "output.s0.x.mmx.base")))
+          (Bop (Add)
+            (Bop (Mul)
+              (Var (Int 32 1) (V "output.min.1"))
+              (Var (Int 32 1) (V "output.stride.1")))
+            (Var (Int 32 1) (V "output.min.0"))))
+        (IntImm 32 8))
+      (Intrinsic)))))
 ; ;; These are not currently used
 ; (run-schedule (repeat 15 
 ;     (saturate (run typechecking))

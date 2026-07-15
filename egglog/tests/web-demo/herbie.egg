@@ -30,13 +30,11 @@
   (Round Math)
   (Log Math))
 
-(let $r-zero (bigrat (bigint 0) (bigint 1)))
-(let $r-one  (bigrat (bigint 1) (bigint 1)))
-(let $r-two  (bigrat (bigint 2) (bigint 1)))
-(let $zero (Num $r-zero))
-(let $one  (Num $r-one))
-(let $two  (Num $r-two))
+(let $zero (Num (bigrat (bigint 0) (bigint 1))))
+(let $one  (Num (bigrat (bigint 1) (bigint 1))))
+(let $two  (Num (bigrat (bigint 2) (bigint 1))))
 (let $three (Num (bigrat (bigint 3) (bigint 1))))
+(let $half (Num (bigrat (bigint 1) (bigint 2))))
 (let $neg-one (Neg $one))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -80,10 +78,10 @@
 ;; - There exists a hi interval, in which case it must be smaller than 0
 ;; This assumes that intervals are well-formed: lo <= hi at all times.
 (rule ((= l (lo e))
-       (> l $r-zero))
+       (> l (bigrat (bigint 0) (bigint 1))))
       ((non-zero e)))
 (rule ((= h (hi e))
-       (< h $r-zero))
+       (< h (bigrat (bigint 0) (bigint 1))))
       ((non-zero e)))
 
 (rule ((= e (Num ve)))
@@ -535,7 +533,7 @@
 
 (push)
 
-(set (lo $x) $r-one)
+(set (lo $x) (bigrat (bigint 1) (bigint 1)))
 (let $e10 (Div (Mul $x $three) $x))
 (run 3)
 (check (= $e10 $three))
@@ -551,7 +549,7 @@
 (push)
 (let $e12 (Add (Num (bigrat (bigint 1) (bigint 5))) (Num (bigrat (bigint 3) (bigint 10)))))
 (run 1)
-(check (= $e12 (Num (bigrat (bigint 1) (bigint 2)))))
+(check (= $e12 $half))
 (pop)
 
 (push)

@@ -64,8 +64,27 @@ impl<'a> ProofInstrumentor<'a> {
     pub(crate) fn add_term_encoding(
         egraph: &'a mut EGraph,
         program: Vec<ResolvedNCommand>,
-    ) -> Vec<Command> {
+    ) -> Result<Vec<Command>, Error> {
         Self { egraph }.add_term_encoding_helper(program)
+    }
+
+    pub(crate) fn lower_inputs(
+        egraph: &EGraph,
+        program: Vec<ResolvedNCommand>,
+    ) -> Result<Vec<ResolvedNCommand>, Error> {
+        let mut lowered = Vec::with_capacity(program.len());
+        for command in program {
+            if let ResolvedNCommand::Input { span, name, file } = &command {
+                lowered.extend(
+                    Self::input_actions(egraph, span, name, file)?
+                        .into_iter()
+                        .map(ResolvedNCommand::CoreAction),
+                );
+            } else {
+                lowered.push(command);
+            }
+        }
+        Ok(lowered)
     }
 
     /// Mark two things as equal, adding proof if proofs are enabled.
@@ -381,6 +400,56 @@ impl<'a> ProofInstrumentor<'a> {
         )
     }
 
+    /// Use native `:no-merge` for primitive outputs and compare UF leaders for eq-sort outputs.
+    fn handle_no_merge_fn(
+        &mut self,
+        fdecl: &ResolvedFunctionDecl,
+        child_names: &[String],
+        child_names_str: &str,
+        rebuilding_ruleset: &str,
+    ) -> String {
+        let name = &fdecl.name;
+        let output_is_eq_sort = fdecl.resolved_schema.output().is_eq_sort();
+
+        if !output_is_eq_sort {
+            let input_sorts = ListDisplay(&fdecl.schema.input, " ");
+            let output_sort = fdecl.schema.output();
+            let current_name = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh(&format!("{name}Current"));
+            self.egraph
+                .proof_state
+                .merge_current
+                .insert(name.clone(), (current_name.clone(), child_names.len()));
+            return format!(
+                "(function {current_name} ({input_sorts}) {output_sort}
+                    :no-merge
+                    :unextractable
+                    :internal-hidden)"
+            );
+        }
+
+        // Distinct encoded values can already belong to the same e-class. Wait
+        // for their encoded UF leaders before deciding whether the conflict is real.
+        let view_name = self.view_name(name);
+        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
+        let uf_name = self.uf_name(fdecl.resolved_schema.output().name());
+
+        format!(
+            "(rule (({view_name} {child_names_str} old)
+                    ({view_name} {child_names_str} new)
+                    (= (values old_leader_ old_proof_) ({uf_name} old))
+                    (= (values new_leader_ new_proof_) ({uf_name} new))
+                    (!= old_leader_ new_leader_)
+                    (= (ordering-max old new) new))
+                   ((panic \"Illegal merge attempted for function {name}\"))
+                    :ruleset {rebuilding_ruleset}
+                    :name \"{fresh_name}\")"
+        )
+    }
+
     /// Generate rules that handle merge functions.
     /// For custom functions, we generate rules that run the merge function.
     /// Constructors need no rule: congruence is resolved by their view's `:merge`.
@@ -396,13 +465,17 @@ impl<'a> ProofInstrumentor<'a> {
         let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
         let view_name = self.view_name(&fdecl.name);
         if fdecl.subtype == FunctionSubtype::Custom {
-            self.handle_merge_fn(
-                fdecl,
-                &child_names,
-                &child_names_str,
-                &view_name,
-                &rebuilding_ruleset,
-            )
+            if fdecl.merge.is_some() {
+                self.handle_merge_fn(
+                    fdecl,
+                    &child_names,
+                    &child_names_str,
+                    &view_name,
+                    &rebuilding_ruleset,
+                )
+            } else {
+                self.handle_no_merge_fn(fdecl, &child_names, &child_names_str, &rebuilding_ruleset)
+            }
         } else {
             // Congruence is resolved by the constructor view's `:merge`; no rule needed.
             String::new()
@@ -1435,7 +1508,59 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
-    fn term_encode_command(&mut self, command: &ResolvedNCommand, res: &mut Vec<Command>) {
+    fn input_actions(
+        egraph: &EGraph,
+        span: &Span,
+        name: &str,
+        file: &str,
+    ) -> Result<Vec<ResolvedAction>, Error> {
+        let function_type = egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|typechecker| typechecker.type_info.get_func_type(name))
+            .unwrap_or_else(|| panic!("Unrecognized function name {name}"))
+            .clone();
+        let rows =
+            EGraph::read_input_file(egraph.fact_directory.as_deref(), &function_type, span, file)?;
+        let mut actions = vec![];
+        for row in rows {
+            let mut expressions = row
+                .into_iter()
+                .map(|literal| ResolvedExpr::Lit(span.clone(), literal));
+            let inputs = expressions
+                .by_ref()
+                .take(function_type.input.len())
+                .collect::<Vec<_>>();
+            actions.push(if function_type.subtype == FunctionSubtype::Constructor {
+                ResolvedAction::Expr(
+                    span.clone(),
+                    ResolvedExpr::Call(
+                        span.clone(),
+                        ResolvedCall::Func(function_type.clone()),
+                        inputs,
+                    ),
+                )
+            } else {
+                let output = expressions
+                    .next()
+                    .expect("custom input row must contain its output value");
+                ResolvedAction::Set(
+                    span.clone(),
+                    ResolvedCall::Func(function_type.clone()),
+                    inputs,
+                    output,
+                )
+            });
+        }
+        Ok(actions)
+    }
+
+    fn term_encode_command(
+        &mut self,
+        command: &ResolvedNCommand,
+        res: &mut Vec<Command>,
+    ) -> Result<(), Error> {
         log::trace!("Term encoding for {command}");
         match &command {
             ResolvedNCommand::Sort {
@@ -1523,9 +1648,21 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(Command::RunSchedule(self.instrument_schedule(schedule)));
             }
             ResolvedNCommand::Fail(span, cmd) => {
-                self.term_encode_command(cmd, res);
-                let last = res.pop().unwrap();
-                res.push(Command::Fail(span.clone(), Box::new(last)));
+                let mut encoded = vec![];
+                self.term_encode_command(cmd, &mut encoded)?;
+                if encoded.len() != 1 {
+                    return Err(Error::UnsupportedProofCommand {
+                        command: cmd.to_command().to_string(),
+                        reason: ProofEncodingUnsupportedReason::FailNonAtomicCommand,
+                    });
+                }
+                res.push(Command::Fail(
+                    span.clone(),
+                    Box::new(encoded.pop().unwrap()),
+                ));
+            }
+            ResolvedNCommand::Input { .. } => {
+                unreachable!("inputs should be lowered before term/proof instrumentation")
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
@@ -1567,7 +1704,6 @@ impl<'a> ProofInstrumentor<'a> {
             | ResolvedNCommand::Push(..)
             | ResolvedNCommand::AddRuleset(..)
             | ResolvedNCommand::Output { .. }
-            | ResolvedNCommand::Input { .. }
             | ResolvedNCommand::UnstableCombinedRuleset(..)
             | ResolvedNCommand::PrintOverallStatistics(..)
             | ResolvedNCommand::PrintFunction(..)
@@ -1578,12 +1714,13 @@ impl<'a> ProofInstrumentor<'a> {
                 panic!("User defined commands unsupported in term encoding");
             }
         }
+        Ok(())
     }
 
     pub(crate) fn add_term_encoding_helper(
         &mut self,
         program: Vec<ResolvedNCommand>,
-    ) -> Vec<Command> {
+    ) -> Result<Vec<Command>, Error> {
         let mut res = vec![];
 
         if !self.egraph.proof_state.term_header_added {
@@ -1596,7 +1733,7 @@ impl<'a> ProofInstrumentor<'a> {
         }
 
         for command in program {
-            self.term_encode_command(&command, &mut res);
+            self.term_encode_command(&command, &mut res)?;
 
             // run rebuilding after every command except a few
             if let ResolvedNCommand::Function(..)
@@ -1608,7 +1745,7 @@ impl<'a> ProofInstrumentor<'a> {
             }
         }
 
-        res
+        Ok(res)
     }
 
     /// Build the [`ContainerRebuildSpec`] for a container sort: mint and cache

@@ -72,17 +72,29 @@ DEFAULT_TIMEOUT_SEC = 120
 DEFAULT_PROFILE_SECONDS = 10
 DEFAULT_PROFILE_TOP = 15
 MAX_PROFILE_ITERATIONS = 10_000
-PROFILE_CACHE_VERSION = "v1"
+PROFILE_CACHE_VERSION = "v2"
 PROFILE_SAMPLY_RATE_HZ = 1000
 TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
 DEFAULT_TREATMENTS: tuple[Treatment, ...] = ("off", "term", "proofs")
-DEFAULT_FILES = (
-    "egglog/tests/math-microbenchmark.egg",
-    "egglog/tests/web-demo/rw-analysis.egg",
-    "egglog/tests/integer_math.egg",
-    "egglog/tests/web-demo/resolution.egg",
-    "egglog-experimental/tests/fixtures/eggcc-2mm-pass1-merge-old.egg",
+
+
+@dataclass(frozen=True)
+class WorkloadConfig:
+    file: str
+    fact_directory: str | None = None
+
+
+DEFAULT_WORKLOADS = (
+    WorkloadConfig("egglog/tests/math-microbenchmark.egg"),
+    WorkloadConfig("egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg"),
+    WorkloadConfig(
+        "benchmarks/pointer-analysis-small.egg",
+        "benchmarks/data/pointer-analysis-small",
+    ),
+    WorkloadConfig("egglog/tests/hardboiled_conv1d_32.egg"),
+    WorkloadConfig("benchmarks/luminal-llama.egg"),
+    WorkloadConfig("egglog/tests/web-demo/herbie.egg"),
 )
 TARGET_WALL_TIME_CAPTION = (
     "Ratio is target / baseline. Values below 1x are faster; above 1x are slower. "
@@ -158,6 +170,8 @@ class ReportFrame(pa.DataFrameModel):
     binary_sha256: Series[str]
     file_path: Series[str]
     file_sha256: Series[str]
+    fact_directory_path: Series[str] = pa.Field(nullable=True)
+    fact_directory_sha256: Series[str]
     backend: Series[str] = pa.Field(isin=list(BACKEND_SPECS))
     treatment: Series[str] = pa.Field(isin=["off", "term", "proofs"])
     timeout_sec: Series[int] = pa.Field(gt=0)
@@ -193,6 +207,50 @@ class FileSpec:
     display_path: str
     absolute_path: Path
     sha256: str
+    fact_directory: Path | None = None
+    fact_directory_sha256: str = ""
+
+
+def report_file_labels(files: Sequence[FileSpec]) -> dict[FileSpec, str]:
+    labels = {file_spec: Path(file_spec.display_path).name for file_spec in files}
+    by_basename: dict[str, list[FileSpec]] = {}
+    for file_spec in files:
+        by_basename.setdefault(labels[file_spec], []).append(file_spec)
+
+    for group in by_basename.values():
+        paths = tuple(dict.fromkeys(file_spec.display_path for file_spec in group))
+        if len(paths) == 1:
+            continue
+        max_depth = max(len(Path(path).parts) for path in paths)
+        path_labels: dict[str, str] = {}
+        for depth in range(2, max_depth + 1):
+            candidates = {path: str(Path(*Path(path).parts[-depth:])) for path in paths}
+            if len(set(candidates.values())) == len(paths):
+                path_labels = candidates
+                break
+        if not path_labels:
+            path_labels = {path: path for path in paths}
+        for file_spec in group:
+            labels[file_spec] = path_labels[file_spec.display_path]
+
+    by_label: dict[str, list[FileSpec]] = {}
+    for file_spec in files:
+        by_label.setdefault(labels[file_spec], []).append(file_spec)
+    for label, group in by_label.items():
+        if len(group) == 1:
+            continue
+        fact_labels = {
+            file_spec: file_spec.fact_directory.name if file_spec.fact_directory is not None else "no-facts"
+            for file_spec in group
+        }
+        if len(set(fact_labels.values())) != len(group):
+            fact_labels = {
+                file_spec: str(file_spec.fact_directory) if file_spec.fact_directory is not None else "no-facts"
+                for file_spec in group
+            }
+        for file_spec in group:
+            labels[file_spec] = f"{label}:{fact_labels[file_spec]}"
+    return labels
 
 
 @dataclass(frozen=True)
@@ -292,6 +350,7 @@ class EstimateKey:
     treatment: Treatment
     timeout_sec: int
     backend: Backend = "main"
+    fact_directory_sha256: str = ""
 
 
 @dataclass(frozen=True)
@@ -348,8 +407,13 @@ class CellSummary:
         return self.issue is None and self.mean is not None
 
 
-CellMap = dict[tuple[str, Backend, Treatment], CellSummary]
+CellKey = tuple[str, str, Backend, Treatment]
+CellMap = dict[CellKey, CellSummary]
 TargetCellMaps = dict[ResolvedTarget, CellMap]
+
+
+def cell_key(file_spec: FileSpec, backend: Backend, treatment: Treatment) -> CellKey:
+    return (file_spec.sha256, file_spec.fact_directory_sha256, backend, treatment)
 
 
 @dataclass(frozen=True)
@@ -400,7 +464,16 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Collect or reuse egglog-experimental benchmark reports.",
     )
-    parser.add_argument("files", nargs="*", help="egglog files to benchmark")
+    parser.add_argument(
+        "files",
+        nargs="*",
+        help="egglog files to benchmark",
+    )
+    parser.add_argument(
+        "--fact-directory",
+        default=None,
+        help="fact directory used by explicitly selected benchmark files",
+    )
     parser.add_argument(
         "--target",
         action="append",
@@ -458,6 +531,11 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
         description="Record or reuse a cached Samply CPU profile for one egglog workload.",
     )
     parser.add_argument("file", help="egglog file to profile")
+    parser.add_argument(
+        "--fact-directory",
+        default=None,
+        help="fact directory used by the profiled workload",
+    )
     parser.add_argument(
         "--target",
         action="append",
@@ -676,6 +754,20 @@ def sha256_file(path: Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def sha256_directory(path: Path) -> str:
+    digest = hashlib.sha256()
+    files = sorted(candidate for candidate in path.rglob("*") if candidate.is_file())
+    for file in files:
+        relative = file.relative_to(path).as_posix().encode()
+        digest.update(relative)
+        digest.update(b"\0")
+        with file.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return f"sha256:{digest.hexdigest()}"
+
+
 def run_text(args: Sequence[str], cwd: Path) -> str:
     completed = subprocess.run(
         list(args),
@@ -699,21 +791,44 @@ def git_dirty(cwd: Path) -> bool:
     return bool(run_text(["git", "status", "--porcelain"], cwd))
 
 
-def resolve_files(raw_files: Sequence[str], invocation_cwd: Path) -> tuple[FileSpec, ...]:
-    chosen = tuple(raw_files) if raw_files else DEFAULT_FILES
+def resolve_files(
+    raw_files: Sequence[str],
+    invocation_cwd: Path,
+    fact_directory: str | None = None,
+) -> tuple[FileSpec, ...]:
+    if raw_files:
+        chosen = tuple(WorkloadConfig(file, fact_directory) for file in raw_files)
+    else:
+        if fact_directory is not None:
+            raise ValueError("--fact-directory requires at least one explicit benchmark file")
+        chosen = DEFAULT_WORKLOADS
     files: list[FileSpec] = []
-    for display_path in chosen:
+    for workload in chosen:
+        display_path = workload.file
         absolute_path = Path(display_path).expanduser()
         if not absolute_path.is_absolute():
             absolute_path = invocation_cwd / absolute_path
         absolute_path = absolute_path.resolve()
         if not absolute_path.is_file():
             raise FileNotFoundError(f"benchmark file does not exist: {display_path}")
+
+        resolved_fact_directory: Path | None = None
+        fact_directory_sha256 = ""
+        if workload.fact_directory is not None:
+            resolved_fact_directory = Path(workload.fact_directory).expanduser()
+            if not resolved_fact_directory.is_absolute():
+                resolved_fact_directory = invocation_cwd / resolved_fact_directory
+            resolved_fact_directory = resolved_fact_directory.resolve()
+            if not resolved_fact_directory.is_dir():
+                raise FileNotFoundError(f"benchmark fact directory does not exist: {workload.fact_directory}")
+            fact_directory_sha256 = sha256_directory(resolved_fact_directory)
         files.append(
             FileSpec(
                 display_path=display_path,
                 absolute_path=absolute_path,
                 sha256=sha256_file(absolute_path),
+                fact_directory=resolved_fact_directory,
+                fact_directory_sha256=fact_directory_sha256,
             )
         )
     return tuple(files)
@@ -754,7 +869,7 @@ def parse_single_treatment(value: str) -> Treatment:
 
 
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
-    files = resolve_files([str(args.file)], invocation_cwd)
+    files = resolve_files([str(args.file)], invocation_cwd, args.fact_directory)
     backend = parse_single_backend(str(args.backend))
     treatment = parse_single_treatment(str(args.treatment))
     target_specs = args.target if args.target is not None else ["."]
@@ -837,11 +952,14 @@ def normalize_report_frame(frame: pd.DataFrame) -> DataFrame[ReportFrame]:
         raise ValueError(f"unexpected report column(s): {', '.join(extra)}")
     if "backend" not in normalized.columns:
         normalized["backend"] = "main"
+    if "fact_directory_sha256" not in normalized.columns:
+        normalized["fact_directory_sha256"] = ""
     for column in columns:
         if column not in normalized.columns:
             normalized[column] = pd.NA
     normalized = normalized.loc[:, columns]
     normalized["backend"] = normalized["backend"].fillna("main")
+    normalized["fact_directory_sha256"] = normalized["fact_directory_sha256"].fillna("")
     normalized["started_at"] = pd.to_datetime(normalized["started_at"], utc=True, errors="raise")
     for column in ["wall_sec", "user_sec", "system_sec", "cpu_wall_ratio"]:
         normalized[column] = pd.to_numeric(normalized[column], errors="raise")
@@ -910,6 +1028,7 @@ class EstimateModel:
                 treatment=cast(Treatment, str(record["treatment"])),
                 timeout_sec=int(record["timeout_sec"]),
                 backend=cast(Backend, str(record["backend"])),
+                fact_directory_sha256=str(record["fact_directory_sha256"]),
             )
             samples.setdefault(key, []).append(float(record["wall_sec"]))
         return cls(samples)
@@ -963,6 +1082,7 @@ def selected_rows(
     matches = rows.loc[
         rows["binary_sha256"].eq(key.binary_sha256)
         & rows["file_sha256"].eq(key.file_sha256)
+        & rows["fact_directory_sha256"].eq(key.fact_directory_sha256)
         & rows["backend"].eq(key.backend)
         & rows["treatment"].eq(key.treatment)
         & rows["timeout_sec"].eq(key.timeout_sec)
@@ -989,6 +1109,7 @@ def estimate_key_for(
         treatment=treatment,
         timeout_sec=timeout_sec,
         backend=backend,
+        fact_directory_sha256=file_spec.fact_directory_sha256,
     )
 
 
@@ -1250,7 +1371,14 @@ def label_has_enough_rows(
         for cell in benchmark_cells(spec):
             matches = selected_rows(
                 rows,
-                EstimateKey(binary_sha256, file_spec.sha256, cell.treatment, spec.timeout_sec, cell.backend),
+                EstimateKey(
+                    binary_sha256,
+                    file_spec.sha256,
+                    cell.treatment,
+                    spec.timeout_sec,
+                    cell.backend,
+                    file_spec.fact_directory_sha256,
+                ),
                 spec.rounds,
             )
             if len(matches) < spec.rounds:
@@ -1319,6 +1447,7 @@ def workload_command(
         "no-messages",
         "-j",
         "1",
+        *(["--fact-directory", str(file_spec.fact_directory)] if file_spec.fact_directory is not None else []),
         *backend_flags(backend),
         *treatment_flags(treatment),
         str(file_spec.absolute_path),
@@ -1351,12 +1480,14 @@ def profile_cache_path(
     backend: Backend,
     treatment: Treatment,
     mode: ProfileMode,
+    fact_directory_sha256: str = "",
 ) -> Path:
     return (
         profiles_dir
         / PROFILE_CACHE_VERSION
         / profile_hash_component(binary_sha256)
         / profile_hash_component(file_sha256)
+        / (profile_hash_component(fact_directory_sha256) if fact_directory_sha256 else "no-facts")
         / f"{backend}-{treatment}-{mode.cache_label}.json.gz"
     )
 
@@ -1685,6 +1816,8 @@ def flat_report_record(
         "binary_sha256": target.binary_sha256,
         "file_path": cell.file.display_path,
         "file_sha256": cell.file.sha256,
+        "fact_directory_path": (str(cell.file.fact_directory) if cell.file.fact_directory is not None else None),
+        "fact_directory_sha256": cell.file.fact_directory_sha256,
         "backend": cell.backend,
         "treatment": cell.treatment,
         "timeout_sec": spec.timeout_sec,
@@ -2007,7 +2140,7 @@ def target_cell_summaries(
     chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, cell.backend, cell.treatment): summarize_cell(
+        cell_key(file_spec, cell.backend, cell.treatment): summarize_cell(
             selected_rows(
                 rows,
                 estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
@@ -2030,7 +2163,7 @@ def target_rss_cell_summaries(
     chosen_backends = spec.backends if backends is None else backends
     chosen_treatments = spec.treatments if treatments is None else treatments
     return {
-        (file_spec.sha256, cell.backend, cell.treatment): summarize_rss_cell(
+        cell_key(file_spec, cell.backend, cell.treatment): summarize_rss_cell(
             selected_rows(
                 rows,
                 estimate_key_for(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
@@ -2053,8 +2186,8 @@ def target_suite_treatment_ratio(
     return suite_ratio(
         [
             (
-                baseline_cells[(file_spec.sha256, backend, treatment)],
-                candidate_cells[(file_spec.sha256, backend, treatment)],
+                baseline_cells[cell_key(file_spec, backend, treatment)],
+                candidate_cells[cell_key(file_spec, backend, treatment)],
             )
             for file_spec in spec.files
         ]
@@ -2071,8 +2204,8 @@ def treatment_file_cells(
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, backend, baseline_treatment)],
-            cell_map[(file_spec.sha256, backend, candidate_treatment)],
+            cell_map[cell_key(file_spec, backend, baseline_treatment)],
+            cell_map[cell_key(file_spec, backend, candidate_treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2088,8 +2221,8 @@ def target_treatment_file_cells(
     return [
         (
             file_spec,
-            baseline_cells[(file_spec.sha256, backend, treatment)],
-            candidate_cells[(file_spec.sha256, backend, treatment)],
+            baseline_cells[cell_key(file_spec, backend, treatment)],
+            candidate_cells[cell_key(file_spec, backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2105,8 +2238,8 @@ def backend_treatment_file_cells(
     return [
         (
             file_spec,
-            cell_map[(file_spec.sha256, baseline_backend, treatment)],
-            cell_map[(file_spec.sha256, candidate_backend, treatment)],
+            cell_map[cell_key(file_spec, baseline_backend, treatment)],
+            cell_map[cell_key(file_spec, candidate_backend, treatment)],
         )
         for file_spec in spec.files
     ]
@@ -2513,18 +2646,19 @@ def per_file_wall_time_change_tables(
 ) -> tuple[ReportTableData, ...]:
     baseline = targets[0]
     cells = benchmark_cells(spec)
+    file_labels = report_file_labels(spec.files)
     tables: list[ReportTableData] = []
     for target in targets[1:]:
         rows: list[tuple[str, ...]] = []
         for file_spec in spec.files:
             for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
-                    cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+                    cell_maps[baseline][cell_key(file_spec, cell.backend, cell.treatment)],
+                    cell_maps[target][cell_key(file_spec, cell.backend, cell.treatment)],
                 )
                 rows.append(
                     report_row(
-                        file_spec.display_path if cell_index == 0 else "",
+                        file_labels[file_spec] if cell_index == 0 else "",
                         cell.backend,
                         cell.treatment,
                         format_ratio_summary(ratio),
@@ -2562,6 +2696,7 @@ def per_file_peak_rss_change_tables(
     baseline = targets[0]
     baseline_has_rss = any(cell.samples for cell in rss_cell_maps[baseline].values())
     cells = benchmark_cells(spec)
+    file_labels = report_file_labels(spec.files)
     tables: list[ReportTableData] = []
     for target in targets[1:]:
         if not baseline_has_rss and not any(cell.samples for cell in rss_cell_maps[target].values()):
@@ -2570,12 +2705,12 @@ def per_file_peak_rss_change_tables(
         for file_spec in spec.files:
             for cell_index, cell in enumerate(cells):
                 ratio = ratio_summary(
-                    rss_cell_maps[baseline][(file_spec.sha256, cell.backend, cell.treatment)],
-                    rss_cell_maps[target][(file_spec.sha256, cell.backend, cell.treatment)],
+                    rss_cell_maps[baseline][cell_key(file_spec, cell.backend, cell.treatment)],
+                    rss_cell_maps[target][cell_key(file_spec, cell.backend, cell.treatment)],
                 )
                 rows.append(
                     report_row(
-                        file_spec.display_path if cell_index == 0 else "",
+                        file_labels[file_spec] if cell_index == 0 else "",
                         cell.backend,
                         cell.treatment,
                         format_ratio_summary(ratio),
@@ -2611,6 +2746,7 @@ def per_file_backend_wall_time_change_tables(
     spec: BenchmarkSpec,
 ) -> tuple[ReportTableData, ...]:
     baseline_backend = spec.backends[0]
+    file_labels = report_file_labels(spec.files)
     tables: list[ReportTableData] = []
     for target in targets:
         for backend in spec.backends[1:]:
@@ -2621,12 +2757,12 @@ def per_file_backend_wall_time_change_tables(
             for file_spec in spec.files:
                 for treatment_index, treatment in enumerate(shared_treatments):
                     ratio = ratio_summary(
-                        cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
-                        cell_maps[target][(file_spec.sha256, backend, treatment)],
+                        cell_maps[target][cell_key(file_spec, baseline_backend, treatment)],
+                        cell_maps[target][cell_key(file_spec, backend, treatment)],
                     )
                     rows.append(
                         report_row(
-                            file_spec.display_path if treatment_index == 0 else "",
+                            file_labels[file_spec] if treatment_index == 0 else "",
                             treatment,
                             format_ratio_summary(ratio),
                             format_wall_time_change(ratio),
@@ -2661,8 +2797,13 @@ def per_file_backend_peak_rss_change_tables(
     spec: BenchmarkSpec,
 ) -> tuple[ReportTableData, ...]:
     baseline_backend = spec.backends[0]
+    file_labels = report_file_labels(spec.files)
     baseline_has_rss = {
-        target: any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == baseline_backend)
+        target: any(
+            cell.samples
+            for (_, _, cell_backend, _), cell in rss_cell_maps[target].items()
+            if cell_backend == baseline_backend
+        )
         for target in targets
     }
     tables: list[ReportTableData] = []
@@ -2671,19 +2812,23 @@ def per_file_backend_peak_rss_change_tables(
             shared_treatments = shared_backend_treatments(spec, baseline_backend, backend)
             if not shared_treatments:
                 continue
-            candidate_has_rss = any(cell.samples for key, cell in rss_cell_maps[target].items() if key[1] == backend)
+            candidate_has_rss = any(
+                cell.samples
+                for (_, _, cell_backend, _), cell in rss_cell_maps[target].items()
+                if cell_backend == backend
+            )
             if not baseline_has_rss[target] and not candidate_has_rss:
                 continue
             rows: list[tuple[str, ...]] = []
             for file_spec in spec.files:
                 for treatment_index, treatment in enumerate(shared_treatments):
                     ratio = ratio_summary(
-                        rss_cell_maps[target][(file_spec.sha256, baseline_backend, treatment)],
-                        rss_cell_maps[target][(file_spec.sha256, backend, treatment)],
+                        rss_cell_maps[target][cell_key(file_spec, baseline_backend, treatment)],
+                        rss_cell_maps[target][cell_key(file_spec, backend, treatment)],
                     )
                     rows.append(
                         report_row(
-                            file_spec.display_path if treatment_index == 0 else "",
+                            file_labels[file_spec] if treatment_index == 0 else "",
                             treatment,
                             format_ratio_summary(ratio),
                             format_percent_change(ratio),
@@ -2835,7 +2980,7 @@ def within_target_wall_summary_rows(
             label,
             format_ratio_summary(summary),
             format_percent_change(summary),
-            format_worst_file(worst_file),
+            format_report_file(worst_file, spec),
             format_ratio_summary(worst),
             result,
         ),
@@ -2866,7 +3011,7 @@ def within_target_rss_summary_row(
         label,
         format_ratio_summary(summary),
         format_percent_change(summary),
-        format_worst_file(worst_file),
+        format_report_file(worst_file, spec),
         format_ratio_summary(worst),
         lower_is_better_result_text(summary),
     )
@@ -2897,7 +3042,7 @@ def multi_target_summary_tables(
                     cell.treatment,
                     format_wall_time_change(suite),
                     format_ratio_summary(geometric),
-                    format_worst_file(worst_file),
+                    format_report_file(worst_file, spec),
                     format_ratio_summary(worst),
                     comparison_result_text(suite),
                 )
@@ -2924,7 +3069,7 @@ def multi_target_summary_tables(
                     cell.treatment,
                     format_percent_change(summary),
                     format_ratio_summary(geometric),
-                    format_worst_file(worst_file),
+                    format_report_file(worst_file, spec),
                     format_ratio_summary(worst),
                     lower_is_better_result_text(summary),
                 )
@@ -3035,7 +3180,7 @@ def backend_summary_table(
                         metric.format_change(summary),
                         format_ratio_summary(geometric),
                         format_better_file_count(count_better_files(ratios)),
-                        format_worst_file(best_file),
+                        format_report_file(best_file, spec),
                         format_ratio_summary(best),
                         metric.format_result(best),
                     ]
@@ -3111,8 +3256,8 @@ def render_backend_summary(
         console.print(render_rich_table(table_data))
 
 
-def format_worst_file(file_spec: FileSpec | None) -> str:
-    return "-" if file_spec is None else file_spec.display_path
+def format_report_file(file_spec: FileSpec | None, spec: BenchmarkSpec) -> str:
+    return "-" if file_spec is None else report_file_labels(spec.files)[file_spec]
 
 
 def render_target_diagnostics(
@@ -3129,14 +3274,15 @@ def render_target_diagnostics(
 
 def target_wall_time_table_data(cell_map: CellMap, target: ResolvedTarget, spec: BenchmarkSpec) -> ReportTableData:
     cells = benchmark_cells(spec)
+    file_labels = report_file_labels(spec.files)
     headers = ["File", *(cell_label(spec, cell.backend, cell.treatment) for cell in cells)]
     rows_with_issue: list[tuple[list[str], str]] = []
     has_mean_issues = False
     for file_spec in spec.files:
         issue_parts: list[str] = []
-        row_values = [file_spec.display_path]
+        row_values = [file_labels[file_spec]]
         for cell in cells:
-            summary = cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            summary = cell_map[cell_key(file_spec, cell.backend, cell.treatment)]
             row_values.append(format_seconds_summary(summary))
             if summary.issue is not None:
                 issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
@@ -3178,18 +3324,19 @@ def overhead_ratios_table_data(
     ratio_columns = {backend: ratio_specs_for_backend(spec, backend) for backend in spec.backends}
     if not any(ratio_columns.values()):
         return None
+    file_labels = report_file_labels(spec.files)
     headers = ["File"]
     for backend in spec.backends:
         for _, _, ratio_name in ratio_columns[backend]:
             headers.append(backend_metric_label(spec, backend, ratio_name))
     rows: list[tuple[str, ...]] = []
     for file_spec in spec.files:
-        row_values = [file_spec.display_path]
+        row_values = [file_labels[file_spec]]
         for backend in spec.backends:
             for baseline_treatment, candidate_treatment, _ in ratio_columns[backend]:
                 ratio = ratio_summary(
-                    cell_map[(file_spec.sha256, backend, baseline_treatment)],
-                    cell_map[(file_spec.sha256, backend, candidate_treatment)],
+                    cell_map[cell_key(file_spec, backend, baseline_treatment)],
+                    cell_map[cell_key(file_spec, backend, candidate_treatment)],
                 )
                 row_values.append(format_ratio_summary(ratio))
         rows.append(tuple(row_values))
@@ -3221,14 +3368,15 @@ def target_peak_rss_table_data(
     if not any(cell.samples for cell in rss_cell_map.values()):
         return None
     cells = benchmark_cells(spec)
+    file_labels = report_file_labels(spec.files)
     headers = ["File", *(cell_label(spec, cell.backend, cell.treatment) for cell in cells)]
     rss_rows: list[tuple[list[str], str]] = []
     has_rss_issues = False
     for file_spec in spec.files:
         issue_parts: list[str] = []
-        row_values = [file_spec.display_path]
+        row_values = [file_labels[file_spec]]
         for cell in cells:
-            summary = rss_cell_map[(file_spec.sha256, cell.backend, cell.treatment)]
+            summary = rss_cell_map[cell_key(file_spec, cell.backend, cell.treatment)]
             row_values.append(format_bytes_summary(summary))
             if summary.issue is not None:
                 issue_parts.append(f"{cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
@@ -3289,6 +3437,7 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
         request.backend,
         request.treatment,
         request.mode,
+        request.file.fact_directory_sha256,
     )
     profile: dict[str, Any] | None = None
     cache_status: Literal["hit", "recorded"] = "recorded"
@@ -3398,7 +3547,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         backends = parse_backends(args.backend)
         treatments = parse_treatments(args.treatments)
         report_destination = resolve_report_destination(args.report, invocation_cwd)
-        files = resolve_files(args.files, invocation_cwd)
+        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
         spec = BenchmarkSpec(
             files=files,
             treatments=treatments,

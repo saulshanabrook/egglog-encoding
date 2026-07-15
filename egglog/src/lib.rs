@@ -72,13 +72,14 @@ use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display, Formatter};
 use std::fs::File;
 use std::hash::Hash;
-use std::io::{Read as _, Write as _};
+use std::io::Write as _;
 use std::iter::once;
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
+use typechecking::FuncType;
 pub use typechecking::PrimitiveValidator;
 pub use typechecking::TypeError;
 pub use typechecking::TypeInfo;
@@ -2129,12 +2130,8 @@ impl EGraph {
                     return Err(Error::ExpectFail(span));
                 }
             }
-            ResolvedNCommand::Input {
-                span: _,
-                name,
-                file,
-            } => {
-                self.input_file(&name, file)?;
+            ResolvedNCommand::Input { span, name, file } => {
+                self.input_file(span, &name, file)?;
             }
             ResolvedNCommand::Output { span, file, exprs } => {
                 let mut filename = self.fact_directory.clone().unwrap_or_default();
@@ -2198,95 +2195,104 @@ impl EGraph {
         Ok(vec![])
     }
 
-    fn input_file(&mut self, func_name: &str, file: String) -> Result<(), Error> {
-        let function_type = self
-            .type_info
-            .get_func_type(func_name)
-            .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"));
-        let func = self.functions.get_mut(func_name).unwrap();
+    fn read_input_file(
+        fact_directory: Option<&std::path::Path>,
+        function_type: &FuncType,
+        span: &Span,
+        file: &str,
+    ) -> Result<Vec<Vec<Literal>>, Error> {
+        let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
+        filename.push(file);
 
-        let mut filename = self.fact_directory.clone().unwrap_or_default();
-        filename.push(file.as_str());
-
-        // check that the function uses supported types
-
-        for t in &func.schema.input {
-            match t.name() {
+        for sort in &function_type.input {
+            match sort.name() {
                 "i64" | "f64" | "String" => {}
-                s => panic!("Unsupported type {s} for input"),
+                name => panic!("Unsupported type {name} for input"),
             }
         }
-
         if function_type.subtype != FunctionSubtype::Constructor {
-            for sort in &func.schema.outputs {
+            for sort in &function_type.outputs {
                 match sort.name() {
                     "i64" | "String" | "Unit" => {}
-                    s => panic!("Unsupported type {s} for input"),
+                    name => panic!("Unsupported type {name} for input"),
                 }
             }
         }
 
         log::info!("Opening file '{filename:?}'...");
-        let mut f = File::open(filename).unwrap();
-        let mut contents = String::new();
-        f.read_to_string(&mut contents).unwrap();
-
-        // Can also do a row-major Vec<Value>
-        let mut parsed_contents: Vec<Vec<Value>> = Vec::with_capacity(contents.lines().count());
-
-        let mut row_schema = func.schema.input.clone();
+        let contents = std::fs::read_to_string(&filename)
+            .map_err(|error| Error::IoError(filename, error, span.clone()))?;
+        let mut row_schema = function_type.input.clone();
+        // Relations desugar to constructors, so their implicit output is not a TSV column.
         if function_type.subtype == FunctionSubtype::Custom {
-            row_schema.extend(func.schema.outputs.iter().cloned());
+            row_schema.extend(function_type.outputs.iter().cloned());
         }
 
-        log::debug!("{row_schema:?}");
-
-        let unit_val = self.backend.base_values().get(());
-
+        let mut rows = Vec::with_capacity(contents.lines().count());
         for line in contents.lines() {
-            let mut it = line.split('\t').map(|s| s.trim());
-
-            let mut row: Vec<Value> = Vec::with_capacity(row_schema.len());
-
-            for sort in row_schema.iter() {
-                if let Some(raw) = it.next() {
-                    let val = match sort.name() {
-                        "i64" => {
-                            if let Ok(i) = raw.parse::<i64>() {
-                                self.backend.base_values().get(i)
-                            } else {
-                                return Err(Error::InputFileFormatError(file));
-                            }
-                        }
-                        "f64" => {
-                            if let Ok(f) = raw.parse::<f64>() {
-                                self.backend
-                                    .base_values()
-                                    .get::<F>(core_relations::Boxed::new(f.into()))
-                            } else {
-                                return Err(Error::InputFileFormatError(file));
-                            }
-                        }
-                        "String" => self.backend.base_values().get::<S>(raw.to_string().into()),
-                        "Unit" => unit_val,
-                        _ => panic!("Unreachable"),
-                    };
-                    row.push(val);
-                } else {
-                    break;
+            let mut fields = line.split('\t').map(str::trim);
+            let mut row = Vec::with_capacity(row_schema.len());
+            for sort in &row_schema {
+                if sort.name() == "Unit" {
+                    row.push(Literal::Unit);
+                    continue;
                 }
+                let Some(raw) = fields.next() else {
+                    break;
+                };
+                let literal = match sort.name() {
+                    "i64" => raw
+                        .parse()
+                        .map(Literal::Int)
+                        .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
+                    "f64" => raw
+                        .parse::<f64>()
+                        .map(ordered_float::OrderedFloat)
+                        .map(Literal::Float)
+                        .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
+                    "String" => Literal::String(raw.to_owned()),
+                    _ => unreachable!(),
+                };
+                row.push(literal);
             }
-
             if row.is_empty() {
                 continue;
             }
-
-            if row.len() != row_schema.len() || it.next().is_some() {
-                return Err(Error::InputFileFormatError(file));
+            if row.len() != row_schema.len() || fields.next().is_some() {
+                return Err(Error::InputFileFormatError(file.to_owned()));
             }
-
-            parsed_contents.push(row);
+            rows.push(row);
         }
+        Ok(rows)
+    }
+
+    fn input_file(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
+        let function_type = self
+            .type_info
+            .get_func_type(func_name)
+            .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"))
+            .clone();
+        let parsed_contents =
+            Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
+        let func = self.functions.get_mut(func_name).unwrap();
+        let unit_val = self.backend.base_values().get(());
+        let parsed_contents = parsed_contents
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|literal| match literal {
+                        Literal::Int(value) => self.backend.base_values().get(value),
+                        Literal::Float(value) => self
+                            .backend
+                            .base_values()
+                            .get::<F>(core_relations::Boxed::new(value)),
+                        Literal::String(value) => self.backend.base_values().get::<S>(value.into()),
+                        Literal::Unit => unit_val,
+                        Literal::Bool(_) => unreachable!(),
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
 
         log::debug!("Successfully loaded file.");
 
@@ -2380,6 +2386,10 @@ impl EGraph {
                 desugared_before_proofs: vec![],
             })
         } else {
+            // Input expansion needs resolved schemas. Lower it once here so the
+            // encoded execution and proof checker consume the same fiat actions.
+            let resolved_before_proofs =
+                ProofInstrumentor::lower_inputs(self, resolved_before_proofs)?;
             // Now remove globals for actual execution (but NOT from desugared_commands)
             let typechecked_no_globals = proof_global_remover::remove_globals(
                 resolved_before_proofs.clone(),
@@ -2390,7 +2400,7 @@ impl EGraph {
             }
 
             let term_encoding_added =
-                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals);
+                ProofInstrumentor::add_term_encoding(self, typechecked_no_globals)?;
             let mut new_typechecked = vec![];
             for new_cmd in term_encoding_added {
                 let desugared =
