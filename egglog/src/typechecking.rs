@@ -640,16 +640,13 @@ impl EGraph {
                 ResolvedNCommand::PrintSize(span.clone(), n.clone())
             }
             NCommand::ProveExists(span, constructor) => {
+                // prove-exists targets a table: a constructor, or its lowering to
+                // a term relation (a function) under the term/proof encoding.
+                // `get_func_type` already rejects primitives/unbound names.
                 let func_type = self
                     .type_info
                     .get_func_type(constructor)
                     .ok_or_else(|| TypeError::UnboundFunction(constructor.clone(), span.clone()))?;
-                if func_type.subtype != FunctionSubtype::Constructor {
-                    return Err(TypeError::ProveExistsRequiresConstructor(
-                        constructor.clone(),
-                        span.clone(),
-                    ));
-                }
                 ResolvedNCommand::ProveExists(span.clone(), ResolvedCall::Func(func_type.clone()))
             }
             NCommand::Output { span, file, exprs } => {

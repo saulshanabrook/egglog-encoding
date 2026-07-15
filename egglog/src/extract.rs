@@ -725,13 +725,32 @@ impl Function {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
     }
 
+    /// A term or proof relation created by the term/proof encoding: an
+    /// internal-hidden function-to-`Unit` where the minted id is the last input
+    /// column and the earlier inputs are the term's children. (Distinct from
+    /// views, which carry `term_constructor` and have a non-`Unit` output.) Such
+    /// a relation is reconstructed like an old-form view: last input = output id.
+    pub(crate) fn is_relation_term(&self) -> bool {
+        self.decl.subtype == FunctionSubtype::Custom
+            && self.decl.internal_hidden
+            && self.decl.term_constructor.is_none()
+            && self.schema.outputs.len() == 1
+            && self.schema.outputs[0].name() == "Unit"
+    }
+
+    /// True when the id is the last input column (old-form views and encoding
+    /// relations), rather than a real output column.
+    fn id_is_last_input(&self) -> bool {
+        (self.decl.term_constructor.is_some() && !self.is_fd_view()) || self.is_relation_term()
+    }
+
     /// For view tables (with term_constructor), the effective output sort is the last input column
     /// (old form) or the first output column (FD tuple view). For regular tables, it's the output.
     /// This is used by extraction to determine which sort a table produces values for.
     pub(crate) fn extraction_output_sort(&self) -> &ArcSort {
         if self.is_fd_view() {
             self.schema.output()
-        } else if self.decl.term_constructor.is_some() {
+        } else if self.id_is_last_input() {
             self.schema.input.last().unwrap()
         } else {
             self.schema.output()
@@ -742,7 +761,7 @@ impl Function {
     /// For old-form view tables, this excludes the last input column (the e-class); FD tuple views
     /// key on children only, so all inputs are children.
     pub(crate) fn extraction_num_children(&self) -> usize {
-        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
+        if self.id_is_last_input() {
             self.schema.input.len() - 1
         } else {
             self.schema.input.len()
@@ -762,8 +781,9 @@ impl Function {
     /// For view tables, the e-class is the last input column (second-to-last in the row).
     /// For regular tables, it's the last column (the actual output).
     pub(crate) fn extraction_output_index(&self) -> usize {
-        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
-            // Old-form view: row is [children..., eclass, view_sort]; eclass at input.len() - 1.
+        if self.id_is_last_input() {
+            // Old-form view / encoding relation: row is [children..., id, ...];
+            // the id is at input.len() - 1.
             self.schema.input.len() - 1
         } else {
             // Regular table: [inputs..., output]. FD view: [children..., eclass, proof]; the eclass

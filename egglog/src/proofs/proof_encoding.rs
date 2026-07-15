@@ -364,6 +364,15 @@ impl<'a> ProofInstrumentor<'a> {
             &Justification::Merge(name.clone(), p1_fresh.clone(), p2_fresh.clone()),
         );
         let merge_fn_code_str = merge_fn_code.join("\n");
+        // The `current` function replays the (instrumented) user merge. When the
+        // merge has mint statements it is an action block `(<mints> <result>)`;
+        // when the result is a bare var/lit (e.g. `:merge old`) it must stay a
+        // plain expression, since `(old)` would parse as a call to `old`.
+        let current_merge = if merge_fn_code.is_empty() {
+            merge_fn_var.clone()
+        } else {
+            format!("({merge_fn_code_str}\n{merge_fn_var})")
+        };
         let mut updated = child_names.to_vec();
         updated.push(merge_fn_var.clone());
 
@@ -404,8 +413,7 @@ impl<'a> ProofInstrumentor<'a> {
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
         format!(
             "(function {current_name} ({input_sorts}) {output_sort}
-                    :merge ({merge_fn_code_str}
-                            {merge_fn_var})
+                    :merge {current_merge}
                     :unextractable
                     :internal-hidden)
                  (sort {fresh_sort})

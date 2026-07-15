@@ -1,4 +1,3 @@
-use crate::ast::FunctionSubtype;
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
 use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
@@ -24,10 +23,7 @@ impl ProofInstrumentor<'_> {
         call: &ResolvedCall,
     ) -> Result<(ProofStore, ProofId), ProveExistsError> {
         let func = match call {
-            ResolvedCall::Func(func) if func.subtype == FunctionSubtype::Constructor => func,
-            ResolvedCall::Func(_) => {
-                return Err(ProveExistsError::RequiresConstructor);
-            }
+            ResolvedCall::Func(func) => func,
             ResolvedCall::Primitive(_) => {
                 return Err(ProveExistsError::PrimitivesUnsupported);
             }
@@ -43,17 +39,16 @@ impl ProofInstrumentor<'_> {
             .unwrap_or_else(|| panic!("constructor {} is not declared", func.name));
 
         let backend_id = function.backend_id;
-        let output_sort = function.schema.output().clone();
+        // The eclass sort and its column (last input for a relation, output for a
+        // plain constructor).
+        let output_sort = function.extraction_output_sort().clone();
+        let output_index = function.extraction_output_index();
 
         let mut termdag = TermDag::default();
         let mut witness_value = None;
 
         self.egraph.backend.for_each_while(backend_id, |row| {
-            let value = *row
-                .vals
-                .last()
-                .expect("constructor rows include their output value");
-            witness_value = Some(value);
+            witness_value = Some(row.vals[output_index]);
             false
         });
 

@@ -96,7 +96,9 @@ impl RootExtractor {
         sort: &ArcSort,
     ) -> Option<TermId> {
         for func in egraph.functions.values() {
-            if func.decl.subtype != FunctionSubtype::Constructor
+            // Term/proof relations (function-to-Unit, id in the last input) and
+            // ordinary constructors both reconstruct here; views are skipped.
+            if (func.decl.subtype != FunctionSubtype::Constructor && !func.is_relation_term())
                 || func.extraction_output_sort().name() != sort.name()
                 || func.decl.term_constructor.is_some()
             {
