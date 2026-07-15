@@ -109,13 +109,26 @@ impl ProofInstrumentor<'_> {
         res.unwrap()
     }
 
-    pub(crate) fn format_prooflist(&self, proofs: &[String]) -> String {
-        let pcons = &self.proof_names().pcons;
-        let pnil = &self.proof_names().pnil;
+    /// Build a ProofList relation (`pnil`, then `pcons` folds) by minting a fresh
+    /// id per node and asserting the row, emitting the mints onto `stmts` and
+    /// returning the final list's var.
+    pub(crate) fn format_prooflist(
+        &mut self,
+        stmts: &mut Vec<String>,
+        proofs: &[String],
+    ) -> String {
+        let pcons = self.proof_names().pcons.clone();
+        let pnil = self.proof_names().pnil.clone();
+        let proof_list_sort = self.proof_names().proof_list_sort.clone();
 
-        let mut prooflist = format!("({pnil})");
+        let mut prooflist = self.mint(stmts, &pnil, "", &proof_list_sort);
         for proof in proofs.iter().rev() {
-            prooflist = format!("({pcons} {proof} {prooflist})");
+            prooflist = self.mint(
+                stmts,
+                &pcons,
+                &format!("{proof} {prooflist}"),
+                &proof_list_sort,
+            );
         }
         prooflist
     }
@@ -596,9 +609,7 @@ pub(crate) fn command_supports_proof_encoding(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && type_info
-            .expr_has_function_lookup(&merge.result)
-            .is_some()
+        && type_info.expr_has_function_lookup(&merge.result).is_some()
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }

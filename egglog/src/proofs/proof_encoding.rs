@@ -88,8 +88,11 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// Mark two things as equal, adding proof if proofs are enabled.
+    /// Emits any proof-relation mints onto `stmts` and returns the `(set @UF ...)`
+    /// action; the caller must push the mints (already on `stmts`) before it.
     pub(crate) fn union(
         &mut self,
+        stmts: &mut Vec<String>,
         type_name: &str,
         lhs: &str,
         rhs: &str,
@@ -108,16 +111,34 @@ impl<'a> ProofInstrumentor<'a> {
                 .proof_names()
                 .sort_to_ast_constructor
                 .get(type_name)
-                .unwrap();
-            let rule_constructor = &self.proof_names().rule_constructor;
-            let fiat_constructor = &self.proof_names().fiat_constructor;
+                .unwrap()
+                .clone();
+            let proof_sort = self.proof_sort();
+            let ast_sort = self.proof_names().ast_sort.clone();
             match justification {
-                Justification::Rule(rule_name, proof_list) => format!(
-                    "({rule_constructor} {rule_name} {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
-                Justification::Fiat => format!(
-                    "({fiat_constructor} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
+                Justification::Rule(rule_name, proof_list) => {
+                    let (rule_name, proof_list) = (rule_name.clone(), proof_list.clone());
+                    let rule_constructor = self.proof_names().rule_constructor.clone();
+                    let a_larger = self.mint(stmts, &to_ast_constructor, &larger, &ast_sort);
+                    let a_smaller = self.mint(stmts, &to_ast_constructor, &smaller, &ast_sort);
+                    self.mint(
+                        stmts,
+                        &rule_constructor,
+                        &format!("{rule_name} {proof_list} {a_larger} {a_smaller}"),
+                        &proof_sort,
+                    )
+                }
+                Justification::Fiat => {
+                    let fiat_constructor = self.proof_names().fiat_constructor.clone();
+                    let a_larger = self.mint(stmts, &to_ast_constructor, &larger, &ast_sort);
+                    let a_smaller = self.mint(stmts, &to_ast_constructor, &smaller, &ast_sort);
+                    self.mint(
+                        stmts,
+                        &fiat_constructor,
+                        &format!("{a_larger} {a_smaller}"),
+                        &proof_sort,
+                    )
+                }
                 Justification::Merge(_func_name, _proof1, _proof2) => panic!(
                     "Merge functions do not include union actions, so proof should not be by merge"
                 ),
@@ -183,11 +204,18 @@ impl<'a> ProofInstrumentor<'a> {
         let uf_merge = if proofs {
             let trans = self.proof_names().eq_trans_constructor.clone();
             let sym = self.proof_names().eq_sym_constructor.clone();
+            let proof_sort = self.proof_sort();
+            let mut mints = vec![];
+            let sym_pf = self.mint(&mut mints, &sym, "hi_pf_", &proof_sort);
+            let displaced_pf =
+                self.mint(&mut mints, &trans, &format!("{sym_pf} lo_pf_"), &proof_sort);
+            let mints_str = mints.join("\n                  ");
             format!(
                 "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
                   (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+                  {mints_str}
                   (set ({uf_name} (ordering-max old0 new0))
-                       (values (ordering-min old0 new0) ({trans} ({sym} hi_pf_) lo_pf_)))
+                       (values (ordering-min old0 new0) {displaced_pf}))
                   (values (ordering-min old0 new0) lo_pf_))"
             )
         } else {
@@ -197,11 +225,14 @@ impl<'a> ProofInstrumentor<'a> {
             )
         };
         // path compression: a->b (pb: a=b), b->c (pc: b=c)  =>  a->c (Trans pb pc: a=c)
-        let compressed_proof = if proofs {
+        let (compressed_proof_lets, compressed_proof) = if proofs {
             let trans = self.proof_names().eq_trans_constructor.clone();
-            format!("({trans} {pb} {pc})")
+            let proof_sort = self.proof_sort();
+            let mut mints = vec![];
+            let pf = self.mint(&mut mints, &trans, &format!("{pb} {pc}"), &proof_sort);
+            (mints.join("\n                    "), pf)
         } else {
-            "()".to_string()
+            (String::new(), "()".to_string())
         };
 
         let code = format!(
@@ -210,7 +241,8 @@ impl<'a> ProofInstrumentor<'a> {
              (rule ((= (values {b} {pb}) ({uf_name} {a}))
                     (= (values {c} {pc}) ({uf_name} {b}))
                     (!= {b} {c}))
-                  ((set ({uf_name} {a}) (values {c} {compressed_proof})))
+                  ({compressed_proof_lets}
+                   (set ({uf_name} {a}) (values {c} {compressed_proof})))
                    :ruleset {path_compress_ruleset_name}
                    :name \"{fresh_name}\")
                    "
@@ -323,11 +355,6 @@ impl<'a> ProofInstrumentor<'a> {
             // View is a function with Unit output; no need to bind the output
             "".to_string()
         };
-        let proof_var = if self.egraph.proof_state.proofs_enabled {
-            self.fresh_var()
-        } else {
-            "()".to_string()
-        };
         let mut merge_fn_code = vec![];
         // Proof instrumentation tracks the merged *value*; a `:merge` action block's effects are
         // not proof-tracked (action-block merges under proofs are unsupported).
@@ -339,20 +366,34 @@ impl<'a> ProofInstrumentor<'a> {
         let merge_fn_code_str = merge_fn_code.join("\n");
         let mut updated = child_names.to_vec();
         updated.push(merge_fn_var.clone());
-        let term = format!("({name} {child_names_str} {merge_fn_var})");
 
-        let rule_proof = if self.egraph.proof_state.proofs_enabled {
-            let to_ast = self.fname_to_ast_name(name);
+        // Mint the merged term relation row, its AST node, and the merge proof.
+        // `rule_proof` holds the accumulated mint statements (emitted before the
+        // view update in the rule action block); `proof_var` is the merge proof.
+        let (rule_proof, proof_var) = if self.egraph.proof_state.proofs_enabled {
+            let to_ast = self.fname_to_ast_name(name).to_string();
             let merge_fn_constructor = self.proof_names().merge_fn_constructor.clone();
-            format!(
-                "(let {proof_var}
-                            ({merge_fn_constructor} \"{name}\"
-                                  {p1_fresh}
-                                  {p2_fresh}
-                                  ({to_ast} {term})))"
-            )
+            let proof_sort = self.proof_sort();
+            let ast_sort = self.proof_names().ast_sort.clone();
+            let term_sort = self
+                .proof_names()
+                .fn_to_term_sort
+                .get(name)
+                .expect("term sort recorded in term_and_view")
+                .clone();
+            let term_args = format!("{child_names_str} {merge_fn_var}");
+            let mut mints = vec![];
+            let term_var = self.mint(&mut mints, name, &term_args, &term_sort);
+            let ast_var = self.mint(&mut mints, &to_ast, &term_var, &ast_sort);
+            let pf = self.mint(
+                &mut mints,
+                &merge_fn_constructor,
+                &format!("\"{name}\" {p1_fresh} {p2_fresh} {ast_var}"),
+                &proof_sort,
+            );
+            (mints.join("\n                        "), pf)
         } else {
-            "".to_string()
+            (String::new(), "()".to_string())
         };
         let term_and_proof = self.update_view(name, &updated, &proof_var);
         let cleanup_constructor = self.egraph.parser.symbol_gen.fresh("mergecleanup");
@@ -558,11 +599,18 @@ impl<'a> ProofInstrumentor<'a> {
                 let uf_name = self.uf_name(schema.output());
                 let trans = self.proof_names().eq_trans_constructor.clone();
                 let sym = self.proof_names().eq_sym_constructor.clone();
+                let proof_sort = self.proof_sort();
+                let mut mints = vec![];
+                let sym_pf = self.mint(&mut mints, &sym, "lo_pf_", &proof_sort);
+                let union_pf =
+                    self.mint(&mut mints, &trans, &format!("hi_pf_ {sym_pf}"), &proof_sort);
+                let mints_str = mints.join("\n                      ");
                 format!(
                     "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
                       (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+                      {mints_str}
                       (set ({uf_name} (ordering-max old0 new0))
-                           (values (ordering-min old0 new0) ({trans} hi_pf_ ({sym} lo_pf_))))
+                           (values (ordering-min old0 new0) {union_pf}))
                       (values (ordering-min old0 new0) lo_pf_))"
                 )
             } else {
@@ -651,21 +699,34 @@ impl<'a> ProofInstrumentor<'a> {
                     let congr = self.proof_names().congr_constructor.clone();
                     let trans = self.proof_names().eq_trans_constructor.clone();
                     let sym = self.proof_names().eq_sym_constructor.clone();
+                    let proof_sort = self.proof_sort();
                     let proof_prim = self.ensure_container_rebuild_proof(ty);
                     let rebuild_pf = self.fresh_var();
-                    let new_pf = self.fresh_var();
                     let cproof = self.term_proof_name(ty.name());
+                    // proof_lets: bind the container rebuild proof, then mint the congr proof.
+                    let mut lets = vec![format!("(let {rebuild_pf} ({proof_prim} {ci}))")];
+                    let new_pf = self.mint(
+                        &mut lets,
+                        &congr,
+                        &format!("{view_prf} {i} {rebuild_pf}"),
+                        &proof_sort,
+                    );
+                    // cproof_set: mint (Sym rebuild_pf), (Trans .. rebuild_pf), then record it.
+                    let mut cproof_stmts = vec![];
+                    let sym_pf = self.mint(&mut cproof_stmts, &sym, &rebuild_pf, &proof_sort);
+                    let trans_pf = self.mint(
+                        &mut cproof_stmts,
+                        &trans,
+                        &format!("{sym_pf} {rebuild_pf}"),
+                        &proof_sort,
+                    );
+                    cproof_stmts.push(format!("(set ({cproof} {canon}) {trans_pf})"));
                     (
                         canon_fact,
                         ":naive ",
-                        format!(
-                            "(let {rebuild_pf} ({proof_prim} {ci}))
-                             (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
-                        ),
+                        lets.join("\n                             "),
                         new_pf,
-                        format!(
-                            "(set ({cproof} {canon}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
-                        ),
+                        cproof_stmts.join("\n                             "),
                     )
                 } else {
                     (
@@ -682,11 +743,18 @@ impl<'a> ProofInstrumentor<'a> {
                 let canon_fact = format!("(= (values {canon} {uf_prf}) ({uf_name} {ci}))");
                 if proofs {
                     let congr = self.proof_names().congr_constructor.clone();
-                    let new_pf = self.fresh_var();
+                    let proof_sort = self.proof_sort();
+                    let mut lets = vec![];
+                    let new_pf = self.mint(
+                        &mut lets,
+                        &congr,
+                        &format!("{view_prf} {i} {uf_prf}"),
+                        &proof_sort,
+                    );
                     (
                         canon_fact,
                         "",
-                        format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
+                        lets.join("\n                             "),
                         new_pf,
                         String::new(),
                     )
@@ -730,11 +798,16 @@ impl<'a> ProofInstrumentor<'a> {
             let (proof_lets, pf_arg) = if proofs {
                 let trans = self.proof_names().eq_trans_constructor.clone();
                 let sym = self.proof_names().eq_sym_constructor.clone();
-                let new_pf = self.fresh_var();
-                (
-                    format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
-                    new_pf,
-                )
+                let proof_sort = self.proof_sort();
+                let mut lets = vec![];
+                let sym_pf = self.mint(&mut lets, &sym, &uf_prf, &proof_sort);
+                let new_pf = self.mint(
+                    &mut lets,
+                    &trans,
+                    &format!("{sym_pf} {view_prf}"),
+                    &proof_sort,
+                );
+                (lets.join("\n                      "), new_pf)
             } else {
                 (String::new(), "()".to_string())
             };
@@ -836,7 +909,12 @@ impl<'a> ProofInstrumentor<'a> {
         // by re-evaluation (see `check_side_condition`, which shares this gate).
         if is_container_side_condition(fact) {
             res.push(fact.to_string());
-            return format!("({})", self.proof_names().eval_constructor);
+            if self.egraph.proof_state.proofs_enabled {
+                let eval_constructor = self.proof_names().eval_constructor.clone();
+                let proof_sort = self.proof_sort();
+                return self.mint(action_lookups, &eval_constructor, "", &proof_sort);
+            }
+            return "()".to_string();
         }
         match fact {
             // In proof normal form, this is the only way that function calls appear.
@@ -870,13 +948,15 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(format!("(= {proof_var} ({view_name} {args_str}))"));
 
                 if self.egraph.proof_state.proofs_enabled {
+                    let congr = self.proof_names().congr_constructor.clone();
+                    let proof_sort = self.proof_sort();
                     let mut proof = proof_var;
                     for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                        let congr = &self.proof_names().congr_constructor;
-                        proof = format!(
-                            "
-                            ({congr} {proof} {i} {arg_proof})
-                            "
+                        proof = self.mint(
+                            action_lookups,
+                            &congr,
+                            &format!("{proof} {i} {arg_proof}"),
+                            &proof_sort,
                         );
                     }
                     proof
@@ -888,10 +968,20 @@ impl<'a> ProofInstrumentor<'a> {
                 let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups);
                 let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
                 res.push(format!("(= {v1} {v2})"));
-                let sym = &self.proof_names().eq_sym_constructor;
-                let trans = &self.proof_names().eq_trans_constructor;
-
-                format!("({trans} ({sym} {p1}) {p2})",)
+                if self.egraph.proof_state.proofs_enabled {
+                    let sym = self.proof_names().eq_sym_constructor.clone();
+                    let trans = self.proof_names().eq_trans_constructor.clone();
+                    let proof_sort = self.proof_sort();
+                    let sym_pf = self.mint(action_lookups, &sym, &p1, &proof_sort);
+                    self.mint(
+                        action_lookups,
+                        &trans,
+                        &format!("{sym_pf} {p2}"),
+                        &proof_sort,
+                    )
+                } else {
+                    "()".to_string()
+                }
             }
             ResolvedFact::Fact(generic_expr) => {
                 let (_, proof) = self.instrument_fact_expr(generic_expr, res, action_lookups);
@@ -902,7 +992,9 @@ impl<'a> ProofInstrumentor<'a> {
                             if p.output().is_eq_container_sort()
                     )
                 {
-                    format!("({})", self.proof_names().eval_constructor)
+                    let eval_constructor = self.proof_names().eval_constructor.clone();
+                    let proof_sort = self.proof_sort();
+                    self.mint(action_lookups, &eval_constructor, "", &proof_sort)
                 } else {
                     proof
                 }
@@ -923,14 +1015,25 @@ impl<'a> ProofInstrumentor<'a> {
         match expr {
             ResolvedExpr::Lit(_, lit) => {
                 let proof_code = if self.egraph.proof_state.proofs_enabled {
-                    let fiat_constructor = &self.proof_names().fiat_constructor;
                     let lit_sort = literal_sort(lit);
                     let to_ast = self
                         .proof_names()
                         .sort_to_ast_constructor
                         .get(lit_sort.name())
-                        .unwrap();
-                    format!("({fiat_constructor} ({to_ast} {lit}) ({to_ast} {lit}))")
+                        .unwrap()
+                        .clone();
+                    let fiat_constructor = self.proof_names().fiat_constructor.clone();
+                    let proof_sort = self.proof_sort();
+                    let ast_sort = self.proof_names().ast_sort.clone();
+                    let lit_str = format!("{lit}");
+                    let a1 = self.mint(action_lookups, &to_ast, &lit_str, &ast_sort);
+                    let a2 = self.mint(action_lookups, &to_ast, &lit_str, &ast_sort);
+                    self.mint(
+                        action_lookups,
+                        &fiat_constructor,
+                        &format!("{a1} {a2}"),
+                        &proof_sort,
+                    )
                 } else {
                     "()".to_string()
                 };
@@ -959,14 +1062,24 @@ impl<'a> ProofInstrumentor<'a> {
                             .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
                         fresh_proof
                     } else {
-                        let fiat_constructor = &self.proof_names().fiat_constructor;
                         let lit_sort = resolved_var.sort.name();
                         let to_ast = self
                             .proof_names()
                             .sort_to_ast_constructor
                             .get(lit_sort)
-                            .unwrap();
-                        format!("({fiat_constructor} ({to_ast} {var}) ({to_ast} {var}))")
+                            .unwrap()
+                            .clone();
+                        let fiat_constructor = self.proof_names().fiat_constructor.clone();
+                        let proof_sort = self.proof_sort();
+                        let ast_sort = self.proof_names().ast_sort.clone();
+                        let a1 = self.mint(action_lookups, &to_ast, var, &ast_sort);
+                        let a2 = self.mint(action_lookups, &to_ast, var, &ast_sort);
+                        self.mint(
+                            action_lookups,
+                            &fiat_constructor,
+                            &format!("{a1} {a2}"),
+                            &proof_sort,
+                        )
                     },
                 )
             }
@@ -1004,14 +1117,16 @@ impl<'a> ProofInstrumentor<'a> {
                                 "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
                             ));
                             if self.proofs_enabled() {
+                                let congr = self.proof_names().congr_constructor.clone();
+                                let proof_sort = self.proof_sort();
                                 let mut proof = view_proof_var;
                                 for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
                                     if let Some(arg_proof) = arg_proof {
-                                        let congr = &self.proof_names().congr_constructor;
-                                        proof = format!(
-                                            "
-                            ({congr} {proof} {i} {arg_proof})
-                            "
+                                        proof = self.mint(
+                                            action_lookups,
+                                            &congr,
+                                            &format!("{proof} {i} {arg_proof}"),
+                                            &proof_sort,
                                         );
                                     }
                                 }
@@ -1052,13 +1167,23 @@ impl<'a> ProofInstrumentor<'a> {
                         } else {
                             // Base primitives produce a literal result; a
                             // reflexive `Fiat` over a literal is checker-valid.
-                            let fiat_constructor = &self.proof_names().fiat_constructor;
                             let to_ast = self
                                 .proof_names()
                                 .sort_to_ast_constructor
                                 .get(specialized_primitive.output().name())
-                                .unwrap();
-                            format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))")
+                                .unwrap()
+                                .clone();
+                            let fiat_constructor = self.proof_names().fiat_constructor.clone();
+                            let proof_sort = self.proof_sort();
+                            let ast_sort = self.proof_names().ast_sort.clone();
+                            let a1 = self.mint(action_lookups, &to_ast, &fv, &ast_sort);
+                            let a2 = self.mint(action_lookups, &to_ast, &fv, &ast_sort);
+                            self.mint(
+                                action_lookups,
+                                &fiat_constructor,
+                                &format!("{a1} {a2}"),
+                                &proof_sort,
+                            )
                         };
 
                         (fv.clone(), proof)
@@ -1088,7 +1213,15 @@ impl<'a> ProofInstrumentor<'a> {
             proof.push(f_proof);
         }
 
-        (res, action_lookups, self.format_prooflist(&proof))
+        // The prooflist mints are actions (emitted into `action_lookups` before
+        // the proof binding). Only proof mode consumes the prooflist; in term
+        // mode it is discarded, so skip the mints to keep `action_lookups` empty.
+        let proof_list = if self.proofs_enabled() {
+            self.format_prooflist(&mut action_lookups, &proof)
+        } else {
+            String::new()
+        };
+        (res, action_lookups, proof_list)
     }
 
     // Actions need to be instrumented to add to the view
@@ -1143,7 +1276,7 @@ impl<'a> ProofInstrumentor<'a> {
                 let v2 = self.instrument_action_expr(generic_expr1, &mut res, justification);
                 let ot = generic_expr.output_type();
                 let type_name = ot.name();
-                let unioned = self.union(type_name, &v1, &v2, justification);
+                let unioned = self.union(&mut res, type_name, &v1, &v2, justification);
                 res.push(unioned);
             }
             ResolvedAction::Panic(..) => {
@@ -1177,7 +1310,12 @@ impl<'a> ProofInstrumentor<'a> {
                 let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
                 let a2 = self.mint(stmts, to_ast, fv, &ast_sort);
                 let rule = self.proof_names().rule_constructor.clone();
-                self.mint(stmts, &rule, &format!("{rule_name} {rule_proof} {a1} {a2}"), &proof_sort)
+                self.mint(
+                    stmts,
+                    &rule,
+                    &format!("{rule_name} {rule_proof} {a1} {a2}"),
+                    &proof_sort,
+                )
             }
             Justification::Fiat => {
                 let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
@@ -1189,7 +1327,12 @@ impl<'a> ProofInstrumentor<'a> {
                 let (p1, p2) = (p1.clone(), p2.clone());
                 let a = self.mint(stmts, to_ast, fv, &ast_sort);
                 let merge = self.proof_names().merge_fn_constructor.clone();
-                self.mint(stmts, &merge, &format!("\"{fn_name}\" {p1} {p2} {a}"), &proof_sort)
+                self.mint(
+                    stmts,
+                    &merge,
+                    &format!("\"{fn_name}\" {p1} {p2} {a}"),
+                    &proof_sort,
+                )
             }
         }
     }
@@ -1239,7 +1382,7 @@ impl<'a> ProofInstrumentor<'a> {
     /// and returning the fresh variable. Terms and proofs are relations rather
     /// than constructors, so an id is minted explicitly here rather than by a
     /// constructor call; every minted id keeps its row (nothing is merged away).
-    fn mint(
+    pub(crate) fn mint(
         &mut self,
         stmts: &mut Vec<String>,
         name: &str,
@@ -1254,7 +1397,7 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// The `Proof` datatype's sort name (mint target for proof relations).
-    fn proof_sort(&self) -> String {
+    pub(crate) fn proof_sort(&self) -> String {
         self.proof_names().proof_datatype.clone()
     }
 
@@ -1277,11 +1420,17 @@ impl<'a> ProofInstrumentor<'a> {
             .get(&func_type.name)
             .expect("term sort recorded in term_and_view")
             .clone();
-        let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
+        let fv = self.mint(
+            &mut res,
+            &func_type.name,
+            &ListDisplay(args, " ").to_string(),
+            &view_sort,
+        );
 
         let view_proof_var = if self.egraph.proof_state.proofs_enabled {
             let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
-            let proof_var = self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
+            let proof_var =
+                self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
             // add a proof for the constructor if needed
             if func_type.subtype == FunctionSubtype::Constructor {
                 let term_proof_constructor = self.term_proof_name(func_type.output().name());
@@ -1349,8 +1498,18 @@ impl<'a> ProofInstrumentor<'a> {
                         if func_type.subtype == FunctionSubtype::Custom {
                             // Globals are desugared to no-arg functions (in non-proof mode)
                             // They're allowed, in proof mode they are constructors.
+                            // The term is a relation, so mint its row and return the
+                            // fresh eclass id rather than emitting a value expression.
                             if self.egraph.type_info.is_global(&func_type.name) {
-                                return format!("({} {})", func_type.name, ListDisplay(&args, " "));
+                                let view_sort = self
+                                    .proof_names()
+                                    .fn_to_term_sort
+                                    .get(&func_type.name)
+                                    .expect("term sort recorded in term_and_view")
+                                    .clone();
+                                let args_joined = ListDisplay(&args, " ").to_string();
+                                let name = func_type.name.clone();
+                                return self.mint(res, &name, &args_joined, &view_sort);
                             }
                             panic!(
                                 "Found a function lookup in actions, should have been prevented by typechecking"
