@@ -373,10 +373,12 @@ installation of collected writes as Merge. DD has no separate union-find
 rebuild phase, so it reports Rebuild as zero. The exact mechanisms remain
 backend-specific, but both backends use the same semantic boundaries above.
 
-The engine enables these split-phase stopwatches only for serial
-`--timing-summary` execution. Ordinary programmatic runs retain the existing
-combined Search+Apply report without the new per-batch clocks; in particular,
-the in-process CodSpeed harness does not enable them.
+The bundled backends record split phases on every serial rule run.
+`--timing-summary` only requests serialization of those accumulated timings;
+it does not enable measurement. Parallel main-backend execution leaves Search
+and Apply unavailable because their overlapping work is not additive. Ordinary
+serial programmatic runs and the single-threaded CodSpeed harness include the
+same phase clocks.
 
 These measurements are aggregated by ruleset across engine iterations within
 one process; they are not per-rule or per-iteration profiles. The stored
@@ -904,9 +906,10 @@ job groups:
 - `codspeed`: an in-process, proofs-only `egglog-experimental` benchmark
   harness over a smaller representative file set, run through CodSpeed in both
   simulation and memory modes. CodSpeed tracks proof-mode movement without
-  invoking `./bench.py` or requesting timing-summary serialization, so the
-  split-phase stopwatches remain disabled there. The CLI benchmark report
-  remains the source for the full off/term/proofs comparison.
+  invoking `./bench.py` or requesting timing-summary serialization. Its serial
+  measured execution includes the phase clocks, but CodSpeed does not store the
+  resulting phase breakdown. The CLI benchmark report remains the source for
+  the full off/term/proofs comparison.
 
 The same entrypoints used by CI are available locally:
 

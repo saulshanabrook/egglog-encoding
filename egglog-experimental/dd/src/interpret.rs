@@ -108,12 +108,12 @@ enum Write {
 
 pub(crate) struct IterationResult {
     pub changed: bool,
-    /// Compatibility total derived from split timing, or zero when disabled.
+    /// Compatibility total derived from split timing.
     pub search_and_apply_time: Duration,
     /// Body matching, fused join execution, and body primitive evaluation.
-    pub search_time: Option<Duration>,
+    pub search_time: Duration,
     /// Rule-head instruction execution and write staging.
-    pub apply_time: Option<Duration>,
+    pub apply_time: Duration,
     /// Resolving and installing the staged writes.
     pub merge_time: Duration,
 }
@@ -128,11 +128,7 @@ pub(crate) struct IterationResult {
 /// never-cleared `InputSession`s. Positive per-rule binding deltas become envs;
 /// body primitives and head actions then run host-side. Writes and FD merges are
 /// applied afterward so results are bit-exact.
-pub fn run_iteration(
-    eg: &mut EGraph,
-    rules: &[(usize, RuleSpec)],
-    phase_timing_enabled: bool,
-) -> Result<IterationResult> {
+pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<IterationResult> {
     // Every rule — including the term encoder's canonicalization rules — lowers
     // as an ordinary rule and joins on the fused DD worker; there is no special
     // casing for any rule kind.
@@ -152,15 +148,11 @@ pub fn run_iteration(
     // apply head actions in the original rule firing order. Atom-less rules
     // (`(rule () …)`) have no input relation to drive the DD dataflow, so they
     // stay host-side (fire once); they are computed inline below.
-    let (envs_by_rule, search_time) = if phase_timing_enabled {
-        let search_timer = Instant::now();
-        let envs_by_rule = fused_bindings(eg, rules)?;
-        (envs_by_rule, Some(search_timer.elapsed()))
-    } else {
-        (fused_bindings(eg, rules)?, None)
-    };
+    let search_timer = Instant::now();
+    let envs_by_rule = fused_bindings(eg, rules)?;
+    let search_time = search_timer.elapsed();
 
-    let apply_timer = phase_timing_enabled.then(Instant::now);
+    let apply_timer = Instant::now();
     for ((_, rule), envs) in rules.iter().zip(envs_by_rule) {
         for mut env in envs {
             apply_head(
@@ -172,11 +164,8 @@ pub fn run_iteration(
             )?;
         }
     }
-    let apply_time = apply_timer.map(|timer| timer.elapsed());
-    let search_and_apply_time = match (search_time, apply_time) {
-        (Some(search_time), Some(apply_time)) => search_time + apply_time,
-        _ => Duration::ZERO,
-    };
+    let apply_time = apply_timer.elapsed();
+    let search_and_apply_time = search_time + apply_time;
 
     // Apply collected writes to the mirror.
     //
@@ -191,7 +180,7 @@ pub fn run_iteration(
     // full before/after content compare. A hash-cons in `lookup_or_create`
     // always allocates a fresh id, so any term created this call advances
     // `next_id` — that alone is a real mirror change.
-    let merge_timer = phase_timing_enabled.then(Instant::now);
+    let merge_timer = Instant::now();
     let mut changed = eg.next_id != next_id_at_start;
     let mut removes_by_func: RemovesByFunc = HashMap::new();
     let mut sets: Vec<(FunctionId, Row)> = Vec::new();
@@ -223,9 +212,7 @@ pub fn run_iteration(
         changed |= eg.subsume_rows(f, &prefix);
     }
 
-    let merge_time = merge_timer
-        .map(|timer| timer.elapsed())
-        .unwrap_or(Duration::ZERO);
+    let merge_time = merge_timer.elapsed();
     Ok(IterationResult {
         changed,
         search_and_apply_time,

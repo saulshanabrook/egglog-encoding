@@ -174,12 +174,6 @@ fn timing_split_separates_inline_batches_and_final_flush() {
     action.build_with_description("copy");
     let rule_set = rules.build();
 
-    let default_report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
-    assert_eq!(default_report.search_time, None);
-    assert_eq!(default_report.apply_time, None);
-    assert!(default_report.search_and_apply_time > std::time::Duration::ZERO);
-
-    db.set_phase_timing(true);
     let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
     let legacy_plan_time = report.rule_search_and_apply_time("copy");
     let search_time = report.search_time.unwrap();
@@ -198,9 +192,8 @@ fn timing_split_separates_inline_batches_and_final_flush() {
 }
 
 #[test]
-fn enabled_phase_timing_is_available_for_an_empty_ruleset() {
+fn phase_timing_is_available_for_an_empty_ruleset() {
     let mut db = Database::default();
-    db.set_phase_timing(true);
     let rule_set = RuleSetBuilder::new(&mut db).build();
 
     let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
@@ -218,7 +211,6 @@ fn parallel_execution_keeps_split_phase_timing_unavailable() {
         .unwrap()
         .install(|| {
             let mut db = Database::default();
-            db.set_phase_timing(true);
             let new_relation = || {
                 SortedWritesTable::new(
                     1,

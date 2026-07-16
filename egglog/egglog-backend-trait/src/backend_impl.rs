@@ -226,10 +226,6 @@ impl Backend for EGraph {
         EGraph::set_report_level(self, level);
     }
 
-    fn set_phase_timing(&mut self, enabled: bool) {
-        EGraph::set_phase_timing(self, enabled);
-    }
-
     fn dump_debug_info(&self) {
         EGraph::dump_debug_info(self);
     }

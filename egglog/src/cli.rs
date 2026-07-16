@@ -131,7 +131,6 @@ where
     }
 
     EGraph::set_num_threads(args.threads);
-    egraph.set_phase_timing(args.timing_summary.is_some());
     egraph.fact_directory.clone_from(&args.fact_directory);
     egraph.seminaive = !args.naive;
     egraph.no_decomp = args.no_decomp;

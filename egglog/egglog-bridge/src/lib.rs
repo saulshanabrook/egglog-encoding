@@ -1101,10 +1101,6 @@ impl EGraph {
     pub fn set_report_level(&mut self, level: ReportLevel) {
         self.report_level = level;
     }
-
-    pub fn set_phase_timing(&mut self, enabled: bool) {
-        self.db.set_phase_timing(enabled);
-    }
 }
 
 #[derive(Clone)]

@@ -326,12 +326,6 @@ pub trait Backend: Send + Sync {
     /// Set the verbosity of the per-iteration timing report.
     fn set_report_level(&mut self, level: ReportLevel);
 
-    /// Enable or disable detailed search/apply phase timing.
-    ///
-    /// The default is a no-op for backends that do not support the split. Such
-    /// backends continue to provide their ordinary combined timing report.
-    fn set_phase_timing(&mut self, _enabled: bool) {}
-
     /// Dump the database state to the log channel (debug only).
     fn dump_debug_info(&self);
 

@@ -347,10 +347,9 @@ impl Prober {
 impl Database {
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
         if rule_set.plans.is_empty() {
-            let phase_time = self.phase_timing_enabled.then_some(Duration::ZERO);
             return RuleSetReport {
-                search_time: phase_time,
-                apply_time: phase_time,
+                search_time: Some(Duration::ZERO),
+                apply_time: Some(Duration::ZERO),
                 ..RuleSetReport::default()
             };
         }
@@ -360,9 +359,8 @@ impl Database {
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
         let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
-        let record_phase_timing = self.phase_timing_enabled && !run_in_parallel;
-        let mut search_time = record_phase_timing.then_some(Duration::ZERO);
-        let mut apply_time = record_phase_timing.then_some(Duration::ZERO);
+        let mut search_time = None;
+        let mut apply_time = None;
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         if run_in_parallel {
             let dash_rule_reports: Arc<DashMap<Arc<str>, Vec<RuleReport>>> =
@@ -511,11 +509,12 @@ impl Database {
             let join_state = JoinState::new(self, exec_state.clone());
             // Just run all of the plans in order with a single in-place action
             // buffer.
+            let mut serial_search_time = Duration::ZERO;
             let mut action_buf = InPlaceActionBuffer {
                 rule_set,
                 match_counter: match_counter.as_ref(),
                 batches: Default::default(),
-                apply_time,
+                apply_time: Duration::ZERO,
             };
             for (plan, desc, symbol_map) in rule_set.plans.values() {
                 let report_plan = match report_level {
@@ -605,13 +604,8 @@ impl Database {
                     }
                 }
                 let search_and_apply_time = search_and_apply_timer.elapsed();
-                if let (Some(search_time), Some(before), Some(after)) = (
-                    search_time.as_mut(),
-                    apply_time_before_plan,
-                    action_buf.apply_time,
-                ) {
-                    *search_time += search_and_apply_time.saturating_sub(after - before);
-                }
+                serial_search_time += search_and_apply_time
+                    .saturating_sub(action_buf.apply_time - apply_time_before_plan);
 
                 // TODO: unnecessary cloning in many cases
                 let rule_report = rule_reports.entry(desc.clone()).or_default();
@@ -622,7 +616,8 @@ impl Database {
                 });
             }
             action_buf.flush(&mut exec_state.clone());
-            apply_time = action_buf.apply_time;
+            search_time = Some(serial_search_time);
+            apply_time = Some(action_buf.apply_time);
         }
 
         for (plan, desc, _symbol_map) in rule_set.plans.values() {
@@ -1906,9 +1901,8 @@ struct InPlaceActionBuffer<'a> {
     match_counter: &'a MatchCounter,
     batches: DenseIdMap<ActionId, ActionState>,
     /// Time spent executing rule-head instruction batches. Buffer management
-    /// and match accounting deliberately remain outside the apply phase. `None`
-    /// keeps ordinary execution free of per-batch stopwatch calls.
-    apply_time: Option<Duration>,
+    /// and match accounting deliberately remain outside the apply phase.
+    apply_time: Duration,
 }
 
 impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> {
@@ -1934,14 +1928,9 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         }
         if action_state.len >= VAR_BATCH_SIZE {
             let mut state = to_exec_state();
-            let succeeded = if let Some(apply_time) = self.apply_time.as_mut() {
-                let apply_timer = Instant::now();
-                let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
-                *apply_time += apply_timer.elapsed();
-                succeeded
-            } else {
-                state.run_instrs(&action_info.instrs, &mut action_state.bindings)
-            };
+            let apply_timer = Instant::now();
+            let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
+            self.apply_time += apply_timer.elapsed();
             action_state.bindings.clear();
             self.match_counter.inc_matches(action, succeeded);
             action_state.len = 0;
@@ -1954,7 +1943,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             &mut self.batches,
             self.rule_set,
             self.match_counter,
-            self.apply_time.as_mut(),
+            Some(&mut self.apply_time),
         );
     }
 

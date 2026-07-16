@@ -309,9 +309,6 @@ pub struct Database {
     /// This is primarily used to determine whether or not to attempt to do some operations in
     /// parallel.
     total_size_estimate: usize,
-    /// Whether serial rule execution records split search/apply phases. This is
-    /// opt-in so ordinary execution and microbenchmarks avoid per-batch clocks.
-    phase_timing_enabled: bool,
 }
 
 impl Database {
@@ -321,11 +318,6 @@ impl Database {
     /// thread pool.
     pub fn new() -> Database {
         Database::default()
-    }
-
-    /// Enable or disable detailed search/apply timing for serial rule runs.
-    pub fn set_phase_timing(&mut self, enabled: bool) {
-        self.phase_timing_enabled = enabled;
     }
 
     /// Initialize a new rulse set to run against this database.

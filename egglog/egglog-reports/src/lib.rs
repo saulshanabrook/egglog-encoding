@@ -15,8 +15,8 @@ pub(crate) type IndexSet<T> = indexmap::IndexSet<T, BuildHasherDefault<FxHasher>
 pub enum ReportLevel {
     /// Report combined search/apply, merge, and rebuild time.
     ///
-    /// Backends may additionally provide split search/apply timing when the
-    /// orthogonal phase-timing opt-in is enabled.
+    /// Backends may additionally provide split search/apply timing when their
+    /// execution mode can attribute the phases without overlap.
     #[default]
     TimeOnly,
     /// Report [`ReportLevel::TimeOnly`] and query plan for each rule
@@ -70,14 +70,15 @@ pub struct RuleSetReport {
     pub changed: bool,
     pub rule_reports: HashMap<Arc<str>, Vec<RuleReport>>,
     /// The backend's legacy combined search/apply value. Main egglog records
-    /// its historical outer wall-clock span even when detailed timing is off;
-    /// backends without a historical combined timer may leave this at zero.
+    /// its historical outer wall-clock span even when split attribution is
+    /// unavailable; backends without a historical combined timer may leave
+    /// this at zero.
     pub search_and_apply_time: Duration,
     /// Search time excluding timed rule-head instruction batches. `None` when
-    /// detailed phase timing was disabled or execution was parallel.
+    /// the backend cannot attribute the phases, such as during parallel execution.
     pub search_time: Option<Duration>,
-    /// Rule-head instruction execution and staged writes. `None` when detailed
-    /// phase timing was disabled or execution was parallel.
+    /// Rule-head instruction execution and staged writes. `None` when the
+    /// backend cannot attribute the phases, such as during parallel execution.
     pub apply_time: Option<Duration>,
     pub merge_time: Duration,
 }
