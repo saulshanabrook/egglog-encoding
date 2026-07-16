@@ -34,6 +34,7 @@ use egglog_backend_trait::{
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
+use web_time::Duration;
 
 mod compile;
 mod dd_native;
@@ -169,6 +170,9 @@ pub struct EGraph {
     /// cloned external functions share this channel, matching the reference
     /// bridge's panic-function behavior.
     panic_message: Arc<Mutex<Option<String>>>,
+    /// Opt-in detailed search/apply timing. Disabled for ordinary and CodSpeed
+    /// execution to avoid extra stopwatch calls.
+    phase_timing_enabled: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -231,7 +235,16 @@ impl EGraph {
             subsumed_versions: HashMap::new(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Default::default(),
+            phase_timing_enabled: false,
         }
+    }
+
+    fn empty_iteration_report(&self) -> IterationReport {
+        let phase_time = self.phase_timing_enabled.then_some(Duration::ZERO);
+        let mut report = IterationReport::default();
+        report.rule_set_report.search_time = phase_time;
+        report.rule_set_report.apply_time = phase_time;
+        report
     }
 
     pub(crate) fn info(&self, f: FunctionId) -> &RelationInfo {
@@ -1395,6 +1408,94 @@ mod tests {
     }
 
     #[test]
+    fn split_phase_timings_are_reported_at_every_report_level() {
+        for level in [
+            ReportLevel::TimeOnly,
+            ReportLevel::WithPlan,
+            ReportLevel::StageInfo,
+        ] {
+            let mut eg = EGraph::new();
+            Backend::set_report_level(&mut eg, level);
+            Backend::set_phase_timing(&mut eg, true);
+            let input = id_table(&mut eg, "input", 2);
+            let output = id_table(&mut eg, "output", 2);
+            for i in 0..512 {
+                eg.insert_live_row(input, row(&[i, i + 1]));
+            }
+
+            let mut rule = TestRule::new("timed");
+            let x = rule.new_var(ColumnTy::Id);
+            let y = rule.new_var(ColumnTy::Id);
+            rule.query_table(input, &[x.clone(), y.clone()], Some(false));
+            rule.set(output, &[x, y]);
+            let rule = rule.build(&mut eg);
+
+            let report = run_rules(&mut eg, &[rule]).unwrap();
+            assert_eq!(
+                report.rule_set_report.search_and_apply_time,
+                report.rule_set_report.search_time.unwrap()
+                    + report.rule_set_report.apply_time.unwrap(),
+            );
+            assert!(
+                report.rule_set_report.search_time.unwrap() > Duration::ZERO,
+                "missing search timing at {level:?}"
+            );
+            assert!(
+                report.rule_set_report.apply_time.unwrap() > Duration::ZERO,
+                "missing apply timing at {level:?}"
+            );
+            assert!(
+                report.rule_set_report.merge_time > Duration::ZERO,
+                "missing merge timing at {level:?}"
+            );
+            assert_eq!(report.rebuild_time, Duration::ZERO);
+        }
+    }
+
+    #[test]
+    fn split_phase_timing_is_opt_in_and_default_dd_timings_remain_zero() {
+        let mut eg = EGraph::new();
+        let input = id_table(&mut eg, "input", 2);
+        let output = id_table(&mut eg, "output", 2);
+        for i in 0..128 {
+            eg.insert_live_row(input, row(&[i, i + 1]));
+        }
+
+        let mut rule = TestRule::new("timed");
+        let x = rule.new_var(ColumnTy::Id);
+        let y = rule.new_var(ColumnTy::Id);
+        rule.query_table(input, &[x.clone(), y.clone()], Some(false));
+        rule.set(output, &[x, y]);
+        let rule = rule.build(&mut eg);
+
+        let report = run_rules(&mut eg, &[rule]).unwrap();
+
+        assert_eq!(report.rule_set_report.search_time, None);
+        assert_eq!(report.rule_set_report.apply_time, None);
+        assert_eq!(report.rule_set_report.search_and_apply_time, Duration::ZERO);
+        assert_eq!(report.rule_set_report.merge_time, Duration::ZERO);
+    }
+
+    #[test]
+    fn enabled_phase_timing_is_available_for_an_empty_ruleset() {
+        let mut eg = EGraph::new();
+        Backend::set_phase_timing(&mut eg, true);
+
+        let report = Backend::run_rules(
+            &mut eg,
+            RuleSetRun {
+                name: Some("empty"),
+                rules: &[],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(report.rule_set_report.search_time, Some(Duration::ZERO));
+        assert_eq!(report.rule_set_report.apply_time, Some(Duration::ZERO));
+        assert_eq!(report.rule_set_report.search_and_apply_time, Duration::ZERO);
+    }
+
+    #[test]
     fn join_planning_failure_is_returned_without_unwinding() {
         let mut eg = EGraph::new();
         let wide = id_table(&mut eg, "wide", dd_native::W);
@@ -2320,7 +2421,7 @@ impl Backend for EGraph {
             return Err(anyhow!(message));
         }
         if run.rules.is_empty() {
-            return Ok(IterationReport::default());
+            return Ok(self.empty_iteration_report());
         }
         let rules: Vec<(usize, RuleSpec)> = run
             .rules
@@ -2335,17 +2436,26 @@ impl Backend for EGraph {
             })
             .collect();
         if rules.is_empty() {
-            return Ok(IterationReport::default());
+            return Ok(self.empty_iteration_report());
         }
 
-        let changed = interpret::run_iteration(self, &rules);
+        let phase_timing_enabled = self.phase_timing_enabled;
+        let result = interpret::run_iteration(self, &rules, phase_timing_enabled);
         if let Some(message) = self.take_panic_message() {
             return Err(anyhow!(message));
         }
-        let changed = changed?;
+        let result = result?;
 
         let mut report = IterationReport::default();
-        report.rule_set_report.changed = changed;
+        report.rule_set_report.changed = result.changed;
+        report.rule_set_report.search_and_apply_time = result.search_and_apply_time;
+        report.rule_set_report.search_time = result.search_time;
+        report.rule_set_report.apply_time = result.apply_time;
+        report.rule_set_report.merge_time = result.merge_time;
+        // The DD backend has no native union-find rebuild phase. Term/proof
+        // canonicalization is expressed as ordinary rules and is therefore
+        // already included in the ruleset timings.
+        report.rebuild_time = Duration::ZERO;
         Ok(report)
     }
 
@@ -2403,6 +2513,10 @@ impl Backend for EGraph {
 
     fn set_report_level(&mut self, _level: ReportLevel) {}
 
+    fn set_phase_timing(&mut self, enabled: bool) {
+        self.phase_timing_enabled = enabled;
+    }
+
     fn dump_debug_info(&self) {
         for (i, info) in self.relations.iter().enumerate() {
             let f = FunctionId::new(i as u32);
@@ -2436,6 +2550,7 @@ impl Backend for EGraph {
             subsumed_versions: self.subsumed_versions.clone(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Arc::clone(&self.panic_message),
+            phase_timing_enabled: self.phase_timing_enabled,
         })
     }
 

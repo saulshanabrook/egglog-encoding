@@ -2681,6 +2681,11 @@ impl EGraph {
         self.backend.set_report_level(level);
     }
 
+    /// Enable or disable detailed search/apply phase timing.
+    pub fn set_phase_timing(&mut self, enabled: bool) {
+        self.backend.set_phase_timing(enabled);
+    }
+
     /// A basic method for dumping the state of the database to `log::info!`.
     ///
     /// For large tables, this is unlikely to give particularly useful output.

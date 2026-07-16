@@ -17,6 +17,7 @@ egglog-core-relations = { path = "../../egglog/core-relations" }
 egglog-numeric-id = { path = "../../egglog/numeric-id" }
 hashbrown = "0.16"
 log = "0.4"
+web-time = { workspace = true }
 # Raw differential-dataflow + timely, used in-process by `dd_native.rs`.
 differential-dataflow = "=0.24.0"
 timely = "=0.30.0"

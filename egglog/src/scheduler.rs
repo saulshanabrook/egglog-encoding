@@ -684,6 +684,14 @@ mod test {
                     .collect::<Vec<_>>(),
                 [&"test".into()]
             );
+            assert_eq!(
+                report.search_time_per_ruleset.keys().collect::<Vec<_>>(),
+                [&"test".into()]
+            );
+            assert_eq!(
+                report.apply_time_per_ruleset.keys().collect::<Vec<_>>(),
+                [&"test".into()]
+            );
 
             if report.can_stop {
                 break;

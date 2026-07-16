@@ -18,7 +18,7 @@ use dashmap::mapref::entry::Entry;
 use dashmap::mapref::one::RefMut;
 use egglog_reports::{ReportLevel, RuleReport, RuleSetReport};
 use smallvec::SmallVec;
-use web_time::Instant;
+use web_time::{Duration, Instant};
 
 use crate::{
     Constraint, OffsetRange, Pool, SubsetRef,
@@ -347,15 +347,24 @@ impl Prober {
 impl Database {
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
         if rule_set.plans.is_empty() {
-            return RuleSetReport::default();
+            let phase_time = self.phase_timing_enabled.then_some(Duration::ZERO);
+            return RuleSetReport {
+                search_time: phase_time,
+                apply_time: phase_time,
+                ..RuleSetReport::default()
+            };
         }
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
 
         let search_and_apply_timer = Instant::now();
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
+        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let record_phase_timing = self.phase_timing_enabled && !run_in_parallel;
+        let mut search_time = record_phase_timing.then_some(Duration::ZERO);
+        let mut apply_time = record_phase_timing.then_some(Duration::ZERO);
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
-        if parallelize_db_level_op(self.total_size_estimate) {
+        if run_in_parallel {
             let dash_rule_reports: Arc<DashMap<Arc<str>, Vec<RuleReport>>> =
                 Arc::new(DashMap::default());
             let db: &Database = self;
@@ -506,6 +515,7 @@ impl Database {
                 rule_set,
                 match_counter: match_counter.as_ref(),
                 batches: Default::default(),
+                apply_time,
             };
             for (plan, desc, symbol_map) in rule_set.plans.values() {
                 let report_plan = match report_level {
@@ -521,6 +531,7 @@ impl Database {
                     binding_info.insert_subset(id, table.all());
                 }
 
+                let apply_time_before_plan = action_buf.apply_time;
                 let search_and_apply_timer = Instant::now();
                 'eval: {
                     for JoinHeader { atom, subset, .. } in plan.header() {
@@ -594,6 +605,13 @@ impl Database {
                     }
                 }
                 let search_and_apply_time = search_and_apply_timer.elapsed();
+                if let (Some(search_time), Some(before), Some(after)) = (
+                    search_time.as_mut(),
+                    apply_time_before_plan,
+                    action_buf.apply_time,
+                ) {
+                    *search_time += search_and_apply_time.saturating_sub(after - before);
+                }
 
                 // TODO: unnecessary cloning in many cases
                 let rule_report = rule_reports.entry(desc.clone()).or_default();
@@ -604,6 +622,7 @@ impl Database {
                 });
             }
             action_buf.flush(&mut exec_state.clone());
+            apply_time = action_buf.apply_time;
         }
 
         for (plan, desc, _symbol_map) in rule_set.plans.values() {
@@ -621,7 +640,6 @@ impl Database {
             reports[i].num_matches = match_counter.read_matches(plan.actions());
         }
         let search_and_apply_time = search_and_apply_timer.elapsed();
-
         let merge_timer = Instant::now();
         let changed = self.merge_all();
         let merge_time = merge_timer.elapsed();
@@ -630,6 +648,8 @@ impl Database {
             changed,
             rule_reports,
             search_and_apply_time,
+            search_time,
+            apply_time,
             merge_time,
         }
     }
@@ -1885,6 +1905,10 @@ struct InPlaceActionBuffer<'a> {
     rule_set: &'a RuleSet,
     match_counter: &'a MatchCounter,
     batches: DenseIdMap<ActionId, ActionState>,
+    /// Time spent executing rule-head instruction batches. Buffer management
+    /// and match accounting deliberately remain outside the apply phase. `None`
+    /// keeps ordinary execution free of per-batch stopwatch calls.
+    apply_time: Option<Duration>,
 }
 
 impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> {
@@ -1910,7 +1934,14 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         }
         if action_state.len >= VAR_BATCH_SIZE {
             let mut state = to_exec_state();
-            let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
+            let succeeded = if let Some(apply_time) = self.apply_time.as_mut() {
+                let apply_timer = Instant::now();
+                let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
+                *apply_time += apply_timer.elapsed();
+                succeeded
+            } else {
+                state.run_instrs(&action_info.instrs, &mut action_state.bindings)
+            };
             action_state.bindings.clear();
             self.match_counter.inc_matches(action, succeeded);
             action_state.len = 0;
@@ -1923,6 +1954,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             &mut self.batches,
             self.rule_set,
             self.match_counter,
+            self.apply_time.as_mut(),
         );
     }
 
@@ -2005,6 +2037,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
             &mut self.batches,
             self.rule_set,
             self.match_counter.as_ref(),
+            None,
         );
         self.needs_flush = false;
     }
@@ -2034,6 +2067,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
                     &mut buf.batches,
                     buf.rule_set,
                     buf.match_counter.as_ref(),
+                    None,
                 );
             }
         });
@@ -2097,10 +2131,15 @@ fn flush_action_states(
     actions: &mut DenseIdMap<ActionId, ActionState>,
     rule_set: &RuleSet,
     match_counter: &MatchCounter,
+    mut apply_time: Option<&mut Duration>,
 ) {
     for (action, ActionState { bindings, len, .. }) in actions.iter_mut() {
         if *len > 0 {
+            let apply_timer = apply_time.is_some().then(Instant::now);
             let succeeded = exec_state.run_instrs(&rule_set.actions[action].instrs, bindings);
+            if let (Some(total), Some(timer)) = (apply_time.as_deref_mut(), apply_timer) {
+                *total += timer.elapsed();
+            }
             bindings.clear();
             match_counter.inc_matches(action, succeeded);
             *len = 0;

@@ -1,0 +1,518 @@
+"""Own the transient DuckDB catalog over the append-only benchmark JSONL.
+
+This module appends trusted writer records, creates the direct JSONL scan,
+installs the selected report scope, loads the analysis and output-facing SQL
+views, converts those view rows to typed contracts, and owns the optional
+DuckDB UI lifecycle. Persisted writer shapes belong in
+:mod:`benchmarking.reports.records`; statistical and grouping semantics belong
+in ``reports/sql``; table layout and text rendering belong in the sibling
+summary, timing, and render modules.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+from importlib import resources
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import duckdb
+
+from ..models import (
+    Backend,
+    BenchmarkSpec,
+    EstimateKey,
+    ResolvedTarget,
+    Status,
+    TargetRow,
+    Treatment,
+    benchmark_cells,
+    validate_unique_file_identities,
+    validate_unique_target_binaries,
+)
+from .records import ReportRecord
+from .results import (
+    CachedTarget,
+    CellEstimateView,
+    CompactTimingView,
+    ComparisonRequest,
+    ComparisonRollupView,
+    EstimateAggregate,
+    FileRatioView,
+    ReportViewData,
+    RulesetTimingView,
+    TargetView,
+)
+
+
+class _LabelPointerRow(NamedTuple):
+    target_source: str
+    target_path: str
+    target_git_ref: str
+    target_git_sha: str
+    target_is_dirty: bool
+    binary_sha256: str
+
+
+class _SelectedStatusRow(NamedTuple):
+    request_order: int
+    status: Status
+
+
+class _EstimateAggregateQueryRow(NamedTuple):
+    binary_sha256: str
+    file_sha256: str
+    fact_directory_sha256: str
+    backend: Backend
+    treatment: Treatment
+    timeout_sec: int
+    sample_count: int
+    total_wall_sec: float
+
+
+class ReportDatabase:
+    """Provide one isolated transient SQL session over an append-only JSONL file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.touch(exist_ok=True)
+        # This private in-memory catalog owns only schemas, scope relations, and
+        # report views. ``report_rows`` scans the JSONL directly; no report data
+        # is copied into or persisted as a DuckDB database.
+        self._connection = duckdb.connect(":memory:")
+        self._closed = False
+        try:
+            self._connection.execute("SET threads = 1")
+            self._connection.execute("SET preserve_insertion_order = true")
+            # The UI queries through another connection to this database
+            # instance, so bind the source path in a catalog macro rather than
+            # a connection-local SET VARIABLE.
+            report_path = _duckdb_string_literal(_escape_duckdb_glob(self.path))
+            self._connection.execute(f"CREATE MACRO report_path() AS {report_path}")
+            self._connection.execute(_sql_resource("schema.sql"))
+            self._ensure_report_loads()
+            self._connection.execute(_sql_resource("analysis.sql"))
+            self._connection.execute(_sql_resource("presentation.sql"))
+        except BaseException:
+            self._connection.close()
+            self._closed = True
+            raise
+
+    @property
+    def display_path(self) -> str:
+        """Return the path text used in report headings and diagnostics."""
+
+        return str(self.path)
+
+    def __enter__(self) -> ReportDatabase:
+        self._ensure_open()
+        return self
+
+    def __exit__(self, _exc_type: object, _exc_value: object, _traceback: object) -> None:
+        self.close()
+
+    def close(self) -> None:
+        """Release the transient connection without creating database artifacts."""
+
+        if not self._closed:
+            self._connection.close()
+            self._closed = True
+
+    def start_ui(self) -> str:
+        """Open DuckDB's local UI on this report session and return its status."""
+
+        self._ensure_open()
+        try:
+            row = self._connection.execute("CALL start_ui()").fetchone()
+        except duckdb.Error as error:
+            raise ValueError(
+                "could not open the DuckDB UI; DuckDB may have been unable to install, "
+                f"load, or start its ui extension: {error}"
+            ) from error
+        if row is None:
+            raise ValueError("could not open the DuckDB UI: CALL start_ui() returned no status")
+        status = str(row[0])
+        if "different DuckDB instance" in status:
+            raise ValueError(f"could not open the DuckDB UI for this report session: {status}")
+        return status
+
+    def _ensure_report_loads(self) -> None:
+        """Reject an existing cache that cannot satisfy the strict record cast."""
+
+        try:
+            # count(*) can be answered without projecting the cast record.
+            # Referencing one member forces DuckDB to cast every complete JSON
+            # object to report_record_t, whose strict key set rejects old shapes.
+            self._connection.execute("SELECT count(started_at) FROM report_rows")
+        except duckdb.Error as error:
+            raise ValueError(self._incompatible_report_message()) from error
+
+    def append(self, record: ReportRecord) -> None:
+        """Serialize one trusted writer record, then append one JSON line."""
+
+        self._ensure_open()
+        encoded = json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(encoded + "\n")
+
+    def find_label_pointer(self, label: str) -> CachedTarget | None:
+        """Return the latest JSONL row carrying ``label``, or ``None``."""
+
+        self._ensure_open()
+        rows = _fetch_rows(
+            self._connection.execute(
+                """
+            SELECT
+                target_source,
+                target_path,
+                target_git_ref,
+                target_git_sha,
+                target_is_dirty,
+                binary_sha256
+            FROM report_rows
+            WHERE target_label = ?
+            ORDER BY started_at::TIMESTAMPTZ DESC, row_index DESC
+            LIMIT 1
+            """,
+                [label],
+            ),
+            _LabelPointerRow,
+        )
+        if not rows:
+            return None
+        row = rows[0]
+        return CachedTarget(
+            TargetRow(
+                source=row.target_source,
+                path=row.target_path,
+                git_ref=row.target_git_ref,
+                git_sha=row.target_git_sha,
+                is_dirty=row.target_is_dirty,
+                label=label,
+            ),
+            row.binary_sha256,
+        )
+
+    def selected_statuses(self, key: EstimateKey, rounds: int) -> tuple[Status, ...]:
+        """Select statuses from the latest rounds for one exact cache key."""
+
+        return self.selected_statuses_for_keys((key,), rounds)[key]
+
+    def selected_statuses_for_keys(
+        self,
+        keys: Sequence[EstimateKey],
+        rounds: int,
+    ) -> dict[EstimateKey, tuple[Status, ...]]:
+        """Select latest statuses for all distinct cache keys in one direct-file scan."""
+
+        self._ensure_open()
+        if rounds < 1:
+            raise ValueError("rounds must be positive")
+        distinct_keys = tuple(dict.fromkeys(keys))
+        if not distinct_keys:
+            return {}
+        self._connection.execute("DELETE FROM selection_keys")
+        self._connection.executemany(
+            "INSERT INTO selection_keys VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    order,
+                    key.binary_sha256,
+                    key.file_sha256,
+                    key.fact_directory_sha256,
+                    key.backend,
+                    key.treatment,
+                    key.timeout_sec,
+                )
+                for order, key in enumerate(distinct_keys)
+            ],
+        )
+        rows = _fetch_rows(
+            self._connection.execute(
+                """
+            WITH ranked AS (
+                SELECT
+                    keys.request_order,
+                    reports.row_index,
+                    reports.started_at,
+                    reports.status,
+                    row_number() OVER (
+                        PARTITION BY keys.request_order
+                        ORDER BY reports.started_at::TIMESTAMPTZ DESC, reports.row_index DESC
+                    ) AS selection_rank
+                FROM selection_keys AS keys
+                JOIN report_rows AS reports
+                    ON reports.binary_sha256 = keys.binary_sha256
+                    AND reports.file_sha256 = keys.file_sha256
+                    AND reports.fact_directory_sha256 = keys.fact_directory_sha256
+                    AND reports.backend = keys.backend
+                    AND reports.treatment = keys.treatment
+                    AND reports.timeout_sec = keys.timeout_sec
+            )
+            SELECT
+                request_order,
+                status
+            FROM ranked
+            WHERE selection_rank <= ?
+            ORDER BY request_order, started_at::TIMESTAMPTZ, row_index
+            """,
+                [rounds],
+            ),
+            _SelectedStatusRow,
+        )
+        selected: dict[EstimateKey, list[Status]] = {key: [] for key in distinct_keys}
+        for row in rows:
+            selected[distinct_keys[row.request_order]].append(row.status)
+        return {key: tuple(statuses) for key, statuses in selected.items()}
+
+    def successful_estimate_aggregates(self) -> tuple[EstimateAggregate, ...]:
+        """Return SQL-grouped historical wall totals for ETA modeling."""
+
+        self._ensure_open()
+        rows = _fetch_rows(
+            self._connection.execute(
+                """
+            SELECT
+                binary_sha256,
+                file_sha256,
+                fact_directory_sha256,
+                backend,
+                treatment,
+                timeout_sec,
+                sample_count,
+                total_wall_sec
+            FROM historical_process_estimates
+            ORDER BY binary_sha256, file_sha256, fact_directory_sha256, backend, treatment, timeout_sec
+            """
+            ),
+            _EstimateAggregateQueryRow,
+        )
+        return tuple(
+            EstimateAggregate(
+                EstimateKey(
+                    binary_sha256=row.binary_sha256,
+                    file_sha256=row.file_sha256,
+                    treatment=row.treatment,
+                    timeout_sec=row.timeout_sec,
+                    backend=row.backend,
+                    fact_directory_sha256=row.fact_directory_sha256,
+                ),
+                row.sample_count,
+                row.total_wall_sec,
+            )
+            for row in rows
+        )
+
+    def install_scope(
+        self,
+        targets: Sequence[ResolvedTarget],
+        spec: BenchmarkSpec,
+        t_critical_95: float | None,
+    ) -> None:
+        """Install one ordered target/file/cell matrix for subsequent bulk queries."""
+
+        self._ensure_open()
+        cells = benchmark_cells(spec)
+        if not targets:
+            raise ValueError("report scope requires at least one target")
+        if not spec.files:
+            raise ValueError("report scope requires at least one file")
+        validate_unique_target_binaries(targets)
+        validate_unique_file_identities(spec.files)
+        if not cells:
+            raise ValueError("report scope requires at least one supported backend/treatment cell")
+        if spec.rounds < 1:
+            raise ValueError("report scope rounds must be positive")
+        if spec.timeout_sec < 1:
+            raise ValueError("report scope timeout must be positive")
+
+        connection = self._connection
+        connection.execute("BEGIN TRANSACTION")
+        try:
+            for table in (
+                "scope_comparisons",
+                "scope_parameters",
+                "scope_cells",
+                "scope_files",
+                "scope_targets",
+            ):
+                connection.execute(f"DELETE FROM {table}")
+            connection.executemany(
+                "INSERT INTO scope_targets VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        order,
+                        target.binary_sha256,
+                        target.display_label,
+                        target.row.source,
+                        target.row.path,
+                        target.row.git_ref,
+                        target.row.git_sha,
+                        target.row.is_dirty,
+                    )
+                    for order, target in enumerate(targets)
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO scope_files VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        order,
+                        file.sha256,
+                        file.fact_directory_sha256,
+                        file.display_path,
+                        str(file.absolute_path),
+                        None if file.fact_directory is None else str(file.fact_directory),
+                    )
+                    for order, file in enumerate(spec.files)
+                ],
+            )
+            connection.executemany(
+                "INSERT INTO scope_cells VALUES (?, ?, ?)",
+                [(order, cell.backend, cell.treatment) for order, cell in enumerate(cells)],
+            )
+            connection.execute(
+                "INSERT INTO scope_parameters VALUES (?, ?, ?)",
+                [spec.rounds, spec.timeout_sec, t_critical_95],
+            )
+            connection.execute("COMMIT")
+        except BaseException:
+            connection.execute("ROLLBACK")
+            raise
+
+    def report_view_data(
+        self,
+        requests: Sequence[ComparisonRequest],
+        *,
+        include_timing: bool,
+    ) -> ReportViewData:
+        """Return typed rows from every Python-consumed view for the installed scope."""
+
+        self._ensure_open()
+        self._install_comparisons(requests)
+        targets = _fetch_rows(
+            self._connection.execute("SELECT * FROM presentation_targets ORDER BY target_order"),
+            TargetView,
+        )
+        cell_estimates = _fetch_rows(
+            self._connection.execute(
+                """
+                SELECT * FROM presentation_cell_estimates
+                ORDER BY metric_order, target_order, file_order, cell_order
+                """
+            ),
+            CellEstimateView,
+        )
+        file_ratios = _fetch_rows(
+            self._connection.execute(
+                """
+                SELECT * FROM presentation_file_ratios
+                ORDER BY comparison_order, metric_order, file_order
+                """
+            ),
+            FileRatioView,
+        )
+        comparison_rollups = _fetch_rows(
+            self._connection.execute(
+                """
+                SELECT * FROM presentation_comparison_rollups
+                ORDER BY comparison_order, metric_order
+                """
+            ),
+            ComparisonRollupView,
+        )
+        compact_timings: list[CompactTimingView] = []
+        ruleset_timings: list[RulesetTimingView] = []
+        if include_timing:
+            compact_timings = _fetch_rows(
+                self._connection.execute(
+                    """
+                    SELECT * FROM presentation_compact_timings
+                    ORDER BY file_order, cell_order, target_order
+                    """
+                ),
+                CompactTimingView,
+            )
+            ruleset_timings = _fetch_rows(
+                self._connection.execute(
+                    """
+                    SELECT * FROM presentation_ruleset_timings
+                    ORDER BY file_order, cell_order, ruleset_order, target_order
+                    """
+                ),
+                RulesetTimingView,
+            )
+        return ReportViewData(
+            targets=tuple(targets),
+            cell_estimates=tuple(cell_estimates),
+            file_ratios=tuple(file_ratios),
+            comparison_rollups=tuple(comparison_rollups),
+            compact_timings=tuple(compact_timings),
+            ruleset_timings=tuple(ruleset_timings),
+        )
+
+    def _install_comparisons(self, requests: Sequence[ComparisonRequest]) -> None:
+        """Replace the ordered comparison scope consumed by report views."""
+
+        self._connection.execute("DELETE FROM scope_comparisons")
+        if requests:
+            self._connection.executemany(
+                "INSERT INTO scope_comparisons VALUES (?, ?, ?, ?, ?)",
+                [
+                    (
+                        request.comparison_order,
+                        request.baseline_target_order,
+                        request.baseline_cell_order,
+                        request.candidate_target_order,
+                        request.candidate_cell_order,
+                    )
+                    for request in requests
+                ],
+            )
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("report database is closed")
+
+    def _incompatible_report_message(self) -> str:
+        return (
+            f"invalid or incompatible benchmark report {self.path}. "
+            "Move or remove this report and recompute the benchmarks."
+        )
+
+
+def _sql_resource(name: str) -> str:
+    return resources.files("benchmarking.reports.sql").joinpath(name).read_text(encoding="utf-8")
+
+
+def _escape_duckdb_glob(path: Path) -> str:
+    """Make file-table-function glob metacharacters literal in ``path``."""
+
+    literals = {"*": "[*]", "?": "[?]", "[": "[[]", "]": "[]]"}
+    return "".join(literals.get(character, character) for character in str(path))
+
+
+def _duckdb_string_literal(value: str) -> str:
+    """Quote runtime text as a DuckDB literal for catalog DDL."""
+
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _fetch_rows[RowT](cursor: duckdb.DuckDBPyConnection, row_type: type[RowT]) -> list[RowT]:
+    """Construct named rows after checking the SQL/Python column boundary."""
+
+    description = cursor.description
+    if description is None:
+        raise RuntimeError("DuckDB query did not return columns")
+    row_constructor: Any = row_type
+    expected_columns = tuple(row_constructor._fields)
+    actual_columns = tuple(column[0] for column in description)
+    if actual_columns != expected_columns:
+        raise RuntimeError(f"DuckDB columns {actual_columns!r} do not match {expected_columns!r}")
+    rows: list[RowT] = []
+    for values in cursor.fetchall():
+        row: RowT = row_constructor(*values)
+        rows.append(row)
+    return rows

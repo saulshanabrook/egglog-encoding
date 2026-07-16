@@ -138,6 +138,127 @@ fn basic_query_inner() {
 }
 
 #[test]
+fn timing_split_separates_inline_batches_and_final_flush() {
+    let mut db = Database::default();
+    let new_relation = || {
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+    let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+    {
+        let mut input_buffer = db.new_buffer(input);
+        // One full 128-binding batch runs inline; the remaining 127 bindings
+        // run in the final flush. Both sides are deliberately substantial so
+        // the duration inequalities remain robust on coarse platform clocks.
+        for value in 0..255 {
+            input_buffer.stage_insert(&[Value::new(value)]);
+        }
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    query.add_atom(input, &[value.into()], &[]).unwrap();
+    let mut action = query.build();
+    action.insert(output, &[value.into()]).unwrap();
+    action.build_with_description("copy");
+    let rule_set = rules.build();
+
+    let default_report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    assert_eq!(default_report.search_time, None);
+    assert_eq!(default_report.apply_time, None);
+    assert!(default_report.search_and_apply_time > std::time::Duration::ZERO);
+
+    db.set_phase_timing(true);
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    let legacy_plan_time = report.rule_search_and_apply_time("copy");
+    let search_time = report.search_time.unwrap();
+    let apply_time = report.apply_time.unwrap();
+
+    assert!(search_time > std::time::Duration::ZERO);
+    assert!(apply_time > std::time::Duration::ZERO);
+    assert!(
+        search_time < legacy_plan_time,
+        "the inline action batch must be subtracted from search"
+    );
+    assert!(
+        search_time + apply_time > legacy_plan_time,
+        "the final action flush must be included in apply"
+    );
+}
+
+#[test]
+fn enabled_phase_timing_is_available_for_an_empty_ruleset() {
+    let mut db = Database::default();
+    db.set_phase_timing(true);
+    let rule_set = RuleSetBuilder::new(&mut db).build();
+
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+
+    assert_eq!(report.search_time, Some(std::time::Duration::ZERO));
+    assert_eq!(report.apply_time, Some(std::time::Duration::ZERO));
+    assert_eq!(report.search_and_apply_time, std::time::Duration::ZERO);
+}
+
+#[test]
+fn parallel_execution_keeps_split_phase_timing_unavailable() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap()
+        .install(|| {
+            let mut db = Database::default();
+            db.set_phase_timing(true);
+            let new_relation = || {
+                SortedWritesTable::new(
+                    1,
+                    1,
+                    None,
+                    vec![],
+                    Box::new(|_, left, right, _| {
+                        assert_eq!(left, right, "merge not supported");
+                        false
+                    }),
+                )
+            };
+            let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+            let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+            {
+                let mut input_buffer = db.new_buffer(input);
+                for value in 0..10_001 {
+                    input_buffer.stage_insert(&[Value::new(value)]);
+                }
+            }
+            db.merge_all();
+
+            let mut rules = RuleSetBuilder::new(&mut db);
+            let mut query = rules.new_rule();
+            let value = query.new_var_named("value");
+            query.add_atom(input, &[value.into()], &[]).unwrap();
+            let mut action = query.build();
+            action.insert(output, &[value.into()]).unwrap();
+            action.build_with_description("copy");
+            let rule_set = rules.build();
+
+            let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+
+            assert_eq!(report.search_time, None);
+            assert_eq!(report.apply_time, None);
+            assert!(report.search_and_apply_time > std::time::Duration::ZERO);
+        });
+}
+
+#[test]
 fn line_graph_1_fj_puresize() {
     run_serial_and_parallel(|| line_graph_1_test(PlanStrategy::PureSize));
 }

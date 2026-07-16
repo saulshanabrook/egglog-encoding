@@ -1,0 +1,45 @@
+# serializer version: 1
+# name: test_markdown_compact_and_detailed_report
+  '''
+  ## Engine Timing
+  
+  ### integer_math.egg
+  
+  | Target | Backend/Treatment | Search | Apply | Merge | Rebuild | Other | Wall | Status |
+  | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+  | baseline | main/off | 500 us | 200 us | 150 us | 150 us | 250 us | 1.25 ms | success |
+  | candidate | main/off | 400 us | 120 us | 110 us | 120 us | 150 us | 900 us | success |
+  | baseline | main/proofs | — | — | — | — | — | — | timeout row selected |
+  | candidate | main/proofs | 700 us | 300 us | 200 us | 300 us | !-100 us | 1.40 ms | success |
+  
+  *Other is wall time minus Search, Apply, Merge, and Rebuild. A leading ! means recorded phase time exceeds wall time; timing attribution is descriptive.*
+  
+  ## Detailed Timing
+  
+  ### integer_math.egg · main/off · baseline
+  
+  | Ruleset | Total | Share | Search | Apply | Merge | Rebuild |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | <default ruleset> | 750 us | 75.0% | 450 us | 150 us | 100 us | 50.0 us |
+  | simplify\|nested | 250 us | 25.0% | 70.0 us | 30.0 us | 50.0 us | 100 us |
+  | candidate-only | — | — | — | — | — | — |
+  
+  ### integer_math.egg · main/off · candidate
+  
+  | Ruleset | Total | Share | Search | Apply | Merge | Rebuild |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | <default ruleset> | 0 ns | 0.0% | 0 ns | 0 ns | 0 ns | 0 ns |
+  | simplify\|nested | 700 us | 93.3% | 350 us | 150 us | 100 us | 100 us |
+  | candidate-only | 50.0 us | 6.7% | 15.0 us | 5.00 us | 10.0 us | 20.0 us |
+  
+  ### integer_math.egg · main/proofs · baseline
+  
+  Status: timeout row selected
+  
+  ### integer_math.egg · main/proofs · candidate
+  
+  | Ruleset | Total | Share | Search | Apply | Merge | Rebuild |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | proof extraction | 1.50 ms | 100.0% | 700 us | 300 us | 200 us | 300 us |
+  '''
+# ---
