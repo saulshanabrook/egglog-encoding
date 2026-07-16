@@ -444,11 +444,15 @@ observation instead of waiting for a whole-file rewrite or end-of-run flush.
 
 The runner opens a private in-memory DuckDB catalog and reads this JSONL file
 directly through a concrete nested record schema. The catalog owns only types,
-selected-scope tables, analysis views, and output-facing views: report rows are
-not copied into another table, and no `.duckdb` database or WAL file is created.
-Cache selection and report analysis use bulk, set-oriented operations rather
-than scanning once per target/file/backend/treatment result. Appending remains
-a direct, one-line JSONL filesystem write.
+one report's parameter relations, analysis views, and output-facing views:
+report rows are not copied into another table, and no `.duckdb` database or WAL
+file is created. Cache selection binds its requested keys directly as a typed
+query parameter. Report analysis populates the `scope_*` parameter relations
+once so the same selected targets, files, cells, statistics settings, and
+comparisons are visible to every view and to the optional UI connection. Cache
+selection and report analysis use bulk, set-oriented operations rather than
+scanning once per target/file/backend/treatment result. Appending remains a
+direct, one-line JSONL filesystem write.
 
 Use `./bench.py --duckdb-ui` to inspect that in-memory database interactively
 after the ordinary report is rendered. The browser UI runs locally and queries
@@ -469,6 +473,14 @@ SELECT * FROM presentation_comparison_rollups;
 SELECT * FROM presentation_compact_timings;
 SELECT * FROM presentation_ruleset_timings;
 ```
+
+The views are ordinary live views, not materialized snapshots. `report_rows`
+and `historical_process_estimates` cover the complete JSONL cache. The
+`scoped_*` analysis views combine that universal data with the installed
+`scope_*` parameter relations, and the `presentation_*` views provide stable
+output schemas over those scoped calculations. Consequently every query sees
+the installed report scope and the current append-only JSONL contents without
+copying or refreshing report rows.
 
 The timing views expose the raw `unattributed_ns` component and SQL-derived
 `pre_merge_ns` values. The compact view also exposes `ruleset_total_ns` and

@@ -72,7 +72,7 @@ class _EstimateAggregateQueryRow(NamedTuple):
 
 
 class ReportDatabase:
-    """Provide one isolated transient SQL session over an append-only JSONL file."""
+    """Provide one transient SQL session with repeatable cache queries and one report scope."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -227,26 +227,26 @@ class ReportDatabase:
         distinct_keys = tuple(dict.fromkeys(keys))
         if not distinct_keys:
             return {}
-        self._connection.execute("DELETE FROM selection_keys")
-        self._connection.executemany(
-            "INSERT INTO selection_keys VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    order,
-                    key.binary_sha256,
-                    key.file_sha256,
-                    key.fact_directory_sha256,
-                    key.backend,
-                    key.treatment,
-                    key.timeout_sec,
-                )
-                for order, key in enumerate(distinct_keys)
-            ],
-        )
+        selection_keys = [
+            {
+                "request_order": order,
+                "binary_sha256": key.binary_sha256,
+                "file_sha256": key.file_sha256,
+                "fact_directory_sha256": key.fact_directory_sha256,
+                "backend": key.backend,
+                "treatment": key.treatment,
+                "timeout_sec": key.timeout_sec,
+            }
+            for order, key in enumerate(distinct_keys)
+        ]
         rows = _fetch_rows(
             self._connection.execute(
                 """
-            WITH ranked AS (
+            WITH selection_keys AS (
+                SELECT key.*
+                FROM unnest(?::selection_key_t[]) AS parameters(key)
+            ),
+            ranked AS (
                 SELECT
                     keys.request_order,
                     reports.row_index,
@@ -272,7 +272,7 @@ class ReportDatabase:
             WHERE selection_rank <= ?
             ORDER BY request_order, started_at::TIMESTAMPTZ, row_index
             """,
-                [rounds],
+                [selection_keys, rounds],
             ),
             _SelectedStatusRow,
         )
@@ -325,7 +325,7 @@ class ReportDatabase:
         spec: BenchmarkSpec,
         t_critical_95: float | None,
     ) -> None:
-        """Install one ordered target/file/cell matrix for subsequent bulk queries."""
+        """Install the ordered parameter relations for this report exactly once."""
 
         self._ensure_open()
         cells = benchmark_cells(spec)
@@ -345,14 +345,6 @@ class ReportDatabase:
         connection = self._connection
         connection.execute("BEGIN TRANSACTION")
         try:
-            for table in (
-                "scope_comparisons",
-                "scope_parameters",
-                "scope_cells",
-                "scope_files",
-                "scope_targets",
-            ):
-                connection.execute(f"DELETE FROM {table}")
             connection.executemany(
                 "INSERT INTO scope_targets VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [
@@ -402,7 +394,7 @@ class ReportDatabase:
         *,
         include_timing: bool,
     ) -> ReportViewData:
-        """Return typed rows from every Python-consumed view for the installed scope."""
+        """Install comparisons and query every Python-consumed view for the report scope."""
 
         self._ensure_open()
         self._install_comparisons(requests)
@@ -468,9 +460,8 @@ class ReportDatabase:
         )
 
     def _install_comparisons(self, requests: Sequence[ComparisonRequest]) -> None:
-        """Replace the ordered comparison scope consumed by report views."""
+        """Install the ordered comparison parameters consumed by report views."""
 
-        self._connection.execute("DELETE FROM scope_comparisons")
         if requests:
             self._connection.executemany(
                 "INSERT INTO scope_comparisons VALUES (?, ?, ?, ?, ?)",

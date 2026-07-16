@@ -20,6 +20,18 @@ CREATE TYPE timing_summary_record_t AS STRUCT(
     rulesets ruleset_timing_record_t[]
 );
 
+-- One cache lookup binds a list of these values directly; unlike the report
+-- scope below, selection keys do not need to remain visible to later views.
+CREATE TYPE selection_key_t AS STRUCT(
+    request_order UINTEGER,
+    binary_sha256 VARCHAR,
+    file_sha256 VARCHAR,
+    fact_directory_sha256 VARCHAR,
+    backend VARCHAR,
+    treatment report_treatment_t,
+    timeout_sec UINTEGER
+);
+
 -- Python mirror: ReportRecord.
 CREATE TYPE report_record_t AS STRUCT(
     started_at VARCHAR,
@@ -61,10 +73,10 @@ WITH parsed AS (
 SELECT row_index, unnest(record)
 FROM parsed;
 
--- Ordered request relations let analysis scan the external file for the whole
--- selected matrix instead of issuing one JSON scan per displayed cell.  These
--- are ordinary objects in the private in-memory catalog (rather than TEMP
--- objects) so another connection from the optional DuckDB UI can inspect them.
+-- These relations are the parameters for one report. Python populates them
+-- once after resolving the selected matrix; the ordinary views read them at
+-- query time. They are catalog objects rather than TEMP objects so another
+-- connection from the optional DuckDB UI sees the same scope.
 CREATE TABLE scope_targets (
     target_order UINTEGER PRIMARY KEY,
     binary_sha256 VARCHAR NOT NULL,
@@ -103,14 +115,4 @@ CREATE TABLE scope_comparisons (
     baseline_cell_order UINTEGER NOT NULL,
     candidate_target_order UINTEGER NOT NULL,
     candidate_cell_order UINTEGER NOT NULL
-);
-
-CREATE TABLE selection_keys (
-    request_order UINTEGER PRIMARY KEY,
-    binary_sha256 VARCHAR NOT NULL,
-    file_sha256 VARCHAR NOT NULL,
-    fact_directory_sha256 VARCHAR NOT NULL,
-    backend VARCHAR NOT NULL,
-    treatment report_treatment_t NOT NULL,
-    timeout_sec UINTEGER NOT NULL
 );
