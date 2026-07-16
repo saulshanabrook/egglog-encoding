@@ -110,21 +110,33 @@ impl<'a> ProofInstrumentor<'a> {
         // `@UF : (S) -> (S, {Unit|Proof})` is keyed by the larger endpoint; its
         // `:merge` resolves conflicting parents. The second column carries a proof
         // `larger = smaller` (`()` in term mode).
-        let proof = if !self.egraph.proof_state.proofs_enabled {
-            "()".to_string()
-        } else {
-            let to_ast_constructor = self
-                .proof_names()
-                .sort_to_ast_constructor
-                .get(type_name)
-                .unwrap()
-                .clone();
-            let proof_sort = self.proof_sort();
-            let ast_sort = self.proof_names().ast_sort.clone();
-            match justification {
+        if !self.egraph.proof_state.proofs_enabled {
+            return format!("(set ({uf_name} {larger}) (values {smaller} ()))");
+        }
+
+        let to_ast_constructor = self
+            .proof_names()
+            .sort_to_ast_constructor
+            .get(type_name)
+            .unwrap()
+            .clone();
+        let proof_sort = self.proof_sort();
+        let ast_sort = self.proof_names().ast_sort.clone();
+        let rule_constructor = self.proof_names().rule_constructor.clone();
+        let fiat_constructor = self.proof_names().fiat_constructor.clone();
+
+        // Natural id + connector (`natural = deduped`) for each operand, if it was
+        // a canonicalized constructor term. Leaves / body matches have neither.
+        let lhs_info = self.egraph.proof_state.nat_conn.get(lhs).cloned();
+        let rhs_info = self.egraph.proof_state.nat_conn.get(rhs).cloned();
+        let lhs_conn = lhs_info.as_ref().and_then(|(_, c)| c.clone());
+        let rhs_conn = rhs_info.as_ref().and_then(|(_, c)| c.clone());
+
+        // No canonicalized side: build the edge proof directly over the deduped
+        // e-classes (their ASTs are stable here) — the original behaviour.
+        if lhs_conn.is_none() && rhs_conn.is_none() {
+            let proof = match justification {
                 Justification::Rule(rule_name, proof_list) => {
-                    let (rule_name, proof_list) = (rule_name.clone(), proof_list.clone());
-                    let rule_constructor = self.proof_names().rule_constructor.clone();
                     let a_larger = self.mint(stmts, &to_ast_constructor, &larger, &ast_sort);
                     let a_smaller = self.mint(stmts, &to_ast_constructor, &smaller, &ast_sort);
                     self.mint(
@@ -135,22 +147,80 @@ impl<'a> ProofInstrumentor<'a> {
                     )
                 }
                 Justification::Fiat => {
-                    let fiat_constructor = self.proof_names().fiat_constructor.clone();
                     let a_larger = self.mint(stmts, &to_ast_constructor, &larger, &ast_sort);
                     let a_smaller = self.mint(stmts, &to_ast_constructor, &smaller, &ast_sort);
-                    self.mint(
-                        stmts,
-                        &fiat_constructor,
-                        &format!("{a_larger} {a_smaller}"),
-                        &proof_sort,
-                    )
+                    self.mint(stmts, &fiat_constructor, &format!("{a_larger} {a_smaller}"), &proof_sort)
                 }
-                Justification::Merge(_func_name, _proof1, _proof2) => panic!(
+                Justification::Merge(..) => panic!(
+                    "Merge functions do not include union actions, so proof should not be by merge"
+                ),
+            };
+            return format!("(set ({uf_name} {larger}) (values {smaller} {proof}))");
+        }
+
+        // A canonicalized operand's deduped e-class may already be unioned with a
+        // differently-shaped term, so its AST floats. Build the base equality over
+        // the *natural* forms (ASTs pinned to the enode the rule built), then route
+        // each deduped e-class to a shared natural form and orient the edge to
+        // `larger = smaller` with proof-of-max/min.
+        let nat_of = |info: &Option<(String, Option<String>)>, dedup: &str| {
+            info.as_ref().map(|(n, _)| n.clone()).unwrap_or_else(|| dedup.to_string())
+        };
+        let lhs_nat = nat_of(&lhs_info, lhs);
+        let rhs_nat = nat_of(&rhs_info, rhs);
+
+        let base_proof = {
+            let a_lhs = self.mint(stmts, &to_ast_constructor, &lhs_nat, &ast_sort);
+            let a_rhs = self.mint(stmts, &to_ast_constructor, &rhs_nat, &ast_sort);
+            match justification {
+                Justification::Rule(rule_name, proof_list) => self.mint(
+                    stmts,
+                    &rule_constructor,
+                    &format!("{rule_name} {proof_list} {a_lhs} {a_rhs}"),
+                    &proof_sort,
+                ),
+                Justification::Fiat => {
+                    self.mint(stmts, &fiat_constructor, &format!("{a_lhs} {a_rhs}"), &proof_sort)
+                }
+                Justification::Merge(..) => panic!(
                     "Merge functions do not include union actions, so proof should not be by merge"
                 ),
             }
         };
-        format!("(set ({uf_name} {larger}) (values {smaller} {proof}))")
+
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        // Prove `lhs = shared` and `rhs = shared` for a shared natural form
+        // (a canonicalized side, so no reflexive proof is needed).
+        let (lhs_to_shared, rhs_to_shared) = if let Some(rc) = &rhs_conn {
+            // shared = rhs_nat
+            let lhs_to = if let Some(lc) = &lhs_conn {
+                let sym_lc = self.mint(stmts, &sym, lc, &proof_sort);
+                self.mint(stmts, &trans, &format!("{sym_lc} {base_proof}"), &proof_sort)
+            } else {
+                base_proof.clone()
+            };
+            let rhs_to = self.mint(stmts, &sym, rc, &proof_sort);
+            (lhs_to, rhs_to)
+        } else {
+            // rhs is a leaf; lhs is canonicalized -> shared = lhs_nat.
+            let lc = lhs_conn.as_ref().unwrap();
+            let lhs_to = self.mint(stmts, &sym, lc, &proof_sort);
+            let rhs_to = self.mint(stmts, &sym, &base_proof, &proof_sort);
+            (lhs_to, rhs_to)
+        };
+
+        let max_pf = self.fresh_var();
+        stmts.push(format!(
+            "(let {max_pf} (proof-of-max {lhs} {lhs_to_shared} {rhs} {rhs_to_shared}))"
+        ));
+        let min_pf = self.fresh_var();
+        stmts.push(format!(
+            "(let {min_pf} (proof-of-min {lhs} {lhs_to_shared} {rhs} {rhs_to_shared}))"
+        ));
+        let sym_min = self.mint(stmts, &sym, &min_pf, &proof_sort);
+        let edge = self.mint(stmts, &trans, &format!("{max_pf} {sym_min}"), &proof_sort);
+        format!("(set ({uf_name} {larger}) (values {smaller} {edge}))")
     }
 
     /// The parent table is the database representation of a union-find datastructure.
@@ -1709,6 +1779,9 @@ impl<'a> ProofInstrumentor<'a> {
             ListDisplay(facts, " "),
             ListDisplay(actions, " "),
         );
+        if std::env::var("ZZDUMP").is_ok() {
+            eprintln!("ZZRULE=====\n{instrumented}\nZZEND=====");
+        }
         self.parse_program(&instrumented)
     }
 
