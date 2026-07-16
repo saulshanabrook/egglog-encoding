@@ -1,7 +1,7 @@
-"""Lay out renderer-neutral ordinary benchmark and optional timing reports.
+"""Build one complete renderer-neutral benchmark report catalog.
 
 This module chooses comparison coordinates, report sections, columns, captions,
-and human wording. DuckDB views own statistics, result classifications,
+and human wording. DuckDB relations own statistics, result classifications,
 best/worst selection, rollups, and timing aggregation; ``database`` returns
 their typed rows. Timing-specific table assembly belongs in ``timing``, while
 Rich/Markdown syntax and terminal behavior belong in ``render``.
@@ -26,6 +26,20 @@ from ..models import (
     benchmark_cells,
     shared_backend_treatments,
 )
+from .catalog import (
+    CellTone,
+    ReportCatalog,
+    ReportCell,
+    ReportColumn,
+    ReportOptions,
+    ReportRow,
+    ReportScope,
+    ReportSection,
+    ReportTable,
+    TableAlignment,
+    report_id,
+    text_cell,
+)
 from .database import ReportDatabase
 from .results import (
     CellEstimateView,
@@ -34,11 +48,10 @@ from .results import (
     FileRatioView,
     MetricName,
     RatioSummary,
-    ReportTableData,
     ResultClass,
     TargetView,
 )
-from .timing import TimingReport, build_timing_report
+from .timing import build_timing_sections
 
 ComparisonKey = tuple[int, int, int, int]
 
@@ -69,14 +82,12 @@ class MetricSpec:
     caption: str
     file_count_heading: str
     format_total: Callable[[float | None], str]
-    format_change: Callable[[RatioSummary], str]
-    format_result: Callable[[ResultClass, str | None], str]
     omit_without_samples: bool = False
 
 
 @dataclass(frozen=True)
 class ReportAnalysis:
-    """Output-facing DuckDB view rows indexed by stable selector coordinates."""
+    """Output-facing DuckDB rows indexed by stable selector coordinates."""
 
     cells: dict[tuple[MetricName, int, int, int], CellEstimateView]
     file_ratios: dict[tuple[int, MetricName, int], FileRatioView]
@@ -102,40 +113,20 @@ class ReportAnalysis:
         return self.file_ratios[(comparison.comparison_order, comparison.metric, file_order)]
 
 
-@dataclass(frozen=True)
-class ReportDocument:
-    """Renderer-neutral sections for one complete benchmark report."""
-
-    report_path: str
-    rounds: int
-    targets: tuple[TargetView, ...]
-    command_argv: tuple[str, ...] | None
-    targets_table: ReportTableData
-    comparisons: tuple[ReportTableData, ...]
-    diagnostics: tuple[ReportTableData, ...]
-    timing: TimingReport | None
-    summary: tuple[ReportTableData, ...]
-
-
-def build_report_document(
+def build_report_catalog(
     database: ReportDatabase,
-    targets: Sequence[ResolvedTarget],
-    spec: BenchmarkSpec,
-    command_argv: Sequence[str] | None = None,
-    *,
-    phase_timings: bool = False,
-    detailed_timing: bool = False,
-) -> ReportDocument:
-    """Query all selected results once and assemble report sections."""
+    scope: ReportScope,
+    options: ReportOptions | None = None,
+) -> ReportCatalog:
+    """Install one explicit scope, query its views, and assemble the shared catalog."""
 
-    selected_targets = tuple(targets)
+    options = ReportOptions() if options is None else options
+    selected_targets = scope.targets
+    spec = scope.spec
     t_critical = None if spec.rounds < 2 else float(stats.t.ppf(0.975, spec.rounds - 1))
-    database.install_scope(selected_targets, spec, t_critical)
     requests = _comparison_requests(selected_targets, spec)
-    view_data = database.report_view_data(
-        requests,
-        include_timing=phase_timings or detailed_timing,
-    )
+    database.install_scope(selected_targets, spec, t_critical, requests)
+    view_data = database.report_view_data(include_timing=options.include_timing)
     analysis = ReportAnalysis(
         cells={(row.metric, row.target_order, row.file_order, row.cell_order): row for row in view_data.cell_estimates},
         file_ratios={(row.comparison_order, row.metric, row.file_order): row for row in view_data.file_ratios},
@@ -146,34 +137,38 @@ def build_report_document(
                 request.baseline_cell_order,
                 request.candidate_target_order,
                 request.candidate_cell_order,
-            ): request.comparison_order
-            for request in requests
+            ): comparison_order
+            for comparison_order, request in enumerate(requests)
         },
     )
     file_labels = report_file_labels(spec.files)
     comparisons = comparison_tables(analysis, selected_targets, spec, file_labels)
     diagnostics = diagnostic_tables(analysis, selected_targets, spec, file_labels)
     summary = summary_tables(analysis, selected_targets, spec, file_labels)
-    timing = None
-    if phase_timings or detailed_timing:
-        timing = build_timing_report(
-            view_data.compact_timings,
-            view_data.ruleset_timings,
-            selected_targets,
-            spec,
-            detailed=detailed_timing,
-            file_labels=tuple(file_labels[file] for file in spec.files),
+    sections: list[ReportSection] = [
+        ReportSection("targets", None, (targets_table_data(view_data.targets),)),
+    ]
+    if comparisons:
+        sections.append(ReportSection("comparisons", "Comparisons", comparisons))
+    if diagnostics:
+        sections.append(ReportSection("diagnostics", "Target Diagnostics", diagnostics))
+    if options.include_timing:
+        sections.extend(
+            build_timing_sections(
+                view_data.compact_timings,
+                view_data.ruleset_timings,
+                selected_targets,
+                spec,
+                detailed=options.detailed_timing,
+                file_labels=tuple(file_labels[file] for file in spec.files),
+            )
         )
-    return ReportDocument(
+    sections.append(ReportSection("summary", "Benchmark Summary", summary))
+    return ReportCatalog(
         report_path=database.display_path,
         rounds=spec.rounds,
-        targets=view_data.targets,
-        command_argv=None if command_argv is None else tuple(command_argv),
-        targets_table=targets_table_data(view_data.targets),
-        comparisons=comparisons,
-        diagnostics=diagnostics,
-        timing=timing,
-        summary=summary,
+        command_argv=options.command_argv,
+        sections=tuple(sections),
     )
 
 
@@ -212,7 +207,7 @@ def _comparison_requests(targets: Sequence[ResolvedTarget], spec: BenchmarkSpec)
                         _cell_order(spec, candidate_backend, treatment),
                     )
                 )
-    return tuple(ComparisonRequest(index, *key) for index, key in enumerate(keys))
+    return tuple(ComparisonRequest(*key) for key in keys)
 
 
 def report_file_labels(files: Sequence[FileSpec]) -> dict[FileSpec, str]:
@@ -257,23 +252,41 @@ def report_file_labels(files: Sequence[FileSpec]) -> dict[FileSpec, str]:
     return labels
 
 
-def targets_table_data(targets: Sequence[TargetView]) -> ReportTableData:
-    rows: list[tuple[str, ...]] = []
+def targets_table_data(targets: Sequence[TargetView]) -> ReportTable:
+    rows: list[ReportRow] = []
     for target in targets:
         git = target.target_git_sha[:12]
         if target.target_git_ref != "HEAD":
             git = f"{git} ({target.target_git_ref})"
         rows.append(
             _row(
+                report_id("target", target.binary_sha256),
                 target.target_role,
                 target.target_label,
-                git,
-                "yes" if target.target_is_dirty else "no",
-                target.binary_sha256.removeprefix("sha256:")[:12],
+                target.target_source,
+                text_cell(target.target_git_sha, git),
+                target.target_git_ref,
+                text_cell(target.target_is_dirty, "yes" if target.target_is_dirty else "no"),
+                text_cell(target.binary_sha256, target.binary_sha256.removeprefix("sha256:")[:12]),
                 target.target_path,
             )
         )
-    return ReportTableData("Targets", ("Role", "Label", "Git", "Dirty", "Binary", "Path"), tuple(rows))
+    return ReportTable(
+        report_id("table", "targets"),
+        "Targets",
+        (
+            ReportColumn("role", "Role"),
+            ReportColumn("label", "Label"),
+            ReportColumn("source", "Source", visible=False),
+            ReportColumn("git", "Git"),
+            ReportColumn("git_ref", "Git ref", visible=False),
+            ReportColumn("dirty", "Dirty"),
+            ReportColumn("binary", "Binary"),
+            ReportColumn("path", "Path"),
+        ),
+        tuple(rows),
+        layout="target-tree",
+    )
 
 
 def comparison_tables(
@@ -281,10 +294,10 @@ def comparison_tables(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     """Build target and backend per-file comparison sections."""
 
-    tables: list[ReportTableData] = []
+    tables: list[ReportTable] = []
     if len(targets) > 1:
         tables.extend(_per_file_target_tables(analysis, targets, spec, file_labels, "wall_sec"))
         tables.extend(_per_file_target_tables(analysis, targets, spec, file_labels, "max_rss_bytes"))
@@ -300,28 +313,38 @@ def _per_file_target_tables(
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
     metric: MetricName,
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     baseline = targets[0]
     cells = benchmark_cells(spec)
-    tables: list[ReportTableData] = []
+    tables: list[ReportTable] = []
     for target_order, target in enumerate(targets[1:], start=1):
         if metric == "max_rss_bytes" and not (
             _target_has_samples(analysis, metric, 0) or _target_has_samples(analysis, metric, target_order)
         ):
             continue
-        rows: list[tuple[str, ...]] = []
+        rows: list[ReportRow] = []
         for file_order, file_spec in enumerate(spec.files):
             for cell_order, cell in enumerate(cells):
                 comparison = analysis.comparison(metric, 0, cell_order, target_order, cell_order)
                 ratio = analysis.file_ratio(comparison, file_order)
                 rows.append(
                     _row(
-                        file_labels[file_spec] if cell_order == 0 else "",
+                        report_id(
+                            "comparison",
+                            "target",
+                            metric,
+                            target.binary_sha256,
+                            file_spec.sha256,
+                            file_spec.fact_directory_sha256,
+                            cell.backend,
+                            cell.treatment,
+                        ),
+                        file_labels[file_spec],
                         cell.backend,
                         cell.treatment,
-                        format_ratio_summary(ratio.ratio),
-                        format_percent_change(ratio.change),
-                        _result_text(ratio.result_class, ratio.issue, rss=metric == "max_rss_bytes"),
+                        _ratio_cell(ratio.ratio),
+                        _percent_cell(ratio.change),
+                        _result_cell(ratio.result_class, ratio.issue, rss=metric == "max_rss_bytes"),
                     )
                 )
         if metric == "wall_sec":
@@ -333,12 +356,15 @@ def _per_file_target_tables(
             headers = ("File", "Backend", "Treatment", "RSS ratio", "RSS change", "Result")
             caption = TARGET_PEAK_RSS_CAPTION
         tables.append(
-            ReportTableData(
+            _table(
+                report_id("table", "comparison", "target", metric, baseline.binary_sha256, target.binary_sha256),
                 title,
+                ("file", "backend", "treatment", "ratio", "change", "result"),
                 headers,
                 tuple(rows),
                 caption,
                 ("left", "left", "left", "right", "right", "left"),
+                collapse_repeats=frozenset({"file"}),
             )
         )
     return tuple(tables)
@@ -350,16 +376,15 @@ def _per_file_backend_tables(
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
     metric: MetricName,
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     baseline_backend = spec.backends[0]
     baseline_name = backend_spec(baseline_backend).display_name
-    tables: list[ReportTableData] = []
+    tables: list[ReportTable] = []
     for target_order, target in enumerate(targets):
         if metric == "max_rss_bytes" and not _target_has_samples(analysis, metric, target_order):
             continue
-        rows: list[tuple[str, ...]] = []
+        rows: list[ReportRow] = []
         for file_order, file_spec in enumerate(spec.files):
-            first = True
             for candidate_backend in spec.backends[1:]:
                 for treatment in shared_backend_treatments(spec, baseline_backend, candidate_backend):
                     baseline_cell = _cell_order(spec, baseline_backend, treatment)
@@ -368,15 +393,24 @@ def _per_file_backend_tables(
                     ratio = analysis.file_ratio(comparison, file_order)
                     rows.append(
                         _row(
-                            file_labels[file_spec] if first else "",
+                            report_id(
+                                "comparison",
+                                "backend",
+                                metric,
+                                target.binary_sha256,
+                                file_spec.sha256,
+                                file_spec.fact_directory_sha256,
+                                candidate_backend,
+                                treatment,
+                            ),
+                            file_labels[file_spec],
                             candidate_backend,
                             treatment,
-                            format_ratio_summary(ratio.ratio),
-                            format_percent_change(ratio.change),
-                            _result_text(ratio.result_class, ratio.issue, rss=metric == "max_rss_bytes"),
+                            _ratio_cell(ratio.ratio),
+                            _percent_cell(ratio.change),
+                            _result_cell(ratio.result_class, ratio.issue, rss=metric == "max_rss_bytes"),
                         )
                     )
-                    first = False
         if metric == "wall_sec":
             title = f"Per-file backend wall-time change vs {baseline_name}: {target.display_label}"
             headers = ("File", "Backend", "Treatment", "Time ratio", "Wall-time change", "Result")
@@ -386,12 +420,15 @@ def _per_file_backend_tables(
             headers = ("File", "Backend", "Treatment", "RSS ratio", "RSS change", "Result")
             caption = BACKEND_PEAK_RSS_CAPTION
         tables.append(
-            ReportTableData(
+            _table(
+                report_id("table", "comparison", "backend", metric, target.binary_sha256),
                 title,
+                ("file", "backend", "treatment", "ratio", "change", "result"),
                 headers,
                 tuple(rows),
                 caption,
                 ("left", "left", "left", "right", "right", "left"),
+                collapse_repeats=frozenset({"file"}),
             )
         )
     return tuple(tables)
@@ -402,10 +439,10 @@ def diagnostic_tables(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     """Build within-target treatment ratios and per-file estimate tables."""
 
-    tables: list[ReportTableData] = []
+    tables: list[ReportTable] = []
     for target_order, target in enumerate(targets):
         overhead = _overhead_ratios_table(analysis, target_order, target, spec, file_labels)
         if overhead is not None:
@@ -426,17 +463,19 @@ def _overhead_ratios_table(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> ReportTableData | None:
+) -> ReportTable | None:
     ratios = {backend: ratio_specs_for_backend(spec, backend) for backend in spec.backends}
     if not any(ratios.values()):
         return None
     headers = ["File"]
+    column_ids = ["file"]
     for backend in spec.backends:
-        for _, _, ratio_name in ratios[backend]:
+        for baseline_treatment, candidate_treatment, ratio_name in ratios[backend]:
             headers.append(_backend_metric_label(spec, backend, ratio_name))
-    rows: list[tuple[str, ...]] = []
+            column_ids.append(f"ratio:{backend}:{baseline_treatment}:{candidate_treatment}")
+    rows: list[ReportRow] = []
     for file_order, file_spec in enumerate(spec.files):
-        values = [file_labels[file_spec]]
+        values: list[ReportCell] = [text_cell(file_labels[file_spec])]
         for backend in spec.backends:
             for baseline_treatment, candidate_treatment, _ in ratios[backend]:
                 comparison = analysis.comparison(
@@ -446,10 +485,22 @@ def _overhead_ratios_table(
                     target_order,
                     _cell_order(spec, backend, candidate_treatment),
                 )
-                values.append(format_ratio_summary(analysis.file_ratio(comparison, file_order).ratio))
-        rows.append(tuple(values))
-    return ReportTableData(
+                values.append(_ratio_cell(analysis.file_ratio(comparison, file_order).ratio))
+        rows.append(
+            ReportRow(
+                report_id(
+                    "overhead",
+                    target.binary_sha256,
+                    file_spec.sha256,
+                    file_spec.fact_directory_sha256,
+                ),
+                tuple(values),
+            )
+        )
+    return _table(
+        report_id("table", "diagnostic", "overhead", target.binary_sha256),
         f"{target.display_label}: overhead ratios",
+        tuple(column_ids),
         tuple(headers),
         tuple(rows),
         "Within-target treatment ratios. These are not target-vs-baseline wall-time change.",
@@ -464,30 +515,41 @@ def _target_metric_table(
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
     metric: MetricName,
-) -> ReportTableData:
+) -> ReportTable:
     cells = benchmark_cells(spec)
     headers = ["File", *(_cell_label(spec, cell.backend, cell.treatment) for cell in cells)]
-    rows_with_issue: list[tuple[list[str], str]] = []
+    column_ids = ["file", *(f"cell:{cell.backend}:{cell.treatment}" for cell in cells)]
+    rows_with_issue: list[tuple[FileSpec, list[ReportCell], str]] = []
     for file_order, file_spec in enumerate(spec.files):
-        values = [file_labels[file_spec]]
+        values = [text_cell(file_labels[file_spec])]
         issues: list[str] = []
         for cell_order, cell in enumerate(cells):
             summary = analysis.cell(metric, target_order, file_order, cell_order)
-            values.append(_format_cell_summary(summary, rss=metric == "max_rss_bytes"))
+            values.append(_cell_summary_cell(summary, rss=metric == "max_rss_bytes"))
             if summary.issue is not None:
                 issues.append(f"{_cell_label(spec, cell.backend, cell.treatment)}: {summary.issue}")
-        rows_with_issue.append((values, "; ".join(issues)))
-    if any(issue for _, issue in rows_with_issue):
+        rows_with_issue.append((file_spec, values, "; ".join(issues)))
+    has_issue = any(issue for _, _, issue in rows_with_issue)
+    if has_issue:
         headers.append("Issue")
-    rows = tuple(tuple([*values, issue] if headers[-1] == "Issue" else values) for values, issue in rows_with_issue)
+        column_ids.append("issue")
+    rows = tuple(
+        ReportRow(
+            report_id("estimate", metric, target.binary_sha256, file_spec.sha256, file_spec.fact_directory_sha256),
+            tuple([*values, text_cell(issue)] if has_issue else values),
+        )
+        for file_spec, values, issue in rows_with_issue
+    )
     if metric == "wall_sec":
         title = f"{target.display_label}: per-file wall time"
         caption = "Within-target wall-time estimates. These are not target-vs-baseline ratios."
     else:
         title = f"{target.display_label}: per-file peak RSS"
         caption = "Within-target peak resident set size estimates. These are separate from wall-time ratios."
-    return ReportTableData(
+    return _table(
+        report_id("table", "diagnostic", "estimate", metric, target.binary_sha256),
         title,
+        tuple(column_ids),
         tuple(headers),
         rows,
         caption,
@@ -500,7 +562,7 @@ def summary_tables(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     """Build the final decision-oriented benchmark summary tables."""
 
     tables = list(_backend_summary_tables(analysis, targets, spec, file_labels))
@@ -516,8 +578,8 @@ def _single_target_summary(
     target: ResolvedTarget,
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> ReportTableData:
-    rows: list[tuple[str, ...]] = []
+) -> ReportTable:
+    rows: list[ReportRow] = []
     for backend in spec.backends:
         has_off_proofs = backend_has_treatment(spec, backend, "off") and backend_has_treatment(spec, backend, "proofs")
         has_term_proofs = backend_has_treatment(spec, backend, "term") and backend_has_treatment(
@@ -568,11 +630,12 @@ def _single_target_summary(
         else:
             rows.append(
                 _row(
+                    report_id("summary", "proof-overhead", backend, "unavailable"),
                     _backend_metric_label(spec, backend, "no proof baseline"),
-                    "-",
-                    "-",
-                    "-",
-                    "-",
+                    text_cell(None, "-"),
+                    text_cell(None, "-"),
+                    text_cell(None, "-"),
+                    text_cell(None, "-"),
                     "select off and proofs",
                 )
             )
@@ -590,8 +653,10 @@ def _single_target_summary(
                     include_geomean=False,
                 )
             )
-    return ReportTableData(
+    return _table(
+        report_id("table", "summary", "proof-overhead", target.binary_sha256),
         f"{target.display_label}: proof overhead summary",
+        ("metric", "ratio", "change", "worst_file", "worst_ratio", "result"),
         ("Metric", "Ratio", "Change", "Worst file", "Worst ratio", "Result"),
         tuple(rows),
         PROOF_OVERHEAD_CAPTION,
@@ -611,7 +676,7 @@ def _within_target_summary_rows(
     *,
     include_geomean: bool,
     proof_gate: bool = False,
-) -> tuple[tuple[str, ...], ...]:
+) -> tuple[ReportRow, ...]:
     comparison = analysis.comparison(
         metric,
         0,
@@ -621,29 +686,31 @@ def _within_target_summary_rows(
     )
     worst_file_order, worst = comparison.worst_file_order, comparison.worst
     result = (
-        _proof_gate_result_text(comparison)
+        _proof_gate_cell(comparison)
         if proof_gate
-        else _result_text(comparison.suite_result_class, comparison.suite_issue, rss=metric == "max_rss_bytes")
+        else _result_cell(comparison.suite_result_class, comparison.suite_issue, rss=metric == "max_rss_bytes")
     )
     rows = [
         _row(
+            report_id("summary", backend, baseline_treatment, candidate_treatment, metric, "suite"),
             label,
-            format_ratio_summary(comparison.suite),
-            format_percent_change(comparison.suite_change),
-            _format_file_order(worst_file_order, spec, file_labels),
-            format_ratio_summary(worst),
+            _ratio_cell(comparison.suite),
+            _percent_cell(comparison.suite_change),
+            _file_order_cell(worst_file_order, spec, file_labels),
+            _ratio_cell(worst),
             result,
         )
     ]
     if include_geomean:
         rows.append(
             _row(
+                report_id("summary", backend, baseline_treatment, candidate_treatment, metric, "geomean"),
                 f"{label} geomean",
-                format_ratio_summary(comparison.geometric_mean),
-                format_percent_change(comparison.geometric_mean_change),
-                "-",
-                "-",
-                "descriptive",
+                _ratio_cell(comparison.geometric_mean),
+                _percent_cell(comparison.geometric_mean_change),
+                text_cell(None, "-"),
+                text_cell(None, "-"),
+                text_cell("descriptive", tone="muted"),
             )
         )
     return tuple(rows)
@@ -654,43 +721,47 @@ def _multi_target_summaries(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> tuple[ReportTableData, ReportTableData]:
+) -> tuple[ReportTable, ReportTable]:
     baseline = targets[0]
-    wall_rows: list[tuple[str, ...]] = []
-    rss_rows: list[tuple[str, ...]] = []
+    wall_rows: list[ReportRow] = []
+    rss_rows: list[ReportRow] = []
     for target_order, target in enumerate(targets[1:], start=1):
         for cell_order, cell in enumerate(benchmark_cells(spec)):
             wall = analysis.comparison("wall_sec", 0, cell_order, target_order, cell_order)
             worst_file, worst = wall.worst_file_order, wall.worst
             wall_rows.append(
                 _row(
+                    report_id("summary", "target", "wall_sec", target.binary_sha256, cell.backend, cell.treatment),
                     target.display_label,
                     cell.backend,
                     cell.treatment,
-                    format_percent_change(wall.suite_change),
-                    format_ratio_summary(wall.geometric_mean),
-                    _format_file_order(worst_file, spec, file_labels),
-                    format_ratio_summary(worst),
-                    _result_text(wall.suite_result_class, wall.suite_issue),
+                    _percent_cell(wall.suite_change),
+                    _ratio_cell(wall.geometric_mean),
+                    _file_order_cell(worst_file, spec, file_labels),
+                    _ratio_cell(worst),
+                    _result_cell(wall.suite_result_class, wall.suite_issue),
                 )
             )
             rss = analysis.comparison("max_rss_bytes", 0, cell_order, target_order, cell_order)
             rss_worst_file, rss_worst = rss.worst_file_order, rss.worst
             rss_rows.append(
                 _row(
+                    report_id("summary", "target", "max_rss_bytes", target.binary_sha256, cell.backend, cell.treatment),
                     target.display_label,
                     cell.backend,
                     cell.treatment,
-                    format_percent_change(rss.suite_change),
-                    format_ratio_summary(rss.geometric_mean),
-                    _format_file_order(rss_worst_file, spec, file_labels),
-                    format_ratio_summary(rss_worst),
-                    _result_text(rss.suite_result_class, rss.suite_issue, rss=True),
+                    _percent_cell(rss.suite_change),
+                    _ratio_cell(rss.geometric_mean),
+                    _file_order_cell(rss_worst_file, spec, file_labels),
+                    _ratio_cell(rss_worst),
+                    _result_cell(rss.suite_result_class, rss.suite_issue, rss=True),
                 )
             )
     return (
-        ReportTableData(
+        _table(
+            report_id("table", "summary", "target", "wall_sec", baseline.binary_sha256),
             f"Wall-time summary vs {baseline.display_label}",
+            ("target", "backend", "treatment", "change", "geomean", "worst_file", "worst_ratio", "result"),
             (
                 "Target",
                 "Backend",
@@ -705,8 +776,10 @@ def _multi_target_summaries(
             TARGET_WALL_TIME_CAPTION,
             ("left", "left", "left", "right", "right", "left", "right", "left"),
         ),
-        ReportTableData(
+        _table(
+            report_id("table", "summary", "target", "max_rss_bytes", baseline.binary_sha256),
             f"Peak RSS summary vs {baseline.display_label}",
+            ("target", "backend", "treatment", "change", "geomean", "worst_file", "worst_ratio", "result"),
             ("Target", "Backend", "Treatment", "RSS change", "Geomean", "Worst file", "Worst ratio", "Result"),
             tuple(rss_rows),
             TARGET_PEAK_RSS_CAPTION,
@@ -720,7 +793,7 @@ def _backend_summary_tables(
     targets: Sequence[ResolvedTarget],
     spec: BenchmarkSpec,
     file_labels: dict[FileSpec, str],
-) -> tuple[ReportTableData, ...]:
+) -> tuple[ReportTable, ...]:
     if len(spec.backends) <= 1:
         return ()
     metrics: tuple[tuple[MetricName, MetricSpec], ...] = (
@@ -731,8 +804,6 @@ def _backend_summary_tables(
                 BACKEND_WALL_TIME_CAPTION,
                 "Faster files",
                 format_seconds_value,
-                format_percent_change,
-                _wall_result_text,
             ),
         ),
         (
@@ -742,8 +813,6 @@ def _backend_summary_tables(
                 BACKEND_PEAK_RSS_CAPTION,
                 "Lower-RSS files",
                 format_bytes,
-                format_percent_change,
-                _rss_result_text,
                 True,
             ),
         ),
@@ -762,7 +831,7 @@ def _backend_summary_table(
     file_labels: dict[FileSpec, str],
     metric: MetricName,
     policy: MetricSpec,
-) -> ReportTableData:
+) -> ReportTable:
     baseline_backend = spec.backends[0]
     baseline_name = backend_spec(baseline_backend).display_name
     candidate_name = backend_spec(spec.backends[1]).display_name if len(spec.backends) == 2 else "Candidate"
@@ -790,7 +859,7 @@ def _backend_summary_table(
             "Best result",
         )
     )
-    rows: list[tuple[str, ...]] = []
+    rows: list[ReportRow] = []
     for target_order, target in enumerate(targets):
         for candidate_backend in spec.backends[1:]:
             for treatment in shared_backend_treatments(spec, baseline_backend, candidate_backend):
@@ -798,23 +867,39 @@ def _backend_summary_table(
                 candidate_cell = _cell_order(spec, candidate_backend, treatment)
                 comparison = analysis.comparison(metric, target_order, baseline_cell, target_order, candidate_cell)
                 best_file, best = comparison.best_file_order, comparison.best
-                values: list[object] = [target.display_label] if len(targets) > 1 else []
+                values: list[ReportCell | str] = [target.display_label] if len(targets) > 1 else []
                 values.extend(
                     (
                         candidate_backend,
                         treatment,
-                        policy.format_total(comparison.baseline_total),
-                        policy.format_total(comparison.candidate_total),
-                        format_ratio_summary(comparison.suite),
-                        policy.format_change(comparison.suite_change),
-                        format_ratio_summary(comparison.geometric_mean),
-                        _format_better_count(comparison),
-                        _format_file_order(best_file, spec, file_labels),
-                        format_ratio_summary(best),
-                        policy.format_result(comparison.best_result_class, comparison.best_issue),
+                        text_cell(comparison.baseline_total, policy.format_total(comparison.baseline_total)),
+                        text_cell(comparison.candidate_total, policy.format_total(comparison.candidate_total)),
+                        _ratio_cell(comparison.suite),
+                        _percent_cell(comparison.suite_change),
+                        _ratio_cell(comparison.geometric_mean),
+                        _better_count_cell(comparison),
+                        _file_order_cell(best_file, spec, file_labels),
+                        _ratio_cell(best),
+                        _result_cell(
+                            comparison.best_result_class,
+                            comparison.best_issue,
+                            rss=metric == "max_rss_bytes",
+                        ),
                     )
                 )
-                rows.append(_row(*values))
+                rows.append(
+                    _row(
+                        report_id(
+                            "summary",
+                            "backend",
+                            metric,
+                            target.binary_sha256,
+                            candidate_backend,
+                            treatment,
+                        ),
+                        *values,
+                    )
+                )
     right = {
         baseline_total_heading,
         candidate_total_heading,
@@ -824,8 +909,26 @@ def _backend_summary_table(
         policy.file_count_heading,
         "Best ratio",
     }
-    return ReportTableData(
+    column_ids = ["target"] if len(targets) > 1 else []
+    column_ids.extend(
+        (
+            "backend",
+            "mode",
+            "baseline_total",
+            "candidate_total",
+            "ratio",
+            "change",
+            "geomean",
+            "better_files",
+            "best_file",
+            "best_ratio",
+            "result",
+        )
+    )
+    return _table(
+        report_id("table", "summary", "backend", metric, baseline_backend),
         title,
+        tuple(column_ids),
         tuple(headers),
         tuple(rows),
         policy.caption,
@@ -906,6 +1009,18 @@ def _format_cell_summary(summary: CellEstimateView, *, rss: bool) -> str:
     return format_estimate_or_interval(summary.mean, summary.ci_low, summary.ci_high, "s", 4)
 
 
+def _cell_summary_cell(summary: CellEstimateView, *, rss: bool) -> ReportCell:
+    return text_cell(summary.mean, _format_cell_summary(summary, rss=rss))
+
+
+def _ratio_cell(summary: RatioSummary) -> ReportCell:
+    return text_cell(summary.point, format_ratio_summary(summary))
+
+
+def _percent_cell(summary: RatioSummary) -> ReportCell:
+    return text_cell(summary.point, format_percent_change(summary))
+
+
 def _result_text(result_class: ResultClass, issue: str | None, *, rss: bool = False) -> str:
     """Translate a SQL-owned statistical classification into report wording."""
 
@@ -922,12 +1037,17 @@ def _result_text(result_class: ResultClass, issue: str | None, *, rss: bool = Fa
     raise ValueError(f"unexpected ratio result class: {result_class}")
 
 
-def _wall_result_text(result_class: ResultClass, issue: str | None) -> str:
-    return _result_text(result_class, issue)
-
-
-def _rss_result_text(result_class: ResultClass, issue: str | None) -> str:
-    return _result_text(result_class, issue, rss=True)
+def _result_cell(result_class: ResultClass, issue: str | None, *, rss: bool = False) -> ReportCell:
+    tones: dict[ResultClass, CellTone] = {
+        "available": "default",
+        "higher": "negative",
+        "interval": "default",
+        "invalid": "error",
+        "lower": "positive",
+        "point_only": "muted",
+        "unclear": "warning",
+    }
+    return text_cell(result_class, _result_text(result_class, issue, rss=rss), tone=tones[result_class])
 
 
 def _proof_gate_result_text(summary: ComparisonRollupView) -> str:
@@ -938,14 +1058,34 @@ def _proof_gate_result_text(summary: ComparisonRollupView) -> str:
     return "<2x established" if summary.suite_ci_entirely_below_two else "<2x not established"
 
 
+def _proof_gate_cell(summary: ComparisonRollupView) -> ReportCell:
+    text = _proof_gate_result_text(summary)
+    if summary.suite_result_class == "invalid":
+        tone: CellTone = "error"
+    elif summary.suite_result_class == "point_only":
+        tone = "muted"
+    else:
+        tone = "positive" if summary.suite_ci_entirely_below_two else "negative"
+    return text_cell(summary.suite_result_class, text, tone=tone)
+
+
 def _format_better_count(comparison: ComparisonRollupView) -> str:
     if comparison.comparable_file_count == 0:
         return "-"
     return f"{comparison.better_file_count}/{comparison.comparable_file_count}"
 
 
+def _better_count_cell(comparison: ComparisonRollupView) -> ReportCell:
+    raw = None if comparison.comparable_file_count == 0 else comparison.better_file_count
+    return text_cell(raw, _format_better_count(comparison))
+
+
 def _format_file_order(file_order: int | None, spec: BenchmarkSpec, file_labels: dict[FileSpec, str]) -> str:
     return "-" if file_order is None else file_labels[spec.files[file_order]]
+
+
+def _file_order_cell(file_order: int | None, spec: BenchmarkSpec, file_labels: dict[FileSpec, str]) -> ReportCell:
+    return text_cell(file_order, _format_file_order(file_order, spec, file_labels))
 
 
 def _cell_order(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> int:
@@ -973,5 +1113,34 @@ def _target_has_samples(analysis: ReportAnalysis, metric: MetricName, target_ord
     )
 
 
-def _row(*values: object) -> tuple[str, ...]:
-    return tuple(str(value) for value in values)
+def _row(
+    row_id: str,
+    *values: ReportCell | str | int | float | bool | None,
+) -> ReportRow:
+    return ReportRow(row_id, tuple(value if isinstance(value, ReportCell) else text_cell(value) for value in values))
+
+
+def _table(
+    table_id: str,
+    title: str,
+    column_ids: Sequence[str],
+    headers: Sequence[str],
+    rows: tuple[ReportRow, ...],
+    caption: str | None = None,
+    alignments: Sequence[TableAlignment] | None = None,
+    *,
+    collapse_repeats: frozenset[str] = frozenset(),
+) -> ReportTable:
+    selected_alignments: tuple[TableAlignment, ...] = (
+        tuple("left" for _ in headers) if alignments is None else tuple(alignments)
+    )
+    columns = tuple(
+        ReportColumn(
+            column_id,
+            header,
+            alignment,
+            collapse_repeats=column_id in collapse_repeats,
+        )
+        for column_id, header, alignment in zip(column_ids, headers, selected_alignments, strict=True)
+    )
+    return ReportTable(table_id, title, columns, rows, caption)

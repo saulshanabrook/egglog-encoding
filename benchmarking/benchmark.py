@@ -30,9 +30,10 @@ from .collection import (
 )
 from .models import BenchmarkSpec, validate_unique_target_binaries
 from .output import RunnerOutput
+from .reports.catalog import ReportOptions, ReportScope
 from .reports.database import ReportDatabase
 from .reports.render import render_markdown_report_document, render_rich_report_document
-from .reports.summary import build_report_document
+from .reports.summary import build_report_catalog
 from .targets import git_root_for_path, parse_target
 
 
@@ -108,19 +109,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 emit_collection_plan(output, plan, estimate_model)
                 collect_rows(database, plan, spec, output, estimate_model, startup_warmup)
 
-            document = build_report_document(
+            catalog = build_report_catalog(
                 database,
-                targets,
-                spec,
-                command_argv=raw_argv if args.format == "markdown" else None,
-                phase_timings=bool(args.phase_timings),
-                detailed_timing=bool(args.detailed_timing),
+                ReportScope(targets, spec),
+                ReportOptions(
+                    command_argv=raw_argv if args.format == "markdown" else None,
+                    phase_timings=bool(args.phase_timings),
+                    detailed_timing=bool(args.detailed_timing),
+                ),
             )
             if args.format == "markdown":
-                rendered = render_markdown_report_document(document)
+                rendered = render_markdown_report_document(catalog)
                 sys.stdout.write(rendered + "\n")
             else:
-                output.console.print(render_rich_report_document(document, output.console.width))
+                output.console.print(render_rich_report_document(catalog, output.console.width))
             if args.duckdb_ui:
                 # Markdown may be redirected and block-buffered. Make the
                 # completed report observable before the interactive wait.

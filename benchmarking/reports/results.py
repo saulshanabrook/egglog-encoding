@@ -1,11 +1,10 @@
-"""Define typed SQL-view contracts and renderer-neutral report values.
+"""Define immutable typed contracts at the DuckDB query boundary.
 
 The ``*View`` named tuples mirror the output columns in
 ``reports/sql/presentation.sql`` exactly; schema changes must update both
 locations. Persisted mutable ``TypedDict`` shapes instead belong in
-:mod:`benchmarking.reports.records`. The database constructs view rows, summary
-and timing modules choose table layout and wording, and render owns output
-syntax.
+:mod:`benchmarking.reports.records`. The database constructs these values;
+final table layout and display values belong in :mod:`benchmarking.reports.catalog`.
 """
 
 from __future__ import annotations
@@ -15,21 +14,9 @@ from typing import Literal, NamedTuple
 
 from ..models import EstimateKey, TargetRow, Treatment
 
-TableAlignment = Literal["left", "right"]
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["available", "higher", "interval", "invalid", "lower", "point_only", "unclear"]
 TargetRole = Literal["baseline", "candidate", "target"]
-
-
-@dataclass(frozen=True)
-class ReportTableData:
-    """Renderer-neutral title, headings, rows, and alignment for one table."""
-
-    title: str
-    headers: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
-    caption: str | None = None
-    alignments: tuple[TableAlignment, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -63,7 +50,6 @@ class EstimateAggregate:
 class ComparisonRequest:
     """Compare two scoped target/cell coordinates across every scoped file."""
 
-    comparison_order: int
     baseline_target_order: int
     baseline_cell_order: int
     candidate_target_order: int

@@ -1,14 +1,14 @@
-"""Render ordinary and engine-timing report models as Rich or Markdown.
+"""Render the shared benchmark report catalog as Rich or Markdown.
 
-This module owns terminal-width warnings, wrapping, styling, escaping, headings,
-and tables; persistence, calculations, and report policy belong elsewhere.
+This module owns terminal-width warnings, repeated-cell collapsing, styling,
+escaping, headings, and table syntax. Persistence, calculations, report scope,
+and section-selection policy belong elsewhere.
 """
 
 from __future__ import annotations
 
 import shlex
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from rich import box
 from rich.console import Group, RenderableType
@@ -17,11 +17,7 @@ from rich.table import Table
 from rich.text import Text
 from rich.tree import Tree
 
-from .results import ReportTableData
-from .timing import CompactTimingRow, DetailedTimingBlock, TimingReport
-
-if TYPE_CHECKING:
-    from .summary import ReportDocument
+from .catalog import CellTone, ReportCatalog, ReportCell, ReportColumn, ReportMessage, ReportSection, ReportTable
 
 RICH_TIMING_MIN_WIDTH = 120
 RICH_TIMING_NARROW_WARNING = (
@@ -29,296 +25,217 @@ RICH_TIMING_NARROW_WARNING = (
     "(detected {width}); output may wrap. Widen the terminal or use --format markdown."
 )
 
-RESULT_STYLES = {
-    "descriptive": "dim",
-    "established": "green",
-    "faster": "green",
-    "invalid": "bold red",
-    "less": "green",
-    "more": "red",
-    "not established": "red",
-    "point only": "dim",
-    "slower": "red",
-    "unclear": "yellow",
+TONE_STYLES: dict[CellTone, str] = {
+    "default": "",
+    "positive": "green",
+    "negative": "red",
+    "warning": "yellow",
+    "error": "bold red",
+    "muted": "dim",
 }
 
 
-def styled_status(status: str, text: str | None = None) -> Text:
-    return Text(text or status, style=RESULT_STYLES.get(status, ""))
+def report_table(title: str, *, caption: str | None = None, wide: bool = False) -> Table:
+    """Create one consistently styled Rich report table."""
 
-
-def report_table(title: str, *, caption: str | None = None, show_lines: bool = False) -> Table:
     return Table(
         title=Text(title, style="bold"),
         caption=None if caption is None else Text(caption, style="dim"),
         caption_justify="left",
         header_style="bold",
         box=box.SIMPLE_HEAVY,
-        show_lines=show_lines,
+        expand=wide,
+        collapse_padding=wide,
+        padding=(0, 1),
     )
 
 
-def rich_result_cell(value: str) -> Text:
-    if value.startswith("invalid:"):
-        return styled_status("invalid", value)
-    if value == "<2x established":
-        return styled_status("established", value)
-    if value == "<2x not established":
-        return styled_status("not established", value)
-    if value in RESULT_STYLES:
-        return styled_status(value)
-    return Text(value)
+def render_rich_table(table_data: ReportTable) -> Table:
+    """Render one catalog table without interpreting its display strings."""
 
-
-def render_rich_table(table_data: ReportTableData) -> Table:
-    table = report_table(table_data.title, caption=table_data.caption)
-    alignments = table_data.alignments or tuple("left" for _ in table_data.headers)
-    for header, alignment in zip(table_data.headers, alignments, strict=True):
-        table.add_column(
-            Text(header), no_wrap=alignment == "right", justify="right" if alignment == "right" else "left"
-        )
-    result_columns = {"Result", "Best result"}
-    for row in table_data.rows:
-        values: list[Text] = []
-        for header, value in zip(table_data.headers, row, strict=True):
-            values.append(rich_result_cell(value) if header in result_columns else Text(value))
-        table.add_row(*values)
+    wide = table_data.layout == "wide"
+    table = report_table(table_data.title, caption=table_data.caption, wide=wide)
+    visible = tuple((index, column) for index, column in enumerate(table_data.columns) if column.visible)
+    for _, column in visible:
+        if column.alignment == "left" and wide:
+            table.add_column(Text(column.label), justify="left", overflow="fold")
+        else:
+            table.add_column(
+                Text(column.label),
+                no_wrap=column.alignment == "right",
+                justify="right" if column.alignment == "right" else "left",
+            )
+    for values in _display_rows(table_data, visible):
+        table.add_row(*(Text(value.display, style=TONE_STYLES[value.tone]) for value in values))
     return table
 
 
 def markdown_escape_cell(value: object) -> str:
+    """Escape one Markdown table cell without changing its visible meaning."""
+
     text = str(value)
     return text.replace("\\", "\\\\").replace("|", "\\|").replace("\r\n", "\n").replace("\n", "<br>")
 
 
-def render_markdown_table(table_data: ReportTableData, *, heading_level: int = 3) -> str:
-    alignments = table_data.alignments or tuple("left" for _ in table_data.headers)
-    separator_cells = tuple("---:" if alignment == "right" else "---" for alignment in alignments)
+def render_markdown_table(table_data: ReportTable, *, heading_level: int = 3) -> str:
+    """Render one catalog table as Markdown."""
+
+    visible = tuple((index, column) for index, column in enumerate(table_data.columns) if column.visible)
+    separator_cells = tuple("---:" if column.alignment == "right" else "---" for _, column in visible)
+    title = _markdown_heading(table_data.title) if table_data.layout == "wide" else table_data.title
     lines = [
-        f"{'#' * heading_level} {table_data.title}",
+        f"{'#' * heading_level} {title}",
         "",
-        "| " + " | ".join(markdown_escape_cell(header) for header in table_data.headers) + " |",
+        "| " + " | ".join(markdown_escape_cell(column.label) for _, column in visible) + " |",
         "| " + " | ".join(separator_cells) + " |",
     ]
-    for row in table_data.rows:
-        lines.append("| " + " | ".join(markdown_escape_cell(value) for value in row) + " |")
+    for values in _display_rows(table_data, visible):
+        lines.append("| " + " | ".join(markdown_escape_cell(value.display) for value in values) + " |")
     if table_data.caption:
         lines.extend(["", f"*{markdown_escape_cell(table_data.caption)}*"])
     return "\n".join(lines)
 
 
 def benchmark_command_block(argv: Sequence[str]) -> str:
+    """Render the reproducible benchmark command used for a Markdown report."""
+
     return "```shell\n$ " + shlex.join(["./bench.py", *argv]) + "\n```"
 
 
-def render_rich_report_document(document: ReportDocument, width: int) -> Group:
-    """Render all Rich report sections in their decision-oriented order."""
+def render_rich_report_document(catalog: ReportCatalog, width: int) -> Group:
+    """Render all Rich catalog sections in their decision-oriented order."""
 
     renderables: list[RenderableType] = [
         Rule("[bold]Benchmark report[/bold]"),
-        Text.assemble("Report: ", (document.report_path, "bold")),
-        Text.assemble("Selected rows per result: ", (str(document.rounds), "bold")),
-        _render_targets_tree(document),
+        Text.assemble("Report: ", (catalog.report_path, "bold")),
+        Text.assemble("Selected rows per result: ", (str(catalog.rounds), "bold")),
     ]
-    renderables.extend(render_rich_table(table) for table in document.comparisons)
-    renderables.extend(render_rich_table(table) for table in document.diagnostics)
-    if document.timing is not None:
-        renderables.append(render_rich_timing(document.timing, width))
-    renderables.append(Rule("[bold]Benchmark summary[/bold]"))
-    renderables.extend(render_rich_table(table) for table in document.summary)
+    for section in catalog.sections:
+        renderables.extend(_rich_section_renderables(section, width))
     return Group(*renderables)
 
 
-def render_markdown_report_document(document: ReportDocument) -> str:
-    """Render all Markdown report sections from the same renderer-neutral data."""
+def render_markdown_report_document(catalog: ReportCatalog) -> str:
+    """Render every Markdown section from the same catalog used by Rich."""
 
     parts: list[str] = []
-    if document.command_argv is not None:
-        parts.append(benchmark_command_block(document.command_argv))
+    if catalog.command_argv is not None:
+        parts.append(benchmark_command_block(catalog.command_argv))
     parts.extend(
         (
             "# Benchmark Report",
-            f"- Report: `{document.report_path}`\n- Selected rows per result: `{document.rounds}`",
-            render_markdown_table(document.targets_table, heading_level=2),
+            f"- Report: `{catalog.report_path}`\n- Selected rows per result: `{catalog.rounds}`",
         )
     )
-    if document.comparisons:
-        parts.append("## Comparisons")
-        parts.extend(render_markdown_table(table) for table in document.comparisons)
-    if document.diagnostics:
-        parts.append("## Target Diagnostics")
-        parts.extend(render_markdown_table(table) for table in document.diagnostics)
-    if document.timing is not None:
-        parts.append(render_markdown_timing(document.timing))
-    parts.append("## Benchmark Summary")
-    parts.extend(render_markdown_table(table) for table in document.summary)
+    for section in catalog.sections:
+        parts.extend(_markdown_section_parts(section))
     return "\n\n".join(part.strip() for part in parts if part.strip())
 
 
-def _render_targets_tree(document: ReportDocument) -> Tree:
-    tree = Tree(Text("Targets", style="bold"), guide_style="dim")
-    for target in document.targets:
-        dirty = "dirty" if target.target_is_dirty else "clean"
-        binary = target.binary_sha256.removeprefix("sha256:")[:12]
-        branch = tree.add(Text.assemble((target.target_role, "bold"), " ", target.target_label))
-        branch.add(Text.assemble("source: ", target.target_source))
-        branch.add(Text.assemble("git: ", target.target_git_sha[:12], f" ({dirty})"))
-        if target.target_git_ref != "HEAD":
-            branch.add(Text.assemble("ref: ", target.target_git_ref))
+def render_rich_sections(sections: Sequence[ReportSection], width: int) -> Group:
+    """Render selected catalog sections without the full report preamble."""
+
+    return Group(*(renderable for section in sections for renderable in _rich_section_renderables(section, width)))
+
+
+def render_markdown_sections(sections: Sequence[ReportSection]) -> str:
+    """Render selected catalog sections without the full report preamble."""
+
+    parts = [part for section in sections for part in _markdown_section_parts(section)]
+    return "\n\n".join(part.strip() for part in parts if part.strip())
+
+
+def _rich_section_renderables(section: ReportSection, width: int) -> tuple[RenderableType, ...]:
+    renderables: list[RenderableType] = []
+    if section.id == "timing":
+        if width < RICH_TIMING_MIN_WIDTH:
+            renderables.append(Text(RICH_TIMING_NARROW_WARNING.format(width=width), style="yellow"))
+        renderables.append(Text("Engine timing", style="bold", justify="center"))
+        renderables.extend(_render_rich_block(block) for block in section.blocks)
+    elif section.id == "detailed-timing":
+        renderables.append(Text("Detailed timing", style="bold", justify="center"))
+        renderables.extend(_render_rich_block(block) for block in section.blocks)
+    elif section.id == "summary":
+        renderables.append(Rule("[bold]Benchmark summary[/bold]"))
+        renderables.extend(_render_rich_block(block) for block in section.blocks)
+    else:
+        renderables.extend(_render_rich_block(block) for block in section.blocks)
+    return tuple(renderables)
+
+
+def _markdown_section_parts(section: ReportSection) -> tuple[str, ...]:
+    parts: list[str] = []
+    if section.id == "targets":
+        parts.extend(
+            render_markdown_table(block, heading_level=2) for block in section.blocks if isinstance(block, ReportTable)
+        )
+        return tuple(parts)
+    if section.title is not None:
+        parts.append(f"## {_markdown_heading(section.title)}")
+    parts.extend(_render_markdown_block(block) for block in section.blocks)
+    return tuple(parts)
+
+
+def _render_rich_block(block: ReportTable | ReportMessage) -> RenderableType:
+    if isinstance(block, ReportTable):
+        if block.layout == "target-tree":
+            return _render_rich_targets(block)
+        return render_rich_table(block)
+    if block.layout == "caption":
+        return Text(block.text, style=TONE_STYLES[block.tone])
+    if block.title is None:
+        return Text(block.text, style=TONE_STYLES[block.tone])
+    return Group(Text(block.title, style="bold"), Text(block.text, style=TONE_STYLES[block.tone] or "dim"))
+
+
+def _render_markdown_block(block: ReportTable | ReportMessage) -> str:
+    if isinstance(block, ReportTable):
+        return render_markdown_table(block)
+    if block.layout == "caption":
+        return f"*{markdown_escape_cell(block.text)}*"
+    if block.title is None:
+        return markdown_escape_cell(block.text)
+    return f"### {_markdown_heading(block.title)}\n\n{markdown_escape_cell(block.text)}"
+
+
+def _render_rich_targets(table: ReportTable) -> Tree:
+    """Preserve the compact Rich target tree from the shared target table."""
+
+    tree = Tree(Text(table.title, style="bold"), guide_style="dim")
+    column_indexes = {column.id: index for index, column in enumerate(table.columns)}
+    for row in table.rows:
+        cells = {column_id: row.cells[index] for column_id, index in column_indexes.items()}
+        dirty = "dirty" if cells["dirty"].raw is True else "clean"
+        binary = str(cells["binary"].raw).removeprefix("sha256:")[:12]
+        git_sha = str(cells["git"].raw)
+        git_ref = str(cells["git_ref"].raw)
+        branch = tree.add(Text.assemble((cells["role"].display, "bold"), " ", cells["label"].display))
+        branch.add(Text.assemble("source: ", cells["source"].display))
+        branch.add(Text.assemble("git: ", git_sha[:12], f" ({dirty})"))
+        if git_ref != "HEAD":
+            branch.add(Text.assemble("ref: ", git_ref))
         branch.add(Text.assemble("binary: ", binary))
-        branch.add(Text.assemble("path: ", target.target_path))
+        branch.add(Text.assemble("path: ", cells["path"].display))
     return tree
 
 
-def render_rich_timing(report: TimingReport, width: int) -> Group:
-    """Render the canonical timing tables, with one warning below 120 columns."""
-
-    renderables: list[RenderableType] = []
-    if width < RICH_TIMING_MIN_WIDTH:
-        renderables.append(Text(RICH_TIMING_NARROW_WARNING.format(width=width), style="yellow"))
-    renderables.append(Text("Engine timing", style="bold", justify="center"))
-    renderables.extend(_rich_compact_timing_table(table.file, table.rows) for table in report.compact)
-    renderables.append(Text(report.caption, style="dim"))
-    if report.detailed:
-        renderables.append(Text("Detailed timing", style="bold", justify="center"))
-        for block in report.detailed:
-            if block.message is not None:
-                renderables.append(Text(block.title, style="bold"))
-                renderables.append(Text(block.message, style="dim"))
+def _display_rows(
+    table: ReportTable,
+    visible: Sequence[tuple[int, ReportColumn]],
+) -> tuple[tuple[ReportCell, ...], ...]:
+    previous: dict[int, object] = {}
+    rows: list[tuple[ReportCell, ...]] = []
+    for row in table.rows:
+        values: list[ReportCell] = []
+        for index, column in visible:
+            cell = row.cells[index]
+            if column.collapse_repeats and index in previous and previous[index] == cell.raw:
+                cell = ReportCell(cell.raw, "", cell.tone)
             else:
-                renderables.append(_rich_detailed_timing_table(block))
-    return Group(*renderables)
-
-
-def render_markdown_timing(report: TimingReport) -> str:
-    """Render complete timing names and values independently of terminal width."""
-
-    lines = ["## Engine Timing"]
-    for table in report.compact:
-        lines.extend(
-            [
-                "",
-                f"### {_markdown_heading(table.file)}",
-                "",
-                *_markdown_table_lines(
-                    ("Target", "Backend/Treatment", "Search", "Apply", "Merge", "Rebuild", "Other", "Wall", "Status"),
-                    tuple(
-                        (
-                            row.target,
-                            row.cell,
-                            row.search,
-                            row.apply,
-                            row.merge,
-                            row.rebuild,
-                            row.other,
-                            row.wall,
-                            row.status,
-                        )
-                        for row in table.rows
-                    ),
-                    right_aligned=frozenset({"Search", "Apply", "Merge", "Rebuild", "Other", "Wall"}),
-                ),
-            ]
-        )
-    lines.extend(["", f"*{markdown_escape_cell(report.caption)}*"])
-    if report.detailed:
-        lines.extend(["", "## Detailed Timing"])
-        for block in report.detailed:
-            lines.extend(["", f"### {_markdown_heading(block.title)}", ""])
-            if block.message is not None:
-                lines.append(markdown_escape_cell(block.message))
-            else:
-                lines.extend(
-                    _markdown_table_lines(
-                        ("Ruleset", "Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"),
-                        tuple(
-                            (
-                                row.ruleset,
-                                row.total,
-                                row.share,
-                                row.search,
-                                row.apply,
-                                row.unattributed,
-                                row.merge,
-                                row.rebuild,
-                            )
-                            for row in block.rows
-                        ),
-                        right_aligned=frozenset(
-                            {"Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"}
-                        ),
-                    )
-                )
-    return "\n".join(lines)
-
-
-def _rich_compact_timing_table(file: str, rows: Sequence[CompactTimingRow]) -> Table:
-    table = Table(
-        title=Text(file, style="bold"),
-        header_style="bold",
-        box=box.SIMPLE_HEAVY,
-        expand=True,
-        collapse_padding=True,
-        padding=(0, 1),
-    )
-    table.add_column("Target", overflow="fold")
-    table.add_column("Backend/Treatment", overflow="fold")
-    for header in ("Search", "Apply", "Merge", "Rebuild", "Other", "Wall"):
-        table.add_column(header, justify="right", no_wrap=True)
-    table.add_column("Status", overflow="fold")
-    for value in rows:
-        table.add_row(
-            Text(value.target),
-            Text(value.cell),
-            Text(value.search),
-            Text(value.apply),
-            Text(value.merge),
-            Text(value.rebuild),
-            Text(value.other),
-            Text(value.wall),
-            Text(value.status),
-        )
-    return table
-
-
-def _rich_detailed_timing_table(block: DetailedTimingBlock) -> Table:
-    table = Table(
-        title=Text(block.title, style="bold"),
-        header_style="bold",
-        box=box.SIMPLE_HEAVY,
-        expand=True,
-        collapse_padding=True,
-        padding=(0, 1),
-    )
-    table.add_column("Ruleset", overflow="fold")
-    for header in ("Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"):
-        table.add_column(header, justify="right", no_wrap=True)
-    for row in block.rows:
-        table.add_row(
-            Text(row.ruleset),
-            Text(row.total),
-            Text(row.share),
-            Text(row.search),
-            Text(row.apply),
-            Text(row.unattributed),
-            Text(row.merge),
-            Text(row.rebuild),
-        )
-    return table
-
-
-def _markdown_table_lines(
-    headers: tuple[str, ...],
-    rows: tuple[tuple[str, ...], ...],
-    *,
-    right_aligned: frozenset[str],
-) -> list[str]:
-    lines = [
-        "| " + " | ".join(markdown_escape_cell(header) for header in headers) + " |",
-        "| " + " | ".join("---:" if header in right_aligned else "---" for header in headers) + " |",
-    ]
-    lines.extend("| " + " | ".join(markdown_escape_cell(value) for value in row) + " |" for row in rows)
-    return lines
+                previous[index] = cell.raw
+            values.append(cell)
+        rows.append(tuple(values))
+    return tuple(rows)
 
 
 def _markdown_heading(value: str) -> str:

@@ -10,7 +10,7 @@ from typing import cast
 import pytest
 
 from benchmarking import models
-from benchmarking.reports.database import ReportDatabase
+from benchmarking.reports.database import ReportDatabase, SqlReportScope
 from benchmarking.reports.records import (
     ReportRecord,
     RulesetTimingRecord,
@@ -19,6 +19,17 @@ from benchmarking.reports.records import (
 from benchmarking.reports.results import ComparisonRequest
 
 from .conftest import make_record, make_ruleset_timing, make_target, make_timing_summary, write_report
+
+PRESENTATION_RELATIONS = (
+    "presentation_targets",
+    "presentation_files",
+    "presentation_cells",
+    "presentation_cell_estimates",
+    "presentation_file_ratios",
+    "presentation_comparison_rollups",
+    "presentation_compact_timings",
+    "presentation_ruleset_timings",
+)
 
 
 def test_missing_report_is_an_empty_direct_view_without_database_artifacts(tmp_path: Path) -> None:
@@ -92,8 +103,8 @@ def test_output_views_and_source_path_are_visible_to_another_connection(tmp_path
     spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=1, timeout_sec=120)
 
     with ReportDatabase(report) as database:
-        database.install_scope((target,), spec, t_critical_95=None)
-        database.report_view_data((), include_timing=True)
+        database.install_scope((target,), spec, t_critical_95=None, requests=())
+        database.report_view_data(include_timing=True)
         other_connection = database._connection.cursor()
         try:
             views = dict(
@@ -105,26 +116,243 @@ def test_output_views_and_source_path_are_visible_to_another_connection(tmp_path
                     """
                 ).fetchall()
             )
+            macros = {
+                name: (function_type, parameters, parameter_types)
+                for name, function_type, parameters, parameter_types in other_connection.execute(
+                    """
+                    SELECT function_name, function_type, parameters, parameter_types
+                    FROM duckdb_functions()
+                    WHERE function_name LIKE 'presentation_%'
+                    """
+                ).fetchall()
+            }
             source_count = other_connection.execute("SELECT count(*) FROM report_rows").fetchone()
             scoped_target = other_connection.execute(
                 "SELECT target_role, target_label FROM presentation_targets"
             ).fetchone()
+            macro_target = other_connection.execute(
+                """
+                SELECT target_role, target_label
+                FROM presentation_targets(
+                    (SELECT scope FROM current_report_scope WHERE singleton)
+                )
+                """
+            ).fetchone()
         finally:
             other_connection.close()
 
-    assert set(views) == {
-        "presentation_targets",
-        "presentation_files",
-        "presentation_cells",
-        "presentation_cell_estimates",
-        "presentation_file_ratios",
-        "presentation_comparison_rollups",
-        "presentation_compact_timings",
-        "presentation_ruleset_timings",
-    }
+    assert set(views) == set(PRESENTATION_RELATIONS)
     assert not any(views.values())
+    assert set(macros) == set(PRESENTATION_RELATIONS)
+    assert all(function_type == "table_macro" for function_type, _, _ in macros.values())
+    assert all(parameters == ["requested_scope"] for _, parameters, _ in macros.values())
+    assert all(len(parameter_types) == 1 for _, _, parameter_types in macros.values())
     assert source_count == (1,)
     assert scoped_target == ("target", "current")
+    assert macro_target == scoped_target
+
+
+def test_presentation_views_and_typed_macros_preserve_column_names_and_types(tmp_path: Path) -> None:
+    expected = """
+### presentation_targets
+- target_order: UINTEGER
+- target_role: VARCHAR
+- target_label: VARCHAR
+- target_source: VARCHAR
+- target_path: VARCHAR
+- target_git_ref: VARCHAR
+- target_git_sha: VARCHAR
+- target_is_dirty: BOOLEAN
+- binary_sha256: VARCHAR
+### presentation_files
+- file_order: UINTEGER
+- file_sha256: VARCHAR
+- fact_directory_sha256: VARCHAR
+- file_path: VARCHAR
+- absolute_file_path: VARCHAR
+- fact_directory_path: VARCHAR
+### presentation_cells
+- cell_order: UINTEGER
+- backend: VARCHAR
+- treatment: ENUM('off', 'term', 'proofs')
+### presentation_cell_estimates
+- metric_order: UTINYINT
+- target_order: UINTEGER
+- file_order: UINTEGER
+- cell_order: UINTEGER
+- metric: VARCHAR
+- backend: VARCHAR
+- treatment: ENUM('off', 'term', 'proofs')
+- sample_count: UINTEGER
+- has_samples: BOOLEAN
+- mean: DOUBLE
+- ci_low: DOUBLE
+- ci_high: DOUBLE
+- result_class: VARCHAR
+- issue: VARCHAR
+### presentation_file_ratios
+- comparison_order: UINTEGER
+- metric_order: UTINYINT
+- file_order: UINTEGER
+- metric: VARCHAR
+- baseline_target_order: UINTEGER
+- baseline_cell_order: UINTEGER
+- candidate_target_order: UINTEGER
+- candidate_cell_order: UINTEGER
+- baseline_sample_count: UINTEGER
+- candidate_sample_count: UINTEGER
+- has_samples: BOOLEAN
+- point: DOUBLE
+- ci_low: DOUBLE
+- ci_high: DOUBLE
+- change_fraction: DOUBLE
+- change_ci_low: DOUBLE
+- change_ci_high: DOUBLE
+- is_valid: BOOLEAN
+- ci_entirely_below_one: BOOLEAN
+- ci_entirely_above_one: BOOLEAN
+- result_class: VARCHAR
+- issue: VARCHAR
+### presentation_comparison_rollups
+- comparison_order: UINTEGER
+- metric_order: UTINYINT
+- metric: VARCHAR
+- baseline_target_order: UINTEGER
+- baseline_cell_order: UINTEGER
+- candidate_target_order: UINTEGER
+- candidate_cell_order: UINTEGER
+- baseline_total: DOUBLE
+- candidate_total: DOUBLE
+- has_samples: BOOLEAN
+- suite_point: DOUBLE
+- suite_ci_low: DOUBLE
+- suite_ci_high: DOUBLE
+- suite_change_fraction: DOUBLE
+- suite_change_ci_low: DOUBLE
+- suite_change_ci_high: DOUBLE
+- suite_ci_entirely_below_two: BOOLEAN
+- suite_result_class: VARCHAR
+- suite_issue: VARCHAR
+- geometric_mean_point: DOUBLE
+- geometric_mean_change_fraction: DOUBLE
+- geometric_mean_result_class: VARCHAR
+- geometric_mean_issue: VARCHAR
+- file_count: UINTEGER
+- comparable_file_count: UINTEGER
+- better_file_count: UINTEGER
+- best_file_order: UINTEGER
+- best_point: DOUBLE
+- best_ci_low: DOUBLE
+- best_ci_high: DOUBLE
+- best_change_fraction: DOUBLE
+- best_result_class: VARCHAR
+- best_issue: VARCHAR
+- worst_file_order: UINTEGER
+- worst_point: DOUBLE
+- worst_ci_low: DOUBLE
+- worst_ci_high: DOUBLE
+- worst_change_fraction: DOUBLE
+- worst_result_class: VARCHAR
+- worst_issue: VARCHAR
+### presentation_compact_timings
+- target_order: UINTEGER
+- file_order: UINTEGER
+- cell_order: UINTEGER
+- backend: VARCHAR
+- treatment: ENUM('off', 'term', 'proofs')
+- search_ns: DOUBLE
+- apply_ns: DOUBLE
+- search_and_apply_ns: DOUBLE
+- unattributed_ns: DOUBLE
+- pre_merge_ns: DOUBLE
+- merge_ns: DOUBLE
+- rebuild_ns: DOUBLE
+- ruleset_total_ns: DOUBLE
+- outside_rulesets_ns: DOUBLE
+- other_ns: DOUBLE
+- wall_ns: DOUBLE
+- has_samples: BOOLEAN
+- result_class: VARCHAR
+- issue: VARCHAR
+### presentation_ruleset_timings
+- file_order: UINTEGER
+- cell_order: UINTEGER
+- ruleset_order: UINTEGER
+- target_order: UINTEGER
+- backend: VARCHAR
+- treatment: ENUM('off', 'term', 'proofs')
+- name: VARCHAR
+- search_ns: DOUBLE
+- apply_ns: DOUBLE
+- search_and_apply_ns: DOUBLE
+- unattributed_ns: DOUBLE
+- pre_merge_ns: DOUBLE
+- merge_ns: DOUBLE
+- rebuild_ns: DOUBLE
+- total_ns: DOUBLE
+- maximum_target_total: DOUBLE
+- result_ruleset_total_ns: DOUBLE
+- has_samples: BOOLEAN
+- result_class: VARCHAR
+- ruleset_share: DOUBLE
+""".strip()
+
+    with ReportDatabase(tmp_path / "report.jsonl") as database:
+        actual_sections: list[str] = []
+        for name in PRESENTATION_RELATIONS:
+            view_schema = database._connection.execute(f"DESCRIBE FROM {name}").fetchall()
+            macro_schema = database._connection.execute(
+                f"""
+                DESCRIBE FROM {name}(
+                    (SELECT scope FROM current_report_scope WHERE singleton)
+                )
+                """
+            ).fetchall()
+            view_columns = [(row[0], row[1]) for row in view_schema]
+            macro_columns = [(row[0], row[1]) for row in macro_schema]
+            assert macro_columns == view_columns
+            actual_sections.append(
+                "\n".join([f"### {name}", *(f"- {column}: {data_type}" for column, data_type in view_columns)])
+            )
+
+    assert "\n".join(actual_sections) == expected
+
+
+def test_arbitrary_scope_macro_recomputes_without_changing_current_view(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    write_report(
+        report,
+        make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=1.0),
+        make_record(1, started_at="2026-07-15T12:00:01Z", wall_sec=3.0),
+    )
+    target = make_target(target_label="current")
+    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
+
+    with ReportDatabase(report) as database:
+        database.install_scope((target,), spec, t_critical_95=12.706204736432095, requests=())
+        stored = database._connection.execute("SELECT scope FROM current_report_scope WHERE singleton").fetchone()
+        assert stored is not None
+        alternate_scope = cast(SqlReportScope, stored[0])
+        alternate_scope["rounds"] = 1
+        current_before = database._connection.execute(
+            "SELECT mean FROM presentation_cell_estimates WHERE metric = 'wall_sec'"
+        ).fetchone()
+        alternate = database._connection.execute(
+            """
+            SELECT mean
+            FROM presentation_cell_estimates(?::report_scope_t)
+            WHERE metric = 'wall_sec'
+            """,
+            [alternate_scope],
+        ).fetchone()
+        current_after = database._connection.execute(
+            "SELECT mean FROM presentation_cell_estimates WHERE metric = 'wall_sec'"
+        ).fetchone()
+
+    assert current_before == (2.0,)
+    assert alternate == (3.0,)
+    assert current_after == current_before
 
 
 def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: Path) -> None:
@@ -231,13 +459,15 @@ def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp
         target = make_target(binary_sha256="sha256:bin")
         file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
         spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-        database.install_scope((target,), spec, t_critical_95=12.706204736432095)
+        database.install_scope((target,), spec, t_critical_95=12.706204736432095, requests=())
         scoped_statuses = tuple(
             row[0]
             for row in database._connection.execute(
                 """
                 SELECT status
-                FROM scoped_observations
+                FROM scoped_observations(
+                    (SELECT scope FROM current_report_scope WHERE singleton)
+                )
                 ORDER BY started_at::TIMESTAMPTZ, row_index
                 """
             ).fetchall()
@@ -263,11 +493,13 @@ def test_scope_cell_and_comparison_statistics_match_expected_formulas(tmp_path: 
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=12.706204736432095)
-        views = database.report_view_data(
-            (ComparisonRequest(0, 0, 0, 1, 0),),
-            include_timing=False,
+        database.install_scope(
+            (baseline, candidate),
+            spec,
+            t_critical_95=12.706204736432095,
+            requests=(ComparisonRequest(0, 0, 1, 0),),
         )
+        views = database.report_view_data(include_timing=False)
 
     cells = [row for row in views.cell_estimates if row.metric == "wall_sec"]
     comparison = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
@@ -311,11 +543,13 @@ def test_sql_t_and_fieller_intervals_match_reference_formulas(tmp_path: Path) ->
     write_report(report, *records)
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=t_critical)
-        views = database.report_view_data(
-            (ComparisonRequest(0, 0, 0, 1, 0),),
-            include_timing=False,
+        database.install_scope(
+            (baseline, candidate),
+            spec,
+            t_critical_95=t_critical,
+            requests=(ComparisonRequest(0, 0, 1, 0),),
         )
+        views = database.report_view_data(include_timing=False)
 
     baseline_first = next(
         row
@@ -398,11 +632,13 @@ def test_file_and_suite_interval_undefined_branches(
     write_report(report, *records)
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=t_critical)
-        views = database.report_view_data(
-            (ComparisonRequest(0, 0, 0, 1, 0),),
-            include_timing=False,
+        database.install_scope(
+            (baseline, candidate),
+            spec,
+            t_critical_95=t_critical,
+            requests=(ComparisonRequest(0, 0, 1, 0),),
         )
+        views = database.report_view_data(include_timing=False)
 
     file_ratio = next(row for row in views.file_ratios if row.metric == "wall_sec")
     suite = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
@@ -433,11 +669,13 @@ def test_zero_candidate_mean_keeps_suite_ratio_and_marks_geometric_mean_unavaila
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=12.706204736432095)
-        views = database.report_view_data(
-            (ComparisonRequest(0, 0, 0, 1, 0),),
-            include_timing=False,
+        database.install_scope(
+            (baseline, candidate),
+            spec,
+            t_critical_95=12.706204736432095,
+            requests=(ComparisonRequest(0, 0, 1, 0),),
         )
+        views = database.report_view_data(include_timing=False)
         comparison = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
 
     assert comparison.suite_point == 0.0
@@ -478,11 +716,13 @@ def test_comparison_rollup_view_owns_best_worst_counts_and_totals(tmp_path: Path
     write_report(report, *records)
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=None)
-        views = database.report_view_data(
-            (ComparisonRequest(0, 0, 0, 1, 0),),
-            include_timing=False,
+        database.install_scope(
+            (baseline, candidate),
+            spec,
+            t_critical_95=None,
+            requests=(ComparisonRequest(0, 0, 1, 0),),
         )
+        views = database.report_view_data(include_timing=False)
         rollup = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
 
     assert rollup.file_count == 3
@@ -509,7 +749,7 @@ def test_report_scope_rejects_targets_with_the_same_binary(tmp_path: Path) -> No
         ReportDatabase(report) as database,
         pytest.raises(ValueError, match=r"targets 'first' and 'second' produced the same binary SHA-256"),
     ):
-        database.install_scope((first, second), spec, t_critical_95=12.706204736432095)
+        database.install_scope((first, second), spec, t_critical_95=12.706204736432095, requests=())
 
 
 def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path: Path) -> None:
@@ -549,8 +789,8 @@ def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path:
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((invalid, valid), spec, t_critical_95=12.706204736432095)
-        views = database.report_view_data((), include_timing=True)
+        database.install_scope((invalid, valid), spec, t_critical_95=12.706204736432095, requests=())
+        views = database.report_view_data(include_timing=True)
 
     timings = {row.target_order: row for row in views.compact_timings}
     invalid_metric = next(row for row in views.cell_estimates if row.target_order == 0 and row.metric == "wall_sec")
@@ -640,8 +880,8 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=12.706204736432095)
-        views = database.report_view_data((), include_timing=True)
+        database.install_scope((baseline, candidate), spec, t_critical_95=12.706204736432095, requests=())
+        views = database.report_view_data(include_timing=True)
 
     rows = {(row.target_order, row.name): row for row in views.ruleset_timings}
     for target_order, absent_name in ((0, "candidate-only"), (1, "baseline-only"), (1, "sporadic")):

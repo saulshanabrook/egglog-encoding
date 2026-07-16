@@ -1,7 +1,8 @@
-"""Package the DuckDB schema, analysis, and output-facing report views.
+"""Package the DuckDB cache schema, parameterized analysis, and presentation layer.
 
-``schema.sql`` defines the trusted JSONL projection and selected-scope tables,
-``analysis.sql`` owns reusable statistics and timing aggregation, and
-``presentation.sql`` exposes typed semantic datasets for Python rendering and
-interactive UI queries. Python loads all three through :mod:`importlib.resources`.
+``schema.sql`` defines the trusted JSONL projection, typed scope STRUCT, and
+current-scope holder. ``analysis.sql`` owns scope table macros, statistics, and
+timing aggregation. ``presentation.sql`` exposes same-named parameterized table
+macros and current-scope views for Python rendering and interactive UI queries.
+Python loads all three through :mod:`importlib.resources`.
 """

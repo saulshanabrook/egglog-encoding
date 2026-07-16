@@ -1,22 +1,22 @@
--- Presentation views keep stable output contracts for Python and the DuckDB
--- UI. Analysis owns every statistical classification, ranking, and derived
--- timing value; these views only project them and attach selector labels.
-CREATE VIEW presentation_targets AS
+-- Presentation table macros keep stable output contracts for arbitrary typed
+-- scopes. Analysis owns every statistical classification, ranking, and
+-- derived timing value; these macros only project them and attach labels.
+CREATE MACRO presentation_targets(requested_scope report_scope_t) AS TABLE
 SELECT *
-FROM scoped_target_metadata;
+FROM scoped_target_metadata(requested_scope);
 
 -- These two passthroughs deliberately keep all UI entry points under one
 -- presentation_* namespace instead of making users mix scope_* and output
 -- names when joining coordinates to labels.
-CREATE VIEW presentation_files AS
+CREATE MACRO presentation_files(requested_scope report_scope_t) AS TABLE
 SELECT *
-FROM scope_files;
+FROM scope_files(requested_scope);
 
-CREATE VIEW presentation_cells AS
+CREATE MACRO presentation_cells(requested_scope report_scope_t) AS TABLE
 SELECT *
-FROM scope_cells;
+FROM scope_cells(requested_scope);
 
-CREATE VIEW presentation_cell_estimates AS
+CREATE MACRO presentation_cell_estimates(requested_scope report_scope_t) AS TABLE
 SELECT
     summaries.metric_order,
     summaries.target_order,
@@ -32,10 +32,10 @@ SELECT
     summaries.ci_high,
     summaries.result_class,
     summaries.issue
-FROM scoped_cell_summaries AS summaries
-JOIN scope_cells AS cells USING (cell_order);
+FROM scoped_cell_summaries(requested_scope) AS summaries
+JOIN scope_cells(requested_scope) AS cells USING (cell_order);
 
-CREATE VIEW presentation_file_ratios AS
+CREATE MACRO presentation_file_ratios(requested_scope report_scope_t) AS TABLE
 SELECT
     comparison_order,
     metric_order,
@@ -59,9 +59,9 @@ SELECT
     ci_entirely_above_one,
     result_class,
     issue
-FROM scoped_file_ratios;
+FROM scoped_file_ratios(requested_scope);
 
-CREATE VIEW presentation_comparison_rollups AS
+CREATE MACRO presentation_comparison_rollups(requested_scope report_scope_t) AS TABLE
 SELECT
     comparison_order,
     metric_order,
@@ -103,9 +103,9 @@ SELECT
     worst_change_fraction,
     worst_result_class,
     worst_issue
-FROM scoped_comparison_rollups;
+FROM scoped_comparison_rollups(requested_scope);
 
-CREATE VIEW presentation_compact_timings AS
+CREATE MACRO presentation_compact_timings(requested_scope report_scope_t) AS TABLE
 SELECT
     timings.target_order,
     timings.file_order,
@@ -126,10 +126,10 @@ SELECT
     timings.has_samples,
     timings.result_class,
     timings.issue
-FROM scoped_timing_summaries AS timings
-JOIN scope_cells AS cells USING (cell_order);
+FROM scoped_timing_summaries(requested_scope) AS timings
+JOIN scope_cells(requested_scope) AS cells USING (cell_order);
 
-CREATE VIEW presentation_ruleset_timings AS
+CREATE MACRO presentation_ruleset_timings(requested_scope report_scope_t) AS TABLE
 SELECT
     timings.file_order,
     timings.cell_order,
@@ -151,5 +151,48 @@ SELECT
     timings.has_samples,
     timings.result_class,
     timings.ruleset_share
-FROM scoped_ruleset_timings AS timings
-JOIN scope_cells AS cells USING (cell_order);
+FROM scoped_ruleset_timings(requested_scope) AS timings
+JOIN scope_cells(requested_scope) AS cells USING (cell_order);
+
+-- The CLI and DuckDB UI use ordinary, discoverable views over the one current
+-- scope. A caller can invoke the same-named macro with another report_scope_t
+-- to recompute without mutating this state or using session variables.
+CREATE VIEW presentation_targets AS
+FROM presentation_targets(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_files AS
+FROM presentation_files(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_cells AS
+FROM presentation_cells(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_cell_estimates AS
+FROM presentation_cell_estimates(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_file_ratios AS
+FROM presentation_file_ratios(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_comparison_rollups AS
+FROM presentation_comparison_rollups(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_compact_timings AS
+FROM presentation_compact_timings(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);
+
+CREATE VIEW presentation_ruleset_timings AS
+FROM presentation_ruleset_timings(
+    (SELECT scope FROM current_report_scope WHERE singleton)
+);

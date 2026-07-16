@@ -93,6 +93,7 @@ def test_data_boundary_does_not_import_runner_or_presentation_dependencies() -> 
         "rich",
     }
     data_modules = (
+        ROOT / "benchmarking/reports/catalog.py",
         ROOT / "benchmarking/reports/records.py",
         ROOT / "benchmarking/reports/database.py",
         ROOT / "benchmarking/reports/results.py",
@@ -104,6 +105,21 @@ def test_data_boundary_does_not_import_runner_or_presentation_dependencies() -> 
                 violations.append(f"{path.relative_to(ROOT)} imports {name}")
 
     assert not violations, "; ".join(violations)
+
+
+def test_report_renderer_depends_only_on_the_shared_catalog_contract() -> None:
+    """Prevent renderer-specific code from reaching behind the final catalog."""
+
+    imports = imported_module_names(ROOT / "benchmarking/reports/render.py")
+    forbidden = {
+        "benchmarking.reports.database",
+        "benchmarking.reports.records",
+        "benchmarking.reports.results",
+        "benchmarking.reports.summary",
+        "benchmarking.reports.timing",
+    }
+    assert "benchmarking.reports.catalog" in imports
+    assert imports.isdisjoint(forbidden)
 
 
 def test_report_package_does_not_import_runner_layers() -> None:

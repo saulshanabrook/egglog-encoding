@@ -73,46 +73,53 @@ WITH parsed AS (
 SELECT row_index, unnest(record)
 FROM parsed;
 
--- These relations are the parameters for one report. Python populates them
--- once after resolving the selected matrix; the ordinary views read them at
--- query time. They are catalog objects rather than TEMP objects so another
--- connection from the optional DuckDB UI sees the same scope.
-CREATE TABLE scope_targets (
-    target_order UINTEGER PRIMARY KEY,
-    binary_sha256 VARCHAR NOT NULL,
-    target_label VARCHAR NOT NULL,
-    target_source VARCHAR NOT NULL,
-    target_path VARCHAR NOT NULL,
-    target_git_ref VARCHAR NOT NULL,
-    target_git_sha VARCHAR NOT NULL,
-    target_is_dirty BOOLEAN NOT NULL
+-- A report scope is one immutable, typed value. Ordered lists own their
+-- zero-based coordinates; the scope_* table macros recover those coordinates
+-- with ordinality instead of storing a second, potentially inconsistent copy.
+CREATE TYPE report_scope_target_t AS STRUCT(
+    binary_sha256 VARCHAR,
+    target_label VARCHAR,
+    target_source VARCHAR,
+    target_path VARCHAR,
+    target_git_ref VARCHAR,
+    target_git_sha VARCHAR,
+    target_is_dirty BOOLEAN
 );
 
-CREATE TABLE scope_files (
-    file_order UINTEGER PRIMARY KEY,
-    file_sha256 VARCHAR NOT NULL,
-    fact_directory_sha256 VARCHAR NOT NULL,
-    file_path VARCHAR NOT NULL,
-    absolute_file_path VARCHAR NOT NULL,
+CREATE TYPE report_scope_file_t AS STRUCT(
+    file_sha256 VARCHAR,
+    fact_directory_sha256 VARCHAR,
+    file_path VARCHAR,
+    absolute_file_path VARCHAR,
     fact_directory_path VARCHAR
 );
 
-CREATE TABLE scope_cells (
-    cell_order UINTEGER PRIMARY KEY,
-    backend VARCHAR NOT NULL,
-    treatment report_treatment_t NOT NULL
+CREATE TYPE report_scope_cell_t AS STRUCT(
+    backend VARCHAR,
+    treatment report_treatment_t
 );
 
-CREATE TABLE scope_parameters (
-    rounds UINTEGER NOT NULL,
-    timeout_sec UINTEGER NOT NULL,
+CREATE TYPE report_scope_comparison_t AS STRUCT(
+    baseline_target_order UINTEGER,
+    baseline_cell_order UINTEGER,
+    candidate_target_order UINTEGER,
+    candidate_cell_order UINTEGER
+);
+
+CREATE TYPE report_scope_t AS STRUCT(
+    targets report_scope_target_t[],
+    files report_scope_file_t[],
+    cells report_scope_cell_t[],
+    comparisons report_scope_comparison_t[],
+    rounds UINTEGER,
+    timeout_sec UINTEGER,
     t_critical_95 DOUBLE
 );
 
-CREATE TABLE scope_comparisons (
-    comparison_order UINTEGER PRIMARY KEY,
-    baseline_target_order UINTEGER NOT NULL,
-    baseline_cell_order UINTEGER NOT NULL,
-    candidate_target_order UINTEGER NOT NULL,
-    candidate_cell_order UINTEGER NOT NULL
+-- The CLI installs one current scope for its ordinary presentation views. A
+-- caller that needs another scope passes it directly to the same-named table
+-- macros, without replacing this row or relying on connection-local state.
+CREATE TABLE current_report_scope (
+    singleton BOOLEAN PRIMARY KEY CHECK (singleton),
+    scope report_scope_t NOT NULL
 );

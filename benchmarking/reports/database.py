@@ -1,8 +1,8 @@
 """Own the transient DuckDB catalog over the append-only benchmark JSONL.
 
 This module appends trusted writer records, creates the direct JSONL scan,
-installs the selected report scope, loads the analysis and output-facing SQL
-views, converts those view rows to typed contracts, and owns the optional
+installs the selected typed report scope, loads the analysis and output-facing
+SQL relations, converts those rows to typed contracts, and owns the optional
 DuckDB UI lifecycle. Persisted writer shapes belong in
 :mod:`benchmarking.reports.records`; statistical and grouping semantics belong
 in ``reports/sql``; table layout and text rendering belong in the sibling
@@ -15,7 +15,7 @@ import json
 from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypedDict
 
 import duckdb
 
@@ -69,6 +69,56 @@ class _EstimateAggregateQueryRow(NamedTuple):
     timeout_sec: int
     sample_count: int
     total_wall_sec: float
+
+
+class SqlReportScopeTarget(TypedDict):
+    """Python mirror of SQL ``report_scope_target_t``."""
+
+    binary_sha256: str
+    target_label: str
+    target_source: str
+    target_path: str
+    target_git_ref: str
+    target_git_sha: str
+    target_is_dirty: bool
+
+
+class SqlReportScopeFile(TypedDict):
+    """Python mirror of SQL ``report_scope_file_t``."""
+
+    file_sha256: str
+    fact_directory_sha256: str
+    file_path: str
+    absolute_file_path: str
+    fact_directory_path: str | None
+
+
+class SqlReportScopeCell(TypedDict):
+    """Python mirror of SQL ``report_scope_cell_t``."""
+
+    backend: Backend
+    treatment: Treatment
+
+
+class SqlReportScopeComparison(TypedDict):
+    """Python mirror of SQL ``report_scope_comparison_t``."""
+
+    baseline_target_order: int
+    baseline_cell_order: int
+    candidate_target_order: int
+    candidate_cell_order: int
+
+
+class SqlReportScope(TypedDict):
+    """Python mirror of SQL ``report_scope_t`` passed to report table macros."""
+
+    targets: list[SqlReportScopeTarget]
+    files: list[SqlReportScopeFile]
+    cells: list[SqlReportScopeCell]
+    comparisons: list[SqlReportScopeComparison]
+    rounds: int
+    timeout_sec: int
+    t_critical_95: float | None
 
 
 class ReportDatabase:
@@ -324,8 +374,9 @@ class ReportDatabase:
         targets: Sequence[ResolvedTarget],
         spec: BenchmarkSpec,
         t_critical_95: float | None,
+        requests: Sequence[ComparisonRequest],
     ) -> None:
-        """Install the ordered parameter relations for this report exactly once."""
+        """Install one immutable typed scope for the current report views."""
 
         self._ensure_open()
         cells = benchmark_cells(spec)
@@ -342,62 +393,56 @@ class ReportDatabase:
         if spec.timeout_sec < 1:
             raise ValueError("report scope timeout must be positive")
 
-        connection = self._connection
-        connection.execute("BEGIN TRANSACTION")
-        try:
-            connection.executemany(
-                "INSERT INTO scope_targets VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        order,
-                        target.binary_sha256,
-                        target.display_label,
-                        target.row.source,
-                        target.row.path,
-                        target.row.git_ref,
-                        target.row.git_sha,
-                        target.row.is_dirty,
-                    )
-                    for order, target in enumerate(targets)
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO scope_files VALUES (?, ?, ?, ?, ?, ?)",
-                [
-                    (
-                        order,
-                        file.sha256,
-                        file.fact_directory_sha256,
-                        file.display_path,
-                        str(file.absolute_path),
-                        None if file.fact_directory is None else str(file.fact_directory),
-                    )
-                    for order, file in enumerate(spec.files)
-                ],
-            )
-            connection.executemany(
-                "INSERT INTO scope_cells VALUES (?, ?, ?)",
-                [(order, cell.backend, cell.treatment) for order, cell in enumerate(cells)],
-            )
-            connection.execute(
-                "INSERT INTO scope_parameters VALUES (?, ?, ?)",
-                [spec.rounds, spec.timeout_sec, t_critical_95],
-            )
-            connection.execute("COMMIT")
-        except BaseException:
-            connection.execute("ROLLBACK")
-            raise
+        scope: SqlReportScope = {
+            "targets": [
+                {
+                    "binary_sha256": target.binary_sha256,
+                    "target_label": target.display_label,
+                    "target_source": target.row.source,
+                    "target_path": target.row.path,
+                    "target_git_ref": target.row.git_ref,
+                    "target_git_sha": target.row.git_sha,
+                    "target_is_dirty": target.row.is_dirty,
+                }
+                for target in targets
+            ],
+            "files": [
+                {
+                    "file_sha256": file.sha256,
+                    "fact_directory_sha256": file.fact_directory_sha256,
+                    "file_path": file.display_path,
+                    "absolute_file_path": str(file.absolute_path),
+                    "fact_directory_path": None if file.fact_directory is None else str(file.fact_directory),
+                }
+                for file in spec.files
+            ],
+            "cells": [{"backend": cell.backend, "treatment": cell.treatment} for cell in cells],
+            "comparisons": [
+                {
+                    "baseline_target_order": request.baseline_target_order,
+                    "baseline_cell_order": request.baseline_cell_order,
+                    "candidate_target_order": request.candidate_target_order,
+                    "candidate_cell_order": request.candidate_cell_order,
+                }
+                for request in requests
+            ],
+            "rounds": spec.rounds,
+            "timeout_sec": spec.timeout_sec,
+            "t_critical_95": t_critical_95,
+        }
+        self._connection.execute(
+            "INSERT INTO current_report_scope VALUES (TRUE, ?::report_scope_t)",
+            [scope],
+        )
 
     def report_view_data(
         self,
-        requests: Sequence[ComparisonRequest],
         *,
         include_timing: bool,
     ) -> ReportViewData:
-        """Install comparisons and query every Python-consumed view for the report scope."""
+        """Query every Python-consumed presentation view for the current scope."""
 
         self._ensure_open()
-        self._install_comparisons(requests)
         targets = _fetch_rows(
             self._connection.execute("SELECT * FROM presentation_targets ORDER BY target_order"),
             TargetView,
@@ -458,24 +503,6 @@ class ReportDatabase:
             compact_timings=tuple(compact_timings),
             ruleset_timings=tuple(ruleset_timings),
         )
-
-    def _install_comparisons(self, requests: Sequence[ComparisonRequest]) -> None:
-        """Install the ordered comparison parameters consumed by report views."""
-
-        if requests:
-            self._connection.executemany(
-                "INSERT INTO scope_comparisons VALUES (?, ?, ?, ?, ?)",
-                [
-                    (
-                        request.comparison_order,
-                        request.baseline_target_order,
-                        request.baseline_cell_order,
-                        request.candidate_target_order,
-                        request.candidate_cell_order,
-                    )
-                    for request in requests
-                ],
-            )
 
     def _ensure_open(self) -> None:
         if self._closed:

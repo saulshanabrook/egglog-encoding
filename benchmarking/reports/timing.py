@@ -1,20 +1,28 @@
-"""Lay out and format engine-timing rows returned by DuckDB report views.
+"""Build renderer-neutral engine-timing tables from DuckDB report relations.
 
-This module maps selected coordinates into compact and detailed tables and
-formats durations, shares, and availability messages. SQL views own phase
-aggregation, the cross-target ruleset union, absent-ruleset nullability,
-ordering, and share calculation. Rich and Markdown syntax, terminal widths,
-and styling belong in ``render``.
+This module maps selected coordinates into generic catalog blocks and formats
+durations, shares, and availability messages. SQL views own phase aggregation,
+the cross-target ruleset union, absent-ruleset nullability, ordering, and share
+calculation. Rich/Markdown syntax and terminal widths belong in ``render``.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Final
 
-from ..models import BenchmarkSpec, ResolvedTarget, benchmark_cells
+from ..models import BenchmarkCell, BenchmarkSpec, FileSpec, ResolvedTarget, benchmark_cells
+from .catalog import (
+    ReportBlock,
+    ReportColumn,
+    ReportMessage,
+    ReportRow,
+    ReportSection,
+    ReportTable,
+    report_id,
+    text_cell,
+)
 from .results import CompactTimingView, RulesetTimingView
 
 NULL: Final = "—"
@@ -26,62 +34,7 @@ TIMING_CAPTION: Final = (
 )
 
 
-@dataclass(frozen=True)
-class CompactTimingRow:
-    """One selected target/file/backend/treatment result in the compact view."""
-
-    target: str
-    cell: str
-    search: str
-    apply: str
-    merge: str
-    rebuild: str
-    other: str
-    wall: str
-    status: str
-
-
-@dataclass(frozen=True)
-class CompactTimingTable:
-    """All selected results for one benchmark file."""
-
-    file: str
-    rows: tuple[CompactTimingRow, ...]
-
-
-@dataclass(frozen=True)
-class RulesetTimingRow:
-    """One formatted ruleset mean in a detailed result table."""
-
-    ruleset: str
-    total: str
-    share: str
-    search: str
-    apply: str
-    unattributed: str
-    merge: str
-    rebuild: str
-
-
-@dataclass(frozen=True)
-class DetailedTimingBlock:
-    """One target's detailed result within a file/cell comparison group."""
-
-    title: str
-    rows: tuple[RulesetTimingRow, ...]
-    message: str | None = None
-
-
-@dataclass(frozen=True)
-class TimingReport:
-    """Complete compact timing overview plus optional exhaustive detail."""
-
-    compact: tuple[CompactTimingTable, ...]
-    detailed: tuple[DetailedTimingBlock, ...]
-    caption: str = TIMING_CAPTION
-
-
-def build_timing_report(
+def build_timing_sections(
     compact_rows: Sequence[CompactTimingView],
     ruleset_rows: Sequence[RulesetTimingView],
     targets: Sequence[ResolvedTarget],
@@ -89,13 +42,8 @@ def build_timing_report(
     *,
     detailed: bool,
     file_labels: Sequence[str] | None = None,
-) -> TimingReport:
-    """Build timing views in benchmark selector order.
-
-    The rows must come from the output-facing views for one installed scope.
-    Missing query rows are nevertheless rendered as invalid results so a UI
-    bug cannot silently omit a selected cell.
-    """
+) -> tuple[ReportSection, ...]:
+    """Build timing sections in benchmark selector order from one installed scope."""
 
     labels = tuple(file.display_path for file in spec.files) if file_labels is None else tuple(file_labels)
     if len(labels) != len(spec.files):
@@ -105,27 +53,51 @@ def build_timing_report(
     rulesets_by_coordinate: dict[tuple[int, int, int], list[RulesetTimingView]] = {}
     for row in ruleset_rows:
         rulesets_by_coordinate.setdefault((row.target_order, row.file_order, row.cell_order), []).append(row)
-    cells = benchmark_cells(spec)
-    compact_tables: list[CompactTimingTable] = []
-    for file_order, label in enumerate(labels):
-        rows: list[CompactTimingRow] = []
-        for cell_order, cell in enumerate(cells):
-            for target_order, target in enumerate(targets):
-                summary = compact_by_coordinate.get((target_order, file_order, cell_order))
-                rows.append(_compact_row(target.display_label, f"{cell.backend}/{cell.treatment}", summary))
-        compact_tables.append(CompactTimingTable(label, tuple(rows)))
 
-    detail_blocks: list[DetailedTimingBlock] = []
+    cells = benchmark_cells(spec)
+    compact_tables = tuple(
+        _compact_table(
+            file_spec,
+            labels[file_order],
+            file_order,
+            cells,
+            targets,
+            compact_by_coordinate,
+        )
+        for file_order, file_spec in enumerate(spec.files)
+    )
+    timing_blocks: tuple[ReportBlock, ...] = (
+        *compact_tables,
+        ReportMessage(
+            report_id("timing", "caption"),
+            None,
+            TIMING_CAPTION,
+            tone="muted",
+            layout="caption",
+        ),
+    )
+    sections = [ReportSection("timing", "Engine Timing", timing_blocks)]
+
     if detailed:
-        for file_order, label in enumerate(labels):
+        detail_blocks: list[ReportBlock] = []
+        for file_order, file_spec in enumerate(spec.files):
             for cell_order, cell in enumerate(cells):
                 for target_order, target in enumerate(targets):
                     key = (target_order, file_order, cell_order)
-                    summary = compact_by_coordinate.get(key)
-                    title = f"{label} · {cell.backend}/{cell.treatment} · {target.display_label}"
-                    detail_blocks.append(_detailed_block(title, summary, rulesets_by_coordinate.get(key, ())))
+                    title = f"{labels[file_order]} · {cell.backend}/{cell.treatment} · {target.display_label}"
+                    detail_blocks.append(
+                        _detailed_block(
+                            target,
+                            file_spec,
+                            cell,
+                            title,
+                            compact_by_coordinate.get(key),
+                            rulesets_by_coordinate.get(key, ()),
+                        )
+                    )
+        sections.append(ReportSection("detailed-timing", "Detailed Timing", tuple(detail_blocks)))
 
-    return TimingReport(tuple(compact_tables), tuple(detail_blocks))
+    return tuple(sections)
 
 
 def format_duration(value_ns: float | None, *, attribution: bool = False) -> str:
@@ -159,51 +131,138 @@ def format_share(value: float | None) -> str:
     return f"{percentage:.1f}%"
 
 
-def _compact_row(target: str, cell: str, summary: CompactTimingView | None) -> CompactTimingRow:
-    if summary is None:
-        return CompactTimingRow(target, cell, NULL, NULL, NULL, NULL, NULL, NULL, "missing result")
-    if summary.issue is not None:
-        return CompactTimingRow(target, cell, NULL, NULL, NULL, NULL, NULL, NULL, summary.issue)
-    return CompactTimingRow(
-        target,
-        cell,
-        format_duration(summary.search_ns),
-        format_duration(summary.apply_ns),
-        format_duration(summary.merge_ns),
-        format_duration(summary.rebuild_ns),
-        format_duration(summary.other_ns, attribution=True),
-        format_duration(summary.wall_ns),
-        "success",
+def _compact_table(
+    file_spec: FileSpec,
+    label: str,
+    file_order: int,
+    cells: Sequence[BenchmarkCell],
+    targets: Sequence[ResolvedTarget],
+    compact_by_coordinate: dict[tuple[int, int, int], CompactTimingView],
+) -> ReportTable:
+    rows = tuple(
+        _compact_row(
+            target,
+            file_spec,
+            cell,
+            compact_by_coordinate.get((target_order, file_order, cell_order)),
+        )
+        for cell_order, cell in enumerate(cells)
+        for target_order, target in enumerate(targets)
+    )
+    return ReportTable(
+        report_id("timing", "compact", file_spec.sha256, file_spec.fact_directory_sha256),
+        label,
+        (
+            ReportColumn("target", "Target"),
+            ReportColumn("cell", "Backend/Treatment"),
+            ReportColumn("search_ns", "Search", "right"),
+            ReportColumn("apply_ns", "Apply", "right"),
+            ReportColumn("merge_ns", "Merge", "right"),
+            ReportColumn("rebuild_ns", "Rebuild", "right"),
+            ReportColumn("other_ns", "Other", "right"),
+            ReportColumn("wall_ns", "Wall", "right"),
+            ReportColumn("status", "Status"),
+        ),
+        rows,
+        layout="wide",
     )
 
 
+def _compact_row(
+    target: ResolvedTarget,
+    file_spec: FileSpec,
+    cell: BenchmarkCell,
+    summary: CompactTimingView | None,
+) -> ReportRow:
+    row_id = report_id(
+        "timing",
+        "compact-row",
+        target.binary_sha256,
+        file_spec.sha256,
+        file_spec.fact_directory_sha256,
+        cell.backend,
+        cell.treatment,
+    )
+    identity = (text_cell(target.display_label), text_cell(f"{cell.backend}/{cell.treatment}"))
+    if summary is None:
+        return ReportRow(row_id, (*identity, *(_missing_duration_cells()), text_cell("missing result")))
+    if summary.issue is not None:
+        return ReportRow(row_id, (*identity, *(_missing_duration_cells()), text_cell(summary.issue)))
+    return ReportRow(
+        row_id,
+        (
+            *identity,
+            text_cell(summary.search_ns, format_duration(summary.search_ns)),
+            text_cell(summary.apply_ns, format_duration(summary.apply_ns)),
+            text_cell(summary.merge_ns, format_duration(summary.merge_ns)),
+            text_cell(summary.rebuild_ns, format_duration(summary.rebuild_ns)),
+            text_cell(summary.other_ns, format_duration(summary.other_ns, attribution=True)),
+            text_cell(summary.wall_ns, format_duration(summary.wall_ns)),
+            text_cell("success"),
+        ),
+    )
+
+
+def _missing_duration_cells() -> tuple:
+    return tuple(text_cell(None, NULL) for _ in range(6))
+
+
 def _detailed_block(
+    target: ResolvedTarget,
+    file_spec: FileSpec,
+    cell: BenchmarkCell,
     title: str,
     summary: CompactTimingView | None,
     rulesets: Sequence[RulesetTimingView],
-) -> DetailedTimingBlock:
+) -> ReportBlock:
+    block_id = report_id(
+        "timing",
+        "rulesets",
+        target.binary_sha256,
+        file_spec.sha256,
+        file_spec.fact_directory_sha256,
+        cell.backend,
+        cell.treatment,
+    )
     if summary is None:
-        return DetailedTimingBlock(title, (), "Status: missing result")
+        return ReportMessage(block_id, title, "Status: missing result")
     if summary.issue is not None:
-        return DetailedTimingBlock(title, (), f"Status: {summary.issue}")
+        return ReportMessage(block_id, title, f"Status: {summary.issue}")
     if not rulesets:
-        return DetailedTimingBlock(title, (), "No rulesets recorded.")
+        return ReportMessage(block_id, title, "No rulesets recorded.")
 
-    rows: list[RulesetTimingRow] = []
-    for ruleset in rulesets:
-        rows.append(
-            RulesetTimingRow(
-                DEFAULT_RULESET if ruleset.name == "" else ruleset.name,
-                format_duration(ruleset.total_ns),
-                format_share(ruleset.ruleset_share),
-                format_duration(ruleset.search_ns),
-                format_duration(ruleset.apply_ns),
-                format_duration(ruleset.unattributed_ns),
-                format_duration(ruleset.merge_ns),
-                format_duration(ruleset.rebuild_ns),
-            )
+    rows = tuple(
+        ReportRow(
+            report_id(block_id, "ruleset", ruleset.name),
+            (
+                text_cell(ruleset.name, DEFAULT_RULESET if ruleset.name == "" else ruleset.name),
+                text_cell(ruleset.total_ns, format_duration(ruleset.total_ns)),
+                text_cell(ruleset.ruleset_share, format_share(ruleset.ruleset_share)),
+                text_cell(ruleset.search_ns, format_duration(ruleset.search_ns)),
+                text_cell(ruleset.apply_ns, format_duration(ruleset.apply_ns)),
+                text_cell(ruleset.unattributed_ns, format_duration(ruleset.unattributed_ns)),
+                text_cell(ruleset.merge_ns, format_duration(ruleset.merge_ns)),
+                text_cell(ruleset.rebuild_ns, format_duration(ruleset.rebuild_ns)),
+            ),
         )
-    return DetailedTimingBlock(title, tuple(rows))
+        for ruleset in rulesets
+    )
+    return ReportTable(
+        block_id,
+        title,
+        (
+            ReportColumn("ruleset", "Ruleset"),
+            ReportColumn("total_ns", "Total", "right"),
+            ReportColumn("share", "Share", "right"),
+            ReportColumn("search_ns", "Search", "right"),
+            ReportColumn("apply_ns", "Apply", "right"),
+            ReportColumn("unattributed_ns", "Unattributed", "right"),
+            ReportColumn("merge_ns", "Merge", "right"),
+            ReportColumn("rebuild_ns", "Rebuild", "right"),
+        ),
+        rows,
+        layout="wide",
+    )
 
 
 def _three_significant_digits(value: float) -> str:

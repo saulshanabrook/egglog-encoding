@@ -24,8 +24,58 @@ FROM report_rows
 WHERE status = 'success' AND wall_sec IS NOT NULL
 GROUP BY ALL;
 
+-- Expand one typed report scope into the relations used by analysis. List
+-- order is the single source of truth for stable zero-based coordinates.
+CREATE MACRO scope_targets(requested_scope report_scope_t) AS TABLE
+SELECT
+    (ordinality - 1)::UINTEGER AS target_order,
+    target.binary_sha256,
+    target.target_label,
+    target.target_source,
+    target.target_path,
+    target.target_git_ref,
+    target.target_git_sha,
+    target.target_is_dirty
+FROM unnest(struct_extract(requested_scope, 'targets'))
+WITH ORDINALITY AS rows(target, ordinality);
+
+CREATE MACRO scope_files(requested_scope report_scope_t) AS TABLE
+SELECT
+    (ordinality - 1)::UINTEGER AS file_order,
+    file.file_sha256,
+    file.fact_directory_sha256,
+    file.file_path,
+    file.absolute_file_path,
+    file.fact_directory_path
+FROM unnest(struct_extract(requested_scope, 'files'))
+WITH ORDINALITY AS rows(file, ordinality);
+
+CREATE MACRO scope_cells(requested_scope report_scope_t) AS TABLE
+SELECT
+    (ordinality - 1)::UINTEGER AS cell_order,
+    cell.backend,
+    cell.treatment
+FROM unnest(struct_extract(requested_scope, 'cells'))
+WITH ORDINALITY AS rows(cell, ordinality);
+
+CREATE MACRO scope_parameters(requested_scope report_scope_t) AS TABLE
+SELECT
+    struct_extract(requested_scope, 'rounds') AS rounds,
+    struct_extract(requested_scope, 'timeout_sec') AS timeout_sec,
+    struct_extract(requested_scope, 't_critical_95') AS t_critical_95;
+
+CREATE MACRO scope_comparisons(requested_scope report_scope_t) AS TABLE
+SELECT
+    (ordinality - 1)::UINTEGER AS comparison_order,
+    comparison.baseline_target_order,
+    comparison.baseline_cell_order,
+    comparison.candidate_target_order,
+    comparison.candidate_cell_order
+FROM unnest(struct_extract(requested_scope, 'comparisons'))
+WITH ORDINALITY AS rows(comparison, ordinality);
+
 -- Stable target roles are report facts shared by Rich and Markdown renderers.
-CREATE VIEW scoped_target_metadata AS
+CREATE MACRO scoped_target_metadata(requested_scope report_scope_t) AS TABLE
 SELECT
     target_order,
     CASE
@@ -40,11 +90,11 @@ SELECT
     target_git_sha,
     target_is_dirty,
     binary_sha256
-FROM scope_targets;
+FROM scope_targets(requested_scope);
 
 -- Select the latest requested observations per target occurrence and cell,
 -- breaking equal timestamps by their append order in JSONL.
-CREATE VIEW scoped_observations AS
+CREATE MACRO scoped_observations(requested_scope report_scope_t) AS TABLE
 WITH ranked AS (
     SELECT
         targets.target_order,
@@ -60,10 +110,10 @@ WITH ranked AS (
             PARTITION BY targets.target_order, files.file_order, cells.cell_order
             ORDER BY reports.started_at::TIMESTAMPTZ DESC, reports.row_index DESC
         ) AS selection_rank
-    FROM scope_targets AS targets
-    CROSS JOIN scope_files AS files
-    CROSS JOIN scope_cells AS cells
-    CROSS JOIN scope_parameters AS parameters
+    FROM scope_targets(requested_scope) AS targets
+    CROSS JOIN scope_files(requested_scope) AS files
+    CROSS JOIN scope_cells(requested_scope) AS cells
+    CROSS JOIN scope_parameters(requested_scope) AS parameters
     JOIN report_rows AS reports
         ON reports.binary_sha256 = targets.binary_sha256
         AND reports.file_sha256 = files.file_sha256
@@ -74,19 +124,19 @@ WITH ranked AS (
 )
 SELECT * EXCLUDE (selection_rank)
 FROM ranked
-WHERE selection_rank <= (SELECT rounds FROM scope_parameters);
+WHERE selection_rank <= (SELECT rounds FROM scope_parameters(requested_scope));
 
 -- Missing/failure/timeout precedence belongs to one result-level relation so
 -- ordinary metrics and phase timing cannot classify the same cell differently.
-CREATE VIEW scoped_result_statuses AS
+CREATE MACRO scoped_result_statuses(requested_scope report_scope_t) AS TABLE
 WITH requested AS (
     SELECT
         targets.target_order,
         files.file_order,
         cells.cell_order
-    FROM scope_targets AS targets
-    CROSS JOIN scope_files AS files
-    CROSS JOIN scope_cells AS cells
+    FROM scope_targets(requested_scope) AS targets
+    CROSS JOIN scope_files(requested_scope) AS files
+    CROSS JOIN scope_cells(requested_scope) AS cells
 ),
 aggregated AS (
     SELECT
@@ -100,8 +150,8 @@ aggregated AS (
         )::UINTEGER AS failure_count,
         parameters.rounds
     FROM requested
-    CROSS JOIN scope_parameters AS parameters
-    LEFT JOIN scoped_observations AS observations USING (target_order, file_order, cell_order)
+    CROSS JOIN scope_parameters(requested_scope) AS parameters
+    LEFT JOIN scoped_observations(requested_scope) AS observations USING (target_order, file_order, cell_order)
     GROUP BY ALL
 )
 SELECT
@@ -119,7 +169,7 @@ FROM aggregated;
 
 -- Calculate both ordinary metrics together so sample counts,
 -- variance-of-the-mean, and Student-t intervals share one implementation.
-CREATE VIEW scoped_cell_summaries AS
+CREATE MACRO scoped_cell_summaries(requested_scope report_scope_t) AS TABLE
 WITH requested AS (
     SELECT
         targets.target_order,
@@ -127,9 +177,9 @@ WITH requested AS (
         cells.cell_order,
         metrics.metric_order,
         metrics.metric
-    FROM scope_targets AS targets
-    CROSS JOIN scope_files AS files
-    CROSS JOIN scope_cells AS cells
+    FROM scope_targets(requested_scope) AS targets
+    CROSS JOIN scope_files(requested_scope) AS files
+    CROSS JOIN scope_cells(requested_scope) AS cells
     CROSS JOIN report_metrics AS metrics
 ),
 observed_metrics AS (
@@ -144,7 +194,7 @@ observed_metrics AS (
             WHEN 'wall_sec' THEN observations.wall_sec
             WHEN 'max_rss_bytes' THEN observations.max_rss_bytes::DOUBLE
         END AS metric_value
-    FROM scoped_observations AS observations
+    FROM scoped_observations(requested_scope) AS observations
     CROSS JOIN report_metrics AS metrics
 ),
 aggregated AS (
@@ -155,7 +205,7 @@ aggregated AS (
         var_samp(observed.metric_value) AS sample_variance,
         parameters.t_critical_95
     FROM requested
-    CROSS JOIN scope_parameters AS parameters
+    CROSS JOIN scope_parameters(requested_scope) AS parameters
     LEFT JOIN observed_metrics AS observed
         ON observed.target_order = requested.target_order
         AND observed.file_order = requested.file_order
@@ -177,7 +227,7 @@ classified AS (
             ELSE NULL
         END AS issue
     FROM aggregated
-    JOIN scoped_result_statuses AS statuses USING (target_order, file_order, cell_order)
+    JOIN scoped_result_statuses(requested_scope) AS statuses USING (target_order, file_order, cell_order)
 ),
 estimated AS (
     SELECT
@@ -218,7 +268,7 @@ FROM estimated;
 
 -- A general target/cell pair represents target, treatment, and backend
 -- comparisons without embedding presentation-specific comparison categories.
-CREATE VIEW scoped_comparison_cells AS
+CREATE MACRO scoped_comparison_cells(requested_scope report_scope_t) AS TABLE
 SELECT
     comparisons.comparison_order,
     comparisons.baseline_target_order,
@@ -237,22 +287,22 @@ SELECT
     candidate.var_mean AS candidate_var_mean,
     candidate.issue AS candidate_issue,
     parameters.t_critical_95
-FROM scope_comparisons AS comparisons
-CROSS JOIN scope_files AS files
+FROM scope_comparisons(requested_scope) AS comparisons
+CROSS JOIN scope_files(requested_scope) AS files
 CROSS JOIN report_metrics AS metrics
-CROSS JOIN scope_parameters AS parameters
-JOIN scoped_cell_summaries AS baseline
+CROSS JOIN scope_parameters(requested_scope) AS parameters
+JOIN scoped_cell_summaries(requested_scope) AS baseline
     ON baseline.target_order = comparisons.baseline_target_order
     AND baseline.file_order = files.file_order
     AND baseline.cell_order = comparisons.baseline_cell_order
     AND baseline.metric = metrics.metric
-JOIN scoped_cell_summaries AS candidate
+JOIN scoped_cell_summaries(requested_scope) AS candidate
     ON candidate.target_order = comparisons.candidate_target_order
     AND candidate.file_order = files.file_order
     AND candidate.cell_order = comparisons.candidate_cell_order
     AND candidate.metric = metrics.metric;
 
-CREATE VIEW scoped_file_ratios AS
+CREATE MACRO scoped_file_ratios(requested_scope report_scope_t) AS TABLE
 WITH preliminary AS (
     SELECT
         *,
@@ -262,7 +312,7 @@ WITH preliminary AS (
             WHEN baseline_mean <= 0 THEN 'baseline mean is not positive'
             ELSE NULL
         END AS preliminary_issue
-    FROM scoped_comparison_cells
+    FROM scoped_comparison_cells(requested_scope)
 ),
 fieller AS (
     SELECT
@@ -337,7 +387,7 @@ FROM estimated;
 
 -- Suite ratios sum fixed-file means and their independent variances. Equal-file
 -- geometric means remain a separate descriptive aggregate without an interval.
-CREATE VIEW scoped_suite_ratios AS
+CREATE MACRO scoped_suite_ratios(requested_scope report_scope_t) AS TABLE
 WITH aggregated AS (
     SELECT
         comparison_order,
@@ -377,7 +427,7 @@ WITH aggregated AS (
             OR baseline_mean <= 0
             OR candidate_mean <= 0
         ) AS geometric_mean_unavailable
-    FROM scoped_comparison_cells
+    FROM scoped_comparison_cells(requested_scope)
     GROUP BY comparison_order, metric
 ),
 preliminary AS (
@@ -471,7 +521,7 @@ FROM estimated;
 -- One decision-oriented row per comparison and metric. Best prefers the
 -- smallest valid point estimate; worst reports the first invalid file when
 -- one exists, otherwise the largest point estimate. Ties use file_order.
-CREATE VIEW scoped_comparison_rollups AS
+CREATE MACRO scoped_comparison_rollups(requested_scope report_scope_t) AS TABLE
 WITH ranked_files AS (
     SELECT
         ratios.*,
@@ -483,7 +533,7 @@ WITH ranked_files AS (
             PARTITION BY ratios.comparison_order, ratios.metric
             ORDER BY ratios.point IS NOT NULL, ratios.point DESC NULLS LAST, ratios.file_order
         ) AS worst_rank
-    FROM scoped_file_ratios AS ratios
+    FROM scoped_file_ratios(requested_scope) AS ratios
 ),
 file_facts AS (
     SELECT
@@ -547,7 +597,7 @@ SELECT
     files.worst_point - 1.0 AS worst_change_fraction,
     files.worst_result_class,
     files.worst_issue
-FROM scoped_suite_ratios AS suites
+FROM scoped_suite_ratios(requested_scope) AS suites
 JOIN file_facts AS files USING (comparison_order, metric);
 
 -- Compact components sum each observation's rulesets before averaging,
@@ -555,7 +605,7 @@ JOIN file_facts AS files USING (comparison_order, metric);
 -- ``other_ns`` deliberately folds the pre-merge residual into the compact
 -- Other column; ``outside_rulesets_ns`` exposes only time beyond full ruleset
 -- totals for deeper queries.
-CREATE VIEW scoped_timing_summaries AS
+CREATE MACRO scoped_timing_summaries(requested_scope report_scope_t) AS TABLE
 WITH observation_phases AS (
     SELECT
         observations.target_order,
@@ -583,7 +633,7 @@ WITH observation_phases AS (
             observations.timing_summary.rulesets,
             item -> item.rebuild_ns
         )), 0)::DOUBLE AS rebuild_ns
-    FROM scoped_observations AS observations
+    FROM scoped_observations(requested_scope) AS observations
 ),
 aggregated AS (
     SELECT
@@ -597,7 +647,7 @@ aggregated AS (
         avg(observed.unattributed_ns) AS unattributed_ns,
         avg(observed.merge_ns) AS merge_ns,
         avg(observed.rebuild_ns) AS rebuild_ns
-    FROM scoped_result_statuses AS statuses
+    FROM scoped_result_statuses(requested_scope) AS statuses
     LEFT JOIN observation_phases AS observed USING (target_order, file_order, cell_order)
     GROUP BY ALL
 ),
@@ -638,7 +688,7 @@ FROM derived;
 -- the mean still covers every selected observation rather than only active runs.
 -- Totals, common ordering, and shares are semantic analysis rather than output
 -- formatting, so the presentation view only adds backend/treatment labels.
-CREATE VIEW scoped_ruleset_timings AS
+CREATE MACRO scoped_ruleset_timings(requested_scope report_scope_t) AS TABLE
 WITH observation_rulesets AS (
     SELECT
         observations.target_order,
@@ -651,8 +701,8 @@ WITH observation_rulesets AS (
         ruleset.unattributed_ns::DOUBLE AS unattributed_ns,
         ruleset.merge_ns::DOUBLE AS merge_ns,
         ruleset.rebuild_ns::DOUBLE AS rebuild_ns
-    FROM scoped_observations AS observations
-    JOIN scoped_timing_summaries AS valid_result
+    FROM scoped_observations(requested_scope) AS observations
+    JOIN scoped_timing_summaries(requested_scope) AS valid_result
         ON valid_result.target_order = observations.target_order
         AND valid_result.file_order = observations.file_order
         AND valid_result.cell_order = observations.cell_order
@@ -686,14 +736,14 @@ target_means AS (
         CASE
             WHEN count(values.row_index) > 0 THEN avg(coalesce(values.rebuild_ns, 0))
         END AS rebuild_ns
-    FROM scope_targets AS targets
+    FROM scope_targets(requested_scope) AS targets
     JOIN ruleset_names AS names ON true
-    JOIN scoped_timing_summaries AS valid_target
+    JOIN scoped_timing_summaries(requested_scope) AS valid_target
         ON valid_target.target_order = targets.target_order
         AND valid_target.file_order = names.file_order
         AND valid_target.cell_order = names.cell_order
         AND valid_target.issue IS NULL
-    JOIN scoped_observations AS observations
+    JOIN scoped_observations(requested_scope) AS observations
         ON observations.target_order = targets.target_order
         AND observations.file_order = names.file_order
         AND observations.cell_order = names.cell_order

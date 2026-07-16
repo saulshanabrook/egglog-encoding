@@ -520,7 +520,7 @@ def test_main_opens_duckdb_ui_after_installing_report_scope(
     monkeypatch.setattr(benchmark.sys, "stdout", stdout)
 
     def start_ui(database: Any) -> str:
-        scoped_targets = database._connection.execute("SELECT count(*) FROM scope_targets").fetchone()[0]
+        scoped_targets = database._connection.execute("SELECT count(*) FROM presentation_targets").fetchone()[0]
         assert scoped_targets == 1
         events.append("start")
         return "UI started at http://localhost:4213"

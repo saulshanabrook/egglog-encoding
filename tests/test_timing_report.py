@@ -9,9 +9,10 @@ from rich.console import Console
 from syrupy.assertion import SnapshotAssertion
 
 from benchmarking import models
-from benchmarking.reports.render import render_markdown_timing, render_rich_timing
+from benchmarking.reports.catalog import ReportSection, ReportTable
+from benchmarking.reports.render import render_markdown_sections, render_rich_sections
 from benchmarking.reports.results import CompactTimingView, RulesetTimingView
-from benchmarking.reports.timing import build_timing_report, format_duration, format_share
+from benchmarking.reports.timing import build_timing_sections, format_duration, format_share
 
 
 def test_duration_and_share_formatting() -> None:
@@ -68,7 +69,7 @@ def test_markdown_compact_and_detailed_report(snapshot: SnapshotAssertion) -> No
         _ruleset(1, 1, 0, "proof extraction", 700_000, 300_000, 200_000, 300_000, 1_500_000, 1_500_000),
     )
 
-    report = build_timing_report(
+    sections = build_timing_sections(
         compact,
         rulesets,
         targets,
@@ -77,7 +78,7 @@ def test_markdown_compact_and_detailed_report(snapshot: SnapshotAssertion) -> No
         file_labels=("integer_math.egg",),
     )
 
-    assert render_markdown_timing(report) == snapshot
+    assert render_markdown_sections(sections) == snapshot
 
 
 def test_view_order_preserves_absent_rows_and_recorded_zeroes() -> None:
@@ -96,15 +97,15 @@ def test_view_order_preserves_absent_rows_and_recorded_zeroes() -> None:
         _ruleset(1, 0, 2, "recorded-zero", 0, 0, 0, 0, 20, 0, treatment="proofs"),
     )
 
-    report = build_timing_report(compact, rulesets, targets, spec, detailed=True)
+    sections = build_timing_sections(compact, rulesets, targets, spec, detailed=True)
 
-    baseline, candidate = report.detailed
-    assert [row.ruleset for row in baseline.rows] == ["candidate-only", "baseline-only", "recorded-zero"]
-    assert [row.ruleset for row in candidate.rows] == ["candidate-only", "baseline-only", "recorded-zero"]
-    assert baseline.rows[0].total == "—"
-    assert candidate.rows[1].total == "—"
-    assert baseline.rows[2].total == "0 ns"
-    assert candidate.rows[2].total == "0 ns"
+    baseline, candidate = _tables(_section(sections, "detailed-timing"))
+    assert _column_displays(baseline, "ruleset") == ("candidate-only", "baseline-only", "recorded-zero")
+    assert _column_displays(candidate, "ruleset") == ("candidate-only", "baseline-only", "recorded-zero")
+    assert _column_displays(baseline, "total_ns") == ("—", "10.0 ns", "0 ns")
+    assert _column_displays(candidate, "total_ns") == ("20.0 ns", "—", "0 ns")
+    assert _column_raw(baseline, "total_ns") == (None, 10, 0)
+    assert _column_raw(candidate, "total_ns") == (20, None, 0)
 
 
 def test_rich_timing_warns_exactly_once_below_120_and_always_renders() -> None:
@@ -120,11 +121,11 @@ def test_rich_timing_warns_exactly_once_below_120_and_always_renders() -> None:
         _ruleset(0, 0, 1, "other", 0, 0, 0, 0, 10, 20, treatment="proofs"),
         _ruleset(1, 0, 1, "other", 10, 8, 1, 1, 20, 20, treatment="proofs"),
     )
-    report = build_timing_report(compact, rulesets, targets, spec, detailed=True)
+    sections = build_timing_sections(compact, rulesets, targets, spec, detailed=True)
 
     for width in (80, 119, 120, 160):
         console = Console(record=True, width=width, color_system=None)
-        console.print(render_rich_timing(report, width))
+        console.print(render_rich_sections(sections, width))
         output = console.export_text()
         assert output.count("Warning:") == (1 if width < 120 else 0)
         assert max(cell_len(line) for line in output.splitlines()) <= width
@@ -175,17 +176,17 @@ def test_default_six_file_compact_report_stays_bounded_at_realistic_widths() -> 
         for file_order in range(6)
         for cell_order, treatment in enumerate(spec.treatments)
     )
-    report = build_timing_report(compact, rulesets, (target,), spec, detailed=False)
+    sections = build_timing_sections(compact, rulesets, (target,), spec, detailed=False)
 
     for width in (80, 119, 120, 160):
         console = Console(record=True, width=width, color_system=None)
-        console.print(render_rich_timing(report, width))
+        console.print(render_rich_sections(sections, width))
         lines = console.export_text().splitlines()
         assert sum("Warning:" in line for line in lines) == (1 if width < 120 else 0)
         assert max(map(cell_len, lines)) <= width
         assert len(lines) <= 70
 
-    markdown = render_markdown_timing(report)
+    markdown = render_markdown_sections(sections)
     assert markdown.count("### benchmarks/case-") == 6
     assert markdown.count("| main | main/") == 18
 
@@ -304,3 +305,25 @@ def _target(label: str, binary_sha256: str) -> models.ResolvedTarget:
 def _spec(*, treatments: tuple[models.Treatment, ...] = ("off", "proofs")) -> models.BenchmarkSpec:
     file = models.FileSpec("path/to/integer_math.egg", Path("/tmp/integer_math.egg"), "sha256:file")
     return models.BenchmarkSpec(files=(file,), treatments=treatments, rounds=2, timeout_sec=120)
+
+
+def _section(sections: tuple[ReportSection, ...], section_id: str) -> ReportSection:
+    return next(section for section in sections if section.id == section_id)
+
+
+def _tables(section: ReportSection) -> tuple[ReportTable, ...]:
+    return tuple(block for block in section.blocks if isinstance(block, ReportTable))
+
+
+def _column_index(table: ReportTable, column_id: str) -> int:
+    return next(index for index, column in enumerate(table.columns) if column.id == column_id)
+
+
+def _column_displays(table: ReportTable, column_id: str) -> tuple[str, ...]:
+    index = _column_index(table, column_id)
+    return tuple(row.cells[index].display for row in table.rows)
+
+
+def _column_raw(table: ReportTable, column_id: str) -> tuple[object, ...]:
+    index = _column_index(table, column_id)
+    return tuple(row.cells[index].raw for row in table.rows)
