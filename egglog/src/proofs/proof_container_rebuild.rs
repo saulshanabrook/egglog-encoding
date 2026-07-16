@@ -159,9 +159,16 @@ fn rebuild_container_value_rec(
     let mut leaders: HashMap<Value, Value> = HashMap::default();
     for (esort, eval) in &elements {
         let new = if esort.is_eq_sort() {
-            lookup_uf_row(state, uf_names, esort, *eval, proof_mode)
-                .map(|(leader, _)| leader)
-                .unwrap_or(*eval)
+            // Chain: a natural element resolves through `UF-Aux` to its canonical
+            // id, which then resolves through the main `UF` to its leader.
+            let mut cur = *eval;
+            if let Some((canonical, _)) = lookup_aux_row(state, esort, cur) {
+                cur = canonical;
+            }
+            if let Some((leader, _)) = lookup_uf_row(state, uf_names, esort, cur, proof_mode) {
+                cur = leader;
+            }
+            cur
         } else if esort.is_eq_container_sort() {
             rebuild_container_value_rec(state, esort, *eval, uf_names, proof_mode)?
         } else {
@@ -193,6 +200,22 @@ where
     let action = state.registry().lookup_table(uf_name)?;
     let values = action.lookup_values(state.es(), &[eval])?;
     Some((values[0], proof_mode.then(|| values[1])))
+}
+
+/// Look up a natural element's `@UF-Aux-<Sort>` row: `natural -> (canonical,
+/// connector)`, where `connector` proves `natural = canonical`. Containers are
+/// built over natural element ids (so their term-proof extracts the syntactic
+/// shape); this is how the rebuild recovers the canonical element. Returns
+/// `None` outside proof mode (no such table) or when the element is not a
+/// recorded natural. The table name is deterministic, so no plumbing is needed.
+fn lookup_aux_row<'a, 'db: 'a, S>(state: &S, esort: &ArcSort, eval: Value) -> Option<(Value, Value)>
+where
+    S: RegistrySealed<'a, 'db>,
+{
+    let aux_name = crate::proofs::proof_encoding::uf_aux_name(esort.name());
+    let action = state.registry().lookup_table(&aux_name)?;
+    let values = action.lookup_values(state.es(), &[eval])?;
+    Some((values[0], values[1]))
 }
 
 /// A term-encoding primitive that canonicalizes a container value's elements to
@@ -311,12 +334,34 @@ fn rebuild_container_proof_rec(
     let mut child_proofs: Vec<(usize, Value)> = vec![];
     for (j, (esort, eval)) in elements.iter().enumerate() {
         if esort.is_eq_sort() {
-            if let Some((leader, Some(proof))) =
-                lookup_uf_row(state, &prim.uf_names, esort, *eval, true)
-                && leader != *eval
+            // Chain the two hops and compose their proofs: `natural --connector-->
+            // canonical --uf_proof--> leader`. Either hop may be absent.
+            let mut cur = *eval;
+            let mut proof: Option<Value> = None;
+            if let Some((canonical, connector)) = lookup_aux_row(state, esort, cur) {
+                cur = canonical;
+                proof = Some(connector);
+            }
+            if let Some((leader, Some(uf_proof))) =
+                lookup_uf_row(state, &prim.uf_names, esort, cur, true)
             {
-                leaders.insert(*eval, leader);
-                child_proofs.push((j, proof));
+                proof = Some(match proof {
+                    Some(connector) => {
+                        let trans_action = state.registry().lookup_table(&prim.trans_name)?.clone();
+                        mint_proof_row(
+                            state,
+                            &trans_action,
+                            prim.id_counter,
+                            &[connector, uf_proof],
+                        )
+                    }
+                    None => uf_proof,
+                });
+                cur = leader;
+            }
+            if cur != *eval {
+                leaders.insert(*eval, cur);
+                child_proofs.push((j, proof.expect("changed element must carry a proof")));
             }
         } else if esort.is_eq_container_sort() {
             let (rebuilt_child, child_proof) =
@@ -343,7 +388,12 @@ fn rebuild_container_proof_rec(
     let mut current = base;
     for (j, proof) in child_proofs {
         let j_val = state.base_values().get::<i64>(j as i64);
-        current = mint_proof_row(state, &congr_action, prim.id_counter, &[current, j_val, proof]);
+        current = mint_proof_row(
+            state,
+            &congr_action,
+            prim.id_counter,
+            &[current, j_val, proof],
+        );
     }
 
     // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`

@@ -106,7 +106,7 @@ impl WritePrim for SetIfEmpty {
             return Some(vals[0]);
         }
         // Empty: seed the key with the fresh row and return its e-class.
-        action.insert(state.raw_exec_state(), args.to_vec().into_iter());
+        action.insert(state.raw_exec_state(), args.iter().copied());
         Some(args[n_keys])
     }
 }
