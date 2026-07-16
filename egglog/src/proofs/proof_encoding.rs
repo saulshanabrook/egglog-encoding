@@ -190,10 +190,11 @@ impl<'a> ProofInstrumentor<'a> {
 
         let sym = self.proof_names().eq_sym_constructor.clone();
         let trans = self.proof_names().eq_trans_constructor.clone();
-        // Prove `lhs = shared` and `rhs = shared` for a shared natural form
-        // (a canonicalized side, so no reflexive proof is needed).
+        // Route both operands to a shared *natural* form, then orient to the
+        // `larger = smaller` UF edge with proof-of-max/min. The shared form is the
+        // canonicalized side's natural (pinned AST), so the Trans goes through it
+        // rather than through the deduped e-class.
         let (lhs_to_shared, rhs_to_shared) = if let Some(rc) = &rhs_conn {
-            // shared = rhs_nat
             let lhs_to = if let Some(lc) = &lhs_conn {
                 let sym_lc = self.mint(stmts, &sym, lc, &proof_sort);
                 self.mint(stmts, &trans, &format!("{sym_lc} {base_proof}"), &proof_sort)
@@ -203,13 +204,11 @@ impl<'a> ProofInstrumentor<'a> {
             let rhs_to = self.mint(stmts, &sym, rc, &proof_sort);
             (lhs_to, rhs_to)
         } else {
-            // rhs is a leaf; lhs is canonicalized -> shared = lhs_nat.
             let lc = lhs_conn.as_ref().unwrap();
             let lhs_to = self.mint(stmts, &sym, lc, &proof_sort);
             let rhs_to = self.mint(stmts, &sym, &base_proof, &proof_sort);
             (lhs_to, rhs_to)
         };
-
         let max_pf = self.fresh_var();
         stmts.push(format!(
             "(let {max_pf} (proof-of-max {lhs} {lhs_to_shared} {rhs} {rhs_to_shared}))"
@@ -1572,10 +1571,17 @@ impl<'a> ProofInstrumentor<'a> {
             }
         }
 
-        // Canonical-children term (seeds the view if the key is fresh).
+        // Canonical-children term (seeds the view if the key is fresh). Its proof
+        // is the *reflexive* `fv_can = fv_can` derived from the Congr chain
+        // (`Trans (Sym e-to-e') e-to-e'`), NOT a fresh `@Rule`: a `@Rule` here is
+        // checked against the rule head, but `fv_can`'s deduped children can extract
+        // to a canonicalized shape (a subterm rewritten elsewhere) that no longer
+        // matches the syntactic head. The Trans-derived proof is exempt from that
+        // check and serves as the view's `e-node = leader` proof for a seeded key.
         let fv_can =
             self.mint(&mut res, &func_type.name, &ListDisplay(&dedup_args, " ").to_string(), &view_sort);
-        let can_prf = self.term_proof_for_justification(&mut res, &fv_can, &to_ast, justification);
+        let sym_ntd = self.mint(&mut res, &sym, &nat_to_dedup_term, &proof_sort);
+        let can_prf = self.mint(&mut res, &trans, &format!("{sym_ntd} {nat_to_dedup_term}"), &proof_sort);
         res.push(format!("(set ({term_proof_constructor} {fv_can}) {can_prf})"));
 
         // Dedup to the view e-class; read its stored proof (`dedup = f(children)`).
