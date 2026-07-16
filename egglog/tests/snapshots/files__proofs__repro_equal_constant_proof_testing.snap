@@ -6,4 +6,4 @@ expression: proof_snapshot
   (= (@ExistsConstructor) (@ExistsConstructor))
   (name "@prove_exists_rule")
   (premises (Fiat (= (foo 10) (foo 10))) (Fiat (= () ())))
-  (substitution (@v8 10)))
+  (substitution (@v25 10)))
