@@ -536,10 +536,7 @@ impl EGraph {
                 // rows under the term/proof encoding; register the sort's
                 // `get-fresh!` primitive so those mint sites resolve, both during
                 // encoding and when the desugared program is re-parsed.
-                if self
-                    .get_sort_by_name(name)
-                    .is_some_and(|s| s.is_eq_sort())
-                {
+                if self.get_sort_by_name(name).is_some_and(|s| s.is_eq_sort()) {
                     register_get_fresh(self, name);
                 }
                 ResolvedNCommand::Sort {
