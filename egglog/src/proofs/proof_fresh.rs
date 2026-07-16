@@ -142,7 +142,7 @@ impl Primitive for ViewProof {
 }
 
 impl WritePrim for ViewProof {
-    fn apply<'a, 'db>(&self, mut state: WriteState<'a, 'db>, args: &[Value]) -> Option<Value> {
+    fn apply<'a, 'db>(&self, state: WriteState<'a, 'db>, args: &[Value]) -> Option<Value> {
         let n_keys = self.key_sorts.len();
         let fallback = args[n_keys];
         let action = state.registry().lookup_table(&self.view_name)?.clone();

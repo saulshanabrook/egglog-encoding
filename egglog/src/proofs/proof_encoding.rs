@@ -1319,6 +1319,16 @@ impl<'a> ProofInstrumentor<'a> {
         match action {
             ResolvedAction::Let(_span, v, generic_expr) => {
                 let v2 = self.instrument_action_expr(generic_expr, &mut res, justification);
+                // Carry the canonicalization info onto the let-bound name. `v2` is
+                // the built term's deduped e-class var, keyed in `nat_conn` by that
+                // fresh var; without this, a later reference to `v.name` (e.g. the
+                // `new-e` in `(let new-e (Bop …)) (union e new-e)`) misses in
+                // `nat_conn` and `union` falls into the no-connector branch, whose
+                // bare `@Rule` endpoint extracts the deduped (canonicalized) shape
+                // instead of the natural one the rule head produced.
+                if let Some(info) = self.egraph.proof_state.nat_conn.get(&v2).cloned() {
+                    self.egraph.proof_state.nat_conn.insert(v.name.clone(), info);
+                }
                 res.push(format!("(let {} {})", v.name, v2));
             }
             ResolvedAction::Set(_span, h, generic_exprs, generic_expr) => {
@@ -1556,7 +1566,12 @@ impl<'a> ProofInstrumentor<'a> {
         let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
         let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
 
-        // Natural term + its (rule-justified) term proof.
+        // Natural term + its (rule-justified) term proof. `fv_nat` stays *unseeded*
+        // (only the canonical node below is written to the view), so it is never
+        // pulled into the view's congruence `:merge` and stays as-built — hence its
+        // `@Rule` endpoint extracts the syntactic shape the rule head produced, and
+        // recording it as `fv_nat`'s existence proof is valid (and required, since
+        // proof-testing can enumerate the natural row as a witness).
         let fv_nat =
             self.mint(&mut res, &func_type.name, &ListDisplay(&nat_args, " ").to_string(), &view_sort);
         let nat_prf = self.term_proof_for_justification(&mut res, &fv_nat, &to_ast, justification);
@@ -1571,17 +1586,22 @@ impl<'a> ProofInstrumentor<'a> {
             }
         }
 
-        // Canonical-children term (seeds the view if the key is fresh). Its proof
-        // is the *reflexive* `fv_can = fv_can` derived from the Congr chain
-        // (`Trans (Sym e-to-e') e-to-e'`), NOT a fresh `@Rule`: a `@Rule` here is
-        // checked against the rule head, but `fv_can`'s deduped children can extract
-        // to a canonicalized shape (a subterm rewritten elsewhere) that no longer
-        // matches the syntactic head. The Trans-derived proof is exempt from that
-        // check and serves as the view's `e-node = leader` proof for a seeded key.
+        // Canonical-children term that seeds the view — always a *separate* node
+        // from `fv_nat`, even when no child changed (`nat_args == dedup_args`).
+        // The natural node must stay unseeded so it is never pulled into the view's
+        // congruence `:merge` (which natively unions e-classes): if `fv_nat` were
+        // the seed, a birewrite that re-keys this view to a differently-shaped
+        // partner (e.g. `(IntImm32 x) <-> (IntImm 32 x)`) would natively merge
+        // `fv_nat` into that partner, and the natural `@Rule` endpoint threaded up
+        // through the Congr chain would then extract the partner's shape instead of
+        // the as-built one the rule head produced. `fv_can`'s proof is the
+        // *reflexive* `fv_can = fv_can` from the Congr chain (`Trans (Sym e-to-e')
+        // e-to-e'`), exempt from the rule-head check.
         let fv_can =
             self.mint(&mut res, &func_type.name, &ListDisplay(&dedup_args, " ").to_string(), &view_sort);
         let sym_ntd = self.mint(&mut res, &sym, &nat_to_dedup_term, &proof_sort);
-        let can_prf = self.mint(&mut res, &trans, &format!("{sym_ntd} {nat_to_dedup_term}"), &proof_sort);
+        let can_prf =
+            self.mint(&mut res, &trans, &format!("{sym_ntd} {nat_to_dedup_term}"), &proof_sort);
         res.push(format!("(set ({term_proof_constructor} {fv_can}) {can_prf})"));
 
         // Dedup to the view e-class; read its stored proof (`dedup = f(children)`).
