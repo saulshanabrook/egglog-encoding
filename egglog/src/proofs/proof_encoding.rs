@@ -393,6 +393,8 @@ impl<'a> ProofInstrumentor<'a> {
         _view_name: &str,
         rebuilding_ruleset: &str,
     ) -> String {
+        // `nat_conn` is scoped to a single generated program (see `instrument_rule`).
+        self.egraph.proof_state.nat_conn.clear();
         let name = &fdecl.name;
 
         let merge_fn = &fdecl
@@ -1702,10 +1704,9 @@ impl<'a> ProofInstrumentor<'a> {
                             specialized_primitive.name(),
                             ListDisplay(&args, " ")
                         ));
-                        // In proof mode, a primitive that builds a container
-                        // value records a reflexive term-proof in `<CSort>Proof`.
-                        // This is the anchor for the container's rebuild
-                        // congruence proofs (see `rebuilding_rules`).
+                        // In proof mode, a primitive that builds a container value
+                        // records a term-proof in `<CSort>Proof`, the anchor for the
+                        // container's rebuild congruence proofs.
                         if self.egraph.proof_state.proofs_enabled {
                             let out = specialized_primitive.output();
                             if out.is_eq_container_sort() {
@@ -1750,6 +1751,12 @@ impl<'a> ProofInstrumentor<'a> {
     /// When proofs are enabled we query proof tables, then build a proof for the rule in the actions.
     /// Finally, each view update also updates the proof tables.
     fn instrument_rule(&mut self, rule: &ResolvedRule) -> Vec<Command> {
+        // `nat_conn` maps this unit's freshly-minted vars (and let-bound names) to
+        // their natural/connector; it is scoped to a single generated program, so
+        // reset it per rule. Otherwise stale entries keyed by repeated user let
+        // names (e.g. `new-e`) leak in from earlier rules/merges and reference
+        // out-of-scope vars.
+        self.egraph.proof_state.nat_conn.clear();
         // term_proofs are fetched as action-side lookups (see instrument_facts),
         // so a rule with any needs a Read/Full action context (`eval_opt` below).
         let (facts, action_lookups, proof_str) = self.instrument_facts(&rule.body);
@@ -1996,6 +2003,9 @@ impl<'a> ProofInstrumentor<'a> {
                 res.extend(self.instrument_rule(rule));
             }
             ResolvedNCommand::CoreAction(action) => {
+                // Each global action is its own generated program, so naturals do
+                // not carry across commands; scope `nat_conn` to this one.
+                self.egraph.proof_state.nat_conn.clear();
                 let instrumented = self
                     .instrument_action(action, &Justification::Fiat)
                     .join("\n");
