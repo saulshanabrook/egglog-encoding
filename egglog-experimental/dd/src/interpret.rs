@@ -108,8 +108,6 @@ enum Write {
 
 pub(crate) struct IterationResult {
     pub changed: bool,
-    /// Compatibility total derived from split timing.
-    pub search_and_apply_time: Duration,
     /// Body matching, fused join execution, and body primitive evaluation.
     pub search_time: Duration,
     /// Rule-head instruction execution and write staging.
@@ -165,8 +163,6 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
         }
     }
     let apply_time = apply_timer.elapsed();
-    let search_and_apply_time = search_time + apply_time;
-
     // Apply collected writes to the mirror.
     //
     // Removes are BATCHED per function: applying each `Write::Remove` with its
@@ -215,7 +211,6 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     let merge_time = merge_timer.elapsed();
     Ok(IterationResult {
         changed,
-        search_and_apply_time,
         search_time,
         apply_time,
         merge_time,

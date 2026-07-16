@@ -223,9 +223,12 @@ class CompactTimingView(NamedTuple):
     search_ns: float | None
     apply_ns: float | None
     search_and_apply_ns: float | None
+    unattributed_ns: float | None
+    pre_merge_ns: float | None
     merge_ns: float | None
     rebuild_ns: float | None
-    attributed_ns: float | None
+    ruleset_total_ns: float | None
+    outside_rulesets_ns: float | None
     other_ns: float | None
     wall_ns: float | None
     has_samples: bool
@@ -250,14 +253,16 @@ class RulesetTimingView(NamedTuple):
     search_ns: float | None
     apply_ns: float | None
     search_and_apply_ns: float | None
+    unattributed_ns: float | None
+    pre_merge_ns: float | None
     merge_ns: float | None
     rebuild_ns: float | None
     total_ns: float | None
     maximum_target_total: float
-    result_attributed_ns: float | None
+    result_ruleset_total_ns: float | None
     has_samples: bool
     result_class: ResultClass
-    attributed_share: float | None
+    ruleset_share: float | None
 
 
 @dataclass(frozen=True)

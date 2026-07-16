@@ -230,12 +230,23 @@ def render_markdown_timing(report: TimingReport) -> str:
             else:
                 lines.extend(
                     _markdown_table_lines(
-                        ("Ruleset", "Total", "Share", "Search", "Apply", "Merge", "Rebuild"),
+                        ("Ruleset", "Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"),
                         tuple(
-                            (row.ruleset, row.total, row.share, row.search, row.apply, row.merge, row.rebuild)
+                            (
+                                row.ruleset,
+                                row.total,
+                                row.share,
+                                row.search,
+                                row.apply,
+                                row.unattributed,
+                                row.merge,
+                                row.rebuild,
+                            )
                             for row in block.rows
                         ),
-                        right_aligned=frozenset({"Total", "Share", "Search", "Apply", "Merge", "Rebuild"}),
+                        right_aligned=frozenset(
+                            {"Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"}
+                        ),
                     )
                 )
     return "\n".join(lines)
@@ -280,7 +291,7 @@ def _rich_detailed_timing_table(block: DetailedTimingBlock) -> Table:
         padding=(0, 1),
     )
     table.add_column("Ruleset", overflow="fold")
-    for header in ("Total", "Share", "Search", "Apply", "Merge", "Rebuild"):
+    for header in ("Total", "Share", "Search", "Apply", "Unattributed", "Merge", "Rebuild"):
         table.add_column(header, justify="right", no_wrap=True)
     for row in block.rows:
         table.add_row(
@@ -289,6 +300,7 @@ def _rich_detailed_timing_table(block: DetailedTimingBlock) -> Table:
             Text(row.share),
             Text(row.search),
             Text(row.apply),
+            Text(row.unattributed),
             Text(row.merge),
             Text(row.rebuild),
         )

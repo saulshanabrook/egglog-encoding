@@ -17,7 +17,7 @@ fn temporary_directory() -> PathBuf {
 }
 
 #[test]
-fn dd_timing_summary_v1_splits_search_and_apply_for_every_named_ruleset() {
+fn dd_timing_summary_v2_splits_search_and_apply_for_every_named_ruleset() {
     let directory = temporary_directory();
     let program_path = directory.join("program.egg");
     let summary_path = directory.join("summary.json");
@@ -61,7 +61,7 @@ fn dd_timing_summary_v1_splits_search_and_apply_for_every_named_ruleset() {
     assert_eq!(summary_object.len(), 2);
     assert!(summary_object.contains_key("schema_version"));
     assert!(summary_object.contains_key("rulesets"));
-    assert_eq!(summary["schema_version"], 1);
+    assert_eq!(summary["schema_version"], 2);
 
     let rulesets = summary["rulesets"].as_array().unwrap();
     let names = rulesets
@@ -71,15 +71,29 @@ fn dd_timing_summary_v1_splits_search_and_apply_for_every_named_ruleset() {
     assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     for ruleset in rulesets {
         let ruleset_object = ruleset.as_object().unwrap();
-        assert_eq!(ruleset_object.len(), 5);
-        for field in ["name", "search_ns", "apply_ns", "merge_ns", "rebuild_ns"] {
+        assert_eq!(ruleset_object.len(), 6);
+        for field in [
+            "name",
+            "search_ns",
+            "apply_ns",
+            "unattributed_ns",
+            "merge_ns",
+            "rebuild_ns",
+        ] {
             assert!(ruleset_object.contains_key(field));
         }
         assert!(ruleset["name"].is_string());
-        for field in ["search_ns", "apply_ns", "merge_ns", "rebuild_ns"] {
+        for field in [
+            "search_ns",
+            "apply_ns",
+            "unattributed_ns",
+            "merge_ns",
+            "rebuild_ns",
+        ] {
             assert!(ruleset[field].is_u64());
         }
         assert_eq!(ruleset["rebuild_ns"], 0);
+        assert_eq!(ruleset["unattributed_ns"], 0);
     }
 
     for name in ["alpha", "zeta"] {

@@ -166,7 +166,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     ) -> processes.TimingResult:
         summary_path = Path(command[command.index("--timing-summary") + 1])
         summary_path.write_text(
-            json.dumps({"schema_version": 2, "rulesets": []}),
+            json.dumps({"schema_version": 1, "rulesets": []}),
             encoding="utf-8",
         )
         return processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None)
@@ -176,7 +176,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     with ReportDatabase(report) as database:
         plan = collection.build_collection_plan(database, target, spec, False)
         startup_warmup = processes.TimingResult("success", processes.TimingRow(wall_sec=0.1), None)
-        with pytest.raises(ValueError, match=r"unsupported timing summary.*2"):
+        with pytest.raises(ValueError, match=r"unsupported timing summary.*1"):
             collection.collect_rows(
                 database,
                 plan,

@@ -20,8 +20,9 @@ from .results import CompactTimingView, RulesetTimingView
 NULL: Final = "—"
 DEFAULT_RULESET: Final = "<default ruleset>"
 TIMING_CAPTION: Final = (
-    "Other is wall time minus Search, Apply, Merge, and Rebuild. "
-    "A leading ! means recorded phase time exceeds wall time; timing attribution is descriptive."
+    "Other is wall time minus Search, Apply, Merge, and Rebuild; it includes Unattributed "
+    "pre-merge time and time outside recorded rulesets. A leading ! means displayed phase "
+    "time exceeds wall time; timing attribution is descriptive."
 )
 
 
@@ -57,6 +58,7 @@ class RulesetTimingRow:
     share: str
     search: str
     apply: str
+    unattributed: str
     merge: str
     rebuild: str
 
@@ -193,9 +195,10 @@ def _detailed_block(
             RulesetTimingRow(
                 DEFAULT_RULESET if ruleset.name == "" else ruleset.name,
                 format_duration(ruleset.total_ns),
-                format_share(ruleset.attributed_share),
+                format_share(ruleset.ruleset_share),
                 format_duration(ruleset.search_ns),
                 format_duration(ruleset.apply_ns),
+                format_duration(ruleset.unattributed_ns),
                 format_duration(ruleset.merge_ns),
                 format_duration(ruleset.rebuild_ns),
             )

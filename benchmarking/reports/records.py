@@ -12,7 +12,7 @@ from typing import Final, Literal, TypedDict
 
 from ..models import Backend, Status, Treatment
 
-TIMING_SUMMARY_SCHEMA_VERSION: Final = 1
+TIMING_SUMMARY_SCHEMA_VERSION: Final = 2
 
 
 class RulesetTimingRecord(TypedDict):
@@ -21,6 +21,7 @@ class RulesetTimingRecord(TypedDict):
     name: str
     search_ns: int
     apply_ns: int
+    unattributed_ns: int
     merge_ns: int
     rebuild_ns: int
 
@@ -28,7 +29,7 @@ class RulesetTimingRecord(TypedDict):
 class TimingSummaryRecord(TypedDict):
     """Engine timing summary; mirrors SQL ``timing_summary_record_t``."""
 
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     rulesets: list[RulesetTimingRecord]
 
 

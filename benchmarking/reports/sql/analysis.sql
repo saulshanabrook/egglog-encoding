@@ -550,8 +550,11 @@ SELECT
 FROM scoped_suite_ratios AS suites
 JOIN file_facts AS files USING (comparison_order, metric);
 
--- Compact phases sum each observation's rulesets before averaging, preserving
--- the same arithmetic-mean population used for ordinary wall time.
+-- Compact components sum each observation's rulesets before averaging,
+-- preserving the same arithmetic-mean population used for ordinary wall time.
+-- ``other_ns`` deliberately folds the pre-merge residual into the compact
+-- Other column; ``outside_rulesets_ns`` exposes only time beyond full ruleset
+-- totals for deeper queries.
 CREATE VIEW scoped_timing_summaries AS
 WITH observation_phases AS (
     SELECT
@@ -568,6 +571,10 @@ WITH observation_phases AS (
             observations.timing_summary.rulesets,
             item -> item.apply_ns
         )), 0)::DOUBLE AS apply_ns,
+        coalesce(list_sum(list_transform(
+            observations.timing_summary.rulesets,
+            item -> item.unattributed_ns
+        )), 0)::DOUBLE AS unattributed_ns,
         coalesce(list_sum(list_transform(
             observations.timing_summary.rulesets,
             item -> item.merge_ns
@@ -587,6 +594,7 @@ aggregated AS (
         avg(observed.wall_sec) * 1000000000.0 AS wall_ns,
         avg(observed.search_ns) AS search_ns,
         avg(observed.apply_ns) AS apply_ns,
+        avg(observed.unattributed_ns) AS unattributed_ns,
         avg(observed.merge_ns) AS merge_ns,
         avg(observed.rebuild_ns) AS rebuild_ns
     FROM scoped_result_statuses AS statuses
@@ -597,7 +605,8 @@ derived AS (
     SELECT
         *,
         search_ns + apply_ns AS search_and_apply_ns,
-        search_ns + apply_ns + merge_ns + rebuild_ns AS attributed_ns
+        search_ns + apply_ns + unattributed_ns AS pre_merge_ns,
+        search_ns + apply_ns + unattributed_ns + merge_ns + rebuild_ns AS ruleset_total_ns
     FROM aggregated
 )
 SELECT
@@ -607,10 +616,16 @@ SELECT
     CASE WHEN issue IS NULL THEN search_ns END AS search_ns,
     CASE WHEN issue IS NULL THEN apply_ns END AS apply_ns,
     CASE WHEN issue IS NULL THEN search_and_apply_ns END AS search_and_apply_ns,
+    CASE WHEN issue IS NULL THEN unattributed_ns END AS unattributed_ns,
+    CASE WHEN issue IS NULL THEN pre_merge_ns END AS pre_merge_ns,
     CASE WHEN issue IS NULL THEN merge_ns END AS merge_ns,
     CASE WHEN issue IS NULL THEN rebuild_ns END AS rebuild_ns,
-    CASE WHEN issue IS NULL THEN attributed_ns END AS attributed_ns,
-    CASE WHEN issue IS NULL THEN wall_ns - attributed_ns END AS other_ns,
+    CASE WHEN issue IS NULL THEN ruleset_total_ns END AS ruleset_total_ns,
+    CASE WHEN issue IS NULL THEN wall_ns - ruleset_total_ns END AS outside_rulesets_ns,
+    CASE
+        WHEN issue IS NULL
+        THEN wall_ns - search_ns - apply_ns - merge_ns - rebuild_ns
+    END AS other_ns,
     CASE WHEN issue IS NULL THEN wall_ns END AS wall_ns,
     issue IS NULL AND wall_ns IS NOT NULL AS has_samples,
     CASE WHEN issue IS NULL THEN 'available' ELSE 'invalid' END AS result_class,
@@ -633,6 +648,7 @@ WITH observation_rulesets AS (
         ruleset.name,
         ruleset.search_ns::DOUBLE AS search_ns,
         ruleset.apply_ns::DOUBLE AS apply_ns,
+        ruleset.unattributed_ns::DOUBLE AS unattributed_ns,
         ruleset.merge_ns::DOUBLE AS merge_ns,
         ruleset.rebuild_ns::DOUBLE AS rebuild_ns
     FROM scoped_observations AS observations
@@ -661,6 +677,9 @@ target_means AS (
         CASE
             WHEN count(values.row_index) > 0 THEN avg(coalesce(values.apply_ns, 0))
         END AS apply_ns,
+        CASE
+            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.unattributed_ns, 0))
+        END AS unattributed_ns,
         CASE
             WHEN count(values.row_index) > 0 THEN avg(coalesce(values.merge_ns, 0))
         END AS merge_ns,
@@ -691,7 +710,8 @@ phases AS (
     SELECT
         *,
         search_ns + apply_ns AS search_and_apply_ns,
-        search_ns + apply_ns + merge_ns + rebuild_ns AS total_ns
+        search_ns + apply_ns + unattributed_ns AS pre_merge_ns,
+        search_ns + apply_ns + unattributed_ns + merge_ns + rebuild_ns AS total_ns
     FROM target_means
 ),
 ordered AS (
@@ -714,7 +734,7 @@ with_totals AS (
         *,
         sum(total_ns) OVER (
             PARTITION BY target_order, file_order, cell_order
-        ) AS result_attributed_ns
+        ) AS result_ruleset_total_ns
     FROM ranked
 )
 SELECT
@@ -726,15 +746,17 @@ SELECT
     search_ns,
     apply_ns,
     search_and_apply_ns,
+    unattributed_ns,
+    pre_merge_ns,
     merge_ns,
     rebuild_ns,
     total_ns,
     maximum_target_total,
-    result_attributed_ns,
+    result_ruleset_total_ns,
     has_samples,
     'available' AS result_class,
     CASE
-        WHEN result_attributed_ns = 0 THEN NULL
-        ELSE total_ns / result_attributed_ns
-    END AS attributed_share
+        WHEN result_ruleset_total_ns = 0 THEN NULL
+        ELSE total_ns / result_ruleset_total_ns
+    END AS ruleset_share
 FROM with_totals;

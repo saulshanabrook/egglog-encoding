@@ -9,6 +9,7 @@ CREATE TYPE ruleset_timing_record_t AS STRUCT(
     name VARCHAR,
     search_ns UBIGINT,
     apply_ns UBIGINT,
+    unattributed_ns UBIGINT,
     merge_ns UBIGINT,
     rebuild_ns UBIGINT
 );

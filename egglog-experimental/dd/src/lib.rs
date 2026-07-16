@@ -28,8 +28,8 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
-    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -237,8 +237,11 @@ impl EGraph {
 
     fn empty_iteration_report() -> IterationReport {
         let mut report = IterationReport::default();
-        report.rule_set_report.search_time = Some(Duration::ZERO);
-        report.rule_set_report.apply_time = Some(Duration::ZERO);
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: Duration::ZERO,
+            apply: Duration::ZERO,
+            unattributed: Duration::ZERO,
+        };
         report
     }
 
@@ -1425,19 +1428,20 @@ mod tests {
             let rule = rule.build(&mut eg);
 
             let report = run_rules(&mut eg, &[rule]).unwrap();
-            assert_eq!(
-                report.rule_set_report.search_and_apply_time,
-                report.rule_set_report.search_time.unwrap()
-                    + report.rule_set_report.apply_time.unwrap(),
-            );
+            let PreMergeTiming::Split {
+                search,
+                apply,
+                unattributed,
+            } = report.rule_set_report.pre_merge
+            else {
+                panic!("DD execution must report split timing");
+            };
             assert!(
-                report.rule_set_report.search_time.unwrap() > Duration::ZERO,
+                search > Duration::ZERO,
                 "missing search timing at {level:?}"
             );
-            assert!(
-                report.rule_set_report.apply_time.unwrap() > Duration::ZERO,
-                "missing apply timing at {level:?}"
-            );
+            assert!(apply > Duration::ZERO, "missing apply timing at {level:?}");
+            assert_eq!(unattributed, Duration::ZERO);
             assert!(
                 report.rule_set_report.merge_time > Duration::ZERO,
                 "missing merge timing at {level:?}"
@@ -1459,9 +1463,14 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(report.rule_set_report.search_time, Some(Duration::ZERO));
-        assert_eq!(report.rule_set_report.apply_time, Some(Duration::ZERO));
-        assert_eq!(report.rule_set_report.search_and_apply_time, Duration::ZERO);
+        assert_eq!(
+            report.rule_set_report.pre_merge,
+            PreMergeTiming::Split {
+                search: Duration::ZERO,
+                apply: Duration::ZERO,
+                unattributed: Duration::ZERO,
+            }
+        );
     }
 
     #[test]
@@ -2416,9 +2425,11 @@ impl Backend for EGraph {
 
         let mut report = IterationReport::default();
         report.rule_set_report.changed = result.changed;
-        report.rule_set_report.search_and_apply_time = result.search_and_apply_time;
-        report.rule_set_report.search_time = Some(result.search_time);
-        report.rule_set_report.apply_time = Some(result.apply_time);
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: result.search_time,
+            apply: result.apply_time,
+            unattributed: Duration::ZERO,
+        };
         report.rule_set_report.merge_time = result.merge_time;
         // The DD backend has no native union-find rebuild phase. Term/proof
         // canonicalization is expressed as ordinary rules and is therefore

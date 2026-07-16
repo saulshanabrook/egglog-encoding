@@ -29,15 +29,39 @@ def test_markdown_compact_and_detailed_report(snapshot: SnapshotAssertion) -> No
     targets = (_target("baseline", "sha256:baseline"), _target("candidate", "sha256:candidate"))
     spec = _spec()
     compact = (
-        _compact(0, 0, 500_000, 200_000, 150_000, 150_000, 1_250_000),
-        _compact(1, 0, 400_000, 120_000, 110_000, 120_000, 900_000),
+        _compact(0, 0, 500_000, 200_000, 150_000, 150_000, 1_250_000, unattributed_ns=50_000),
+        _compact(1, 0, 400_000, 120_000, 110_000, 120_000, 900_000, unattributed_ns=30_000),
         _compact(0, 1, issue="timeout row selected"),
-        _compact(1, 1, 700_000, 300_000, 200_000, 300_000, 1_400_000),
+        _compact(1, 1, 700_000, 300_000, 200_000, 300_000, 1_400_000, unattributed_ns=40_000),
     )
     rulesets = (
-        _ruleset(0, 0, 0, "", 450_000, 150_000, 100_000, 50_000, 1_000_000, 750_000),
-        _ruleset(1, 0, 0, "", 0, 0, 0, 0, 750_000, 750_000),
-        _ruleset(0, 0, 1, "simplify|nested", 70_000, 30_000, 50_000, 100_000, 1_000_000, 700_000),
+        _ruleset(
+            0,
+            0,
+            0,
+            "",
+            450_000,
+            150_000,
+            100_000,
+            50_000,
+            1_050_000,
+            770_000,
+            unattributed_ns=20_000,
+        ),
+        _ruleset(1, 0, 0, "", 0, 0, 0, 0, 750_000, 770_000),
+        _ruleset(
+            0,
+            0,
+            1,
+            "simplify|nested",
+            70_000,
+            30_000,
+            50_000,
+            100_000,
+            1_050_000,
+            700_000,
+            unattributed_ns=30_000,
+        ),
         _ruleset(1, 0, 1, "simplify|nested", 350_000, 150_000, 100_000, 100_000, 750_000, 700_000),
         _ruleset(0, 0, 2, "candidate-only", None, None, None, None, 1_000_000, 50_000),
         _ruleset(1, 0, 2, "candidate-only", 15_000, 5_000, 10_000, 20_000, 750_000, 50_000),
@@ -106,6 +130,7 @@ def test_rich_timing_warns_exactly_once_below_120_and_always_renders() -> None:
         assert max(cell_len(line) for line in output.splitlines()) <= width
         assert "Engine timing" in output
         assert "Detailed timing" in output
+        assert "Unattributed" in output
 
 
 def test_default_six_file_compact_report_stays_bounded_at_realistic_widths() -> None:
@@ -177,14 +202,20 @@ def _compact(
     file_order: int = 0,
     treatment: models.Treatment = "off",
     issue: str | None = None,
+    unattributed_ns: float | None = None,
 ) -> CompactTimingView:
-    attributed = None
+    pre_merge = None
+    ruleset_total = None
+    outside_rulesets = None
     other = None
     if issue is None:
         assert search_ns is not None and apply_ns is not None
         assert merge_ns is not None and rebuild_ns is not None and wall_ns is not None
-        attributed = search_ns + apply_ns + merge_ns + rebuild_ns
-        other = wall_ns - attributed
+        unattributed_ns = 0 if unattributed_ns is None else unattributed_ns
+        pre_merge = search_ns + apply_ns + unattributed_ns
+        ruleset_total = pre_merge + merge_ns + rebuild_ns
+        outside_rulesets = wall_ns - ruleset_total
+        other = wall_ns - search_ns - apply_ns - merge_ns - rebuild_ns
     return CompactTimingView(
         target_order,
         file_order,
@@ -194,9 +225,12 @@ def _compact(
         search_ns,
         apply_ns,
         None if search_ns is None or apply_ns is None else search_ns + apply_ns,
+        unattributed_ns,
+        pre_merge,
         merge_ns,
         rebuild_ns,
-        attributed,
+        ruleset_total,
+        outside_rulesets,
         other,
         wall_ns,
         wall_ns is not None,
@@ -219,10 +253,12 @@ def _ruleset(
     *,
     file_order: int = 0,
     treatment: models.Treatment = "off",
+    unattributed_ns: float | None = None,
 ) -> RulesetTimingView:
-    phases = (search_ns, apply_ns, merge_ns, rebuild_ns)
+    phases = (search_ns, apply_ns, unattributed_ns, merge_ns, rebuild_ns)
     if all(phase is None for phase in phases):
         search_and_apply = None
+        pre_merge = None
         total = None
         has_samples = False
     else:
@@ -230,8 +266,10 @@ def _ruleset(
         assert apply_ns is not None
         assert merge_ns is not None
         assert rebuild_ns is not None
+        unattributed_ns = 0 if unattributed_ns is None else unattributed_ns
         search_and_apply = search_ns + apply_ns
-        total = search_and_apply + merge_ns + rebuild_ns
+        pre_merge = search_and_apply + unattributed_ns
+        total = pre_merge + merge_ns + rebuild_ns
         has_samples = True
     return RulesetTimingView(
         file_order,
@@ -244,6 +282,8 @@ def _ruleset(
         search_ns,
         apply_ns,
         search_and_apply,
+        unattributed_ns,
+        pre_merge,
         merge_ns,
         rebuild_ns,
         total,

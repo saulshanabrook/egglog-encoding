@@ -16,7 +16,7 @@ use crate::{
 use crossbeam::utils::CachePadded;
 use dashmap::mapref::entry::Entry;
 use dashmap::mapref::one::RefMut;
-use egglog_reports::{ReportLevel, RuleReport, RuleSetReport};
+use egglog_reports::{PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
 use smallvec::SmallVec;
 use web_time::{Duration, Instant};
 
@@ -348,19 +348,21 @@ impl Database {
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
         if rule_set.plans.is_empty() {
             return RuleSetReport {
-                search_time: Some(Duration::ZERO),
-                apply_time: Some(Duration::ZERO),
+                pre_merge: PreMergeTiming::Split {
+                    search: Duration::ZERO,
+                    apply: Duration::ZERO,
+                    unattributed: Duration::ZERO,
+                },
                 ..RuleSetReport::default()
             };
         }
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
 
-        let search_and_apply_timer = Instant::now();
+        let pre_merge_timer = Instant::now();
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
         let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
-        let mut search_time = None;
-        let mut apply_time = None;
+        let mut split_time = None;
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         if run_in_parallel {
             let dash_rule_reports: Arc<DashMap<Arc<str>, Vec<RuleReport>>> =
@@ -616,8 +618,7 @@ impl Database {
                 });
             }
             action_buf.flush(&mut exec_state.clone());
-            search_time = Some(serial_search_time);
-            apply_time = Some(action_buf.apply_time);
+            split_time = Some((serial_search_time, action_buf.apply_time));
         }
 
         for (plan, desc, _symbol_map) in rule_set.plans.values() {
@@ -634,7 +635,21 @@ impl Database {
             // caused by individual queries.
             reports[i].num_matches = match_counter.read_matches(plan.actions());
         }
-        let search_and_apply_time = search_and_apply_timer.elapsed();
+        let pre_merge_elapsed = pre_merge_timer.elapsed();
+        let pre_merge = match split_time {
+            Some((search, apply)) => {
+                let unattributed = pre_merge_elapsed.saturating_sub(search + apply);
+                debug_assert_eq!(search + apply + unattributed, pre_merge_elapsed);
+                PreMergeTiming::Split {
+                    search,
+                    apply,
+                    unattributed,
+                }
+            }
+            None => PreMergeTiming::Combined {
+                elapsed: pre_merge_elapsed,
+            },
+        };
         let merge_timer = Instant::now();
         let changed = self.merge_all();
         let merge_time = merge_timer.elapsed();
@@ -642,9 +657,7 @@ impl Database {
         RuleSetReport {
             changed,
             rule_reports,
-            search_and_apply_time,
-            search_time,
-            apply_time,
+            pre_merge,
             merge_time,
         }
     }

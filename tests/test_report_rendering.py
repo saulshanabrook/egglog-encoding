@@ -331,6 +331,7 @@ def test_rich_report_treats_dynamic_names_as_literal_text() -> None:
                         "66.7%",
                         "1.00 ms",
                         "2.00 ms",
+                        "500 us",
                         "3.00 ms",
                         "4.00 ms",
                     ),

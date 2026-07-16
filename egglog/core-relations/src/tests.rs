@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use egglog_reports::ReportLevel;
+use egglog_reports::{PreMergeTiming, ReportLevel};
 
 use crate::numeric_id::NumericId;
 
@@ -176,19 +176,26 @@ fn timing_split_separates_inline_batches_and_final_flush() {
 
     let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
     let legacy_plan_time = report.rule_search_and_apply_time("copy");
-    let search_time = report.search_time.unwrap();
-    let apply_time = report.apply_time.unwrap();
+    let PreMergeTiming::Split {
+        search,
+        apply,
+        unattributed,
+    } = report.pre_merge
+    else {
+        panic!("serial execution must report split timing");
+    };
 
-    assert!(search_time > std::time::Duration::ZERO);
-    assert!(apply_time > std::time::Duration::ZERO);
+    assert!(search > std::time::Duration::ZERO);
+    assert!(apply > std::time::Duration::ZERO);
     assert!(
-        search_time < legacy_plan_time,
+        search < legacy_plan_time,
         "the inline action batch must be subtracted from search"
     );
     assert!(
-        search_time + apply_time > legacy_plan_time,
+        search + apply > legacy_plan_time,
         "the final action flush must be included in apply"
     );
+    assert_eq!(report.pre_merge.total(), search + apply + unattributed);
 }
 
 #[test]
@@ -198,9 +205,14 @@ fn phase_timing_is_available_for_an_empty_ruleset() {
 
     let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
 
-    assert_eq!(report.search_time, Some(std::time::Duration::ZERO));
-    assert_eq!(report.apply_time, Some(std::time::Duration::ZERO));
-    assert_eq!(report.search_and_apply_time, std::time::Duration::ZERO);
+    assert_eq!(
+        report.pre_merge,
+        PreMergeTiming::Split {
+            search: std::time::Duration::ZERO,
+            apply: std::time::Duration::ZERO,
+            unattributed: std::time::Duration::ZERO,
+        }
+    );
 }
 
 #[test]
@@ -244,9 +256,10 @@ fn parallel_execution_keeps_split_phase_timing_unavailable() {
 
             let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
 
-            assert_eq!(report.search_time, None);
-            assert_eq!(report.apply_time, None);
-            assert!(report.search_and_apply_time > std::time::Duration::ZERO);
+            let PreMergeTiming::Combined { elapsed } = report.pre_merge else {
+                panic!("parallel execution must report combined timing");
+            };
+            assert!(elapsed > std::time::Duration::ZERO);
         });
 }
 

@@ -749,7 +749,6 @@ version = "2.0.0"
 dependencies = [
  "clap",
  "hashbrown 0.16.1",
- "indexmap",
  "rustc-hash",
  "serde",
  "serde_json",

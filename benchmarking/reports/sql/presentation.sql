@@ -115,9 +115,12 @@ SELECT
     timings.search_ns,
     timings.apply_ns,
     timings.search_and_apply_ns,
+    timings.unattributed_ns,
+    timings.pre_merge_ns,
     timings.merge_ns,
     timings.rebuild_ns,
-    timings.attributed_ns,
+    timings.ruleset_total_ns,
+    timings.outside_rulesets_ns,
     timings.other_ns,
     timings.wall_ns,
     timings.has_samples,
@@ -138,13 +141,15 @@ SELECT
     timings.search_ns,
     timings.apply_ns,
     timings.search_and_apply_ns,
+    timings.unattributed_ns,
+    timings.pre_merge_ns,
     timings.merge_ns,
     timings.rebuild_ns,
     timings.total_ns,
     timings.maximum_target_total,
-    timings.result_attributed_ns,
+    timings.result_ruleset_total_ns,
     timings.has_samples,
     timings.result_class,
-    timings.attributed_share
+    timings.ruleset_share
 FROM scoped_ruleset_timings AS timings
 JOIN scope_cells AS cells USING (cell_order);

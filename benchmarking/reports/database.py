@@ -31,7 +31,7 @@ from ..models import (
     validate_unique_file_identities,
     validate_unique_target_binaries,
 )
-from .records import ReportRecord
+from .records import TIMING_SUMMARY_SCHEMA_VERSION, ReportRecord
 from .results import (
     CachedTarget,
     CellEstimateView,
@@ -139,15 +139,29 @@ class ReportDatabase:
         return status
 
     def _ensure_report_loads(self) -> None:
-        """Reject an existing cache that cannot satisfy the strict record cast."""
+        """Reject a cache that does not satisfy the current record contracts."""
 
         try:
             # count(*) can be answered without projecting the cast record.
             # Referencing one member forces DuckDB to cast every complete JSON
-            # object to report_record_t, whose strict key set rejects old shapes.
-            self._connection.execute("SELECT count(started_at) FROM report_rows")
+            # object to report_record_t. The explicit version count also rejects
+            # an old summary whose empty ruleset list cannot reveal its shape.
+            counts = self._connection.execute(
+                """
+                SELECT
+                    count(started_at),
+                    count(*) FILTER (
+                        WHERE timing_summary IS NOT NULL
+                          AND timing_summary.schema_version != ?
+                    )
+                FROM report_rows
+                """,
+                [TIMING_SUMMARY_SCHEMA_VERSION],
+            ).fetchone()
         except duckdb.Error as error:
             raise ValueError(self._incompatible_report_message()) from error
+        if counts is None or counts[1] != 0:
+            raise ValueError(self._incompatible_report_message())
 
     def append(self, record: ReportRecord) -> None:
         """Serialize one trusted writer record, then append one JSON line."""

@@ -249,9 +249,9 @@ threads.
 
 ### Engine timing breakdown
 
-Every successful benchmark observation records the engine time attributed to
-each ruleset: Search, Apply, Merge, and Rebuild. The runner reads the
-summary produced by the measured child process and stores it in the same
+Every successful benchmark observation records engine timing for each ruleset:
+Search, Apply, Unattributed, Merge, and Rebuild. The runner reads
+the summary produced by the measured child process and stores it in the same
 `.reports.jsonl` row as wall time and peak RSS. It does not run a separate
 diagnostic process, and a timing view does not request observations beyond
 those required by the ordinary benchmark and cache policy.
@@ -266,12 +266,14 @@ with:
 
 For a result whose selected `--rounds` observations are all successful, the
 compact view reports their arithmetic means for Search, Apply, Merge, Rebuild,
-Other, and Wall. Other is mean Wall minus the four unrounded mean phase totals
-summed across every ruleset. It includes all process time not charged to those
-timers, such as process setup and reporting, and is not an engine phase.
+Other, and Wall. Other is mean Wall minus the four displayed, unrounded mean
+phase totals summed across every ruleset. It combines Unattributed pre-merge
+engine time with time outside recorded rulesets, such as process setup and
+reporting; it is not itself an engine phase. DuckDB exposes those two parts
+separately as `unattributed_ns` and `outside_rulesets_ns` for deeper analysis.
 
 If Other is negative, the timing view prefixes the negative value
-with `!` and explains that attributed time exceeds wall time. This is a
+with `!` and explains that displayed phase time exceeds wall time. This is a
 display-only attribution warning computed before rounding: the requested timing
 view is still shown, ordinary wall-time and peak-RSS results remain valid, and
 the command does not fail. An incomplete or invalid result instead shows its
@@ -336,30 +338,34 @@ only the runs where it was active. An incomplete or invalid result contributes
 no names or values to this union and receives a status block instead of a
 ruleset table.
 
-For a ruleset, Total is its unrounded mean Search + Apply + Merge + Rebuild.
-Share is Total divided by the sum of every present ruleset Total for that same
-target, file, backend, and treatment result. Share is displayed as `—` for an
-absent ruleset or whenever that denominator is zero, including an empty summary
-or a nonempty summary whose rulesets all report zero time. Rulesets are ordered
-by the largest unrounded mean Total they reach in any target in the comparison
-group, then by the exact ruleset name as a lexical tie-breaker. The empty name
-is displayed as `<default ruleset>`.
+For a ruleset, Total is the sum of its unrounded means for Search, Apply,
+Unattributed, Merge, and Rebuild. Share is Total divided by the sum of every
+present ruleset Total for that same target, file, backend, and treatment result.
+Share is displayed as `—` for an absent ruleset or whenever that denominator is
+zero, including an empty summary or a nonempty summary whose rulesets all
+report zero time. Rulesets are ordered by the largest unrounded mean Total they
+reach in any target in the comparison group, then by the exact ruleset name as
+a lexical tie-breaker. The empty name is displayed as `<default ruleset>`.
 
 Rich output at 120 columns or more uses `Ruleset`, `Total`, `Share`,
-`Search`, `Apply`, `Merge`, and `Rebuild` columns. Below 120 columns the same
-table renders best-effort after the command's single width warning; ruleset
-names may fold, but numeric values remain on one line. Markdown preserves every
-full name.
+`Search`, `Apply`, `Unattributed`, `Merge`, and `Rebuild` columns. Below 120
+columns the same table renders best-effort after the command's single width
+warning; ruleset names may fold, but numeric values remain on one line.
+Markdown preserves every full name.
 Across compact and detailed views, each duration independently chooses a unit
 from its absolute magnitude: `ns` below 1 us, `us` below 1 ms, `ms` below 1 s,
 and `s` otherwise. Values retain three significant digits and include the unit.
 Shares use one decimal place; a nonzero share below the displayed precision is
 written as `<0.1%` rather than zero.
 
-The phase boundaries are:
+The recorded timing components are:
 
 - Search: matching and join execution.
 - Apply: executing rule-head instructions and staging updates.
+- Unattributed: the remainder of a backend's pre-merge ruleset total after
+  Search and Apply. In main egglog it closes the measured outer interval and
+  includes setup and bookkeeping not accurately described as either phase; DD
+  defines pre-merge as Search + Apply and therefore reports zero.
 - Merge: resolving and installing staged updates.
 - Rebuild: rebuilding indexes and e-graph state.
 
@@ -382,8 +388,9 @@ same phase clocks.
 
 These measurements are aggregated by ruleset across engine iterations within
 one process; they are not per-rule or per-iteration profiles. The stored
-summary contains only the ruleset name and the four primitive phase totals.
-Search+Apply and Other are derived by DuckDB rather than persisted.
+summary contains only the ruleset name and the five timing components.
+Search+Apply, pre-merge time, ruleset totals, time outside rulesets, and Other
+are derived by DuckDB rather than persisted.
 
 A failed or timed-out observation has no timing summary and remains invalid or
 incomplete under the ordinary report rules rather than being treated as zero.
@@ -463,6 +470,10 @@ SELECT * FROM presentation_compact_timings;
 SELECT * FROM presentation_ruleset_timings;
 ```
 
+The timing views expose the raw `unattributed_ns` component and SQL-derived
+`pre_merge_ns` values. The compact view also exposes `ruleset_total_ns` and
+`outside_rulesets_ns`, while the per-ruleset view exposes each row's `total_ns`.
+
 These views contain numeric values, coordinates, result classifications, and
 issues rather than preformatted terminal strings. Python only selects report
 sections, arranges their columns, formats units and wording, and serializes the
@@ -516,15 +527,19 @@ Timing fields:
   process. It is required for `status: success` and `null` for failed or
   timed-out observations.
 
-`timing_summary.schema_version` is `1`. Its `rulesets` array contains every
+`timing_summary.schema_version` is `2`. Its `rulesets` array contains every
 ruleset name present in the engine report, without a producer-side cap. Each
 ruleset has nonnegative integer nanosecond fields `search_ns`, `apply_ns`,
-`merge_ns`, and `rebuild_ns`. The empty string is the engine's default-ruleset
-name. The transport sorts names lexically. Search and Apply are required for
-every included ruleset; absent Merge and Rebuild entries are zero-filled.
-DuckDB's analysis and output views derive
-Search+Apply, Other, the comparison-oriented order, totals, and shares described
-above when a report is queried; those values are not stored in each observation.
+`unattributed_ns`, `merge_ns`, and `rebuild_ns`. The empty string is the
+engine's default-ruleset name. The transport sorts names lexically, and all five
+component fields are required for every included ruleset; a measured zero is
+encoded as zero. DuckDB's analysis and output views derive
+Search+Apply, pre-merge and ruleset totals, time outside rulesets, Other, the
+comparison-oriented order, and shares described above when a report is
+queried; those values are not stored in each observation.
+Version 1 did not carry `unattributed_ns`; the runner rejects it before
+appending an observation, and caches containing that older shape must be
+recomputed.
 
 For `status: timed-out`, `wall_sec`, `max_rss_bytes`, and `timing_summary` are
 `null`. The row records only that the run did not complete before
@@ -564,12 +579,13 @@ Example row:
   "error_signal": null,
   "error_message": null,
   "timing_summary": {
-    "schema_version": 1,
+    "schema_version": 2,
     "rulesets": [
       {
         "name": "rules",
         "search_ns": 200,
         "apply_ns": 100,
+        "unattributed_ns": 20,
         "merge_ns": 40,
         "rebuild_ns": 50
       }

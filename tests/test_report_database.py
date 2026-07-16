@@ -135,7 +135,12 @@ def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: 
         max_rss_bytes=1234,
         timing_summary=make_timing_summary(
             make_ruleset_timing(
-                "rules/\N{GREEK SMALL LETTER LAMDA}", search_ns=6, apply_ns=5, merge_ns=7, rebuild_ns=3
+                "rules/\N{GREEK SMALL LETTER LAMDA}",
+                search_ns=6,
+                apply_ns=5,
+                unattributed_ns=4,
+                merge_ns=7,
+                rebuild_ns=3,
             ),
             make_ruleset_timing("", search_ns=0, apply_ns=0, merge_ns=5, rebuild_ns=0),
         ),
@@ -159,6 +164,7 @@ def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: 
     rulesets = cast(list[dict[str, object]], summary["rulesets"])
     assert tuple(rulesets[0]) == tuple(RulesetTimingRecord.__annotations__)
     assert "search_and_apply_ns" not in rulesets[0]
+    assert "pre_merge_ns" not in rulesets[0]
 
 
 @pytest.mark.parametrize("mixed", [False, True], ids=["old", "mixed"])
@@ -169,6 +175,26 @@ def test_old_report_shapes_fail_during_database_construction(tmp_path: Path, mix
     old["report_schema_version"] = 1
     records = (current, cast(ReportRecord, old)) if mixed else (cast(ReportRecord, old),)
     write_report(report, *records)
+
+    with pytest.raises(
+        ValueError,
+        match=r"invalid or incompatible benchmark report.*Move or remove.*recompute",
+    ):
+        ReportDatabase(report)
+
+
+@pytest.mark.parametrize("empty_rulesets", [False, True], ids=["missing-field", "empty"])
+def test_old_timing_summary_fails_during_database_construction(tmp_path: Path, empty_rulesets: bool) -> None:
+    report = tmp_path / "report.jsonl"
+    old = cast(dict[str, object], make_record(0, started_at="2026-07-15T12:00:00Z"))
+    summary = cast(dict[str, object], old["timing_summary"])
+    summary["schema_version"] = 1
+    rulesets = cast(list[dict[str, object]], summary["rulesets"])
+    if empty_rulesets:
+        rulesets.clear()
+    else:
+        del rulesets[0]["unattributed_ns"]
+    write_report(report, cast(ReportRecord, old))
 
     with pytest.raises(
         ValueError,
@@ -511,7 +537,7 @@ def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path:
             started_at="2026-07-15T12:00:00Z",
             binary_sha256="sha256:valid",
             timing_summary=make_timing_summary(
-                make_ruleset_timing("valid", search_ns=60, apply_ns=40, merge_ns=20, rebuild_ns=5)
+                make_ruleset_timing("valid", search_ns=60, apply_ns=40, unattributed_ns=10, merge_ns=20, rebuild_ns=5)
             ),
         ),
         make_record(
@@ -536,18 +562,24 @@ def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path:
     assert timings[0].search_ns is None
     assert timings[0].apply_ns is None
     assert timings[0].search_and_apply_ns is None
+    assert timings[0].unattributed_ns is None
+    assert timings[0].pre_merge_ns is None
     assert timings[0].merge_ns is None
     assert timings[0].rebuild_ns is None
-    assert timings[0].attributed_ns is None
+    assert timings[0].ruleset_total_ns is None
+    assert timings[0].outside_rulesets_ns is None
     assert timings[0].other_ns is None
     assert timings[0].wall_ns is None
     assert timings[1].issue is None
     assert timings[1].search_ns is not None
     assert timings[1].apply_ns is not None
     assert timings[1].search_and_apply_ns == timings[1].search_ns + timings[1].apply_ns
-    assert timings[1].attributed_ns is not None
+    assert timings[1].unattributed_ns is not None
+    assert timings[1].pre_merge_ns == timings[1].search_and_apply_ns + timings[1].unattributed_ns
+    assert timings[1].ruleset_total_ns is not None
     assert timings[1].wall_ns is not None
-    assert timings[1].other_ns == timings[1].wall_ns - timings[1].attributed_ns
+    assert timings[1].outside_rulesets_ns == timings[1].wall_ns - timings[1].ruleset_total_ns
+    assert timings[1].other_ns == timings[1].unattributed_ns + timings[1].outside_rulesets_ns
     valid_rulesets = [row for row in views.ruleset_timings if row.target_order == 1]
     assert [ruleset.name for ruleset in valid_rulesets] == ["rules", "valid"]
     assert "invalid-only" not in {ruleset.name for ruleset in valid_rulesets}
@@ -555,6 +587,8 @@ def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path:
     assert means["valid"].search_ns == 30
     assert means["valid"].apply_ns == 20
     assert means["valid"].search_and_apply_ns == 50
+    assert means["valid"].unattributed_ns == 5
+    assert means["valid"].pre_merge_ns == 55
 
 
 def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) -> None:
@@ -563,7 +597,7 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
     spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
     baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
     candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
-    zero = make_ruleset_timing("recorded-zero", search_ns=0, apply_ns=0, merge_ns=0, rebuild_ns=0)
+    zero = make_ruleset_timing("recorded-zero", search_ns=0, apply_ns=0, unattributed_ns=0, merge_ns=0, rebuild_ns=0)
     write_report(
         report,
         make_record(
@@ -572,7 +606,7 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
             binary_sha256=baseline.binary_sha256,
             timing_summary=make_timing_summary(
                 make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
-                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, unattributed_ns=6, merge_ns=0, rebuild_ns=0),
                 zero,
             ),
         ),
@@ -617,24 +651,30 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
         assert absent.search_ns is None
         assert absent.apply_ns is None
         assert absent.search_and_apply_ns is None
+        assert absent.unattributed_ns is None
+        assert absent.pre_merge_ns is None
         assert absent.merge_ns is None
         assert absent.rebuild_ns is None
         assert absent.total_ns is None
-        assert absent.attributed_share is None
+        assert absent.ruleset_share is None
 
     for target_order in (0, 1):
         recorded_zero = rows[target_order, "recorded-zero"]
         assert recorded_zero.has_samples
         assert recorded_zero.search_ns == 0
         assert recorded_zero.total_ns == 0
-        assert recorded_zero.attributed_share == 0
+        assert recorded_zero.ruleset_share == 0
 
     # Missing rounds remain zero contributions after the ruleset has appeared,
     # keeping detailed phase totals consistent with the compact all-round mean.
     assert rows[0, "sporadic"].search_ns == 4
+    assert rows[0, "sporadic"].unattributed_ns == 3
+    assert rows[0, "sporadic"].pre_merge_ns == 7
     compact = {row.target_order: row for row in views.compact_timings}
     baseline_search = sum(row.search_ns or 0 for row in views.ruleset_timings if row.target_order == 0)
+    baseline_unattributed = sum(row.unattributed_ns or 0 for row in views.ruleset_timings if row.target_order == 0)
     assert compact[0].search_ns == baseline_search == 14
+    assert compact[0].unattributed_ns == baseline_unattributed == 3
 
 
 def test_append_failure_does_not_claim_a_persisted_row(tmp_path: Path) -> None:

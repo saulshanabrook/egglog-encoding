@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
 
 use clap::Parser;
-use egglog_reports::TimingSummaryV1;
+use egglog_reports::TimingSummaryV2;
 use env_logger::Env;
 use std::path::PathBuf;
 
@@ -224,7 +224,7 @@ where
     }
 
     if let Some(summary_path) = args.timing_summary {
-        let summary = TimingSummaryV1::from_run_report(egraph.get_overall_run_report())
+        let summary = TimingSummaryV2::from_run_report(egraph.get_overall_run_report())
             .unwrap_or_else(|error| {
                 log::error!("failed to create timing summary: {error}");
                 std::process::exit(1);

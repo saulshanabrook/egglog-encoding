@@ -50,12 +50,13 @@ def test_run_process_passes_backend_flag_only_for_dd(monkeypatch: pytest.MonkeyP
         summary_path.write_text(
             json.dumps(
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
                     "rulesets": [
                         {
                             "name": "rules",
                             "search_ns": 4,
                             "apply_ns": 6,
+                            "unattributed_ns": 10,
                             "merge_ns": 20,
                             "rebuild_ns": 30,
                         }
@@ -80,6 +81,7 @@ def test_run_process_passes_backend_flag_only_for_dd(monkeypatch: pytest.MonkeyP
     assert main.timing_summary is not None
     assert main.timing_summary["rulesets"][0]["search_ns"] == 4
     assert main.timing_summary["rulesets"][0]["apply_ns"] == 6
+    assert main.timing_summary["rulesets"][0]["unattributed_ns"] == 10
     assert main.timing_summary["rulesets"][0]["merge_ns"] == 20
     assert dd.timing_summary is not None
 
