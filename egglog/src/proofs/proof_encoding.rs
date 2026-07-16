@@ -1462,28 +1462,75 @@ impl<'a> ProofInstrumentor<'a> {
             return (res, canon);
         }
 
-        // Proof mode: build the term, record its term proof, and update the FD
-        // view (whose congruence `:merge` reconciles duplicate e-classes). Insertion
-        // -time canonicalization via `set-if-empty` is validated in term-only mode
-        // (−22% rebuild search) but not yet sound in proof mode: deduped "stray"
-        // terms are left unattached to the encoded `@UF`, and those strays leak into
-        // proofs (globals, prove-exists, extraction) as unbacked `Fiat` edges.
-        // Reconnecting them without reintroducing per-term `@UF` churn is a separate
-        // design task, so proof mode stays on the view-merge path.
-        let fv = self.mint(&mut res, &func_type.name, &ListDisplay(args, " ").to_string(), &view_sort);
+        // Proof mode (the flatten-canonicalize-thread plan): build the *natural*
+        // term (children at their as-built ids) and the *canonical* term (children
+        // at their view-deduped ids), connect them with a `Congr` chain over the
+        // changed children, then `set-if-empty` to the view's deduped e-class and
+        // stitch on the view-dedup edge. Return the deduped e-class (so parents and
+        // views stay canonical) and record `(natural, connector : natural =
+        // deduped)` in `nat_conn` for the parent's `Congr` and the root `union`.
         let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
-        let proof_var = self.term_proof_for_justification(&mut res, &fv, &to_ast, justification);
+        let proof_sort = self.proof_sort();
+        let congr = self.proof_names().congr_constructor.clone();
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        let sym = self.proof_names().eq_sym_constructor.clone();
         let term_proof_constructor = self.term_proof_name(func_type.output().name());
-        res.push(format!("(set ({term_proof_constructor} {fv}) {proof_var})"));
-        // Canonicalize to the view's e-class. Orphan term-relation rows for the
-        // discarded fresh id are acceptable; the view proof bridges the canonical
-        // e-class back to this enode's form when a consumer needs it.
-        let canon = self.fresh_var();
+
+        // Each arg is a child's deduped id; look up its natural id + connector.
+        let children: Vec<(String, String, Option<String>)> = args
+            .iter()
+            .map(|a| match self.egraph.proof_state.nat_conn.get(a) {
+                Some((nat, conn)) => (a.clone(), nat.clone(), conn.clone()),
+                None => (a.clone(), a.clone(), None),
+            })
+            .collect();
+        let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
+        let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
+
+        // Natural term + its (rule-justified) term proof.
+        let fv_nat =
+            self.mint(&mut res, &func_type.name, &ListDisplay(&nat_args, " ").to_string(), &view_sort);
+        let nat_prf = self.term_proof_for_justification(&mut res, &fv_nat, &to_ast, justification);
+        res.push(format!("(set ({term_proof_constructor} {fv_nat}) {nat_prf})"));
+
+        // `Congr` chain: `fv_nat = f(deduped children)` (rewrite each changed child).
+        let mut nat_to_dedup_term = nat_prf.clone();
+        for (i, (_, _, conn)) in children.iter().enumerate() {
+            if let Some(conn) = conn {
+                nat_to_dedup_term =
+                    self.mint(&mut res, &congr, &format!("{nat_to_dedup_term} {i} {conn}"), &proof_sort);
+            }
+        }
+
+        // Canonical-children term (seeds the view if the key is fresh).
+        let fv_can =
+            self.mint(&mut res, &func_type.name, &ListDisplay(&dedup_args, " ").to_string(), &view_sort);
+        let can_prf = self.term_proof_for_justification(&mut res, &fv_can, &to_ast, justification);
+        res.push(format!("(set ({term_proof_constructor} {fv_can}) {can_prf})"));
+
+        // Dedup to the view e-class; read its stored proof (`dedup = f(children)`).
+        let dedup = self.fresh_var();
         res.push(format!(
-            "(let {canon} ({set_if_empty} {} {fv} {proof_var}))",
-            ListDisplay(args, " ")
+            "(let {dedup} ({set_if_empty} {} {fv_can} {can_prf}))",
+            ListDisplay(&dedup_args, " ")
         ));
-        (res, canon)
+        let view_proof = crate::proofs::proof_fresh::view_proof_prim_name(&view);
+        let vprf = self.fresh_var();
+        res.push(format!(
+            "(let {vprf} ({view_proof} {} {can_prf}))",
+            ListDisplay(&dedup_args, " ")
+        ));
+
+        // connector: `fv_nat = dedup` = Trans(fv_nat = f(children), Sym(dedup = f(children))).
+        let sym_vprf = self.mint(&mut res, &sym, &vprf, &proof_sort);
+        let connector =
+            self.mint(&mut res, &trans, &format!("{nat_to_dedup_term} {sym_vprf}"), &proof_sort);
+
+        self.egraph
+            .proof_state
+            .nat_conn
+            .insert(dedup.clone(), (fv_nat, Some(connector)));
+        (res, dedup)
     }
 
     /// Returns a query for (fname args) and a variable for the proof (or Unit) output.
