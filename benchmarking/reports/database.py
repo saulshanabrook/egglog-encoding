@@ -1,12 +1,12 @@
 """Own the transient DuckDB catalog over the append-only benchmark JSONL.
 
 This module appends trusted writer records, creates the direct JSONL scan,
-installs the selected typed report scope, loads the analysis and output-facing
-SQL relations, converts those rows to typed contracts, and owns the optional
-DuckDB UI lifecycle. Persisted writer shapes belong in
-:mod:`benchmarking.reports.records`; statistical and grouping semantics belong
-in ``reports/sql``; table layout and text rendering belong in the sibling
-summary, timing, and render modules.
+installs the current typed report scope, loads the parameterized analysis
+macros and current-scope presentation views, converts those rows to typed
+contracts, and owns the optional DuckDB UI lifecycle. Persisted writer shapes
+belong in :mod:`benchmarking.reports.records`; statistical and grouping
+semantics belong in ``reports/sql``; table layout and text rendering belong in
+the sibling summary, timing, and render modules.
 """
 
 from __future__ import annotations

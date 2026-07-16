@@ -230,6 +230,39 @@ def test_duckdb_ui_is_opt_in() -> None:
     assert with_ui.duckdb_ui
 
 
+def test_live_report_server_is_opt_in_with_an_optional_port() -> None:
+    ordinary = benchmark_config.parse_benchmark_args([])
+    automatic_port = benchmark_config.parse_benchmark_args(["--serve"])
+    fixed_port = benchmark_config.parse_benchmark_args(["--serve", "--serve-port", "4312"])
+
+    assert not ordinary.serve
+    assert ordinary.serve_port is None
+    assert automatic_port.serve
+    assert automatic_port.serve_port is None
+    assert fixed_port.serve
+    assert fixed_port.serve_port == 4312
+
+
+def test_live_report_port_requires_server(capsys: Any) -> None:
+    with pytest.raises(SystemExit):
+        benchmark_config.parse_benchmark_args(["--serve-port", "4312"])
+
+    assert "--serve-port requires --serve" in capsys.readouterr().err
+
+
+def test_live_report_server_rejects_duckdb_ui(capsys: Any) -> None:
+    with pytest.raises(SystemExit):
+        benchmark_config.parse_benchmark_args(["--serve", "--duckdb-ui"])
+
+    assert "--serve and --duckdb-ui cannot be used together" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_live_report_server_rejects_invalid_ports(port: str) -> None:
+    with pytest.raises(SystemExit):
+        benchmark_config.parse_benchmark_args(["--serve", "--serve-port", port])
+
+
 def test_duckdb_ui_reports_extension_start_failure(tmp_path: Path) -> None:
     class FailingConnection:
         def execute(self, _query: str) -> None:
@@ -551,3 +584,52 @@ def test_main_opens_duckdb_ui_after_installing_report_scope(
     assert events == ["write", "flush", "start", "wait"]
     assert "# Benchmark Report" in stdout.text
     assert "UI started at http://localhost:4213" in captured.err
+
+
+def test_main_serves_the_completed_shared_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "reports.jsonl"
+    write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
+    target = make_target()
+    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_files",
+        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
+    )
+    monkeypatch.setattr(benchmark, "resolve_target", lambda *_args: target)
+    observed: dict[str, object] = {}
+
+    def serve(session: Any, *, port: int, console: Any) -> None:
+        observed["port"] = port
+        observed["console"] = console
+        observed["payload"] = session.payload()
+
+    monkeypatch.setattr(benchmark, "serve_live_report", serve)
+
+    result = benchmark.main(
+        [
+            "--report",
+            str(report),
+            "--rounds",
+            "1",
+            "--treatments",
+            "off",
+            "--serve",
+            "--serve-port",
+            "4312",
+            "file.egg",
+        ]
+    )
+
+    assert result == 0
+    assert observed["port"] == 4312
+    payload = observed["payload"]
+    assert isinstance(payload, dict)
+    assert payload["report_path"] == str(report)
+    assert payload["sections"]

@@ -74,6 +74,14 @@ press Enter in the benchmark terminal and confirm the server closes cleanly.
 Opening the UI can require network access for the extension or frontend assets;
 keep this a deliberate manual smoke rather than part of the unattended gate.
 
+For live-report changes, manually run `--serve` against a report under `/tmp`
+with both an OS-selected port and one fixed `--serve-port`. Inspect a focused
+one-file report and the default six-file report, including compact and detailed
+timing. In the browser, verify baseline/selector retargeting, a cached scope with
+a missing result, SQL-style and column filters, an invalid Apply that restores
+the prior selectors and report, table-local scrolling at 800 pixels, and clean
+Ctrl-C shutdown. Scope changes must never build a target or collect a new row.
+
 ## Benchmarking
 
 - Use `./bench.py` as the public benchmark entrypoint.

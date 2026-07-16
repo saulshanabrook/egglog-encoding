@@ -185,8 +185,9 @@ initial collection plan and machine-readable report rows retain full paths.
 The benchmark CLI exposes the routine collection and reporting options:
 
 Positional files together with `--target`, `--backend`, and `--treatments`
-define the selected benchmark results. Display options do not select a
-different subset: every enabled report view covers every selected result.
+define the initially selected benchmark results. CLI display options do not
+change that subset: every enabled report view covers every CLI-selected result.
+The live page may then narrow that fixed universe using cached rows only.
 
 - `--report <path>`: append-only JSONL report/cache path. Default:
   `.reports.jsonl`. Literal `-` is rejected; use a disposable path under
@@ -208,13 +209,58 @@ different subset: every enabled report view covers every selected result.
 - `--detailed-timing`: display the compact timing breakdown followed by every
   recorded ruleset for every selected result.
 - `--duckdb-ui`: after rendering the report, open DuckDB's official local UI
-  on the same transient in-memory database. The selected report scope and
-  analysis views are available for interactive SQL. This requires interactive
-  stdin; press Enter or Ctrl-C in the benchmark terminal to close the session.
+  on the same transient in-memory database. The selected report scope and eight
+  `presentation_*` views/table macros are available for interactive SQL. This
+  requires interactive stdin; press Enter or Ctrl-C in the benchmark terminal
+  to close the session.
   DuckDB installs and loads its `ui` extension on first use and the UI frontend
   may fetch remote assets, so opening it can require network access.
+- `--serve`: after printing the ordinary Rich or Markdown report, serve the
+  same shared report catalog on a loopback-only interactive web page. Every
+  table supports local filtering; changing a report scope applies one complete
+  cache-only recomputation and never builds a target or collects observations.
+  Press Ctrl-C in the benchmark terminal to stop the server.
+- `--serve-port <port>`: fixed loopback port for `--serve`. Without it, the
+  operating system chooses an available port. This option requires `--serve`;
+  `--serve` and `--duckdb-ui` are mutually exclusive.
 - `--force-run`: append new observations even when enough matching rows already
   exist.
+
+### Live report
+
+Use the local live view when you want to explore the same report tables without
+rerunning the benchmark command for every narrower presentation:
+
+```bash
+./bench.py FILE --target main=@origin/main --target mine=. \
+  --backend main,dd --treatments proofs --phase-timings --serve
+```
+
+The command prints its ordinary Rich or Markdown report first, then reports a
+`127.0.0.1` URL, attempts to open it in the default browser, and remains alive
+until Ctrl-C. The page is populated from the same renderer-neutral catalog as
+the terminal and Markdown renderers, preserving visible section/block order,
+values, cell emphasis, and wording. It does not load Pyodide or calculate
+replacement statistics in the browser. Table SQL-style WHERE filters
+(implemented locally with AlaSQL), substring filters, checkboxes, and column
+filters change only the browser display; they do not change the selected
+benchmark scope or query DuckDB.
+
+The scope editor is deliberately bounded by the invocation. It can choose a
+non-empty deterministic subset of the already-resolved targets, files,
+backends, and treatments, with one selected target as the explicit baseline,
+plus rounds, timeout, and compact or detailed timing display. Apply sends one
+complete scope update. Rounds and timeout only reselect matching cached rows;
+they can produce missing-result diagnostics but never trigger collection. The
+server analyzes only rows already present in the selected JSONL report, using a
+fresh transient DuckDB catalog for the request; it never resolves or builds a
+new target and never runs a benchmark. The displayed catalog and scope editor
+are replaced only after the complete update succeeds, so a failed update leaves
+the previous report intact and restores its selectors alongside the error.
+
+Use `--serve-port PORT` when a predictable port is useful. Otherwise the
+operating system chooses a free port. `--serve` cannot be combined with
+`--duckdb-ui`, because both modes own the post-report interactive session.
 
 ### Treatments
 
@@ -444,15 +490,14 @@ observation instead of waiting for a whole-file rewrite or end-of-run flush.
 
 The runner opens a private in-memory DuckDB catalog and reads this JSONL file
 directly through a concrete nested record schema. The catalog owns only types,
-one report's parameter relations, analysis views, and output-facing views:
-report rows are not copied into another table, and no `.duckdb` database or WAL
-file is created. Cache selection binds its requested keys directly as a typed
-query parameter. Report analysis populates the `scope_*` parameter relations
-once so the same selected targets, files, cells, statistics settings, and
-comparisons are visible to every view and to the optional UI connection. Cache
-selection and report analysis use bulk, set-oriented operations rather than
-scanning once per target/file/backend/treatment result. Appending remains a
-direct, one-line JSONL filesystem write.
+parameterized analysis macros, one current-scope value, and output-facing
+views: report rows are not copied into another table, and no `.duckdb` database
+or WAL file is created. Cache selection binds its requested keys directly as a
+typed query parameter. Report analysis installs one immutable `report_scope_t`
+value containing the selected targets, files, cells, statistics settings, and
+comparisons. Cache selection and report analysis use bulk, set-oriented
+operations rather than scanning once per target/file/backend/treatment result.
+Appending remains a direct, one-line JSONL filesystem write.
 
 Use `./bench.py --duckdb-ui` to inspect that in-memory database interactively
 after the ordinary report is rendered. The browser UI runs locally and queries
@@ -476,20 +521,27 @@ SELECT * FROM presentation_ruleset_timings;
 
 The views are ordinary live views, not materialized snapshots. `report_rows`
 and `historical_process_estimates` cover the complete JSONL cache. The
-`scoped_*` analysis views combine that universal data with the installed
-`scope_*` parameter relations, and the `presentation_*` views provide stable
-output schemas over those scoped calculations. Consequently every query sees
-the installed report scope and the current append-only JSONL contents without
-copying or refreshing report rows.
+`scope_*` macros expand any typed scope into ordered selector relations, the
+`scoped_*` macros perform the calculations, and each
+`presentation_*(requested_scope)` table macro provides one stable output
+schema. A discoverable view with the same `presentation_*` name invokes that
+macro using the singleton `current_report_scope` value. Consequently every UI
+query sees the installed report scope and the current append-only JSONL
+contents without copying or refreshing report rows. SQL callers can instead
+pass another `report_scope_t` value to the table macro and recompute the same
+dataset without mutating the installed `current_report_scope` row. The live web
+view uses a fresh transient catalog for each Apply so a complete new catalog is
+published atomically while the previous one remains visible on failure.
 
 The timing views expose the raw `unattributed_ns` component and SQL-derived
 `pre_merge_ns` values. The compact view also exposes `ruleset_total_ns` and
 `outside_rulesets_ns`, while the per-ruleset view exposes each row's `total_ns`.
 
 These views contain numeric values, coordinates, result classifications, and
-issues rather than preformatted terminal strings. Python only selects report
-sections, arranges their columns, formats units and wording, and serializes the
-result as Rich or Markdown.
+issues rather than preformatted terminal strings. Python selects report
+sections, arranges their columns, and formats units and wording into the shared
+catalog; adapters render it as Rich or Markdown or serialize it for the live
+browser.
 
 The persisted Python and SQL schemas deliberately mirror one another:
 `ReportRecord` matches `report_record_t`, `TimingSummaryRecord` matches
@@ -835,17 +887,23 @@ Python package boundaries:
 - `benchmarking/profile.py` owns profile requests and records and caches Samply
   profiles; `samply_analysis.py` reads, summarizes, and renders those artifacts.
 - `benchmarking/reports/records.py` defines the trusted JSONL `TypedDict`
-  writer contract. `database.py` owns the transient DuckDB catalog, selected
-  scope, append/query boundary, and typed conversion of output-view rows.
-- `benchmarking/reports/sql/schema.sql` defines the JSONL projection and scope;
-  `analysis.sql` owns statistics and timing aggregation; `presentation.sql`
-  exposes the semantic datasets consumed by both Python and the DuckDB UI.
-- `benchmarking/reports/results.py` mirrors those output-view schemas as named
-  tuples and contains renderer-neutral table values. `summary.py` selects
-  comparisons and lays out ordinary tables without recomputing report facts.
+  writer contract. `database.py` owns the transient DuckDB catalog, current
+  typed scope, append/query boundary, DuckDB UI lifecycle, and conversion of
+  output rows to named tuples.
+- `benchmarking/reports/sql/schema.sql` defines the direct JSONL projection and
+  typed scope; `analysis.sql` owns parameterized statistics and timing
+  aggregation; `presentation.sql` exposes the stable table macros and
+  current-scope views consumed by Python and the DuckDB UI.
+- `benchmarking/reports/results.py` mirrors the SQL presentation schemas as
+  named tuples. `catalog.py` defines the renderer-neutral report request,
+  sections, tables, cells, messages, stable IDs, and raw/display values.
+- `benchmarking/reports/summary.py` chooses comparisons and lays out ordinary
+  catalog tables without recomputing report facts.
 - `benchmarking/reports/timing.py` lays out timing tables and formats their
   SQL-derived values; `render.py` is the only owner of Rich/Markdown syntax and
-  terminal width behavior.
+  terminal width behavior. `live.py` owns the browser scope editor and wire
+  adapter, adapts the same catalog to eval-live, and owns cache-only scope
+  retargeting plus the loopback server/browser lifecycle.
 - Package `__init__.py` files are documentation-only. Tests enforce ownership
   docstrings, this no-side-effect initializer rule, the data-layer dependency
   boundary, and an acyclic static import graph.

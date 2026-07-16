@@ -124,9 +124,24 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="open the scoped report views in DuckDB's local UI (requires interactive stdin)",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="serve the completed shared report catalog on a local interactive web page",
+    )
+    parser.add_argument(
+        "--serve-port",
+        type=tcp_port,
+        default=None,
+        help="loopback TCP port for --serve (default: choose an available port)",
+    )
     args = parser.parse_args(argv)
     if args.report == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
+    if args.serve_port is not None and not args.serve:
+        parser.error("--serve-port requires --serve")
+    if args.serve and args.duckdb_ui:
+        parser.error("--serve and --duckdb-ui cannot be used together")
     if args.detailed_timing:
         args.phase_timings = True
     args.command = "benchmark"
@@ -137,6 +152,15 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
+    return parsed
+
+
+def tcp_port(value: str) -> int:
+    """Parse one valid TCP port accepted by the live report server."""
+
+    parsed = positive_int(value)
+    if parsed > 65535:
+        raise argparse.ArgumentTypeError("must be at most 65535")
     return parsed
 
 

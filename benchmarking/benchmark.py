@@ -32,6 +32,7 @@ from .models import BenchmarkSpec, validate_unique_target_binaries
 from .output import RunnerOutput
 from .reports.catalog import ReportOptions, ReportScope
 from .reports.database import ReportDatabase
+from .reports.live import LiveReportSession, serve_live_report
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.summary import build_report_catalog
 from .targets import git_root_for_path, parse_target
@@ -63,6 +64,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = tuple(sys.argv[1:] if argv is None else argv)
     args = parse_benchmark_args(raw_argv)
     output = RunnerOutput()
+    live_session: LiveReportSession | None = None
     try:
         if args.duckdb_ui and not sys.stdin.isatty():
             raise ValueError("--duckdb-ui requires an interactive terminal on stdin")
@@ -109,15 +111,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 emit_collection_plan(output, plan, estimate_model)
                 collect_rows(database, plan, spec, output, estimate_model, startup_warmup)
 
-            catalog = build_report_catalog(
-                database,
-                ReportScope(targets, spec),
-                ReportOptions(
-                    command_argv=raw_argv if args.format == "markdown" else None,
-                    phase_timings=bool(args.phase_timings),
-                    detailed_timing=bool(args.detailed_timing),
-                ),
+            report_scope = ReportScope(targets, spec)
+            report_options = ReportOptions(
+                command_argv=raw_argv if args.format == "markdown" else None,
+                phase_timings=bool(args.phase_timings),
+                detailed_timing=bool(args.detailed_timing),
             )
+            catalog = build_report_catalog(database, report_scope, report_options)
             if args.format == "markdown":
                 rendered = render_markdown_report_document(catalog)
                 sys.stdout.write(rendered + "\n")
@@ -129,6 +129,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sys.stdout.flush()
                 output.console.print(database.start_ui())
                 wait_for_duckdb_ui_exit(output)
+            if args.serve:
+                if args.format == "markdown":
+                    sys.stdout.flush()
+                live_session = LiveReportSession(report_path, report_scope, report_options, catalog)
+        if live_session is not None:
+            serve_live_report(
+                live_session,
+                port=args.serve_port,
+                console=output.console,
+            )
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2
