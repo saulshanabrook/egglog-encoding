@@ -438,6 +438,20 @@ def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -
         workloads.resolve_files([str(prove_file)], tmp_path)
 
 
+@pytest.mark.parametrize(
+    "source",
+    (
+        "(check (= 1 1)) (prove (= 1 1))\n",
+        "( check (= 1 1))\n( ; comment between the parenthesis and command\n prove (= 1 1))\n",
+    ),
+)
+def test_prove_scan_detects_top_level_commands_beyond_line_starts(tmp_path: Path, source: str) -> None:
+    prove_file = tmp_path / "prove.egg"
+    prove_file.write_text(source, encoding="utf-8")
+
+    assert workloads.file_contains_executable_prove_command(prove_file)
+
+
 def test_resolve_files_allows_prove_mentions_in_comments(tmp_path: Path) -> None:
     check_file = tmp_path / "check.egg"
     check_file.write_text(
@@ -446,6 +460,17 @@ def test_resolve_files_allows_prove_mentions_in_comments(tmp_path: Path) -> None
     )
 
     assert workloads.resolve_files([str(check_file)], tmp_path)[0].absolute_path == check_file.resolve()
+
+
+def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) -> None:
+    check_file = tmp_path / "check.egg"
+    check_file.write_text(
+        '; (prove (Comment))\n(let text "escaped \\"(prove (String))\\"")\n'
+        "(check (= 1 1)) ; (prove (InlineComment))\n(prove-more (NotACommand))\n",
+        encoding="utf-8",
+    )
+
+    assert not workloads.file_contains_executable_prove_command(check_file)
 
 
 def test_default_workloads_are_the_six_research_cases() -> None:
@@ -488,7 +513,7 @@ def test_main_validates_old_report_before_target_resolution(
 ) -> None:
     report = tmp_path / "old.jsonl"
     old = dict(make_record(0, started_at="2026-07-04T12:00:00Z"))
-    cast(dict[str, object], old["timing_summary"])["schema_version"] = 1
+    del old["report_schema_version"]
     report.write_text(json.dumps(old) + "\n", encoding="utf-8")
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(
@@ -501,6 +526,40 @@ def test_main_validates_old_report_before_target_resolution(
 
     assert result == 2
     assert "invalid or incompatible benchmark report" in capsys.readouterr().err
+
+
+def test_main_reports_interactive_write_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    tmp_path: Path,
+) -> None:
+    report = tmp_path / "reports.jsonl"
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
+    write_report(
+        report,
+        make_record(0, started_at="2026-07-17T00:00:00Z", treatment="off"),
+        make_record(1, started_at="2026-07-17T00:00:01Z", treatment="proofs"),
+    )
+    target = make_target()
+    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
+    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (file_spec,))
+    monkeypatch.setattr(
+        benchmark,
+        "resolve_targets",
+        lambda groups, *_args: {request: target for request, _endpoints in groups},
+    )
+
+    def fail_write(*_args: object) -> Path:
+        raise PermissionError("read-only destination")
+
+    monkeypatch.setattr(benchmark, "write_interactive_report", fail_write)
+
+    result = benchmark.main(["--report", str(report), "--rounds", "1", "--open", "file.egg"])
+
+    assert result == 2
+    assert "read-only destination" in capsys.readouterr().err
 
 
 def test_main_preflights_both_fresh_targets_before_collecting(

@@ -7,6 +7,7 @@ import gzip
 import io
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -27,6 +28,43 @@ from .conftest import (
     mock_profile_resolution,
     write_profile,
 )
+
+
+def stable_file_spec(tmp_path: Path) -> models.FileSpec:
+    """Create one immutable workload identity for profile lifecycle tests."""
+
+    path = tmp_path / "workload.egg"
+    path.write_text("(check (= 1 1))\n", encoding="utf-8")
+    return models.FileSpec(path.name, path, targets.sha256_file(path))
+
+
+def stub_samply_record_process(
+    monkeypatch: pytest.MonkeyPatch,
+    action: Callable[..., None],
+    return_code: int = 0,
+) -> None:
+    """Run a Samply-record test action through the isolated Popen lifecycle."""
+
+    class FakeProcess:
+        pid = 1
+
+        def __init__(self, command: list[str], kwargs: dict[str, Any]) -> None:
+            self.command = command
+            self.kwargs = kwargs
+            self.returncode: int | None = None
+
+        def wait(self, timeout: int | None = None) -> int:
+            if self.returncode is None:
+                action(self.command, **self.kwargs)
+                self.returncode = return_code
+            return self.returncode
+
+    def fake_popen(command: list[str], **kwargs: Any) -> FakeProcess:
+        assert kwargs["start_new_session"] is True
+        return FakeProcess(command, kwargs)
+
+    monkeypatch.setattr(profile_runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(profile_runner, "terminate_process_group", lambda process: process.wait())
 
 
 def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
@@ -183,7 +221,7 @@ def test_profile_cache_path_uses_full_binary_and_file_hashes() -> None:
         profile_runner.ProfileMode(None, 10),
     )
 
-    base = Path(".profiles") / "v2" / ("a" * 64) / ("b" * 64) / "no-facts"
+    base = Path(".profiles") / "v3" / ("a" * 64) / ("b" * 64) / "no-facts"
     assert explicit == base / "main-proofs-i5.json.gz"
     assert automatic == base / "main-proofs-auto10s.json.gz"
 
@@ -229,10 +267,11 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
         write_profile(output, profile)
 
     monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
-    monkeypatch.setattr(profile_runner.subprocess, "run", fake_run)
+    stub_samply_record_process(monkeypatch, fake_run)
 
     recorded_profile = profile_runner.run_samply_record(
         artifact=artifact,
+        file_spec=stable_file_spec(tmp_path),
         name="profile",
         iterations=3,
         workload=["workload"],
@@ -250,21 +289,51 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
     assert command[-2:] == ["--", "workload"]
 
 
+def test_samply_mutated_workload_is_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    artifact.write_bytes(b"old")
+    file_spec = stable_file_spec(tmp_path)
+    temporary_paths: list[Path] = []
+
+    def fake_run(command: list[str], **kwargs: Any) -> None:
+        output = Path(command[command.index("--output") + 1])
+        temporary_paths.append(output)
+        write_profile(output)
+        file_spec.absolute_path.write_text("(check (= 2 2))\n", encoding="utf-8")
+
+    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
+    stub_samply_record_process(monkeypatch, fake_run)
+
+    with pytest.raises(ValueError, match=r"workload changed during execution: workload\.egg"):
+        profile_runner.run_samply_record(
+            artifact=artifact,
+            file_spec=file_spec,
+            name="profile",
+            iterations=1,
+            workload=["workload"],
+            checkout_path=ROOT,
+            timeout_sec=120,
+        )
+
+    assert artifact.read_bytes() == b"old"
+    assert temporary_paths and not temporary_paths[0].exists()
+
+
 def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     artifact = tmp_path / "profile.json.gz"
     temp_artifact = tmp_path / ".profile.tmp-test.json.gz"
 
     def fake_run(command: list[str], **kwargs: Any) -> None:
         temp_artifact.write_bytes(b"partial")
-        raise subprocess.CalledProcessError(1, command)
 
     monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     monkeypatch.setattr(profile_runner, "profile_temp_path", lambda path: temp_artifact)
-    monkeypatch.setattr(profile_runner.subprocess, "run", fake_run)
+    stub_samply_record_process(monkeypatch, fake_run, return_code=1)
 
     with pytest.raises(subprocess.CalledProcessError):
         profile_runner.run_samply_record(
             artifact=artifact,
+            file_spec=stable_file_spec(tmp_path),
             name="profile",
             iterations=1,
             workload=["workload"],
@@ -274,6 +343,43 @@ def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, 
 
     assert not artifact.exists()
     assert not temp_artifact.exists()
+
+
+def test_samply_timeout_cleans_up_before_propagating(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    artifact = tmp_path / "profile.json.gz"
+    artifact.write_bytes(b"old")
+    terminated: list[object] = []
+
+    class TimedOutProcess:
+        pid = 1
+        returncode: int | None = None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired("samply", timeout if timeout is not None else 0.0)
+
+    process = TimedOutProcess()
+
+    def fake_popen(command: list[str], **kwargs: Any) -> TimedOutProcess:
+        assert kwargs["start_new_session"] is True
+        return process
+
+    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
+    monkeypatch.setattr(profile_runner.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(profile_runner, "terminate_process_group", terminated.append)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        profile_runner.run_samply_record(
+            artifact=artifact,
+            file_spec=stable_file_spec(tmp_path),
+            name="profile",
+            iterations=1,
+            workload=["workload"],
+            checkout_path=ROOT,
+            timeout_sec=120,
+        )
+
+    assert terminated == [process]
+    assert artifact.read_bytes() == b"old"
 
 
 def test_read_profile_artifact_rejects_plain_json(tmp_path: Path) -> None:
@@ -335,11 +441,12 @@ def test_samply_plain_json_output_is_not_promoted(monkeypatch: pytest.MonkeyPatc
         write_profile(output, compressed=False)
 
     monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
-    monkeypatch.setattr(profile_runner.subprocess, "run", fake_run)
+    stub_samply_record_process(monkeypatch, fake_run)
 
     with pytest.raises(ValueError, match="gzip"):
         profile_runner.run_samply_record(
             artifact=artifact,
+            file_spec=stable_file_spec(tmp_path),
             name="profile",
             iterations=1,
             workload=["workload"],

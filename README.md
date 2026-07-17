@@ -280,6 +280,12 @@ nanosecond totals:
 - Merge: resolving and installing staged updates.
 - Rebuild: rebuilding indexes and e-graph state.
 
+The pre-merge boundary is backend-defined. Main egglog measures one contiguous
+pre-merge interval and records the remainder after Search and Apply as
+Unattributed. DD directly times its native Search and Apply regions and defines
+its pre-merge total as their sum, so DD records zero Unattributed time. DD work
+outside those phase boundaries remains part of Outside recorded rulesets.
+
 The phase report aggregates all rulesets and keeps two kinds of otherwise
 hidden time distinct:
 
@@ -405,16 +411,20 @@ counts. All operational output goes to stderr.
 `benchmarking/reports/records.py` defines the sole trusted `TypedDict` schema
 and standard-library JSON codec. Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
-details. Successful observations also contain the version-2 per-ruleset timing
-summary: name plus Search, Apply, Unattributed, Merge, and Rebuild nanoseconds.
+details. A top-level report schema version covers both the persisted shape and
+measurement semantics, so methodology changes cannot silently reuse stale
+measurements. Successful observations also contain the version-2 per-ruleset
+timing summary: name plus Search, Apply, Unattributed, Merge, and Rebuild
+nanoseconds.
 
 Timed-out rows have null wall time, peak RSS, and timing summary. Failed rows
 have no timing summary and retain whatever process measurements the operating
 system supplied. Either status makes a dependent statistical comparison
 incomplete instead of averaging only successful rows.
 
-This tool is the only supported reader and writer. The codec rejects old timing
-schema versions and requires successful rows to contain timing data. It trusts
+This tool is the only supported reader and writer. The codec rejects old report
+and timing-summary schema versions and requires successful rows to contain
+timing data. It trusts
 the tool's typed writer rather than repeating the `TypedDict` as runtime
 field-by-field validation. A schema change intentionally invalidates existing
 caches: move or remove an incompatible report and recompute it.

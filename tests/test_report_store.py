@@ -123,6 +123,21 @@ def test_typed_dict_schema_and_nested_values_round_trip(tmp_path: Path) -> None:
     assert tuple(rulesets[0]) == tuple(RulesetTimingRecord.__annotations__)
 
 
+@pytest.mark.parametrize("schema_version", [None, 2], ids=["missing", "wrong"])
+def test_incompatible_report_schema_fails_during_load(tmp_path: Path, schema_version: int | None) -> None:
+    report = tmp_path / "report.jsonl"
+    current = make_record(0, started_at="2026-07-15T12:00:00Z")
+    old = cast(dict[str, object], make_record(1, started_at="2026-07-15T12:00:01Z"))
+    if schema_version is None:
+        del old["report_schema_version"]
+    else:
+        old["report_schema_version"] = schema_version
+    report.write_text(f"{json.dumps(current)}\n{json.dumps(old)}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
+        ReportStore(report)
+
+
 @pytest.mark.parametrize("mixed", [False, True], ids=["old", "mixed"])
 def test_incompatible_report_shapes_fail_during_load(tmp_path: Path, mixed: bool) -> None:
     report = tmp_path / "report.jsonl"

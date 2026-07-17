@@ -42,6 +42,7 @@ from .models import (
 from .output import RunnerOutput
 from .processes import TimingResult, run_command
 from .reports.records import (
+    REPORT_SCHEMA_VERSION,
     ReportRecord,
     TimingSummaryRecord,
     parse_timing_summary,
@@ -54,6 +55,7 @@ from .targets import (
     target_row_for_request,
     workload_command,
 )
+from .workloads import require_workload_unchanged
 
 
 @dataclass(frozen=True)
@@ -368,6 +370,7 @@ def run_process(
         workload = workload_command(binary_path, file_spec, backend, treatment)
         command = [workload[0], "--timing-summary", str(summary_path), *workload[1:]]
         result = run_command(command, checkout_path, timeout_sec)
+        require_workload_unchanged(file_spec)
         if result.status != "success":
             return ProcessObservation(result=result, timing_summary=None)
         if not summary_path.is_file():
@@ -546,6 +549,7 @@ def flat_report_record(
 
     result = observation.result
     return {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "started_at": started_at,
         "status": result.status,
         "target_label": target.row.label,

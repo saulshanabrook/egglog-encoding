@@ -13,6 +13,9 @@ from typing import Final, Literal, TypedDict, cast
 
 from ..models import Backend, Status, Treatment
 
+type ReportSchemaVersion = Literal[1]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 1
+
 type TimingSummarySchemaVersion = Literal[2]
 TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2
 
@@ -38,6 +41,7 @@ class TimingSummaryRecord(TypedDict):
 class ReportRecord(TypedDict):
     """One complete benchmark observation persisted as one JSON line."""
 
+    report_schema_version: ReportSchemaVersion
     started_at: str
     status: Status
     target_label: str | None
@@ -66,7 +70,7 @@ def parse_report_record(data: bytes | str) -> ReportRecord:
     """Parse one JSON object and enforce the current trusted-writer contract."""
 
     record = cast(ReportRecord, json.loads(data))
-    _require_current_timing(record)
+    _require_current_record(record)
     return record
 
 
@@ -81,12 +85,15 @@ def parse_timing_summary(data: bytes | str) -> TimingSummaryRecord:
 def serialize_report_record(record: ReportRecord) -> bytes:
     """Return the record's validated, newline-free JSON encoding."""
 
-    _require_current_timing(record)
+    _require_current_record(record)
     return json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
 
 
-def _require_current_timing(record: ReportRecord) -> None:
-    """Reject old timing data and keep successful rows self-contained."""
+def _require_current_record(record: ReportRecord) -> None:
+    """Reject old report data and keep successful rows self-contained."""
+
+    if record["report_schema_version"] != REPORT_SCHEMA_VERSION:
+        raise ValueError(f"unsupported report schema version {record['report_schema_version']!r}")
 
     summary = record["timing_summary"]
     if summary is not None:

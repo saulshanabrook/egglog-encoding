@@ -277,6 +277,12 @@ def test_interactive_path_and_best_effort_open(monkeypatch: pytest.MonkeyPatch, 
 
     assert opened == [(tmp_path / "report with spaces.html").resolve().as_uri()]
 
+    def fail_open(_url: str) -> None:
+        raise RuntimeError("browser unavailable")
+
+    monkeypatch.setattr(interactive.webbrowser, "open", fail_open)
+    interactive.open_interactive_report(tmp_path / "report.html")
+
 
 def test_write_rejects_the_jsonl_path_itself(tmp_path: Path) -> None:
     _runtime, _payload, store, comparison = _interactive_case(tmp_path)

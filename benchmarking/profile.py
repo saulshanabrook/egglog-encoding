@@ -31,16 +31,16 @@ from .models import (
     validate_backend_treatment,
 )
 from .output import RunnerOutput
-from .processes import run_command
+from .processes import run_command, terminate_process_group
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
-from .workloads import resolve_files
+from .workloads import require_workload_unchanged, resolve_files
 
 DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_PROFILE_SECONDS = 10
 DEFAULT_PROFILE_TOP = 15
 DEFAULT_TIMEOUT_SEC = 120
 MAX_PROFILE_ITERATIONS = 10_000
-PROFILE_CACHE_VERSION = "v2"
+PROFILE_CACHE_VERSION = "v3"
 PROFILE_SAMPLY_RATE_HZ = 1000
 OutputFormat = Literal["rich", "markdown"]
 
@@ -270,6 +270,7 @@ def profile_record_timeout(timeout_sec: int, iterations: int) -> int:
 def run_samply_record(
     *,
     artifact: Path,
+    file_spec: FileSpec,
     name: str,
     iterations: int,
     workload: Sequence[str],
@@ -284,17 +285,25 @@ def run_samply_record(
     env = os.environ.copy()
     env["RUST_LOG"] = "error"
     try:
-        subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=checkout_path,
             env=env,
-            check=True,
-            timeout=profile_record_timeout(timeout_sec, iterations),
             stdout=sys.stderr,
             stderr=sys.stderr,
+            start_new_session=True,
         )
+        try:
+            return_code = process.wait(timeout=profile_record_timeout(timeout_sec, iterations))
+        except BaseException:
+            terminate_process_group(process)
+            raise
+        if return_code != 0:
+            terminate_process_group(process)
+            raise subprocess.CalledProcessError(return_code, command)
         if not profile_cache_hit(temp_artifact):
             raise ValueError(f"Samply did not produce a nonempty profile artifact: {temp_artifact}")
+        require_workload_unchanged(file_spec)
         profile = samply_analysis.read_artifact(temp_artifact)
         artifact.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temp_artifact, artifact)
@@ -418,6 +427,7 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
         output.console.print(Text.assemble(("Recording profile", "bold"), " ", str(artifact)))
         profile = run_samply_record(
             artifact=artifact,
+            file_spec=request.file,
             name=name,
             iterations=iterations,
             workload=workload,

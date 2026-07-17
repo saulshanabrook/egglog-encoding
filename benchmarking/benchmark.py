@@ -281,7 +281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             output.console.print(f"Interactive benchmark report: {interactive_path}")
             open_interactive_report(interactive_path)
-    except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2
     return 0

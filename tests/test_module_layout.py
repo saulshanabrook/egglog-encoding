@@ -51,9 +51,29 @@ def imported_module_names(path: Path) -> set[str]:
             base = node.module or ""
         if base:
             imported.add(base)
-        if node.module is None:
-            imported.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
+        imported.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
     return imported
+
+
+def forbidden_imports(imports: set[str], forbidden: set[str]) -> set[str]:
+    """Return imports equal to or nested beneath one of the forbidden roots."""
+
+    return {
+        imported
+        for imported in imports
+        for forbidden_root in forbidden
+        if imported == forbidden_root or imported.startswith(forbidden_root + ".")
+    }
+
+
+def test_import_analysis_tracks_members_and_forbidden_descendants() -> None:
+    imports = imported_module_names(ROOT / "benchmarking/benchmark.py")
+
+    assert "benchmarking.models.BenchmarkEndpoint" in imports
+    assert forbidden_imports({"importlib.util", "importlib_util", "rich"}, {"importlib", "rich"}) == {
+        "importlib.util",
+        "rich",
+    }
 
 
 def test_every_python_module_has_an_ownership_docstring() -> None:
@@ -117,7 +137,7 @@ def test_report_renderer_depends_only_on_the_shared_catalog_contract() -> None:
         "benchmarking.reports.store",
     }
     assert "benchmarking.reports.catalog" in imports
-    assert imports.isdisjoint(forbidden)
+    assert not forbidden_imports(imports, forbidden)
 
 
 def test_store_does_not_import_analysis_or_presentation_layers() -> None:
@@ -134,7 +154,7 @@ def test_store_does_not_import_analysis_or_presentation_layers() -> None:
         "rich",
         "scipy",
     }
-    assert imports.isdisjoint(forbidden)
+    assert not forbidden_imports(imports, forbidden)
 
 
 def test_interactive_runtime_does_not_import_the_host_adapter() -> None:
@@ -147,7 +167,7 @@ def test_interactive_runtime_does_not_import_the_host_adapter() -> None:
         "importlib",
         "webbrowser",
     }
-    assert imports.isdisjoint(forbidden)
+    assert not forbidden_imports(imports, forbidden)
 
 
 def test_report_package_does_not_import_runner_layers() -> None:

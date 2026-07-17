@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from benchmarking import collection, models, processes
+from benchmarking import collection, models, processes, targets
 from benchmarking import output as runner_output
 from benchmarking.reports.store import EstimateAggregate, ReportStore
 
@@ -270,7 +270,9 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    file_spec = models.FileSpec("file.egg", benchmark_file, targets.sha256_file(benchmark_file))
     target = make_target(binary_path=ROOT / "egglog-experimental")
     selected_endpoint = endpoint(target)
 
@@ -300,6 +302,52 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
         )
 
     assert report.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.parametrize("mutated_input", ("file", "facts"))
+def test_collect_rows_rejects_mutated_workload_before_append(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutated_input: str,
+) -> None:
+    benchmark_file = tmp_path / "file.egg"
+    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
+    facts = tmp_path / "facts"
+    facts.mkdir()
+    fact_file = facts / "input.tsv"
+    fact_file.write_text("before\n", encoding="utf-8")
+    file_spec = models.FileSpec(
+        benchmark_file.name,
+        benchmark_file,
+        targets.sha256_file(benchmark_file),
+        facts,
+        targets.sha256_directory(facts),
+    )
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    selected_endpoint = endpoint(target)
+
+    def mutate_workload(
+        command: list[str],
+        _checkout_path: Path,
+        _timeout_sec: int,
+    ) -> processes.TimingResult:
+        summary_path = Path(command[command.index("--timing-summary") + 1])
+        summary_path.write_text(json.dumps(make_timing_summary()), encoding="utf-8")
+        if mutated_input == "file":
+            benchmark_file.write_text("(check (= 2 2))\n", encoding="utf-8")
+        else:
+            fact_file.write_text("after\n", encoding="utf-8")
+        return processes.TimingResult("success", processes.TimingRow(wall_sec=1.0), None)
+
+    monkeypatch.setattr(collection, "run_command", mutate_workload)
+    store = ReportStore(tmp_path / "report.jsonl")
+    plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 1, 120, False)
+
+    with pytest.raises(ValueError, match=r"workload changed during execution: file\.egg"):
+        collection.collect_rows(store, plan, 120, runner_output.RunnerOutput(), collection.EstimateModel())
+
+    assert store.row_count == 0
+    assert store.path.read_text(encoding="utf-8") == ""
 
 
 def test_redirected_collection_logs_each_run_and_one_status_summary(

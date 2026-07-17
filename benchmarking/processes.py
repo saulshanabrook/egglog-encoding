@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import os
 import resource
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -71,6 +73,7 @@ def run_command(
             text=True,
             stdout=stdout_file,
             stderr=stderr_file,
+            start_new_session=True,
         )
         try:
             return_code, usage = wait4_process(process, timeout_sec)
@@ -80,6 +83,9 @@ def run_command(
                 timing=TimingRow(),
                 error=ErrorRow(message=f"timed out after {timeout_sec} seconds"),
             )
+        except BaseException:
+            terminate_process_group(process)
+            raise
         wall_sec = time.perf_counter() - start
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
@@ -94,27 +100,50 @@ def run_command(
         return TimingResult(status="success", timing=timing, error=None)
     message = stderr.strip() or stdout.strip() or "process exited with non-zero status"
     exit_code = return_code if return_code >= 0 else None
-    signal = -return_code if return_code < 0 else None
+    signal_number = -return_code if return_code < 0 else None
     return TimingResult(
         status="failure",
         timing=timing,
-        error=ErrorRow(exit_code=exit_code, signal=signal, message=message[-1000:]),
+        error=ErrorRow(exit_code=exit_code, signal=signal_number, message=message[-1000:]),
     )
 
 
+def terminate_process_group(process: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+    """Kill and reap a command's isolated process group after an exceptional exit."""
+
+    with suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+
+
 def wait4_process(process: subprocess.Popen[str], timeout_sec: int) -> tuple[int, resource.struct_rusage]:
-    deadline = time.monotonic() + timeout_sec
-    while True:
-        waited_pid, status, usage = os.wait4(process.pid, os.WNOHANG)
-        if waited_pid == process.pid:
-            return os.waitstatus_to_exitcode(status), usage
-        if time.monotonic() >= deadline:
-            with suppress(ProcessLookupError):
-                process.kill()
-            with suppress(ChildProcessError):
-                os.wait4(process.pid, 0)
-            raise subprocess.TimeoutExpired(process.args, timeout_sec)
-        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+    """Wait without adding polling delay to the measured child wall time."""
+
+    timed_out = threading.Event()
+    finished = threading.Event()
+
+    def expire() -> None:
+        if finished.is_set():
+            return
+        timed_out.set()
+        with suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+
+    timer = threading.Timer(timeout_sec, expire)
+    try:
+        timer.start()
+        waited_pid, status, usage = os.wait4(process.pid, 0)
+    finally:
+        finished.set()
+        timer.cancel()
+        with suppress(RuntimeError):
+            timer.join()
+    assert waited_pid == process.pid
+    return_code = os.waitstatus_to_exitcode(status)
+    process.returncode = return_code
+    if timed_out.is_set():
+        raise subprocess.TimeoutExpired(process.args, timeout_sec)
+    return return_code, usage
 
 
 def read_tempfile(handle: TextIO) -> str:

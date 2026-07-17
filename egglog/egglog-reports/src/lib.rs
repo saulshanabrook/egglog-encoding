@@ -68,30 +68,31 @@ pub struct RuleReport {
 pub struct RuleSetReport {
     pub changed: bool,
     pub rule_reports: HashMap<Arc<str>, Vec<RuleReport>>,
-    /// Time before staged updates are merged, either as one elapsed duration or
-    /// as an exhaustive serial breakdown of that same interval.
+    /// Backend-defined timed work before staged updates are merged, either as
+    /// one elapsed duration or as an exhaustive serial phase breakdown.
     pub pre_merge: PreMergeTiming,
     pub merge_time: Duration,
 }
 
-/// Timing for the part of a ruleset iteration before staged updates are merged.
+/// Timing for a backend's defined timed work before staged updates are merged.
 ///
 /// Parallel execution reports one wall-clock duration because search and apply
-/// can overlap. Serial execution reports an exhaustive backend-defined
+/// can overlap. Serial execution reports an additive, backend-defined phase
 /// breakdown. Main egglog derives `unattributed` so the components close its
-/// measured outer interval; DD defines its pre-merge total as search plus apply
-/// and therefore reports zero `unattributed` time.
+/// measured outer interval. DD instead defines its pre-merge total directly as
+/// its native search plus apply regions and therefore reports zero
+/// `unattributed` time.
 #[derive(Debug, Serialize, Clone, Copy, PartialEq, Eq)]
 pub enum PreMergeTiming {
     /// One wall-clock duration for execution modes whose search and apply work
     /// can overlap.
     Combined { elapsed: Duration },
-    /// Non-overlapping components of one serial pre-merge interval.
+    /// Non-overlapping components of the backend's serial pre-merge timing.
     Split {
         search: Duration,
         apply: Duration,
-        /// Pre-merge setup and bookkeeping outside the timed search and apply
-        /// regions.
+        /// Remainder of a measured outer pre-merge interval after search and
+        /// apply, or zero when the backend defines the total as their sum.
         unattributed: Duration,
     },
 }

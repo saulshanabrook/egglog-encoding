@@ -13,6 +13,7 @@ import pytest
 from benchmarking import models, samply_analysis, targets
 from benchmarking import profile as profile_runner
 from benchmarking.reports.records import (
+    REPORT_SCHEMA_VERSION,
     ReportRecord,
     RulesetTimingRecord,
     TimingSummaryRecord,
@@ -41,6 +42,7 @@ def make_record(
     if status == "success" and timing_summary is None:
         timing_summary = make_timing_summary()
     return {
+        "report_schema_version": REPORT_SCHEMA_VERSION,
         "started_at": started_at,
         "status": status,
         "target_label": target_label,
