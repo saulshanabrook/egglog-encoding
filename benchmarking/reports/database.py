@@ -1,12 +1,11 @@
 """Own the transient DuckDB catalog over the append-only benchmark JSONL.
 
 This module appends trusted writer records, creates the direct JSONL scan,
-installs the current typed report scope, loads the parameterized analysis
-macros and current-scope presentation views, converts those rows to typed
-contracts, and owns the optional DuckDB UI lifecycle. Persisted writer shapes
-belong in :mod:`benchmarking.reports.records`; statistical and grouping
-semantics belong in ``reports/sql``; table layout and text rendering belong in
-the sibling summary, timing, and render modules.
+installs one immutable pair scope, loads ordinary analysis/presentation views,
+discovers row-complete cached endpoints, and converts SQL rows to typed
+contracts. Persisted writer shapes belong in :mod:`benchmarking.reports.records`;
+statistical and grouping semantics belong in ``reports/sql``; table layout and
+text rendering belong above this module.
 """
 
 from __future__ import annotations
@@ -21,28 +20,27 @@ import duckdb
 
 from ..models import (
     Backend,
-    BenchmarkSpec,
+    BenchmarkEndpoint,
+    ComparisonSpec,
+    DetailLevel,
     EstimateKey,
-    ResolvedTarget,
+    FileSpec,
     Status,
     TargetRow,
     Treatment,
-    benchmark_cells,
     validate_unique_file_identities,
-    validate_unique_target_binaries,
 )
 from .records import TIMING_SUMMARY_SCHEMA_VERSION, ReportRecord
 from .results import (
+    CachedEndpoint,
     CachedTarget,
-    CellEstimateView,
-    CompactTimingView,
-    ComparisonRequest,
-    ComparisonRollupView,
+    EndpointView,
     EstimateAggregate,
-    FileRatioView,
-    ReportViewData,
-    RulesetTimingView,
-    TargetView,
+    FileComparisonView,
+    PairReportViewData,
+    PhaseComparisonView,
+    RulesetComparisonView,
+    SummaryView,
 )
 
 
@@ -71,8 +69,20 @@ class _EstimateAggregateQueryRow(NamedTuple):
     total_wall_sec: float
 
 
-class SqlReportScopeTarget(TypedDict):
-    """Python mirror of SQL ``report_scope_target_t``."""
+class _CachedEndpointQueryRow(NamedTuple):
+    binary_sha256: str
+    backend: Backend
+    treatment: Treatment
+    target_label: str | None
+    target_source: str
+    target_path: str
+    target_git_ref: str
+    target_git_sha: str
+    target_is_dirty: bool
+
+
+class SqlReportScopeEndpoint(TypedDict):
+    """Python mirror of SQL ``report_scope_endpoint_t``."""
 
     binary_sha256: str
     target_label: str
@@ -81,6 +91,8 @@ class SqlReportScopeTarget(TypedDict):
     target_git_ref: str
     target_git_sha: str
     target_is_dirty: bool
+    backend: Backend
+    treatment: Treatment
 
 
 class SqlReportScopeFile(TypedDict):
@@ -93,29 +105,12 @@ class SqlReportScopeFile(TypedDict):
     fact_directory_path: str | None
 
 
-class SqlReportScopeCell(TypedDict):
-    """Python mirror of SQL ``report_scope_cell_t``."""
-
-    backend: Backend
-    treatment: Treatment
-
-
-class SqlReportScopeComparison(TypedDict):
-    """Python mirror of SQL ``report_scope_comparison_t``."""
-
-    baseline_target_order: int
-    baseline_cell_order: int
-    candidate_target_order: int
-    candidate_cell_order: int
-
-
 class SqlReportScope(TypedDict):
-    """Python mirror of SQL ``report_scope_t`` passed to report table macros."""
+    """Python mirror of the singleton SQL ``report_scope_t``."""
 
-    targets: list[SqlReportScopeTarget]
+    baseline: SqlReportScopeEndpoint
+    candidate: SqlReportScopeEndpoint
     files: list[SqlReportScopeFile]
-    cells: list[SqlReportScopeCell]
-    comparisons: list[SqlReportScopeComparison]
     rounds: int
     timeout_sec: int
     t_critical_95: float | None
@@ -133,12 +128,12 @@ class ReportDatabase:
         # is copied into or persisted as a DuckDB database.
         self._connection = duckdb.connect(":memory:")
         self._closed = False
+        self._scope_installed = False
         try:
             self._connection.execute("SET threads = 1")
             self._connection.execute("SET preserve_insertion_order = true")
-            # The UI queries through another connection to this database
-            # instance, so bind the source path in a catalog macro rather than
-            # a connection-local SET VARIABLE.
+            # A created view cannot bind a prepared path parameter, so expose
+            # the escaped literal through a catalog scalar macro.
             report_path = _duckdb_string_literal(_escape_duckdb_glob(self.path))
             self._connection.execute(f"CREATE MACRO report_path() AS {report_path}")
             self._connection.execute(_sql_resource("schema.sql"))
@@ -170,24 +165,6 @@ class ReportDatabase:
             self._connection.close()
             self._closed = True
 
-    def start_ui(self) -> str:
-        """Open DuckDB's local UI on this report session and return its status."""
-
-        self._ensure_open()
-        try:
-            row = self._connection.execute("CALL start_ui()").fetchone()
-        except duckdb.Error as error:
-            raise ValueError(
-                "could not open the DuckDB UI; DuckDB may have been unable to install, "
-                f"load, or start its ui extension: {error}"
-            ) from error
-        if row is None:
-            raise ValueError("could not open the DuckDB UI: CALL start_ui() returned no status")
-        status = str(row[0])
-        if "different DuckDB instance" in status:
-            raise ValueError(f"could not open the DuckDB UI for this report session: {status}")
-        return status
-
     def _ensure_report_loads(self) -> None:
         """Reject a cache that does not satisfy the current record contracts."""
 
@@ -201,6 +178,10 @@ class ReportDatabase:
                 SELECT
                     count(started_at),
                     count(*) FILTER (
+                        WHERE status = 'success'
+                          AND timing_summary IS NULL
+                    ),
+                    count(*) FILTER (
                         WHERE timing_summary IS NOT NULL
                           AND timing_summary.schema_version != ?
                     )
@@ -210,7 +191,7 @@ class ReportDatabase:
             ).fetchone()
         except duckdb.Error as error:
             raise ValueError(self._incompatible_report_message()) from error
-        if counts is None or counts[1] != 0:
+        if counts is None or counts[1] != 0 or counts[2] != 0:
             raise ValueError(self._incompatible_report_message())
 
     def append(self, record: ReportRecord) -> None:
@@ -369,139 +350,228 @@ class ReportDatabase:
             for row in rows
         )
 
-    def install_scope(
+    def complete_cached_endpoints(
         self,
-        targets: Sequence[ResolvedTarget],
-        spec: BenchmarkSpec,
-        t_critical_95: float | None,
-        requests: Sequence[ComparisonRequest],
-    ) -> None:
-        """Install one immutable typed scope for the current report views."""
+        files: Sequence[FileSpec],
+        rounds: int,
+        timeout_sec: int,
+    ) -> tuple[CachedEndpoint, ...]:
+        """Return atomic endpoints with enough latest rows for every file.
+
+        Completeness counts failures and timeouts, matching ordinary cache
+        reuse. Provenance comes from the newest selected row for the endpoint;
+        it does not participate in endpoint identity.
+        """
 
         self._ensure_open()
-        cells = benchmark_cells(spec)
-        if not targets:
-            raise ValueError("report scope requires at least one target")
-        if not spec.files:
-            raise ValueError("report scope requires at least one file")
-        validate_unique_target_binaries(targets)
-        validate_unique_file_identities(spec.files)
-        if not cells:
-            raise ValueError("report scope requires at least one supported backend/treatment cell")
-        if spec.rounds < 1:
-            raise ValueError("report scope rounds must be positive")
-        if spec.timeout_sec < 1:
-            raise ValueError("report scope timeout must be positive")
+        if not files:
+            raise ValueError("cached endpoint discovery requires at least one file")
+        validate_unique_file_identities(files)
+        if rounds < 1:
+            raise ValueError("rounds must be positive")
+        if timeout_sec < 1:
+            raise ValueError("timeout must be positive")
+        requested_files = [_sql_scope_file(file) for file in files]
+        rows = _fetch_rows(
+            self._connection.execute(
+                """
+                WITH requested_files AS (
+                    SELECT
+                        (ordinality - 1)::UINTEGER AS file_order,
+                        file.file_sha256,
+                        file.fact_directory_sha256
+                    FROM unnest(?::report_scope_file_t[])
+                    WITH ORDINALITY AS rows(file, ordinality)
+                ),
+                candidate_endpoints AS (
+                    SELECT DISTINCT
+                        reports.binary_sha256,
+                        reports.backend,
+                        reports.treatment
+                    FROM report_rows AS reports
+                    JOIN requested_files AS files
+                        ON files.file_sha256 = reports.file_sha256
+                        AND files.fact_directory_sha256 = reports.fact_directory_sha256
+                    WHERE reports.timeout_sec = ?
+                ),
+                ranked AS (
+                    SELECT
+                        endpoints.binary_sha256,
+                        endpoints.backend,
+                        endpoints.treatment,
+                        files.file_order,
+                        reports.row_index,
+                        reports.started_at,
+                        reports.target_label,
+                        reports.target_source,
+                        reports.target_path,
+                        reports.target_git_ref,
+                        reports.target_git_sha,
+                        reports.target_is_dirty,
+                        row_number() OVER (
+                            PARTITION BY
+                                endpoints.binary_sha256,
+                                endpoints.backend,
+                                endpoints.treatment,
+                                files.file_order
+                            ORDER BY reports.started_at::TIMESTAMPTZ DESC, reports.row_index DESC
+                        ) AS selection_rank
+                    FROM candidate_endpoints AS endpoints
+                    CROSS JOIN requested_files AS files
+                    JOIN report_rows AS reports
+                        ON reports.binary_sha256 = endpoints.binary_sha256
+                        AND reports.backend = endpoints.backend
+                        AND reports.treatment = endpoints.treatment
+                        AND reports.file_sha256 = files.file_sha256
+                        AND reports.fact_directory_sha256 = files.fact_directory_sha256
+                        AND reports.timeout_sec = ?
+                ),
+                selected AS (
+                    SELECT *
+                    FROM ranked
+                    WHERE selection_rank <= ?
+                ),
+                complete AS (
+                    SELECT binary_sha256, backend, treatment
+                    FROM selected
+                    GROUP BY ALL
+                    HAVING count(*) = ?
+                ),
+                metadata AS (
+                    SELECT
+                        selected.*,
+                        row_number() OVER (
+                            PARTITION BY
+                                selected.binary_sha256,
+                                selected.backend,
+                                selected.treatment
+                            ORDER BY selected.started_at::TIMESTAMPTZ DESC, selected.row_index DESC
+                        ) AS metadata_rank
+                    FROM selected
+                    JOIN complete USING (binary_sha256, backend, treatment)
+                )
+                SELECT
+                    binary_sha256,
+                    backend,
+                    treatment,
+                    target_label,
+                    target_source,
+                    target_path,
+                    target_git_ref,
+                    target_git_sha,
+                    target_is_dirty
+                FROM metadata
+                WHERE metadata_rank = 1
+                ORDER BY
+                    coalesce(target_label, target_git_ref, target_git_sha),
+                    backend,
+                    treatment,
+                    binary_sha256
+                """,
+                [requested_files, timeout_sec, timeout_sec, rounds, len(files) * rounds],
+            ),
+            _CachedEndpointQueryRow,
+        )
+        return tuple(
+            CachedEndpoint(
+                TargetRow(
+                    source=row.target_source,
+                    path=row.target_path,
+                    git_ref=row.target_git_ref,
+                    git_sha=row.target_git_sha,
+                    is_dirty=row.target_is_dirty,
+                    label=row.target_label,
+                ),
+                row.binary_sha256,
+                row.backend,
+                row.treatment,
+            )
+            for row in rows
+        )
+
+    def install_scope(
+        self,
+        comparison: ComparisonSpec,
+        t_critical_95: float | None,
+    ) -> None:
+        """Install the comparison used by every analysis and presentation view."""
+
+        self._ensure_open()
+        if self._scope_installed:
+            raise RuntimeError("report scope is already installed")
 
         scope: SqlReportScope = {
-            "targets": [
-                {
-                    "binary_sha256": target.binary_sha256,
-                    "target_label": target.display_label,
-                    "target_source": target.row.source,
-                    "target_path": target.row.path,
-                    "target_git_ref": target.row.git_ref,
-                    "target_git_sha": target.row.git_sha,
-                    "target_is_dirty": target.row.is_dirty,
-                }
-                for target in targets
-            ],
-            "files": [
-                {
-                    "file_sha256": file.sha256,
-                    "fact_directory_sha256": file.fact_directory_sha256,
-                    "file_path": file.display_path,
-                    "absolute_file_path": str(file.absolute_path),
-                    "fact_directory_path": None if file.fact_directory is None else str(file.fact_directory),
-                }
-                for file in spec.files
-            ],
-            "cells": [{"backend": cell.backend, "treatment": cell.treatment} for cell in cells],
-            "comparisons": [
-                {
-                    "baseline_target_order": request.baseline_target_order,
-                    "baseline_cell_order": request.baseline_cell_order,
-                    "candidate_target_order": request.candidate_target_order,
-                    "candidate_cell_order": request.candidate_cell_order,
-                }
-                for request in requests
-            ],
-            "rounds": spec.rounds,
-            "timeout_sec": spec.timeout_sec,
+            "baseline": _sql_scope_endpoint(comparison.baseline),
+            "candidate": _sql_scope_endpoint(comparison.candidate),
+            "files": [_sql_scope_file(file) for file in comparison.files],
+            "rounds": comparison.rounds,
+            "timeout_sec": comparison.timeout_sec,
             "t_critical_95": t_critical_95,
         }
         self._connection.execute(
             "INSERT INTO current_report_scope VALUES (TRUE, ?::report_scope_t)",
             [scope],
         )
+        self._scope_installed = True
 
-    def report_view_data(
-        self,
-        *,
-        include_timing: bool,
-    ) -> ReportViewData:
-        """Query every Python-consumed presentation view for the current scope."""
+    def report_view_data(self, detail: DetailLevel) -> PairReportViewData:
+        """Fetch the renderer relations needed by ``detail`` for the installed pair."""
 
         self._ensure_open()
-        targets = _fetch_rows(
-            self._connection.execute("SELECT * FROM presentation_targets ORDER BY target_order"),
-            TargetView,
+        if not self._scope_installed:
+            raise RuntimeError("report scope is not installed")
+        endpoints = _fetch_rows(
+            self._connection.execute("SELECT * FROM presentation_endpoints ORDER BY endpoint_order"),
+            EndpointView,
         )
-        cell_estimates = _fetch_rows(
+        summary = _fetch_rows(
             self._connection.execute(
                 """
-                SELECT * FROM presentation_cell_estimates
-                ORDER BY metric_order, target_order, file_order, cell_order
+                SELECT * FROM presentation_summary
+                ORDER BY summary_order
                 """
             ),
-            CellEstimateView,
+            SummaryView,
         )
-        file_ratios = _fetch_rows(
-            self._connection.execute(
-                """
-                SELECT * FROM presentation_file_ratios
-                ORDER BY comparison_order, metric_order, file_order
-                """
-            ),
-            FileRatioView,
-        )
-        comparison_rollups = _fetch_rows(
-            self._connection.execute(
-                """
-                SELECT * FROM presentation_comparison_rollups
-                ORDER BY comparison_order, metric_order
-                """
-            ),
-            ComparisonRollupView,
-        )
-        compact_timings: list[CompactTimingView] = []
-        ruleset_timings: list[RulesetTimingView] = []
-        if include_timing:
-            compact_timings = _fetch_rows(
+        files: list[FileComparisonView] = []
+        phases: list[PhaseComparisonView] = []
+        rulesets: list[RulesetComparisonView] = []
+        if detail != "summary":
+            files = _fetch_rows(
                 self._connection.execute(
                     """
-                    SELECT * FROM presentation_compact_timings
-                    ORDER BY file_order, cell_order, target_order
+                    SELECT * FROM presentation_files
+                    ORDER BY file_order, metric_order
                     """
                 ),
-                CompactTimingView,
+                FileComparisonView,
             )
-            ruleset_timings = _fetch_rows(
+        if detail in ("phases", "rulesets"):
+            phases = _fetch_rows(
                 self._connection.execute(
                     """
-                    SELECT * FROM presentation_ruleset_timings
-                    ORDER BY file_order, cell_order, ruleset_order, target_order
+                    SELECT * FROM presentation_phases
+                    ORDER BY file_order, phase_order
                     """
                 ),
-                RulesetTimingView,
+                PhaseComparisonView,
             )
-        return ReportViewData(
-            targets=tuple(targets),
-            cell_estimates=tuple(cell_estimates),
-            file_ratios=tuple(file_ratios),
-            comparison_rollups=tuple(comparison_rollups),
-            compact_timings=tuple(compact_timings),
-            ruleset_timings=tuple(ruleset_timings),
+        if detail == "rulesets":
+            rulesets = _fetch_rows(
+                self._connection.execute(
+                    """
+                    SELECT * FROM presentation_rulesets
+                    ORDER BY file_order, ruleset_rank
+                    """
+                ),
+                RulesetComparisonView,
+            )
+        return PairReportViewData(
+            endpoints=tuple(endpoints),
+            summary=tuple(summary),
+            files=tuple(files),
+            phases=tuple(phases),
+            rulesets=tuple(rulesets),
         )
 
     def _ensure_open(self) -> None:
@@ -517,6 +587,35 @@ class ReportDatabase:
 
 def _sql_resource(name: str) -> str:
     return resources.files("benchmarking.reports.sql").joinpath(name).read_text(encoding="utf-8")
+
+
+def _sql_scope_endpoint(endpoint: BenchmarkEndpoint) -> SqlReportScopeEndpoint:
+    """Convert one resolved endpoint to the SQL scope STRUCT mirror."""
+
+    target = endpoint.target
+    return {
+        "binary_sha256": target.binary_sha256,
+        "target_label": target.display_label,
+        "target_source": target.row.source,
+        "target_path": target.row.path,
+        "target_git_ref": target.row.git_ref,
+        "target_git_sha": target.row.git_sha,
+        "target_is_dirty": target.row.is_dirty,
+        "backend": endpoint.backend,
+        "treatment": endpoint.treatment,
+    }
+
+
+def _sql_scope_file(file: FileSpec) -> SqlReportScopeFile:
+    """Convert one workload to the SQL scope STRUCT mirror."""
+
+    return {
+        "file_sha256": file.sha256,
+        "fact_directory_sha256": file.fact_directory_sha256,
+        "file_path": file.display_path,
+        "absolute_file_path": str(file.absolute_path),
+        "fact_directory_path": None if file.fact_directory is None else str(file.fact_directory),
+    }
 
 
 def _escape_duckdb_glob(path: Path) -> str:

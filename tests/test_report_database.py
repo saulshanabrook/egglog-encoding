@@ -1,4 +1,4 @@
-"""Test trusted direct-JSONL persistence, bulk selection, and DuckDB analysis."""
+"""Test direct JSONL persistence and pair-native DuckDB report relations."""
 
 from __future__ import annotations
 
@@ -10,26 +10,63 @@ from typing import cast
 import pytest
 
 from benchmarking import models
-from benchmarking.reports.database import ReportDatabase, SqlReportScope
+from benchmarking.reports.database import ReportDatabase, _fetch_rows
 from benchmarking.reports.records import (
     ReportRecord,
     RulesetTimingRecord,
     TimingSummaryRecord,
 )
-from benchmarking.reports.results import ComparisonRequest
+from benchmarking.reports.results import (
+    EndpointView,
+    FileComparisonView,
+    PhaseComparisonView,
+    RulesetComparisonView,
+    SummaryView,
+)
 
 from .conftest import make_record, make_ruleset_timing, make_target, make_timing_summary, write_report
 
 PRESENTATION_RELATIONS = (
-    "presentation_targets",
+    "presentation_endpoints",
+    "presentation_summary",
     "presentation_files",
-    "presentation_cells",
-    "presentation_cell_estimates",
-    "presentation_file_ratios",
-    "presentation_comparison_rollups",
-    "presentation_compact_timings",
-    "presentation_ruleset_timings",
+    "presentation_phases",
+    "presentation_rulesets",
 )
+
+
+def _endpoint(
+    label: str,
+    binary_sha256: str,
+    *,
+    backend: models.Backend = "main",
+    treatment: models.Treatment = "off",
+) -> models.BenchmarkEndpoint:
+    return models.BenchmarkEndpoint(
+        make_target(target_label=label, binary_sha256=binary_sha256),
+        backend,
+        treatment,
+    )
+
+
+def _comparison(
+    tmp_path: Path,
+    files: tuple[models.FileSpec, ...] | None = None,
+    *,
+    rounds: int = 1,
+    timeout_sec: int = 120,
+    baseline: models.BenchmarkEndpoint | None = None,
+    candidate: models.BenchmarkEndpoint | None = None,
+) -> models.ComparisonSpec:
+    if files is None:
+        files = (models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file"),)
+    return models.ComparisonSpec(
+        baseline or _endpoint("baseline", "sha256:baseline"),
+        candidate or _endpoint("candidate", "sha256:candidate"),
+        files,
+        rounds,
+        timeout_sec,
+    )
 
 
 def test_missing_report_is_an_empty_direct_view_without_database_artifacts(tmp_path: Path) -> None:
@@ -63,11 +100,7 @@ def test_report_path_metacharacters_are_literal_not_a_glob(tmp_path: Path) -> No
     write_report(report, make_record(0, started_at="2026-07-15T12:00:00Z"))
     write_report(
         sibling,
-        make_record(
-            1,
-            started_at="2026-07-15T12:00:01Z",
-            binary_sha256="sha256:sibling",
-        ),
+        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:sibling"),
     )
 
     with ReportDatabase(report) as database:
@@ -95,267 +128,86 @@ def test_historical_estimates_are_grouped_as_counts_and_sums_in_sql(tmp_path: Pa
     ] == [(60, 1, 7.0), (120, 2, 4.0)]
 
 
-def test_output_views_and_source_path_are_visible_to_another_connection(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    write_report(report, make_record(0, started_at="2026-07-15T12:00:00Z"))
-    target = make_target(target_label="current")
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=1, timeout_sec=120)
-
-    with ReportDatabase(report) as database:
-        database.install_scope((target,), spec, t_critical_95=None, requests=())
-        database.report_view_data(include_timing=True)
-        other_connection = database._connection.cursor()
-        try:
-            views = dict(
-                other_connection.execute(
-                    """
-                    SELECT view_name, temporary
-                    FROM duckdb_views()
-                    WHERE view_name LIKE 'presentation_%'
-                    """
-                ).fetchall()
-            )
-            macros = {
-                name: (function_type, parameters, parameter_types)
-                for name, function_type, parameters, parameter_types in other_connection.execute(
-                    """
-                    SELECT function_name, function_type, parameters, parameter_types
-                    FROM duckdb_functions()
-                    WHERE function_name LIKE 'presentation_%'
-                    """
-                ).fetchall()
-            }
-            source_count = other_connection.execute("SELECT count(*) FROM report_rows").fetchone()
-            scoped_target = other_connection.execute(
-                "SELECT target_role, target_label FROM presentation_targets"
-            ).fetchone()
-            macro_target = other_connection.execute(
+def test_five_presentation_relations_are_ordinary_views_with_named_tuple_schemas(tmp_path: Path) -> None:
+    expected_columns = (
+        EndpointView._fields,
+        SummaryView._fields,
+        FileComparisonView._fields,
+        PhaseComparisonView._fields,
+        RulesetComparisonView._fields,
+    )
+    with ReportDatabase(tmp_path / "report.jsonl") as database:
+        views = dict(
+            database._connection.execute(
                 """
-                SELECT target_role, target_label
-                FROM presentation_targets(
-                    (SELECT scope FROM current_report_scope WHERE singleton)
-                )
+                SELECT view_name, temporary
+                FROM duckdb_views()
+                WHERE view_name LIKE 'presentation_%'
                 """
-            ).fetchone()
-        finally:
-            other_connection.close()
+            ).fetchall()
+        )
+        macros = database._connection.execute(
+            """
+            SELECT function_name
+            FROM duckdb_functions()
+            WHERE function_name LIKE 'presentation_%'
+            """
+        ).fetchall()
+        for name, expected in zip(PRESENTATION_RELATIONS, expected_columns, strict=True):
+            columns = tuple(row[0] for row in database._connection.execute(f"DESCRIBE FROM {name}").fetchall())
+            assert columns == expected
 
     assert set(views) == set(PRESENTATION_RELATIONS)
     assert not any(views.values())
-    assert set(macros) == set(PRESENTATION_RELATIONS)
-    assert all(function_type == "table_macro" for function_type, _, _ in macros.values())
-    assert all(parameters == ["requested_scope"] for _, parameters, _ in macros.values())
-    assert all(len(parameter_types) == 1 for _, _, parameter_types in macros.values())
-    assert source_count == (1,)
-    assert scoped_target == ("target", "current")
-    assert macro_target == scoped_target
+    assert macros == []
 
 
-def test_presentation_views_and_typed_macros_preserve_column_names_and_types(tmp_path: Path) -> None:
-    expected = """
-### presentation_targets
-- target_order: UINTEGER
-- target_role: VARCHAR
-- target_label: VARCHAR
-- target_source: VARCHAR
-- target_path: VARCHAR
-- target_git_ref: VARCHAR
-- target_git_sha: VARCHAR
-- target_is_dirty: BOOLEAN
-- binary_sha256: VARCHAR
-### presentation_files
-- file_order: UINTEGER
-- file_sha256: VARCHAR
-- fact_directory_sha256: VARCHAR
-- file_path: VARCHAR
-- absolute_file_path: VARCHAR
-- fact_directory_path: VARCHAR
-### presentation_cells
-- cell_order: UINTEGER
-- backend: VARCHAR
-- treatment: ENUM('off', 'term', 'proofs')
-### presentation_cell_estimates
-- metric_order: UTINYINT
-- target_order: UINTEGER
-- file_order: UINTEGER
-- cell_order: UINTEGER
-- metric: VARCHAR
-- backend: VARCHAR
-- treatment: ENUM('off', 'term', 'proofs')
-- sample_count: UINTEGER
-- has_samples: BOOLEAN
-- mean: DOUBLE
-- ci_low: DOUBLE
-- ci_high: DOUBLE
-- result_class: VARCHAR
-- issue: VARCHAR
-### presentation_file_ratios
-- comparison_order: UINTEGER
-- metric_order: UTINYINT
-- file_order: UINTEGER
-- metric: VARCHAR
-- baseline_target_order: UINTEGER
-- baseline_cell_order: UINTEGER
-- candidate_target_order: UINTEGER
-- candidate_cell_order: UINTEGER
-- baseline_sample_count: UINTEGER
-- candidate_sample_count: UINTEGER
-- has_samples: BOOLEAN
-- point: DOUBLE
-- ci_low: DOUBLE
-- ci_high: DOUBLE
-- change_fraction: DOUBLE
-- change_ci_low: DOUBLE
-- change_ci_high: DOUBLE
-- is_valid: BOOLEAN
-- ci_entirely_below_one: BOOLEAN
-- ci_entirely_above_one: BOOLEAN
-- result_class: VARCHAR
-- issue: VARCHAR
-### presentation_comparison_rollups
-- comparison_order: UINTEGER
-- metric_order: UTINYINT
-- metric: VARCHAR
-- baseline_target_order: UINTEGER
-- baseline_cell_order: UINTEGER
-- candidate_target_order: UINTEGER
-- candidate_cell_order: UINTEGER
-- baseline_total: DOUBLE
-- candidate_total: DOUBLE
-- has_samples: BOOLEAN
-- suite_point: DOUBLE
-- suite_ci_low: DOUBLE
-- suite_ci_high: DOUBLE
-- suite_change_fraction: DOUBLE
-- suite_change_ci_low: DOUBLE
-- suite_change_ci_high: DOUBLE
-- suite_ci_entirely_below_two: BOOLEAN
-- suite_result_class: VARCHAR
-- suite_issue: VARCHAR
-- geometric_mean_point: DOUBLE
-- geometric_mean_change_fraction: DOUBLE
-- geometric_mean_result_class: VARCHAR
-- geometric_mean_issue: VARCHAR
-- file_count: UINTEGER
-- comparable_file_count: UINTEGER
-- better_file_count: UINTEGER
-- best_file_order: UINTEGER
-- best_point: DOUBLE
-- best_ci_low: DOUBLE
-- best_ci_high: DOUBLE
-- best_change_fraction: DOUBLE
-- best_result_class: VARCHAR
-- best_issue: VARCHAR
-- worst_file_order: UINTEGER
-- worst_point: DOUBLE
-- worst_ci_low: DOUBLE
-- worst_ci_high: DOUBLE
-- worst_change_fraction: DOUBLE
-- worst_result_class: VARCHAR
-- worst_issue: VARCHAR
-### presentation_compact_timings
-- target_order: UINTEGER
-- file_order: UINTEGER
-- cell_order: UINTEGER
-- backend: VARCHAR
-- treatment: ENUM('off', 'term', 'proofs')
-- search_ns: DOUBLE
-- apply_ns: DOUBLE
-- search_and_apply_ns: DOUBLE
-- unattributed_ns: DOUBLE
-- pre_merge_ns: DOUBLE
-- merge_ns: DOUBLE
-- rebuild_ns: DOUBLE
-- ruleset_total_ns: DOUBLE
-- outside_rulesets_ns: DOUBLE
-- other_ns: DOUBLE
-- wall_ns: DOUBLE
-- has_samples: BOOLEAN
-- result_class: VARCHAR
-- issue: VARCHAR
-### presentation_ruleset_timings
-- file_order: UINTEGER
-- cell_order: UINTEGER
-- ruleset_order: UINTEGER
-- target_order: UINTEGER
-- backend: VARCHAR
-- treatment: ENUM('off', 'term', 'proofs')
-- name: VARCHAR
-- search_ns: DOUBLE
-- apply_ns: DOUBLE
-- search_and_apply_ns: DOUBLE
-- unattributed_ns: DOUBLE
-- pre_merge_ns: DOUBLE
-- merge_ns: DOUBLE
-- rebuild_ns: DOUBLE
-- total_ns: DOUBLE
-- maximum_target_total: DOUBLE
-- result_ruleset_total_ns: DOUBLE
-- has_samples: BOOLEAN
-- result_class: VARCHAR
-- ruleset_share: DOUBLE
-""".strip()
+def test_scope_is_a_single_immutable_pair_and_can_compare_backend_treatment_endpoints(tmp_path: Path) -> None:
+    baseline = _endpoint("main/off", "sha256:shared", backend="main", treatment="off")
+    candidate = _endpoint("DD/term", "sha256:shared", backend="dd", treatment="term")
+    comparison = _comparison(tmp_path, baseline=baseline, candidate=candidate)
 
     with ReportDatabase(tmp_path / "report.jsonl") as database:
-        actual_sections: list[str] = []
-        for name in PRESENTATION_RELATIONS:
-            view_schema = database._connection.execute(f"DESCRIBE FROM {name}").fetchall()
-            macro_schema = database._connection.execute(
-                f"""
-                DESCRIBE FROM {name}(
-                    (SELECT scope FROM current_report_scope WHERE singleton)
-                )
-                """
-            ).fetchall()
-            view_columns = [(row[0], row[1]) for row in view_schema]
-            macro_columns = [(row[0], row[1]) for row in macro_schema]
-            assert macro_columns == view_columns
-            actual_sections.append(
-                "\n".join([f"### {name}", *(f"- {column}: {data_type}" for column, data_type in view_columns)])
-            )
+        database.install_scope(comparison, None)
+        endpoints = database.report_view_data("summary").endpoints
+        with pytest.raises(RuntimeError, match="already installed"):
+            database.install_scope(comparison, None)
+        count = database._connection.execute("SELECT count(*) FROM current_report_scope").fetchone()
 
-    assert "\n".join(actual_sections) == expected
+    assert [(row.endpoint_role, row.backend, row.treatment) for row in endpoints] == [
+        ("baseline", "main", "off"),
+        ("candidate", "dd", "term"),
+    ]
+    assert count == (1,)
 
 
-def test_arbitrary_scope_macro_recomputes_without_changing_current_view(tmp_path: Path) -> None:
+def test_report_view_data_fetches_only_the_requested_detail_relations(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
     write_report(
         report,
-        make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=1.0),
-        make_record(1, started_at="2026-07-15T12:00:01Z", wall_sec=3.0),
+        make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:baseline"),
+        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:candidate"),
     )
-    target = make_target(target_label="current")
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
 
     with ReportDatabase(report) as database:
-        database.install_scope((target,), spec, t_critical_95=12.706204736432095, requests=())
-        stored = database._connection.execute("SELECT scope FROM current_report_scope WHERE singleton").fetchone()
-        assert stored is not None
-        alternate_scope = cast(SqlReportScope, stored[0])
-        alternate_scope["rounds"] = 1
-        current_before = database._connection.execute(
-            "SELECT mean FROM presentation_cell_estimates WHERE metric = 'wall_sec'"
-        ).fetchone()
-        alternate = database._connection.execute(
-            """
-            SELECT mean
-            FROM presentation_cell_estimates(?::report_scope_t)
-            WHERE metric = 'wall_sec'
-            """,
-            [alternate_scope],
-        ).fetchone()
-        current_after = database._connection.execute(
-            "SELECT mean FROM presentation_cell_estimates WHERE metric = 'wall_sec'"
-        ).fetchone()
+        with pytest.raises(RuntimeError, match="not installed"):
+            database.report_view_data("summary")
+        database.install_scope(comparison, None)
+        summary = database.report_view_data("summary")
+        files = database.report_view_data("files")
+        phases = database.report_view_data("phases")
+        rulesets = database.report_view_data("rulesets")
 
-    assert current_before == (2.0,)
-    assert alternate == (3.0,)
-    assert current_after == current_before
+    assert len(summary.endpoints) == 2
+    assert len(summary.summary) == 5
+    assert not summary.files and not summary.phases and not summary.rulesets
+    assert files.files and not files.phases and not files.rulesets
+    assert phases.files and phases.phases and not phases.rulesets
+    assert rulesets.files and rulesets.phases and rulesets.rulesets
 
 
-def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: Path) -> None:
+def test_python_and_duckdb_record_schemas_match_and_nested_values_round_trip(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     record = make_record(
         0,
@@ -363,14 +215,13 @@ def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: 
         max_rss_bytes=1234,
         timing_summary=make_timing_summary(
             make_ruleset_timing(
-                "rules/\N{GREEK SMALL LETTER LAMDA}",
+                "rules/N{GREEK SMALL LETTER LAMDA}",
                 search_ns=6,
                 apply_ns=5,
                 unattributed_ns=4,
                 merge_ns=7,
                 rebuild_ns=3,
-            ),
-            make_ruleset_timing("", search_ns=0, apply_ns=0, merge_ns=5, rebuild_ns=0),
+            )
         ),
     )
 
@@ -380,23 +231,20 @@ def test_python_and_duckdb_schemas_match_and_nested_values_round_trip(tmp_path: 
         sql_fields = tuple(row[0] for row in described if row[0] != "row_index")
         python_fields = tuple(ReportRecord.__annotations__)
         cursor = database._connection.execute(f"SELECT {', '.join(python_fields)} FROM report_rows")
-        result_fields = tuple(column[0] for column in cursor.description)
         loaded = cursor.fetchone()
 
     assert sql_fields == python_fields
     assert loaded is not None
-    round_tripped = dict(zip(result_fields, loaded, strict=True))
+    round_tripped = dict(zip(python_fields, loaded, strict=True))
     assert round_tripped == record
     summary = cast(dict[str, object], round_tripped["timing_summary"])
     assert tuple(summary) == tuple(TimingSummaryRecord.__annotations__)
     rulesets = cast(list[dict[str, object]], summary["rulesets"])
     assert tuple(rulesets[0]) == tuple(RulesetTimingRecord.__annotations__)
-    assert "search_and_apply_ns" not in rulesets[0]
-    assert "pre_merge_ns" not in rulesets[0]
 
 
 @pytest.mark.parametrize("mixed", [False, True], ids=["old", "mixed"])
-def test_old_report_shapes_fail_during_database_construction(tmp_path: Path, mixed: bool) -> None:
+def test_incompatible_report_shapes_fail_during_construction(tmp_path: Path, mixed: bool) -> None:
     report = tmp_path / "report.jsonl"
     current = make_record(0, started_at="2026-07-15T12:00:00Z")
     old = cast(dict[str, object], make_record(1, started_at="2026-07-15T12:00:01Z"))
@@ -404,47 +252,33 @@ def test_old_report_shapes_fail_during_database_construction(tmp_path: Path, mix
     records = (current, cast(ReportRecord, old)) if mixed else (cast(ReportRecord, old),)
     write_report(report, *records)
 
-    with pytest.raises(
-        ValueError,
-        match=r"invalid or incompatible benchmark report.*Move or remove.*recompute",
-    ):
+    with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
         ReportDatabase(report)
 
 
-@pytest.mark.parametrize("empty_rulesets", [False, True], ids=["missing-field", "empty"])
-def test_old_timing_summary_fails_during_database_construction(tmp_path: Path, empty_rulesets: bool) -> None:
+def test_success_without_timing_summary_is_an_incompatible_report(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    old = cast(dict[str, object], make_record(0, started_at="2026-07-15T12:00:00Z"))
-    summary = cast(dict[str, object], old["timing_summary"])
-    summary["schema_version"] = 1
-    rulesets = cast(list[dict[str, object]], summary["rulesets"])
-    if empty_rulesets:
-        rulesets.clear()
-    else:
-        del rulesets[0]["unattributed_ns"]
-    write_report(report, cast(ReportRecord, old))
+    row = make_record(0, started_at="2026-07-15T12:00:00Z")
+    row["timing_summary"] = None
+    write_report(report, row)
 
-    with pytest.raises(
-        ValueError,
-        match=r"invalid or incompatible benchmark report.*Move or remove.*recompute",
-    ):
+    with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
         ReportDatabase(report)
 
 
 def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    records = (
-        make_record(0, started_at="2026-07-15T12:00:00Z", status="failure", wall_sec=1.0),
+    write_report(
+        report,
+        make_record(0, started_at="2026-07-15T12:00:00Z", status="failure"),
         make_record(1, started_at="2026-07-15T12:00:01Z", status="timed-out"),
-        make_record(2, started_at="2026-07-15T12:00:01Z", wall_sec=3.0),
+        make_record(2, started_at="2026-07-15T12:00:01Z"),
         make_record(
             3,
             started_at="2026-07-15T12:00:02Z",
-            wall_sec=9.0,
             fact_directory_sha256="sha256:other-facts",
         ),
     )
-    write_report(report, *records)
     exact = models.EstimateKey("sha256:bin", "sha256:file", "off", 120)
     other_facts = models.EstimateKey(
         "sha256:bin",
@@ -456,169 +290,19 @@ def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp
 
     with ReportDatabase(report) as database:
         selected = database.selected_statuses_for_keys((exact, other_facts), 2)
-        target = make_target(binary_sha256="sha256:bin")
-        file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-        spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-        database.install_scope((target,), spec, t_critical_95=12.706204736432095, requests=())
-        scoped_statuses = tuple(
-            row[0]
-            for row in database._connection.execute(
-                """
-                SELECT status
-                FROM scoped_observations(
-                    (SELECT scope FROM current_report_scope WHERE singleton)
-                )
-                ORDER BY started_at::TIMESTAMPTZ, row_index
-                """
-            ).fetchall()
-        )
 
     assert selected[exact] == ("timed-out", "success")
     assert selected[other_facts] == ("success",)
-    assert scoped_statuses == selected[exact]
 
 
-def test_scope_cell_and_comparison_statistics_match_expected_formulas(tmp_path: Path) -> None:
+def test_pair_statistics_and_fieller_intervals_are_computed_in_sql(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
-    write_report(
-        report,
-        make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:baseline", wall_sec=1.0),
-        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:baseline", wall_sec=1.2),
-        make_record(2, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:candidate", wall_sec=2.0),
-        make_record(3, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:candidate", wall_sec=2.2),
-    )
-
-    with ReportDatabase(report) as database:
-        database.install_scope(
-            (baseline, candidate),
-            spec,
-            t_critical_95=12.706204736432095,
-            requests=(ComparisonRequest(0, 0, 1, 0),),
-        )
-        views = database.report_view_data(include_timing=False)
-
-    cells = [row for row in views.cell_estimates if row.metric == "wall_sec"]
-    comparison = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
-    file_ratio = next(row for row in views.file_ratios if row.metric == "wall_sec")
-    assert len(cells) == 2
-    assert cells[0].sample_count == 2
-    assert cells[0].mean == pytest.approx(1.1)
-    assert file_ratio.point == pytest.approx(2.1 / 1.1)
-    assert comparison.suite_point == pytest.approx(2.1 / 1.1)
-    assert comparison.geometric_mean_point == pytest.approx(2.1 / 1.1)
-
-
-def test_sql_t_and_fieller_intervals_match_reference_formulas(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    files = (
-        models.FileSpec("first.egg", tmp_path / "first.egg", "sha256:first"),
-        models.FileSpec("second.egg", tmp_path / "second.egg", "sha256:second"),
-    )
-    spec = models.BenchmarkSpec(files, ("off",), rounds=3, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    comparison = _comparison(tmp_path, rounds=3)
     t_critical = 4.302652729911275
-    samples = (
-        (baseline.binary_sha256, files[0].sha256, (9.9, 10.0, 10.1)),
-        (candidate.binary_sha256, files[0].sha256, (7.9, 8.0, 8.1)),
-        (baseline.binary_sha256, files[1].sha256, (19.8, 20.0, 20.2)),
-        (candidate.binary_sha256, files[1].sha256, (21.8, 22.0, 22.2)),
-    )
-    records: list[ReportRecord] = []
-    for binary_sha256, file_sha256, values in samples:
-        for wall_sec in values:
-            records.append(
-                make_record(
-                    len(records),
-                    started_at=f"2026-07-15T12:00:{len(records):02d}Z",
-                    binary_sha256=binary_sha256,
-                    file_sha256=file_sha256,
-                    wall_sec=wall_sec,
-                )
-            )
-    write_report(report, *records)
-
-    with ReportDatabase(report) as database:
-        database.install_scope(
-            (baseline, candidate),
-            spec,
-            t_critical_95=t_critical,
-            requests=(ComparisonRequest(0, 0, 1, 0),),
-        )
-        views = database.report_view_data(include_timing=False)
-
-    baseline_first = next(
-        row
-        for row in views.cell_estimates
-        if row.metric == "wall_sec" and row.target_order == 0 and row.file_order == 0
-    )
-    expected_cell_half_width = t_critical * math.sqrt(0.01 / 3)
-    assert baseline_first.mean == pytest.approx(10.0)
-    assert baseline_first.ci_low == pytest.approx(10.0 - expected_cell_half_width)
-    assert baseline_first.ci_high == pytest.approx(10.0 + expected_cell_half_width)
-
-    first_file = next(row for row in views.file_ratios if row.metric == "wall_sec" and row.file_order == 0)
-    expected_file_low, expected_file_high = _fieller_bounds(
-        baseline_mean=10.0,
-        baseline_var_mean=0.01 / 3,
-        candidate_mean=8.0,
-        candidate_var_mean=0.01 / 3,
-        t_critical=t_critical,
-    )
-    assert first_file.point == pytest.approx(0.8)
-    assert first_file.ci_low == pytest.approx(expected_file_low)
-    assert first_file.ci_high == pytest.approx(expected_file_high)
-
-    suite = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
-    expected_suite_low, expected_suite_high = _fieller_bounds(
-        baseline_mean=30.0,
-        baseline_var_mean=(0.01 + 0.04) / 3,
-        candidate_mean=30.0,
-        candidate_var_mean=(0.01 + 0.04) / 3,
-        t_critical=t_critical,
-    )
-    assert suite.baseline_total == pytest.approx(30.0)
-    assert suite.candidate_total == pytest.approx(30.0)
-    assert suite.suite_point == pytest.approx(1.0)
-    assert suite.suite_ci_low == pytest.approx(expected_suite_low)
-    assert suite.suite_ci_high == pytest.approx(expected_suite_high)
-
-
-@pytest.mark.parametrize(
-    ("rounds", "baseline_values", "candidate_values", "t_critical", "expected_issue"),
-    [
-        (1, (1.0,), (2.0,), None, "CI undefined for n < 2"),
-        (
-            2,
-            (1.0, 2.0),
-            (1.0, 1.1),
-            12.706204736432095,
-            "Fieller interval undefined",
-        ),
-    ],
-    ids=["one-sample", "fieller-denominator-crosses-zero"],
-)
-def test_file_and_suite_interval_undefined_branches(
-    tmp_path: Path,
-    rounds: int,
-    baseline_values: tuple[float, ...],
-    candidate_values: tuple[float, ...],
-    t_critical: float | None,
-    expected_issue: str,
-) -> None:
-    report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=rounds, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
     records: list[ReportRecord] = []
     for binary_sha256, values in (
-        (baseline.binary_sha256, baseline_values),
-        (candidate.binary_sha256, candidate_values),
+        ("sha256:baseline", (9.9, 10.0, 10.1)),
+        ("sha256:candidate", (7.9, 8.0, 8.1)),
     ):
         for wall_sec in values:
             records.append(
@@ -627,233 +311,260 @@ def test_file_and_suite_interval_undefined_branches(
                     started_at=f"2026-07-15T12:00:{len(records):02d}Z",
                     binary_sha256=binary_sha256,
                     wall_sec=wall_sec,
+                    max_rss_bytes=100,
                 )
             )
     write_report(report, *records)
 
     with ReportDatabase(report) as database:
-        database.install_scope(
-            (baseline, candidate),
-            spec,
-            t_critical_95=t_critical,
-            requests=(ComparisonRequest(0, 0, 1, 0),),
-        )
-        views = database.report_view_data(include_timing=False)
+        database.install_scope(comparison, t_critical)
+        views = database.report_view_data("files")
 
-    file_ratio = next(row for row in views.file_ratios if row.metric == "wall_sec")
-    suite = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
-    assert file_ratio.point is not None
-    assert file_ratio.ci_low is None
-    assert file_ratio.ci_high is None
-    assert file_ratio.result_class == "point_only"
-    assert file_ratio.issue == expected_issue
-    assert suite.suite_point is not None
-    assert suite.suite_ci_low is None
-    assert suite.suite_ci_high is None
-    assert suite.suite_result_class == "point_only"
-    assert suite.suite_issue == expected_issue
+    wall = next(row for row in views.files if row.metric == "wall_sec")
+    expected_half_width = t_critical * math.sqrt(0.01 / 3)
+    expected_low, expected_high = _fieller_bounds(10.0, 0.01 / 3, 8.0, 0.01 / 3, t_critical)
+    assert wall.baseline_mean == pytest.approx(10.0)
+    assert wall.baseline_ci_low == pytest.approx(10.0 - expected_half_width)
+    assert wall.baseline_ci_high == pytest.approx(10.0 + expected_half_width)
+    assert wall.point == pytest.approx(0.8)
+    assert wall.ci_low == pytest.approx(expected_low)
+    assert wall.ci_high == pytest.approx(expected_high)
+    suite = views.summary[0]
+    assert suite.summary_kind == "suite"
+    assert suite.point == pytest.approx(0.8)
 
 
-def test_zero_candidate_mean_keeps_suite_ratio_and_marks_geometric_mean_unavailable(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
-    write_report(
-        report,
-        make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:baseline", wall_sec=1.0),
-        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:baseline", wall_sec=1.0),
-        make_record(2, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:candidate", wall_sec=0.0),
-        make_record(3, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:candidate", wall_sec=0.0),
-    )
-
-    with ReportDatabase(report) as database:
-        database.install_scope(
-            (baseline, candidate),
-            spec,
-            t_critical_95=12.706204736432095,
-            requests=(ComparisonRequest(0, 0, 1, 0),),
-        )
-        views = database.report_view_data(include_timing=False)
-        comparison = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
-
-    assert comparison.suite_point == 0.0
-    assert comparison.geometric_mean_point is None
-    assert comparison.geometric_mean_issue == "mean unavailable"
-
-
-def test_comparison_rollup_view_owns_best_worst_counts_and_totals(tmp_path: Path) -> None:
+def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     files = tuple(
         models.FileSpec(f"file-{index}.egg", tmp_path / f"file-{index}.egg", f"sha256:file-{index}")
         for index in range(3)
     )
-    spec = models.BenchmarkSpec(files, ("off",), rounds=1, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
+    comparison = _comparison(tmp_path, files)
     records: list[ReportRecord] = []
-    for file_order, candidate_wall in enumerate((0.5, 2.0, None)):
-        records.append(
-            make_record(
-                len(records),
-                started_at=f"2026-07-15T12:00:0{len(records)}Z",
-                binary_sha256=baseline.binary_sha256,
-                file_sha256=files[file_order].sha256,
-                wall_sec=1.0,
-            )
-        )
-        records.append(
-            make_record(
-                len(records),
-                started_at=f"2026-07-15T12:00:0{len(records)}Z",
-                binary_sha256=candidate.binary_sha256,
-                file_sha256=files[file_order].sha256,
-                status="success" if candidate_wall is not None else "failure",
-                wall_sec=candidate_wall,
+    for file in files:
+        records.extend(
+            (
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-15T12:00:{len(records):02d}Z",
+                    binary_sha256="sha256:baseline",
+                    file_sha256=file.sha256,
+                    wall_sec=1.0,
+                    max_rss_bytes=100,
+                ),
+                make_record(
+                    len(records) + 1,
+                    started_at=f"2026-07-15T12:00:{len(records) + 1:02d}Z",
+                    binary_sha256="sha256:candidate",
+                    file_sha256=file.sha256,
+                    wall_sec=2.0,
+                    max_rss_bytes=200,
+                ),
             )
         )
     write_report(report, *records)
 
     with ReportDatabase(report) as database:
-        database.install_scope(
-            (baseline, candidate),
-            spec,
-            t_critical_95=None,
-            requests=(ComparisonRequest(0, 0, 1, 0),),
-        )
-        views = database.report_view_data(include_timing=False)
-        rollup = next(row for row in views.comparison_rollups if row.metric == "wall_sec")
+        database.install_scope(comparison, None)
+        summary = database.report_view_data("summary").summary
 
-    assert rollup.file_count == 3
-    assert rollup.comparable_file_count == 2
-    assert rollup.better_file_count == 0
-    assert rollup.best_file_order == 0
-    assert rollup.best_point == 0.5
-    assert rollup.best_result_class == "point_only"
-    assert rollup.worst_file_order == 2
-    assert rollup.worst_point is None
-    assert rollup.worst_result_class == "invalid"
-    assert rollup.baseline_total == 3.0
-    assert rollup.candidate_total is None
+    assert [(row.metric, row.summary_kind) for row in summary] == [
+        ("wall_sec", "suite"),
+        ("wall_sec", "lowest_file"),
+        ("wall_sec", "highest_file"),
+        ("max_rss_bytes", "lowest_file"),
+        ("max_rss_bytes", "highest_file"),
+    ]
+    assert [row.file_order for row in summary] == [None, 0, 2, 0, 2]
+    assert all(row.point == pytest.approx(2.0) for row in summary)
 
 
-def test_report_scope_rejects_targets_with_the_same_binary(tmp_path: Path) -> None:
+def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-    first = make_target(target_label="first", binary_sha256="sha256:shared")
-    second = make_target(target_label="second", binary_sha256="sha256:shared")
-
-    with (
-        ReportDatabase(report) as database,
-        pytest.raises(ValueError, match=r"targets 'first' and 'second' produced the same binary SHA-256"),
-    ):
-        database.install_scope((first, second), spec, t_critical_95=12.706204736432095, requests=())
-
-
-def test_invalid_result_rulesets_do_not_contaminate_valid_result_union(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-    invalid = make_target(target_label="invalid", binary_sha256="sha256:invalid")
-    valid = make_target(target_label="valid", binary_sha256="sha256:valid")
+    files = (
+        models.FileSpec("valid.egg", tmp_path / "valid.egg", "sha256:valid-file"),
+        models.FileSpec("invalid.egg", tmp_path / "invalid.egg", "sha256:invalid-file"),
+    )
+    comparison = _comparison(tmp_path, files)
     write_report(
         report,
         make_record(
             0,
             started_at="2026-07-15T12:00:00Z",
-            binary_sha256="sha256:invalid",
-            timing_summary=make_timing_summary(make_ruleset_timing("invalid-only")),
+            binary_sha256="sha256:baseline",
+            file_sha256=files[0].sha256,
+            wall_sec=1.0,
+            max_rss_bytes=100,
         ),
         make_record(
             1,
             started_at="2026-07-15T12:00:01Z",
-            binary_sha256="sha256:invalid",
+            binary_sha256="sha256:candidate",
+            file_sha256=files[0].sha256,
+            wall_sec=0.5,
+            max_rss_bytes=80,
+        ),
+        make_record(
+            2,
+            started_at="2026-07-15T12:00:02Z",
+            binary_sha256="sha256:baseline",
+            file_sha256=files[1].sha256,
+            wall_sec=1.0,
+            max_rss_bytes=100,
+        ),
+        make_record(
+            3,
+            started_at="2026-07-15T12:00:03Z",
+            binary_sha256="sha256:candidate",
+            file_sha256=files[1].sha256,
             status="failure",
         ),
-        make_record(
-            2,
-            started_at="2026-07-15T12:00:00Z",
-            binary_sha256="sha256:valid",
-            timing_summary=make_timing_summary(
-                make_ruleset_timing("valid", search_ns=60, apply_ns=40, unattributed_ns=10, merge_ns=20, rebuild_ns=5)
-            ),
-        ),
-        make_record(
-            3,
-            started_at="2026-07-15T12:00:01Z",
-            binary_sha256="sha256:valid",
-            timing_summary=make_timing_summary(),
-        ),
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((invalid, valid), spec, t_critical_95=12.706204736432095, requests=())
-        views = database.report_view_data(include_timing=True)
+        database.install_scope(comparison, None)
+        summary = database.report_view_data("summary").summary
 
-    timings = {row.target_order: row for row in views.compact_timings}
-    invalid_metric = next(row for row in views.cell_estimates if row.target_order == 0 and row.metric == "wall_sec")
-    assert invalid_metric.issue == timings[0].issue
-    assert invalid_metric.result_class == timings[0].result_class
-    assert timings[0].issue == "failure row selected"
-    assert timings[0].result_class == "invalid"
-    assert not timings[0].has_samples
-    assert timings[0].search_ns is None
-    assert timings[0].apply_ns is None
-    assert timings[0].search_and_apply_ns is None
-    assert timings[0].unattributed_ns is None
-    assert timings[0].pre_merge_ns is None
-    assert timings[0].merge_ns is None
-    assert timings[0].rebuild_ns is None
-    assert timings[0].ruleset_total_ns is None
-    assert timings[0].outside_rulesets_ns is None
-    assert timings[0].other_ns is None
-    assert timings[0].wall_ns is None
-    assert timings[1].issue is None
-    assert timings[1].search_ns is not None
-    assert timings[1].apply_ns is not None
-    assert timings[1].search_and_apply_ns == timings[1].search_ns + timings[1].apply_ns
-    assert timings[1].unattributed_ns is not None
-    assert timings[1].pre_merge_ns == timings[1].search_and_apply_ns + timings[1].unattributed_ns
-    assert timings[1].ruleset_total_ns is not None
-    assert timings[1].wall_ns is not None
-    assert timings[1].outside_rulesets_ns == timings[1].wall_ns - timings[1].ruleset_total_ns
-    assert timings[1].other_ns == timings[1].unattributed_ns + timings[1].outside_rulesets_ns
-    valid_rulesets = [row for row in views.ruleset_timings if row.target_order == 1]
-    assert [ruleset.name for ruleset in valid_rulesets] == ["rules", "valid"]
-    assert "invalid-only" not in {ruleset.name for ruleset in valid_rulesets}
-    means = {ruleset.name: ruleset for ruleset in valid_rulesets}
-    assert means["valid"].search_ns == 30
-    assert means["valid"].apply_ns == 20
-    assert means["valid"].search_and_apply_ns == 50
-    assert means["valid"].unattributed_ns == 5
-    assert means["valid"].pre_merge_ns == 55
+    suite, *tails = summary
+    assert suite.result_class == "invalid"
+    assert suite.point is None
+    assert suite.issue == "failure row selected"
+    assert all(row.file_order == 0 for row in tails)
+    assert all(row.point is not None for row in tails)
 
 
-def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) -> None:
+def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    file_spec = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), rounds=2, timeout_sec=120)
-    baseline = make_target(target_label="baseline", binary_sha256="sha256:baseline")
-    candidate = make_target(target_label="candidate", binary_sha256="sha256:candidate")
-    zero = make_ruleset_timing("recorded-zero", search_ns=0, apply_ns=0, unattributed_ns=0, merge_ns=0, rebuild_ns=0)
+    files = (
+        models.FileSpec("valid.egg", tmp_path / "valid.egg", "sha256:valid-file"),
+        models.FileSpec("invalid.egg", tmp_path / "invalid.egg", "sha256:invalid-file"),
+    )
+    comparison = _comparison(tmp_path, files, rounds=2)
+    records: list[ReportRecord] = []
+    for binary_sha256, wall_sec, max_rss_bytes in (
+        ("sha256:baseline", 1.0, 100),
+        ("sha256:candidate", 0.5, 80),
+    ):
+        for _ in range(2):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-15T12:00:{len(records):02d}Z",
+                    binary_sha256=binary_sha256,
+                    file_sha256=files[0].sha256,
+                    wall_sec=wall_sec,
+                    max_rss_bytes=max_rss_bytes,
+                )
+            )
+    for binary_sha256, status in (
+        ("sha256:baseline", "success"),
+        ("sha256:candidate", "failure"),
+    ):
+        for _ in range(2):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-15T12:00:{len(records):02d}Z",
+                    binary_sha256=binary_sha256,
+                    file_sha256=files[1].sha256,
+                    status=cast(models.Status, status),
+                    wall_sec=1.0,
+                    max_rss_bytes=100,
+                )
+            )
+    write_report(report, *records)
+
+    with ReportDatabase(report) as database:
+        database.install_scope(comparison, 12.706204736432095)
+        suite, *tails = database.report_view_data("summary").summary
+
+    assert suite.issue == "failure row selected"
+    assert all(row.file_order == 0 for row in tails)
+    assert all(row.issue is None for row in tails)
+
+
+def test_phase_rows_are_exact_components_and_other_is_wall_residual(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path)
+    baseline_timing = make_timing_summary(
+        make_ruleset_timing(
+            search_ns=100,
+            apply_ns=200,
+            unattributed_ns=17,
+            merge_ns=300,
+            rebuild_ns=400,
+        )
+    )
+    candidate_timing = make_timing_summary(
+        make_ruleset_timing(
+            search_ns=200,
+            apply_ns=100,
+            unattributed_ns=23,
+            merge_ns=600,
+            rebuild_ns=200,
+        )
+    )
     write_report(
         report,
         make_record(
             0,
             started_at="2026-07-15T12:00:00Z",
-            binary_sha256=baseline.binary_sha256,
+            binary_sha256="sha256:baseline",
+            wall_sec=0.0000015,
+            timing_summary=baseline_timing,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            wall_sec=0.000002,
+            timing_summary=candidate_timing,
+        ),
+    )
+
+    with ReportDatabase(report) as database:
+        database.install_scope(comparison, None)
+        phases = database.report_view_data("phases").phases
+
+    assert [row.phase for row in phases] == ["search", "apply", "merge", "rebuild", "other"]
+    assert [(row.baseline_ns, row.candidate_ns) for row in phases] == [
+        (100.0, 200.0),
+        (200.0, 100.0),
+        (300.0, 600.0),
+        (400.0, 200.0),
+        (500.0, 900.0),
+    ]
+    assert [row.delta_ns for row in phases] == [100.0, -100.0, 300.0, -200.0, 400.0]
+
+
+def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path, rounds=2)
+    zero = make_ruleset_timing(
+        "recorded-zero",
+        search_ns=0,
+        apply_ns=0,
+        unattributed_ns=0,
+        merge_ns=0,
+        rebuild_ns=0,
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
             timing_summary=make_timing_summary(
                 make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
-                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, unattributed_ns=6, merge_ns=0, rebuild_ns=0),
+                make_ruleset_timing("sporadic", search_ns=8, apply_ns=0, merge_ns=0, rebuild_ns=0),
                 zero,
             ),
         ),
         make_record(
             1,
             started_at="2026-07-15T12:00:01Z",
-            binary_sha256=baseline.binary_sha256,
+            binary_sha256="sha256:baseline",
             timing_summary=make_timing_summary(
                 make_ruleset_timing("baseline-only", search_ns=10, apply_ns=0, merge_ns=0, rebuild_ns=0),
                 zero,
@@ -861,8 +572,8 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
         ),
         make_record(
             2,
-            started_at="2026-07-15T12:00:00Z",
-            binary_sha256=candidate.binary_sha256,
+            started_at="2026-07-15T12:00:02Z",
+            binary_sha256="sha256:candidate",
             timing_summary=make_timing_summary(
                 make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0, rebuild_ns=0),
                 zero,
@@ -870,8 +581,8 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
         ),
         make_record(
             3,
-            started_at="2026-07-15T12:00:01Z",
-            binary_sha256=candidate.binary_sha256,
+            started_at="2026-07-15T12:00:03Z",
+            binary_sha256="sha256:candidate",
             timing_summary=make_timing_summary(
                 make_ruleset_timing("candidate-only", search_ns=20, apply_ns=0, merge_ns=0, rebuild_ns=0),
                 zero,
@@ -880,70 +591,117 @@ def test_ruleset_union_distinguishes_absence_from_recorded_zero(tmp_path: Path) 
     )
 
     with ReportDatabase(report) as database:
-        database.install_scope((baseline, candidate), spec, t_critical_95=12.706204736432095, requests=())
-        views = database.report_view_data(include_timing=True)
+        database.install_scope(comparison, 12.706204736432095)
+        rows = {row.name: row for row in database.report_view_data("rulesets").rulesets}
 
-    rows = {(row.target_order, row.name): row for row in views.ruleset_timings}
-    for target_order, absent_name in ((0, "candidate-only"), (1, "baseline-only"), (1, "sporadic")):
-        absent = rows[target_order, absent_name]
-        assert not absent.has_samples
-        assert absent.result_class == "available"
-        assert absent.search_ns is None
-        assert absent.apply_ns is None
-        assert absent.search_and_apply_ns is None
-        assert absent.unattributed_ns is None
-        assert absent.pre_merge_ns is None
-        assert absent.merge_ns is None
-        assert absent.rebuild_ns is None
-        assert absent.total_ns is None
-        assert absent.ruleset_share is None
-
-    for target_order in (0, 1):
-        recorded_zero = rows[target_order, "recorded-zero"]
-        assert recorded_zero.has_samples
-        assert recorded_zero.search_ns == 0
-        assert recorded_zero.total_ns == 0
-        assert recorded_zero.ruleset_share == 0
-
-    # Missing rounds remain zero contributions after the ruleset has appeared,
-    # keeping detailed phase totals consistent with the compact all-round mean.
-    assert rows[0, "sporadic"].search_ns == 4
-    assert rows[0, "sporadic"].unattributed_ns == 3
-    assert rows[0, "sporadic"].pre_merge_ns == 7
-    compact = {row.target_order: row for row in views.compact_timings}
-    baseline_search = sum(row.search_ns or 0 for row in views.ruleset_timings if row.target_order == 0)
-    baseline_unattributed = sum(row.unattributed_ns or 0 for row in views.ruleset_timings if row.target_order == 0)
-    assert compact[0].search_ns == baseline_search == 14
-    assert compact[0].unattributed_ns == baseline_unattributed == 3
+    assert rows["baseline-only"].baseline_total_ns == 10
+    assert rows["baseline-only"].candidate_total_ns is None
+    assert rows["baseline-only"].point is None
+    assert rows["candidate-only"].baseline_total_ns is None
+    assert rows["candidate-only"].candidate_total_ns == 20
+    assert rows["candidate-only"].point is None
+    assert rows["sporadic"].baseline_total_ns == 4
+    assert rows["recorded-zero"].baseline_total_ns == 0
+    assert rows["recorded-zero"].candidate_total_ns == 0
+    assert rows["recorded-zero"].point is None
 
 
-def test_append_failure_does_not_claim_a_persisted_row(tmp_path: Path) -> None:
+def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    record = make_record(0, started_at="2026-07-15T12:00:00Z")
+    comparison = _comparison(tmp_path)
+    names = tuple(reversed(tuple(f"rules-{index:02d}" for index in range(12))))
+    baseline_rules = tuple(
+        make_ruleset_timing(name, search_ns=100, apply_ns=0, merge_ns=0, rebuild_ns=0) for name in names
+    )
+    candidate_rules = tuple(
+        make_ruleset_timing(name, search_ns=101, apply_ns=0, merge_ns=0, rebuild_ns=0) for name in names
+    )
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-15T12:00:00Z",
+            binary_sha256="sha256:baseline",
+            timing_summary=make_timing_summary(*baseline_rules),
+        ),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            timing_summary=make_timing_summary(*candidate_rules),
+        ),
+    )
 
     with ReportDatabase(report) as database:
-        report.unlink()
-        report.mkdir()
-        with pytest.raises(IsADirectoryError):
-            database.append(record)
+        database.install_scope(comparison, None)
+        rulesets = database.report_view_data("rulesets").rulesets
 
-    assert report.is_dir()
+    assert len(rulesets) == 10
+    assert [row.name for row in rulesets] == [f"rules-{index:02d}" for index in range(10)]
+    assert [row.ruleset_rank for row in rulesets] == list(range(1, 11))
+    assert {row.ruleset_count for row in rulesets} == {12}
 
 
-def test_packaged_sql_loads_outside_repository_working_directory(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_complete_cached_endpoints_requires_latest_rounds_for_every_file_and_counts_any_status(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    files = (
+        models.FileSpec("first.egg", tmp_path / "first.egg", "sha256:first", fact_directory_sha256="facts:first"),
+        models.FileSpec("second.egg", tmp_path / "second.egg", "sha256:second", fact_directory_sha256="facts:second"),
+    )
+    records: list[ReportRecord] = []
 
-    with ReportDatabase(Path("report.jsonl")) as database:
-        assert database.successful_estimate_aggregates() == ()
+    def add(
+        binary: str,
+        file: models.FileSpec,
+        second: int,
+        *,
+        status: models.Status = "success",
+        label: str | None = None,
+        timeout_sec: int = 120,
+    ) -> None:
+        records.append(
+            make_record(
+                len(records),
+                started_at=f"2026-07-15T12:00:{second:02d}Z",
+                binary_sha256=binary,
+                file_sha256=file.sha256,
+                fact_directory_sha256=file.fact_directory_sha256,
+                status=status,
+                target_label=label,
+                timeout_sec=timeout_sec,
+            )
+        )
 
-    assert (tmp_path / "report.jsonl").is_file()
+    add("sha256:complete", files[0], 0, status="failure", label="old")
+    add("sha256:complete", files[0], 1, status="timed-out", label="middle")
+    add("sha256:complete", files[1], 2, label="new")
+    add("sha256:complete", files[1], 3, status="failure", label="newest")
+    add("sha256:incomplete", files[0], 4)
+    add("sha256:incomplete", files[0], 5)
+    add("sha256:incomplete", files[1], 6)
+    add("sha256:wrong-timeout", files[0], 7, timeout_sec=60)
+    add("sha256:wrong-timeout", files[0], 8, timeout_sec=60)
+    add("sha256:wrong-timeout", files[1], 9, timeout_sec=60)
+    add("sha256:wrong-timeout", files[1], 10, timeout_sec=60)
+    write_report(report, *records)
+
+    with ReportDatabase(report) as database:
+        endpoints = database.complete_cached_endpoints(files, rounds=2, timeout_sec=120)
+
+    assert len(endpoints) == 1
+    assert endpoints[0].binary_sha256 == "sha256:complete"
+    assert endpoints[0].row.label == "newest"
+    assert endpoints[0].cache_identity == ("sha256:complete", "main", "off")
+
+
+def test_fetch_rows_rejects_sql_python_column_drift(tmp_path: Path) -> None:
+    with ReportDatabase(tmp_path / "report.jsonl") as database:
+        cursor = database._connection.execute("SELECT 0 AS wrong_column")
+        with pytest.raises(RuntimeError, match="do not match"):
+            _fetch_rows(cursor, EndpointView)
 
 
 def _fieller_bounds(
-    *,
     baseline_mean: float,
     baseline_var_mean: float,
     candidate_mean: float,
@@ -955,4 +713,4 @@ def _fieller_bounds(
     radicand = (baseline_mean * candidate_mean) ** 2 - a * d
     center = baseline_mean * candidate_mean / a
     half_width = math.sqrt(radicand) / a
-    return center - half_width, center + half_width
+    return (center - half_width, center + half_width)

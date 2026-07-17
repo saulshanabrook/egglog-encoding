@@ -115,8 +115,6 @@ def test_report_renderer_depends_only_on_the_shared_catalog_contract() -> None:
         "benchmarking.reports.database",
         "benchmarking.reports.records",
         "benchmarking.reports.results",
-        "benchmarking.reports.summary",
-        "benchmarking.reports.timing",
     }
     assert "benchmarking.reports.catalog" in imports
     assert imports.isdisjoint(forbidden)
@@ -127,7 +125,6 @@ def test_report_package_does_not_import_runner_layers() -> None:
 
     forbidden = {
         "benchmarking.benchmark",
-        "benchmarking.benchmark_config",
         "benchmarking.collection",
         "benchmarking.output",
         "benchmarking.processes",

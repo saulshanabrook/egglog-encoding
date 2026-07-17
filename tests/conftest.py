@@ -104,10 +104,6 @@ def write_report(path: Path, *records: ReportRecord) -> None:
     )
 
 
-def make_spec(file_spec: models.FileSpec) -> models.BenchmarkSpec:
-    return models.BenchmarkSpec(files=(file_spec,), treatments=("off",), rounds=2, timeout_sec=120)
-
-
 def make_target(
     *,
     target_label: str | None = None,
@@ -126,6 +122,22 @@ def make_target(
         ),
         binary_sha256=binary_sha256,
         binary_path=binary_path,
+    )
+
+
+def make_endpoint(
+    *,
+    target_label: str | None = None,
+    binary_sha256: str = "sha256:bin",
+    backend: models.Backend = "main",
+    treatment: models.Treatment = "off",
+) -> models.BenchmarkEndpoint:
+    """Construct one resolved endpoint used by pair-report tests."""
+
+    return models.BenchmarkEndpoint(
+        make_target(target_label=target_label, binary_sha256=binary_sha256),
+        backend,
+        treatment,
     )
 
 

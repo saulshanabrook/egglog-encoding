@@ -55,7 +55,7 @@ proof-tests:
 # Use a disposable report path, keeping the default report cache untouched.
 benchmark-smoke:
 	rm -f -- "$(BENCHMARK_SMOKE_REPORT)"
-	uv run --locked ./bench.py --rounds 1 --treatments off \
+	uv run --locked ./bench.py --rounds 1 \
 		--report "$(BENCHMARK_SMOKE_REPORT)" --format markdown \
 		egglog/tests/integer_math.egg > /dev/null
 	test -s "$(BENCHMARK_SMOKE_REPORT)"

@@ -1,10 +1,9 @@
-"""Define the renderer-neutral request and output contracts for benchmark reports.
+"""Define renderer-neutral options and output contracts for pair reports.
 
-This module owns explicit report scope/options, stable presentation identifiers,
-raw-versus-display cells, section ordering, and the small structural invariants
-shared by Rich, Markdown, and live views. DuckDB UI consumes the typed SQL
-presentation views directly. This module performs no
-database queries, statistical analysis, or renderer-specific serialization.
+This module owns the cumulative detail option, stable presentation identities,
+raw-versus-display cells, section ordering, and structural invariants shared by
+Rich, Markdown, and live views. It performs no database queries, statistical
+analysis, or renderer-specific serialization.
 """
 
 from __future__ import annotations
@@ -14,36 +13,20 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from ..models import BenchmarkSpec, ResolvedTarget
+from ..models import DetailLevel
 
 type ReportScalar = str | int | float | bool | None
 TableAlignment = Literal["left", "right"]
 CellTone = Literal["default", "positive", "negative", "warning", "error", "muted"]
-TableLayout = Literal["standard", "wide", "target-tree"]
+TableLayout = Literal["standard", "wide"]
 MessageLayout = Literal["text", "caption"]
 
 
 @dataclass(frozen=True)
-class ReportScope:
-    """The ordered targets and benchmark matrix that determine report analysis."""
-
-    targets: tuple[ResolvedTarget, ...]
-    spec: BenchmarkSpec
-
-
-@dataclass(frozen=True)
 class ReportOptions:
-    """Presentation choices that do not change the selected benchmark samples."""
+    """The cumulative presentation detail requested for one comparison."""
 
-    command_argv: tuple[str, ...] | None = None
-    phase_timings: bool = False
-    detailed_timing: bool = False
-
-    @property
-    def include_timing(self) -> bool:
-        """Return whether compact or detailed timing data is requested."""
-
-        return self.phase_timings or self.detailed_timing
+    detail: DetailLevel = "summary"
 
 
 @dataclass(frozen=True)
@@ -124,11 +107,8 @@ class ReportSection:
 
 @dataclass(frozen=True)
 class ReportCatalog:
-    """The complete shared presentation catalog for one explicit report scope."""
+    """The complete shared presentation catalog for one explicit comparison."""
 
-    report_path: str
-    rounds: int
-    command_argv: tuple[str, ...] | None
     sections: tuple[ReportSection, ...]
 
     def __post_init__(self) -> None:

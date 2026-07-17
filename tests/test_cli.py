@@ -1,4 +1,4 @@
-"""Test public CLI parsing, dispatch, validation order, and output routing."""
+"""Test pair-only benchmark CLI parsing, validation, and orchestration."""
 
 from __future__ import annotations
 
@@ -6,12 +6,11 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-import duckdb
 import pytest
 
-from benchmarking import benchmark, benchmark_config, models, processes, targets
+from benchmarking import benchmark, collection, models, processes, targets, workloads
+from benchmarking import output as runner_output
 from benchmarking.reports.database import ReportDatabase
-from benchmarking.reports.summary import report_file_labels
 
 from .conftest import ROOT, make_record, make_target, write_report
 
@@ -32,77 +31,409 @@ def test_parse_target_rejects_invalid_pr_targets(raw: str) -> None:
         targets.parse_target(raw)
 
 
-def test_parse_treatments_rejects_duplicates() -> None:
-    with pytest.raises(ValueError, match="duplicate treatment: off"):
-        benchmark_config.parse_treatments("off,term,off")
+def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
+    args = benchmark.parse_benchmark_args([])
+    baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert baseline == models.EndpointRequest(targets.parse_target("."), "main", "off")
+    assert candidate == models.EndpointRequest(targets.parse_target("."), "main", "proofs")
+    assert args.detail == "summary"
+    assert args.command == "benchmark"
 
 
-def test_parse_backends_accepts_single_and_comma_separated_values() -> None:
-    assert benchmark_config.parse_backends("main") == ("main",)
-    assert benchmark_config.parse_backends("main,dd") == ("main", "dd")
-    assert benchmark_config.parse_backends(" dd , main ") == ("dd", "main")
+def test_compare_target_inherits_candidate_but_compare_backend_stays_main() -> None:
+    args = benchmark.parse_benchmark_args(["--target", "mine=@branch", "--backend", "dd"])
+    baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert baseline.target == candidate.target == targets.parse_target("mine=@branch")
+    assert baseline.backend == "main"
+    assert baseline.treatment == "off"
+    assert candidate.backend == "dd"
+    assert candidate.treatment == "proofs"
 
 
-def test_parse_backends_rejects_duplicates_unknowns_and_empty_values() -> None:
-    with pytest.raises(ValueError, match="duplicate backend: main"):
-        benchmark_config.parse_backends("main,dd,main")
-    with pytest.raises(ValueError, match="unknown backend: bogus"):
-        benchmark_config.parse_backends("bogus")
-    with pytest.raises(ValueError, match="at least one backend"):
-        benchmark_config.parse_backends(",,")
+def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
+    args = benchmark.parse_benchmark_args(
+        [
+            "--compare-target",
+            "old=@origin/main",
+            "--compare-backend",
+            "dd",
+            "--compare-treatment",
+            "term",
+            "--target",
+            "new=.",
+            "--backend",
+            "main",
+            "--treatment",
+            "proofs",
+            "--detail",
+            "rulesets",
+        ]
+    )
+    baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert baseline == models.EndpointRequest(targets.parse_target("old=@origin/main"), "dd", "term")
+    assert candidate == models.EndpointRequest(targets.parse_target("new=."), "main", "proofs")
+    assert args.detail == "rulesets"
 
 
-def test_backend_registry_drives_capabilities_flags_and_display(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("detail", ["summary", "files", "phases", "rulesets"])
+def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
+    assert benchmark.parse_benchmark_args(["--detail", detail]).detail == detail
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--treatments", "off,proofs"),
+        ("--backend", "main,dd"),
+        ("--phase-timings",),
+        ("--detailed-timing",),
+        ("--duckdb-ui",),
+        ("--detail", "3"),
+        ("--report", "-"),
+    ],
+)
+def test_pair_cli_rejects_removed_or_unsupported_options(argv: tuple[str, ...]) -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_benchmark_args(argv)
+
+
+def test_live_report_server_is_opt_in_with_an_optional_port() -> None:
+    ordinary = benchmark.parse_benchmark_args([])
+    automatic_port = benchmark.parse_benchmark_args(["--serve"])
+    fixed_port = benchmark.parse_benchmark_args(["--serve", "--serve-port", "4312"])
+
+    assert not ordinary.serve
+    assert ordinary.serve_port is None
+    assert automatic_port.serve
+    assert automatic_port.serve_port is None
+    assert fixed_port.serve
+    assert fixed_port.serve_port == 4312
+
+
+def test_live_report_port_requires_server(capsys: Any) -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_benchmark_args(["--serve-port", "4312"])
+
+    assert "--serve-port requires --serve" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("port", ["0", "65536"])
+def test_live_report_server_rejects_invalid_ports(port: str) -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_benchmark_args(["--serve", "--serve-port", port])
+
+
+def test_endpoint_validation_uses_backend_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(
         models.BACKEND_SPECS,
         "future",
-        models.BackendSpec("Future", ("proofs",), ("--backend", "future"), ("future-backend",)),
+        models.BackendSpec(("proofs",), ("--backend", "future"), ("future-backend",)),
     )
+    request = targets.parse_target(".")
 
-    assert benchmark_config.parse_backends("future") == ("future",)
-    assert models.backend_spec("future").treatments == ("proofs",)
+    args = benchmark.parse_benchmark_args(["--backend", "future"])
+    _baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert candidate == models.EndpointRequest(request, "future", "proofs")
     assert targets.backend_flags("future") == ["--backend", "future"]
     assert models.backend_cargo_features(("main", "future")) == ("future-backend",)
-    assert models.backend_spec("future").display_name == "Future"
-    assert models.backend_treatment_cells(("future",), ("off", "proofs")) == (models.BenchmarkCell("future", "proofs"),)
+    with pytest.raises(ValueError, match="backend future does not support treatment off"):
+        models.EndpointRequest(request, "future", "off")
 
 
-def test_benchmark_cells_filter_off_for_non_main_backends() -> None:
+def test_pair_cli_rejects_identical_endpoints_before_target_resolution() -> None:
+    args = benchmark.parse_benchmark_args(["--treatment", "off"])
+
+    with pytest.raises(ValueError, match="baseline and candidate endpoints must be different"):
+        benchmark.endpoint_requests(args)
+
+
+def test_comparison_permits_shared_binary_across_different_treatments() -> None:
+    target = make_target(binary_sha256="sha256:shared")
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec(
-        files=(file_spec,),
-        treatments=("off", "term", "proofs"),
-        rounds=1,
-        timeout_sec=120,
-        backends=("main", "dd"),
+    baseline = models.BenchmarkEndpoint(target, "main", "off")
+    candidate = models.BenchmarkEndpoint(target, "main", "proofs")
+
+    comparison = models.ComparisonSpec(baseline, candidate, (file_spec,), 2, 120)
+
+    assert baseline.cache_identity == ("sha256:shared", "main", "off")
+    assert candidate.cache_identity == ("sha256:shared", "main", "proofs")
+    assert comparison.baseline.target is comparison.candidate.target
+
+
+def test_comparison_rejects_identical_cache_endpoints() -> None:
+    target = make_target(binary_sha256="sha256:shared")
+    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    endpoint = models.BenchmarkEndpoint(target, "main", "proofs")
+
+    with pytest.raises(ValueError, match="baseline and candidate endpoints must be different"):
+        models.ComparisonSpec(endpoint, endpoint, (file_spec,), 1, 120)
+
+
+def test_endpoint_requests_group_one_shared_target_and_two_distinct_targets() -> None:
+    shared = targets.parse_target(".")
+    baseline = models.EndpointRequest(shared, "main", "off")
+    candidate = models.EndpointRequest(shared, "main", "proofs")
+
+    assert benchmark.group_endpoint_requests(baseline, candidate) == ((shared, (baseline, candidate)),)
+
+    other = models.EndpointRequest(targets.parse_target("@origin/main"), "main", "proofs")
+    assert benchmark.group_endpoint_requests(baseline, other) == (
+        (shared, (baseline,)),
+        (other.target, (other,)),
     )
 
-    assert models.benchmark_cells(spec) == (
-        models.BenchmarkCell("main", "off"),
-        models.BenchmarkCell("main", "term"),
-        models.BenchmarkCell("main", "proofs"),
-        models.BenchmarkCell("dd", "term"),
-        models.BenchmarkCell("dd", "proofs"),
+
+def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    shared_target = make_target(target_label="shared", binary_sha256="sha256:shared")
+    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    comparison = models.ComparisonSpec(
+        models.BenchmarkEndpoint(shared_target, "main", "off"),
+        models.BenchmarkEndpoint(shared_target, "dd", "proofs"),
+        (file_spec,),
+        1,
+        120,
+    )
+    observed: list[tuple[models.ResolvedTarget, tuple[models.BenchmarkEndpoint, ...], bool]] = []
+    sentinel = cast(collection.CollectionPlan, object())
+
+    def build_plan(
+        _database: ReportDatabase,
+        target: models.ResolvedTarget,
+        endpoints: tuple[models.BenchmarkEndpoint, ...],
+        _files: tuple[models.FileSpec, ...],
+        _rounds: int,
+        _timeout_sec: int,
+        force_run: bool,
+    ) -> collection.CollectionPlan:
+        observed.append((target, endpoints, force_run))
+        return sentinel
+
+    monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
+
+    plans = benchmark.collection_plans(cast(ReportDatabase, object()), comparison, True)
+
+    assert plans == (sentinel,)
+    assert observed == [(shared_target, (comparison.baseline, comparison.candidate), True)]
+
+
+def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_target = make_target(target_label="cached", binary_sha256="sha256:shared", binary_path=None)
+    candidate_target = make_target(
+        target_label="current",
+        binary_sha256="sha256:shared",
+        binary_path=ROOT / "egglog-experimental",
+    )
+    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    comparison = models.ComparisonSpec(
+        models.BenchmarkEndpoint(baseline_target, "main", "off"),
+        models.BenchmarkEndpoint(candidate_target, "main", "proofs"),
+        (file_spec,),
+        1,
+        120,
+    )
+    observed: list[models.ResolvedTarget] = []
+
+    def build_plan(
+        _database: ReportDatabase,
+        target: models.ResolvedTarget,
+        _endpoints: tuple[models.BenchmarkEndpoint, ...],
+        _files: tuple[models.FileSpec, ...],
+        _rounds: int,
+        _timeout_sec: int,
+        _force_run: bool,
+    ) -> collection.CollectionPlan:
+        observed.append(target)
+        return cast(collection.CollectionPlan, object())
+
+    monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
+
+    benchmark.collection_plans(cast(ReportDatabase, object()), comparison, False)
+
+    assert observed == [baseline_target, candidate_target]
+
+
+def test_shared_target_resolution_builds_union_backend_features(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = targets.parse_target(".")
+    row = models.TargetRow(".", str(ROOT), "HEAD", "abc123", False)
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    built_features: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(collection, "materialize_target_request", lambda *_args: row)
+
+    def build(
+        _request: models.TargetRequest,
+        _row: models.TargetRow,
+        _output: runner_output.RunnerOutput,
+        _profile: targets.BuildProfile,
+        features: tuple[str, ...],
+    ) -> models.ResolvedTarget:
+        built_features.append(features)
+        return target
+
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+
+    resolved = collection.resolve_targets(
+        (
+            (
+                request,
+                (
+                    models.EndpointRequest(request, "main", "off"),
+                    models.EndpointRequest(request, "dd", "proofs"),
+                ),
+            ),
+        ),
+        cast(ReportDatabase, object()),
+        (file_spec,),
+        1,
+        120,
+        False,
+        ROOT,
+        ROOT,
+        runner_output.RunnerOutput(),
     )
 
+    assert resolved == {request: target}
+    assert built_features == [("dd-backend",)]
 
-def test_validate_spec_rejects_backend_with_no_supported_treatments() -> None:
+
+def test_same_checkout_target_aliases_build_once_with_union_backend_features(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_request = targets.parse_target(".")
+    candidate_request = targets.parse_target(str(ROOT))
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
-    spec = models.BenchmarkSpec((file_spec,), ("off",), 1, 120, ("dd",))
+    rows = {
+        baseline_request: models.TargetRow(".", str(ROOT), "HEAD", "abc123", False),
+        candidate_request: models.TargetRow(str(ROOT), str(ROOT), "HEAD", "abc123", False),
+    }
+    binary_path = ROOT / "target/release/egglog-experimental"
+    materialized: list[models.TargetRequest] = []
+    builds: list[tuple[models.TargetRequest, tuple[str, ...]]] = []
 
-    with pytest.raises(ValueError, match="backend dd has no supported treatments"):
-        benchmark_config.validate_spec(spec)
+    def materialize(request: models.TargetRequest, *_args: object) -> models.TargetRow:
+        materialized.append(request)
+        return rows[request]
+
+    monkeypatch.setattr(collection, "materialize_target_request", materialize)
+
+    def build(
+        request: models.TargetRequest,
+        row: models.TargetRow,
+        _output: runner_output.RunnerOutput,
+        _profile: targets.BuildProfile,
+        features: tuple[str, ...],
+    ) -> models.ResolvedTarget:
+        assert materialized == [baseline_request, candidate_request]
+        builds.append((request, features))
+        return models.ResolvedTarget(request, row, "sha256:union", binary_path)
+
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+    baseline = models.EndpointRequest(baseline_request, "main", "off")
+    candidate = models.EndpointRequest(candidate_request, "dd", "proofs")
+
+    resolved = collection.resolve_targets(
+        (
+            (baseline_request, (baseline,)),
+            (candidate_request, (candidate,)),
+        ),
+        cast(ReportDatabase, object()),
+        (file_spec,),
+        1,
+        120,
+        False,
+        ROOT,
+        ROOT,
+        runner_output.RunnerOutput(),
+    )
+
+    assert builds == [(baseline_request, ("dd-backend",))]
+    assert resolved[baseline_request].request == baseline_request
+    assert resolved[candidate_request].request == candidate_request
+    assert resolved[baseline_request].row.source == "."
+    assert resolved[candidate_request].row.source == str(ROOT)
+    assert resolved[baseline_request].binary_path == resolved[candidate_request].binary_path == binary_path
+    assert resolved[baseline_request].binary_sha256 == resolved[candidate_request].binary_sha256 == "sha256:union"
 
 
-def test_validate_spec_rejects_duplicate_workload_cache_identities(tmp_path: Path) -> None:
+def test_batch_target_resolution_reuses_complete_cache_label_before_building_pending_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = tmp_path / "report.jsonl"
+    write_report(
+        report,
+        make_record(
+            0,
+            started_at="2026-07-04T12:00:00Z",
+            target_label="cached",
+            binary_sha256="sha256:cached",
+        ),
+    )
+    cached_request = targets.parse_target("cached=")
+    fresh_request = targets.parse_target(".")
+    file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    fresh_row = models.TargetRow(".", str(tmp_path / "checkout"), "HEAD", "fresh123", False)
+    binary_path = tmp_path / "checkout/target/release/egglog-experimental"
+    materialized: list[models.TargetRequest] = []
+    builds: list[tuple[str, ...]] = []
+
+    def materialize(request: models.TargetRequest, *_args: object) -> models.TargetRow:
+        materialized.append(request)
+        return fresh_row
+
+    def build(
+        request: models.TargetRequest,
+        row: models.TargetRow,
+        _output: runner_output.RunnerOutput,
+        _profile: targets.BuildProfile,
+        features: tuple[str, ...],
+    ) -> models.ResolvedTarget:
+        builds.append(features)
+        return models.ResolvedTarget(request, row, "sha256:fresh", binary_path)
+
+    monkeypatch.setattr(collection, "materialize_target_request", materialize)
+    monkeypatch.setattr(collection, "build_resolved_target", build)
+    groups = (
+        (cached_request, (models.EndpointRequest(cached_request, "main", "off"),)),
+        (fresh_request, (models.EndpointRequest(fresh_request, "dd", "proofs"),)),
+    )
+
+    with ReportDatabase(report) as database:
+        resolved = collection.resolve_targets(
+            groups,
+            database,
+            (file_spec,),
+            1,
+            120,
+            False,
+            tmp_path,
+            ROOT,
+            runner_output.RunnerOutput(),
+        )
+
+    assert materialized == [fresh_request]
+    assert builds == [("dd-backend",)]
+    assert resolved[cached_request].binary_sha256 == "sha256:cached"
+    assert resolved[cached_request].binary_path is None
+    assert resolved[fresh_request].binary_sha256 == "sha256:fresh"
+    assert resolved[fresh_request].binary_path == binary_path
+
+
+def test_validate_workloads_rejects_duplicate_cache_identities(tmp_path: Path) -> None:
     benchmark_file = tmp_path / "file.egg"
     benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
     first = models.FileSpec("first.egg", benchmark_file, "sha256:same", fact_directory_sha256="sha256:facts")
     second = models.FileSpec("second.egg", benchmark_file, "sha256:same", fact_directory_sha256="sha256:facts")
-    spec = models.BenchmarkSpec((first, second), ("off",), 1, 120)
 
     with pytest.raises(ValueError, match=r"first\.egg.*second\.egg.*identical file and fact-directory hashes"):
-        benchmark_config.validate_spec(spec)
+        workloads.validate_workloads((first, second))
 
 
 def test_same_file_with_different_fact_contents_is_a_distinct_workload(tmp_path: Path) -> None:
@@ -111,44 +442,32 @@ def test_same_file_with_different_fact_contents_is_a_distinct_workload(tmp_path:
     first = models.FileSpec("first.egg", benchmark_file, "sha256:same", fact_directory_sha256="sha256:facts-a")
     second = models.FileSpec("second.egg", benchmark_file, "sha256:same", fact_directory_sha256="sha256:facts-b")
 
-    benchmark_config.validate_spec(models.BenchmarkSpec((first, second), ("off",), 1, 120))
+    workloads.validate_workloads((first, second))
 
 
-def test_validate_spec_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
+def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -> None:
     prove_file = tmp_path / "prove.egg"
     prove_file.write_text(
         "; comments may mention (prove ...)\n(datatype Expr)\n(prove (Fact))\n",
         encoding="utf-8",
     )
-    spec = models.BenchmarkSpec(
-        files=benchmark_config.resolve_files([str(prove_file)], tmp_path),
-        treatments=("off", "term", "proofs"),
-        rounds=1,
-        timeout_sec=120,
-    )
 
     with pytest.raises(ValueError, match="explicit prove command"):
-        benchmark_config.validate_spec(spec)
+        workloads.resolve_files([str(prove_file)], tmp_path)
 
 
-def test_validate_spec_allows_prove_mentions_in_comments(tmp_path: Path) -> None:
+def test_resolve_files_allows_prove_mentions_in_comments(tmp_path: Path) -> None:
     check_file = tmp_path / "check.egg"
     check_file.write_text(
         "; comments may mention (prove ...)\n(datatype Expr)\n(check (Fact))\n",
         encoding="utf-8",
     )
-    spec = models.BenchmarkSpec(
-        files=benchmark_config.resolve_files([str(check_file)], tmp_path),
-        treatments=("off", "term", "proofs"),
-        rounds=1,
-        timeout_sec=120,
-    )
 
-    benchmark_config.validate_spec(spec)
+    assert workloads.resolve_files([str(check_file)], tmp_path)[0].absolute_path == check_file.resolve()
 
 
 def test_default_workloads_are_the_six_research_cases() -> None:
-    files = benchmark_config.resolve_files([], ROOT)
+    files = workloads.resolve_files([], ROOT)
     assert tuple(file.display_path for file in files) == (
         "egglog/tests/math-microbenchmark.egg",
         "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
@@ -162,24 +481,6 @@ def test_default_workloads_are_the_six_research_cases() -> None:
     assert pointer.fact_directory_sha256.startswith("sha256:")
 
 
-def test_report_file_labels_disambiguate_paths_and_fact_directories() -> None:
-    unique = models.FileSpec("long/path/unique.egg", ROOT / "unique.egg", "sha256:unique")
-    first = models.FileSpec("alpha/shared.egg", ROOT / "first.egg", "sha256:first")
-    second = models.FileSpec("beta/nested/shared.egg", ROOT / "second.egg", "sha256:second")
-    same_a = models.FileSpec("query.egg", ROOT / "query.egg", "sha256:query", ROOT / "facts-a", "sha:a")
-    same_b = models.FileSpec("query.egg", ROOT / "query.egg", "sha256:query", ROOT / "facts-b", "sha:b")
-
-    assert report_file_labels((unique, first, second)) == {
-        unique: "unique.egg",
-        first: "alpha/shared.egg",
-        second: "nested/shared.egg",
-    }
-    assert report_file_labels((same_a, same_b)) == {
-        same_a: "query.egg:facts-a",
-        same_b: "query.egg:facts-b",
-    }
-
-
 def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     benchmark_file = tmp_path / "input.egg"
     benchmark_file.write_text('(input Edge "edge.tsv")\n', encoding="utf-8")
@@ -187,7 +488,7 @@ def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     facts.mkdir()
     (facts / "edge.tsv").write_text("a\tb\n", encoding="utf-8")
 
-    (file_spec,) = benchmark_config.resolve_files(["input.egg"], tmp_path, "facts")
+    (file_spec,) = workloads.resolve_files(["input.egg"], tmp_path, "facts")
 
     assert file_spec.fact_directory == facts.resolve()
     assert file_spec.fact_directory_sha256 == targets.sha256_directory(facts)
@@ -195,140 +496,10 @@ def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
 
 def test_fact_directory_requires_explicit_benchmark_file(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires at least one explicit benchmark file"):
-        benchmark_config.resolve_files([], tmp_path, "facts")
+        workloads.resolve_files([], tmp_path, "facts")
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [
-        ("--output", "jsonl"),
-        ("--warmup", "0"),
-        ("--collect-phase-timings", "on"),
-        ("--phase-timing-rounds", "1"),
-        ("--phase-timing-top", "1"),
-        ("--phase-timings-report", "phase.jsonl"),
-        ("--report", "-"),
-    ],
-)
-def test_parse_args_rejects_removed_or_unsupported_modes(argv: tuple[str, ...]) -> None:
-    with pytest.raises(SystemExit):
-        benchmark_config.parse_benchmark_args(argv)
-
-
-def test_detailed_timing_implies_compact_timing() -> None:
-    args = benchmark_config.parse_benchmark_args(["--detailed-timing"])
-
-    assert args.detailed_timing
-    assert args.phase_timings
-
-
-def test_duckdb_ui_is_opt_in() -> None:
-    ordinary = benchmark_config.parse_benchmark_args([])
-    with_ui = benchmark_config.parse_benchmark_args(["--duckdb-ui"])
-
-    assert not ordinary.duckdb_ui
-    assert with_ui.duckdb_ui
-
-
-def test_live_report_server_is_opt_in_with_an_optional_port() -> None:
-    ordinary = benchmark_config.parse_benchmark_args([])
-    automatic_port = benchmark_config.parse_benchmark_args(["--serve"])
-    fixed_port = benchmark_config.parse_benchmark_args(["--serve", "--serve-port", "4312"])
-
-    assert not ordinary.serve
-    assert ordinary.serve_port is None
-    assert automatic_port.serve
-    assert automatic_port.serve_port is None
-    assert fixed_port.serve
-    assert fixed_port.serve_port == 4312
-
-
-def test_live_report_port_requires_server(capsys: Any) -> None:
-    with pytest.raises(SystemExit):
-        benchmark_config.parse_benchmark_args(["--serve-port", "4312"])
-
-    assert "--serve-port requires --serve" in capsys.readouterr().err
-
-
-def test_live_report_server_rejects_duckdb_ui(capsys: Any) -> None:
-    with pytest.raises(SystemExit):
-        benchmark_config.parse_benchmark_args(["--serve", "--duckdb-ui"])
-
-    assert "--serve and --duckdb-ui cannot be used together" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("port", ["0", "65536"])
-def test_live_report_server_rejects_invalid_ports(port: str) -> None:
-    with pytest.raises(SystemExit):
-        benchmark_config.parse_benchmark_args(["--serve", "--serve-port", port])
-
-
-def test_duckdb_ui_reports_extension_start_failure(tmp_path: Path) -> None:
-    class FailingConnection:
-        def execute(self, _query: str) -> None:
-            raise duckdb.Error("extension unavailable")
-
-    database = object.__new__(ReportDatabase)
-    database.path = tmp_path / "reports.jsonl"
-    database._closed = False
-    database._connection = cast(Any, FailingConnection())
-
-    with pytest.raises(ValueError, match="unable to install, load, or start.*extension unavailable"):
-        database.start_ui()
-
-
-def test_duckdb_ui_wait_keeps_session_alive_until_input(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: Any,
-) -> None:
-    events: list[str] = []
-
-    class FakeStdin:
-        def readline(self) -> str:
-            events.append("input")
-            return "\n"
-
-    monkeypatch.setattr(benchmark.sys, "stdin", FakeStdin())
-
-    benchmark.wait_for_duckdb_ui_exit(benchmark.RunnerOutput())
-
-    assert events == ["input"]
-    assert "Press Enter or Ctrl-C" in capsys.readouterr().err
-
-
-def test_duckdb_ui_wait_rejects_closed_input(monkeypatch: pytest.MonkeyPatch) -> None:
-    class ClosedStdin:
-        def readline(self) -> str:
-            return ""
-
-    monkeypatch.setattr(benchmark.sys, "stdin", ClosedStdin())
-
-    with pytest.raises(ValueError, match="input closed"):
-        benchmark.wait_for_duckdb_ui_exit(benchmark.RunnerOutput())
-
-
-def test_main_rejects_duckdb_ui_without_interactive_stdin(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: Any,
-) -> None:
-    class NoninteractiveStdin:
-        def isatty(self) -> bool:
-            return False
-
-    monkeypatch.setattr(benchmark.sys, "stdin", NoninteractiveStdin())
-    monkeypatch.setattr(
-        benchmark,
-        "git_root_for_path",
-        lambda _path: pytest.fail("noninteractive UI must fail before repository work"),
-    )
-
-    result = benchmark.main(["--duckdb-ui"])
-
-    assert result == 2
-    assert "requires an interactive terminal" in capsys.readouterr().err
-
-
-def test_main_validates_old_report_shape_before_building(
+def test_main_validates_old_report_before_target_resolution(
     monkeypatch: pytest.MonkeyPatch,
     capsys: Any,
     tmp_path: Path,
@@ -340,17 +511,17 @@ def test_main_validates_old_report_shape_before_building(
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(
         benchmark,
-        "resolve_target",
+        "resolve_targets",
         lambda *_args: pytest.fail("an incompatible report must fail before target resolution/build"),
     )
 
-    result = benchmark.main(["--report", str(report), "--rounds", "1", "--treatments", "off"])
+    result = benchmark.main(["--report", str(report), "--rounds", "1"])
 
     assert result == 2
     assert "invalid or incompatible benchmark report" in capsys.readouterr().err
 
 
-def test_main_preflights_every_fresh_target_before_collecting(
+def test_main_preflights_both_fresh_targets_before_collecting(
     monkeypatch: pytest.MonkeyPatch,
     capsys: Any,
     tmp_path: Path,
@@ -360,42 +531,32 @@ def test_main_preflights_every_fresh_target_before_collecting(
     benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
     file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
     targets_by_label = {
-        "first": make_target(
-            target_label="first",
-            binary_sha256="sha256:first",
-            binary_path=tmp_path / "first-egglog",
-        ),
-        "second": make_target(
-            target_label="second",
-            binary_sha256="sha256:second",
-            binary_path=tmp_path / "second-egglog",
-        ),
+        "old": make_target(target_label="old", binary_sha256="sha256:old", binary_path=tmp_path / "old-bin"),
+        "new": make_target(target_label="new", binary_sha256="sha256:new", binary_path=tmp_path / "new-bin"),
     }
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
+    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (file_spec,))
     monkeypatch.setattr(
         benchmark,
-        "resolve_files",
-        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
-    )
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_target",
-        lambda request, *_args: targets_by_label[request.label or ""],
+        "resolve_targets",
+        lambda request_groups, *_args: {
+            request: targets_by_label[request.label or ""] for request, _endpoints in request_groups
+        },
     )
     preflighted: list[str] = []
 
-    def fail_second_preflight(plan: Any, _spec: models.BenchmarkSpec) -> processes.TimingResult:
+    def fail_new_preflight(plan: collection.CollectionPlan, _timeout: int) -> processes.TimingResult:
         label = plan.target.display_label
         preflighted.append(label)
-        if label == "second":
-            raise ValueError("target second does not support --timing-summary")
+        if label == "new":
+            raise ValueError("target new does not support --timing-summary")
         return processes.TimingResult("success", processes.TimingRow(wall_sec=0.1), None)
 
-    monkeypatch.setattr(benchmark, "preflight_collection", fail_second_preflight)
+    monkeypatch.setattr(benchmark, "preflight_collection", fail_new_preflight)
     monkeypatch.setattr(
         benchmark,
         "collect_rows",
-        lambda *_args: pytest.fail("collection must wait until every target passes preflight"),
+        lambda *_args: pytest.fail("collection must wait until both targets pass preflight"),
     )
 
     result = benchmark.main(
@@ -404,232 +565,19 @@ def test_main_preflights_every_fresh_target_before_collecting(
             str(report),
             "--rounds",
             "1",
-            "--treatments",
-            "off",
+            "--compare-target",
+            "old=.",
+            "--compare-treatment",
+            "proofs",
             "--target",
-            "first=.",
-            "--target",
-            "second=.",
+            "new=.",
+            "--treatment",
+            "proofs",
             "file.egg",
         ]
     )
 
     assert result == 2
-    assert preflighted == ["first", "second"]
+    assert preflighted == ["old", "new"]
     assert report.read_text(encoding="utf-8") == ""
     assert "does not support --timing-summary" in capsys.readouterr().err
-
-
-def test_main_rejects_duplicate_binary_targets_before_collection(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: Any,
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "reports.jsonl"
-    benchmark_file = tmp_path / "file.egg"
-    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
-    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
-    targets_by_label = {
-        label: make_target(target_label=label, binary_sha256="sha256:shared") for label in ("first", "second")
-    }
-    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_files",
-        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
-    )
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_target",
-        lambda request, *_args: targets_by_label[request.label or ""],
-    )
-    monkeypatch.setattr(
-        benchmark,
-        "build_collection_plan",
-        lambda *_args: pytest.fail("duplicate targets must fail before collection planning"),
-    )
-
-    result = benchmark.main(
-        [
-            "--report",
-            str(report),
-            "--rounds",
-            "1",
-            "--treatments",
-            "off",
-            "--target",
-            "first=.",
-            "--target",
-            "second=.",
-            "file.egg",
-        ]
-    )
-
-    assert result == 2
-    assert report.read_text(encoding="utf-8") == ""
-    assert "targets 'first' and 'second' produced the same binary SHA-256" in capsys.readouterr().err
-
-
-def test_main_rich_report_remains_on_stderr_by_default(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: Any,
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "reports.jsonl"
-    write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    benchmark_file = tmp_path / "file.egg"
-    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
-    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
-    target = make_target()
-    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_files",
-        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
-    )
-    monkeypatch.setattr(benchmark, "resolve_target", lambda *_args: target)
-    monkeypatch.setattr(
-        benchmark.ReportDatabase,
-        "start_ui",
-        lambda *_args: pytest.fail("ordinary benchmark runs must not start the DuckDB UI"),
-    )
-
-    result = benchmark.main(
-        [
-            "--report",
-            str(report),
-            "--rounds",
-            "1",
-            "--treatments",
-            "off",
-            "file.egg",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert captured.out == ""
-    assert "cache and estimate plan" in captured.err
-    assert "Benchmark report" in captured.err
-
-
-def test_main_opens_duckdb_ui_after_installing_report_scope(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: Any,
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "reports.jsonl"
-    write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    benchmark_file = tmp_path / "file.egg"
-    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
-    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
-    target = make_target()
-    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_files",
-        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
-    )
-    monkeypatch.setattr(benchmark, "resolve_target", lambda *_args: target)
-    events: list[str] = []
-
-    class InteractiveStdin:
-        def isatty(self) -> bool:
-            return True
-
-    class BufferedStdout:
-        text = ""
-
-        def write(self, value: str) -> int:
-            self.text += value
-            events.append("write")
-            return len(value)
-
-        def flush(self) -> None:
-            events.append("flush")
-
-    stdout = BufferedStdout()
-    monkeypatch.setattr(benchmark.sys, "stdin", InteractiveStdin())
-    monkeypatch.setattr(benchmark.sys, "stdout", stdout)
-
-    def start_ui(database: Any) -> str:
-        scoped_targets = database._connection.execute("SELECT count(*) FROM presentation_targets").fetchone()[0]
-        assert scoped_targets == 1
-        events.append("start")
-        return "UI started at http://localhost:4213"
-
-    def wait_for_exit(_output: Any) -> None:
-        events.append("wait")
-
-    monkeypatch.setattr(benchmark.ReportDatabase, "start_ui", start_ui)
-    monkeypatch.setattr(benchmark, "wait_for_duckdb_ui_exit", wait_for_exit)
-
-    result = benchmark.main(
-        [
-            "--report",
-            str(report),
-            "--rounds",
-            "1",
-            "--treatments",
-            "off",
-            "--format",
-            "markdown",
-            "--duckdb-ui",
-            "file.egg",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert result == 0
-    assert events == ["write", "flush", "start", "wait"]
-    assert "# Benchmark Report" in stdout.text
-    assert "UI started at http://localhost:4213" in captured.err
-
-
-def test_main_serves_the_completed_shared_catalog(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "reports.jsonl"
-    write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
-    benchmark_file = tmp_path / "file.egg"
-    benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
-    file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
-    target = make_target()
-    monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(
-        benchmark,
-        "resolve_files",
-        lambda _raw_files, _invocation_cwd, _fact_directory=None: (file_spec,),
-    )
-    monkeypatch.setattr(benchmark, "resolve_target", lambda *_args: target)
-    observed: dict[str, object] = {}
-
-    def serve(session: Any, *, port: int, console: Any) -> None:
-        observed["port"] = port
-        observed["console"] = console
-        observed["payload"] = session.payload()
-
-    monkeypatch.setattr(benchmark, "serve_live_report", serve)
-
-    result = benchmark.main(
-        [
-            "--report",
-            str(report),
-            "--rounds",
-            "1",
-            "--treatments",
-            "off",
-            "--serve",
-            "--serve-port",
-            "4312",
-            "file.egg",
-        ]
-    )
-
-    assert result == 0
-    assert observed["port"] == 4312
-    payload = observed["payload"]
-    assert isinstance(payload, dict)
-    assert payload["report_path"] == str(report)
-    assert payload["sections"]

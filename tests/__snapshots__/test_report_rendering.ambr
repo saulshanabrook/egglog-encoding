@@ -1,239 +1,90 @@
 # serializer version: 1
-# name: test_database_built_multi_target_backend_markdown_snapshot
+# name: test_realistic_pair_report_markdown_snapshot
   '''
-  ```shell
-  $ ./bench.py --target baseline=main --target candidate=HEAD --backend main,dd --treatments term,proofs --phase-timings benchmarks/integer_math.egg
-  ```
-  
   # Benchmark Report
   
-  - Report: `/tmp/benchmark-report.jsonl`
-  - Selected rows per result: `2`
+  ## Comparison
   
-  ## Targets
+  ### Endpoints
   
-  | Role | Label | Git | Dirty | Binary | Path |
+  | Role | Target | Git | Dirty | Backend | Treatment |
   | --- | --- | --- | --- | --- | --- |
-  | baseline | baseline | 111111111111 | no | baseline | /checkout/baseline |
-  | candidate | candidate | 222222222222 | no | candidate | /checkout/candidate |
+  | Baseline | baseline | abc123 | no | main | off |
+  | Candidate | candidate | abc123 | no | dd | proofs |
   
-  ## Comparisons
+  ### Run
   
-  ### Per-file wall-time change vs baseline: candidate
+  | Setting | Value |
+  | --- | --- |
+  | Ratio | candidate / baseline; below 1 is faster or uses less RSS, while above 1 is slower or uses more RSS |
+  | Files | 2: math.egg; rewrite.egg |
+  | Rounds | 2 per endpoint/file |
+  | Timeout | 120 s per run |
+  | Report | /tmp/benchmark-report.jsonl |
   
-  | File | Backend | Treatment | Time ratio | Wall-time change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | main | term | [0.889x, 1.364x] | [-11.1%, 36.4%] | unclear |
-  |  | main | proofs | [0.905x, 1.300x] | [-9.5%, 30.0%] | unclear |
-  |  | dd | term | [0.917x, 1.256x] | [-8.3%, 25.6%] | unclear |
-  |  | dd | proofs | [0.926x, 1.223x] | [-7.4%, 22.3%] | unclear |
+  This comparison changes more than one of target, backend, and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.
   
-  *Ratio is target / baseline. Values below 1x are faster; above 1x are slower. Wall-time change is derived from the ratio; negative is faster. Intervals are 95% CIs.*
+  ## Benchmark summary
   
-  ### Per-file peak RSS change vs baseline: candidate
+  | Metric | Scope | File(s) | Ratio (95% CI) | Result |
+  | --- | --- | --- | ---: | --- |
+  | Wall time | Suite total | 2 files | 1.066x [0.983, 1.157] | CI includes 1 |
+  | Wall time | Lowest-ratio file | math.egg | 0.802x [0.652, 0.978] | faster |
+  | Wall time | Highest-ratio file | rewrite.egg | 1.199x [1.105, 1.303] | slower |
+  | Peak RSS | Lowest-ratio file | math.egg | 0.950x [0.867, 1.042] | CI includes 1 |
+  | Peak RSS | Highest-ratio file | rewrite.egg | 1.153x [1.082, 1.230] | higher RSS |
   
-  | File | Backend | Treatment | RSS ratio | RSS change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | main | term | [1.042x, 1.042x] | [4.2%, 4.2%] | more |
-  |  | main | proofs | [1.041x, 1.041x] | [4.1%, 4.1%] | more |
-  |  | dd | term | [1.040x, 1.040x] | [4.0%, 4.0%] | more |
-  |  | dd | proofs | [1.040x, 1.040x] | [4.0%, 4.0%] | more |
+  ## Per-file results
   
-  *Ratio is target / baseline. Values below 1x use less peak RSS; above 1x use more. RSS change is derived from the ratio; negative uses less memory. Intervals are 95% CIs.*
+  ### Per-file wall time
   
-  ### Per-file backend wall-time change vs main: baseline
+  | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+  | --- | ---: | ---: | ---: | --- |
+  | math.egg | 1.0100s [0.8829, 1.1371] | 0.8100s [0.6829, 0.9371] | 0.802x [0.652, 0.978] | faster |
+  | rewrite.egg | 2.0100s [1.8829, 2.1371] | 2.4100s [2.2829, 2.5371] | 1.199x [1.105, 1.303] | slower |
   
-  | File | Backend | Treatment | Time ratio | Wall-time change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | dd | term | [1.133x, 1.677x] | [13.3%, 67.7%] | slower |
-  |  | dd | proofs | [1.114x, 1.557x] | [11.4%, 55.7%] | slower |
+  ### Per-file peak RSS
   
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs.*
+  | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
+  | --- | ---: | ---: | ---: | --- |
+  | math.egg | 95.8 MiB [89.8, 101.9] | 91.1 MiB [85.0, 97.1] | 0.950x [0.867, 1.042] | CI includes 1 |
+  | rewrite.egg | 124.5 MiB [118.4, 130.5] | 143.5 MiB [137.5, 149.6] | 1.153x [1.082, 1.230] | higher RSS |
   
-  ### Per-file backend wall-time change vs main: candidate
+  ## Phase comparison
   
-  | File | Backend | Treatment | Time ratio | Wall-time change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | dd | term | [1.122x, 1.607x] | [12.2%, 60.7%] | slower |
-  |  | dd | proofs | [1.106x, 1.510x] | [10.6%, 51.0%] | slower |
+  | File | Phase | Baseline | Candidate | Delta | Ratio |
+  | --- | --- | ---: | ---: | ---: | ---: |
+  | math.egg | Search | 404 ms | 324 ms | -80.0 ms | 0.802x |
+  |  | Apply | 182 ms | 146 ms | -36.0 ms | 0.802x |
+  |  | Merge | 100 ms | 100 ms | 0 ns | 1.000x |
+  |  | Rebuild | 40.0 ms | 40.0 ms | 0 ns | 1.000x |
+  |  | Other | 284 ms | 200 ms | -84.0 ms | 0.704x |
+  | rewrite.egg | Search | 804 ms | 964 ms | 160 ms | 1.199x |
+  |  | Apply | 362 ms | 434 ms | 72.0 ms | 1.199x |
+  |  | Merge | 100 ms | 100 ms | 0 ns | 1.000x |
+  |  | Rebuild | 40.0 ms | 40.0 ms | 0 ns | 1.000x |
+  |  | Other | 704 ms | 872 ms | 168 ms | 1.239x |
   
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs.*
+  *Delta is candidate − baseline. Phase values are descriptive means without confidence intervals. Other is wall time minus Search, Apply, Merge, and Rebuild; a leading ! means recorded phase totals exceed wall time.*
   
-  ### Per-file backend peak RSS change vs main: baseline
+  ## Ruleset comparison
   
-  | File | Backend | Treatment | RSS ratio | RSS change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | dd | term | [1.033x, 1.033x] | [3.3%, 3.3%] | more |
-  |  | dd | proofs | [1.033x, 1.033x] | [3.3%, 3.3%] | more |
+  ### Ruleset comparison — math.egg
   
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x use less peak RSS; above 1x use more. Intervals are 95% CIs.*
-  
-  ### Per-file backend peak RSS change vs main: candidate
-  
-  | File | Backend | Treatment | RSS ratio | RSS change | Result |
-  | --- | --- | --- | ---: | ---: | --- |
-  | integer_math.egg | dd | term | [1.032x, 1.032x] | [3.2%, 3.2%] | more |
-  |  | dd | proofs | [1.031x, 1.031x] | [3.1%, 3.1%] | more |
-  
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x use less peak RSS; above 1x use more. Intervals are 95% CIs.*
-  
-  ## Target Diagnostics
-  
-  ### baseline: overhead ratios
-  
-  | File | main proofs/term | dd proofs/term |
-  | --- | ---: | ---: |
-  | integer_math.egg | [0.967x, 1.463x] | [0.975x, 1.325x] |
-  
-  *Within-target treatment ratios. These are not target-vs-baseline wall-time change.*
-  
-  ### baseline: per-file wall time
-  
-  | File | main/term | main/proofs | dd/term | dd/proofs |
+  | Ruleset | Baseline total | Candidate total | Delta | Ratio |
   | --- | ---: | ---: | ---: | ---: |
-  | integer_math.egg | [0.6829s, 0.9371s] | [0.8329s, 1.0871s] | [0.9829s, 1.2371s] | [1.1329s, 1.3871s] |
+  | simplify | 534 ms | 450 ms | -84.0 ms | 0.843x |
+  | finish | 192 ms | 160 ms | -32.0 ms | 0.833x |
   
-  *Within-target wall-time estimates. These are not target-vs-baseline ratios.*
+  *Ruleset totals are descriptive means without confidence intervals.*
   
-  ### baseline: per-file peak RSS
+  ### Ruleset comparison — rewrite.egg
   
-  | File | main/term | main/proofs | dd/term | dd/proofs |
+  | Ruleset | Baseline total | Candidate total | Delta | Ratio |
   | --- | ---: | ---: | ---: | ---: |
-  | integer_math.egg | [114.4 MiB, 114.4 MiB] | [116.3 MiB, 116.3 MiB] | [118.3 MiB, 118.3 MiB] | [120.2 MiB, 120.2 MiB] |
+  | simplify | 954 ms | 1.12 s | 168 ms | 1.176x |
+  | finish | 352 ms | 416 ms | 64.0 ms | 1.182x |
   
-  *Within-target peak resident set size estimates. These are separate from wall-time ratios.*
-  
-  ### candidate: overhead ratios
-  
-  | File | main proofs/term | dd proofs/term |
-  | --- | ---: | ---: |
-  | integer_math.egg | [0.970x, 1.416x] | [0.977x, 1.301x] |
-  
-  *Within-target treatment ratios. These are not target-vs-baseline wall-time change.*
-  
-  ### candidate: per-file wall time
-  
-  | File | main/term | main/proofs | dd/term | dd/proofs |
-  | --- | ---: | ---: | ---: | ---: |
-  | integer_math.egg | [0.7629s, 1.0171s] | [0.9129s, 1.1671s] | [1.0629s, 1.3171s] | [1.2129s, 1.4671s] |
-  
-  *Within-target wall-time estimates. These are not target-vs-baseline ratios.*
-  
-  ### candidate: per-file peak RSS
-  
-  | File | main/term | main/proofs | dd/term | dd/proofs |
-  | --- | ---: | ---: | ---: | ---: |
-  | integer_math.egg | [119.2 MiB, 119.2 MiB] | [121.1 MiB, 121.1 MiB] | [123.0 MiB, 123.0 MiB] | [124.9 MiB, 124.9 MiB] |
-  
-  *Within-target peak resident set size estimates. These are separate from wall-time ratios.*
-  
-  ## Engine Timing
-  
-  ### integer_math.egg
-  
-  | Target | Backend/Treatment | Search | Apply | Merge | Rebuild | Other | Wall | Status |
-  | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-  | baseline | main/term | 275 ms | 113 ms | 70.0 ms | 30.0 ms | 321 ms | 810 ms | success |
-  | candidate | main/term | 303 ms | 125 ms | 70.0 ms | 30.0 ms | 363 ms | 890 ms | success |
-  | baseline | main/proofs | 326 ms | 134 ms | 70.0 ms | 30.0 ms | 399 ms | 960 ms | success |
-  | candidate | main/proofs | 354 ms | 146 ms | 70.0 ms | 30.0 ms | 441 ms | 1.04 s | success |
-  | baseline | dd/term | 377 ms | 155 ms | 70.0 ms | 30.0 ms | 477 ms | 1.11 s | success |
-  | candidate | dd/term | 405 ms | 167 ms | 70.0 ms | 30.0 ms | 519 ms | 1.19 s | success |
-  | baseline | dd/proofs | 428 ms | 176 ms | 70.0 ms | 30.0 ms | 555 ms | 1.26 s | success |
-  | candidate | dd/proofs | 456 ms | 188 ms | 70.0 ms | 30.0 ms | 597 ms | 1.34 s | success |
-  
-  *Other is wall time minus Search, Apply, Merge, and Rebuild; it includes Unattributed pre-merge time and time outside recorded rulesets. A leading ! means displayed phase time exceeds wall time; timing attribution is descriptive.*
-  
-  ## Benchmark Summary
-  
-  ### DD vs main wall time
-  
-  | Target | Backend | Mode | main total | DD total | DD/main | Change | File geomean | Faster files | Best file | Best ratio | Best result |
-  | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
-  | baseline | dd | term | 0.8100s | 1.1100s | [1.133x, 1.677x] | [13.3%, 67.7%] | 1.370x | 0/1 | integer_math.egg | [1.133x, 1.677x] | slower |
-  | baseline | dd | proofs | 0.9600s | 1.2600s | [1.114x, 1.557x] | [11.4%, 55.7%] | 1.312x | 0/1 | integer_math.egg | [1.114x, 1.557x] | slower |
-  | candidate | dd | term | 0.8900s | 1.1900s | [1.122x, 1.607x] | [12.2%, 60.7%] | 1.337x | 0/1 | integer_math.egg | [1.122x, 1.607x] | slower |
-  | candidate | dd | proofs | 1.0400s | 1.3400s | [1.106x, 1.510x] | [10.6%, 51.0%] | 1.288x | 0/1 | integer_math.egg | [1.106x, 1.510x] | slower |
-  
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x are faster; above 1x are slower. Intervals are 95% CIs.*
-  
-  ### DD vs main peak RSS
-  
-  | Target | Backend | Mode | main total | DD total | DD/main | Change | File geomean | Lower-RSS files | Best file | Best ratio | Best result |
-  | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | --- |
-  | baseline | dd | term | 114.4 MiB | 118.3 MiB | [1.033x, 1.033x] | [3.3%, 3.3%] | 1.033x | 0/1 | integer_math.egg | [1.033x, 1.033x] | more |
-  | baseline | dd | proofs | 116.3 MiB | 120.2 MiB | [1.033x, 1.033x] | [3.3%, 3.3%] | 1.033x | 0/1 | integer_math.egg | [1.033x, 1.033x] | more |
-  | candidate | dd | term | 119.2 MiB | 123.0 MiB | [1.032x, 1.032x] | [3.2%, 3.2%] | 1.032x | 0/1 | integer_math.egg | [1.032x, 1.032x] | more |
-  | candidate | dd | proofs | 121.1 MiB | 124.9 MiB | [1.031x, 1.031x] | [3.1%, 3.1%] | 1.031x | 0/1 | integer_math.egg | [1.031x, 1.031x] | more |
-  
-  *Ratio is candidate backend / baseline backend for the same target and treatment. Values below 1x use less peak RSS; above 1x use more. Intervals are 95% CIs.*
-  
-  ### Wall-time summary vs baseline
-  
-  | Target | Backend | Treatment | Wall-time change | Geomean | Worst file | Worst ratio | Result |
-  | --- | --- | --- | ---: | ---: | --- | ---: | --- |
-  | candidate | main | term | [-11.1%, 36.4%] | 1.099x | integer_math.egg | [0.889x, 1.364x] | unclear |
-  | candidate | main | proofs | [-9.5%, 30.0%] | 1.083x | integer_math.egg | [0.905x, 1.300x] | unclear |
-  | candidate | dd | term | [-8.3%, 25.6%] | 1.072x | integer_math.egg | [0.917x, 1.256x] | unclear |
-  | candidate | dd | proofs | [-7.4%, 22.3%] | 1.063x | integer_math.egg | [0.926x, 1.223x] | unclear |
-  
-  *Ratio is target / baseline. Values below 1x are faster; above 1x are slower. Wall-time change is derived from the ratio; negative is faster. Intervals are 95% CIs.*
-  
-  ### Peak RSS summary vs baseline
-  
-  | Target | Backend | Treatment | RSS change | Geomean | Worst file | Worst ratio | Result |
-  | --- | --- | --- | ---: | ---: | --- | ---: | --- |
-  | candidate | main | term | [4.2%, 4.2%] | 1.042x | integer_math.egg | [1.042x, 1.042x] | more |
-  | candidate | main | proofs | [4.1%, 4.1%] | 1.041x | integer_math.egg | [1.041x, 1.041x] | more |
-  | candidate | dd | term | [4.0%, 4.0%] | 1.040x | integer_math.egg | [1.040x, 1.040x] | more |
-  | candidate | dd | proofs | [4.0%, 4.0%] | 1.040x | integer_math.egg | [1.040x, 1.040x] | more |
-  
-  *Ratio is target / baseline. Values below 1x use less peak RSS; above 1x use more. RSS change is derived from the ratio; negative uses less memory. Intervals are 95% CIs.*
-  '''
-# ---
-# name: test_markdown_report_document_snapshot
-  '''
-  ```shell
-  $ ./bench.py --phase-timings egglog/tests/integer_math.egg
-  ```
-  
-  # Benchmark Report
-  
-  - Report: `/tmp/report.jsonl`
-  - Selected rows per result: `2`
-  
-  ## Targets
-  
-  | Role | Label | Git | Dirty | Binary | Path |
-  | --- | --- | --- | --- | --- | --- |
-  | target | main | 123456789abc | no | abcdef012345 | /checkout |
-  
-  ## Target Diagnostics
-  
-  ### main: per-file wall time
-  
-  | File | proofs |
-  | --- | ---: |
-  | integer_math.egg | [1.0000s, 1.2000s] |
-  
-  *Within-target wall-time estimates.*
-  
-  ## Engine Timing
-  
-  ### integer_math.egg
-  
-  | Target | Backend/Treatment | Search | Apply | Merge | Rebuild | Other | Wall | Status |
-  | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-  | main | main/proofs | 450 ms | 200 ms | 100 ms | 50.0 ms | 300 ms | 1.10 s | success |
-  
-  *Other is wall time minus Search, Apply, Merge, and Rebuild; it includes Unattributed pre-merge time and time outside recorded rulesets. A leading ! means displayed phase time exceeds wall time; timing attribution is descriptive.*
-  
-  ## Benchmark Summary
-  
-  ### main: proof overhead summary
-  
-  | Metric | Ratio | Result |
-  | --- | ---: | --- |
-  | wall proofs/off | 1.250x | unclear |
+  *Ruleset totals are descriptive means without confidence intervals.*
   '''
 # ---

@@ -73,17 +73,19 @@ WITH parsed AS (
 SELECT row_index, unnest(record)
 FROM parsed;
 
--- A report scope is one immutable, typed value. Ordered lists own their
--- zero-based coordinates; the scope_* table macros recover those coordinates
--- with ordinality instead of storing a second, potentially inconsistent copy.
-CREATE TYPE report_scope_target_t AS STRUCT(
+-- A report scope compares exactly two endpoint tuples over one ordered file
+-- list. Endpoint roles are fields rather than list data so an installed scope
+-- cannot represent zero, one, or more than two systems.
+CREATE TYPE report_scope_endpoint_t AS STRUCT(
     binary_sha256 VARCHAR,
     target_label VARCHAR,
     target_source VARCHAR,
     target_path VARCHAR,
     target_git_ref VARCHAR,
     target_git_sha VARCHAR,
-    target_is_dirty BOOLEAN
+    target_is_dirty BOOLEAN,
+    backend VARCHAR,
+    treatment report_treatment_t
 );
 
 CREATE TYPE report_scope_file_t AS STRUCT(
@@ -94,31 +96,17 @@ CREATE TYPE report_scope_file_t AS STRUCT(
     fact_directory_path VARCHAR
 );
 
-CREATE TYPE report_scope_cell_t AS STRUCT(
-    backend VARCHAR,
-    treatment report_treatment_t
-);
-
-CREATE TYPE report_scope_comparison_t AS STRUCT(
-    baseline_target_order UINTEGER,
-    baseline_cell_order UINTEGER,
-    candidate_target_order UINTEGER,
-    candidate_cell_order UINTEGER
-);
-
 CREATE TYPE report_scope_t AS STRUCT(
-    targets report_scope_target_t[],
+    baseline report_scope_endpoint_t,
+    candidate report_scope_endpoint_t,
     files report_scope_file_t[],
-    cells report_scope_cell_t[],
-    comparisons report_scope_comparison_t[],
     rounds UINTEGER,
     timeout_sec UINTEGER,
     t_critical_95 DOUBLE
 );
 
--- The CLI installs one current scope for its ordinary presentation views. A
--- caller that needs another scope passes it directly to the same-named table
--- macros, without replacing this row or relying on connection-local state.
+-- Each transient catalog installs this immutable singleton once. Live report
+-- retargeting opens a fresh catalog instead of updating or deleting this row.
 CREATE TABLE current_report_scope (
     singleton BOOLEAN PRIMARY KEY CHECK (singleton),
     scope report_scope_t NOT NULL

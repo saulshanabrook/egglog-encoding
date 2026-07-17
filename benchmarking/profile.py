@@ -22,17 +22,18 @@ from typing import Any, Literal, cast
 from rich.text import Text
 
 from . import samply_analysis
-from .benchmark_config import parse_single_backend, parse_single_treatment, positive_int, resolve_files, validate_spec
 from .models import (
+    BACKEND_SPECS,
     Backend,
-    BenchmarkSpec,
     FileSpec,
     TargetRequest,
     Treatment,
+    validate_backend_treatment,
 )
 from .output import RunnerOutput
 from .processes import run_command
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
+from .workloads import resolve_files
 
 DEFAULT_PROFILES_DIR = ".profiles"
 DEFAULT_PROFILE_SECONDS = 10
@@ -91,12 +92,21 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--target",
-        action="append",
-        default=None,
+        default=".",
         help="target source: ., /path, @git-ref, #pr, or label=source; cache-only label= is not supported",
     )
-    parser.add_argument("--backend", default="main", help="single backend to profile (default: main)")
-    parser.add_argument("--treatment", default="proofs", help="single treatment to profile (default: proofs)")
+    parser.add_argument(
+        "--backend",
+        choices=tuple(BACKEND_SPECS),
+        default="main",
+        help="backend to profile (default: main)",
+    )
+    parser.add_argument(
+        "--treatment",
+        choices=("off", "term", "proofs"),
+        default="proofs",
+        help="treatment to profile (default: proofs)",
+    )
     iteration_group = parser.add_mutually_exclusive_group()
     iteration_group.add_argument(
         "--iterations", type=positive_int, default=None, help="explicit Samply iteration count"
@@ -142,6 +152,15 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.command = "profile"
     return args
+
+
+def positive_int(value: str) -> int:
+    """Parse a positive integer for one profile CLI option."""
+
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be positive")
+    return parsed
 
 
 def profile_hash_component(value: str) -> str:
@@ -305,11 +324,9 @@ def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
 
 def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> ProfileRequest:
     files = resolve_files([str(args.file)], invocation_cwd, args.fact_directory)
-    backend = parse_single_backend(str(args.backend))
-    treatment = parse_single_treatment(str(args.treatment))
-    target_specs = args.target if args.target is not None else ["."]
-    if len(target_specs) != 1:
-        raise ValueError("profile mode requires exactly one target")
+    backend = cast(Backend, str(args.backend))
+    treatment = cast(Treatment, str(args.treatment))
+    validate_backend_treatment(backend, treatment)
     if args.iterations is not None:
         mode = ProfileMode(iterations=args.iterations, profile_seconds=None)
     else:
@@ -320,7 +337,7 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         profiles_dir = invocation_cwd / profiles_dir
     request = ProfileRequest(
         file=files[0],
-        target_request=parse_target(str(target_specs[0])),
+        target_request=parse_target(str(args.target)),
         backend=backend,
         treatment=treatment,
         timeout_sec=int(args.timeout_sec),
@@ -331,15 +348,6 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
         top=int(args.top),
         show_summary=not bool(args.no_summary),
         output_format=cast(OutputFormat, str(args.format)),
-    )
-    validate_spec(
-        BenchmarkSpec(
-            files=(request.file,),
-            treatments=(request.treatment,),
-            rounds=1,
-            timeout_sec=request.timeout_sec,
-            backends=(request.backend,),
-        )
     )
     return request
 

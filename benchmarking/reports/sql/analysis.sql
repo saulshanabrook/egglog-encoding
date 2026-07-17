@@ -1,4 +1,5 @@
--- Keep the supported metrics and their stable output order in one relation.
+-- Statistical analysis for the one immutable baseline/candidate scope.
+
 CREATE VIEW report_metrics AS
 SELECT *
 FROM (
@@ -7,9 +8,19 @@ FROM (
         (1::UTINYINT, 'max_rss_bytes')
 ) AS metrics(metric_order, metric);
 
--- Historical collection estimates need only one aggregate per exact cache key.
--- Fresh observations update these count/sum pairs in Python without retaining
--- every old sample in memory.
+CREATE VIEW report_phases AS
+SELECT *
+FROM (
+    VALUES
+        (0::UTINYINT, 'search'),
+        (1::UTINYINT, 'apply'),
+        (2::UTINYINT, 'merge'),
+        (3::UTINYINT, 'rebuild'),
+        (4::UTINYINT, 'other')
+) AS phases(phase_order, phase);
+
+-- Collection ETA data covers the complete cache rather than the installed
+-- report scope.
 CREATE VIEW historical_process_estimates AS
 SELECT
     binary_sha256,
@@ -24,22 +35,37 @@ FROM report_rows
 WHERE status = 'success' AND wall_sec IS NOT NULL
 GROUP BY ALL;
 
--- Expand one typed report scope into the relations used by analysis. List
--- order is the single source of truth for stable zero-based coordinates.
-CREATE MACRO scope_targets(requested_scope report_scope_t) AS TABLE
+CREATE VIEW selected_endpoints AS
+WITH endpoints AS (
+    SELECT
+        0::UTINYINT AS endpoint_order,
+        'baseline' AS endpoint_role,
+        scope.baseline AS endpoint
+    FROM current_report_scope
+    WHERE singleton
+    UNION ALL
+    SELECT
+        1::UTINYINT AS endpoint_order,
+        'candidate' AS endpoint_role,
+        scope.candidate AS endpoint
+    FROM current_report_scope
+    WHERE singleton
+)
 SELECT
-    (ordinality - 1)::UINTEGER AS target_order,
-    target.binary_sha256,
-    target.target_label,
-    target.target_source,
-    target.target_path,
-    target.target_git_ref,
-    target.target_git_sha,
-    target.target_is_dirty
-FROM unnest(struct_extract(requested_scope, 'targets'))
-WITH ORDINALITY AS rows(target, ordinality);
+    endpoint_order,
+    endpoint_role,
+    endpoint.binary_sha256,
+    endpoint.target_label,
+    endpoint.target_source,
+    endpoint.target_path,
+    endpoint.target_git_ref,
+    endpoint.target_git_sha,
+    endpoint.target_is_dirty,
+    endpoint.backend,
+    endpoint.treatment
+FROM endpoints;
 
-CREATE MACRO scope_files(requested_scope report_scope_t) AS TABLE
+CREATE VIEW selected_files AS
 SELECT
     (ordinality - 1)::UINTEGER AS file_order,
     file.file_sha256,
@@ -47,59 +73,25 @@ SELECT
     file.file_path,
     file.absolute_file_path,
     file.fact_directory_path
-FROM unnest(struct_extract(requested_scope, 'files'))
-WITH ORDINALITY AS rows(file, ordinality);
+FROM current_report_scope,
+    unnest(scope.files) WITH ORDINALITY AS rows(file, ordinality)
+WHERE singleton;
 
-CREATE MACRO scope_cells(requested_scope report_scope_t) AS TABLE
+CREATE VIEW selected_parameters AS
 SELECT
-    (ordinality - 1)::UINTEGER AS cell_order,
-    cell.backend,
-    cell.treatment
-FROM unnest(struct_extract(requested_scope, 'cells'))
-WITH ORDINALITY AS rows(cell, ordinality);
+    scope.rounds AS rounds,
+    scope.timeout_sec AS timeout_sec,
+    scope.t_critical_95 AS t_critical_95
+FROM current_report_scope
+WHERE singleton;
 
-CREATE MACRO scope_parameters(requested_scope report_scope_t) AS TABLE
-SELECT
-    struct_extract(requested_scope, 'rounds') AS rounds,
-    struct_extract(requested_scope, 'timeout_sec') AS timeout_sec,
-    struct_extract(requested_scope, 't_critical_95') AS t_critical_95;
-
-CREATE MACRO scope_comparisons(requested_scope report_scope_t) AS TABLE
-SELECT
-    (ordinality - 1)::UINTEGER AS comparison_order,
-    comparison.baseline_target_order,
-    comparison.baseline_cell_order,
-    comparison.candidate_target_order,
-    comparison.candidate_cell_order
-FROM unnest(struct_extract(requested_scope, 'comparisons'))
-WITH ORDINALITY AS rows(comparison, ordinality);
-
--- Stable target roles are report facts shared by Rich and Markdown renderers.
-CREATE MACRO scoped_target_metadata(requested_scope report_scope_t) AS TABLE
-SELECT
-    target_order,
-    CASE
-        WHEN count(*) OVER () = 1 THEN 'target'
-        WHEN target_order = 0 THEN 'baseline'
-        ELSE 'candidate'
-    END AS target_role,
-    target_label,
-    target_source,
-    target_path,
-    target_git_ref,
-    target_git_sha,
-    target_is_dirty,
-    binary_sha256
-FROM scope_targets(requested_scope);
-
--- Select the latest requested observations per target occurrence and cell,
--- breaking equal timestamps by their append order in JSONL.
-CREATE MACRO scoped_observations(requested_scope report_scope_t) AS TABLE
+-- Select the latest requested observations for each endpoint/file. Equal
+-- timestamps are broken by physical JSONL order.
+CREATE VIEW selected_observations AS
 WITH ranked AS (
     SELECT
-        targets.target_order,
+        endpoints.endpoint_order,
         files.file_order,
-        cells.cell_order,
         reports.row_index,
         reports.started_at,
         reports.status,
@@ -107,40 +99,34 @@ WITH ranked AS (
         reports.max_rss_bytes,
         reports.timing_summary,
         row_number() OVER (
-            PARTITION BY targets.target_order, files.file_order, cells.cell_order
+            PARTITION BY endpoints.endpoint_order, files.file_order
             ORDER BY reports.started_at::TIMESTAMPTZ DESC, reports.row_index DESC
         ) AS selection_rank
-    FROM scope_targets(requested_scope) AS targets
-    CROSS JOIN scope_files(requested_scope) AS files
-    CROSS JOIN scope_cells(requested_scope) AS cells
-    CROSS JOIN scope_parameters(requested_scope) AS parameters
+    FROM selected_endpoints AS endpoints
+    CROSS JOIN selected_files AS files
+    CROSS JOIN selected_parameters AS parameters
     JOIN report_rows AS reports
-        ON reports.binary_sha256 = targets.binary_sha256
+        ON reports.binary_sha256 = endpoints.binary_sha256
         AND reports.file_sha256 = files.file_sha256
         AND reports.fact_directory_sha256 = files.fact_directory_sha256
-        AND reports.backend = cells.backend
-        AND reports.treatment = cells.treatment
+        AND reports.backend = endpoints.backend
+        AND reports.treatment = endpoints.treatment
         AND reports.timeout_sec = parameters.timeout_sec
 )
 SELECT * EXCLUDE (selection_rank)
 FROM ranked
-WHERE selection_rank <= (SELECT rounds FROM scope_parameters(requested_scope));
+WHERE selection_rank <= (SELECT rounds FROM selected_parameters);
 
--- Missing/failure/timeout precedence belongs to one result-level relation so
--- ordinary metrics and phase timing cannot classify the same cell differently.
-CREATE MACRO scoped_result_statuses(requested_scope report_scope_t) AS TABLE
+CREATE VIEW selected_result_statuses AS
 WITH requested AS (
-    SELECT
-        targets.target_order,
-        files.file_order,
-        cells.cell_order
-    FROM scope_targets(requested_scope) AS targets
-    CROSS JOIN scope_files(requested_scope) AS files
-    CROSS JOIN scope_cells(requested_scope) AS cells
+    SELECT endpoints.endpoint_order, files.file_order
+    FROM selected_endpoints AS endpoints
+    CROSS JOIN selected_files AS files
 ),
 aggregated AS (
     SELECT
-        requested.*,
+        requested.endpoint_order,
+        requested.file_order,
         count(observations.row_index)::UINTEGER AS row_count,
         count(observations.row_index) FILTER (
             WHERE observations.status = 'timed-out'
@@ -150,14 +136,13 @@ aggregated AS (
         )::UINTEGER AS failure_count,
         parameters.rounds
     FROM requested
-    CROSS JOIN scope_parameters(requested_scope) AS parameters
-    LEFT JOIN scoped_observations(requested_scope) AS observations USING (target_order, file_order, cell_order)
+    CROSS JOIN selected_parameters AS parameters
+    LEFT JOIN selected_observations AS observations USING (endpoint_order, file_order)
     GROUP BY ALL
 )
 SELECT
-    target_order,
+    endpoint_order,
     file_order,
-    cell_order,
     row_count,
     CASE
         WHEN row_count < rounds THEN 'missing ' || (rounds - row_count)::VARCHAR || ' row(s)'
@@ -167,26 +152,23 @@ SELECT
     END AS issue
 FROM aggregated;
 
--- Calculate both ordinary metrics together so sample counts,
--- variance-of-the-mean, and Student-t intervals share one implementation.
-CREATE MACRO scoped_cell_summaries(requested_scope report_scope_t) AS TABLE
+-- Absolute wall/RSS estimates share one implementation so their samples and
+-- Student-t intervals cannot drift apart.
+CREATE VIEW endpoint_metric_estimates AS
 WITH requested AS (
     SELECT
-        targets.target_order,
-        files.file_order,
-        cells.cell_order,
         metrics.metric_order,
+        endpoints.endpoint_order,
+        files.file_order,
         metrics.metric
-    FROM scope_targets(requested_scope) AS targets
-    CROSS JOIN scope_files(requested_scope) AS files
-    CROSS JOIN scope_cells(requested_scope) AS cells
+    FROM selected_endpoints AS endpoints
+    CROSS JOIN selected_files AS files
     CROSS JOIN report_metrics AS metrics
 ),
-observed_metrics AS (
+observed AS (
     SELECT
-        observations.target_order,
+        observations.endpoint_order,
         observations.file_order,
-        observations.cell_order,
         observations.row_index,
         metrics.metric_order,
         metrics.metric,
@@ -194,7 +176,7 @@ observed_metrics AS (
             WHEN 'wall_sec' THEN observations.wall_sec
             WHEN 'max_rss_bytes' THEN observations.max_rss_bytes::DOUBLE
         END AS metric_value
-    FROM scoped_observations(requested_scope) AS observations
+    FROM selected_observations AS observations
     CROSS JOIN report_metrics AS metrics
 ),
 aggregated AS (
@@ -205,11 +187,10 @@ aggregated AS (
         var_samp(observed.metric_value) AS sample_variance,
         parameters.t_critical_95
     FROM requested
-    CROSS JOIN scope_parameters(requested_scope) AS parameters
-    LEFT JOIN observed_metrics AS observed
-        ON observed.target_order = requested.target_order
+    CROSS JOIN selected_parameters AS parameters
+    LEFT JOIN observed
+        ON observed.endpoint_order = requested.endpoint_order
         AND observed.file_order = requested.file_order
-        AND observed.cell_order = requested.cell_order
         AND observed.metric = requested.metric
     GROUP BY ALL
 ),
@@ -221,111 +202,82 @@ classified AS (
             WHEN statuses.issue IS NOT NULL THEN statuses.issue
             WHEN aggregated.sample_count != statuses.row_count THEN
                 CASE aggregated.metric
-                    WHEN 'wall_sec' THEN 'missing wall_sec'
-                    WHEN 'max_rss_bytes' THEN 'missing max_rss_bytes'
+                    WHEN 'wall_sec' THEN 'wall time unavailable'
+                    WHEN 'max_rss_bytes' THEN 'peak RSS unavailable'
                 END
             ELSE NULL
         END AS issue
     FROM aggregated
-    JOIN scoped_result_statuses(requested_scope) AS statuses USING (target_order, file_order, cell_order)
-),
-estimated AS (
-    SELECT
-        *,
-        CASE WHEN issue IS NULL THEN raw_mean END AS mean,
-        CASE
-            WHEN issue IS NULL AND sample_count >= 2 THEN sample_variance / sample_count
-        END AS var_mean,
-        CASE
-            WHEN issue IS NULL AND sample_count >= 2 THEN
-                raw_mean - t_critical_95 * sqrt(sample_variance / sample_count)
-        END AS ci_low,
-        CASE
-            WHEN issue IS NULL AND sample_count >= 2 THEN
-                raw_mean + t_critical_95 * sqrt(sample_variance / sample_count)
-        END AS ci_high
-    FROM classified
+    JOIN selected_result_statuses AS statuses USING (endpoint_order, file_order)
 )
 SELECT
     metric_order,
-    target_order,
+    endpoint_order,
     file_order,
-    cell_order,
     metric,
     sample_count,
-    sample_count > 0 AS has_samples,
-    mean,
-    var_mean,
-    ci_low,
-    ci_high,
+    CASE WHEN issue IS NULL THEN raw_mean END AS mean,
     CASE
-        WHEN issue IS NOT NULL OR mean IS NULL THEN 'invalid'
-        WHEN ci_low IS NULL OR ci_high IS NULL THEN 'point_only'
-        ELSE 'interval'
-    END AS result_class,
+        WHEN issue IS NULL AND sample_count >= 2 THEN sample_variance / sample_count
+    END AS var_mean,
+    CASE
+        WHEN issue IS NULL AND sample_count >= 2 THEN
+            raw_mean - t_critical_95 * sqrt(sample_variance / sample_count)
+    END AS ci_low,
+    CASE
+        WHEN issue IS NULL AND sample_count >= 2 THEN
+            raw_mean + t_critical_95 * sqrt(sample_variance / sample_count)
+    END AS ci_high,
     issue
-FROM estimated;
+FROM classified;
 
--- A general target/cell pair represents target, treatment, and backend
--- comparisons without embedding presentation-specific comparison categories.
-CREATE MACRO scoped_comparison_cells(requested_scope report_scope_t) AS TABLE
-SELECT
-    comparisons.comparison_order,
-    comparisons.baseline_target_order,
-    comparisons.baseline_cell_order,
-    comparisons.candidate_target_order,
-    comparisons.candidate_cell_order,
-    files.file_order,
-    metrics.metric_order,
-    metrics.metric,
-    baseline.sample_count AS baseline_sample_count,
-    baseline.mean AS baseline_mean,
-    baseline.var_mean AS baseline_var_mean,
-    baseline.issue AS baseline_issue,
-    candidate.sample_count AS candidate_sample_count,
-    candidate.mean AS candidate_mean,
-    candidate.var_mean AS candidate_var_mean,
-    candidate.issue AS candidate_issue,
-    parameters.t_critical_95
-FROM scope_comparisons(requested_scope) AS comparisons
-CROSS JOIN scope_files(requested_scope) AS files
-CROSS JOIN report_metrics AS metrics
-CROSS JOIN scope_parameters(requested_scope) AS parameters
-JOIN scoped_cell_summaries(requested_scope) AS baseline
-    ON baseline.target_order = comparisons.baseline_target_order
-    AND baseline.file_order = files.file_order
-    AND baseline.cell_order = comparisons.baseline_cell_order
-    AND baseline.metric = metrics.metric
-JOIN scoped_cell_summaries(requested_scope) AS candidate
-    ON candidate.target_order = comparisons.candidate_target_order
-    AND candidate.file_order = files.file_order
-    AND candidate.cell_order = comparisons.candidate_cell_order
-    AND candidate.metric = metrics.metric;
-
-CREATE MACRO scoped_file_ratios(requested_scope report_scope_t) AS TABLE
-WITH preliminary AS (
+CREATE VIEW file_metric_comparisons AS
+WITH paired AS (
     SELECT
-        *,
+        baseline.metric_order,
+        baseline.file_order,
+        baseline.metric,
+        baseline.sample_count AS baseline_sample_count,
+        baseline.mean AS baseline_mean,
+        baseline.var_mean AS baseline_var_mean,
+        baseline.ci_low AS baseline_ci_low,
+        baseline.ci_high AS baseline_ci_high,
+        baseline.issue AS baseline_issue,
+        candidate.sample_count AS candidate_sample_count,
+        candidate.mean AS candidate_mean,
+        candidate.var_mean AS candidate_var_mean,
+        candidate.ci_low AS candidate_ci_low,
+        candidate.ci_high AS candidate_ci_high,
+        candidate.issue AS candidate_issue,
+        parameters.t_critical_95,
         CASE
-            WHEN baseline_issue IS NOT NULL THEN baseline_issue
-            WHEN candidate_issue IS NOT NULL THEN candidate_issue
-            WHEN baseline_mean <= 0 THEN 'baseline mean is not positive'
+            WHEN baseline.issue IS NOT NULL THEN baseline.issue
+            WHEN candidate.issue IS NOT NULL THEN candidate.issue
+            WHEN baseline.mean <= 0 THEN 'baseline mean is not positive'
             ELSE NULL
         END AS preliminary_issue
-    FROM scoped_comparison_cells(requested_scope)
+    FROM endpoint_metric_estimates AS baseline
+    JOIN endpoint_metric_estimates AS candidate
+        ON candidate.file_order = baseline.file_order
+        AND candidate.metric = baseline.metric
+        AND candidate.endpoint_order = 1
+    CROSS JOIN selected_parameters AS parameters
+    WHERE baseline.endpoint_order = 0
 ),
 fieller AS (
     SELECT
         *,
-        baseline_mean * baseline_mean - t_critical_95 * t_critical_95 * baseline_var_mean AS fieller_a,
-        candidate_mean * candidate_mean - t_critical_95 * t_critical_95 * candidate_var_mean AS fieller_d
-    FROM preliminary
+        baseline_mean * baseline_mean
+            - t_critical_95 * t_critical_95 * baseline_var_mean AS fieller_a,
+        candidate_mean * candidate_mean
+            - t_critical_95 * t_critical_95 * candidate_var_mean AS fieller_d
+    FROM paired
 ),
 calculated AS (
     SELECT
         *,
-        (baseline_mean * candidate_mean) * (baseline_mean * candidate_mean) - fieller_a * fieller_d
-            AS fieller_radicand
+        (baseline_mean * candidate_mean) * (baseline_mean * candidate_mean)
+            - fieller_a * fieller_d AS fieller_radicand
     FROM fieller
 ),
 estimated AS (
@@ -355,26 +307,18 @@ estimated AS (
     FROM calculated
 )
 SELECT
-    comparison_order,
     metric_order,
     file_order,
     metric,
-    baseline_target_order,
-    baseline_cell_order,
-    candidate_target_order,
-    candidate_cell_order,
-    baseline_sample_count,
-    candidate_sample_count,
-    baseline_sample_count > 0 OR candidate_sample_count > 0 AS has_samples,
+    baseline_mean,
+    baseline_ci_low,
+    baseline_ci_high,
+    candidate_mean,
+    candidate_ci_low,
+    candidate_ci_high,
     point,
     ci_low,
     ci_high,
-    point - 1.0 AS change_fraction,
-    ci_low - 1.0 AS change_ci_low,
-    ci_high - 1.0 AS change_ci_high,
-    point IS NOT NULL AS is_valid,
-    ci_high IS NOT NULL AND ci_high < 1.0 AS ci_entirely_below_one,
-    ci_low IS NOT NULL AND ci_low > 1.0 AS ci_entirely_above_one,
     CASE
         WHEN point IS NULL THEN 'invalid'
         WHEN ci_low IS NULL OR ci_high IS NULL THEN 'point_only'
@@ -385,428 +329,355 @@ SELECT
     issue
 FROM estimated;
 
--- Suite ratios sum fixed-file means and their independent variances. Equal-file
--- geometric means remain a separate descriptive aggregate without an interval.
-CREATE MACRO scoped_suite_ratios(requested_scope report_scope_t) AS TABLE
-WITH aggregated AS (
+-- The fixed-suite result applies only to wall time. Lowest/highest summaries
+-- remain available from valid comparable files even when another file makes
+-- the suite incomplete.
+CREATE VIEW comparison_summary AS
+WITH suite_aggregated AS (
     SELECT
-        comparison_order,
-        first(metric_order) AS metric_order,
-        metric,
-        first(baseline_target_order) AS baseline_target_order,
-        first(baseline_cell_order) AS baseline_cell_order,
-        first(candidate_target_order) AS candidate_target_order,
-        first(candidate_cell_order) AS candidate_cell_order,
-        count(*)::UINTEGER AS file_count,
         first(
             CASE
-                WHEN baseline_issue IS NOT NULL THEN baseline_issue
-                WHEN candidate_issue IS NOT NULL THEN candidate_issue
+                WHEN baseline.issue IS NOT NULL THEN baseline.issue
+                WHEN candidate.issue IS NOT NULL THEN candidate.issue
             END
-            ORDER BY file_order
-        ) FILTER (WHERE baseline_issue IS NOT NULL OR candidate_issue IS NOT NULL) AS first_cell_issue,
-        first(baseline_sample_count ORDER BY file_order)::UINTEGER AS sample_count,
-        sum(baseline_mean) AS baseline_sum,
-        sum(candidate_mean) AS candidate_sum,
-        bool_or(baseline_issue IS NOT NULL OR baseline_mean IS NULL) AS baseline_total_unavailable,
-        bool_or(candidate_issue IS NOT NULL OR candidate_mean IS NULL) AS candidate_total_unavailable,
-        bool_or(baseline_sample_count > 0 OR candidate_sample_count > 0) AS has_samples,
-        sum(baseline_var_mean) AS baseline_variance,
-        sum(candidate_var_mean) AS candidate_variance,
-        max(t_critical_95) AS t_critical_95,
-        exp(
-            avg(
-                CASE
-                    WHEN baseline_mean > 0 AND candidate_mean > 0 THEN ln(candidate_mean / baseline_mean)
-                END
-            )
-        ) AS geometric_mean_point,
-        bool_or(
-            baseline_mean IS NULL
-            OR candidate_mean IS NULL
-            OR baseline_mean <= 0
-            OR candidate_mean <= 0
-        ) AS geometric_mean_unavailable
-    FROM scoped_comparison_cells(requested_scope)
-    GROUP BY comparison_order, metric
+            ORDER BY baseline.file_order
+        ) FILTER (WHERE baseline.issue IS NOT NULL OR candidate.issue IS NOT NULL) AS first_issue,
+        min(baseline.sample_count)::UINTEGER AS sample_count,
+        sum(baseline.mean) AS baseline_total,
+        sum(candidate.mean) AS candidate_total,
+        sum(baseline.var_mean) AS baseline_variance,
+        sum(candidate.var_mean) AS candidate_variance,
+        max(parameters.t_critical_95) AS t_critical_95
+    FROM endpoint_metric_estimates AS baseline
+    JOIN endpoint_metric_estimates AS candidate
+        ON candidate.file_order = baseline.file_order
+        AND candidate.metric = baseline.metric
+        AND candidate.endpoint_order = 1
+    CROSS JOIN selected_parameters AS parameters
+    WHERE baseline.endpoint_order = 0 AND baseline.metric = 'wall_sec'
 ),
-preliminary AS (
+suite_preliminary AS (
     SELECT
         *,
         CASE
-            WHEN first_cell_issue IS NOT NULL THEN first_cell_issue
-            WHEN baseline_sum <= 0 THEN 'baseline mean is not positive'
+            WHEN first_issue IS NOT NULL THEN first_issue
+            WHEN baseline_total <= 0 THEN 'baseline mean is not positive'
             ELSE NULL
-        END AS suite_preliminary_issue,
+        END AS preliminary_issue,
+        baseline_total * baseline_total
+            - t_critical_95 * t_critical_95 * baseline_variance AS fieller_a,
+        candidate_total * candidate_total
+            - t_critical_95 * t_critical_95 * candidate_variance AS fieller_d
+    FROM suite_aggregated
+),
+suite_calculated AS (
+    SELECT
+        *,
+        (baseline_total * candidate_total) * (baseline_total * candidate_total)
+            - fieller_a * fieller_d AS fieller_radicand
+    FROM suite_preliminary
+),
+suite AS (
+    SELECT
+        CASE WHEN preliminary_issue IS NULL THEN candidate_total / baseline_total END AS point,
         CASE
-            WHEN first_cell_issue IS NOT NULL THEN first_cell_issue
-            WHEN geometric_mean_unavailable THEN 'mean unavailable'
-            ELSE NULL
-        END AS geometric_mean_issue
-    FROM aggregated
-),
-fieller AS (
-    SELECT
-        *,
-        baseline_sum * baseline_sum - t_critical_95 * t_critical_95 * baseline_variance AS fieller_a,
-        candidate_sum * candidate_sum - t_critical_95 * t_critical_95 * candidate_variance AS fieller_d
-    FROM preliminary
-),
-calculated AS (
-    SELECT
-        *,
-        (baseline_sum * candidate_sum) * (baseline_sum * candidate_sum) - fieller_a * fieller_d
-            AS fieller_radicand
-    FROM fieller
-),
-estimated AS (
-    SELECT
-        *,
-        CASE WHEN suite_preliminary_issue IS NULL THEN candidate_sum / baseline_sum END AS suite_point,
-        CASE
-            WHEN suite_preliminary_issue IS NULL
+            WHEN preliminary_issue IS NULL
                 AND sample_count >= 2
                 AND fieller_a > 0
                 AND fieller_radicand >= 0 THEN
-                baseline_sum * candidate_sum / fieller_a - sqrt(fieller_radicand) / fieller_a
-        END AS suite_ci_low,
+                baseline_total * candidate_total / fieller_a - sqrt(fieller_radicand) / fieller_a
+        END AS ci_low,
         CASE
-            WHEN suite_preliminary_issue IS NULL
+            WHEN preliminary_issue IS NULL
                 AND sample_count >= 2
                 AND fieller_a > 0
                 AND fieller_radicand >= 0 THEN
-                baseline_sum * candidate_sum / fieller_a + sqrt(fieller_radicand) / fieller_a
-        END AS suite_ci_high,
+                baseline_total * candidate_total / fieller_a + sqrt(fieller_radicand) / fieller_a
+        END AS ci_high,
         CASE
-            WHEN suite_preliminary_issue IS NOT NULL THEN suite_preliminary_issue
+            WHEN preliminary_issue IS NOT NULL THEN preliminary_issue
             WHEN sample_count < 2 THEN 'CI undefined for n < 2'
             WHEN fieller_a <= 0 OR fieller_radicand < 0 THEN 'Fieller interval undefined'
             ELSE NULL
-        END AS suite_issue
-    FROM calculated
-)
-SELECT
-    comparison_order,
-    metric_order,
-    metric,
-    baseline_target_order,
-    baseline_cell_order,
-    candidate_target_order,
-    candidate_cell_order,
-    CASE WHEN baseline_total_unavailable THEN NULL ELSE baseline_sum END AS baseline_total,
-    CASE WHEN candidate_total_unavailable THEN NULL ELSE candidate_sum END AS candidate_total,
-    has_samples,
-    suite_point,
-    suite_ci_low,
-    suite_ci_high,
-    suite_point - 1.0 AS suite_change_fraction,
-    suite_ci_low - 1.0 AS suite_change_ci_low,
-    suite_ci_high - 1.0 AS suite_change_ci_high,
-    suite_ci_high IS NOT NULL AND suite_ci_high < 2.0 AS suite_ci_entirely_below_two,
-    CASE
-        WHEN suite_point IS NULL THEN 'invalid'
-        WHEN suite_ci_low IS NULL OR suite_ci_high IS NULL THEN 'point_only'
-        WHEN suite_ci_high < 1.0 THEN 'lower'
-        WHEN suite_ci_low > 1.0 THEN 'higher'
-        ELSE 'unclear'
-    END AS suite_result_class,
-    suite_issue,
-    CASE WHEN geometric_mean_issue IS NULL THEN geometric_mean_point END AS geometric_mean_point,
-    CASE WHEN geometric_mean_issue IS NULL THEN geometric_mean_point - 1.0 END AS geometric_mean_change_fraction,
-    CASE WHEN geometric_mean_issue IS NULL THEN 'available' ELSE 'invalid' END AS geometric_mean_result_class,
-    geometric_mean_issue,
-    file_count
-FROM estimated;
-
--- One decision-oriented row per comparison and metric. Best prefers the
--- smallest valid point estimate; worst reports the first invalid file when
--- one exists, otherwise the largest point estimate. Ties use file_order.
-CREATE MACRO scoped_comparison_rollups(requested_scope report_scope_t) AS TABLE
-WITH ranked_files AS (
-    SELECT
-        ratios.*,
-        row_number() OVER (
-            PARTITION BY ratios.comparison_order, ratios.metric
-            ORDER BY ratios.point IS NULL, ratios.point ASC NULLS LAST, ratios.file_order
-        ) AS best_rank,
-        row_number() OVER (
-            PARTITION BY ratios.comparison_order, ratios.metric
-            ORDER BY ratios.point IS NOT NULL, ratios.point DESC NULLS LAST, ratios.file_order
-        ) AS worst_rank
-    FROM scoped_file_ratios(requested_scope) AS ratios
+        END AS issue
+    FROM suite_calculated
 ),
-file_facts AS (
+ranked_files AS (
     SELECT
-        comparison_order,
+        comparisons.*,
+        row_number() OVER (
+            PARTITION BY metric
+            ORDER BY point ASC, file_order ASC
+        ) AS lowest_rank,
+        row_number() OVER (
+            PARTITION BY metric
+            ORDER BY point DESC, file_order DESC
+        ) AS highest_rank
+    FROM file_metric_comparisons AS comparisons
+    WHERE point IS NOT NULL
+),
+metric_issues AS (
+    SELECT
         metric,
-        count(point)::UINTEGER AS comparable_file_count,
-        count(*) FILTER (WHERE ci_high IS NOT NULL AND ci_high < 1.0)::UINTEGER AS better_file_count,
-        max(file_order) FILTER (WHERE best_rank = 1)::UINTEGER AS best_file_order,
-        max(point) FILTER (WHERE best_rank = 1) AS best_point,
-        max(ci_low) FILTER (WHERE best_rank = 1) AS best_ci_low,
-        max(ci_high) FILTER (WHERE best_rank = 1) AS best_ci_high,
-        max(result_class) FILTER (WHERE best_rank = 1) AS best_result_class,
-        max(issue) FILTER (WHERE best_rank = 1) AS best_issue,
-        max(file_order) FILTER (WHERE worst_rank = 1)::UINTEGER AS worst_file_order,
-        max(point) FILTER (WHERE worst_rank = 1) AS worst_point,
-        max(ci_low) FILTER (WHERE worst_rank = 1) AS worst_ci_low,
-        max(ci_high) FILTER (WHERE worst_rank = 1) AS worst_ci_high,
-        max(result_class) FILTER (WHERE worst_rank = 1) AS worst_result_class,
-        max(issue) FILTER (WHERE worst_rank = 1) AS worst_issue
-    FROM ranked_files
-    GROUP BY comparison_order, metric
+        first(issue ORDER BY file_order) FILTER (WHERE point IS NULL) AS first_issue
+    FROM file_metric_comparisons
+    GROUP BY metric
+),
+tail_specs AS (
+    SELECT *
+    FROM (
+        VALUES
+            (1::UTINYINT, 0::UTINYINT, 'wall_sec', 'lowest_file', 'lowest'),
+            (2::UTINYINT, 0::UTINYINT, 'wall_sec', 'highest_file', 'highest'),
+            (3::UTINYINT, 1::UTINYINT, 'max_rss_bytes', 'lowest_file', 'lowest'),
+            (4::UTINYINT, 1::UTINYINT, 'max_rss_bytes', 'highest_file', 'highest')
+    ) AS specs(summary_order, metric_order, metric, summary_kind, rank_kind)
+),
+tails AS (
+    SELECT
+        specs.summary_order,
+        specs.metric_order,
+        specs.metric,
+        specs.summary_kind,
+        selected.file_order,
+        selected.point,
+        selected.ci_low,
+        selected.ci_high,
+        coalesce(selected.result_class, 'invalid') AS result_class,
+        CASE
+            WHEN selected.file_order IS NOT NULL THEN selected.issue
+            ELSE coalesce(issues.first_issue, 'no comparable files')
+        END AS issue
+    FROM tail_specs AS specs
+    LEFT JOIN ranked_files AS selected
+        ON selected.metric = specs.metric
+        AND (
+            (specs.rank_kind = 'lowest' AND selected.lowest_rank = 1)
+            OR (specs.rank_kind = 'highest' AND selected.highest_rank = 1)
+        )
+    LEFT JOIN metric_issues AS issues ON issues.metric = specs.metric
 )
 SELECT
-    suites.comparison_order,
-    suites.metric_order,
-    suites.metric,
-    suites.baseline_target_order,
-    suites.baseline_cell_order,
-    suites.candidate_target_order,
-    suites.candidate_cell_order,
-    suites.baseline_total,
-    suites.candidate_total,
-    suites.has_samples,
-    suites.suite_point,
-    suites.suite_ci_low,
-    suites.suite_ci_high,
-    suites.suite_change_fraction,
-    suites.suite_change_ci_low,
-    suites.suite_change_ci_high,
-    suites.suite_ci_entirely_below_two,
-    suites.suite_result_class,
-    suites.suite_issue,
-    suites.geometric_mean_point,
-    suites.geometric_mean_change_fraction,
-    suites.geometric_mean_result_class,
-    suites.geometric_mean_issue,
-    suites.file_count,
-    files.comparable_file_count,
-    files.better_file_count,
-    files.best_file_order,
-    files.best_point,
-    files.best_ci_low,
-    files.best_ci_high,
-    files.best_point - 1.0 AS best_change_fraction,
-    files.best_result_class,
-    files.best_issue,
-    files.worst_file_order,
-    files.worst_point,
-    files.worst_ci_low,
-    files.worst_ci_high,
-    files.worst_point - 1.0 AS worst_change_fraction,
-    files.worst_result_class,
-    files.worst_issue
-FROM scoped_suite_ratios(requested_scope) AS suites
-JOIN file_facts AS files USING (comparison_order, metric);
+    0::UTINYINT AS summary_order,
+    0::UTINYINT AS metric_order,
+    'wall_sec' AS metric,
+    'suite' AS summary_kind,
+    NULL::UINTEGER AS file_order,
+    suite.point,
+    suite.ci_low,
+    suite.ci_high,
+    CASE
+        WHEN suite.point IS NULL THEN 'invalid'
+        WHEN suite.ci_low IS NULL OR suite.ci_high IS NULL THEN 'point_only'
+        WHEN suite.ci_high < 1.0 THEN 'lower'
+        WHEN suite.ci_low > 1.0 THEN 'higher'
+        ELSE 'unclear'
+    END AS result_class,
+    suite.issue
+FROM suite
+UNION ALL
+SELECT * FROM tails;
 
--- Compact components sum each observation's rulesets before averaging,
--- preserving the same arithmetic-mean population used for ordinary wall time.
--- ``other_ns`` deliberately folds the pre-merge residual into the compact
--- Other column; ``outside_rulesets_ns`` exposes only time beyond full ruleset
--- totals for deeper queries.
-CREATE MACRO scoped_timing_summaries(requested_scope report_scope_t) AS TABLE
-WITH observation_phases AS (
+-- Aggregate the five recorded components for each observation. Other is the
+-- residual requested by the UI and deliberately includes unattributed
+-- pre-merge time as well as time outside recorded rulesets.
+CREATE VIEW observation_phase_totals AS
+SELECT
+    observations.endpoint_order,
+    observations.file_order,
+    observations.row_index,
+    observations.wall_sec * 1000000000.0 AS wall_ns,
+    coalesce(list_sum(list_transform(
+        observations.timing_summary.rulesets,
+        item -> item.search_ns
+    )), 0)::DOUBLE AS search_ns,
+    coalesce(list_sum(list_transform(
+        observations.timing_summary.rulesets,
+        item -> item.apply_ns
+    )), 0)::DOUBLE AS apply_ns,
+    coalesce(list_sum(list_transform(
+        observations.timing_summary.rulesets,
+        item -> item.merge_ns
+    )), 0)::DOUBLE AS merge_ns,
+    coalesce(list_sum(list_transform(
+        observations.timing_summary.rulesets,
+        item -> item.rebuild_ns
+    )), 0)::DOUBLE AS rebuild_ns
+FROM selected_observations AS observations
+WHERE observations.status = 'success';
+
+CREATE VIEW endpoint_phase_estimates AS
+WITH requested AS (
     SELECT
-        observations.target_order,
-        observations.file_order,
-        observations.cell_order,
-        observations.row_index,
-        observations.wall_sec,
-        coalesce(list_sum(list_transform(
-            observations.timing_summary.rulesets,
-            item -> item.search_ns
-        )), 0)::DOUBLE AS search_ns,
-        coalesce(list_sum(list_transform(
-            observations.timing_summary.rulesets,
-            item -> item.apply_ns
-        )), 0)::DOUBLE AS apply_ns,
-        coalesce(list_sum(list_transform(
-            observations.timing_summary.rulesets,
-            item -> item.unattributed_ns
-        )), 0)::DOUBLE AS unattributed_ns,
-        coalesce(list_sum(list_transform(
-            observations.timing_summary.rulesets,
-            item -> item.merge_ns
-        )), 0)::DOUBLE AS merge_ns,
-        coalesce(list_sum(list_transform(
-            observations.timing_summary.rulesets,
-            item -> item.rebuild_ns
-        )), 0)::DOUBLE AS rebuild_ns
-    FROM scoped_observations(requested_scope) AS observations
+        endpoints.endpoint_order,
+        files.file_order,
+        phases.phase_order,
+        phases.phase
+    FROM selected_endpoints AS endpoints
+    CROSS JOIN selected_files AS files
+    CROSS JOIN report_phases AS phases
+),
+observed AS (
+    SELECT
+        totals.endpoint_order,
+        totals.file_order,
+        totals.row_index,
+        phases.phase_order,
+        phases.phase,
+        CASE phases.phase
+            WHEN 'search' THEN totals.search_ns
+            WHEN 'apply' THEN totals.apply_ns
+            WHEN 'merge' THEN totals.merge_ns
+            WHEN 'rebuild' THEN totals.rebuild_ns
+            WHEN 'other' THEN
+                totals.wall_ns - totals.search_ns - totals.apply_ns - totals.merge_ns - totals.rebuild_ns
+        END AS phase_ns
+    FROM observation_phase_totals AS totals
+    CROSS JOIN report_phases AS phases
 ),
 aggregated AS (
     SELECT
-        statuses.target_order,
-        statuses.file_order,
-        statuses.cell_order,
-        statuses.issue,
-        avg(observed.wall_sec) * 1000000000.0 AS wall_ns,
-        avg(observed.search_ns) AS search_ns,
-        avg(observed.apply_ns) AS apply_ns,
-        avg(observed.unattributed_ns) AS unattributed_ns,
-        avg(observed.merge_ns) AS merge_ns,
-        avg(observed.rebuild_ns) AS rebuild_ns
-    FROM scoped_result_statuses(requested_scope) AS statuses
-    LEFT JOIN observation_phases AS observed USING (target_order, file_order, cell_order)
+        requested.*,
+        avg(observed.phase_ns) AS raw_mean_ns,
+        statuses.issue
+    FROM requested
+    JOIN selected_result_statuses AS statuses USING (endpoint_order, file_order)
+    LEFT JOIN observed
+        ON observed.endpoint_order = requested.endpoint_order
+        AND observed.file_order = requested.file_order
+        AND observed.phase = requested.phase
     GROUP BY ALL
-),
-derived AS (
-    SELECT
-        *,
-        search_ns + apply_ns AS search_and_apply_ns,
-        search_ns + apply_ns + unattributed_ns AS pre_merge_ns,
-        search_ns + apply_ns + unattributed_ns + merge_ns + rebuild_ns AS ruleset_total_ns
-    FROM aggregated
 )
 SELECT
-    target_order,
+    endpoint_order,
     file_order,
-    cell_order,
-    CASE WHEN issue IS NULL THEN search_ns END AS search_ns,
-    CASE WHEN issue IS NULL THEN apply_ns END AS apply_ns,
-    CASE WHEN issue IS NULL THEN search_and_apply_ns END AS search_and_apply_ns,
-    CASE WHEN issue IS NULL THEN unattributed_ns END AS unattributed_ns,
-    CASE WHEN issue IS NULL THEN pre_merge_ns END AS pre_merge_ns,
-    CASE WHEN issue IS NULL THEN merge_ns END AS merge_ns,
-    CASE WHEN issue IS NULL THEN rebuild_ns END AS rebuild_ns,
-    CASE WHEN issue IS NULL THEN ruleset_total_ns END AS ruleset_total_ns,
-    CASE WHEN issue IS NULL THEN wall_ns - ruleset_total_ns END AS outside_rulesets_ns,
-    CASE
-        WHEN issue IS NULL
-        THEN wall_ns - search_ns - apply_ns - merge_ns - rebuild_ns
-    END AS other_ns,
-    CASE WHEN issue IS NULL THEN wall_ns END AS wall_ns,
-    issue IS NULL AND wall_ns IS NOT NULL AS has_samples,
-    CASE WHEN issue IS NULL THEN 'available' ELSE 'invalid' END AS result_class,
+    phase_order,
+    phase,
+    CASE WHEN issue IS NULL THEN raw_mean_ns END AS mean_ns,
     issue
-FROM derived;
+FROM aggregated;
 
--- The ruleset union includes only fully valid selected results. A ruleset that
--- never appears for one target remains NULL in that target's aligned row. Once
--- it appears for a target, observations where it did not run contribute zero so
--- the mean still covers every selected observation rather than only active runs.
--- Totals, common ordering, and shares are semantic analysis rather than output
--- formatting, so the presentation view only adds backend/treatment labels.
-CREATE MACRO scoped_ruleset_timings(requested_scope report_scope_t) AS TABLE
-WITH observation_rulesets AS (
+CREATE VIEW phase_comparisons AS
+WITH paired AS (
     SELECT
-        observations.target_order,
-        observations.file_order,
-        observations.cell_order,
-        observations.row_index,
-        ruleset.name,
-        ruleset.search_ns::DOUBLE AS search_ns,
-        ruleset.apply_ns::DOUBLE AS apply_ns,
-        ruleset.unattributed_ns::DOUBLE AS unattributed_ns,
-        ruleset.merge_ns::DOUBLE AS merge_ns,
-        ruleset.rebuild_ns::DOUBLE AS rebuild_ns
-    FROM scoped_observations(requested_scope) AS observations
-    JOIN scoped_timing_summaries(requested_scope) AS valid_result
-        ON valid_result.target_order = observations.target_order
-        AND valid_result.file_order = observations.file_order
-        AND valid_result.cell_order = observations.cell_order
-        AND valid_result.issue IS NULL
-    CROSS JOIN unnest(observations.timing_summary.rulesets) AS items(ruleset)
-    WHERE observations.status = 'success'
-),
-ruleset_names AS (
-    SELECT DISTINCT file_order, cell_order, name
-    FROM observation_rulesets
-),
-target_means AS (
+        baseline.file_order,
+        baseline.phase_order,
+        baseline.phase,
+        baseline.mean_ns AS baseline_ns,
+        candidate.mean_ns AS candidate_ns,
+        CASE
+            WHEN baseline.issue IS NOT NULL THEN baseline.issue
+            WHEN candidate.issue IS NOT NULL THEN candidate.issue
+            WHEN baseline.mean_ns <= 0 THEN 'baseline phase mean is not positive'
+            WHEN candidate.mean_ns < 0 THEN 'candidate phase mean is negative'
+            ELSE NULL
+        END AS issue
+    FROM endpoint_phase_estimates AS baseline
+    JOIN endpoint_phase_estimates AS candidate
+        ON candidate.file_order = baseline.file_order
+        AND candidate.phase = baseline.phase
+        AND candidate.endpoint_order = 1
+    WHERE baseline.endpoint_order = 0
+)
+SELECT
+    file_order,
+    phase_order,
+    phase,
+    baseline_ns,
+    candidate_ns,
+    candidate_ns - baseline_ns AS delta_ns,
+    CASE WHEN issue IS NULL THEN candidate_ns / baseline_ns END AS point
+FROM paired;
+
+CREATE VIEW observation_rulesets AS
+SELECT
+    observations.endpoint_order,
+    observations.file_order,
+    observations.row_index,
+    ruleset.name,
+    (
+        ruleset.search_ns
+        + ruleset.apply_ns
+        + ruleset.unattributed_ns
+        + ruleset.merge_ns
+        + ruleset.rebuild_ns
+    )::DOUBLE AS total_ns
+FROM selected_observations AS observations
+JOIN selected_result_statuses AS statuses USING (endpoint_order, file_order)
+CROSS JOIN unnest(observations.timing_summary.rulesets) AS items(ruleset)
+WHERE observations.status = 'success' AND statuses.issue IS NULL;
+
+CREATE VIEW valid_ruleset_files AS
+SELECT file_order
+FROM selected_result_statuses
+GROUP BY file_order
+HAVING count(*) = 2 AND count(*) FILTER (WHERE issue IS NULL) = 2;
+
+CREATE VIEW ruleset_names AS
+SELECT DISTINCT rulesets.file_order, rulesets.name
+FROM observation_rulesets AS rulesets
+JOIN valid_ruleset_files USING (file_order);
+
+CREATE VIEW ruleset_endpoint_estimates AS
+SELECT
+    endpoints.endpoint_order,
+    names.file_order,
+    names.name,
+    count(values.row_index) > 0 AS is_present,
+    CASE
+        WHEN count(values.row_index) > 0 THEN avg(coalesce(values.total_ns, 0))
+    END AS mean_total_ns
+FROM selected_endpoints AS endpoints
+JOIN ruleset_names AS names ON true
+JOIN selected_observations AS observations
+    ON observations.endpoint_order = endpoints.endpoint_order
+    AND observations.file_order = names.file_order
+    AND observations.status = 'success'
+LEFT JOIN observation_rulesets AS values
+    ON values.endpoint_order = observations.endpoint_order
+    AND values.file_order = observations.file_order
+    AND values.row_index = observations.row_index
+    AND values.name = names.name
+GROUP BY endpoints.endpoint_order, names.file_order, names.name;
+
+CREATE VIEW ruleset_comparisons AS
+WITH paired AS (
     SELECT
-        targets.target_order,
-        names.file_order,
-        names.cell_order,
-        names.name,
-        count(values.row_index) > 0 AS has_samples,
-        CASE
-            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.search_ns, 0))
-        END AS search_ns,
-        CASE
-            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.apply_ns, 0))
-        END AS apply_ns,
-        CASE
-            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.unattributed_ns, 0))
-        END AS unattributed_ns,
-        CASE
-            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.merge_ns, 0))
-        END AS merge_ns,
-        CASE
-            WHEN count(values.row_index) > 0 THEN avg(coalesce(values.rebuild_ns, 0))
-        END AS rebuild_ns
-    FROM scope_targets(requested_scope) AS targets
-    JOIN ruleset_names AS names ON true
-    JOIN scoped_timing_summaries(requested_scope) AS valid_target
-        ON valid_target.target_order = targets.target_order
-        AND valid_target.file_order = names.file_order
-        AND valid_target.cell_order = names.cell_order
-        AND valid_target.issue IS NULL
-    JOIN scoped_observations(requested_scope) AS observations
-        ON observations.target_order = targets.target_order
-        AND observations.file_order = names.file_order
-        AND observations.cell_order = names.cell_order
-        AND observations.status = 'success'
-    LEFT JOIN observation_rulesets AS values
-        ON values.target_order = observations.target_order
-        AND values.file_order = observations.file_order
-        AND values.cell_order = observations.cell_order
-        AND values.row_index = observations.row_index
-        AND values.name = names.name
-    GROUP BY targets.target_order, names.file_order, names.cell_order, names.name
-),
-phases AS (
-    SELECT
-        *,
-        search_ns + apply_ns AS search_and_apply_ns,
-        search_ns + apply_ns + unattributed_ns AS pre_merge_ns,
-        search_ns + apply_ns + unattributed_ns + merge_ns + rebuild_ns AS total_ns
-    FROM target_means
-),
-ordered AS (
-    SELECT
-        *,
-        max(total_ns) OVER (PARTITION BY file_order, cell_order, name) AS maximum_target_total
-    FROM phases
+        baseline.file_order,
+        baseline.name,
+        baseline.is_present AS baseline_present,
+        candidate.is_present AS candidate_present,
+        baseline.mean_total_ns AS baseline_total_ns,
+        candidate.mean_total_ns AS candidate_total_ns,
+        coalesce(candidate.mean_total_ns, 0) - coalesce(baseline.mean_total_ns, 0) AS delta_ns
+    FROM ruleset_endpoint_estimates AS baseline
+    JOIN ruleset_endpoint_estimates AS candidate
+        ON candidate.file_order = baseline.file_order
+        AND candidate.name = baseline.name
+        AND candidate.endpoint_order = 1
+    WHERE baseline.endpoint_order = 0
 ),
 ranked AS (
     SELECT
         *,
-        dense_rank() OVER (
-            PARTITION BY file_order, cell_order
-            ORDER BY maximum_target_total DESC, name
-        ) - 1 AS ruleset_order
-    FROM ordered
-),
-with_totals AS (
-    SELECT
-        *,
-        sum(total_ns) OVER (
-            PARTITION BY target_order, file_order, cell_order
-        ) AS result_ruleset_total_ns
-    FROM ranked
+        CASE
+            WHEN baseline_present AND candidate_present AND baseline_total_ns > 0 THEN
+                candidate_total_ns / baseline_total_ns
+        END AS point,
+        row_number() OVER (
+            PARTITION BY file_order
+            ORDER BY abs(delta_ns) DESC, name
+        )::UINTEGER AS ruleset_rank,
+        count(*) OVER (PARTITION BY file_order)::UINTEGER AS ruleset_count
+    FROM paired
 )
 SELECT
     file_order,
-    cell_order,
-    ruleset_order::UINTEGER AS ruleset_order,
-    target_order,
+    ruleset_rank,
+    ruleset_count,
     name,
-    search_ns,
-    apply_ns,
-    search_and_apply_ns,
-    unattributed_ns,
-    pre_merge_ns,
-    merge_ns,
-    rebuild_ns,
-    total_ns,
-    maximum_target_total,
-    result_ruleset_total_ns,
-    has_samples,
-    'available' AS result_class,
-    CASE
-        WHEN result_ruleset_total_ns = 0 THEN NULL
-        ELSE total_ns / result_ruleset_total_ns
-    END AS ruleset_share
-FROM with_totals;
+    baseline_total_ns,
+    candidate_total_ns,
+    delta_ns,
+    point
+FROM ranked;

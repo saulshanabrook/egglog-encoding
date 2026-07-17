@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
@@ -32,15 +32,16 @@ from rich.text import Text
 
 from .models import (
     Backend,
-    BenchmarkSpec,
+    BenchmarkEndpoint,
+    EndpointRequest,
     EstimateKey,
     FileSpec,
     ResolvedTarget,
     Status,
     TargetRequest,
+    TargetRow,
     Treatment,
     backend_cargo_features,
-    benchmark_cells,
 )
 from .output import RunnerOutput, display_target
 from .processes import TimingResult, run_command
@@ -63,8 +64,8 @@ TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 
 
 @dataclass(frozen=True)
-class CellPlan:
-    """Cached and missing observations for one benchmark result."""
+class BenchmarkRunPlan:
+    """Cached and missing observations for one endpoint/file result."""
 
     file: FileSpec
     backend: Backend
@@ -84,15 +85,15 @@ class CollectionPlan:
     """All benchmark results collected for one resolved target."""
 
     target: ResolvedTarget
-    cells: tuple[CellPlan, ...]
+    runs: tuple[BenchmarkRunPlan, ...]
 
     @property
     def total_missing_observations(self) -> int:
-        return sum(cell.missing_observations for cell in self.cells)
+        return sum(run.missing_observations for run in self.runs)
 
     @property
     def total_planned_processes(self) -> int:
-        measured = sum(cell.planned_processes for cell in self.cells)
+        measured = sum(run.planned_processes for run in self.runs)
         if measured == 0:
             return 0
         return TARGET_STARTUP_WARMUP_SUBPROCESSES + measured
@@ -114,8 +115,17 @@ class ProcessObservation:
     timing_summary: TimingSummaryRecord | None
 
 
+@dataclass(frozen=True)
+class _PendingTarget:
+    """One materialized target awaiting a checkout-wide feature build."""
+
+    request: TargetRequest
+    row: TargetRow
+    endpoint_requests: tuple[EndpointRequest, ...]
+
+
 class EstimateModel:
-    """Exact-cell duration estimates updated as successful runs finish."""
+    """Exact-result duration estimates updated as successful runs finish."""
 
     def __init__(self, totals: dict[EstimateKey, tuple[int, float]] | None = None) -> None:
         self.totals = totals or {}
@@ -154,38 +164,47 @@ def _now_iso() -> str:
 def build_collection_plan(
     database: ReportDatabase,
     target: ResolvedTarget,
-    spec: BenchmarkSpec,
+    endpoints: tuple[BenchmarkEndpoint, ...],
+    files: tuple[FileSpec, ...],
+    rounds: int,
+    timeout_sec: int,
     force_run: bool,
 ) -> CollectionPlan:
-    """Select cached observations and determine the fresh work for a target."""
+    """Select cached observations for the exact endpoints using this binary."""
+
+    endpoint_by_identity = {endpoint.cache_identity: endpoint for endpoint in endpoints}
+    if len(endpoint_by_identity) != len(endpoints):
+        raise ValueError("collection endpoints must not contain duplicate cache identities")
+    if any(endpoint.target != target for endpoint in endpoints):
+        raise ValueError("collection endpoints must use the plan target")
 
     requests = tuple(
         (
             file_spec,
-            cell.backend,
-            cell.treatment,
-            EstimateKey.for_cell(target, file_spec, cell.backend, cell.treatment, spec.timeout_sec),
+            endpoint.backend,
+            endpoint.treatment,
+            EstimateKey.for_endpoint(endpoint, file_spec, timeout_sec),
         )
-        for file_spec in spec.files
-        for cell in benchmark_cells(spec)
+        for file_spec in files
+        for endpoint in endpoints
     )
-    selected = database.selected_statuses_for_keys(tuple(request[3] for request in requests), spec.rounds)
-    cells: list[CellPlan] = []
+    selected = database.selected_statuses_for_keys(tuple(request[3] for request in requests), rounds)
+    runs: list[BenchmarkRunPlan] = []
     for file_spec, backend, treatment, estimate_key in requests:
         cached = selected[estimate_key]
-        missing = spec.rounds if force_run else max(0, spec.rounds - len(cached))
-        cells.append(
-            CellPlan(
+        missing = rounds if force_run else max(0, rounds - len(cached))
+        runs.append(
+            BenchmarkRunPlan(
                 file=file_spec,
                 backend=backend,
                 treatment=treatment,
-                required_rows=spec.rounds,
+                required_rows=rounds,
                 cached_statuses=cached,
                 missing_observations=missing,
                 estimate_key=estimate_key,
             )
         )
-    return CollectionPlan(target=target, cells=tuple(cells))
+    return CollectionPlan(target=target, runs=tuple(runs))
 
 
 def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel) -> DurationEstimate:
@@ -193,8 +212,8 @@ def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel
 
     seconds = 0.0
     unknown_processes = 0
-    for cell in plan.cells:
-        estimate = estimate_model.estimate_processes(cell.estimate_key, cell.planned_processes)
+    for run in plan.runs:
+        estimate = estimate_model.estimate_processes(run.estimate_key, run.planned_processes)
         if estimate.seconds is None:
             unknown_processes += estimate.unknown_processes
         else:
@@ -204,17 +223,84 @@ def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel
     return DurationEstimate(seconds=seconds, unknown_processes=unknown_processes)
 
 
-def resolve_target(
-    request: TargetRequest,
+def resolve_targets(
+    request_groups: tuple[tuple[TargetRequest, tuple[EndpointRequest, ...]], ...],
     database: ReportDatabase,
-    spec: BenchmarkSpec,
+    files: tuple[FileSpec, ...],
+    rounds: int,
+    timeout_sec: int,
     force_run: bool,
     invocation_cwd: Path,
     repo_root: Path,
     output: RunnerOutput,
-) -> ResolvedTarget:
-    """Resolve a target, reusing a cache-only label when its scope is complete."""
+) -> dict[TargetRequest, ResolvedTarget]:
+    """Resolve every request, then build once per canonical checkout path.
 
+    Materializing all requests before building prevents distinct aliases for the
+    same checkout from overwriting one another's feature-specific executable.
+    Each alias retains its own request and row provenance while sharing the
+    executable path and hash produced from the union of required backends.
+    """
+
+    resolved: dict[TargetRequest, ResolvedTarget] = {}
+    pending_by_checkout: dict[Path, list[_PendingTarget]] = {}
+    for request, endpoint_requests in request_groups:
+        target = _resolve_or_materialize_target(
+            request,
+            database,
+            endpoint_requests,
+            files,
+            rounds,
+            timeout_sec,
+            force_run,
+            invocation_cwd,
+            repo_root,
+        )
+        if isinstance(target, ResolvedTarget):
+            resolved[request] = target
+        else:
+            checkout_path = Path(target.row.path).resolve()
+            pending_by_checkout.setdefault(checkout_path, []).append(target)
+
+    for checkout_path, pending_targets in pending_by_checkout.items():
+        git_shas = {target.row.git_sha for target in pending_targets}
+        if len(git_shas) != 1:
+            raise ValueError(f"target selectors resolved checkout {checkout_path} at different git commits")
+        backends = tuple(endpoint.backend for target in pending_targets for endpoint in target.endpoint_requests)
+        representative = pending_targets[0]
+        built = build_resolved_target(
+            representative.request,
+            representative.row,
+            output,
+            "release",
+            backend_cargo_features(backends),
+        )
+        for target in pending_targets:
+            resolved[target.request] = ResolvedTarget(
+                request=target.request,
+                row=replace(target.row, is_dirty=built.row.is_dirty),
+                binary_sha256=built.binary_sha256,
+                binary_path=built.binary_path,
+            )
+
+    return {request: resolved[request] for request, _endpoint_requests in request_groups}
+
+
+def _resolve_or_materialize_target(
+    request: TargetRequest,
+    database: ReportDatabase,
+    endpoint_requests: tuple[EndpointRequest, ...],
+    files: tuple[FileSpec, ...],
+    rounds: int,
+    timeout_sec: int,
+    force_run: bool,
+    invocation_cwd: Path,
+    repo_root: Path,
+) -> ResolvedTarget | _PendingTarget:
+    """Reuse one complete cache label or materialize a target for later build."""
+
+    if not endpoint_requests or any(endpoint.target != request for endpoint in endpoint_requests):
+        raise ValueError("target resolution requires its exact endpoint requests")
     if request.is_label_lookup:
         assert request.label is not None
         pointer = database.find_label_pointer(request.label)
@@ -226,7 +312,14 @@ def resolve_target(
             binary_sha256=pointer.binary_sha256,
             binary_path=None,
         )
-        if not force_run and label_has_enough_rows(database, pointer.binary_sha256, spec):
+        if not force_run and label_has_enough_rows(
+            database,
+            pointer.binary_sha256,
+            endpoint_requests,
+            files,
+            rounds,
+            timeout_sec,
+        ):
             return cached_target
         if pointer.row.is_dirty:
             raise ValueError(
@@ -234,29 +327,36 @@ def resolve_target(
             )
         checkout_path, resolved_sha = materialize_git_ref(repo_root, pointer.row.git_sha, request.label)
         row = target_row_for_request(request, checkout_path, resolved_sha)
-        return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
+        return _PendingTarget(request, row, endpoint_requests)
 
     row = materialize_target_request(request, invocation_cwd, repo_root)
-    return build_resolved_target(request, row, output, "release", backend_cargo_features(spec.backends))
+    return _PendingTarget(request, row, endpoint_requests)
 
 
-def label_has_enough_rows(database: ReportDatabase, binary_sha256: str, spec: BenchmarkSpec) -> bool:
-    """Return whether every requested result has enough rows for a cached label."""
+def label_has_enough_rows(
+    database: ReportDatabase,
+    binary_sha256: str,
+    endpoint_requests: tuple[EndpointRequest, ...],
+    files: tuple[FileSpec, ...],
+    rounds: int,
+    timeout_sec: int,
+) -> bool:
+    """Return whether every exact endpoint/file result has enough cached rows."""
 
     keys = tuple(
         EstimateKey(
             binary_sha256,
             file_spec.sha256,
-            cell.treatment,
-            spec.timeout_sec,
-            cell.backend,
+            endpoint.treatment,
+            timeout_sec,
+            endpoint.backend,
             file_spec.fact_directory_sha256,
         )
-        for file_spec in spec.files
-        for cell in benchmark_cells(spec)
+        for file_spec in files
+        for endpoint in endpoint_requests
     )
-    selected = database.selected_statuses_for_keys(keys, spec.rounds)
-    return all(len(selected[key]) >= spec.rounds for key in keys)
+    selected = database.selected_statuses_for_keys(keys, rounds)
+    return all(len(selected[key]) >= rounds for key in keys)
 
 
 def run_process(
@@ -309,7 +409,7 @@ def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int)
     )
 
 
-def preflight_collection(plan: CollectionPlan, spec: BenchmarkSpec) -> TimingResult | None:
+def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> TimingResult | None:
     """Check one potentially fresh target before any timed collection begins.
 
     The successful result is reused as that target's single startup warmup.
@@ -321,7 +421,7 @@ def preflight_collection(plan: CollectionPlan, spec: BenchmarkSpec) -> TimingRes
     target = plan.target
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs fresh rows but has no build path")
-    startup_warmup = run_startup_warmup(target.binary_path, Path(target.row.path), spec.timeout_sec)
+    startup_warmup = run_startup_warmup(target.binary_path, Path(target.row.path), timeout_sec)
     if startup_warmup.status != "success":
         message = f"target {target.display_label} startup warmup did not complete successfully"
         if startup_warmup.error is not None:
@@ -399,27 +499,27 @@ def emit_collection_plan(
     plan: CollectionPlan,
     estimate_model: EstimateModel,
 ) -> None:
-    """Render cache sufficiency and exact-cell estimates to stderr."""
+    """Render cache sufficiency and exact-result estimates to stderr."""
 
     total_estimate = collection_plan_estimate(plan, estimate_model)
     table = Table(title=Text(f"{plan.target.display_label}: cache and estimate plan", style="bold"))
     table.add_column("File", overflow="fold")
-    table.add_column("Cell", no_wrap=True)
+    table.add_column("Endpoint", no_wrap=True)
     table.add_column("Cached")
     table.add_column("Missing")
     table.add_column("Statuses")
     table.add_column("Per run")
     table.add_column("Fresh ETA")
-    for cell in plan.cells:
-        estimate = estimate_model.estimate_processes(cell.estimate_key, cell.planned_processes)
-        process_mean = estimate_model.process_mean(cell.estimate_key)
-        status_counts = Counter(cell.cached_statuses)
+    for run in plan.runs:
+        estimate = estimate_model.estimate_processes(run.estimate_key, run.planned_processes)
+        process_mean = estimate_model.process_mean(run.estimate_key)
+        status_counts = Counter(run.cached_statuses)
         statuses = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items())) or "-"
         table.add_row(
-            Text(cell.file.display_path),
-            Text(f"{cell.backend}/{cell.treatment}"),
-            Text(f"{len(cell.cached_statuses)}/{cell.required_rows}"),
-            Text(str(cell.missing_observations)),
+            Text(Path(run.file.display_path).name),
+            Text(f"{run.backend}/{run.treatment}"),
+            Text(f"{len(run.cached_statuses)}/{run.required_rows}"),
+            Text(str(run.missing_observations)),
             Text(statuses),
             Text(format_duration(process_mean)),
             Text(format_duration_estimate(estimate)),
@@ -434,8 +534,8 @@ def flat_report_record(
     *,
     started_at: str,
     target: ResolvedTarget,
-    cell: CellPlan,
-    spec: BenchmarkSpec,
+    run: BenchmarkRunPlan,
+    timeout_sec: int,
     observation: ProcessObservation,
 ) -> ReportRecord:
     """Construct the complete persisted record for one observation."""
@@ -451,13 +551,13 @@ def flat_report_record(
         "target_git_sha": target.row.git_sha,
         "target_is_dirty": target.row.is_dirty,
         "binary_sha256": target.binary_sha256,
-        "file_path": cell.file.display_path,
-        "file_sha256": cell.file.sha256,
-        "fact_directory_path": (str(cell.file.fact_directory) if cell.file.fact_directory is not None else None),
-        "fact_directory_sha256": cell.file.fact_directory_sha256,
-        "backend": cell.backend,
-        "treatment": cell.treatment,
-        "timeout_sec": spec.timeout_sec,
+        "file_path": run.file.display_path,
+        "file_sha256": run.file.sha256,
+        "fact_directory_path": (str(run.file.fact_directory) if run.file.fact_directory is not None else None),
+        "fact_directory_sha256": run.file.fact_directory_sha256,
+        "backend": run.backend,
+        "treatment": run.treatment,
+        "timeout_sec": timeout_sec,
         "wall_sec": result.timing.wall_sec,
         "max_rss_bytes": result.timing.max_rss_bytes,
         "error_exit_code": result.error.exit_code if result.error is not None else None,
@@ -470,7 +570,7 @@ def flat_report_record(
 def collect_rows(
     database: ReportDatabase,
     plan: CollectionPlan,
-    spec: BenchmarkSpec,
+    timeout_sec: int,
     output: RunnerOutput,
     estimate_model: EstimateModel,
     startup_warmup: TimingResult | None,
@@ -488,11 +588,9 @@ def collect_rows(
     total_observations = plan.total_missing_observations
     planned_processes = plan.total_planned_processes
     remaining_processes: dict[EstimateKey, int] = {}
-    for cell in plan.cells:
-        if cell.planned_processes > 0:
-            remaining_processes[cell.estimate_key] = (
-                remaining_processes.get(cell.estimate_key, 0) + cell.planned_processes
-            )
+    for run in plan.runs:
+        if run.planned_processes > 0:
+            remaining_processes[run.estimate_key] = remaining_processes.get(run.estimate_key, 0) + run.planned_processes
     output.console.print(
         Text.assemble(
             ("Collecting", "bold"),
@@ -501,7 +599,7 @@ def collect_rows(
             f" ({total_observations} observations, {planned_processes} subprocesses)",
         )
     )
-    max_deficit = max(cell.missing_observations for cell in plan.cells)
+    max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
 
     def decrement_remaining(key: EstimateKey, count: int = 1) -> None:
@@ -515,17 +613,17 @@ def collect_rows(
     def run_loop(progress: Progress, process_task: TaskID) -> None:
         nonlocal completed_observations
         for round_index in range(max_deficit):
-            for cell in plan.cells:
-                if round_index >= cell.missing_observations:
+            for run in plan.runs:
+                if round_index >= run.missing_observations:
                     continue
-                cell_key = cell.estimate_key
+                run_key = run.estimate_key
                 observation_number = completed_observations + 1
                 label = collection_label(
-                    cell.file,
-                    cell.backend,
-                    cell.treatment,
+                    run.file,
+                    run.backend,
+                    run.treatment,
                     round_index,
-                    cell.missing_observations,
+                    run.missing_observations,
                 )
 
                 def update_progress(current: str, advance: int = 0) -> None:
@@ -541,13 +639,13 @@ def collect_rows(
                 observation = run_process(
                     binary_path,
                     Path(target.row.path),
-                    cell.file,
-                    cell.backend,
-                    cell.treatment,
-                    spec.timeout_sec,
+                    run.file,
+                    run.backend,
+                    run.treatment,
+                    timeout_sec,
                 )
-                estimate_model.record_process(cell_key, observation.result)
-                decrement_remaining(cell_key)
+                estimate_model.record_process(run_key, observation.result)
+                decrement_remaining(run_key)
                 update_progress(
                     "row "
                     f"{observation_number}/{total_observations} timed; "
@@ -557,8 +655,8 @@ def collect_rows(
                 record = flat_report_record(
                     started_at=started_at,
                     target=target,
-                    cell=cell,
-                    spec=spec,
+                    run=run,
+                    timeout_sec=timeout_sec,
                     observation=observation,
                 )
                 database.append(record)

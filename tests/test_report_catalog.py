@@ -32,7 +32,7 @@ def test_catalog_retains_full_repeated_values_and_renderer_collapses_them() -> N
             ),
         ),
     )
-    catalog = ReportCatalog("/tmp/report.jsonl", 2, None, (ReportSection("comparisons", "Comparisons", (table,)),))
+    catalog = ReportCatalog((ReportSection("comparisons", "Comparisons", (table,)),))
 
     assert tuple(row.cells[0].display for row in table.rows) == ("file.egg", "file.egg")
     assert tuple(row.cells[1].raw for row in table.rows) == (1.0, 1.5)

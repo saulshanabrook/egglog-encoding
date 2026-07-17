@@ -1,7 +1,7 @@
 """Define dependency-free benchmark identities, invariants, and backend metadata.
 
-This module owns shared values, canonical cell ordering, and the uniqueness
-rules required by cache-backed statistics. Feature-local requests, subprocess
+This module owns endpoint selection, comparison scope, and the uniqueness rules
+required by cache-backed statistics. Feature-local requests, subprocess
 outcomes, persisted records, and DuckDB result rows live beside their owners.
 """
 
@@ -15,20 +15,19 @@ from typing import Literal
 Status = Literal["success", "timed-out", "failure"]
 Backend = str
 Treatment = Literal["off", "term", "proofs"]
-DEFAULT_BACKENDS: tuple[Backend, ...] = ("main",)
+DetailLevel = Literal["summary", "files", "phases", "rulesets"]
 
 
 @dataclass(frozen=True)
 class BackendSpec:
-    display_name: str
     treatments: tuple[Treatment, ...]
     flags: tuple[str, ...]
     cargo_features: tuple[str, ...] = ()
 
 
 BACKEND_SPECS: dict[Backend, BackendSpec] = {
-    "main": BackendSpec("main", ("off", "term", "proofs"), ()),
-    "dd": BackendSpec("DD", ("term", "proofs"), ("--backend", "dd"), ("dd-backend",)),
+    "main": BackendSpec(("off", "term", "proofs"), ()),
+    "dd": BackendSpec(("term", "proofs"), ("--backend", "dd"), ("dd-backend",)),
 }
 
 
@@ -45,6 +44,16 @@ def backend_cargo_features(backends: Sequence[Backend]) -> tuple[str, ...]:
     """Return deduplicated Cargo features required by ``backends``."""
 
     return tuple(dict.fromkeys(feature for backend in backends for feature in backend_spec(backend).cargo_features))
+
+
+def validate_backend_treatment(backend: Backend, treatment: Treatment) -> None:
+    """Reject one endpoint combination unsupported by its backend."""
+
+    supported = backend_spec(backend).treatments
+    if treatment not in supported:
+        raise ValueError(
+            f"backend {backend} does not support treatment {treatment}; supported treatments: {','.join(supported)}"
+        )
 
 
 @dataclass(frozen=True)
@@ -82,68 +91,6 @@ def validate_unique_file_identities(files: Sequence[FileSpec]) -> None:
 
 
 @dataclass(frozen=True)
-class BenchmarkSpec:
-    files: tuple[FileSpec, ...]
-    treatments: tuple[Treatment, ...]
-    rounds: int
-    timeout_sec: int
-    backends: tuple[Backend, ...] = DEFAULT_BACKENDS
-
-
-@dataclass(frozen=True)
-class BenchmarkCell:
-    backend: Backend
-    treatment: Treatment
-
-
-def backend_treatment_cells(
-    backends: Sequence[Backend],
-    treatments: Sequence[Treatment],
-) -> tuple[BenchmarkCell, ...]:
-    """Return supported cells in canonical backend-then-treatment order."""
-
-    cells: list[BenchmarkCell] = []
-    requested = ",".join(treatments)
-    for backend in backends:
-        supported = backend_spec(backend).treatments
-        backend_cells = tuple(BenchmarkCell(backend, treatment) for treatment in treatments if treatment in supported)
-        if not backend_cells:
-            raise ValueError(
-                f"backend {backend} has no supported treatments in requested set {requested}; "
-                f"supported treatments: {','.join(supported)}"
-            )
-        cells.extend(backend_cells)
-    return tuple(cells)
-
-
-def benchmark_cells(spec: BenchmarkSpec) -> tuple[BenchmarkCell, ...]:
-    """Return the canonical cells for a benchmark request."""
-
-    return backend_treatment_cells(spec.backends, spec.treatments)
-
-
-def backend_has_treatment(spec: BenchmarkSpec, backend: Backend, treatment: Treatment) -> bool:
-    """Return whether a backend/treatment cell is selected by ``spec``."""
-
-    return any(cell.backend == backend and cell.treatment == treatment for cell in benchmark_cells(spec))
-
-
-def shared_backend_treatments(
-    spec: BenchmarkSpec,
-    baseline_backend: Backend,
-    candidate_backend: Backend,
-) -> tuple[Treatment, ...]:
-    """Return selected treatments supported by both backends."""
-
-    return tuple(
-        treatment
-        for treatment in spec.treatments
-        if treatment in backend_spec(baseline_backend).treatments
-        and treatment in backend_spec(candidate_backend).treatments
-    )
-
-
-@dataclass(frozen=True)
 class TargetRequest:
     raw: str
     source: str
@@ -172,18 +119,56 @@ class ResolvedTarget:
         return Path(self.row.path).name
 
 
-def validate_unique_target_binaries(targets: Sequence[ResolvedTarget]) -> None:
-    """Reject targets that would select the same cached observations."""
+@dataclass(frozen=True)
+class EndpointRequest:
+    """One unresolved target/backend/treatment selected by the CLI."""
 
-    by_binary: dict[str, ResolvedTarget] = {}
-    for target in targets:
-        previous = by_binary.get(target.binary_sha256)
-        if previous is not None:
-            raise ValueError(
-                f"benchmark targets {previous.display_label!r} and {target.display_label!r} produced the same "
-                f"binary SHA-256 ({target.binary_sha256[:12]}); select each binary only once"
-            )
-        by_binary[target.binary_sha256] = target
+    target: TargetRequest
+    backend: Backend
+    treatment: Treatment
+
+    def __post_init__(self) -> None:
+        validate_backend_treatment(self.backend, self.treatment)
+
+
+@dataclass(frozen=True)
+class BenchmarkEndpoint:
+    """One resolved target/backend/treatment addressed by benchmark cache rows."""
+
+    target: ResolvedTarget
+    backend: Backend
+    treatment: Treatment
+
+    def __post_init__(self) -> None:
+        validate_backend_treatment(self.backend, self.treatment)
+
+    @property
+    def cache_identity(self) -> tuple[str, Backend, Treatment]:
+        """Return the endpoint coordinates shared by all of its file keys."""
+
+        return (self.target.binary_sha256, self.backend, self.treatment)
+
+
+@dataclass(frozen=True)
+class ComparisonSpec:
+    """The exact baseline/candidate pair and workloads selected for one report."""
+
+    baseline: BenchmarkEndpoint
+    candidate: BenchmarkEndpoint
+    files: tuple[FileSpec, ...]
+    rounds: int
+    timeout_sec: int
+
+    def __post_init__(self) -> None:
+        if not self.files:
+            raise ValueError("benchmark comparison requires at least one file")
+        validate_unique_file_identities(self.files)
+        if self.rounds < 1:
+            raise ValueError("benchmark rounds must be positive")
+        if self.timeout_sec < 1:
+            raise ValueError("benchmark timeout must be positive")
+        if self.baseline.cache_identity == self.candidate.cache_identity:
+            raise ValueError("baseline and candidate endpoints must be different")
 
 
 @dataclass(frozen=True)
@@ -196,20 +181,18 @@ class EstimateKey:
     fact_directory_sha256: str = ""
 
     @classmethod
-    def for_cell(
+    def for_endpoint(
         cls,
-        target: ResolvedTarget,
+        endpoint: BenchmarkEndpoint,
         file_spec: FileSpec,
-        backend: Backend,
-        treatment: Treatment,
         timeout_sec: int,
     ) -> EstimateKey:
         """Build the ordinary-report identity shared by collection and reporting."""
         return cls(
-            binary_sha256=target.binary_sha256,
+            binary_sha256=endpoint.target.binary_sha256,
             file_sha256=file_spec.sha256,
-            treatment=treatment,
+            treatment=endpoint.treatment,
             timeout_sec=timeout_sec,
-            backend=backend,
+            backend=endpoint.backend,
             fact_directory_sha256=file_spec.fact_directory_sha256,
         )

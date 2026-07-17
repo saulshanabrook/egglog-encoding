@@ -56,31 +56,22 @@ The Make target writes the one-round machine-readable report to
 `/tmp/egglog-encoding-bench-smoke.jsonl` by default and verifies that it is
 nonempty. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
 
-For engine-timing UI changes, inspect both a focused one-file report and the
+For benchmark-report UI changes, inspect both a focused one-file report and the
 default six-file report in Rich and Markdown form. Exercise terminal widths 80,
 119, 120, and 160 using copies of the report cache under `/tmp`; do not read
-from or append to the repository cache during UI validation. Confirm that
-`--phase-timings` shows one logical compact summary for every selected result,
-`--detailed-timing` adds every ruleset for every selected result, Rich output at
-120 columns is readable, widths below 120 produce exactly one warning and still
-render without error, and Markdown preserves full names and values independent
-of terminal width. Widths below 80 have no readability guarantee.
-
-For DuckDB UI changes, also run one scoped command with `--duckdb-ui`, an
-interactive terminal, and a report cache under `/tmp`. In the browser, confirm
-that all eight `presentation_*` views are visible, query at least
-`presentation_comparison_rollups` and `presentation_ruleset_timings`, then
-press Enter in the benchmark terminal and confirm the server closes cleanly.
-Opening the UI can require network access for the extension or frontend assets;
-keep this a deliberate manual smoke rather than part of the unattended gate.
+from or append to the repository cache during UI validation. Confirm that the
+cumulative `--detail` levels add files, phases, and top rulesets in that order,
+Rich output at 120 columns is readable, widths below 120 produce exactly one
+warning for detailed output and still render without error, and Markdown
+preserves full names and values independent of terminal width. Widths below 80
+have no readability guarantee.
 
 For live-report changes, manually run `--serve` against a report under `/tmp`
-with both an OS-selected port and one fixed `--serve-port`. Inspect a focused
-one-file report and the default six-file report, including compact and detailed
-timing. In the browser, verify baseline/selector retargeting, a cached scope with
-a missing result, SQL-style and column filters, an invalid Apply that restores
-the prior selectors and report, table-local scrolling at 800 pixels, and clean
-Ctrl-C shutdown. Scope changes must never build a target or collect a new row.
+with both an OS-selected port and one fixed `--serve-port`. In the browser,
+verify complete cached endpoint selection, endpoint swapping, file subsets,
+cumulative detail, an invalid Apply that preserves the prior selectors and
+report, and clean Ctrl-C shutdown. Scope changes must never build a target or
+collect a new row.
 
 ## Benchmarking
 
@@ -101,6 +92,8 @@ Ctrl-C shutdown. Scope changes must never build a target or collect a new row.
   not relative to comparison targets.
 - Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory
   SHA-256, backend, treatment, and timeout.
-- A request must not contain duplicate binary hashes or duplicate
-  file/fact-directory hash pairs; those selectors would reuse the same samples
-  while report statistics require independent target and file coordinates.
+- The baseline and candidate must have different endpoint cache identities
+  (binary SHA-256, backend, and treatment). They may use the same binary when
+  backend or treatment differs.
+- A request must not contain duplicate file/fact-directory hash pairs; those
+  selectors would address the same cached workload observations twice.

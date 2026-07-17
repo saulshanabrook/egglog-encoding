@@ -13,7 +13,7 @@ from typing import Any, cast
 import pytest
 from rich.console import Console
 
-from benchmarking import benchmark_config, collection, models, output, processes, samply_analysis, targets
+from benchmarking import benchmark, collection, models, output, processes, samply_analysis, targets
 from benchmarking import profile as profile_runner
 from benchmarking.reports.database import ReportDatabase
 
@@ -23,7 +23,6 @@ from .conftest import (
     make_cpu_summary,
     make_profile_case,
     make_profile_data,
-    make_spec,
     make_target,
     mock_profile_resolution,
     write_profile,
@@ -31,7 +30,7 @@ from .conftest import (
 
 
 def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
-    benchmark_args = benchmark_config.parse_benchmark_args(["--rounds", "1", "file.egg"])
+    benchmark_args = benchmark.parse_benchmark_args(["--rounds", "1", "file.egg"])
     profile_args = profile_runner.parse_profile_args(["file.egg"])
 
     assert benchmark_args.command == "benchmark"
@@ -50,7 +49,7 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
 def test_benchmark_and_profile_cli_accept_windows_fact_paths() -> None:
     file = r"C:\bench\file.egg"
     facts = r"D:\facts"
-    benchmark_args = benchmark_config.parse_benchmark_args([file, "--fact-directory", facts])
+    benchmark_args = benchmark.parse_benchmark_args([file, "--fact-directory", facts])
     profile_args = profile_runner.parse_profile_args([file, "--fact-directory", facts])
 
     assert benchmark_args.files == [file]
@@ -80,7 +79,7 @@ def test_resolve_profile_request_reuses_backend_treatment_validation(tmp_path: P
     file_path.write_text("(check (= 1 1))\n", encoding="utf-8")
     args = profile_runner.parse_profile_args([str(file_path), "--backend", "dd", "--treatment", "off"])
 
-    with pytest.raises(ValueError, match="backend dd has no supported treatments"):
+    with pytest.raises(ValueError, match="backend dd does not support treatment off"):
         profile_runner.resolve_profile_request(args, ROOT)
 
 
@@ -120,16 +119,19 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
     monkeypatch.setattr(targets, "materialize_target_request", fake_materialize)
     monkeypatch.setattr(targets, "build_resolved_target", fake_build)
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
+    endpoint_request = models.EndpointRequest(request, "main", "off")
 
-    benchmark_target = collection.resolve_target(
-        request,
+    benchmark_target = collection.resolve_targets(
+        ((request, (endpoint_request,)),),
         cast(ReportDatabase, object()),
-        make_spec(file_spec),
+        (file_spec,),
+        1,
+        120,
         False,
         ROOT,
         ROOT,
         output.RunnerOutput(),
-    )
+    )[request]
     profile_target = targets.resolve_profile_target(request, "dd", ROOT, ROOT, output.RunnerOutput())
 
     assert benchmark_target == target

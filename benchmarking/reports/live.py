@@ -1,13 +1,10 @@
-"""Serve the shared report catalog as a live, cache-only browser application.
+"""Serve one cached pair report as a live, cache-only browser application.
 
-This module owns the eval-live wire adapter, browser scope editor and CSS, the
-immutable retargeting universe, the current browser scope, and a small loopback
-HTTP server. Eval-live itself owns display-only table filters. Applying
-selectors builds a complete replacement catalog from the existing JSONL cache
-in a fresh :class:`ReportDatabase`; this module never resolves, builds, or runs
-benchmark targets. Report calculation and wording remain in ``summary``/SQL,
-with timing-specific wording in ``timing``; CLI policy remains in ``benchmark``
-and ``benchmark_config``.
+This module adapts the shared report catalog to eval-live, discovers complete
+cached endpoints for the comparison's fixed files/rounds/timeout, validates
+browser retargeting requests, and owns the loopback HTTP server and static UI.
+It never resolves targets, builds binaries, or collects benchmark observations;
+SQL analysis and human-facing report wording remain in ``comparison``.
 """
 
 from __future__ import annotations
@@ -23,18 +20,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, cast
 
-from ..models import Backend, BenchmarkSpec, FileSpec, Treatment
-from .catalog import (
-    CellTone,
-    ReportCatalog,
-    ReportCell,
-    ReportMessage,
-    ReportOptions,
-    ReportScope,
-    report_id,
+from ..models import (
+    BenchmarkEndpoint,
+    ComparisonSpec,
+    DetailLevel,
+    FileSpec,
+    ResolvedTarget,
+    TargetRequest,
 )
+from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, ReportOptions, report_id
+from .comparison import build_report_catalog, report_file_labels
 from .database import ReportDatabase
-from .summary import build_report_catalog
+from .results import CachedEndpoint
 
 
 class ConsoleLike(Protocol):
@@ -55,7 +52,7 @@ type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 
 _MAX_SCOPE_REQUEST_BYTES = 1 << 20
-_MAX_UINTEGER = (1 << 32) - 1
+_DETAIL_LEVELS: tuple[DetailLevel, ...] = ("summary", "files", "phases", "rulesets")
 
 
 @dataclass(frozen=True)
@@ -68,47 +65,52 @@ class StaticAsset:
 
 @dataclass(frozen=True)
 class LiveScopeRequest:
-    """One canonical selection within a session's fixed benchmark universe."""
+    """The mutable selectors within a session's fixed cache coordinates."""
 
-    target_ids: tuple[str, ...]
-    baseline_target_id: str
+    baseline_endpoint_id: str
+    candidate_endpoint_id: str
     file_ids: tuple[str, ...]
-    backends: tuple[Backend, ...]
-    treatments: tuple[Treatment, ...]
-    rounds: int
-    timeout_sec: int
-    phase_timings: bool
-    detailed_timing: bool
+    detail: DetailLevel
 
 
 class LiveReportSession:
-    """Own one fixed selector universe and its atomically replaced report catalog."""
+    """Own one immutable cache universe and an atomically replaced pair report."""
 
     def __init__(
         self,
         report_path: Path,
-        scope: ReportScope,
+        comparison: ComparisonSpec,
         options: ReportOptions,
         catalog: ReportCatalog,
     ) -> None:
         self._report_path = report_path
-        self._targets = scope.targets
-        self._files = scope.spec.files
-        self._backends = scope.spec.backends
-        self._treatments = scope.spec.treatments
-        self._options_command = options.command_argv
-        self._target_by_id = {target.binary_sha256: target for target in self._targets}
+        self._files = comparison.files
+        self._rounds = comparison.rounds
+        self._timeout_sec = comparison.timeout_sec
+        with ReportDatabase(report_path) as database:
+            cached = database.complete_cached_endpoints(
+                self._files,
+                self._rounds,
+                self._timeout_sec,
+            )
+        self._endpoints = tuple(_benchmark_endpoint(endpoint) for endpoint in cached)
+        self._endpoint_by_id = {_endpoint_id(endpoint): endpoint for endpoint in self._endpoints}
         self._file_by_id = {_file_id(file): file for file in self._files}
+
+        baseline_id = _endpoint_id(comparison.baseline)
+        candidate_id = _endpoint_id(comparison.candidate)
+        missing = tuple(
+            role
+            for role, endpoint_id in (("baseline", baseline_id), ("candidate", candidate_id))
+            if endpoint_id not in self._endpoint_by_id
+        )
+        if missing:
+            raise ValueError("initial live report endpoint(s) are not complete in the cache: " + ", ".join(missing))
         self._request = LiveScopeRequest(
-            target_ids=tuple(self._target_by_id),
-            baseline_target_id=self._targets[0].binary_sha256,
-            file_ids=tuple(self._file_by_id),
-            backends=self._backends,
-            treatments=self._treatments,
-            rounds=scope.spec.rounds,
-            timeout_sec=scope.spec.timeout_sec,
-            phase_timings=options.phase_timings,
-            detailed_timing=options.detailed_timing,
+            baseline_id,
+            candidate_id,
+            tuple(self._file_by_id),
+            options.detail,
         )
         self._catalog = catalog
 
@@ -117,6 +119,30 @@ class LiveReportSession:
 
         return self._payload(self._request, self._catalog)
 
+    def apply(self, value: object) -> dict[str, JsonValue]:
+        """Validate and compute a replacement before publishing any state."""
+
+        request = self._parse_request(value)
+        selected_file_ids = set(request.file_ids)
+        files = tuple(file for file in self._files if _file_id(file) in selected_file_ids)
+        comparison = ComparisonSpec(
+            baseline=self._endpoint_by_id[request.baseline_endpoint_id],
+            candidate=self._endpoint_by_id[request.candidate_endpoint_id],
+            files=files,
+            rounds=self._rounds,
+            timeout_sec=self._timeout_sec,
+        )
+        options = ReportOptions(request.detail)
+
+        # Use a fresh transient catalog. A parse, SQL, or report-assembly error
+        # leaves both the published request and catalog untouched.
+        with ReportDatabase(self._report_path) as database:
+            catalog = build_report_catalog(database, comparison, options)
+        payload = self._payload(request, catalog)
+        self._request = request
+        self._catalog = catalog
+        return payload
+
     def _payload(self, request: LiveScopeRequest, catalog: ReportCatalog) -> dict[str, JsonValue]:
         return {
             "report_path": str(self._report_path),
@@ -124,113 +150,85 @@ class LiveReportSession:
             "sections": _catalog_payload(catalog),
         }
 
-    def apply(self, value: object) -> dict[str, JsonValue]:
-        """Validate one browser request, recompute fully, then publish it atomically."""
-
-        request = self._parse_request(value)
-        selected_target_ids = set(request.target_ids)
-        targets = (
-            self._target_by_id[request.baseline_target_id],
-            *(
-                target
-                for target in self._targets
-                if target.binary_sha256 in selected_target_ids and target.binary_sha256 != request.baseline_target_id
-            ),
-        )
-        selected_file_ids = set(request.file_ids)
-        files = tuple(file for file in self._files if _file_id(file) in selected_file_ids)
-        selected_backends = set(request.backends)
-        backends = tuple(backend for backend in self._backends if backend in selected_backends)
-        selected_treatments = set(request.treatments)
-        treatments = tuple(treatment for treatment in self._treatments if treatment in selected_treatments)
-        spec = BenchmarkSpec(
-            files=files,
-            treatments=treatments,
-            rounds=request.rounds,
-            timeout_sec=request.timeout_sec,
-            backends=backends,
-        )
-        options = ReportOptions(
-            command_argv=self._options_command,
-            phase_timings=request.phase_timings,
-            detailed_timing=request.detailed_timing,
-        )
-
-        # Build against a new transient catalog. If parsing, SQL, or report
-        # assembly fails, the current request/catalog remain untouched.
-        with ReportDatabase(self._report_path) as database:
-            catalog = build_report_catalog(database, ReportScope(targets, spec), options)
-        payload = self._payload(request, catalog)
-        self._request = request
-        self._catalog = catalog
-        return payload
-
     def _parse_request(self, value: object) -> LiveScopeRequest:
         request = _object(value, "scope request")
-        target_ids = _string_list(request, "target_ids")
-        _require_known_subset(target_ids, self._target_by_id, "target")
-        baseline_target_id = _string(request, "baseline_target_id")
-        if baseline_target_id not in target_ids:
-            raise ValueError("baseline_target_id must name a selected target")
+        baseline_id = _string(request, "baseline_endpoint_id")
+        candidate_id = _string(request, "candidate_endpoint_id")
+        _require_known(baseline_id, self._endpoint_by_id, "baseline endpoint")
+        _require_known(candidate_id, self._endpoint_by_id, "candidate endpoint")
+        if baseline_id == candidate_id:
+            raise ValueError("baseline and candidate endpoints must be different")
         file_ids = _string_list(request, "file_ids")
         _require_known_subset(file_ids, self._file_by_id, "file")
-        backends = _string_list(request, "backends")
-        _require_known_subset(backends, {backend: backend for backend in self._backends}, "backend")
-        treatments = _string_list(request, "treatments")
-        _require_known_subset(
-            treatments,
-            {treatment: treatment for treatment in self._treatments},
-            "treatment",
-        )
-        detailed_timing = _boolean(request, "detailed_timing")
+        detail = _string(request, "detail")
+        if detail not in _DETAIL_LEVELS:
+            raise ValueError(f"unknown detail level: {detail}")
         return LiveScopeRequest(
-            target_ids=target_ids,
-            baseline_target_id=baseline_target_id,
-            file_ids=file_ids,
-            backends=tuple(cast(Backend, backend) for backend in backends),
-            treatments=tuple(cast(Treatment, treatment) for treatment in treatments),
-            rounds=_positive_integer(request, "rounds"),
-            timeout_sec=_positive_integer(request, "timeout_sec"),
-            phase_timings=_boolean(request, "phase_timings") or detailed_timing,
-            detailed_timing=detailed_timing,
+            baseline_id,
+            candidate_id,
+            file_ids,
+            cast(DetailLevel, detail),
         )
 
     def _selector_payload(self, request: LiveScopeRequest) -> dict[str, JsonValue]:
-        selected_targets = set(request.target_ids)
+        labels = report_file_labels(self._files)
         selected_files = set(request.file_ids)
-        selected_backends = set(request.backends)
-        selected_treatments = set(request.treatments)
         return {
-            "targets": [
+            "endpoints": [
                 {
-                    "id": target.binary_sha256,
-                    "label": target.display_label,
-                    "selected": target.binary_sha256 in selected_targets,
-                    "baseline": target.binary_sha256 == request.baseline_target_id,
+                    "id": _endpoint_id(endpoint),
+                    "label": _endpoint_label(endpoint),
+                    "target": endpoint.target.display_label,
+                    "git_sha": endpoint.target.row.git_sha,
+                    "dirty": endpoint.target.row.is_dirty,
+                    "backend": endpoint.backend,
+                    "treatment": endpoint.treatment,
                 }
-                for target in self._targets
+                for endpoint in self._endpoints
             ],
+            "baseline_endpoint_id": request.baseline_endpoint_id,
+            "candidate_endpoint_id": request.candidate_endpoint_id,
             "files": [
                 {
                     "id": _file_id(file),
-                    "label": file.display_path,
+                    "label": labels[file],
                     "selected": _file_id(file) in selected_files,
                 }
                 for file in self._files
             ],
-            "backends": [
-                {"id": backend, "label": backend, "selected": backend in selected_backends}
-                for backend in self._backends
-            ],
-            "treatments": [
-                {"id": treatment, "label": treatment, "selected": treatment in selected_treatments}
-                for treatment in self._treatments
-            ],
-            "rounds": request.rounds,
-            "timeout_sec": request.timeout_sec,
-            "phase_timings": request.phase_timings,
-            "detailed_timing": request.detailed_timing,
+            "detail": request.detail,
+            "rounds": self._rounds,
+            "timeout_sec": self._timeout_sec,
         }
+
+
+def _benchmark_endpoint(cached: CachedEndpoint) -> BenchmarkEndpoint:
+    """Restore a report-only resolved endpoint from its cached provenance."""
+
+    row = cached.row
+    target = ResolvedTarget(
+        TargetRequest(row.label or row.source, row.source, row.label),
+        row,
+        cached.binary_sha256,
+        None,
+    )
+    return BenchmarkEndpoint(target, cached.backend, cached.treatment)
+
+
+def _endpoint_id(endpoint: BenchmarkEndpoint) -> str:
+    return report_id("endpoint", *endpoint.cache_identity)
+
+
+def _endpoint_label(endpoint: BenchmarkEndpoint) -> str:
+    dirty = " dirty" if endpoint.target.row.is_dirty else ""
+    return (
+        f"{endpoint.target.display_label} · {endpoint.target.row.git_sha[:12]}{dirty} "
+        f"· {endpoint.backend}/{endpoint.treatment}"
+    )
+
+
+def _file_id(file: FileSpec) -> str:
+    return report_id("file", file.sha256, file.fact_directory_sha256)
 
 
 def live_assets() -> dict[str, StaticAsset]:
@@ -320,8 +318,6 @@ def serve_live_report(
 ) -> None:
     """Serve one report on loopback until interrupted, opening a browser best-effort."""
 
-    # Port zero asks the OS for a free loopback port. Argparse represents an
-    # omitted --serve-port as None so the choice remains local to the server.
     bind_port = 0 if port is None else port
     try:
         server = http.server.HTTPServer(("127.0.0.1", bind_port), live_handler(session))
@@ -419,10 +415,6 @@ def _tone_style(tone: CellTone) -> dict[str, JsonValue]:
     return {}
 
 
-def _file_id(file: FileSpec) -> str:
-    return report_id("file", file.sha256, file.fact_directory_sha256)
-
-
 def _object(value: object, name: str) -> Mapping[str, object]:
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be a JSON object")
@@ -448,20 +440,9 @@ def _string_list(request: Mapping[str, object], key: str) -> tuple[str, ...]:
     return tuple(values)
 
 
-def _boolean(request: Mapping[str, object], key: str) -> bool:
-    value = request.get(key)
-    if not isinstance(value, bool):
-        raise ValueError(f"{key} must be a boolean")
-    return value
-
-
-def _positive_integer(request: Mapping[str, object], key: str) -> int:
-    value = request.get(key)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"{key} must be a positive integer")
-    if value > _MAX_UINTEGER:
-        raise ValueError(f"{key} must be at most {_MAX_UINTEGER}")
-    return value
+def _require_known(value: str, choices: Mapping[str, object], name: str) -> None:
+    if value not in choices:
+        raise ValueError(f"unknown {name} id: {value}")
 
 
 def _require_known_subset(values: Sequence[str], choices: Mapping[str, object], name: str) -> None:
@@ -503,24 +484,18 @@ function element(tag, text, className) {
   return node;
 }
 
-function choiceFieldset(title, kind, choices) {
-  const fieldset = element("fieldset");
-  fieldset.appendChild(element("legend", title));
-  for (const choice of choices) {
-    const label = element("label", null, "scope-choice");
-    const input = element("input");
-    input.type = "checkbox";
-    input.dataset.kind = kind;
-    input.value = choice.id;
-    input.checked = choice.selected;
-    label.append(input, document.createTextNode(" " + choice.label));
-    fieldset.appendChild(label);
+function endpointField(labelText, id, endpoints, selectedId) {
+  const label = element("label", labelText + " ");
+  const select = element("select");
+  select.id = id;
+  for (const endpoint of endpoints) {
+    const option = element("option", endpoint.label);
+    option.value = endpoint.id;
+    option.selected = endpoint.id === selectedId;
+    select.appendChild(option);
   }
-  return fieldset;
-}
-
-function selected(kind) {
-  return [...scopeRoot.querySelectorAll(`input[data-kind="${kind}"]:checked`)].map((input) => input.value);
+  label.appendChild(select);
+  return label;
 }
 
 function renderScope(selectors, reportPath, statusText = "") {
@@ -528,59 +503,69 @@ function renderScope(selectors, reportPath, statusText = "") {
   const heading = element("h1", "Benchmark report");
   const note = element(
     "p",
-    `Cache: ${reportPath}. Rounds, timeout, and selectors only reselect cached rows; `
-      + "table filters only change the browser display.",
+    `Cache: ${reportPath}. Retargeting only selects complete cached endpoints; it never runs a benchmark.`,
     "scope-note",
   );
   const form = element("form", null, "scope-form");
-  form.append(
-    choiceFieldset("Targets", "target", selectors.targets),
-    choiceFieldset("Files", "file", selectors.files),
-    choiceFieldset("Backends", "backend", selectors.backends),
-    choiceFieldset("Treatments", "treatment", selectors.treatments),
+  const pair = element("fieldset", null, "scope-pair");
+  pair.appendChild(element("legend", "Comparison"));
+  pair.append(
+    endpointField(
+      "Baseline",
+      "scope-baseline",
+      selectors.endpoints,
+      selectors.baseline_endpoint_id,
+    ),
+    endpointField(
+      "Candidate",
+      "scope-candidate",
+      selectors.endpoints,
+      selectors.candidate_endpoint_id,
+    ),
   );
+  const swap = element("button", "Swap endpoints");
+  swap.type = "button";
+  swap.addEventListener("click", () => {
+    const baseline = document.getElementById("scope-baseline");
+    const candidate = document.getElementById("scope-candidate");
+    [baseline.value, candidate.value] = [candidate.value, baseline.value];
+  });
+  pair.appendChild(swap);
 
-  const parameters = element("fieldset");
-  parameters.appendChild(element("legend", "Analysis"));
-  const baselineLabel = element("label", "Baseline target ");
-  const baseline = element("select");
-  baseline.id = "scope-baseline";
-  for (const choice of selectors.targets) {
-    const option = element("option", choice.label);
-    option.value = choice.id;
-    option.selected = choice.baseline;
-    baseline.appendChild(option);
-  }
-  baselineLabel.appendChild(baseline);
-  parameters.appendChild(baselineLabel);
-  for (const [id, label, value] of [
-    ["scope-rounds", "Rounds", selectors.rounds],
-    ["scope-timeout", "Timeout (seconds)", selectors.timeout_sec],
-  ]) {
-    const field = element("label", label + " ");
+  const files = element("fieldset");
+  files.appendChild(element("legend", "Files"));
+  for (const file of selectors.files) {
+    const label = element("label", null, "scope-choice");
     const input = element("input");
-    input.id = id;
-    input.type = "number";
-    input.min = "1";
-    input.value = String(value);
-    field.appendChild(input);
-    parameters.appendChild(field);
-  }
-  for (const [id, label, checked] of [
-    ["scope-timing", "Engine timing", selectors.phase_timings],
-    ["scope-detailed", "Detailed timing", selectors.detailed_timing],
-  ]) {
-    const field = element("label", null, "scope-choice");
-    const input = element("input");
-    input.id = id;
     input.type = "checkbox";
-    input.checked = checked;
-    field.append(input, document.createTextNode(" " + label));
-    parameters.appendChild(field);
+    input.dataset.kind = "file";
+    input.value = file.id;
+    input.checked = file.selected;
+    label.append(input, document.createTextNode(" " + file.label));
+    files.appendChild(label);
   }
-  form.appendChild(parameters);
+
+  const display = element("fieldset");
+  display.appendChild(element("legend", "Display"));
+  const detailLabel = element("label", "Detail ");
+  const detail = element("select");
+  detail.id = "scope-detail";
+  for (const value of ["summary", "files", "phases", "rulesets"]) {
+    const option = element("option", value[0].toUpperCase() + value.slice(1));
+    option.value = value;
+    option.selected = value === selectors.detail;
+    detail.appendChild(option);
+  }
+  detailLabel.appendChild(detail);
+  display.append(
+    detailLabel,
+    element("p", `${selectors.rounds} rounds per endpoint/file`, "scope-fixed"),
+    element("p", `${selectors.timeout_sec} second timeout per run`, "scope-fixed"),
+  );
+  form.append(pair, files, display);
+
   const actions = element("div", null, "scope-actions");
-  const apply = element("button", "Apply scope");
+  const apply = element("button", "Apply");
   apply.type = "submit";
   const status = element("span", statusText, "scope-status");
   actions.append(apply, status);
@@ -589,18 +574,12 @@ function renderScope(selectors, reportPath, statusText = "") {
     event.preventDefault();
     apply.disabled = true;
     status.textContent = "Recomputing cached report...";
-    const targetIds = selected("target");
-    if (!targetIds.includes(baseline.value)) targetIds.push(baseline.value);
     const request = {
-      target_ids: targetIds,
-      baseline_target_id: baseline.value,
-      file_ids: selected("file"),
-      backends: selected("backend"),
-      treatments: selected("treatment"),
-      rounds: Number(document.getElementById("scope-rounds").value),
-      timeout_sec: Number(document.getElementById("scope-timeout").value),
-      phase_timings: document.getElementById("scope-timing").checked,
-      detailed_timing: document.getElementById("scope-detailed").checked,
+      baseline_endpoint_id: document.getElementById("scope-baseline").value,
+      candidate_endpoint_id: document.getElementById("scope-candidate").value,
+      file_ids: [...scopeRoot.querySelectorAll('input[data-kind="file"]:checked')]
+        .map((input) => input.value),
+      detail: document.getElementById("scope-detail").value,
     };
     try {
       const response = await fetch("/api/scope", {
@@ -647,10 +626,12 @@ APP_CSS = """
   padding: 0 1.5rem;
   font-family: system-ui, sans-serif;
 }
-.scope-note { color: #555; }
+.scope-note, .scope-fixed, .scope-status { color: #555; }
 .scope-form { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-start; }
-.scope-form fieldset { min-width: 10rem; border: 1px solid #ccc; border-radius: 0.35rem; }
-.scope-choice, .scope-form fieldset > label { display: block; margin: 0.25rem 0; }
+.scope-form fieldset { min-width: 12rem; border: 1px solid #ccc; border-radius: 0.35rem; }
+.scope-pair { flex: 2 1 42rem; }
+.scope-pair > label, .scope-choice { display: block; margin: 0.35rem 0; }
+.scope-pair select { max-width: min(36rem, 80vw); }
+.scope-fixed { margin: 0.4rem 0; }
 .scope-actions { flex-basis: 100%; display: flex; gap: 0.75rem; align-items: center; }
-.scope-status { color: #555; }
 """

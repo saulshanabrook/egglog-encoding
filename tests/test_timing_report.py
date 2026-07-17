@@ -1,329 +1,175 @@
-"""Snapshot timing serialization and exercise realistic Rich terminal widths."""
+"""Verify SQL-backed phase and top-ruleset report semantics."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from rich.cells import cell_len
-from rich.console import Console
-from syrupy.assertion import SnapshotAssertion
-
 from benchmarking import models
-from benchmarking.reports.catalog import ReportSection, ReportTable
-from benchmarking.reports.render import render_markdown_sections, render_rich_sections
-from benchmarking.reports.results import CompactTimingView, RulesetTimingView
-from benchmarking.reports.timing import build_timing_sections, format_duration, format_share
+from benchmarking.reports.catalog import (
+    ReportCatalog,
+    ReportCell,
+    ReportMessage,
+    ReportOptions,
+    ReportRow,
+    ReportTable,
+)
+from benchmarking.reports.comparison import build_report_catalog, format_duration, report_file_labels
+from benchmarking.reports.database import ReportDatabase
+from benchmarking.reports.records import ReportRecord
+
+from .conftest import make_endpoint, make_record, make_ruleset_timing, make_timing_summary, write_report
 
 
-def test_duration_and_share_formatting() -> None:
-    assert format_duration(0) == "0 ns"
-    assert format_duration(999) == "999 ns"
-    assert format_duration(1_500) == "1.50 us"
-    assert format_duration(2_500_000) == "2.50 ms"
-    assert format_duration(3_250_000_000) == "3.25 s"
-    assert format_duration(-2_500_000, attribution=True) == "!-2.50 ms"
-    assert format_share(None) == "—"
-    assert format_share(0.0005) == "<0.1%"
-
-
-def test_markdown_compact_and_detailed_report(snapshot: SnapshotAssertion) -> None:
-    targets = (_target("baseline", "sha256:baseline"), _target("candidate", "sha256:candidate"))
-    spec = _spec()
-    compact = (
-        _compact(0, 0, 500_000, 200_000, 150_000, 150_000, 1_250_000, unattributed_ns=50_000),
-        _compact(1, 0, 400_000, 120_000, 110_000, 120_000, 900_000, unattributed_ns=30_000),
-        _compact(0, 1, issue="timeout row selected"),
-        _compact(1, 1, 700_000, 300_000, 200_000, 300_000, 1_400_000, unattributed_ns=40_000),
-    )
-    rulesets = (
-        _ruleset(
-            0,
-            0,
-            0,
-            "",
-            450_000,
-            150_000,
-            100_000,
-            50_000,
-            1_050_000,
-            770_000,
-            unattributed_ns=20_000,
+def test_phase_report_uses_split_means_and_wall_residual(tmp_path: Path) -> None:
+    report_path = tmp_path / "phases.jsonl"
+    baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    file = models.FileSpec("nested/file.egg", tmp_path / "file.egg", "sha256:file")
+    records: list[ReportRecord] = []
+    cases = (
+        (baseline, 1.0, make_ruleset_timing(search_ns=600_000_000, apply_ns=300_000_000)),
+        (
+            candidate,
+            1.2,
+            make_ruleset_timing(
+                search_ns=700_000_000,
+                apply_ns=200_000_000,
+                merge_ns=100_000_000,
+                rebuild_ns=100_000_000,
+            ),
         ),
-        _ruleset(1, 0, 0, "", 0, 0, 0, 0, 750_000, 770_000),
-        _ruleset(
+    )
+    for endpoint, wall_sec, timing in cases:
+        records.append(
+            make_record(
+                len(records),
+                started_at=f"2026-07-17T12:00:0{len(records)}Z",
+                binary_sha256=endpoint.target.binary_sha256,
+                backend=endpoint.backend,
+                treatment=endpoint.treatment,
+                wall_sec=wall_sec,
+                timing_summary=make_timing_summary(timing),
+            )
+        )
+    write_report(report_path, *records)
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+
+    with ReportDatabase(report_path) as database:
+        catalog = build_report_catalog(database, comparison, ReportOptions("phases"))
+
+    table = _only_table(catalog, "phases")
+    rows = {_cell(row, table, "phase").raw: row for row in table.rows}
+    assert _cell(rows["search"], table, "baseline").raw == 600_000_000.0
+    assert _cell(rows["apply"], table, "candidate").raw == 200_000_000.0
+    assert _cell(rows["other"], table, "baseline").raw == -200_000_000.0
+    assert _cell(rows["other"], table, "baseline").display == "!-200 ms"
+    assert _cell(rows["other"], table, "candidate").display == "100 ms"
+
+
+def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
+    report_path = tmp_path / "rulesets.jsonl"
+    baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+
+    common_baseline = tuple(
+        make_ruleset_timing(f"rule-{index:02d}", search_ns=(index + 1) * 1_000_000) for index in range(11)
+    )
+    common_candidate = tuple(
+        make_ruleset_timing(f"rule-{index:02d}", search_ns=(index + 2) * 1_000_000) for index in range(11)
+    )
+    removed = make_ruleset_timing("removed", search_ns=1_000_000_000)
+    added = make_ruleset_timing("added", search_ns=1_200_000_000)
+    records = (
+        make_record(
             0,
-            0,
+            started_at="2026-07-17T12:00:00Z",
+            binary_sha256=baseline.target.binary_sha256,
+            treatment=baseline.treatment,
+            wall_sec=4.0,
+            timing_summary=make_timing_summary(*common_baseline, removed),
+        ),
+        make_record(
             1,
-            "simplify|nested",
-            70_000,
-            30_000,
-            50_000,
-            100_000,
-            1_050_000,
-            700_000,
-            unattributed_ns=30_000,
+            started_at="2026-07-17T12:00:01Z",
+            binary_sha256=candidate.target.binary_sha256,
+            treatment=candidate.treatment,
+            wall_sec=4.0,
+            timing_summary=make_timing_summary(*common_candidate, added),
         ),
-        _ruleset(1, 0, 1, "simplify|nested", 350_000, 150_000, 100_000, 100_000, 750_000, 700_000),
-        _ruleset(0, 0, 2, "candidate-only", None, None, None, None, 1_000_000, 50_000),
-        _ruleset(1, 0, 2, "candidate-only", 15_000, 5_000, 10_000, 20_000, 750_000, 50_000),
-        _ruleset(1, 1, 0, "proof extraction", 700_000, 300_000, 200_000, 300_000, 1_500_000, 1_500_000),
     )
+    write_report(report_path, *records)
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    sections = build_timing_sections(
-        compact,
-        rulesets,
-        targets,
-        spec,
-        detailed=True,
-        file_labels=("integer_math.egg",),
-    )
+    with ReportDatabase(report_path) as database:
+        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
 
-    assert render_markdown_sections(sections) == snapshot
-
-
-def test_view_order_preserves_absent_rows_and_recorded_zeroes() -> None:
-    targets = (_target("baseline", "sha256:baseline"), _target("candidate", "sha256:candidate"))
-    spec = _spec(treatments=("proofs",))
-    compact = (
-        _compact(0, 0, 5, 3, 1, 1, 20, treatment="proofs"),
-        _compact(1, 0, 10, 8, 1, 1, 30, treatment="proofs"),
-    )
-    rulesets = (
-        _ruleset(0, 0, 0, "candidate-only", None, None, None, None, 10, 20, treatment="proofs"),
-        _ruleset(1, 0, 0, "candidate-only", 10, 8, 1, 1, 20, 20, treatment="proofs"),
-        _ruleset(0, 0, 1, "baseline-only", 5, 3, 1, 1, 10, 10, treatment="proofs"),
-        _ruleset(1, 0, 1, "baseline-only", None, None, None, None, 20, 10, treatment="proofs"),
-        _ruleset(0, 0, 2, "recorded-zero", 0, 0, 0, 0, 10, 0, treatment="proofs"),
-        _ruleset(1, 0, 2, "recorded-zero", 0, 0, 0, 0, 20, 0, treatment="proofs"),
-    )
-
-    sections = build_timing_sections(compact, rulesets, targets, spec, detailed=True)
-
-    baseline, candidate = _tables(_section(sections, "detailed-timing"))
-    assert _column_displays(baseline, "ruleset") == ("candidate-only", "baseline-only", "recorded-zero")
-    assert _column_displays(candidate, "ruleset") == ("candidate-only", "baseline-only", "recorded-zero")
-    assert _column_displays(baseline, "total_ns") == ("—", "10.0 ns", "0 ns")
-    assert _column_displays(candidate, "total_ns") == ("20.0 ns", "—", "0 ns")
-    assert _column_raw(baseline, "total_ns") == (None, 10, 0)
-    assert _column_raw(candidate, "total_ns") == (20, None, 0)
+    table = _only_table(catalog, "rulesets")
+    names = tuple(_cell(row, table, "ruleset").display for row in table.rows)
+    assert len(table.rows) == 10
+    assert {"added", "removed"} <= set(names)
+    assert "Showing 10 of 13 rulesets" in (table.caption or "")
+    added_row = next(row for row in table.rows if _cell(row, table, "ruleset").display == "added")
+    removed_row = next(row for row in table.rows if _cell(row, table, "ruleset").display == "removed")
+    assert _cell(added_row, table, "baseline").display == "—"
+    assert _cell(removed_row, table, "candidate").display == "—"
+    assert _cell(added_row, table, "ratio").display == "—"
 
 
-def test_rich_timing_warns_exactly_once_below_120_and_always_renders() -> None:
-    targets = (_target("a-long-baseline-target", "sha256:baseline"), _target("candidate", "sha256:candidate"))
-    spec = _spec(treatments=("proofs",))
-    compact = (
-        _compact(0, 0, 5, 3, 1, 1, 20, treatment="proofs"),
-        _compact(1, 0, 10, 8, 1, 1, 30, treatment="proofs"),
-    )
-    rulesets = (
-        _ruleset(0, 0, 0, "a very long ruleset name that may fold", 5, 3, 1, 1, 10, 20, treatment="proofs"),
-        _ruleset(1, 0, 0, "a very long ruleset name that may fold", 0, 0, 0, 0, 20, 20, treatment="proofs"),
-        _ruleset(0, 0, 1, "other", 0, 0, 0, 0, 10, 20, treatment="proofs"),
-        _ruleset(1, 0, 1, "other", 10, 8, 1, 1, 20, 20, treatment="proofs"),
-    )
-    sections = build_timing_sections(compact, rulesets, targets, spec, detailed=True)
-
-    for width in (80, 119, 120, 160):
-        console = Console(record=True, width=width, color_system=None)
-        console.print(render_rich_sections(sections, width))
-        output = console.export_text()
-        assert output.count("Warning:") == (1 if width < 120 else 0)
-        assert max(cell_len(line) for line in output.splitlines()) <= width
-        assert "Engine timing" in output
-        assert "Detailed timing" in output
-        assert "Unattributed" in output
-
-
-def test_default_six_file_compact_report_stays_bounded_at_realistic_widths() -> None:
-    target = _target("main", "sha256:main")
-    files = tuple(
-        models.FileSpec(
-            f"benchmarks/case-{file_order}.egg", Path(f"/tmp/case-{file_order}.egg"), f"sha256:{file_order}"
-        )
-        for file_order in range(6)
-    )
-    spec = models.BenchmarkSpec(files=files, treatments=("off", "term", "proofs"), rounds=6, timeout_sec=120)
-    compact = tuple(
-        _compact(
+def test_failed_file_uses_dashes_and_ruleset_status_message(tmp_path: Path) -> None:
+    report_path = tmp_path / "failed.jsonl"
+    baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    records = (
+        make_record(
             0,
-            cell_order,
-            700_000,
-            300_000,
-            250_000,
-            250_000,
-            2_000_000,
-            file_order=file_order,
-            treatment=treatment,
-        )
-        for file_order in range(6)
-        for cell_order, treatment in enumerate(spec.treatments)
+            started_at="2026-07-17T12:00:00Z",
+            binary_sha256=baseline.target.binary_sha256,
+            treatment=baseline.treatment,
+        ),
+        make_record(
+            1,
+            started_at="2026-07-17T12:00:01Z",
+            binary_sha256=candidate.target.binary_sha256,
+            treatment=candidate.treatment,
+            status="timed-out",
+        ),
     )
-    rulesets = tuple(
-        _ruleset(
-            0,
-            cell_order,
-            0,
-            "rules",
-            700_000,
-            300_000,
-            250_000,
-            250_000,
-            1_500_000,
-            1_500_000,
-            file_order=file_order,
-            treatment=treatment,
-        )
-        for file_order in range(6)
-        for cell_order, treatment in enumerate(spec.treatments)
+    write_report(report_path, *records)
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+
+    with ReportDatabase(report_path) as database:
+        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
+
+    phase_table = _only_table(catalog, "phases")
+    assert all(_cell(row, phase_table, "candidate").display == "—" for row in phase_table.rows)
+    ruleset_section = next(section for section in catalog.sections if section.id == "rulesets")
+    assert isinstance(ruleset_section.blocks[0], ReportMessage)
+    assert "timeout row selected" in ruleset_section.blocks[0].text
+
+
+def test_duration_units_and_file_labels_are_compact() -> None:
+    assert format_duration(None) == "—"
+    assert format_duration(999) == "999 ns"
+    assert format_duration(12_500) == "12.5 us"
+    assert format_duration(1_250_000) == "1.25 ms"
+    assert format_duration(1_250_000_000) == "1.25 s"
+
+    files = (
+        models.FileSpec("left/shared.egg", Path("/left/shared.egg"), "sha256:left"),
+        models.FileSpec("right/shared.egg", Path("/right/shared.egg"), "sha256:right"),
     )
-    sections = build_timing_sections(compact, rulesets, (target,), spec, detailed=False)
-
-    for width in (80, 119, 120, 160):
-        console = Console(record=True, width=width, color_system=None)
-        console.print(render_rich_sections(sections, width))
-        lines = console.export_text().splitlines()
-        assert sum("Warning:" in line for line in lines) == (1 if width < 120 else 0)
-        assert max(map(cell_len, lines)) <= width
-        assert len(lines) <= 70
-
-    markdown = render_markdown_sections(sections)
-    assert markdown.count("### benchmarks/case-") == 6
-    assert markdown.count("| main | main/") == 18
+    assert tuple(report_file_labels(files).values()) == ("left/shared.egg", "right/shared.egg")
 
 
-def _compact(
-    target_order: int,
-    cell_order: int,
-    search_ns: float | None = None,
-    apply_ns: float | None = None,
-    merge_ns: float | None = None,
-    rebuild_ns: float | None = None,
-    wall_ns: float | None = None,
-    *,
-    file_order: int = 0,
-    treatment: models.Treatment = "off",
-    issue: str | None = None,
-    unattributed_ns: float | None = None,
-) -> CompactTimingView:
-    pre_merge = None
-    ruleset_total = None
-    outside_rulesets = None
-    other = None
-    if issue is None:
-        assert search_ns is not None and apply_ns is not None
-        assert merge_ns is not None and rebuild_ns is not None and wall_ns is not None
-        unattributed_ns = 0 if unattributed_ns is None else unattributed_ns
-        pre_merge = search_ns + apply_ns + unattributed_ns
-        ruleset_total = pre_merge + merge_ns + rebuild_ns
-        outside_rulesets = wall_ns - ruleset_total
-        other = wall_ns - search_ns - apply_ns - merge_ns - rebuild_ns
-    return CompactTimingView(
-        target_order,
-        file_order,
-        cell_order,
-        "main",
-        treatment,
-        search_ns,
-        apply_ns,
-        None if search_ns is None or apply_ns is None else search_ns + apply_ns,
-        unattributed_ns,
-        pre_merge,
-        merge_ns,
-        rebuild_ns,
-        ruleset_total,
-        outside_rulesets,
-        other,
-        wall_ns,
-        wall_ns is not None,
-        "available" if issue is None else "invalid",
-        issue,
-    )
+def _only_table(catalog: ReportCatalog, section_id: str) -> ReportTable:
+    section = next(section for section in catalog.sections if section.id == section_id)
+    tables = tuple(block for block in section.blocks if isinstance(block, ReportTable))
+    assert len(tables) == 1
+    return tables[0]
 
 
-def _ruleset(
-    target_order: int,
-    cell_order: int,
-    ruleset_order: int,
-    name: str,
-    search_ns: float | None,
-    apply_ns: float | None,
-    merge_ns: float | None,
-    rebuild_ns: float | None,
-    denominator_ns: float | None,
-    maximum_target_total: float,
-    *,
-    file_order: int = 0,
-    treatment: models.Treatment = "off",
-    unattributed_ns: float | None = None,
-) -> RulesetTimingView:
-    phases = (search_ns, apply_ns, unattributed_ns, merge_ns, rebuild_ns)
-    if all(phase is None for phase in phases):
-        search_and_apply = None
-        pre_merge = None
-        total = None
-        has_samples = False
-    else:
-        assert search_ns is not None
-        assert apply_ns is not None
-        assert merge_ns is not None
-        assert rebuild_ns is not None
-        unattributed_ns = 0 if unattributed_ns is None else unattributed_ns
-        search_and_apply = search_ns + apply_ns
-        pre_merge = search_and_apply + unattributed_ns
-        total = pre_merge + merge_ns + rebuild_ns
-        has_samples = True
-    return RulesetTimingView(
-        file_order,
-        cell_order,
-        ruleset_order,
-        target_order,
-        "main",
-        treatment,
-        name,
-        search_ns,
-        apply_ns,
-        search_and_apply,
-        unattributed_ns,
-        pre_merge,
-        merge_ns,
-        rebuild_ns,
-        total,
-        maximum_target_total,
-        denominator_ns,
-        has_samples,
-        "available",
-        None if total is None or not denominator_ns else total / denominator_ns,
-    )
-
-
-def _target(label: str, binary_sha256: str) -> models.ResolvedTarget:
-    request = models.TargetRequest(f"{label}=.", ".", label)
-    row = models.TargetRow(".", "/checkout", "HEAD", binary_sha256[-12:], False, label)
-    return models.ResolvedTarget(request, row, binary_sha256, None)
-
-
-def _spec(*, treatments: tuple[models.Treatment, ...] = ("off", "proofs")) -> models.BenchmarkSpec:
-    file = models.FileSpec("path/to/integer_math.egg", Path("/tmp/integer_math.egg"), "sha256:file")
-    return models.BenchmarkSpec(files=(file,), treatments=treatments, rounds=2, timeout_sec=120)
-
-
-def _section(sections: tuple[ReportSection, ...], section_id: str) -> ReportSection:
-    return next(section for section in sections if section.id == section_id)
-
-
-def _tables(section: ReportSection) -> tuple[ReportTable, ...]:
-    return tuple(block for block in section.blocks if isinstance(block, ReportTable))
-
-
-def _column_index(table: ReportTable, column_id: str) -> int:
-    return next(index for index, column in enumerate(table.columns) if column.id == column_id)
-
-
-def _column_displays(table: ReportTable, column_id: str) -> tuple[str, ...]:
-    index = _column_index(table, column_id)
-    return tuple(row.cells[index].display for row in table.rows)
-
-
-def _column_raw(table: ReportTable, column_id: str) -> tuple[object, ...]:
-    index = _column_index(table, column_id)
-    return tuple(row.cells[index].raw for row in table.rows)
+def _cell(row: ReportRow, table: ReportTable, column_id: str) -> ReportCell:
+    index = next(index for index, column in enumerate(table.columns) if column.id == column_id)
+    return row.cells[index]
