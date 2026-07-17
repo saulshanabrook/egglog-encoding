@@ -1,5 +1,6 @@
 /target/
 /.reports*.jsonl
+/.reports*.duckdb*
 /.profiles/
 /.bench-worktrees/
 /.venv/

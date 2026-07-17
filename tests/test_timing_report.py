@@ -21,7 +21,7 @@ from .conftest import make_endpoint, make_record, make_ruleset_timing, make_timi
 
 
 def test_phase_report_uses_split_means_and_wall_residual(tmp_path: Path) -> None:
-    report_path = tmp_path / "phases.jsonl"
+    report_path = tmp_path / "phases.duckdb"
     baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
     candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
     file = models.FileSpec("nested/file.egg", tmp_path / "file.egg", "sha256:file")
@@ -67,7 +67,7 @@ def test_phase_report_uses_split_means_and_wall_residual(tmp_path: Path) -> None
 
 
 def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
-    report_path = tmp_path / "rulesets.jsonl"
+    report_path = tmp_path / "rulesets.duckdb"
     baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
     candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
     file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
@@ -117,7 +117,7 @@ def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
 
 
 def test_failed_file_uses_dashes_and_ruleset_status_message(tmp_path: Path) -> None:
-    report_path = tmp_path / "failed.jsonl"
+    report_path = tmp_path / "failed.duckdb"
     baseline = make_endpoint(binary_sha256="sha256:base", treatment="off")
     candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
     file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -38,6 +37,7 @@ def test_pair_cli_defaults_to_current_main_off_vs_proofs() -> None:
     assert baseline == models.EndpointRequest(targets.parse_target("."), "main", "off")
     assert candidate == models.EndpointRequest(targets.parse_target("."), "main", "proofs")
     assert args.detail == "summary"
+    assert args.report == benchmark.DEFAULT_REPORT == ".reports.duckdb"
     assert args.command == "benchmark"
 
 
@@ -366,7 +366,7 @@ def test_batch_target_resolution_reuses_complete_cache_label_before_building_pen
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(
         report,
         make_record(
@@ -504,10 +504,8 @@ def test_main_validates_old_report_before_target_resolution(
     capsys: Any,
     tmp_path: Path,
 ) -> None:
-    report = tmp_path / "old.jsonl"
-    old = dict(make_record(0, started_at="2026-07-04T12:00:00Z"))
-    old["report_schema_version"] = 1
-    report.write_text(json.dumps(old) + "\n", encoding="utf-8")
+    report = tmp_path / "old.duckdb"
+    report.write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(
         benchmark,
@@ -526,7 +524,7 @@ def test_main_preflights_both_fresh_targets_before_collecting(
     capsys: Any,
     tmp_path: Path,
 ) -> None:
-    report = tmp_path / "reports.jsonl"
+    report = tmp_path / "reports.duckdb"
     benchmark_file = tmp_path / "file.egg"
     benchmark_file.write_text("(check (= 1 1))\n", encoding="utf-8")
     file_spec = models.FileSpec("file.egg", benchmark_file, "sha256:file")
@@ -579,5 +577,6 @@ def test_main_preflights_both_fresh_targets_before_collecting(
 
     assert result == 2
     assert preflighted == ["old", "new"]
-    assert report.read_text(encoding="utf-8") == ""
+    with ReportDatabase(report) as database:
+        assert database._connection.execute("SELECT count(*) FROM report_rows").fetchone() == (0,)
     assert "does not support --timing-summary" in capsys.readouterr().err

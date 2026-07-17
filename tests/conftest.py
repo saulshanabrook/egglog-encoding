@@ -12,6 +12,7 @@ import pytest
 
 from benchmarking import models, samply_analysis, targets
 from benchmarking import profile as profile_runner
+from benchmarking.reports.database import ReportDatabase
 from benchmarking.reports.records import (
     ReportRecord,
     RulesetTimingRecord,
@@ -96,12 +97,11 @@ def make_timing_summary(*rulesets: RulesetTimingRecord) -> TimingSummaryRecord:
 
 
 def write_report(path: Path, *records: ReportRecord) -> None:
-    """Write deterministic JSONL fixtures without exercising production append."""
+    """Write deterministic records through the persistent cache boundary."""
 
-    path.write_text(
-        "".join(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n" for record in records),
-        encoding="utf-8",
-    )
+    with ReportDatabase(path) as database:
+        for record in records:
+            database.append(record)
 
 
 def make_target(

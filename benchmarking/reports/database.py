@@ -1,7 +1,7 @@
-"""Own the transient DuckDB catalog over the append-only benchmark JSONL.
+"""Own the persistent benchmark cache and its session-local DuckDB report.
 
-This module appends trusted writer records, creates the direct JSONL scan,
-installs one immutable pair scope, loads ordinary analysis/presentation views,
+This module bootstraps the versioned cache, inserts trusted writer records,
+installs one immutable pair scope, loads temporary analysis/presentation views,
 discovers row-complete cached endpoints, and converts SQL rows to typed
 contracts. Persisted writer shapes belong in :mod:`benchmarking.reports.records`;
 statistical and grouping semantics belong in ``reports/sql``; table layout and
@@ -10,7 +10,7 @@ text rendering belong above this module.
 
 from __future__ import annotations
 
-import json
+import shutil
 from collections.abc import Sequence
 from importlib import resources
 from pathlib import Path
@@ -30,7 +30,7 @@ from ..models import (
     Treatment,
     validate_unique_file_identities,
 )
-from .records import TIMING_SUMMARY_SCHEMA_VERSION, ReportRecord
+from .records import ReportRecord
 from .results import (
     CachedEndpoint,
     CachedTarget,
@@ -117,32 +117,55 @@ class SqlReportScope(TypedDict):
 
 
 class ReportDatabase:
-    """Provide one transient SQL session with repeatable cache queries and one report scope."""
+    """Provide one persistent cache connection and one immutable report scope."""
+
+    # Bump only when schema.sql's persistent objects change; caches are rebuilt.
+    CACHE_SCHEMA_VERSION = 1
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.touch(exist_ok=True)
-        # This private in-memory catalog owns only schemas, scope relations, and
-        # report views. ``report_rows`` scans the JSONL directly; no report data
-        # is copied into or persisted as a DuckDB database.
-        self._connection = duckdb.connect(":memory:")
+        is_new = not (self.path.exists() or self.path.is_symlink())
         self._closed = False
         self._scope_installed = False
         try:
-            self._connection.execute("SET threads = 1")
-            self._connection.execute("SET preserve_insertion_order = true")
-            # A created view cannot bind a prepared path parameter, so expose
-            # the escaped literal through a catalog scalar macro.
-            report_path = _duckdb_string_literal(_escape_duckdb_glob(self.path))
-            self._connection.execute(f"CREATE MACRO report_path() AS {report_path}")
-            self._connection.execute(_sql_resource("schema.sql"))
-            self._ensure_report_loads()
+            self._connection = duckdb.connect(str(self.path), config={"threads": 1})
+        except duckdb.Error as error:
+            message = str(error)
+            if "Could not set lock on file" in message and "Conflicting lock is held" in message:
+                raise ValueError(
+                    f"benchmark report {self.path} is locked by another process. "
+                    "Wait for that process to finish or stop it, then retry; do not remove the report."
+                ) from error
+            if is_new:
+                _remove_cache_artifacts(self.path)
+                raise ValueError(
+                    f"could not create benchmark report {self.path}. Check the path and permissions."
+                ) from error
+            raise ValueError(self._incompatible_report_message()) from error
+        try:
+            if is_new:
+                self._connection.begin()
+                self._connection.execute(_sql_resource("schema.sql"))
+                self._connection.execute(
+                    "INSERT INTO report_cache_metadata VALUES (?)",
+                    [self.CACHE_SCHEMA_VERSION],
+                )
+                self._connection.commit()
+            try:
+                versions = self._connection.execute("SELECT schema_version FROM report_cache_metadata").fetchall()
+            except duckdb.Error as error:
+                raise ValueError(self._incompatible_report_message()) from error
+            if versions != [(self.CACHE_SCHEMA_VERSION,)]:
+                raise ValueError(self._incompatible_report_message())
+            self._connection.execute(_sql_resource("session.sql"))
             self._connection.execute(_sql_resource("analysis.sql"))
             self._connection.execute(_sql_resource("presentation.sql"))
         except BaseException:
             self._connection.close()
             self._closed = True
+            if is_new:
+                _remove_cache_artifacts(self.path)
             raise
 
     @property
@@ -159,51 +182,28 @@ class ReportDatabase:
         self.close()
 
     def close(self) -> None:
-        """Release the transient connection without creating database artifacts."""
+        """Close the cache connection and flush its persistent database."""
 
         if not self._closed:
             self._connection.close()
             self._closed = True
 
-    def _ensure_report_loads(self) -> None:
-        """Reject a cache that does not satisfy the current record contracts."""
-
-        try:
-            # count(*) can be answered without projecting the cast record.
-            # Referencing one member forces DuckDB to cast every complete JSON
-            # object to report_record_t. The explicit version count also rejects
-            # an old summary whose empty ruleset list cannot reveal its shape.
-            counts = self._connection.execute(
-                """
-                SELECT
-                    count(started_at),
-                    count(*) FILTER (
-                        WHERE status = 'success'
-                          AND timing_summary IS NULL
-                    ),
-                    count(*) FILTER (
-                        WHERE timing_summary IS NOT NULL
-                          AND timing_summary.schema_version != ?
-                    )
-                FROM report_rows
-                """,
-                [TIMING_SUMMARY_SCHEMA_VERSION],
-            ).fetchone()
-        except duckdb.Error as error:
-            raise ValueError(self._incompatible_report_message()) from error
-        if counts is None or counts[1] != 0 or counts[2] != 0:
-            raise ValueError(self._incompatible_report_message())
-
     def append(self, record: ReportRecord) -> None:
-        """Serialize one trusted writer record, then append one JSON line."""
+        """Append one trusted writer record to the persistent cache."""
 
         self._ensure_open()
-        encoded = json.dumps(record, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(encoded + "\n")
+        self._connection.execute(
+            """
+            INSERT INTO report_rows BY NAME
+            SELECT
+                nextval('report_row_sequence') AS row_index,
+                unnest(?::report_record_t)
+            """,
+            [record],
+        )
 
     def find_label_pointer(self, label: str) -> CachedTarget | None:
-        """Return the latest JSONL row carrying ``label``, or ``None``."""
+        """Return the latest cache row carrying ``label``, or ``None``."""
 
         self._ensure_open()
         rows = _fetch_rows(
@@ -250,7 +250,7 @@ class ReportDatabase:
         keys: Sequence[EstimateKey],
         rounds: int,
     ) -> dict[EstimateKey, tuple[Status, ...]]:
-        """Select latest statuses for all distinct cache keys in one direct-file scan."""
+        """Select latest statuses for all distinct cache keys in one SQL query."""
 
         self._ensure_open()
         if rounds < 1:
@@ -618,17 +618,12 @@ def _sql_scope_file(file: FileSpec) -> SqlReportScopeFile:
     }
 
 
-def _escape_duckdb_glob(path: Path) -> str:
-    """Make file-table-function glob metacharacters literal in ``path``."""
+def _remove_cache_artifacts(path: Path) -> None:
+    """Remove only artifacts created while bootstrapping a previously absent cache."""
 
-    literals = {"*": "[*]", "?": "[?]", "[": "[[]", "]": "[]]"}
-    return "".join(literals.get(character, character) for character in str(path))
-
-
-def _duckdb_string_literal(value: str) -> str:
-    """Quote runtime text as a DuckDB literal for catalog DDL."""
-
-    return "'" + value.replace("'", "''") + "'"
+    path.unlink(missing_ok=True)
+    Path(f"{path}.wal").unlink(missing_ok=True)
+    shutil.rmtree(Path(f"{path}.tmp"), ignore_errors=True)
 
 
 def _fetch_rows[RowT](cursor: duckdb.DuckDBPyConnection, row_type: type[RowT]) -> list[RowT]:

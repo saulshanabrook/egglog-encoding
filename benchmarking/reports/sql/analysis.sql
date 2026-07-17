@@ -1,6 +1,6 @@
 -- Statistical analysis for the one immutable baseline/candidate scope.
 
-CREATE VIEW report_metrics AS
+CREATE TEMP VIEW report_metrics AS
 SELECT *
 FROM (
     VALUES
@@ -8,7 +8,7 @@ FROM (
         (1::UTINYINT, 'max_rss_bytes')
 ) AS metrics(metric_order, metric);
 
-CREATE VIEW report_phases AS
+CREATE TEMP VIEW report_phases AS
 SELECT *
 FROM (
     VALUES
@@ -21,7 +21,7 @@ FROM (
 
 -- Collection ETA data covers the complete cache rather than the installed
 -- report scope.
-CREATE VIEW historical_process_estimates AS
+CREATE TEMP VIEW historical_process_estimates AS
 SELECT
     binary_sha256,
     file_sha256,
@@ -35,7 +35,7 @@ FROM report_rows
 WHERE status = 'success' AND wall_sec IS NOT NULL
 GROUP BY ALL;
 
-CREATE VIEW selected_endpoints AS
+CREATE TEMP VIEW selected_endpoints AS
 WITH endpoints AS (
     SELECT
         0::UTINYINT AS endpoint_order,
@@ -65,7 +65,7 @@ SELECT
     endpoint.treatment
 FROM endpoints;
 
-CREATE VIEW selected_files AS
+CREATE TEMP VIEW selected_files AS
 SELECT
     (ordinality - 1)::UINTEGER AS file_order,
     file.file_sha256,
@@ -77,7 +77,7 @@ FROM current_report_scope,
     unnest(scope.files) WITH ORDINALITY AS rows(file, ordinality)
 WHERE singleton;
 
-CREATE VIEW selected_parameters AS
+CREATE TEMP VIEW selected_parameters AS
 SELECT
     scope.rounds AS rounds,
     scope.timeout_sec AS timeout_sec,
@@ -86,8 +86,8 @@ FROM current_report_scope
 WHERE singleton;
 
 -- Select the latest requested observations for each endpoint/file. Equal
--- timestamps are broken by physical JSONL order.
-CREATE VIEW selected_observations AS
+-- timestamps are broken by persistent append order.
+CREATE TEMP VIEW selected_observations AS
 WITH ranked AS (
     SELECT
         endpoints.endpoint_order,
@@ -117,7 +117,7 @@ SELECT * EXCLUDE (selection_rank)
 FROM ranked
 WHERE selection_rank <= (SELECT rounds FROM selected_parameters);
 
-CREATE VIEW selected_result_statuses AS
+CREATE TEMP VIEW selected_result_statuses AS
 WITH requested AS (
     SELECT endpoints.endpoint_order, files.file_order
     FROM selected_endpoints AS endpoints
@@ -154,7 +154,7 @@ FROM aggregated;
 
 -- Absolute wall/RSS estimates share one implementation so their samples and
 -- Student-t intervals cannot drift apart.
-CREATE VIEW endpoint_metric_estimates AS
+CREATE TEMP VIEW endpoint_metric_estimates AS
 WITH requested AS (
     SELECT
         metrics.metric_order,
@@ -231,7 +231,7 @@ SELECT
     issue
 FROM classified;
 
-CREATE VIEW file_metric_comparisons AS
+CREATE TEMP VIEW file_metric_comparisons AS
 WITH paired AS (
     SELECT
         baseline.metric_order,
@@ -332,7 +332,7 @@ FROM estimated;
 -- The fixed-suite result applies only to wall time. Lowest/highest summaries
 -- remain available from valid comparable files even when another file makes
 -- the suite incomplete.
-CREATE VIEW comparison_summary AS
+CREATE TEMP VIEW comparison_summary AS
 WITH suite_aggregated AS (
     SELECT
         first(
@@ -481,7 +481,7 @@ SELECT * FROM tails;
 -- Aggregate the five recorded components for each observation. Other is the
 -- residual requested by the UI and deliberately includes unattributed
 -- pre-merge time as well as time outside recorded rulesets.
-CREATE VIEW observation_phase_totals AS
+CREATE TEMP VIEW observation_phase_totals AS
 SELECT
     observations.endpoint_order,
     observations.file_order,
@@ -506,7 +506,7 @@ SELECT
 FROM selected_observations AS observations
 WHERE observations.status = 'success';
 
-CREATE VIEW endpoint_phase_estimates AS
+CREATE TEMP VIEW endpoint_phase_estimates AS
 WITH requested AS (
     SELECT
         endpoints.endpoint_order,
@@ -557,7 +557,7 @@ SELECT
     issue
 FROM aggregated;
 
-CREATE VIEW phase_comparisons AS
+CREATE TEMP VIEW phase_comparisons AS
 WITH paired AS (
     SELECT
         baseline.file_order,
@@ -589,7 +589,7 @@ SELECT
     CASE WHEN issue IS NULL THEN candidate_ns / baseline_ns END AS point
 FROM paired;
 
-CREATE VIEW observation_rulesets AS
+CREATE TEMP VIEW observation_rulesets AS
 SELECT
     observations.endpoint_order,
     observations.file_order,
@@ -607,18 +607,18 @@ JOIN selected_result_statuses AS statuses USING (endpoint_order, file_order)
 CROSS JOIN unnest(observations.timing_summary.rulesets) AS items(ruleset)
 WHERE observations.status = 'success' AND statuses.issue IS NULL;
 
-CREATE VIEW valid_ruleset_files AS
+CREATE TEMP VIEW valid_ruleset_files AS
 SELECT file_order
 FROM selected_result_statuses
 GROUP BY file_order
 HAVING count(*) = 2 AND count(*) FILTER (WHERE issue IS NULL) = 2;
 
-CREATE VIEW ruleset_names AS
+CREATE TEMP VIEW ruleset_names AS
 SELECT DISTINCT rulesets.file_order, rulesets.name
 FROM observation_rulesets AS rulesets
 JOIN valid_ruleset_files USING (file_order);
 
-CREATE VIEW ruleset_endpoint_estimates AS
+CREATE TEMP VIEW ruleset_endpoint_estimates AS
 SELECT
     endpoints.endpoint_order,
     names.file_order,
@@ -640,7 +640,7 @@ LEFT JOIN observation_rulesets AS values
     AND values.name = names.name
 GROUP BY endpoints.endpoint_order, names.file_order, names.name;
 
-CREATE VIEW ruleset_comparisons AS
+CREATE TEMP VIEW ruleset_comparisons AS
 WITH paired AS (
     SELECT
         baseline.file_order,

@@ -1,4 +1,4 @@
-"""Define the trusted JSONL record shapes written by the benchmark runner.
+"""Define the trusted DuckDB record shapes written by the benchmark runner.
 
 The three persisted ``TypedDict`` shapes below mirror the same-named SQL types
 in ``reports/sql/schema.sql``. DuckDB access belongs in

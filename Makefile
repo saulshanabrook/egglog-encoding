@@ -4,7 +4,7 @@
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-test
 
-BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.jsonl
+BENCHMARK_SMOKE_REPORT ?= /tmp/egglog-encoding-bench-smoke.duckdb
 
 # Full validation is hygiene followed by tests.
 check: nits test
@@ -54,11 +54,12 @@ proof-tests:
 
 # Use a disposable report path, keeping the default report cache untouched.
 benchmark-smoke:
-	rm -f -- "$(BENCHMARK_SMOKE_REPORT)"
+	rm -f -- "$(BENCHMARK_SMOKE_REPORT)" "$(BENCHMARK_SMOKE_REPORT).wal"
+	rm -rf -- "$(BENCHMARK_SMOKE_REPORT).tmp"
 	uv run --locked ./bench.py --rounds 1 \
 		--report "$(BENCHMARK_SMOKE_REPORT)" --format markdown \
 		egglog/tests/integer_math.egg > /dev/null
-	test -s "$(BENCHMARK_SMOKE_REPORT)"
+	uv run --locked python -c 'import duckdb, sys; connection = duckdb.connect(sys.argv[1], read_only=True); assert connection.execute("SELECT count(*) FROM report_rows").fetchone()[0] > 0' "$(BENCHMARK_SMOKE_REPORT)"
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details

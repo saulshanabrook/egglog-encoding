@@ -34,7 +34,7 @@ make format         # apply Ruff and rustfmt formatting
 ```
 
 `make benchmark-smoke` uses a one-round comparison and writes its disposable
-JSONL report to `/tmp/egglog-encoding-bench-smoke.jsonl`. Override
+DuckDB report to `/tmp/egglog-encoding-bench-smoke.duckdb`. Override
 `BENCHMARK_SMOKE_REPORT` to choose another path. `make update-snapshots` is the
 explicit review action for accepting intentional Markdown report changes.
 
@@ -218,7 +218,8 @@ selection, summary, files, phases, rulesets order.
 
 The remaining collection options are:
 
-- `--report PATH`: append-only report/cache path; default `.reports.jsonl`.
+- `--report PATH`: persistent DuckDB report/cache path; default
+  `.reports.duckdb`.
   A filesystem path is required; `-` is not a streaming destination.
 - `--rounds N`: selected observations required for every endpoint/file;
   default `6`.
@@ -236,8 +237,8 @@ Every successful benchmark observation records timing from the same measured
 process. Timing collection is always enabled; requesting a detailed report does
 not rerun a diagnostic process or change the cache key.
 
-The engine records these components per ruleset and the JSONL stores their raw
-nanosecond totals:
+The engine records these components per ruleset and the report database stores
+their raw nanosecond totals:
 
 - Search: matching and join execution.
 - Apply: executing rule-head instructions and staging updates.
@@ -278,12 +279,12 @@ The page reuses the exact renderer-neutral tables shown by Rich and Markdown.
 It can select a baseline endpoint, candidate endpoint, file subset, and
 cumulative detail level, and can swap the endpoints. Its endpoint menus contain
 only cache entries complete for the invocation's fixed files, rounds, and
-timeout. Applying a selection opens a fresh transient DuckDB catalog and
+timeout. Applying a selection opens a fresh DuckDB report session and
 recomputes all report views atomically. A failed request leaves the prior report
 and selectors intact.
 
 The live page never resolves a target, builds a binary, runs a benchmark, or
-modifies the JSONL. Stop it with Ctrl-C in the benchmark terminal.
+appends to the report database. Stop it with Ctrl-C in the benchmark terminal.
 
 ### CPU profiling
 
@@ -304,11 +305,22 @@ benchmark statistics and pair report.
 
 ## Reports and cache behavior
 
-`.reports.jsonl` is an append-only, disposable local cache. Each line is one
-measured process observation. The runner queries it directly with DuckDB; the
-in-memory DuckDB connection contains only types, the immutable comparison
-scope, and derived views. Report rows are not copied into a DuckDB table and no
-`.duckdb` database is created.
+`.reports.duckdb` is a binary, disposable local cache. `report_rows` is
+logically append-only through this tool and stores one measured process
+observation per flat, explicitly typed row; the nested timing summary remains a
+DuckDB `STRUCT` containing a list of ruleset `STRUCT`s. The immutable comparison
+scope and all analysis and presentation views are temporary objects recreated
+for each report session.
+
+Every current report session opens the database read-write, including live
+retargeting. If another process holds DuckDB's native-file lock, wait for it to
+finish or stop it before retrying; a lock diagnostic is not an instruction to
+remove a valid cache. Once the benchmark and live server have stopped, inspect
+recent rows without modifying the binary file:
+
+```bash
+uv run --locked python -c 'import duckdb; duckdb.connect(".reports.duckdb", read_only=True).sql("SELECT row_index, started_at, status, backend, treatment, wall_sec FROM report_rows ORDER BY row_index DESC LIMIT 10").show()'
+```
 
 Cache reuse is keyed by:
 
@@ -322,7 +334,7 @@ Cache reuse is keyed by:
 Target source, path, git revision, dirty state, labels, and display paths are
 provenance rather than cache-key dimensions. The runner selects the newest
 `--rounds` rows for each exact endpoint/file, ordering first by `started_at` and
-then by physical JSONL order. Without `--force-run`, it appends only missing
+then by persistent append order. Without `--force-run`, it appends only missing
 rows. With `--force-run`, it appends a full fresh set and then selects the
 newest rows.
 
@@ -331,10 +343,11 @@ and preflighted for the required timing-summary interface. Fresh collection is
 serial and uses one untimed executable startup warmup per target. Operational
 cache, build, progress, and estimate output always goes to stderr.
 
-The trusted writer schema is defined once in
-`benchmarking/reports/records.py` and mirrored by named DuckDB STRUCT types in
-`benchmarking/reports/sql/schema.sql`. A successful row contains provenance,
-cache coordinates, process timing, peak RSS, and this nested timing shape:
+The trusted Python writer schema in `benchmarking/reports/records.py` mirrors
+the named DuckDB `STRUCT` types in `benchmarking/reports/sql/schema.sql`. The
+physical table columns are derived directly from `report_record_t`, avoiding a
+second SQL field list. A successful row contains provenance, cache coordinates,
+process timing, peak RSS, and this logical nested shape:
 
 ```json
 {
@@ -380,15 +393,18 @@ have no timing summary and retain whatever process measurements the operating
 system supplied. Either status makes a dependent statistical comparison
 incomplete instead of averaging only successful rows.
 
-This tool is the only supported reader and writer. DuckDB performs the direct
-JSON-to-STRUCT cast; the Python layer does not duplicate field-by-field input
-validation. A schema change intentionally invalidates existing caches. Move or
-remove an incompatible report and recompute it—there are no migrations, legacy
-fallbacks, or partial old-format reports.
+This tool is the only supported reader and writer. Each insert casts one
+parameterized Python record to `report_record_t`; the Python layer does not
+duplicate field-by-field input validation. One explicit cache schema version
+covers the stored-record objects and rejects incompatible databases before
+target resolution or collection. Move or remove an incompatible report and
+recompute it—there are no migrations, legacy fallbacks, or partial old-format
+reports. Session-only selection and comparison types do not invalidate stored
+rows when their shape changes.
 
 ### SQL ownership
 
-The transient catalog exposes ordinary views with stable responsibilities:
+Each report session exposes temporary views with stable responsibilities:
 
 - `presentation_endpoints`: the exact baseline and candidate;
 - `presentation_summary`: suite wall ratio and per-file wall/RSS tails;
@@ -461,7 +477,7 @@ Top-level ownership:
 - `tests/`: domain-focused pytest and Syrupy snapshot coverage.
 - `Makefile`: canonical validation and maintenance commands.
 - `pyproject.toml` and `uv.lock`: Python configuration and locked environment.
-- `.reports.jsonl`: ignored, disposable benchmark cache.
+- `.reports.duckdb`: ignored, disposable benchmark cache.
 - `.profiles/`: ignored Samply artifact cache.
 
 Python module boundaries:
@@ -480,13 +496,15 @@ Python module boundaries:
   operational stderr presentation.
 - `benchmarking/profile.py` owns profile requests and Samply artifact caching;
   `samply_analysis.py` reads and presents profile artifacts.
-- `benchmarking/reports/records.py` defines the trusted JSONL `TypedDict`
+- `benchmarking/reports/records.py` defines the trusted DuckDB `TypedDict`
   writer schema.
-- `benchmarking/reports/database.py` owns the transient DuckDB connection,
-  direct JSONL scan, immutable pair scope, cache queries, and typed SQL rows.
-- `benchmarking/reports/sql/schema.sql` mirrors persisted/scope types;
-  `analysis.sql` owns selection and computation; `presentation.sql` exposes the
-  five renderer-facing views.
+- `benchmarking/reports/database.py` owns the persistent DuckDB connection,
+  typed inserts, immutable pair scope, cache queries, and typed SQL rows.
+- `benchmarking/reports/sql/schema.sql` defines persistent stored-record types
+  and tables; `session.sql` owns temporary selection/scope types and the
+  immutable scope table; `analysis.sql` owns temporary selection and
+  computation views; `presentation.sql` exposes the five temporary
+  renderer-facing views.
 - `benchmarking/reports/results.py` mirrors presentation schemas with named
   tuples; `comparison.py` maps them to the fixed pair-report catalog.
 - `benchmarking/reports/catalog.py` defines renderer-neutral sections, tables,

@@ -25,7 +25,7 @@ def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: Snaps
         catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
 
     markdown = render_markdown_report_document(catalog)
-    stable = markdown.replace(str(report_path), "/tmp/benchmark-report.jsonl")
+    stable = markdown.replace(str(report_path), "/tmp/benchmark-report.duckdb")
 
     assert stable == snapshot
     assert tuple(section.id for section in catalog.sections) == (
@@ -116,7 +116,7 @@ def test_one_round_report_keeps_point_estimates_without_ci_brackets(tmp_path: Pa
 
 
 def test_missing_rss_is_one_explicit_unavailable_summary(tmp_path: Path) -> None:
-    report_path = tmp_path / "no-rss.jsonl"
+    report_path = tmp_path / "no-rss.duckdb"
     file = models.FileSpec("benchmarks/file.egg", tmp_path / "file.egg", "sha256:file")
     baseline = make_endpoint(target_label="baseline", binary_sha256="sha256:baseline", treatment="off")
     candidate = make_endpoint(target_label="candidate", binary_sha256="sha256:candidate", treatment="proofs")
@@ -146,7 +146,7 @@ def test_missing_rss_is_one_explicit_unavailable_summary(tmp_path: Path) -> None
 
 
 def _pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
-    report_path = tmp_path / "pair.jsonl"
+    report_path = tmp_path / "pair.duckdb"
     files = (
         models.FileSpec("benchmarks/math.egg", tmp_path / "math.egg", "sha256:file-math"),
         models.FileSpec("benchmarks/rewrite.egg", tmp_path / "rewrite.egg", "sha256:file-rewrite"),

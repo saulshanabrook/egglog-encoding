@@ -20,7 +20,7 @@
   | Files | 2: math.egg; rewrite.egg |
   | Rounds | 2 per endpoint/file |
   | Timeout | 120 s per run |
-  | Report | /tmp/benchmark-report.jsonl |
+  | Report | /tmp/benchmark-report.duckdb |
   
   This comparison changes more than one of target, backend, and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.
   

@@ -1,6 +1,6 @@
 -- Stable renderer-facing relations over the singleton comparison scope.
 
-CREATE VIEW presentation_endpoints AS
+CREATE TEMP VIEW presentation_endpoints AS
 SELECT
     endpoint_order,
     endpoint_role,
@@ -12,7 +12,7 @@ SELECT
     treatment
 FROM selected_endpoints;
 
-CREATE VIEW presentation_summary AS
+CREATE TEMP VIEW presentation_summary AS
 SELECT
     summary.summary_order,
     summary.metric,
@@ -25,7 +25,7 @@ SELECT
     summary.issue
 FROM comparison_summary AS summary;
 
-CREATE VIEW presentation_files AS
+CREATE TEMP VIEW presentation_files AS
 SELECT
     comparisons.file_order,
     comparisons.metric_order,
@@ -45,7 +45,7 @@ SELECT
 FROM file_metric_comparisons AS comparisons
 JOIN selected_files AS files USING (file_order);
 
-CREATE VIEW presentation_phases AS
+CREATE TEMP VIEW presentation_phases AS
 SELECT
     comparisons.file_order,
     files.file_path,
@@ -58,7 +58,7 @@ SELECT
 FROM phase_comparisons AS comparisons
 JOIN selected_files AS files USING (file_order);
 
-CREATE VIEW presentation_rulesets AS
+CREATE TEMP VIEW presentation_rulesets AS
 SELECT
     comparisons.file_order,
     files.file_path,

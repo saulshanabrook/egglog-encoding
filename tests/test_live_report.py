@@ -144,7 +144,7 @@ def test_browser_ui_exposes_pair_swap_files_detail_and_atomic_rollback() -> None
 
 
 def _live_case(tmp_path: Path) -> tuple[live.LiveReportSession, dict[str, live.JsonValue]]:
-    report_path = tmp_path / "live.jsonl"
+    report_path = tmp_path / "live.duckdb"
     files = (
         models.FileSpec("benchmarks/one.egg", tmp_path / "one.egg", "sha256:file-one"),
         models.FileSpec("benchmarks/two.egg", tmp_path / "two.egg", "sha256:file-two"),

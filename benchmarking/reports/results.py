@@ -1,7 +1,7 @@
 """Define immutable typed contracts at the DuckDB query boundary.
 
 The ``*View`` named tuples mirror ``reports/sql/presentation.sql`` column for
-column. Persisted JSONL ``TypedDict`` shapes instead live in ``records``;
+column. Persisted DuckDB ``TypedDict`` shapes instead live in ``records``;
 presentation layout and formatting live above this data boundary.
 """
 

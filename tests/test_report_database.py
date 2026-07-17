@@ -1,15 +1,18 @@
-"""Test direct JSONL persistence and pair-native DuckDB report relations."""
+"""Test persistent DuckDB storage and pair-native report relations."""
 
 from __future__ import annotations
 
-import json
 import math
+import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
+import duckdb
 import pytest
 
 from benchmarking import models
+from benchmarking.reports import database as report_database
 from benchmarking.reports.database import ReportDatabase, _fetch_rows
 from benchmarking.reports.records import (
     ReportRecord,
@@ -33,6 +36,19 @@ PRESENTATION_RELATIONS = (
     "presentation_phases",
     "presentation_rulesets",
 )
+PERSISTENT_TYPES = {
+    "report_status_t",
+    "report_treatment_t",
+    "ruleset_timing_record_t",
+    "timing_summary_record_t",
+    "report_record_t",
+}
+SESSION_TYPES = {
+    "selection_key_t",
+    "report_scope_endpoint_t",
+    "report_scope_file_t",
+    "report_scope_t",
+}
 
 
 def _endpoint(
@@ -69,19 +85,28 @@ def _comparison(
     )
 
 
-def test_missing_report_is_an_empty_direct_view_without_database_artifacts(tmp_path: Path) -> None:
-    report = tmp_path / "nested" / "report.jsonl"
+def test_missing_report_creates_an_empty_persistent_cache(tmp_path: Path) -> None:
+    report = tmp_path / "nested" / "report.duckdb"
 
     with ReportDatabase(report) as database:
         assert database.successful_estimate_aggregates() == ()
 
-    assert report.read_text(encoding="utf-8") == ""
+    assert report.stat().st_size > 0
     assert list(report.parent.iterdir()) == [report]
+
+    with ReportDatabase(report) as database:
+        assert database.successful_estimate_aggregates() == ()
 
 
 def test_append_is_immediately_queryable(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     record = make_record(0, started_at="2026-07-15T12:00:00Z", target_label="current")
+    replacement = make_record(
+        1,
+        started_at="2026-07-15T12:00:00Z",
+        target_label="current",
+        binary_sha256="sha256:replacement",
+    )
 
     with ReportDatabase(report) as database:
         database.append(record)
@@ -89,28 +114,99 @@ def test_append_is_immediately_queryable(tmp_path: Path) -> None:
 
     assert pointer is not None
     assert pointer.binary_sha256 == record["binary_sha256"]
-    raw = json.loads(report.read_text(encoding="utf-8"))
-    assert raw == record
-    assert "row_index" not in raw
+    with ReportDatabase(report) as database:
+        persisted = database.find_label_pointer("current")
+        database.append(replacement)
+        latest = database.find_label_pointer("current")
+        row_indices = database._connection.execute("SELECT row_index FROM report_rows ORDER BY row_index").fetchall()
+
+    assert persisted == pointer
+    assert latest is not None
+    assert latest.binary_sha256 == replacement["binary_sha256"]
+    assert row_indices == [(0,), (1,)]
 
 
-def test_report_path_metacharacters_are_literal_not_a_glob(tmp_path: Path) -> None:
-    report = tmp_path / "a'quoted[?*].jsonl"
-    sibling = tmp_path / "a?.jsonl"
-    write_report(report, make_record(0, started_at="2026-07-15T12:00:00Z"))
-    write_report(
-        sibling,
-        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:sibling"),
-    )
+def test_failed_typed_insert_is_atomic_and_does_not_consume_the_sequence(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
+    invalid = make_record(0, started_at="2026-07-15T12:00:00Z")
+    invalid["timeout_sec"] = -1
+    valid = make_record(1, started_at="2026-07-15T12:00:01Z")
 
     with ReportDatabase(report) as database:
-        aggregates = database.successful_estimate_aggregates()
+        with pytest.raises(duckdb.Error, match="out of range"):
+            database.append(invalid)
+        assert database._connection.execute("SELECT * FROM report_rows").fetchall() == []
+        database.append(valid)
+        assert database._connection.execute("SELECT row_index, started_at FROM report_rows").fetchall() == [
+            (0, valid["started_at"])
+        ]
 
-    assert [aggregate.key.binary_sha256 for aggregate in aggregates] == ["sha256:bin"]
+    with ReportDatabase(report) as database:
+        assert database._connection.execute("SELECT row_index, started_at FROM report_rows").fetchall() == [
+            (0, valid["started_at"])
+        ]
+
+
+def test_locked_cache_reports_wait_diagnostic_and_remains_readable(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
+    write_report(report, make_record(0, started_at="2026-07-15T12:00:00Z"))
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import duckdb, sys; "
+                "connection = duckdb.connect(sys.argv[1]); "
+                "print('ready', flush=True); sys.stdin.read()"
+            ),
+            str(report),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    try:
+        assert holder.stdout.readline().strip() == "ready"
+        with pytest.raises(ValueError, match=r"locked by another process.*Wait.*do not remove"):
+            ReportDatabase(report)
+    finally:
+        if holder.poll() is None:
+            holder.communicate(input="\n", timeout=5)
+
+    with ReportDatabase(report) as database:
+        assert len(database.successful_estimate_aggregates()) == 1
+
+
+def test_failed_new_bootstrap_removes_only_its_artifacts_and_can_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = tmp_path / "report.duckdb"
+    original_resource = report_database._sql_resource
+
+    def broken_resource(name: str) -> str:
+        sql = original_resource(name)
+        if name == "schema.sql":
+            return sql + "\nSELECT * FROM missing_bootstrap_relation;"
+        return sql
+
+    monkeypatch.setattr(report_database, "_sql_resource", broken_resource)
+    with pytest.raises(duckdb.Error, match="missing_bootstrap_relation"):
+        ReportDatabase(report)
+
+    assert not report.exists()
+    assert not Path(f"{report}.wal").exists()
+    assert not Path(f"{report}.tmp").exists()
+
+    monkeypatch.setattr(report_database, "_sql_resource", original_resource)
+    with ReportDatabase(report) as database:
+        assert database._connection.execute("SELECT count(*) FROM report_rows").fetchone() == (0,)
 
 
 def test_historical_estimates_are_grouped_as_counts_and_sums_in_sql(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(
         report,
         make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=1.5),
@@ -128,7 +224,7 @@ def test_historical_estimates_are_grouped_as_counts_and_sums_in_sql(tmp_path: Pa
     ] == [(60, 1, 7.0), (120, 2, 4.0)]
 
 
-def test_five_presentation_relations_are_ordinary_views_with_named_tuple_schemas(tmp_path: Path) -> None:
+def test_five_presentation_relations_are_temporary_views_with_named_tuple_schemas(tmp_path: Path) -> None:
     expected_columns = (
         EndpointView._fields,
         SummaryView._fields,
@@ -136,7 +232,7 @@ def test_five_presentation_relations_are_ordinary_views_with_named_tuple_schemas
         PhaseComparisonView._fields,
         RulesetComparisonView._fields,
     )
-    with ReportDatabase(tmp_path / "report.jsonl") as database:
+    with ReportDatabase(tmp_path / "report.duckdb") as database:
         views = dict(
             database._connection.execute(
                 """
@@ -158,8 +254,56 @@ def test_five_presentation_relations_are_ordinary_views_with_named_tuple_schemas
             assert columns == expected
 
     assert set(views) == set(PRESENTATION_RELATIONS)
-    assert not any(views.values())
+    assert all(views.values())
     assert macros == []
+
+
+def test_only_record_types_and_tables_persist_across_report_sessions(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
+    with ReportDatabase(report) as database:
+        custom_types = dict(
+            database._connection.execute(
+                """
+                SELECT type_name, database_name
+                FROM duckdb_types()
+                WHERE type_name IN (
+                    'report_status_t',
+                    'report_treatment_t',
+                    'ruleset_timing_record_t',
+                    'timing_summary_record_t',
+                    'report_record_t',
+                    'selection_key_t',
+                    'report_scope_endpoint_t',
+                    'report_scope_file_t',
+                    'report_scope_t'
+                )
+                """
+            ).fetchall()
+        )
+
+    assert set(custom_types) == PERSISTENT_TYPES | SESSION_TYPES
+    assert {name for name, database_name in custom_types.items() if database_name == "temp"} == SESSION_TYPES
+    assert all(custom_types[name] != "temp" for name in PERSISTENT_TYPES)
+
+    connection = duckdb.connect(str(report), read_only=True)
+    try:
+        persisted_types = {
+            row[0]
+            for row in connection.execute("SELECT type_name FROM duckdb_types() WHERE type_name LIKE '%_t'").fetchall()
+        }
+        persisted_tables = {
+            row[0] for row in connection.execute("SELECT table_name FROM duckdb_tables() WHERE NOT internal").fetchall()
+        }
+        persisted_views = {
+            row[0] for row in connection.execute("SELECT view_name FROM duckdb_views() WHERE NOT internal").fetchall()
+        }
+    finally:
+        connection.close()
+
+    assert persisted_types >= PERSISTENT_TYPES
+    assert not SESSION_TYPES & persisted_types
+    assert persisted_tables == {"report_cache_metadata", "report_rows"}
+    assert not set(PRESENTATION_RELATIONS) & persisted_views
 
 
 def test_scope_is_a_single_immutable_pair_and_can_compare_backend_treatment_endpoints(tmp_path: Path) -> None:
@@ -167,7 +311,7 @@ def test_scope_is_a_single_immutable_pair_and_can_compare_backend_treatment_endp
     candidate = _endpoint("DD/term", "sha256:shared", backend="dd", treatment="term")
     comparison = _comparison(tmp_path, baseline=baseline, candidate=candidate)
 
-    with ReportDatabase(tmp_path / "report.jsonl") as database:
+    with ReportDatabase(tmp_path / "report.duckdb") as database:
         database.install_scope(comparison, None)
         endpoints = database.report_view_data("summary").endpoints
         with pytest.raises(RuntimeError, match="already installed"):
@@ -182,7 +326,7 @@ def test_scope_is_a_single_immutable_pair_and_can_compare_backend_treatment_endp
 
 
 def test_report_view_data_fetches_only_the_requested_detail_relations(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     comparison = _comparison(tmp_path)
     write_report(
         report,
@@ -208,7 +352,7 @@ def test_report_view_data_fetches_only_the_requested_detail_relations(tmp_path: 
 
 
 def test_python_and_duckdb_record_schemas_match_and_nested_values_round_trip(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     record = make_record(
         0,
         started_at="2026-07-15T12:00:00Z",
@@ -243,31 +387,27 @@ def test_python_and_duckdb_record_schemas_match_and_nested_values_round_trip(tmp
     assert tuple(rulesets[0]) == tuple(RulesetTimingRecord.__annotations__)
 
 
-@pytest.mark.parametrize("mixed", [False, True], ids=["old", "mixed"])
-def test_incompatible_report_shapes_fail_during_construction(tmp_path: Path, mixed: bool) -> None:
-    report = tmp_path / "report.jsonl"
-    current = make_record(0, started_at="2026-07-15T12:00:00Z")
-    old = cast(dict[str, object], make_record(1, started_at="2026-07-15T12:00:01Z"))
-    old["report_schema_version"] = 1
-    records = (current, cast(ReportRecord, old)) if mixed else (cast(ReportRecord, old),)
-    write_report(report, *records)
+def test_incompatible_cache_version_fails_during_construction(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
+    with ReportDatabase(report) as database:
+        database._connection.execute("UPDATE report_cache_metadata SET schema_version = 0")
 
     with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
         ReportDatabase(report)
 
 
-def test_success_without_timing_summary_is_an_incompatible_report(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    row = make_record(0, started_at="2026-07-15T12:00:00Z")
-    row["timing_summary"] = None
-    write_report(report, row)
+def test_existing_non_database_artifact_fails_without_being_recreated(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
+    report.write_text("{}\n", encoding="utf-8")
 
     with pytest.raises(ValueError, match=r"invalid or incompatible benchmark report.*recompute"):
         ReportDatabase(report)
 
+    assert report.read_text(encoding="utf-8") == "{}\n"
 
-def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+
+def test_bulk_status_selection_uses_all_cache_dimensions_and_append_tie_order(tmp_path: Path) -> None:
+    report = tmp_path / "report.duckdb"
     write_report(
         report,
         make_record(0, started_at="2026-07-15T12:00:00Z", status="failure"),
@@ -296,7 +436,7 @@ def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp
 
 
 def test_pair_statistics_and_fieller_intervals_are_computed_in_sql(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     comparison = _comparison(tmp_path, rounds=3)
     t_critical = 4.302652729911275
     records: list[ReportRecord] = []
@@ -335,7 +475,7 @@ def test_pair_statistics_and_fieller_intervals_are_computed_in_sql(tmp_path: Pat
 
 
 def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     files = tuple(
         models.FileSpec(f"file-{index}.egg", tmp_path / f"file-{index}.egg", f"sha256:file-{index}")
         for index in range(3)
@@ -381,7 +521,7 @@ def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path
 
 
 def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     files = (
         models.FileSpec("valid.egg", tmp_path / "valid.egg", "sha256:valid-file"),
         models.FileSpec("invalid.egg", tmp_path / "invalid.egg", "sha256:invalid-file"),
@@ -435,7 +575,7 @@ def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> N
 
 
 def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     files = (
         models.FileSpec("valid.egg", tmp_path / "valid.egg", "sha256:valid-file"),
         models.FileSpec("invalid.egg", tmp_path / "invalid.egg", "sha256:invalid-file"),
@@ -485,7 +625,7 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
 
 
 def test_phase_rows_are_exact_components_and_other_is_wall_residual(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     comparison = _comparison(tmp_path)
     baseline_timing = make_timing_summary(
         make_ruleset_timing(
@@ -539,7 +679,7 @@ def test_phase_rows_are_exact_components_and_other_is_wall_residual(tmp_path: Pa
 
 
 def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     comparison = _comparison(tmp_path, rounds=2)
     zero = make_ruleset_timing(
         "recorded-zero",
@@ -607,7 +747,7 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
 
 
 def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     comparison = _comparison(tmp_path)
     names = tuple(reversed(tuple(f"rules-{index:02d}" for index in range(12))))
     baseline_rules = tuple(
@@ -643,7 +783,7 @@ def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_p
 
 
 def test_complete_cached_endpoints_requires_latest_rounds_for_every_file_and_counts_any_status(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     files = (
         models.FileSpec("first.egg", tmp_path / "first.egg", "sha256:first", fact_directory_sha256="facts:first"),
         models.FileSpec("second.egg", tmp_path / "second.egg", "sha256:second", fact_directory_sha256="facts:second"),
@@ -695,7 +835,7 @@ def test_complete_cached_endpoints_requires_latest_rounds_for_every_file_and_cou
 
 
 def test_fetch_rows_rejects_sql_python_column_drift(tmp_path: Path) -> None:
-    with ReportDatabase(tmp_path / "report.jsonl") as database:
+    with ReportDatabase(tmp_path / "report.duckdb") as database:
         cursor = database._connection.execute("SELECT 0 AS wrong_column")
         with pytest.raises(RuntimeError, match="do not match"):
             _fetch_rows(cursor, EndpointView)

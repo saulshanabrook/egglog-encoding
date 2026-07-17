@@ -45,7 +45,7 @@ def test_estimate_model_is_exact_only_and_updates_from_successful_processes() ->
 
 
 def test_collection_plan_counts_cache_and_missing_rows(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
     target = make_target()
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
@@ -65,7 +65,7 @@ def test_collection_plan_counts_cache_and_missing_rows(tmp_path: Path) -> None:
 
 
 def test_collection_plan_does_not_reuse_main_rows_for_dd(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(
         report,
         make_record(
@@ -91,7 +91,7 @@ def test_collection_plan_does_not_reuse_main_rows_for_dd(tmp_path: Path) -> None
 
 
 def test_pair_collection_reuses_each_endpoint_independently_and_force_runs_both(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(
         report,
         make_record(0, started_at="2026-07-04T12:00:00Z", backend="main", treatment="off"),
@@ -116,7 +116,7 @@ def test_collection_plan_writes_human_output_to_stderr(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     write_report(report, make_record(0, started_at="2026-07-04T12:00:00Z", wall_sec=1.0))
     target_label = "target [red]literal[/red] x[/blue]"
     file_label = "nested/file.egg"
@@ -144,7 +144,7 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     target = make_target(binary_path=ROOT / "egglog-experimental")
     selected_endpoint = endpoint(target)
@@ -169,11 +169,9 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
             startup_warmup,
         )
         selected = database.selected_statuses(models.EstimateKey.for_endpoint(selected_endpoint, file_spec, 120), 1)
+        persisted = database._connection.execute("SELECT wall_sec, timing_summary FROM report_rows").fetchone()
 
-    persisted = json.loads(report.read_text(encoding="utf-8"))
-    assert "row_index" not in persisted
-    assert persisted["wall_sec"] == 1.25
-    assert persisted["timing_summary"] == summary
+    assert persisted == (1.25, summary)
     assert selected == ("success",)
 
 
@@ -181,7 +179,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    report = tmp_path / "report.jsonl"
+    report = tmp_path / "report.duckdb"
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     target = make_target(binary_path=ROOT / "egglog-experimental")
     selected_endpoint = endpoint(target)
@@ -212,5 +210,6 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
                 collection.EstimateModel(),
                 startup_warmup,
             )
+        assert database._connection.execute("SELECT count(*) FROM report_rows").fetchone() == (0,)
 
-    assert report.read_text(encoding="utf-8") == ""
+    assert report.stat().st_size > 0

@@ -53,8 +53,9 @@ make benchmark-smoke
 ```
 
 The Make target writes the one-round machine-readable report to
-`/tmp/egglog-encoding-bench-smoke.jsonl` by default and verifies that it is
-nonempty. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
+`/tmp/egglog-encoding-bench-smoke.duckdb` by default and verifies that its
+`report_rows` table is nonempty. Override `BENCHMARK_SMOKE_REPORT` to use
+another temporary path.
 
 For benchmark-report UI changes, inspect both a focused one-file report and the
 default six-file report in Rich and Markdown form. Exercise terminal widths 80,
@@ -76,16 +77,22 @@ collect a new row.
 ## Benchmarking
 
 - Use `./bench.py` as the public benchmark entrypoint.
-- Keep `.reports.jsonl` append-only and ignored by git.
+- Keep `.reports.duckdb` append-only through the benchmark writer and ignored
+  by git.
 - `--report` requires a filesystem path; literal `-` is rejected rather than
   treated as a streaming destination.
 - Runner status output always goes to stderr, including Rich progress and
   summary tables.
-- Treat report JSONL as a disposable cache written and read only by this tool.
-  Schema shape changes invalidate the cache and require recomputation; do not
-  add migrations or field-by-field malformed-input validation.
-- The runner queries report JSONL directly through an explicitly typed DuckDB
-  view; it must not copy rows into a persistent or in-memory DuckDB table.
+- Treat the report database as a disposable cache written and read only by this
+  tool. Schema changes invalidate the cache and require recomputation; do not
+  add migrations, compatibility aliases, or field-by-field malformed-input
+  validation.
+- Persist observations in the flat, typed `report_rows` table. Keep the current
+  selection and comparison types, comparison scope, and all
+  analysis/presentation views temporary and session-local.
+- Every current report session opens DuckDB read-write. Treat a native-file lock
+  as an operational wait/stop-the-other-process condition, never as an
+  incompatible-cache instruction.
 - Benchmark inputs should not contain executable `(prove ...)` commands; use
   `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,

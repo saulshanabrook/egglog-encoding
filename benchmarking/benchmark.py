@@ -44,7 +44,7 @@ from .reports.render import render_markdown_report_document, render_rich_report_
 from .targets import git_root_for_path, parse_target
 from .workloads import resolve_files
 
-DEFAULT_REPORT = ".reports.jsonl"
+DEFAULT_REPORT = ".reports.duckdb"
 DEFAULT_ROUNDS = 6
 DEFAULT_TIMEOUT_SEC = 120
 
@@ -102,7 +102,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--report",
         default=DEFAULT_REPORT,
-        help=f"append-only JSONL report/cache path (default: {DEFAULT_REPORT})",
+        help=f"persistent DuckDB report/cache path (default: {DEFAULT_REPORT})",
     )
     parser.add_argument(
         "--format",

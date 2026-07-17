@@ -134,7 +134,7 @@ class LiveReportSession:
         )
         options = ReportOptions(request.detail)
 
-        # Use a fresh transient catalog. A parse, SQL, or report-assembly error
+        # Use a fresh report session. A cache, SQL, or report-assembly error
         # leaves both the published request and catalog untouched.
         with ReportDatabase(self._report_path) as database:
             catalog = build_report_catalog(database, comparison, options)
