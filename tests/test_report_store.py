@@ -45,14 +45,13 @@ def test_append_is_immediately_queryable(tmp_path: Path) -> None:
     assert "row_index" not in raw
 
 
-def test_append_indexes_the_exact_normalized_record_it_persists(tmp_path: Path) -> None:
+def test_append_indexes_the_exact_record_it_persists(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
-    raw = cast(dict[str, object], make_record(0, started_at="2026-07-15T12:00:00Z"))
-    raw["wall_sec"] = "2.5"
+    record = make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=2.5)
     key = models.EstimateKey("sha256:bin", "sha256:file", "off", 120)
     store = ReportStore(report)
 
-    store.append(cast(ReportRecord, raw))
+    store.append(record)
     persisted = parse_report_record(report.read_bytes())
     current = store.latest_records(key, 1)[0].record
     reopened = ReportStore(report)

@@ -1,16 +1,15 @@
 """Define and encode the trusted JSONL shapes written by the benchmark runner.
 
-The three ``TypedDict`` definitions are the sole persisted schema. One reused
-Pydantic adapter parses and serializes whole observations; cache indexing lives
-in :mod:`benchmarking.reports.store`, while derived immutable rows live with
-their computations in :mod:`benchmarking.reports.analysis`.
+The three ``TypedDict`` definitions are the sole persisted schema. The standard
+library JSON codec reads and writes whole observations; cache indexing lives in
+:mod:`benchmarking.reports.store`, while derived immutable rows live with their
+computations in :mod:`benchmarking.reports.analysis`.
 """
 
 from __future__ import annotations
 
-from typing import Final, Literal, TypedDict
-
-from pydantic import TypeAdapter
+import json
+from typing import Final, Literal, TypedDict, cast
 
 from ..models import Backend, Status, Treatment
 
@@ -63,27 +62,26 @@ class ReportRecord(TypedDict):
     timing_summary: TimingSummaryRecord | None
 
 
-REPORT_RECORD_CODEC: Final = TypeAdapter(ReportRecord)
-
-
 def parse_report_record(data: bytes | str) -> ReportRecord:
     """Parse one JSON object and enforce the current trusted-writer contract."""
 
-    record = REPORT_RECORD_CODEC.validate_json(data)
-    _require_success_timing(record)
+    record = cast(ReportRecord, json.loads(data))
+    _require_current_timing(record)
     return record
 
 
 def serialize_report_record(record: ReportRecord) -> tuple[ReportRecord, bytes]:
-    """Return Pydantic's normalized record and its newline-free JSON encoding."""
+    """Return a record and its newline-free JSON encoding."""
 
-    validated = REPORT_RECORD_CODEC.validate_python(record)
-    _require_success_timing(validated)
-    return validated, REPORT_RECORD_CODEC.dump_json(validated)
+    _require_current_timing(record)
+    return record, json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
 
 
-def _require_success_timing(record: ReportRecord) -> None:
-    """Keep successful rows self-contained for phase and ruleset analysis."""
+def _require_current_timing(record: ReportRecord) -> None:
+    """Reject old timing data and keep successful rows self-contained."""
 
-    if record["status"] == "success" and record["timing_summary"] is None:
+    summary = record["timing_summary"]
+    if summary is not None and summary["schema_version"] != TIMING_SUMMARY_SCHEMA_VERSION:
+        raise ValueError(f"unsupported timing summary schema_version {summary['schema_version']!r}")
+    if record["status"] == "success" and summary is None:
         raise ValueError("successful benchmark record is missing its timing summary")

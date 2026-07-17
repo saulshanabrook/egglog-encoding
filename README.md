@@ -331,8 +331,8 @@ serial and uses one untimed executable startup warmup per target. Operational
 cache, build, progress, and estimate output always goes to stderr.
 
 The trusted writer schema is defined once as `TypedDict` structures in
-`benchmarking/reports/records.py`. One reused Pydantic `TypeAdapter` generated
-from those structures parses and serializes complete rows. A successful row
+`benchmarking/reports/records.py`. The standard-library JSON codec parses and
+serializes complete rows. A successful row
 contains provenance, cache coordinates, process timing, peak RSS, and this
 nested timing shape:
 
@@ -380,12 +380,11 @@ have no timing summary and retain whatever process measurements the operating
 system supplied. Either status makes a dependent statistical comparison
 incomplete instead of averaging only successful rows.
 
-This tool is the only supported reader and writer. The codec enforces the
-required row shape, literal values such as the timing schema version, and the
-requirement that successful rows contain timing data. It deliberately does not
-add migrations or defensive field-by-field validation for data only this tool
-writes. A schema change intentionally invalidates existing caches: move or
-remove an incompatible report and recompute it.
+This tool is the only supported reader and writer. The codec rejects old timing
+schema versions and requires successful rows to contain timing data. It trusts
+the tool's typed writer rather than repeating the `TypedDict` as runtime
+field-by-field validation. A schema change intentionally invalidates existing
+caches: move or remove an incompatible report and recompute it.
 
 ### Report-analysis ownership
 
@@ -483,7 +482,7 @@ Python module boundaries:
 - `benchmarking/profile.py` owns profile requests and Samply artifact caching;
   `samply_analysis.py` reads and presents profile artifacts.
 - `benchmarking/reports/records.py` defines the sole trusted JSONL `TypedDict`
-  schema and its reusable Pydantic codec.
+  schema and its standard-library JSON codec.
 - `benchmarking/reports/store.py` loads and appends JSONL, preserves physical
   order, indexes exact cache keys and labels, and discovers cached endpoints.
 - `benchmarking/reports/analysis.py` defines and computes one pair's immutable

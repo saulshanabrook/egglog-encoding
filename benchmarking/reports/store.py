@@ -88,7 +88,7 @@ class ReportStore:
             with self.path.open("rb") as handle:
                 for line in handle:
                     self._add(parse_report_record(line))
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, KeyError, TypeError) as error:
             raise ValueError(self._incompatible_report_message()) from error
 
     @property
