@@ -32,7 +32,10 @@ pub(crate) struct EncodingState {
     /// current function uses the original eager backend merge, so cleanup can
     /// discard stale proof-view candidates whenever the current value already
     /// has a proof witness.
-    pub merge_current: HashMap<String, (String, usize)>,
+    /// `fname -> (current_fn_name, input_arity, current_is_pair)`. `current_is_pair`
+    /// is true when the `current` helper carries a proof column (proof mode +
+    /// eq-sort output), so `update_view` writes `(values output proof)`.
+    pub merge_current: HashMap<String, (String, usize, bool)>,
     /// Term-construction side channel (proof mode): maps a constructor term's
     /// canonical e-class var to `(natural e-class var, connector proof var)`,
     /// where the connector proves `natural = canonical`. A parent term reads its
@@ -167,7 +170,9 @@ impl<'a> ProofInstrumentor<'a> {
                         &proof_sort,
                     )
                 }
-                Justification::Merge(..) => panic!(
+                Justification::Merge(..)
+                | Justification::MergeIdx(..)
+                | Justification::MergeRow(..) => panic!(
                     "Merge functions do not include union actions, so proof should not be by merge"
                 ),
             };
@@ -203,7 +208,9 @@ impl<'a> ProofInstrumentor<'a> {
                     &format!("{a_lhs} {a_rhs}"),
                     &proof_sort,
                 ),
-                Justification::Merge(..) => panic!(
+                Justification::Merge(..)
+                | Justification::MergeIdx(..)
+                | Justification::MergeRow(..) => panic!(
                     "Merge functions do not include union actions, so proof should not be by merge"
                 ),
             }
@@ -438,10 +445,20 @@ impl<'a> ProofInstrumentor<'a> {
             .parser
             .symbol_gen
             .fresh(&format!("{name}Current"));
-        self.egraph
-            .proof_state
-            .merge_current
-            .insert(name.clone(), (current_name.clone(), child_names.len()));
+        // Proof mode + eq-sort output: the `current` helper carries a proof column
+        // so its `:merge` can build children-free `MergeIdx`/`MergeRow` proofs from
+        // the carried view proofs (`old1`/`new1`). Otherwise it stays value-only.
+        let output = fdecl.resolved_schema.output();
+        let output_is_eq_sort = output.is_eq_sort();
+        // eq-sort and eq-container outputs both build proof-carrying terms in the
+        // merge body, so both route through the pair-valued `current`/`MergeIdx`
+        // path (children-free). Primitive outputs build no proof terms.
+        let current_is_pair = self.egraph.proof_state.proofs_enabled
+            && (output_is_eq_sort || output.is_eq_container_sort());
+        self.egraph.proof_state.merge_current.insert(
+            name.clone(),
+            (current_name.clone(), child_names.len(), current_is_pair),
+        );
 
         let fresh_name = self.egraph.parser.symbol_gen.fresh("merge_rule");
         let cleanup_name = self.egraph.parser.symbol_gen.fresh("merge_cleanup");
@@ -472,11 +489,32 @@ impl<'a> ProofInstrumentor<'a> {
             &Justification::Merge(name.clone(), p1_fresh.clone(), p2_fresh.clone()),
         );
         let merge_fn_code_str = merge_fn_code.join("\n");
-        // The `current` function replays the (instrumented) user merge. When the
-        // merge has mint statements it is an action block `(<mints> <result>)`;
-        // when the result is a bare var/lit (e.g. `:merge old`) it must stay a
-        // plain expression, since `(old)` would parse as a call to `old`.
-        let current_merge = if merge_fn_code.is_empty() {
+        // The `current` function replays the user merge to recompute the merged
+        // value (the view's congruence only picks a UF leader; the "merge of
+        // merges" is produced here).
+        let current_merge = if current_is_pair {
+            // Pair-valued `current`: the `:merge` binds `old0`/`old1`/`new0`/`new1`
+            // (value + carried view proof). Rebuild the merge body over the output
+            // values (old0/new0), minting each subterm with a pre-order-indexed
+            // `MergeIdx` proof built from the carried view proofs (old1/new1). The
+            // row proof is a children-free `MergeRow`. This needs neither the
+            // rule-scoped `@p1`/`@p2` nor the key/AST, so it is valid in a `:merge`.
+            let mut body_code = vec![];
+            let mut idx = 0usize;
+            let merged =
+                self.instrument_merge_body(&merge_fn.result, &mut body_code, name, &mut idx);
+            let row_proof = self.term_proof_for_justification(
+                &mut body_code,
+                "",
+                "",
+                &Justification::MergeRow(name.clone(), "old1".to_string(), "new1".to_string()),
+            );
+            if body_code.is_empty() {
+                format!("(values {merged} {row_proof})")
+            } else {
+                format!("({}\n(values {merged} {row_proof}))", body_code.join("\n"))
+            }
+        } else if merge_fn_code.is_empty() {
             merge_fn_var.clone()
         } else {
             format!("({merge_fn_code_str}\n{merge_fn_var})")
@@ -517,10 +555,26 @@ impl<'a> ProofInstrumentor<'a> {
         let fresh_sort = self.egraph.parser.symbol_gen.fresh("mergecleanupsort");
         let output_sort = fdecl.schema.output().clone();
 
+        // A pair-valued `current` declares a proof column and is read by unpacking
+        // the `(values value proof)` tuple; a value-only `current` binds directly.
+        let (current_output, current_select) = if current_is_pair {
+            let proof_type = self.proof_sort();
+            let selproof = self.egraph.parser.symbol_gen.fresh("selproof");
+            (
+                format!("({output_sort} {proof_type})"),
+                format!("(= (values selected {selproof}) ({current_name} {child_names_str}))"),
+            )
+        } else {
+            (
+                output_sort.to_string(),
+                format!("(= selected ({current_name} {child_names_str}))"),
+            )
+        };
+
         // The first runs the merge function adding a new row.
         // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
         format!(
-            "(function {current_name} ({input_sorts}) {output_sort}
+            "(function {current_name} ({input_sorts}) {current_output}
                     :merge {current_merge}
                     :unextractable
                     :internal-hidden)
@@ -547,7 +601,7 @@ impl<'a> ProofInstrumentor<'a> {
                        ((delete ({view_name} {child_names_str} old)))
                         :ruleset {rebuilding_cleanup_ruleset}
                         :name \"{cleanup_name}\")
-                 (rule ((= selected ({current_name} {child_names_str}))
+                 (rule ({current_select}
                         ({view_name} {child_names_str} selected)
                         ({view_name} {child_names_str} old)
                         (!= selected old))
@@ -577,10 +631,10 @@ impl<'a> ProofInstrumentor<'a> {
                 .parser
                 .symbol_gen
                 .fresh(&format!("{name}Current"));
-            self.egraph
-                .proof_state
-                .merge_current
-                .insert(name.clone(), (current_name.clone(), child_names.len()));
+            self.egraph.proof_state.merge_current.insert(
+                name.clone(),
+                (current_name.clone(), child_names.len(), false),
+            );
             return format!(
                 "(function {current_name} ({input_sorts}) {output_sort}
                     :no-merge
@@ -1463,6 +1517,26 @@ impl<'a> ProofInstrumentor<'a> {
                     &proof_sort,
                 )
             }
+            // Term-free: no AST minted (`fv`/`to_ast` unused). The checker
+            // reconstructs the conclusion from the merge body + premise outputs.
+            Justification::MergeIdx(fn_name, p1, p2, idx) => {
+                let merge_idx = self.proof_names().merge_fn_idx_constructor.clone();
+                self.mint(
+                    stmts,
+                    &merge_idx,
+                    &format!("\"{fn_name}\" {p1} {p2} {idx}"),
+                    &proof_sort,
+                )
+            }
+            Justification::MergeRow(fn_name, p1, p2) => {
+                let merge_row = self.proof_names().merge_fn_row_constructor.clone();
+                self.mint(
+                    stmts,
+                    &merge_row,
+                    &format!("\"{fn_name}\" {p1} {p2}"),
+                    &proof_sort,
+                )
+            }
         }
     }
 
@@ -1472,13 +1546,20 @@ impl<'a> ProofInstrumentor<'a> {
     fn update_view(&mut self, fname: &str, args: &[String], proof: &str) -> String {
         let view_name = self.view_name(fname);
         let view_update = format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "));
-        if let Some((current_name, input_arity)) =
+        if let Some((current_name, input_arity, current_is_pair)) =
             self.egraph.proof_state.merge_current.get(fname).cloned()
             && args.len() == input_arity + 1
         {
             let inputs = ListDisplay(&args[..input_arity], " ");
             let output = &args[input_arity];
-            return format!("{view_update}\n(set ({current_name} {inputs}) {output})");
+            // A pair-valued `current` carries the view proof alongside the output so
+            // its `:merge` can build `MergeIdx`/`MergeRow` proofs from it.
+            let current_value = if current_is_pair {
+                format!("(values {output} {proof})")
+            } else {
+                output.clone()
+            };
+            return format!("{view_update}\n(set ({current_name} {inputs}) {current_value})");
         }
         view_update
     }
@@ -1723,6 +1804,87 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     // Add to view and term tables, returning a variable for the created term.
+    /// Rebuild a custom function's merge body inside the pair-valued `current`
+    /// helper's `:merge`, minting each constructor subterm via `add_term_and_view`
+    /// (so canonical ids are used, like every other term site) with a term-free
+    /// `MergeIdx` proof. `idx` is threaded pre-order (incremented once per node,
+    /// leaves included) to match the checker's `subexpr_at_index`, so subexpr `idx`
+    /// evaluated on the premise outputs reconstructs exactly this node's term.
+    /// `old`/`new` in the body map to the `:merge` output columns `old0`/`new0`;
+    /// the carried view proofs are `old1`/`new1`.
+    fn instrument_merge_body(
+        &mut self,
+        expr: &ResolvedExpr,
+        res: &mut Vec<String>,
+        fname: &str,
+        idx: &mut usize,
+    ) -> String {
+        let my_idx = *idx;
+        *idx += 1;
+        match expr {
+            ResolvedExpr::Lit(_, lit) => format!("{lit}"),
+            ResolvedExpr::Var(_, resolved_var) => match resolved_var.name.as_str() {
+                "old" => "old0".to_string(),
+                "new" => "new0".to_string(),
+                other => other.to_string(),
+            },
+            ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
+                let arg_vars = args
+                    .iter()
+                    .map(|a| self.instrument_merge_body(a, res, fname, idx))
+                    .collect::<Vec<_>>();
+                let just = Justification::MergeIdx(
+                    fname.to_string(),
+                    "old1".to_string(),
+                    "new1".to_string(),
+                    my_idx,
+                );
+                let (code, fv) = self.add_term_and_view(func_type, &arg_vars, &just);
+                res.extend(code);
+                fv
+            }
+            // A container-producing primitive (e.g. `set-intersect`): build the
+            // container over the recursively-built args and anchor a term-free
+            // `MergeIdx` container proof in `<CSort>Proof` (the container rebuild's
+            // anchor). No AST/children needed.
+            ResolvedExpr::Call(_, ResolvedCall::Primitive(sp), args) => {
+                let arg_vars = args
+                    .iter()
+                    .map(|a| self.instrument_merge_body(a, res, fname, idx))
+                    .collect::<Vec<_>>();
+                let prim_name = sp.name().to_string();
+                let out = sp.output();
+                let fv = self.fresh_var();
+                res.push(format!(
+                    "(let {fv} ({prim_name} {}))",
+                    ListDisplay(&arg_vars, " ")
+                ));
+                if self.egraph.proof_state.proofs_enabled && out.is_eq_container_sort() {
+                    let csort = out.name().to_string();
+                    let to_ast = self
+                        .proof_names()
+                        .sort_to_ast_constructor
+                        .get(&csort)
+                        .unwrap()
+                        .clone();
+                    let just = Justification::MergeIdx(
+                        fname.to_string(),
+                        "old1".to_string(),
+                        "new1".to_string(),
+                        my_idx,
+                    );
+                    let proof_var = self.term_proof_for_justification(res, &fv, &to_ast, &just);
+                    let cproof = self.term_proof_name(&csort);
+                    res.push(format!("(set ({cproof} {fv}) {proof_var})"));
+                }
+                fv
+            }
+            ResolvedExpr::Call(_, _, _) => {
+                panic!("proof-mode merge body for `{fname}` contains an unsupported call form")
+            }
+        }
+    }
+
     fn instrument_action_expr(
         &mut self,
         expr: &ResolvedExpr,

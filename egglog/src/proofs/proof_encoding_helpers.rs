@@ -25,6 +25,8 @@ pub(crate) struct EncodingNames {
     pub(crate) fiat_constructor: String,
     pub(crate) rule_constructor: String,
     pub(crate) merge_fn_constructor: String,
+    pub(crate) merge_fn_idx_constructor: String,
+    pub(crate) merge_fn_row_constructor: String,
     pub(crate) eq_trans_constructor: String,
     pub(crate) eq_sym_constructor: String,
     pub(crate) congr_constructor: String,
@@ -55,6 +57,17 @@ pub(crate) enum Justification {
     Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
     Merge(String, String, String), // function name, proof1, proof2
+    /// Term-free merge justification for a merge-body subexpression: function
+    /// name, the two premise (view) proof expressions, and the pre-order index of
+    /// this subexpression in the merge body (matches the checker's
+    /// `subexpr_at_index`). Unlike `Merge`, it embeds no AST, so it needs neither
+    /// the merged term nor the function key/children — usable in a `:merge` action.
+    MergeIdx(String, String, String, usize),
+    /// Term-free merge justification for the whole view row (function name + two
+    /// premise proof expressions). The conclusion `f(children, merged)` is
+    /// reconstructed by the checker by running the whole merge body on the premise
+    /// outputs; no AST/children needed.
+    MergeRow(String, String, String),
 }
 
 impl EncodingNames {
@@ -66,6 +79,8 @@ impl EncodingNames {
             fiat_constructor: symbol_gen.fresh("Fiat"),
             rule_constructor: symbol_gen.fresh("Rule"),
             merge_fn_constructor: symbol_gen.fresh("Merge"),
+            merge_fn_idx_constructor: symbol_gen.fresh("MergeIdx"),
+            merge_fn_row_constructor: symbol_gen.fresh("MergeRow"),
             eq_trans_constructor: symbol_gen.fresh("Trans"),
             eq_sym_constructor: symbol_gen.fresh("Sym"),
             congr_constructor: symbol_gen.fresh("Congr"),
@@ -350,6 +365,8 @@ impl ProofInstrumentor<'_> {
             ref fiat_constructor,
             ref rule_constructor,
             ref merge_fn_constructor,
+            ref merge_fn_idx_constructor,
+            ref merge_fn_row_constructor,
             ref eq_trans_constructor,
             ref eq_sym_constructor,
             ref congr_constructor,
@@ -385,6 +402,15 @@ impl ProofInstrumentor<'_> {
 ;; merge function justification- name of function and two proofs for the two terms being merged,
 ;; and the proposition being justified t = t
 (function {merge_fn_constructor} (String {proof_datatype} {proof_datatype} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
+
+;; term-free merge justification for an FD custom-function view subexpression:
+;; name of function, two premise proofs, and the pre-order index of the merge-body
+;; subexpression whose conclusion is reconstructed during proof conversion
+(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden)
+;; term-free merge justification for an FD custom-function view row:
+;; name of function and two premise proofs; the whole-row conclusion is
+;; reconstructed during proof conversion by running the whole merge body
+(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
 
 ;; transitivity of equality proofs
 (function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
