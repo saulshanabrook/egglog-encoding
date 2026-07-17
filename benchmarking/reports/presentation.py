@@ -551,6 +551,7 @@ def _phase_estimate_cell(
 
 
 def _ratio_cell(ratio: RatioEstimate) -> ReportCell:
+    # Retain the point for sorting/filtering while keeping the visible CI cell compact.
     return text_cell(ratio.estimate.point, format_ratio_summary(ratio))
 
 
@@ -560,10 +561,9 @@ def format_ratio_summary(ratio: RatioEstimate) -> str:
     estimate = ratio.estimate
     if estimate.point is None:
         return NULL
-    point = f"{_three_significant_digits(estimate.point)}x"
-    if estimate.ci_low is None or estimate.ci_high is None:
-        return point
-    return f"{_three_significant_digits(estimate.ci_low)}–{_three_significant_digits(estimate.ci_high)}x"
+    if estimate.ci_low is not None and estimate.ci_high is not None:
+        return f"{_three_significant_digits(estimate.ci_low)}–{_three_significant_digits(estimate.ci_high)}x"
+    return f"{_three_significant_digits(estimate.point)}x"
 
 
 def _format_percent(value: float | None, *, signed: bool = False) -> str:
