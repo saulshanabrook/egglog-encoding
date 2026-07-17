@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from rich.console import Console
 from rich.text import Text
 
 from . import samply_analysis
@@ -30,7 +31,6 @@ from .models import (
     Treatment,
     validate_backend_treatment,
 )
-from .output import RunnerOutput
 from .processes import run_command, terminate_process_group
 from .targets import git_root_for_path, parse_target, resolve_profile_target, workload_command
 from .workloads import require_workload_unchanged, resolve_files
@@ -357,9 +357,9 @@ def resolve_profile_request(args: argparse.Namespace, invocation_cwd: Path) -> P
     return request
 
 
-def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: Path, repo_root: Path) -> None:
+def run_profile(args: argparse.Namespace, console: Console, invocation_cwd: Path, repo_root: Path) -> None:
     request = resolve_profile_request(args, invocation_cwd)
-    target = resolve_profile_target(request.target_request, request.backend, invocation_cwd, repo_root, output)
+    target = resolve_profile_target(request.target_request, request.backend, invocation_cwd, repo_root, console)
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs a profiling binary")
     checkout_path = Path(target.row.path)
@@ -379,18 +379,16 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
         try:
             profile = samply_analysis.read_artifact(artifact)
         except ValueError as error:
-            output.console.print(
-                Text.assemble(("warning:", "yellow"), " ignoring invalid profile cache entry: ", str(error))
-            )
+            console.print(Text.assemble(("warning:", "yellow"), " ignoring invalid profile cache entry: ", str(error)))
         else:
             cache_status = "hit"
-            output.console.print(Text.assemble(("Profile cache hit", "bold"), " ", str(artifact)))
+            console.print(Text.assemble(("Profile cache hit", "bold"), " ", str(artifact)))
 
     if profile is None:
         iterations = request.mode.iterations
         if iterations is None:
             assert request.mode.profile_seconds is not None
-            output.console.print(
+            console.print(
                 Text.assemble(
                     ("Calibrating", "bold"),
                     " ",
@@ -406,11 +404,11 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
                 calibration.timing.wall_sec,
                 request.mode.profile_seconds,
             )
-            output.console.print(
+            console.print(
                 f"  calibration: {calibration.timing.wall_sec:.3f}s; recording {iterations} Samply iteration(s)"
             )
             if capped:
-                output.console.print(
+                console.print(
                     "[yellow]warning:[/yellow] maximum profile iterations reached; "
                     "the profile may be shorter than the requested duration"
                 )
@@ -424,7 +422,7 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
             iterations,
             target.binary_sha256,
         )
-        output.console.print(Text.assemble(("Recording profile", "bold"), " ", str(artifact)))
+        console.print(Text.assemble(("Recording profile", "bold"), " ", str(artifact)))
         profile = run_samply_record(
             artifact=artifact,
             file_spec=request.file,
@@ -434,7 +432,7 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
             checkout_path=checkout_path,
             timeout_sec=request.timeout_sec,
         )
-        output.console.print(Text.assemble(("Profile written", "bold"), " ", str(artifact)))
+        console.print(Text.assemble(("Profile written", "bold"), " ", str(artifact)))
 
     if request.show_summary:
         display_artifact = profile_display_path(artifact, invocation_cwd)
@@ -443,14 +441,12 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
             try:
                 summary = samply_analysis.summarize(profile, target.binary_path)
             except ValueError as error:
-                output.console.print(
-                    Text.assemble(("warning:", "yellow"), " CPU profile summary unavailable: ", str(error))
-                )
+                console.print(Text.assemble(("warning:", "yellow"), " CPU profile summary unavailable: ", str(error)))
             if summary is not None:
                 for warning in summary.warnings:
-                    output.console.print(Text.assemble(("warning:", "yellow"), " ", warning))
+                    console.print(Text.assemble(("warning:", "yellow"), " ", warning))
         else:
-            output.console.print(
+            console.print(
                 "[yellow]warning:[/yellow] CPU profile summaries are currently available on macOS only; "
                 "the Samply artifact was created normally."
             )
@@ -468,7 +464,7 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
             sys.stdout.write(rendered + "\n")
             sys.stdout.flush()
         else:
-            samply_analysis.render_rich(output.console, report)
+            samply_analysis.render_rich(console, report)
     else:
         sys.stdout.write(str(artifact.resolve()) + "\n")
         sys.stdout.flush()
@@ -478,11 +474,11 @@ def run_profile(args: argparse.Namespace, output: RunnerOutput, invocation_cwd: 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_profile_args(tuple(sys.argv[1:] if argv is None else argv))
-    output = RunnerOutput()
+    console = Console(stderr=True)
     try:
         script_root = Path(__file__).resolve().parents[1]
-        run_profile(args, output, Path.cwd(), git_root_for_path(script_root))
+        run_profile(args, console, Path.cwd(), git_root_for_path(script_root))
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        output.print_error(error)
+        console.print(Text.assemble(("error:", "red"), " ", str(error)))
         return 2
     return 0

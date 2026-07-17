@@ -12,20 +12,29 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import cast
+from typing import TypedDict, cast
 
 from ..models import BenchmarkEndpoint, ComparisonSpec, FileSpec, ResolvedTarget, TargetRequest, TargetRow
 from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, report_id
-from .comparison import build_report_catalog, report_file_labels
-from .records import ReportRecord
-from .store import ReportStore
+from .presentation import build_report_catalog, report_file_labels
+from .store import ReportRecord, ReportStore
 
 type JsonScalar = str | int | float | bool | None
 type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
+
+
+class _ScopeRequest(TypedDict):
+    """The trusted request shape emitted by the embedded JavaScript form."""
+
+    baseline_endpoint_id: str
+    candidate_endpoint_id: str
+    file_ids: list[str]
+    timeout_sec: int
+    rounds: int
 
 
 @dataclass(frozen=True)
@@ -162,19 +171,31 @@ class InteractiveRuntime:
         )
 
     def _parse_scope(self, value: object) -> InteractiveScope:
-        request = _object(value, "scope request")
-        baseline_id = _string(request, "baseline_endpoint_id")
-        candidate_id = _string(request, "candidate_endpoint_id")
-        _require_known(baseline_id, self._endpoint_by_id, "baseline endpoint")
-        _require_known(candidate_id, self._endpoint_by_id, "candidate endpoint")
+        if not isinstance(value, dict):
+            raise ValueError("scope request must be a JSON object")
+        request = cast(_ScopeRequest, value)
+        baseline_id = request["baseline_endpoint_id"]
+        candidate_id = request["candidate_endpoint_id"]
+        if baseline_id not in self._endpoint_by_id:
+            raise ValueError(f"unknown baseline endpoint id: {baseline_id}")
+        if candidate_id not in self._endpoint_by_id:
+            raise ValueError(f"unknown candidate endpoint id: {candidate_id}")
         if baseline_id == candidate_id:
             raise ValueError("baseline and candidate endpoints must be different")
-        file_ids = _string_list(request, "file_ids")
-        _require_known_subset(file_ids, self._file_by_id, "file")
-        timeout_sec = _positive_int(request, "timeout_sec")
+        file_ids = tuple(request["file_ids"])
+        if not file_ids:
+            raise ValueError("file_ids must not be empty")
+        if len(set(file_ids)) != len(file_ids):
+            raise ValueError("file_ids must not contain duplicates")
+        unknown_files = tuple(file_id for file_id in file_ids if file_id not in self._file_by_id)
+        if unknown_files:
+            raise ValueError(f"unknown file id(s): {', '.join(unknown_files)}")
+        timeout_sec = request["timeout_sec"]
         if timeout_sec not in self._timeouts:
             raise ValueError(f"unknown timeout: {timeout_sec}s")
-        rounds = _positive_int(request, "rounds")
+        rounds = request["rounds"]
+        if rounds < 1:
+            raise ValueError("rounds must be positive")
         if rounds > self._max_rounds:
             raise ValueError(f"rounds must not exceed cached maximum: {self._max_rounds}")
         return InteractiveScope(baseline_id, candidate_id, file_ids, timeout_sec, rounds)
@@ -409,48 +430,3 @@ def _tone_style(tone: CellTone) -> dict[str, JsonValue]:
     if tone == "muted":
         return {"dim": True}
     return {}
-
-
-def _object(value: object, name: str) -> Mapping[str, object]:
-    if not isinstance(value, dict):
-        raise ValueError(f"{name} must be a JSON object")
-    return cast(Mapping[str, object], value)
-
-
-def _string(request: Mapping[str, object], key: str) -> str:
-    value = request.get(key)
-    if not isinstance(value, str):
-        raise ValueError(f"{key} must be a string")
-    return value
-
-
-def _string_list(request: Mapping[str, object], key: str) -> tuple[str, ...]:
-    value = request.get(key)
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{key} must be a JSON array of strings")
-    values = cast(list[str], value)
-    if not values:
-        raise ValueError(f"{key} must not be empty")
-    if len(set(values)) != len(values):
-        raise ValueError(f"{key} must not contain duplicates")
-    return tuple(values)
-
-
-def _positive_int(request: Mapping[str, object], key: str) -> int:
-    value = request.get(key)
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{key} must be an integer")
-    if value < 1:
-        raise ValueError(f"{key} must be positive")
-    return value
-
-
-def _require_known(value: str, choices: Mapping[str, object], name: str) -> None:
-    if value not in choices:
-        raise ValueError(f"unknown {name} id: {value}")
-
-
-def _require_known_subset(values: Sequence[str], choices: Mapping[str, object], name: str) -> None:
-    unknown = tuple(value for value in values if value not in choices)
-    if unknown:
-        raise ValueError(f"unknown {name} id(s): {', '.join(unknown)}")

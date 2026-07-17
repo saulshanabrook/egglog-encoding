@@ -1,7 +1,8 @@
-"""Test target syntax, materialization, builds, hashes, and workload commands."""
+"""Test target syntax, checkout materialization, build selection, and hashing."""
 
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 import sys
@@ -9,12 +10,53 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from rich.console import Console
 
-from benchmarking import models, output, targets
+from benchmarking import models, targets
 
-from .conftest import (
-    make_dirty_git_repo,
-)
+
+def make_dirty_git_repo(path: Path) -> tuple[str, Path]:
+    """Create the dirty checkout needed only by target materialization tests."""
+
+    tracked = path / "tracked.txt"
+    (path / ".gitignore").write_text("/.bench-worktrees/\n", encoding="utf-8")
+    tracked.write_text("committed\n", encoding="utf-8")
+    subprocess.run(["git", "init", "--quiet"], cwd=path, check=True)
+    subprocess.run(["git", "add", ".gitignore", tracked.name], cwd=path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Benchmark Test",
+            "-c",
+            "user.email=benchmark@example.com",
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+        cwd=path,
+        check=True,
+    )
+    sha = targets.git_sha(path)
+    tracked.write_text("dirty\n", encoding="utf-8")
+    return (sha, tracked)
+
+
+def test_parse_target_variants() -> None:
+    assert targets.parse_target(".") == models.TargetRequest(raw=".", source=".", label=None)
+    assert targets.parse_target("main=@main") == models.TargetRequest(raw="main=@main", source="@main", label="main")
+    assert targets.parse_target("prev-run=") == models.TargetRequest(raw="prev-run=", source="", label="prev-run")
+    assert targets.parse_target("#33") == models.TargetRequest(raw="#33", source="#33", label="#33")
+    assert targets.parse_target("candidate=#33") == models.TargetRequest(
+        raw="candidate=#33", source="#33", label="candidate"
+    )
+
+
+@pytest.mark.parametrize("raw", ["#", "#0", "#abc", "candidate=#0"])
+def test_parse_target_rejects_invalid_pr_targets(raw: str) -> None:
+    with pytest.raises(ValueError, match="invalid PR target"):
+        targets.parse_target(raw)
 
 
 def test_materialize_pr_target_fetches_origin_pull_ref(
@@ -117,10 +159,17 @@ def test_build_target_enables_requested_backend_features(monkeypatch: pytest.Mon
     binary = tmp_path / "target" / "release" / "egglog-experimental"
     binary.parent.mkdir(parents=True)
     binary.write_text("binary", encoding="utf-8")
-    row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False)
+    label = "build [red]literal[/red] x[/blue]"
+    row = models.TargetRow(".", str(tmp_path), "HEAD", "abc123", False, label)
     monkeypatch.setattr(targets.subprocess, "run", lambda command, **kwargs: commands.append(command))
     monkeypatch.setattr(targets, "sha256_file", lambda path: "sha256:bin")
+    stream = io.StringIO()
 
-    targets.build_target(row, output.RunnerOutput(), cargo_features=models.backend_cargo_features(("main", "dd")))
+    targets.build_target(
+        row,
+        Console(file=stream, color_system=None),
+        cargo_features=models.backend_cargo_features(("main", "dd")),
+    )
 
     assert commands == [["cargo", "build", "--release", "-p", "egglog-experimental", "--features", "dd-backend"]]
+    assert stream.getvalue().strip() == f"Building {label}"

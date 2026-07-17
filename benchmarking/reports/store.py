@@ -1,28 +1,109 @@
-"""Own append-only JSONL persistence and exact benchmark-cache selection.
+"""Define the report wire format and own its append-only cache.
 
-``ReportStore`` loads the disposable report once, preserves physical row order,
-indexes exact cache keys and labels, appends observations written by this tool,
-and answers exact cache-selection queries. Pair statistics belong in
-:mod:`benchmarking.reports.analysis`; catalog construction belongs in
-:mod:`benchmarking.reports.comparison`.
+This module owns the trusted ``TypedDict`` schema, standard-library JSON codec,
+exact cache key, physical row order, append/index behavior, and cache-selection
+queries. Pair statistics and presentation live above this persistence boundary.
 """
 
 from __future__ import annotations
 
-import math
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Final, Literal, TypedDict, cast
 
 from ..models import (
     Backend,
-    EstimateKey,
+    BenchmarkEndpoint,
+    FileSpec,
     Status,
     TargetRow,
     Treatment,
 )
-from .records import ReportRecord, parse_report_record, serialize_report_record
+
+type ReportSchemaVersion = Literal[1]
+REPORT_SCHEMA_VERSION: Final[ReportSchemaVersion] = 1
+
+type TimingSummarySchemaVersion = Literal[2]
+TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2
+
+
+class RulesetTimingRecord(TypedDict):
+    """Persisted engine time for one ruleset."""
+
+    name: str
+    search_ns: int
+    apply_ns: int
+    unattributed_ns: int
+    merge_ns: int
+    rebuild_ns: int
+
+
+class TimingSummaryRecord(TypedDict):
+    """Versioned engine timing summary embedded in one successful row."""
+
+    schema_version: TimingSummarySchemaVersion
+    rulesets: list[RulesetTimingRecord]
+
+
+class ReportRecord(TypedDict):
+    """One complete benchmark observation persisted as one JSON line."""
+
+    report_schema_version: ReportSchemaVersion
+    started_at: str
+    status: Status
+    target_label: str | None
+    target_source: str
+    target_path: str
+    target_git_ref: str
+    target_git_sha: str
+    target_is_dirty: bool
+    binary_sha256: str
+    file_path: str
+    file_sha256: str
+    fact_directory_path: str | None
+    fact_directory_sha256: str
+    backend: Backend
+    treatment: Treatment
+    timeout_sec: int
+    wall_sec: float | None
+    max_rss_bytes: int | None
+    error_exit_code: int | None
+    error_signal: int | None
+    error_message: str | None
+    timing_summary: TimingSummaryRecord | None
+
+
+@dataclass(frozen=True)
+class CacheKey:
+    """Exact persisted identity used to select reusable observations."""
+
+    binary_sha256: str
+    file_sha256: str
+    treatment: Treatment
+    timeout_sec: int
+    backend: Backend = "main"
+    fact_directory_sha256: str = ""
+
+    @classmethod
+    def for_endpoint(
+        cls,
+        endpoint: BenchmarkEndpoint,
+        file_spec: FileSpec,
+        timeout_sec: int,
+    ) -> CacheKey:
+        """Build the identity shared by collection and reporting."""
+
+        return cls(
+            binary_sha256=endpoint.target.binary_sha256,
+            file_sha256=file_spec.sha256,
+            treatment=endpoint.treatment,
+            timeout_sec=timeout_sec,
+            backend=endpoint.backend,
+            fact_directory_sha256=file_spec.fact_directory_sha256,
+        )
 
 
 @dataclass(frozen=True)
@@ -31,15 +112,6 @@ class CachedTarget:
 
     row: TargetRow
     binary_sha256: str
-
-
-@dataclass(frozen=True)
-class EstimateAggregate:
-    """Historical successful wall-time count and sum for one exact cache key."""
-
-    key: EstimateKey
-    sample_count: int
-    total_wall_sec: float
 
 
 @dataclass(frozen=True)
@@ -65,7 +137,7 @@ class ReportStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
         self._rows: list[IndexedRecord] = []
-        self._by_key: dict[EstimateKey, list[IndexedRecord]] = {}
+        self._by_key: dict[CacheKey, list[IndexedRecord]] = {}
         self._by_label: dict[str, list[IndexedRecord]] = {}
         try:
             with self.path.open("rb") as handle:
@@ -122,9 +194,9 @@ class ReportStore:
 
     def selected_statuses_for_keys(
         self,
-        keys: Sequence[EstimateKey],
+        keys: Sequence[CacheKey],
         rounds: int,
-    ) -> dict[EstimateKey, tuple[Status, ...]]:
+    ) -> dict[CacheKey, tuple[Status, ...]]:
         """Select latest statuses for every distinct exact cache key."""
 
         if rounds < 1:
@@ -133,27 +205,13 @@ class ReportStore:
             key: tuple(row.record["status"] for row in self.latest_records(key, rounds)) for key in dict.fromkeys(keys)
         }
 
-    def latest_records(self, key: EstimateKey, rounds: int) -> tuple[IndexedRecord, ...]:
+    def latest_records(self, key: CacheKey, rounds: int) -> tuple[IndexedRecord, ...]:
         """Return up to ``rounds`` newest rows in chronological presentation order."""
 
         if rounds < 1:
             raise ValueError("rounds must be positive")
         ordered = sorted(self._by_key.get(key, ()), key=lambda row: row.order_key)
         return tuple(ordered[-rounds:])
-
-    def successful_estimate_aggregates(self) -> tuple[EstimateAggregate, ...]:
-        """Return historical successful wall totals for ETA modeling."""
-
-        aggregates: list[EstimateAggregate] = []
-        for key in sorted(self._by_key, key=_estimate_key_order):
-            values = [
-                row.record["wall_sec"]
-                for row in self._by_key[key]
-                if row.record["status"] == "success" and row.record["wall_sec"] is not None
-            ]
-            if values:
-                aggregates.append(EstimateAggregate(key, len(values), math.fsum(values)))
-        return tuple(aggregates)
 
     def _indexed(self, record: ReportRecord) -> IndexedRecord:
         return IndexedRecord(
@@ -178,8 +236,8 @@ class ReportStore:
         )
 
 
-def _record_key(record: ReportRecord) -> EstimateKey:
-    return EstimateKey(
+def _record_key(record: ReportRecord) -> CacheKey:
+    return CacheKey(
         binary_sha256=record["binary_sha256"],
         file_sha256=record["file_sha256"],
         treatment=record["treatment"],
@@ -189,12 +247,44 @@ def _record_key(record: ReportRecord) -> EstimateKey:
     )
 
 
-def _estimate_key_order(key: EstimateKey) -> tuple[str, str, str, Backend, Treatment, int]:
-    return (
-        key.binary_sha256,
-        key.file_sha256,
-        key.fact_directory_sha256,
-        key.backend,
-        key.treatment,
-        key.timeout_sec,
-    )
+def parse_report_record(data: bytes | str) -> ReportRecord:
+    """Parse one JSON object and enforce the current trusted-writer contract."""
+
+    record = cast(ReportRecord, json.loads(data))
+    _require_current_record(record)
+    return record
+
+
+def parse_timing_summary(data: bytes | str) -> TimingSummaryRecord:
+    """Parse one engine timing summary emitted by a benchmark process."""
+
+    summary = cast(TimingSummaryRecord, json.loads(data))
+    _require_current_timing_summary(summary)
+    return summary
+
+
+def serialize_report_record(record: ReportRecord) -> bytes:
+    """Return the record's validated, newline-free JSON encoding."""
+
+    _require_current_record(record)
+    return json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def _require_current_record(record: ReportRecord) -> None:
+    """Reject old report data and keep successful rows self-contained."""
+
+    if record["report_schema_version"] != REPORT_SCHEMA_VERSION:
+        raise ValueError(f"unsupported report schema version {record['report_schema_version']!r}")
+
+    summary = record["timing_summary"]
+    if summary is not None:
+        _require_current_timing_summary(summary)
+    if record["status"] == "success" and summary is None:
+        raise ValueError("successful benchmark record is missing its timing summary")
+
+
+def _require_current_timing_summary(summary: TimingSummaryRecord) -> None:
+    """Reject timing summaries from an incompatible disposable cache format."""
+
+    if summary["schema_version"] != TIMING_SUMMARY_SCHEMA_VERSION:
+        raise ValueError(f"unsupported timing summary schema_version {summary['schema_version']!r}")

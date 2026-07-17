@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import tempfile
 from collections import Counter
-from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -30,7 +30,6 @@ from .models import (
     Backend,
     BenchmarkEndpoint,
     EndpointRequest,
-    EstimateKey,
     FileSpec,
     ResolvedTarget,
     Status,
@@ -39,15 +38,15 @@ from .models import (
     Treatment,
     backend_cargo_features,
 )
-from .output import RunnerOutput
 from .processes import TimingResult, run_command
-from .reports.records import (
+from .reports.store import (
     REPORT_SCHEMA_VERSION,
+    CacheKey,
     ReportRecord,
+    ReportStore,
     TimingSummaryRecord,
     parse_timing_summary,
 )
-from .reports.store import EstimateAggregate, ReportStore
 from .targets import (
     build_resolved_target,
     materialize_git_ref,
@@ -68,7 +67,6 @@ class BenchmarkRunPlan:
     required_rows: int
     cached_statuses: tuple[Status, ...]
     missing_observations: int
-    estimate_key: EstimateKey
 
 
 @dataclass(frozen=True)
@@ -81,14 +79,6 @@ class CollectionPlan:
     @property
     def total_missing_observations(self) -> int:
         return sum(run.missing_observations for run in self.runs)
-
-
-@dataclass(frozen=True)
-class DurationEstimate:
-    """Estimated known duration plus a count of processes with no estimate."""
-
-    seconds: float | None
-    unknown_processes: int
 
 
 @dataclass(frozen=True)
@@ -106,37 +96,6 @@ class _PendingTarget:
     request: TargetRequest
     row: TargetRow
     endpoint_requests: tuple[EndpointRequest, ...]
-
-
-class EstimateModel:
-    """Exact-result duration estimates updated as successful runs finish."""
-
-    def __init__(self, totals: dict[EstimateKey, tuple[int, float]] | None = None) -> None:
-        self.totals = totals or {}
-
-    @classmethod
-    def from_aggregates(cls, aggregates: tuple[EstimateAggregate, ...]) -> EstimateModel:
-        return cls({aggregate.key: (aggregate.sample_count, aggregate.total_wall_sec) for aggregate in aggregates})
-
-    def process_mean(self, key: EstimateKey) -> float | None:
-        aggregate = self.totals.get(key)
-        if aggregate is None:
-            return None
-        sample_count, total_wall_sec = aggregate
-        return total_wall_sec / sample_count
-
-    def estimate_processes(self, key: EstimateKey, count: int) -> DurationEstimate:
-        if count <= 0:
-            return DurationEstimate(seconds=0.0, unknown_processes=0)
-        mean = self.process_mean(key)
-        if mean is None:
-            return DurationEstimate(seconds=None, unknown_processes=count)
-        return DurationEstimate(seconds=mean * count, unknown_processes=0)
-
-    def record_process(self, key: EstimateKey, result: TimingResult) -> None:
-        if result.status == "success" and result.timing.wall_sec is not None:
-            sample_count, total_wall_sec = self.totals.get(key, (0, 0.0))
-            self.totals[key] = (sample_count + 1, total_wall_sec + result.timing.wall_sec)
 
 
 def _now_iso() -> str:
@@ -167,15 +126,15 @@ def build_collection_plan(
             file_spec,
             endpoint.backend,
             endpoint.treatment,
-            EstimateKey.for_endpoint(endpoint, file_spec, timeout_sec),
+            CacheKey.for_endpoint(endpoint, file_spec, timeout_sec),
         )
         for file_spec in files
         for endpoint in endpoints
     )
     selected = store.selected_statuses_for_keys(tuple(request[3] for request in requests), rounds)
     runs: list[BenchmarkRunPlan] = []
-    for file_spec, backend, treatment, estimate_key in requests:
-        cached = selected[estimate_key]
+    for file_spec, backend, treatment, cache_key in requests:
+        cached = selected[cache_key]
         missing = rounds if force_run else max(0, rounds - len(cached))
         runs.append(
             BenchmarkRunPlan(
@@ -185,38 +144,9 @@ def build_collection_plan(
                 required_rows=rounds,
                 cached_statuses=cached,
                 missing_observations=missing,
-                estimate_key=estimate_key,
             )
         )
     return CollectionPlan(target=target, runs=tuple(runs))
-
-
-def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel) -> DurationEstimate:
-    """Estimate all measured subprocesses in a collection plan."""
-
-    return _combined_estimate(
-        ((run.estimate_key, run.missing_observations) for run in plan.runs),
-        estimate_model,
-    )
-
-
-def _combined_estimate(
-    processes: Iterable[tuple[EstimateKey, int]],
-    estimate_model: EstimateModel,
-) -> DurationEstimate:
-    """Combine exact-key estimates without hiding how unknown runs propagate."""
-
-    seconds = 0.0
-    unknown_processes = 0
-    for key, count in processes:
-        estimate = estimate_model.estimate_processes(key, count)
-        if estimate.seconds is None:
-            unknown_processes += estimate.unknown_processes
-        else:
-            seconds += estimate.seconds
-    if seconds == 0.0 and unknown_processes:
-        return DurationEstimate(seconds=None, unknown_processes=unknown_processes)
-    return DurationEstimate(seconds=seconds, unknown_processes=unknown_processes)
 
 
 def resolve_targets(
@@ -228,7 +158,7 @@ def resolve_targets(
     force_run: bool,
     invocation_cwd: Path,
     repo_root: Path,
-    output: RunnerOutput,
+    console: Console,
 ) -> dict[TargetRequest, ResolvedTarget]:
     """Resolve every request, then build once per canonical checkout path.
 
@@ -267,7 +197,7 @@ def resolve_targets(
         built = build_resolved_target(
             representative.request,
             representative.row,
-            output,
+            console,
             "release",
             backend_cargo_features(backends),
         )
@@ -340,7 +270,7 @@ def label_has_enough_rows(
     """Return whether every exact endpoint/file result has enough cached rows."""
 
     keys = tuple(
-        EstimateKey(
+        CacheKey(
             binary_sha256,
             file_spec.sha256,
             endpoint.treatment,
@@ -440,54 +370,6 @@ def format_timing_result(result: TimingResult) -> str:
     return f"succeeded{elapsed}"
 
 
-def format_duration(seconds: float | None) -> str:
-    """Format one coarse planning duration without benchmark-like precision."""
-
-    if seconds is None:
-        return "unknown"
-    if seconds < 1:
-        return "<1s"
-    rounded_seconds = round(seconds)
-    if rounded_seconds < 60:
-        return f"~{rounded_seconds}s"
-    minutes, remainder = divmod(rounded_seconds, 60)
-    if minutes < 60:
-        return f"~{minutes}m{remainder:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"~{hours}h{minutes:02d}m"
-
-
-def format_duration_estimate(estimate: DurationEstimate) -> str:
-    """Format known and unknown parts of a collection estimate."""
-
-    if estimate.seconds is None:
-        return f"unknown ({_run_count(estimate.unknown_processes, 'unestimated run')})"
-    if estimate.unknown_processes:
-        if estimate.seconds < 1:
-            lower_bound = f"{estimate.seconds:.1f}s"
-        else:
-            lower_bound = format_duration(estimate.seconds).removeprefix("~")
-        return f"at least {lower_bound}; {_run_count(estimate.unknown_processes, 'unestimated run')}"
-    return format_duration(estimate.seconds)
-
-
-def _format_progress_estimate(estimate: DurationEstimate) -> str:
-    """Keep the live ETA honest without crowding out the current workload."""
-
-    if estimate.seconds is None:
-        return "unknown"
-    if estimate.unknown_processes:
-        known = format_duration(estimate.seconds).removeprefix("~")
-        return f"≥{known} ({estimate.unknown_processes} unknown)"
-    return format_duration(estimate.seconds)
-
-
-def _run_count(count: int, singular: str) -> str:
-    """Pluralize one operational run count."""
-
-    return f"{count} {singular if count == 1 else singular + 's'}"
-
-
 def _status_counts_text(status_counts: Counter[Status]) -> str:
     """Format result counts in stable, natural-language order."""
 
@@ -501,27 +383,13 @@ def _status_counts_text(status_counts: Counter[Status]) -> str:
     return ", ".join(parts)
 
 
-def remaining_estimate(
-    remaining_processes: dict[EstimateKey, int],
-    estimate_model: EstimateModel,
-) -> DurationEstimate:
-    """Estimate subprocesses still pending in the current target plan."""
-
-    return _combined_estimate(remaining_processes.items(), estimate_model)
-
-
-def emit_collection_plan(
-    output: RunnerOutput,
-    plan: CollectionPlan,
-    estimate_model: EstimateModel,
-) -> None:
+def emit_collection_plan(console: Console, plan: CollectionPlan) -> None:
     """Render one compact cache and collection summary to stderr."""
 
     cached_statuses = Counter(status for run in plan.runs for status in run.cached_statuses)
     cached = cached_statuses.total()
     required = sum(run.required_rows for run in plan.runs)
     missing = plan.total_missing_observations
-    total_estimate = collection_plan_estimate(plan, estimate_model)
     cached_issues: Counter[Status] = Counter()
     for status in ("failure", "timed-out"):
         if cached_statuses[status]:
@@ -529,12 +397,8 @@ def emit_collection_plan(
     cache_text = f"{cached}/{required} runs cached"
     if cached_issues:
         cache_text += f" ({_status_counts_text(cached_issues)})"
-    action_text = (
-        "nothing to collect"
-        if missing == 0
-        else f"collecting {missing} fresh · ETA {format_duration_estimate(total_estimate)}"
-    )
-    output.console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
+    action_text = "nothing to collect" if missing == 0 else f"collecting {missing} fresh"
+    console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
 
 
 def flat_report_record(
@@ -579,8 +443,7 @@ def collect_rows(
     store: ReportStore,
     plan: CollectionPlan,
     timeout_sec: int,
-    output: RunnerOutput,
-    estimate_model: EstimateModel,
+    console: Console,
 ) -> None:
     """Run and append every missing observation after caller preflight."""
 
@@ -591,12 +454,6 @@ def collect_rows(
         raise ValueError(f"target {target.display_label} needs fresh rows but has no build path")
     binary_path = target.binary_path
     total_observations = plan.total_missing_observations
-    remaining_processes: dict[EstimateKey, int] = {}
-    for run in plan.runs:
-        if run.missing_observations > 0:
-            remaining_processes[run.estimate_key] = (
-                remaining_processes.get(run.estimate_key, 0) + run.missing_observations
-            )
     max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
     result_counts: Counter[Status] = Counter()
@@ -615,22 +472,19 @@ def collect_rows(
         ),
         MofNCompleteColumn(table_column=Column(no_wrap=True)),
         TimeElapsedColumn(table_column=Column(no_wrap=True)),
-        TextColumn("ETA {task.fields[eta]}", table_column=Column(no_wrap=True)),
-        console=output.console,
+        console=console,
         transient=True,
-        disable=not output.console.is_terminal,
+        disable=not console.is_terminal,
     ) as progress:
         process_task = progress.add_task(
             "Collecting",
             total=total_observations,
-            eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
             current="starting",
         )
         for round_index in range(max_deficit):
             for run in plan.runs:
                 if round_index >= run.missing_observations:
                     continue
-                run_key = run.estimate_key
                 observation_number = completed_observations + 1
                 label = collection_label(
                     run.file,
@@ -641,7 +495,6 @@ def collect_rows(
                 )
                 progress.update(
                     process_task,
-                    eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
                     current=label,
                 )
                 started_at = _now_iso()
@@ -662,28 +515,21 @@ def collect_rows(
                         observation=observation,
                     )
                 )
-                estimate_model.record_process(run_key, observation.result)
-                remaining_for_key = remaining_processes[run_key] - 1
-                if remaining_for_key:
-                    remaining_processes[run_key] = remaining_for_key
-                else:
-                    del remaining_processes[run_key]
                 completed_observations += 1
                 result_counts[observation.result.status] += 1
                 progress.update(
                     process_task,
                     advance=1,
-                    eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
                     current=label,
                 )
-                if not output.console.is_terminal or observation.result.status != "success":
+                if not console.is_terminal or observation.result.status != "success":
                     progress.console.print(
                         Text(
                             f"  [{observation_number}/{total_observations}] {label}: "
                             f"{format_timing_result(observation.result)}"
                         )
                     )
-    output.console.print(
+    console.print(
         Text(
             f"{target.display_label}: collected {total_observations} fresh runs · {_status_counts_text(result_counts)}"
         )

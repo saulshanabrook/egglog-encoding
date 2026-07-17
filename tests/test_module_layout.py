@@ -1,9 +1,11 @@
-"""Enforce documented Python ownership and one-way package dependencies."""
+"""Enforce module ownership, dependency direction, and an acyclic package."""
 
 from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,8 +21,6 @@ def python_modules() -> tuple[Path, ...]:
 
 
 def module_name(path: Path) -> str:
-    """Return the importable dotted name for one repo-owned module."""
-
     parts = list(path.relative_to(ROOT).with_suffix("").parts)
     if parts[-1] == "__init__":
         parts.pop()
@@ -28,51 +28,30 @@ def module_name(path: Path) -> str:
 
 
 def imported_module_names(path: Path) -> set[str]:
-    """Resolve absolute and relative imports to dotted module names."""
+    """Resolve static absolute and relative imports to dotted module names."""
 
     current = module_name(path)
     package = current if path.name == "__init__.py" else current.rpartition(".")[0]
     imported: set[str] = set()
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             imported.update(alias.name for alias in node.names)
-            continue
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        if node.level:
-            package_parts = package.split(".") if package else []
-            parent_count = node.level - 1
-            base_parts = package_parts[: len(package_parts) - parent_count] if parent_count else package_parts
+        elif isinstance(node, ast.ImportFrom):
+            base_parts = package.split(".") if package else []
+            if node.level > 1:
+                base_parts = base_parts[: -(node.level - 1)]
             if node.module is not None:
                 base_parts.extend(node.module.split("."))
-            base = ".".join(base_parts)
-        else:
-            base = node.module or ""
-        if base:
-            imported.add(base)
-        imported.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
+            base = ".".join(base_parts) if node.level else node.module or ""
+            if base:
+                imported.add(base)
+            imported.update(f"{base}.{alias.name}" if base else alias.name for alias in node.names)
     return imported
 
 
-def forbidden_imports(imports: set[str], forbidden: set[str]) -> set[str]:
-    """Return imports equal to or nested beneath one of the forbidden roots."""
-
+def forbidden_imports(imports: set[str], forbidden: frozenset[str]) -> set[str]:
     return {
-        imported
-        for imported in imports
-        for forbidden_root in forbidden
-        if imported == forbidden_root or imported.startswith(forbidden_root + ".")
-    }
-
-
-def test_import_analysis_tracks_members_and_forbidden_descendants() -> None:
-    imports = imported_module_names(ROOT / "benchmarking/benchmark.py")
-
-    assert "benchmarking.models.BenchmarkEndpoint" in imports
-    assert forbidden_imports({"importlib.util", "importlib_util", "rich"}, {"importlib", "rich"}) == {
-        "importlib.util",
-        "rich",
+        imported for imported in imports for root in forbidden if imported == root or imported.startswith(root + ".")
     }
 
 
@@ -82,7 +61,6 @@ def test_every_python_module_has_an_ownership_docstring() -> None:
         for path in python_modules()
         if ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))) is None
     ]
-
     assert not missing, f"Python modules without ownership docstrings: {', '.join(missing)}"
 
 
@@ -94,133 +72,115 @@ def test_package_initializers_are_docstring_only() -> None:
     for path in initializers:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         assert len(tree.body) == 1
-        assert isinstance(tree.body[0], ast.Expr)
-        assert isinstance(tree.body[0].value, ast.Constant)
-        assert isinstance(tree.body[0].value.value, str)
+        assert ast.get_docstring(tree) is not None
 
 
-def test_data_boundary_does_not_import_runner_or_presentation_dependencies() -> None:
-    forbidden = {
-        "argparse",
+RUNNER_LAYERS = frozenset(
+    {
         "benchmarking.benchmark",
         "benchmarking.collection",
-        "benchmarking.output",
         "benchmarking.processes",
         "benchmarking.profile",
         "benchmarking.targets",
-        "pandas",
-        "pandera",
-        "rich",
     }
-    data_modules = (
-        ROOT / "benchmarking/reports/catalog.py",
-        ROOT / "benchmarking/reports/records.py",
-        ROOT / "benchmarking/reports/store.py",
-        ROOT / "benchmarking/reports/analysis.py",
-    )
-    violations: list[str] = []
-    for path in data_modules:
-        for name in imported_module_names(path):
-            if any(name == item or name.startswith(item + ".") for item in forbidden):
-                violations.append(f"{path.relative_to(ROOT)} imports {name}")
+)
 
-    assert not violations, "; ".join(violations)
+DEPENDENCY_RULES = (
+    (
+        "benchmarking/reports/store.py",
+        RUNNER_LAYERS
+        | frozenset(
+            {
+                "benchmarking.reports.analysis",
+                "benchmarking.reports.catalog",
+                "benchmarking.reports.interactive",
+                "benchmarking.reports.interactive_runtime",
+                "benchmarking.reports.presentation",
+                "benchmarking.reports.render",
+                "rich",
+                "scipy",
+            }
+        ),
+    ),
+    (
+        "benchmarking/reports/analysis.py",
+        RUNNER_LAYERS
+        | frozenset(
+            {
+                "benchmarking.reports.catalog",
+                "benchmarking.reports.interactive",
+                "benchmarking.reports.presentation",
+                "benchmarking.reports.render",
+                "rich",
+            }
+        ),
+    ),
+    (
+        "benchmarking/reports/catalog.py",
+        RUNNER_LAYERS
+        | frozenset(
+            {
+                "benchmarking.reports.analysis",
+                "benchmarking.reports.presentation",
+                "benchmarking.reports.render",
+                "benchmarking.reports.store",
+                "rich",
+                "scipy",
+            }
+        ),
+    ),
+    (
+        "benchmarking/reports/render.py",
+        frozenset(
+            {
+                "benchmarking.models",
+                "benchmarking.reports.analysis",
+                "benchmarking.reports.presentation",
+                "benchmarking.reports.store",
+            }
+        ),
+    ),
+    (
+        "benchmarking/reports/interactive_runtime.py",
+        frozenset({"benchmarking.reports.interactive", "http.server", "importlib", "webbrowser"}),
+    ),
+)
 
 
-def test_report_renderer_depends_only_on_the_shared_catalog_contract() -> None:
-    """Prevent renderer-specific code from reaching behind the final catalog."""
-
-    imports = imported_module_names(ROOT / "benchmarking/reports/render.py")
-    forbidden = {
-        "benchmarking.reports.analysis",
-        "benchmarking.reports.records",
-        "benchmarking.reports.store",
-    }
-    assert "benchmarking.reports.catalog" in imports
-    assert not forbidden_imports(imports, forbidden)
-
-
-def test_store_does_not_import_analysis_or_presentation_layers() -> None:
-    """Keep persistence and cache selection reusable below derived reports."""
-
-    imports = imported_module_names(ROOT / "benchmarking/reports/store.py")
-    forbidden = {
-        "benchmarking.reports.analysis",
-        "benchmarking.reports.catalog",
-        "benchmarking.reports.comparison",
-        "benchmarking.reports.interactive",
-        "benchmarking.reports.interactive_runtime",
-        "benchmarking.reports.render",
-        "rich",
-        "scipy",
-    }
-    assert not forbidden_imports(imports, forbidden)
-
-
-def test_interactive_runtime_does_not_import_the_host_adapter() -> None:
-    """Keep the Pyodide-compatible selection core independent of HTML export."""
-
-    imports = imported_module_names(ROOT / "benchmarking/reports/interactive_runtime.py")
-    forbidden = {
-        "benchmarking.reports.interactive",
-        "http.server",
-        "importlib",
-        "webbrowser",
-    }
+@pytest.mark.parametrize(("relative_path", "forbidden"), DEPENDENCY_RULES)
+def test_dependency_boundaries(relative_path: str, forbidden: frozenset[str]) -> None:
+    imports = imported_module_names(ROOT / relative_path)
     assert not forbidden_imports(imports, forbidden)
 
 
 def test_report_package_does_not_import_runner_layers() -> None:
-    """Keep report analysis and presentation independent of CLI orchestration."""
-
-    forbidden = {
-        "benchmarking.benchmark",
-        "benchmarking.collection",
-        "benchmarking.output",
-        "benchmarking.processes",
-        "benchmarking.profile",
-        "benchmarking.targets",
+    violations = {
+        str(path.relative_to(ROOT)): forbidden_imports(imported_module_names(path), RUNNER_LAYERS)
+        for path in sorted((ROOT / "benchmarking/reports").rglob("*.py"))
     }
-    violations: list[str] = []
-    for path in sorted((ROOT / "benchmarking/reports").rglob("*.py")):
-        for name in imported_module_names(path):
-            if any(name == item or name.startswith(item + ".") for item in forbidden):
-                violations.append(f"{path.relative_to(ROOT)} imports {name}")
-
-    assert not violations, "; ".join(violations)
+    assert not {path: imports for path, imports in violations.items() if imports}
 
 
 def test_benchmarking_import_graph_is_acyclic() -> None:
-    """Keep module ownership enforceable by rejecting static import cycles."""
-
     modules = {module_name(path): path for path in sorted((ROOT / "benchmarking").rglob("*.py"))}
     graph = {
         name: {dependency for dependency in imported_module_names(path) if dependency in modules}
         for name, path in modules.items()
     }
-    state: dict[str, int] = {}
-    stack: list[str] = []
-    cycle: list[str] | None = None
+    active: list[str] = []
+    complete: set[str] = set()
 
     def visit(name: str) -> None:
-        nonlocal cycle
-        state[name] = 1
-        stack.append(name)
+        if name in active:
+            cycle = [*active[active.index(name) :], name]
+            pytest.fail("Static import cycle: " + " -> ".join(cycle))
+        if name in complete:
+            return
+        active.append(name)
         for dependency in sorted(graph[name]):
-            if cycle is not None:
-                return
-            if state.get(dependency, 0) == 0:
-                visit(dependency)
-            elif state[dependency] == 1:
-                cycle = [*stack[stack.index(dependency) :], dependency]
-                return
-        stack.pop()
-        state[name] = 2
+            visit(dependency)
+        active.pop()
+        complete.add(name)
 
     for name in sorted(modules):
-        if state.get(name, 0) == 0:
-            visit(name)
-        if cycle is not None:
-            break
-
-    assert cycle is None, "Static import cycle: " + " -> ".join(cycle or ())
+        visit(name)

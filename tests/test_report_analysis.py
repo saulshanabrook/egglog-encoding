@@ -10,10 +10,9 @@ import pytest
 
 from benchmarking import models
 from benchmarking.reports.analysis import analyze_pair
-from benchmarking.reports.records import ReportRecord
-from benchmarking.reports.store import ReportStore
+from benchmarking.reports.store import ReportRecord, ReportStore
 
-from .conftest import make_record, make_ruleset_timing, make_target, make_timing_summary, write_report
+from .report_fixtures import make_record, make_ruleset_timing, make_target, make_timing_summary, write_report
 
 
 def _endpoint(
@@ -103,15 +102,15 @@ def test_pair_statistics_and_fieller_intervals(tmp_path: Path) -> None:
     wall = next(row for row in views.files if row.metric == "wall_sec")
     expected_half_width = t_critical * math.sqrt(0.01 / 3)
     expected_low, expected_high = _fieller_bounds(10.0, 0.01 / 3, 8.0, 0.01 / 3, t_critical)
-    assert wall.baseline_mean == pytest.approx(10.0)
-    assert wall.baseline_ci_low == pytest.approx(10.0 - expected_half_width)
-    assert wall.baseline_ci_high == pytest.approx(10.0 + expected_half_width)
-    assert wall.point == pytest.approx(0.8)
-    assert wall.ci_low == pytest.approx(expected_low)
-    assert wall.ci_high == pytest.approx(expected_high)
+    assert wall.baseline.point == pytest.approx(10.0)
+    assert wall.baseline.ci_low == pytest.approx(10.0 - expected_half_width)
+    assert wall.baseline.ci_high == pytest.approx(10.0 + expected_half_width)
+    assert wall.ratio.estimate.point == pytest.approx(0.8)
+    assert wall.ratio.estimate.ci_low == pytest.approx(expected_low)
+    assert wall.ratio.estimate.ci_high == pytest.approx(expected_high)
     suite = views.summary[0]
     assert suite.summary_kind == "suite"
-    assert suite.point == pytest.approx(0.8)
+    assert suite.ratio.estimate.point == pytest.approx(0.8)
 
 
 def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path) -> None:
@@ -155,7 +154,7 @@ def test_summary_has_wall_suite_and_metric_tails_with_stable_ties(tmp_path: Path
         ("max_rss_bytes", "highest_file"),
     ]
     assert [row.file_order for row in summary] == [None, 0, 2, 0, 2]
-    assert all(row.point == pytest.approx(2.0) for row in summary)
+    assert all(row.ratio.estimate.point == pytest.approx(2.0) for row in summary)
 
 
 def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> None:
@@ -203,11 +202,11 @@ def test_invalid_file_breaks_suite_but_not_valid_file_tails(tmp_path: Path) -> N
     summary = analyze_pair(ReportStore(report), comparison, "summary").summary
 
     suite, *tails = summary
-    assert suite.result_class == "invalid"
-    assert suite.point is None
-    assert suite.issue == "failure row selected"
+    assert suite.ratio.result_class == "invalid"
+    assert suite.ratio.estimate.point is None
+    assert suite.ratio.issue == "failure row selected"
     assert all(row.file_order == 0 for row in tails)
-    assert all(row.point is not None for row in tails)
+    assert all(row.ratio.estimate.point is not None for row in tails)
 
 
 def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: Path) -> None:
@@ -253,9 +252,9 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
 
     suite, *tails = analyze_pair(ReportStore(report), comparison, "summary").summary
 
-    assert suite.issue == "failure row selected"
+    assert suite.ratio.issue == "failure row selected"
     assert all(row.file_order == 0 for row in tails)
-    assert all(row.issue is None for row in tails)
+    assert all(row.ratio.issue is None for row in tails)
 
 
 def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) -> None:
@@ -307,7 +306,7 @@ def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) 
         "rebuild",
         "outside",
     ]
-    assert [(row.baseline_ns, row.candidate_ns) for row in phases] == [
+    assert [(row.baseline.timing.point, row.candidate.timing.point) for row in phases] == [
         (100.0, 200.0),
         (200.0, 100.0),
         (17.0, 23.0),
@@ -318,8 +317,8 @@ def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) 
     assert [row.delta_ns for row in phases] == [100.0, -100.0, 6.0, 300.0, -200.0, 394.0]
     assert [row.wall_delta_contribution for row in phases] == pytest.approx([0.2, -0.2, 0.012, 0.6, -0.4, 0.788])
     assert sum(row.wall_delta_contribution or 0.0 for row in phases) == pytest.approx(1.0)
-    assert phases[0].baseline_wall_share == pytest.approx(100.0 / 1_500.0)
-    assert phases[-1].candidate_wall_share == pytest.approx(877.0 / 2_000.0)
+    assert phases[0].baseline.wall_share == pytest.approx(100.0 / 1_500.0)
+    assert phases[-1].candidate.wall_share == pytest.approx(877.0 / 2_000.0)
 
 
 def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Path) -> None:
@@ -347,12 +346,12 @@ def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Pat
     search = analyze_pair(ReportStore(report), comparison, "phases").phases[0]
     half_width = 12.706204736432095 * 100.0
 
-    assert search.baseline_ns == 200
-    assert search.baseline_ci_low_ns == pytest.approx(200 - half_width)
-    assert search.baseline_ci_high_ns == pytest.approx(200 + half_width)
-    assert search.baseline_wall_share == pytest.approx(200 / 1_100)
-    assert search.candidate_ns == 300
-    assert search.candidate_wall_share == pytest.approx(300 / 1_600)
+    assert search.baseline.timing.point == 200
+    assert search.baseline.timing.ci_low == pytest.approx(200 - half_width)
+    assert search.baseline.timing.ci_high == pytest.approx(200 + half_width)
+    assert search.baseline.wall_share == pytest.approx(200 / 1_100)
+    assert search.candidate.timing.point == 300
+    assert search.candidate.wall_share == pytest.approx(300 / 1_600)
     assert search.delta_ns == 100
     assert search.wall_delta_contribution == pytest.approx(0.2)
 
@@ -411,15 +410,14 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
 
     rows = {row.name: row for row in analyze_pair(ReportStore(report), comparison, "rulesets").rulesets}
 
-    assert rows["baseline-only"].baseline_total_ns == 10
-    assert rows["baseline-only"].candidate_total_ns is None
-    assert rows["baseline-only"].baseline_ci_low_ns == 10
-    assert rows["baseline-only"].baseline_ci_high_ns == 10
-    assert rows["candidate-only"].baseline_total_ns is None
-    assert rows["candidate-only"].candidate_total_ns == 20
-    assert rows["sporadic"].baseline_total_ns == 4
-    assert rows["baseline-only"].search_delta_ns == -10
-    assert rows["candidate-only"].search_delta_ns == 20
+    assert rows["baseline-only"].baseline == (10, 10, 10)
+    assert rows["baseline-only"].candidate is None
+    assert rows["candidate-only"].baseline is None
+    assert rows["candidate-only"].candidate == (20, 20, 20)
+    assert rows["sporadic"].baseline is not None
+    assert rows["sporadic"].baseline.point == 4
+    assert rows["baseline-only"].delta.phases.search == -10
+    assert rows["candidate-only"].delta.phases.search == 20
     assert "recorded-zero" not in rows
 
 

@@ -12,13 +12,20 @@ from rich.rule import Rule
 from syrupy.assertion import SnapshotAssertion
 
 from benchmarking import models
-from benchmarking.reports.catalog import ReportMessage, ReportTable
-from benchmarking.reports.comparison import build_report_catalog
-from benchmarking.reports.records import ReportRecord
+from benchmarking.reports.catalog import ReportCatalog, ReportMessage, ReportTable, report_id
+from benchmarking.reports.presentation import (
+    build_report_catalog,
+    format_duration,
+    report_file_labels,
+)
 from benchmarking.reports.render import render_markdown_report_document, render_rich_report_document
-from benchmarking.reports.store import ReportStore
+from benchmarking.reports.store import ReportRecord, ReportStore
 
-from .conftest import make_endpoint, make_record, make_ruleset_timing, make_timing_summary, write_report
+from .report_fixtures import make_endpoint, make_record, make_ruleset_timing, make_timing_summary, write_report
+
+
+def test_report_ids_encode_parts_unambiguously() -> None:
+    assert report_id("target", "ab", "c") != report_id("target", "a", "bc")
 
 
 def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: SnapshotAssertion) -> None:
@@ -29,6 +36,7 @@ def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: Snaps
     stable = markdown.replace(str(report_path), "/tmp/benchmark-report.jsonl")
 
     assert stable == snapshot
+    _assert_catalog_invariants(catalog)
     assert tuple(section.id for section in catalog.sections) == (
         "selection",
         "summary",
@@ -60,11 +68,26 @@ def test_selection_uses_backend_and_treatment_from_the_comparison(tmp_path: Path
     assert "| Candidate | DD/term | abc123 | dd | term |" in markdown
 
 
+def test_shared_formatters_keep_compact_units_and_unambiguous_paths() -> None:
+    assert tuple(format_duration(value) for value in (None, 999, 12_500, 1_250_000, 1_250_000_000)) == (
+        "—",
+        "999 ns",
+        "12.5 us",
+        "1.25 ms",
+        "1.25 s",
+    )
+    files = (
+        models.FileSpec("left/shared.egg", Path("/left/shared.egg"), "sha256:left"),
+        models.FileSpec("right/shared.egg", Path("/right/shared.egg"), "sha256:right"),
+    )
+    assert tuple(report_file_labels(files).values()) == ("left/shared.egg", "right/shared.egg")
+
+
 def test_rich_report_is_readable_at_realistic_widths(tmp_path: Path) -> None:
     report_path, comparison = _six_file_pair_case(tmp_path)
     catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
 
-    for width in (80, 119, 120, 160):
+    for width in (80, 119, 120, 160, 200):
         console = Console(record=True, width=width, color_system=None)
         console.print(render_rich_report_document(catalog, width))
         rendered = console.export_text()
@@ -292,6 +315,34 @@ def test_missing_rss_is_one_explicit_unavailable_summary(tmp_path: Path) -> None
     assert "| Peak RSS | Unavailable | — | — | incomplete: peak RSS unavailable |" in markdown
 
 
+def test_timed_out_file_has_missing_phase_cells_and_ruleset_status(tmp_path: Path) -> None:
+    report_path = tmp_path / "timed-out.jsonl"
+    file = models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file")
+    baseline = make_endpoint(binary_sha256="sha256:baseline", treatment="off")
+    candidate = make_endpoint(binary_sha256="sha256:candidate", treatment="proofs")
+    write_report(
+        report_path,
+        make_record(0, started_at="2026-07-17T12:00:00Z", binary_sha256="sha256:baseline"),
+        make_record(
+            1,
+            started_at="2026-07-17T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            treatment="proofs",
+            status="timed-out",
+        ),
+    )
+    comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
+
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
+    phase_section = next(section for section in catalog.sections if section.id == "phases")
+    phase_table = next(block for block in phase_section.blocks if isinstance(block, ReportTable))
+    candidate_column = next(index for index, column in enumerate(phase_table.columns) if column.id == "candidate")
+    assert all(row.cells[candidate_column].display == "—" for row in phase_table.rows)
+    ruleset_section = next(section for section in catalog.sections if section.id == "rulesets")
+    assert isinstance(ruleset_section.blocks[0], ReportMessage)
+    assert ruleset_section.blocks[0].text == "Status: timeout row selected"
+
+
 def _pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
     report_path = tmp_path / "pair.jsonl"
     files = (
@@ -401,3 +452,21 @@ def _six_file_pair_case(tmp_path: Path) -> tuple[Path, models.ComparisonSpec]:
                 )
     write_report(report_path, *records)
     return report_path, models.ComparisonSpec(baseline, candidate, files, 2, 120)
+
+
+def _assert_catalog_invariants(catalog: ReportCatalog) -> None:
+    """Check trusted catalog construction once at the realistic boundary."""
+
+    section_ids = [section.id for section in catalog.sections]
+    block_ids = [block.id for section in catalog.sections for block in section.blocks]
+    assert len(section_ids) == len(set(section_ids))
+    assert len(block_ids) == len(set(block_ids))
+    for section in catalog.sections:
+        for block in section.blocks:
+            if not isinstance(block, ReportTable):
+                continue
+            column_ids = [column.id for column in block.columns]
+            row_ids = [row.id for row in block.rows]
+            assert len(column_ids) == len(set(column_ids))
+            assert len(row_ids) == len(set(row_ids))
+            assert all(len(row.cells) == len(block.columns) for row in block.rows)

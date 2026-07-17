@@ -1,4 +1,4 @@
-"""Build the canonical benchmark comparison document and format its values.
+"""Build the canonical benchmark presentation and format its values.
 
 This module maps typed statistics from :mod:`benchmarking.reports.analysis`
 into Comparison, Summary, Files, Phases, and Rulesets sections. It owns shared
@@ -14,12 +14,14 @@ from pathlib import Path
 
 from ..models import BenchmarkEndpoint, ComparisonSpec, DetailLevel, FileSpec
 from .analysis import (
+    Estimate,
     FileComparisonView,
     MetricName,
     PairReportViewData,
     PhaseComparisonView,
+    PhaseEstimate,
     PhaseName,
-    RatioSummary,
+    RatioEstimate,
     ResultClass,
     RulesetComparisonView,
     SummaryView,
@@ -197,7 +199,7 @@ def _summary_section(
                 text_cell(scope, _scope_label(scope, len(comparison.files))),
                 file_display,
                 _ratio_cell(row.ratio),
-                _result_cell(row.result_class, row.issue, rss=row.metric == "max_rss_bytes"),
+                _result_cell(row.ratio.result_class, row.ratio.issue, rss=row.metric == "max_rss_bytes"),
             )
         )
     table = _table(
@@ -264,7 +266,7 @@ def _files_section(
     for metric in ("wall_sec", "max_rss_bytes"):
         metric_rows = tuple(row for row in rows if row.metric == metric)
         if metric == "max_rss_bytes" and not any(
-            row.baseline_mean is not None or row.candidate_mean is not None for row in metric_rows
+            row.baseline.point is not None or row.candidate.point is not None for row in metric_rows
         ):
             tables.append(
                 ReportMessage(
@@ -291,20 +293,10 @@ def _files_section(
                             comparison.files[row.file_order].fact_directory_sha256,
                         ),
                         file_labels[comparison.files[row.file_order]],
-                        _estimate_cell(
-                            row.baseline_mean,
-                            row.baseline_ci_low,
-                            row.baseline_ci_high,
-                            rss=metric == "max_rss_bytes",
-                        ),
-                        _estimate_cell(
-                            row.candidate_mean,
-                            row.candidate_ci_low,
-                            row.candidate_ci_high,
-                            rss=metric == "max_rss_bytes",
-                        ),
+                        _estimate_cell(row.baseline, rss=metric == "max_rss_bytes"),
+                        _estimate_cell(row.candidate, rss=metric == "max_rss_bytes"),
                         _ratio_cell(row.ratio),
-                        _result_cell(row.result_class, row.issue, rss=metric == "max_rss_bytes"),
+                        _result_cell(row.ratio.result_class, row.ratio.issue, rss=metric == "max_rss_bytes"),
                     )
                     for row in metric_rows
                 ),
@@ -343,20 +335,8 @@ def _phase_row(row: PhaseComparisonView, file: FileSpec) -> ReportRow:
     return _row(
         report_id("row", "phases", file.sha256, file.fact_directory_sha256, row.phase),
         text_cell(row.phase, PHASE_LABELS[row.phase]),
-        _phase_estimate_cell(
-            row.baseline_ns,
-            row.baseline_ci_low_ns,
-            row.baseline_ci_high_ns,
-            row.baseline_wall_share,
-            attribution=row.phase == "outside",
-        ),
-        _phase_estimate_cell(
-            row.candidate_ns,
-            row.candidate_ci_low_ns,
-            row.candidate_ci_high_ns,
-            row.candidate_wall_share,
-            attribution=row.phase == "outside",
-        ),
+        _phase_estimate_cell(row.baseline, attribution=row.phase == "outside"),
+        _phase_estimate_cell(row.candidate, attribution=row.phase == "outside"),
         text_cell(row.delta_ns, format_duration(row.delta_ns, signed=True)),
         text_cell(row.wall_delta_contribution, _format_percent(row.wall_delta_contribution, signed=True)),
     )
@@ -371,7 +351,9 @@ def _rulesets_section(
     for row in views.rulesets:
         by_file.setdefault(row.file_order, []).append(row)
     file_issues = {
-        row.file_order: row.issue for row in views.files if row.metric == "wall_sec" and row.issue is not None
+        row.file_order: row.ratio.issue
+        for row in views.files
+        if row.metric == "wall_sec" and row.ratio.issue is not None
     }
     blocks: list[ReportBlock] = []
     if views.rulesets:
@@ -412,25 +394,17 @@ def _rulesets_section(
                     _row(
                         report_id("row", "rulesets", file.sha256, file.fact_directory_sha256, row.name),
                         text_cell(row.name, DEFAULT_RULESET if row.name == "" else row.name),
-                        _duration_estimate_cell(
-                            row.baseline_total_ns,
-                            row.baseline_ci_low_ns,
-                            row.baseline_ci_high_ns,
-                        ),
-                        _duration_estimate_cell(
-                            row.candidate_total_ns,
-                            row.candidate_ci_low_ns,
-                            row.candidate_ci_high_ns,
-                        ),
-                        text_cell(row.delta_ns, format_duration(row.delta_ns, signed=True)),
-                        text_cell(row.search_delta_ns, format_duration(row.search_delta_ns, signed=True)),
-                        text_cell(row.apply_delta_ns, format_duration(row.apply_delta_ns, signed=True)),
+                        _duration_estimate_cell(row.baseline),
+                        _duration_estimate_cell(row.candidate),
+                        text_cell(row.delta.total, format_duration(row.delta.total, signed=True)),
+                        text_cell(row.delta.phases.search, format_duration(row.delta.phases.search, signed=True)),
+                        text_cell(row.delta.phases.apply, format_duration(row.delta.phases.apply, signed=True)),
                         text_cell(
-                            row.unattributed_delta_ns,
-                            format_duration(row.unattributed_delta_ns, signed=True),
+                            row.delta.phases.unattributed,
+                            format_duration(row.delta.phases.unattributed, signed=True),
                         ),
-                        text_cell(row.merge_delta_ns, format_duration(row.merge_delta_ns, signed=True)),
-                        text_cell(row.rebuild_delta_ns, format_duration(row.rebuild_delta_ns, signed=True)),
+                        text_cell(row.delta.phases.merge, format_duration(row.delta.phases.merge, signed=True)),
+                        text_cell(row.delta.phases.rebuild, format_duration(row.delta.phases.rebuild, signed=True)),
                     )
                     for row in rulesets
                 ),
@@ -540,12 +514,11 @@ def _metric_label(metric: MetricName) -> str:
 
 
 def _estimate_cell(
-    point: float | None,
-    low: float | None,
-    high: float | None,
+    estimate: Estimate,
     *,
     rss: bool,
 ) -> ReportCell:
+    point, low, high = estimate
     if point is None:
         return text_cell(None, NULL)
     if rss:
@@ -559,35 +532,36 @@ def _estimate_cell(
     return text_cell(point, display)
 
 
-def _duration_estimate_cell(point: float | None, low: float | None, high: float | None) -> ReportCell:
-    return text_cell(point, _format_duration_interval(point, low, high))
+def _duration_estimate_cell(estimate: Estimate | None) -> ReportCell:
+    if estimate is None:
+        return text_cell(None, NULL)
+    return text_cell(estimate.point, _format_duration_interval(*estimate))
 
 
 def _phase_estimate_cell(
-    point: float | None,
-    low: float | None,
-    high: float | None,
-    wall_share: float | None,
+    phase: PhaseEstimate,
     *,
     attribution: bool,
 ) -> ReportCell:
-    duration = _format_duration_interval(point, low, high, attribution=attribution)
-    display = duration if wall_share is None else f"{duration} · {_format_percent(wall_share)}"
+    duration = _format_duration_interval(*phase.timing, attribution=attribution)
+    display = duration if phase.wall_share is None else f"{duration} · {_format_percent(phase.wall_share)}"
+    point = phase.timing.point
     tone: CellTone = "warning" if attribution and point is not None and point < 0 else "default"
     return text_cell(point, display, tone=tone)
 
 
-def _ratio_cell(summary: RatioSummary) -> ReportCell:
-    return text_cell(summary.point, format_ratio_summary(summary))
+def _ratio_cell(ratio: RatioEstimate) -> ReportCell:
+    return text_cell(ratio.estimate.point, format_ratio_summary(ratio))
 
 
-def format_ratio_summary(summary: RatioSummary) -> str:
-    if summary.point is None:
+def format_ratio_summary(ratio: RatioEstimate) -> str:
+    estimate = ratio.estimate
+    if estimate.point is None:
         return NULL
-    point = f"{_three_significant_digits(summary.point)}x"
-    if summary.ci_low is None or summary.ci_high is None:
+    point = f"{_three_significant_digits(estimate.point)}x"
+    if estimate.ci_low is None or estimate.ci_high is None:
         return point
-    return f"{_three_significant_digits(summary.ci_low)}–{_three_significant_digits(summary.ci_high)}x"
+    return f"{_three_significant_digits(estimate.ci_low)}–{_three_significant_digits(estimate.ci_high)}x"
 
 
 def _format_percent(value: float | None, *, signed: bool = False) -> str:

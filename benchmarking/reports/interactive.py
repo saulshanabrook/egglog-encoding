@@ -21,8 +21,7 @@ from typing import Protocol, cast
 
 from ..models import ComparisonSpec
 from .interactive_runtime import InteractiveRuntime, JsonValue, scope_for_comparison
-from .records import serialize_report_record
-from .store import ReportStore
+from .store import ReportStore, serialize_report_record
 
 PYODIDE_VERSION = "314.0.2"
 PYODIDE_BASE_URL = f"https://cdn.jsdelivr.net/pyodide/v{PYODIDE_VERSION}/full/"
@@ -40,11 +39,10 @@ _PYTHON_MODULES = (
     "benchmarking/__init__.py",
     "benchmarking/models.py",
     "benchmarking/reports/__init__.py",
-    "benchmarking/reports/records.py",
     "benchmarking/reports/store.py",
     "benchmarking/reports/analysis.py",
     "benchmarking/reports/catalog.py",
-    "benchmarking/reports/comparison.py",
+    "benchmarking/reports/presentation.py",
     "benchmarking/reports/interactive_runtime.py",
 )
 

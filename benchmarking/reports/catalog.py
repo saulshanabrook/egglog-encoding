@@ -9,7 +9,6 @@ layout lives in :mod:`benchmarking.reports.render`.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -54,16 +53,6 @@ class ReportTable:
     rows: tuple[ReportRow, ...]
     caption: str | None = None
 
-    def __post_init__(self) -> None:
-        _require_unique("column", (column.id for column in self.columns), owner=self.id)
-        _require_unique("row", (row.id for row in self.rows), owner=self.id)
-        width = len(self.columns)
-        for row in self.rows:
-            if len(row.cells) != width:
-                raise ValueError(
-                    f"report row {row.id!r} has {len(row.cells)} cells; table {self.id!r} has {width} columns"
-                )
-
 
 @dataclass(frozen=True)
 class ReportMessage:
@@ -86,23 +75,12 @@ class ReportSection:
     title: str | None
     blocks: tuple[ReportBlock, ...]
 
-    def __post_init__(self) -> None:
-        _require_unique("block", (block.id for block in self.blocks), owner=self.id)
-
 
 @dataclass(frozen=True)
 class ReportCatalog:
     """The complete shared presentation catalog for one explicit comparison."""
 
     sections: tuple[ReportSection, ...]
-
-    def __post_init__(self) -> None:
-        _require_unique("section", (section.id for section in self.sections), owner="report")
-        _require_unique(
-            "block",
-            (block.id for section in self.sections for block in section.blocks),
-            owner="report",
-        )
 
 
 def report_id(*parts: str | int) -> str:
@@ -117,11 +95,3 @@ def text_cell(value: ReportScalar, display: str | None = None, *, tone: CellTone
     if display is None:
         display = "" if value is None else str(value)
     return ReportCell(value, display, tone)
-
-
-def _require_unique(kind: str, values: Iterable[str], *, owner: str) -> None:
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            raise ValueError(f"duplicate report {kind} ID {value!r} in {owner!r}")
-        seen.add(value)

@@ -58,7 +58,7 @@ nonempty. Override `BENCHMARK_SMOKE_REPORT` to use another temporary path.
 
 For benchmark-report UI changes, inspect both a focused one-file report and the
 default six-file report in Rich and Markdown form. Exercise terminal widths 80,
-119, 120, and 160 using copies of the report cache under `/tmp`; do not read
+119, 120, 160, and 200 using copies of the report cache under `/tmp`; do not read
 from or append to the repository cache during UI validation. Confirm that the
 cumulative `--detail` levels add files, phases, and top rulesets in that order,
 Rich output at 120 columns is readable, widths below 120 produce exactly one
@@ -68,8 +68,7 @@ have no readability guarantee.
 
 For collection-status UI changes, exercise fully cached, partially cached, and
 fully fresh plans. Keep operational output compact, make reused and missing work
-clear, avoid zero-work estimates, and do not duplicate the final report or the
-progress display.
+clear, and do not duplicate the final report or the progress display.
 
 For interactive-report changes, manually run `--open` against a report under
 `/tmp` and inspect the generated `file://` page. Verify that the complete

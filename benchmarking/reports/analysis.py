@@ -3,7 +3,7 @@
 This module selects observations, estimates means and confidence intervals,
 computes Fieller ratios, exhaustively attributes wall time, and ranks changed
 rulesets. Persistence lives in :mod:`benchmarking.reports.store`; all labels,
-units, and presentation policy live in :mod:`benchmarking.reports.comparison`.
+units, and presentation policy live in :mod:`benchmarking.reports.presentation`.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ from typing import Literal, NamedTuple
 
 from scipy import stats
 
-from ..models import ComparisonSpec, DetailLevel, EstimateKey
-from .store import IndexedRecord, ReportStore
+from ..models import ComparisonSpec, DetailLevel
+from .store import CacheKey, IndexedRecord, ReportStore
 
 MetricName = Literal["wall_sec", "max_rss_bytes"]
 ResultClass = Literal["higher", "invalid", "lower", "point_only", "unclear"]
@@ -33,126 +33,30 @@ _RULESET_PHASES: tuple[RulesetPhaseName, ...] = ("search", "apply", "unattribute
 _PHASES: tuple[PhaseName, ...] = (*_RULESET_PHASES, "outside")
 
 
-@dataclass(frozen=True)
-class RatioSummary:
-    """Point estimate, confidence interval, and availability issue for a ratio."""
+class Estimate(NamedTuple):
+    """One point estimate and its optional confidence interval."""
 
     point: float | None
     ci_low: float | None
     ci_high: float | None
-    issue: str | None
 
 
-class SummaryView(NamedTuple):
-    """One suite or per-file tail summary."""
+class RatioEstimate(NamedTuple):
+    """One ratio estimate plus its interpretation and availability issue."""
 
-    metric: MetricName
-    summary_kind: SummaryKind
-    file_order: int | None
-    point: float | None
-    ci_low: float | None
-    ci_high: float | None
-    result_class: ResultClass
-    issue: str | None
-
-    @property
-    def ratio(self) -> RatioSummary:
-        """Return the candidate/baseline ratio represented by this row."""
-
-        return RatioSummary(self.point, self.ci_low, self.ci_high, self.issue)
-
-
-class FileComparisonView(NamedTuple):
-    """One file/metric comparison."""
-
-    file_order: int
-    metric: MetricName
-    baseline_mean: float | None
-    baseline_ci_low: float | None
-    baseline_ci_high: float | None
-    candidate_mean: float | None
-    candidate_ci_low: float | None
-    candidate_ci_high: float | None
-    point: float | None
-    ci_low: float | None
-    ci_high: float | None
-    result_class: ResultClass
-    issue: str | None
-
-    @property
-    def ratio(self) -> RatioSummary:
-        """Return the candidate/baseline ratio represented by this row."""
-
-        return RatioSummary(self.point, self.ci_low, self.ci_high, self.issue)
-
-
-class PhaseComparisonView(NamedTuple):
-    """One exhaustive per-file wall-time phase comparison."""
-
-    file_order: int
-    phase: PhaseName
-    baseline_ns: float | None
-    baseline_ci_low_ns: float | None
-    baseline_ci_high_ns: float | None
-    baseline_wall_share: float | None
-    candidate_ns: float | None
-    candidate_ci_low_ns: float | None
-    candidate_ci_high_ns: float | None
-    candidate_wall_share: float | None
-    delta_ns: float | None
-    wall_delta_contribution: float | None
-
-
-class RulesetComparisonView(NamedTuple):
-    """One top absolute-total-delta ruleset with component deltas."""
-
-    file_order: int
-    ruleset_count: int
-    name: str
-    baseline_total_ns: float | None
-    baseline_ci_low_ns: float | None
-    baseline_ci_high_ns: float | None
-    candidate_total_ns: float | None
-    candidate_ci_low_ns: float | None
-    candidate_ci_high_ns: float | None
-    delta_ns: float
-    search_delta_ns: float
-    apply_delta_ns: float
-    unattributed_delta_ns: float
-    merge_delta_ns: float
-    rebuild_delta_ns: float
-
-
-@dataclass(frozen=True)
-class PairReportViewData:
-    """Typed analysis collections requested by one cumulative detail level."""
-
-    summary: tuple[SummaryView, ...]
-    files: tuple[FileComparisonView, ...]
-    phases: tuple[PhaseComparisonView, ...]
-    rulesets: tuple[RulesetComparisonView, ...]
-
-
-@dataclass(frozen=True)
-class _MetricEstimate:
-    sample_count: int
-    mean: float | None
-    var_mean: float | None
-    ci_low: float | None
-    ci_high: float | None
-    issue: str | None
-
-
-@dataclass(frozen=True)
-class _RatioEstimate:
-    point: float | None
-    ci_low: float | None
-    ci_high: float | None
+    estimate: Estimate
     result_class: ResultClass
     issue: str | None
 
 
-class _PhaseTotals(NamedTuple):
+class PhaseEstimate(NamedTuple):
+    """One phase estimate and its share of endpoint wall time."""
+
+    timing: Estimate
+    wall_share: float | None
+
+
+class PhaseValues(NamedTuple):
     """Five recorded timing components aggregated for one observation/ruleset."""
 
     search: float
@@ -175,6 +79,70 @@ class _PhaseTotals(NamedTuple):
         if name == "merge":
             return self.merge
         return self.rebuild
+
+
+class RulesetDelta(NamedTuple):
+    """One exact total delta and its five timing-component deltas."""
+
+    total: float
+    phases: PhaseValues
+
+
+class SummaryView(NamedTuple):
+    """One suite or per-file tail summary."""
+
+    metric: MetricName
+    summary_kind: SummaryKind
+    file_order: int | None
+    ratio: RatioEstimate
+
+
+class FileComparisonView(NamedTuple):
+    """One file/metric comparison."""
+
+    file_order: int
+    metric: MetricName
+    baseline: Estimate
+    candidate: Estimate
+    ratio: RatioEstimate
+
+
+class PhaseComparisonView(NamedTuple):
+    """One exhaustive per-file wall-time phase comparison."""
+
+    file_order: int
+    phase: PhaseName
+    baseline: PhaseEstimate
+    candidate: PhaseEstimate
+    delta_ns: float | None
+    wall_delta_contribution: float | None
+
+
+class RulesetComparisonView(NamedTuple):
+    """One top absolute-total-delta ruleset with component deltas."""
+
+    file_order: int
+    ruleset_count: int
+    name: str
+    baseline: Estimate | None
+    candidate: Estimate | None
+    delta: RulesetDelta
+
+
+class PairReportViewData(NamedTuple):
+    """Typed analysis collections requested by one cumulative detail level."""
+
+    summary: tuple[SummaryView, ...]
+    files: tuple[FileComparisonView, ...]
+    phases: tuple[PhaseComparisonView, ...]
+    rulesets: tuple[RulesetComparisonView, ...]
+
+
+class _MetricEstimate(NamedTuple):
+    sample_count: int
+    estimate: Estimate
+    var_mean: float | None
+    issue: str | None
 
 
 @dataclass
@@ -200,8 +168,7 @@ class _RankedRuleset(NamedTuple):
     name: str
     baseline: _MetricEstimate | None
     candidate: _MetricEstimate | None
-    delta: float
-    phase_deltas: tuple[float, float, float, float, float]
+    delta: RulesetDelta
 
 
 def analyze_pair(
@@ -238,7 +205,7 @@ def _selected_observations(
     selected: dict[_ObservationKey, tuple[IndexedRecord, ...]] = {}
     for endpoint_order, endpoint in enumerate((comparison.baseline, comparison.candidate)):
         for file_order, file in enumerate(comparison.files):
-            key = EstimateKey.for_endpoint(endpoint, file, comparison.timeout_sec)
+            key = CacheKey.for_endpoint(endpoint, file, comparison.timeout_sec)
             selected[(endpoint_order, file_order)] = store.latest_records(key, comparison.rounds)
     return selected
 
@@ -280,71 +247,51 @@ def _file_comparisons(
         for metric in _METRICS:
             baseline = estimates[(0, file_order, metric)]
             candidate = estimates[(1, file_order, metric)]
-            issue = baseline.issue if baseline.issue is not None else candidate.issue
-            ratio = _ratio_estimate(
-                baseline.mean,
-                baseline.var_mean,
-                candidate.mean,
-                candidate.var_mean,
-                baseline.sample_count,
-                t_critical,
-                issue,
-            )
             rows.append(
                 FileComparisonView(
                     file_order,
                     metric,
-                    baseline.mean,
-                    baseline.ci_low,
-                    baseline.ci_high,
-                    candidate.mean,
-                    candidate.ci_low,
-                    candidate.ci_high,
-                    ratio.point,
-                    ratio.ci_low,
-                    ratio.ci_high,
-                    ratio.result_class,
-                    ratio.issue,
+                    baseline.estimate,
+                    candidate.estimate,
+                    _ratio_estimate(baseline, candidate, t_critical),
                 )
             )
     return tuple(rows)
 
 
 def _ratio_estimate(
-    baseline_mean: float | None,
-    baseline_var_mean: float | None,
-    candidate_mean: float | None,
-    candidate_var_mean: float | None,
-    sample_count: int,
+    baseline: _MetricEstimate,
+    candidate: _MetricEstimate,
     t_critical: float | None,
-    preliminary_issue: str | None,
-) -> _RatioEstimate:
-    issue = preliminary_issue
+) -> RatioEstimate:
+    baseline_mean = baseline.estimate.point
+    candidate_mean = candidate.estimate.point
+    issue = baseline.issue or candidate.issue
     if issue is None and (baseline_mean is None or candidate_mean is None):
         issue = "estimate unavailable"
     if issue is None and baseline_mean is not None and baseline_mean <= 0:
         issue = "baseline mean is not positive"
     if issue is not None:
-        return _RatioEstimate(None, None, None, "invalid", issue)
+        return RatioEstimate(Estimate(None, None, None), "invalid", issue)
 
     assert baseline_mean is not None and candidate_mean is not None
     point = candidate_mean / baseline_mean
-    if sample_count < 2:
-        return _RatioEstimate(point, None, None, "point_only", "CI undefined for n < 2")
-    assert baseline_var_mean is not None
-    assert candidate_var_mean is not None
+    if min(baseline.sample_count, candidate.sample_count) < 2:
+        return RatioEstimate(Estimate(point, None, None), "point_only", "CI undefined for n < 2")
+    assert baseline.var_mean is not None
+    assert candidate.var_mean is not None
     assert t_critical is not None
     critical_squared = t_critical * t_critical
-    fieller_a = baseline_mean * baseline_mean - critical_squared * baseline_var_mean
-    fieller_d = candidate_mean * candidate_mean - critical_squared * candidate_var_mean
+    fieller_a = baseline_mean * baseline_mean - critical_squared * baseline.var_mean
+    fieller_d = candidate_mean * candidate_mean - critical_squared * candidate.var_mean
     radicand = (baseline_mean * candidate_mean) ** 2 - fieller_a * fieller_d
     if fieller_a <= 0 or radicand < 0:
-        return _RatioEstimate(point, None, None, "point_only", "Fieller interval undefined")
+        return RatioEstimate(Estimate(point, None, None), "point_only", "Fieller interval undefined")
     center = baseline_mean * candidate_mean / fieller_a
     half_width = math.sqrt(radicand) / fieller_a
     ci_low = center - half_width
     ci_high = center + half_width
-    return _RatioEstimate(point, ci_low, ci_high, _result_class(point, ci_low, ci_high), None)
+    return RatioEstimate(Estimate(point, ci_low, ci_high), _result_class(point, ci_low, ci_high), None)
 
 
 def _result_class(point: float | None, ci_low: float | None, ci_high: float | None) -> ResultClass:
@@ -375,16 +322,23 @@ def _summary_rows(
         ),
         None,
     )
+    sample_count = min(estimate.sample_count for estimate in baseline)
     suite_ratio = _ratio_estimate(
-        math.fsum(estimate.mean or 0.0 for estimate in baseline),
-        math.fsum(estimate.var_mean or 0.0 for estimate in baseline),
-        math.fsum(estimate.mean or 0.0 for estimate in candidate),
-        math.fsum(estimate.var_mean or 0.0 for estimate in candidate),
-        min(estimate.sample_count for estimate in baseline),
+        _MetricEstimate(
+            sample_count,
+            Estimate(math.fsum(estimate.estimate.point or 0.0 for estimate in baseline), None, None),
+            math.fsum(estimate.var_mean or 0.0 for estimate in baseline),
+            first_issue,
+        ),
+        _MetricEstimate(
+            sample_count,
+            Estimate(math.fsum(estimate.estimate.point or 0.0 for estimate in candidate), None, None),
+            math.fsum(estimate.var_mean or 0.0 for estimate in candidate),
+            None,
+        ),
         t_critical,
-        first_issue,
     )
-    rows = [_summary_view("wall_sec", "suite", None, suite_ratio)]
+    rows = [SummaryView("wall_sec", "suite", None, suite_ratio)]
     tail_specs: tuple[tuple[MetricName, SummaryKind], ...] = (
         ("wall_sec", "lowest_file"),
         ("wall_sec", "highest_file"),
@@ -393,45 +347,27 @@ def _summary_rows(
     )
     for metric, kind in tail_specs:
         metric_rows = tuple(row for row in file_rows if row.metric == metric)
-        comparable = tuple(row for row in metric_rows if row.point is not None)
+        comparable = tuple(row for row in metric_rows if row.ratio.estimate.point is not None)
         selected: FileComparisonView | None
         if kind == "lowest_file":
-            selected = min(comparable, key=lambda row: (row.point, row.file_order), default=None)
+            selected = min(comparable, key=lambda row: (row.ratio.estimate.point, row.file_order), default=None)
         else:
-            selected = max(comparable, key=lambda row: (row.point, row.file_order), default=None)
+            selected = max(comparable, key=lambda row: (row.ratio.estimate.point, row.file_order), default=None)
         if selected is None:
-            issue = next((row.issue for row in metric_rows if row.point is None), None) or "no comparable files"
-            ratio = _RatioEstimate(None, None, None, "invalid", issue)
+            issue = (
+                next(
+                    (row.ratio.issue for row in metric_rows if row.ratio.estimate.point is None),
+                    None,
+                )
+                or "no comparable files"
+            )
+            ratio = RatioEstimate(Estimate(None, None, None), "invalid", issue)
             file_order = None
         else:
-            ratio = _RatioEstimate(
-                selected.point,
-                selected.ci_low,
-                selected.ci_high,
-                selected.result_class,
-                selected.issue,
-            )
+            ratio = selected.ratio
             file_order = selected.file_order
-        rows.append(_summary_view(metric, kind, file_order, ratio))
+        rows.append(SummaryView(metric, kind, file_order, ratio))
     return tuple(rows)
-
-
-def _summary_view(
-    metric: MetricName,
-    kind: SummaryKind,
-    file_order: int | None,
-    ratio: _RatioEstimate,
-) -> SummaryView:
-    return SummaryView(
-        metric,
-        kind,
-        file_order,
-        ratio.point,
-        ratio.ci_low,
-        ratio.ci_high,
-        ratio.result_class,
-        ratio.issue,
-    )
 
 
 def _phase_comparisons(
@@ -455,8 +391,8 @@ def _phase_comparisons(
 
     result: list[PhaseComparisonView] = []
     for file_order in range(len(comparison.files)):
-        baseline_wall = metric_estimates[(0, file_order, "wall_sec")].mean
-        candidate_wall = metric_estimates[(1, file_order, "wall_sec")].mean
+        baseline_wall = metric_estimates[(0, file_order, "wall_sec")].estimate.point
+        candidate_wall = metric_estimates[(1, file_order, "wall_sec")].estimate.point
         wall_delta_ns = (
             None
             if baseline_wall is None or candidate_wall is None
@@ -465,19 +401,21 @@ def _phase_comparisons(
         for phase in _PHASES:
             baseline = estimates[(0, file_order, phase)]
             candidate = estimates[(1, file_order, phase)]
-            delta = None if baseline.mean is None or candidate.mean is None else candidate.mean - baseline.mean
+            baseline_point = baseline.estimate.point
+            candidate_point = candidate.estimate.point
+            delta = None if baseline_point is None or candidate_point is None else candidate_point - baseline_point
             result.append(
                 PhaseComparisonView(
                     file_order,
                     phase,
-                    baseline.mean,
-                    baseline.ci_low,
-                    baseline.ci_high,
-                    _share(baseline.mean, baseline_wall, scale=1_000_000_000.0),
-                    candidate.mean,
-                    candidate.ci_low,
-                    candidate.ci_high,
-                    _share(candidate.mean, candidate_wall, scale=1_000_000_000.0),
+                    PhaseEstimate(
+                        baseline.estimate,
+                        _share(baseline_point, baseline_wall, scale=1_000_000_000.0),
+                    ),
+                    PhaseEstimate(
+                        candidate.estimate,
+                        _share(candidate_point, candidate_wall, scale=1_000_000_000.0),
+                    ),
                     delta,
                     _share(delta, wall_delta_ns),
                 )
@@ -501,9 +439,9 @@ def _timing_aggregates(
                 continue
             summary = record["timing_summary"]
             assert summary is not None
-            per_ruleset: dict[str, _PhaseTotals] = {}
+            per_ruleset: dict[str, PhaseValues] = {}
             for ruleset in summary["rulesets"]:
-                totals = _PhaseTotals(
+                totals = PhaseValues(
                     float(ruleset["search_ns"]),
                     float(ruleset["apply_ns"]),
                     float(ruleset["unattributed_ns"]),
@@ -529,11 +467,11 @@ def _timing_aggregates(
     return result
 
 
-_ZERO_PHASE_TOTALS = _PhaseTotals(0.0, 0.0, 0.0, 0.0, 0.0)
+_ZERO_PHASE_TOTALS = PhaseValues(0.0, 0.0, 0.0, 0.0, 0.0)
 
 
-def _add_totals(left: _PhaseTotals, right: _PhaseTotals) -> _PhaseTotals:
-    return _PhaseTotals(
+def _add_totals(left: PhaseValues, right: PhaseValues) -> PhaseValues:
+    return PhaseValues(
         left.search + right.search,
         left.apply + right.apply,
         left.unattributed + right.unattributed,
@@ -542,7 +480,7 @@ def _add_totals(left: _PhaseTotals, right: _PhaseTotals) -> _PhaseTotals:
     )
 
 
-def _sum_totals(values: Iterable[_PhaseTotals]) -> _PhaseTotals:
+def _sum_totals(values: Iterable[PhaseValues]) -> PhaseValues:
     result = _ZERO_PHASE_TOTALS
     for value in values:
         result = _add_totals(result, value)
@@ -564,12 +502,12 @@ def _ruleset_comparisons(
         for name in names:
             baseline = _ruleset_estimate(timing[(0, file_order)], name, None, t_critical)
             candidate = _ruleset_estimate(timing[(1, file_order)], name, None, t_critical)
-            delta = _estimate_mean(candidate) - _estimate_mean(baseline)
-            if delta == 0.0:
+            total_delta = _estimate_point(candidate) - _estimate_point(baseline)
+            if total_delta == 0.0:
                 continue
-            phase_deltas = _ruleset_phase_deltas(timing, file_order, name, t_critical)
-            comparisons.append(_RankedRuleset(name, baseline, candidate, delta, phase_deltas))
-        comparisons.sort(key=lambda row: (-abs(row.delta), row.name))
+            delta = RulesetDelta(total_delta, _ruleset_phase_deltas(timing, file_order, name, t_critical))
+            comparisons.append(_RankedRuleset(name, baseline, candidate, delta))
+        comparisons.sort(key=lambda row: (-abs(row.delta.total), row.name))
         count = len(comparisons)
         for row in comparisons[:10]:
             result.append(
@@ -577,14 +515,9 @@ def _ruleset_comparisons(
                     file_order,
                     count,
                     row.name,
-                    None if row.baseline is None else row.baseline.mean,
-                    None if row.baseline is None else row.baseline.ci_low,
-                    None if row.baseline is None else row.baseline.ci_high,
-                    None if row.candidate is None else row.candidate.mean,
-                    None if row.candidate is None else row.candidate.ci_low,
-                    None if row.candidate is None else row.candidate.ci_high,
+                    None if row.baseline is None else row.baseline.estimate,
+                    None if row.candidate is None else row.candidate.estimate,
                     row.delta,
-                    *row.phase_deltas,
                 )
             )
     return tuple(result)
@@ -604,8 +537,8 @@ def _ruleset_estimate(
     return _sample_estimate(values, None, t_critical)
 
 
-def _estimate_mean(estimate: _MetricEstimate | None) -> float:
-    return 0.0 if estimate is None or estimate.mean is None else estimate.mean
+def _estimate_point(estimate: _MetricEstimate | None) -> float:
+    return 0.0 if estimate is None or estimate.estimate.point is None else estimate.estimate.point
 
 
 def _ruleset_phase_deltas(
@@ -613,13 +546,13 @@ def _ruleset_phase_deltas(
     file_order: int,
     name: str,
     t_critical: float | None,
-) -> tuple[float, float, float, float, float]:
+) -> PhaseValues:
     def delta(phase: RulesetPhaseName) -> float:
         candidate = _ruleset_estimate(timing[(1, file_order)], name, phase, t_critical)
         baseline = _ruleset_estimate(timing[(0, file_order)], name, phase, t_critical)
-        return _estimate_mean(candidate) - _estimate_mean(baseline)
+        return _estimate_point(candidate) - _estimate_point(baseline)
 
-    return (delta("search"), delta("apply"), delta("unattributed"), delta("merge"), delta("rebuild"))
+    return PhaseValues(delta("search"), delta("apply"), delta("unattributed"), delta("merge"), delta("rebuild"))
 
 
 def _sample_estimate(
@@ -637,7 +570,7 @@ def _sample_estimate(
         half_width = t_critical * math.sqrt(var_mean)
         ci_low = mean - half_width
         ci_high = mean + half_width
-    return _MetricEstimate(len(values), mean, var_mean, ci_low, ci_high, issue)
+    return _MetricEstimate(len(values), Estimate(mean, ci_low, ci_high), var_mean, issue)
 
 
 def _share(numerator: float | None, denominator: float | None, *, scale: float = 1.0) -> float | None:

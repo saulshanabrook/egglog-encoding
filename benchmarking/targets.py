@@ -16,8 +16,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
+from rich.console import Console
+from rich.text import Text
+
 from .models import Backend, FileSpec, ResolvedTarget, TargetRequest, TargetRow, Treatment, backend_spec
-from .output import RunnerOutput
 
 BuildProfile = Literal["release", "profiling"]
 
@@ -215,12 +217,12 @@ def materialize_target_request(request: TargetRequest, invocation_cwd: Path, rep
 
 def build_target(
     row: TargetRow,
-    output: RunnerOutput,
+    console: Console,
     build_profile: BuildProfile = "release",
     cargo_features: Sequence[str] = (),
 ) -> tuple[Path, str]:
     checkout_path = Path(row.path)
-    output.build_start(row)
+    console.print(Text.assemble(("Building", "bold"), " ", _display_target(row)))
     if build_profile == "release":
         build_args = ["cargo", "build", "--release", "-p", "egglog-experimental"]
     else:
@@ -245,11 +247,11 @@ def build_target(
 def build_resolved_target(
     request: TargetRequest,
     row: TargetRow,
-    output: RunnerOutput,
+    console: Console,
     build_profile: BuildProfile,
     cargo_features: Sequence[str],
 ) -> ResolvedTarget:
-    binary_path, binary_sha256 = build_target(row, output, build_profile, cargo_features)
+    binary_path, binary_sha256 = build_target(row, console, build_profile, cargo_features)
     row = replace(row, is_dirty=git_dirty(Path(row.path)))
     return ResolvedTarget(request=request, row=row, binary_sha256=binary_sha256, binary_path=binary_path)
 
@@ -259,12 +261,22 @@ def resolve_profile_target(
     backend: Backend,
     invocation_cwd: Path,
     repo_root: Path,
-    output: RunnerOutput,
+    console: Console,
 ) -> ResolvedTarget:
     if request.is_label_lookup:
         raise ValueError("profile mode does not support cache-only label= targets; use label=SOURCE")
     row = materialize_target_request(request, invocation_cwd, repo_root)
-    return build_resolved_target(request, row, output, "profiling", backend_spec(backend).cargo_features)
+    return build_resolved_target(request, row, console, "profiling", backend_spec(backend).cargo_features)
+
+
+def _display_target(row: TargetRow) -> str:
+    """Return the operational label for one target build."""
+
+    if row.label:
+        return row.label
+    if row.git_ref != "HEAD":
+        return row.git_ref
+    return f"{Path(row.path).name}@{row.git_sha[:12]}"
 
 
 def workload_command(

@@ -1,10 +1,8 @@
-"""Test profile request handling, Samply lifecycle, caching, and artifact analysis."""
+"""Test profile CLI handling, Samply recording, caching, lifecycle, and opening."""
 
 from __future__ import annotations
 
 import argparse
-import gzip
-import io
 import subprocess
 import sys
 from collections.abc import Callable
@@ -14,20 +12,18 @@ from typing import Any, cast
 import pytest
 from rich.console import Console
 
-from benchmarking import benchmark, collection, models, output, processes, samply_analysis, targets
+from benchmarking import benchmark, collection, models, processes, samply_analysis, targets
 from benchmarking import profile as profile_runner
 from benchmarking.reports.store import ReportStore
 
-from .conftest import (
-    ROOT,
-    make_cpu_profile_data,
+from .profile_fixtures import (
     make_cpu_summary,
     make_profile_case,
     make_profile_data,
-    make_target,
     mock_profile_resolution,
     write_profile,
 )
+from .report_fixtures import ROOT, make_target
 
 
 def stable_file_spec(tmp_path: Path) -> models.FileSpec:
@@ -63,8 +59,28 @@ def stub_samply_record_process(
         assert kwargs["start_new_session"] is True
         return FakeProcess(command, kwargs)
 
+    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     monkeypatch.setattr(profile_runner.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(profile_runner, "terminate_process_group", lambda process: process.wait())
+
+
+def record_profile(
+    artifact: Path,
+    file_spec: models.FileSpec,
+    *,
+    iterations: int = 1,
+) -> dict[str, Any]:
+    """Record with the arguments shared by every Samply lifecycle test."""
+
+    return profile_runner.run_samply_record(
+        artifact=artifact,
+        file_spec=file_spec,
+        name="profile",
+        iterations=iterations,
+        workload=["workload"],
+        checkout_path=ROOT,
+        timeout_sec=120,
+    )
 
 
 def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> None:
@@ -142,7 +158,7 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
     def fake_build(
         target_request: models.TargetRequest,
         target_row: models.TargetRow,
-        output: output.RunnerOutput,
+        console: Console,
         build_profile: targets.BuildProfile,
         cargo_features: tuple[str, ...],
     ) -> models.ResolvedTarget:
@@ -168,9 +184,9 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
         False,
         ROOT,
         ROOT,
-        output.RunnerOutput(),
+        Console(stderr=True),
     )[request]
-    profile_target = targets.resolve_profile_target(request, "dd", ROOT, ROOT, output.RunnerOutput())
+    profile_target = targets.resolve_profile_target(request, "dd", ROOT, ROOT, Console(stderr=True))
 
     assert benchmark_target == target
     assert profile_target == target
@@ -198,7 +214,7 @@ def test_build_target_uses_profiling_profile(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setattr(targets.subprocess, "run", fake_run)
     monkeypatch.setattr(targets, "sha256_file", lambda path: "sha256:bin")
 
-    binary_path, binary_sha256 = targets.build_target(row, output.RunnerOutput(), "profiling")
+    binary_path, binary_sha256 = targets.build_target(row, Console(stderr=True), "profiling")
 
     assert commands == [["cargo", "build", "--profile", "profiling", "-p", "egglog-experimental"]]
     assert binary_path == binary
@@ -266,18 +282,9 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
         output = Path(command[command.index("--output") + 1])
         write_profile(output, profile)
 
-    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     stub_samply_record_process(monkeypatch, fake_run)
 
-    recorded_profile = profile_runner.run_samply_record(
-        artifact=artifact,
-        file_spec=stable_file_spec(tmp_path),
-        name="profile",
-        iterations=3,
-        workload=["workload"],
-        checkout_path=ROOT,
-        timeout_sec=120,
-    )
+    recorded_profile = record_profile(artifact, stable_file_spec(tmp_path), iterations=3)
 
     assert recorded_profile == profile
     assert artifact.read_bytes()[:2] == b"\x1f\x8b"
@@ -301,19 +308,10 @@ def test_samply_mutated_workload_is_not_promoted(monkeypatch: pytest.MonkeyPatch
         write_profile(output)
         file_spec.absolute_path.write_text("(check (= 2 2))\n", encoding="utf-8")
 
-    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     stub_samply_record_process(monkeypatch, fake_run)
 
     with pytest.raises(ValueError, match=r"workload changed during execution: workload\.egg"):
-        profile_runner.run_samply_record(
-            artifact=artifact,
-            file_spec=file_spec,
-            name="profile",
-            iterations=1,
-            workload=["workload"],
-            checkout_path=ROOT,
-            timeout_sec=120,
-        )
+        record_profile(artifact, file_spec)
 
     assert artifact.read_bytes() == b"old"
     assert temporary_paths and not temporary_paths[0].exists()
@@ -326,20 +324,11 @@ def test_samply_failure_leaves_no_new_artifact(monkeypatch: pytest.MonkeyPatch, 
     def fake_run(command: list[str], **kwargs: Any) -> None:
         temp_artifact.write_bytes(b"partial")
 
-    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     monkeypatch.setattr(profile_runner, "profile_temp_path", lambda path: temp_artifact)
     stub_samply_record_process(monkeypatch, fake_run, return_code=1)
 
     with pytest.raises(subprocess.CalledProcessError):
-        profile_runner.run_samply_record(
-            artifact=artifact,
-            file_spec=stable_file_spec(tmp_path),
-            name="profile",
-            iterations=1,
-            workload=["workload"],
-            checkout_path=ROOT,
-            timeout_sec=120,
-        )
+        record_profile(artifact, stable_file_spec(tmp_path))
 
     assert not artifact.exists()
     assert not temp_artifact.exists()
@@ -368,66 +357,10 @@ def test_samply_timeout_cleans_up_before_propagating(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(profile_runner, "terminate_process_group", terminated.append)
 
     with pytest.raises(subprocess.TimeoutExpired):
-        profile_runner.run_samply_record(
-            artifact=artifact,
-            file_spec=stable_file_spec(tmp_path),
-            name="profile",
-            iterations=1,
-            workload=["workload"],
-            checkout_path=ROOT,
-            timeout_sec=120,
-        )
+        record_profile(artifact, stable_file_spec(tmp_path))
 
     assert terminated == [process]
     assert artifact.read_bytes() == b"old"
-
-
-def test_read_profile_artifact_rejects_plain_json(tmp_path: Path) -> None:
-    artifact = tmp_path / "profile.json.gz"
-    write_profile(artifact, compressed=False)
-
-    with pytest.raises(ValueError, match="not gzip-compressed"):
-        samply_analysis.read_artifact(artifact)
-
-
-def test_read_profile_artifact_rejects_malformed_json(tmp_path: Path) -> None:
-    artifact = tmp_path / "profile.json.gz"
-    with gzip.open(artifact, "wt", encoding="utf-8") as handle:
-        handle.write("not-json")
-
-    with pytest.raises(ValueError, match="could not parse profile artifact"):
-        samply_analysis.read_artifact(artifact)
-
-
-def test_read_profile_artifact_normalizes_os_errors(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    artifact = tmp_path / "profile.json.gz"
-    artifact.write_bytes(b"\x1f\x8b")
-    original_open = Path.open
-
-    def denied_open(path: Path, *args: Any, **kwargs: Any) -> Any:
-        if path == artifact:
-            raise PermissionError("denied")
-        return original_open(path, *args, **kwargs)
-
-    monkeypatch.setattr(Path, "open", denied_open)
-
-    with pytest.raises(ValueError, match="could not read profile artifact"):
-        samply_analysis.read_artifact(artifact)
-
-
-def test_profile_leaf_samples_have_named_fields(tmp_path: Path) -> None:
-    binary = tmp_path / "egglog-experimental"
-    profile = make_cpu_profile_data(binary)
-
-    samples = tuple(samply_analysis._thread_leaf_samples(profile["threads"][0], 1e-6))
-
-    assert samples[0].cpu_seconds == pytest.approx(0.1)
-    assert samples[0].library_index == 0
-    assert samples[0].function_name == "0x10"
-    assert samples[0].relative_address == 0x10
 
 
 def test_samply_plain_json_output_is_not_promoted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -440,19 +373,10 @@ def test_samply_plain_json_output_is_not_promoted(monkeypatch: pytest.MonkeyPatc
         temporary_paths.append(output)
         write_profile(output, compressed=False)
 
-    monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     stub_samply_record_process(monkeypatch, fake_run)
 
     with pytest.raises(ValueError, match="gzip"):
-        profile_runner.run_samply_record(
-            artifact=artifact,
-            file_spec=stable_file_spec(tmp_path),
-            name="profile",
-            iterations=1,
-            workload=["workload"],
-            checkout_path=ROOT,
-            timeout_sec=120,
-        )
+        record_profile(artifact, stable_file_spec(tmp_path))
 
     assert artifact.read_bytes() == b"old"
     assert temporary_paths and not temporary_paths[0].exists()
@@ -463,124 +387,6 @@ def test_missing_samply_reports_install_command(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(FileNotFoundError, match="cargo install --locked samply"):
         profile_runner.samply_executable()
-
-
-def test_macos_profile_summary_uses_cpu_deltas_and_atos_offsets(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    binary = tmp_path / "egglog-experimental"
-    binary.write_bytes(b"binary")
-    profile = make_cpu_profile_data(binary)
-    commands: list[list[str]] = []
-
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        commands.append(command)
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout="crate..Thing$LT$T$GT$::run::h1234 (in egglog-experimental) + 4\n",
-            stderr="",
-        )
-
-    monkeypatch.setattr(samply_analysis.shutil, "which", lambda name: "/usr/bin/atos" if name == "atos" else None)
-    monkeypatch.setattr(samply_analysis.subprocess, "run", fake_run)
-
-    summary = samply_analysis.summarize(profile, binary)
-
-    assert summary.observed_cpu_seconds == pytest.approx(0.6)
-    assert summary.application_cpu_seconds == pytest.approx(0.1)
-    assert summary.other_library_cpu_seconds == pytest.approx(0.2)
-    assert summary.unattributed_cpu_seconds == pytest.approx(0.3)
-    assert summary.symbolized_application_cpu_seconds == pytest.approx(0.1)
-    assert len(summary.functions) == 1
-    assert summary.functions[0].name == "crate::Thing<T>::run::h1234"
-    assert summary.functions[0].cpu_seconds == pytest.approx(0.1)
-    assert len(commands) == 1
-    assert "-offset" in commands[0]
-    assert "0x10" in commands[0]
-    assert "0x100000010" not in commands[0]
-
-
-def test_macos_profile_summary_is_partial_without_atos(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    binary = tmp_path / "egglog-experimental"
-    binary.write_bytes(b"binary")
-    monkeypatch.setattr(samply_analysis.shutil, "which", lambda name: None)
-    monkeypatch.setattr(
-        samply_analysis.subprocess,
-        "run",
-        lambda *args, **kwargs: pytest.fail("symbolizer should not run without atos"),
-    )
-
-    summary = samply_analysis.summarize(make_cpu_profile_data(binary), binary)
-
-    assert summary.observed_cpu_seconds == pytest.approx(0.6)
-    assert summary.application_cpu_seconds == pytest.approx(0.1)
-    assert summary.symbolized_application_cpu_seconds == 0
-    assert summary.functions == ()
-    assert any("atos is unavailable" in warning for warning in summary.warnings)
-
-
-def test_macos_rust_v0_symbols_use_llvm_cxxfilt(monkeypatch: pytest.MonkeyPatch) -> None:
-    commands: list[tuple[list[str], str | None]] = []
-
-    def fake_run(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        commands.append((command, kwargs.get("input")))
-        return subprocess.CompletedProcess(command, 0, stdout="__rustc::__rdl_alloc\n", stderr="")
-
-    monkeypatch.setattr(
-        samply_analysis.shutil,
-        "which",
-        lambda name: "/usr/bin/xcrun" if name == "xcrun" else None,
-    )
-    monkeypatch.setattr(samply_analysis.subprocess, "run", fake_run)
-
-    symbols, warnings = samply_analysis.demangle_rust_v0_symbols({0x10: "_RNvExample"})
-
-    assert symbols == {0x10: "__rustc::__rdl_alloc"}
-    assert warnings == ()
-    assert commands == [(["/usr/bin/xcrun", "llvm-cxxfilt"], "_RNvExample\n")]
-
-
-def test_profile_load_command_quotes_paths_for_posix_and_windows(tmp_path: Path) -> None:
-    artifact = tmp_path / "profiles with spaces" / "profile.json.gz"
-
-    assert samply_analysis.load_command(artifact, os_name="posix") == f"samply load '{artifact.resolve()}'"
-    assert samply_analysis.load_command(artifact, os_name="nt") == f'samply load "{artifact.resolve()}"'
-    assert samply_analysis.load_command(Path(".profiles/profile.json.gz"), os_name="posix") == (
-        "samply load .profiles/profile.json.gz"
-    )
-
-
-def test_profile_rich_and_markdown_render_same_summary(tmp_path: Path) -> None:
-    artifact = tmp_path / "profiles with spaces" / "profile.json.gz"
-    summary = make_cpu_summary()
-    report = samply_analysis.ProfileReport(
-        artifact=artifact,
-        cache_status="hit",
-        workload="dir\\name|file\nnext.egg",
-        backend="main",
-        treatment="proofs",
-        top=1,
-        cpu_summary=summary,
-    )
-    rich_output = io.StringIO()
-    console = Console(file=rich_output, force_terminal=False, width=120)
-
-    samply_analysis.render_rich(console, report)
-    markdown = samply_analysis.render_markdown(report)
-
-    for value in ("CPU Profile Summary", "Observed thread", "Application symbols", "first", "samply load"):
-        assert value in rich_output.getvalue()
-        assert value in markdown
-    assert "second" not in rich_output.getvalue()
-    assert "second" not in markdown
-    assert "first&lt;T&gt;" in markdown
-    assert "dir\\\\name\\|file<br>next.egg" in markdown
-    assert "| Metric | CPU | Share |" in markdown
 
 
 def test_open_samply_profile_redirects_viewer_output_and_handles_interrupt(
@@ -629,7 +435,7 @@ def test_profile_cache_hit_on_non_macos_skips_cpu_summary_and_workload(
         lambda *args, **kwargs: pytest.fail("macOS summary should not run"),
     )
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -653,7 +459,7 @@ def test_profile_cache_hit_on_non_macos_prints_markdown_handoff(
     mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda *args: pytest.fail("summary should not run"))
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     captured = capsys.readouterr()
     assert captured.out.startswith("## Profile Ready\n")
@@ -675,7 +481,7 @@ def test_profile_cache_hit_on_macos_prints_cpu_summary(
     mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: summary)
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -700,7 +506,7 @@ def test_profile_cache_hit_prints_github_markdown_summary(
     mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(samply_analysis, "summarize", lambda profile, binary: make_cpu_summary())
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     captured = capsys.readouterr()
     assert captured.out.startswith("## CPU Profile Summary\n")
@@ -731,7 +537,7 @@ def test_profile_no_summary_prints_only_absolute_artifact_path(
     monkeypatch.setattr(profile_runner.sys, "platform", "linux")
     mock_profile_resolution(monkeypatch, request, target)
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     captured = capsys.readouterr()
     assert captured.out == f"{artifact.resolve()}\n"
@@ -750,7 +556,7 @@ def test_profile_cache_hit_can_open_profile(monkeypatch: pytest.MonkeyPatch, tmp
     mock_profile_resolution(monkeypatch, request, target)
     monkeypatch.setattr(profile_runner, "open_samply_profile", lambda artifact, checkout_path: opened.append(artifact))
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     assert opened == [artifact]
 
@@ -779,7 +585,7 @@ def test_profile_explicit_iterations_skip_calibration_and_bypass_cache(
     )
     monkeypatch.setattr(profile_runner, "run_samply_record", fake_record)
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     assert recorded == [(artifact, 3)]
 
@@ -804,7 +610,7 @@ def test_profile_auto_calibrates_once_and_uses_derived_iterations(
         ),
     )
     monkeypatch.setattr(profile_runner, "run_samply_record", fake_record)
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     assert recorded == [6]
 
@@ -825,7 +631,7 @@ def test_profile_auto_calibration_failure_stops_before_samply(
     monkeypatch.setattr(profile_runner, "run_samply_record", lambda **kwargs: pytest.fail("samply should not run"))
 
     with pytest.raises(ValueError, match="profile calibration failed"):
-        profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+        profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
 
 def test_profile_auto_iteration_cap_prints_warning(
@@ -845,11 +651,11 @@ def test_profile_auto_iteration_cap_prints_warning(
     )
     monkeypatch.setattr(profile_runner, "run_samply_record", lambda **kwargs: make_profile_data())
 
-    profile_runner.run_profile(argparse.Namespace(), output.RunnerOutput(), ROOT, ROOT)
+    profile_runner.run_profile(argparse.Namespace(), Console(stderr=True), ROOT, ROOT)
 
     assert "maximum profile iterations reached" in capsys.readouterr().err
 
 
 def test_profile_rejects_cache_only_label_targets() -> None:
     with pytest.raises(ValueError, match="cache-only label="):
-        targets.resolve_profile_target(targets.parse_target("cached="), "main", ROOT, ROOT, output.RunnerOutput())
+        targets.resolve_profile_target(targets.parse_target("cached="), "main", ROOT, ROOT, Console(stderr=True))

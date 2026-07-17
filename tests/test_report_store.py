@@ -8,24 +8,23 @@ from typing import cast
 
 import pytest
 
-from benchmarking import models
-from benchmarking.reports.records import (
+from benchmarking.reports.store import (
+    CacheKey,
     ReportRecord,
+    ReportStore,
     RulesetTimingRecord,
     TimingSummaryRecord,
     parse_report_record,
 )
-from benchmarking.reports.store import ReportStore
 
-from .conftest import make_record, make_ruleset_timing, make_timing_summary, write_report
+from .report_fixtures import make_record, make_ruleset_timing, make_timing_summary, write_report
 
 
 def test_missing_report_is_an_empty_store_without_sidecar_artifacts(tmp_path: Path) -> None:
     report = tmp_path / "nested" / "report.jsonl"
 
-    store = ReportStore(report)
+    ReportStore(report)
 
-    assert store.successful_estimate_aggregates() == ()
     assert report.read_text(encoding="utf-8") == ""
     assert list(report.parent.iterdir()) == [report]
 
@@ -48,7 +47,7 @@ def test_append_is_immediately_queryable(tmp_path: Path) -> None:
 def test_append_indexes_the_exact_record_it_persists(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     record = make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=2.5)
-    key = models.EstimateKey("sha256:bin", "sha256:file", "off", 120)
+    key = CacheKey("sha256:bin", "sha256:file", "off", 120)
     store = ReportStore(report)
 
     store.append(record)
@@ -59,7 +58,6 @@ def test_append_indexes_the_exact_record_it_persists(tmp_path: Path) -> None:
     assert current == persisted == reopened.latest_records(key, 1)[0].record
     assert store.records == reopened.records == (persisted,)
     assert current["wall_sec"] == 2.5
-    assert store.successful_estimate_aggregates() == reopened.successful_estimate_aggregates()
 
 
 def test_report_path_metacharacters_are_literal_not_a_glob(tmp_path: Path) -> None:
@@ -71,27 +69,9 @@ def test_report_path_metacharacters_are_literal_not_a_glob(tmp_path: Path) -> No
         make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:sibling"),
     )
 
-    aggregates = ReportStore(report).successful_estimate_aggregates()
+    records = ReportStore(report).records
 
-    assert [aggregate.key.binary_sha256 for aggregate in aggregates] == ["sha256:bin"]
-
-
-def test_historical_estimates_are_grouped_as_counts_and_sums(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    write_report(
-        report,
-        make_record(0, started_at="2026-07-15T12:00:00Z", wall_sec=1.5),
-        make_record(1, started_at="2026-07-15T12:00:01Z", wall_sec=2.5),
-        make_record(2, started_at="2026-07-15T12:00:02Z", status="failure", wall_sec=100.0),
-        make_record(3, started_at="2026-07-15T12:00:03Z", status="timed-out"),
-        make_record(4, started_at="2026-07-15T12:00:04Z", timeout_sec=60, wall_sec=7.0),
-    )
-
-    aggregates = ReportStore(report).successful_estimate_aggregates()
-
-    assert [
-        (aggregate.key.timeout_sec, aggregate.sample_count, aggregate.total_wall_sec) for aggregate in aggregates
-    ] == [(60, 1, 7.0), (120, 2, 4.0)]
+    assert [record["binary_sha256"] for record in records] == ["sha256:bin"]
 
 
 def test_typed_dict_schema_and_nested_values_round_trip(tmp_path: Path) -> None:
@@ -175,8 +155,8 @@ def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp
             fact_directory_sha256="sha256:other-facts",
         ),
     )
-    exact = models.EstimateKey("sha256:bin", "sha256:file", "off", 120)
-    other_facts = models.EstimateKey(
+    exact = CacheKey("sha256:bin", "sha256:file", "off", 120)
+    other_facts = CacheKey(
         "sha256:bin",
         "sha256:file",
         "off",

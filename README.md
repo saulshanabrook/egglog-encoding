@@ -402,14 +402,13 @@ Before any measured row is appended, all targets needing collection are built.
 Fresh collection is serial; one untimed `<binary> --help` capability preflight
 per target verifies the required timing-summary interface. Each target prints
 one compact cached/required line and either `nothing to collect` or the fresh-run
-count and a coarse ETA; cached failures and timeouts are explicit, and fully
-cached runs omit the ETA. ETAs use successful observations for the exact cache
-key and mark unmatched runs as unestimated. Fresh TTY runs use transient
-progress, redirected output logs each completed run, and both end with status
-counts. All operational output goes to stderr.
+count; cached failures and timeouts are explicit. Fresh TTY runs use transient
+progress with elapsed time, redirected output logs each completed run, and both
+end with status counts. All operational output goes to stderr.
 
-`benchmarking/reports/records.py` defines the sole trusted `TypedDict` schema
-and standard-library JSON codec. Each observation contains target and workload
+`benchmarking/reports/store.py` defines the sole trusted `TypedDict` schema,
+standard-library JSON codec, cache key, and append/index/select operations.
+Each observation contains target and workload
 provenance, exact cache coordinates, status, wall time, peak RSS, and failure
 details. A top-level report schema version covers both the persisted shape and
 measurement semantics, so methodology changes cannot silently reuse stale
@@ -424,16 +423,16 @@ incomplete instead of averaging only successful rows.
 
 This tool is the only supported reader and writer. The codec rejects old report
 and timing-summary schema versions and requires successful rows to contain
-timing data. It trusts
-the tool's typed writer rather than repeating the `TypedDict` as runtime
-field-by-field validation. A schema change intentionally invalidates existing
-caches: move or remove an incompatible report and recompute it.
+timing data. It trusts the tool's typed writer rather than repeating the
+`TypedDict` as runtime field-by-field validation. A schema change intentionally
+invalidates existing caches: move or remove an incompatible report and recompute
+it.
 
 ### Report-analysis ownership
 
 `ComparisonSpec` owns the exact endpoints, files, rounds, and timeout;
 `store.py` owns physical row order and cache selection. `analysis.py` computes
-immutable summary, file, phase, and ruleset rows, while `comparison.py` maps
+immutable summary, file, phase, and ruleset rows, while `presentation.py` maps
 them to the renderer-neutral catalog. Rich, Markdown, and the interactive page
 serialize that catalog without recomputing report facts.
 
@@ -507,19 +506,19 @@ Top-level ownership:
 
 Python ownership is layered so new code has one clear home:
 
-- Commands: `cli.py` dispatches lazily; `benchmark.py` composes pair benchmark
+- Commands: `bench.py` dispatches lazily; `benchmark.py` composes pair benchmark
   requests; `profile.py` owns profile requests and Samply artifact caching.
 - Inputs and execution: `models.py` defines dependency-free identities and
   invariants; `workloads.py` resolves and validates inputs; `targets.py`
   materializes and builds targets and constructs commands; `collection.py`
-  plans and records observations; `processes.py` measures children; `output.py`
-  routes operational stderr.
+  plans and records observations; `processes.py` measures children. Commands
+  share one Rich stderr console directly.
 - Profile analysis: `samply_analysis.py` reads and presents Samply artifacts.
-- Report data: `reports/records.py` owns the JSONL schema and codec;
-  `reports/store.py` owns append/index/select operations; `reports/analysis.py`
-  computes renderer-independent statistics.
+- Report data: `reports/store.py` owns the JSONL schema, codec, cache key, and
+  append/index/select operations; `reports/analysis.py` computes
+  renderer-independent statistics.
 - Report presentation: `reports/catalog.py` defines the document model;
-  `reports/comparison.py` supplies wording and maps analysis into that model;
+  `reports/presentation.py` supplies wording and maps analysis into that model;
   `reports/render.py` owns Rich and Markdown; `reports/interactive_runtime.py`
   owns cache-only retargeting; `reports/interactive.py` embeds the cache,
   Python modules, and adjacent browser assets into the HTML artifact, then

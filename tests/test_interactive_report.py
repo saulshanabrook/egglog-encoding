@@ -14,17 +14,16 @@ import pytest
 
 from benchmarking import models
 from benchmarking.reports import interactive
-from benchmarking.reports.comparison import build_report_catalog
 from benchmarking.reports.interactive_runtime import (
     InteractiveRuntime,
     JsonValue,
     _catalog_payload,
     scope_for_comparison,
 )
-from benchmarking.reports.records import ReportRecord
-from benchmarking.reports.store import ReportStore
+from benchmarking.reports.presentation import build_report_catalog
+from benchmarking.reports.store import ReportRecord, ReportStore
 
-from .conftest import make_endpoint, make_record, write_report
+from .report_fixtures import make_endpoint, make_record, write_report
 
 
 def test_runtime_discovers_entire_cache_and_retargets_all_sections(tmp_path: Path) -> None:
@@ -184,9 +183,8 @@ def test_html_embeds_exact_jsonl_initial_catalog_runtime_and_safe_data(tmp_path:
         "benchmarking/reports/__init__.py",
         "benchmarking/reports/analysis.py",
         "benchmarking/reports/catalog.py",
-        "benchmarking/reports/comparison.py",
         "benchmarking/reports/interactive_runtime.py",
-        "benchmarking/reports/records.py",
+        "benchmarking/reports/presentation.py",
         "benchmarking/reports/store.py",
     }
     initial_payload = cast(dict[str, JsonValue], envelope["initial_payload"])

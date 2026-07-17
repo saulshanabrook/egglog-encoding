@@ -1,9 +1,9 @@
 """Parse and compose pair-only benchmark collection, analysis, and output.
 
 Workload resolution belongs in :mod:`benchmarking.workloads`, execution
-planning and measurement in :mod:`benchmarking.collection`, report data access
-and presentation in :mod:`benchmarking.reports`, and profile dispatch in
-:mod:`benchmarking.cli`.
+planning and measurement in :mod:`benchmarking.collection`, and report data
+access and presentation in :mod:`benchmarking.reports`. The public script owns
+benchmark/profile dispatch.
 """
 
 from __future__ import annotations
@@ -15,9 +15,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import cast
 
+from rich.console import Console
+from rich.text import Text
+
 from .collection import (
     CollectionPlan,
-    EstimateModel,
     build_collection_plan,
     collect_rows,
     emit_collection_plan,
@@ -35,9 +37,8 @@ from .models import (
     TargetRequest,
     Treatment,
 )
-from .output import RunnerOutput
-from .reports.comparison import build_report_catalog
 from .reports.interactive import interactive_report_path, open_interactive_report, write_interactive_report
+from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.store import ReportStore
 from .targets import git_root_for_path, parse_target
@@ -217,7 +218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     raw_argv = tuple(sys.argv[1:] if argv is None else argv)
     args = parse_benchmark_args(raw_argv)
-    output = RunnerOutput()
+    console = Console(stderr=True)
     try:
         script_root = Path(__file__).resolve().parents[1]
         invocation_cwd = Path.cwd()
@@ -229,7 +230,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         # materialization can build or run anything.
         store = ReportStore(report_path)
         files = resolve_files(args.files, invocation_cwd, args.fact_directory)
-        estimate_model = EstimateModel.from_aggregates(store.successful_estimate_aggregates())
         resolved_targets = resolve_targets(
             group_endpoint_requests(baseline_request, candidate_request),
             store,
@@ -239,7 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             bool(args.force_run),
             invocation_cwd,
             repo_root,
-            output,
+            console,
         )
         comparison = ComparisonSpec(
             baseline=BenchmarkEndpoint(
@@ -262,15 +262,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         for plan in plans:
             preflight_collection(plan, comparison.timeout_sec)
         for plan in plans:
-            emit_collection_plan(output, plan, estimate_model)
-            collect_rows(store, plan, comparison.timeout_sec, output, estimate_model)
+            emit_collection_plan(console, plan)
+            collect_rows(store, plan, comparison.timeout_sec, console)
 
         catalog = build_report_catalog(store, comparison, cast(DetailLevel, str(args.detail)))
         if args.format == "markdown":
             rendered = render_markdown_report_document(catalog)
             sys.stdout.write(rendered + "\n")
         else:
-            output.console.print(render_rich_report_document(catalog, output.console.width))
+            console.print(render_rich_report_document(catalog, console.width))
         if args.open:
             if args.format == "markdown":
                 sys.stdout.flush()
@@ -279,10 +279,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 comparison,
                 interactive_report_path(report_path),
             )
-            output.console.print(f"Interactive benchmark report: {interactive_path}")
+            console.print(f"Interactive benchmark report: {interactive_path}")
             open_interactive_report(interactive_path)
     except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        output.print_error(error)
+        console.print(Text.assemble(("error:", "red"), " ", str(error)))
         return 2
     return 0
 

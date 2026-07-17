@@ -169,30 +169,3 @@ class ComparisonSpec:
             raise ValueError("benchmark timeout must be positive")
         if self.baseline.cache_identity == self.candidate.cache_identity:
             raise ValueError("baseline and candidate endpoints must be different")
-
-
-@dataclass(frozen=True)
-class EstimateKey:
-    binary_sha256: str
-    file_sha256: str
-    treatment: Treatment
-    timeout_sec: int
-    backend: Backend = "main"
-    fact_directory_sha256: str = ""
-
-    @classmethod
-    def for_endpoint(
-        cls,
-        endpoint: BenchmarkEndpoint,
-        file_spec: FileSpec,
-        timeout_sec: int,
-    ) -> EstimateKey:
-        """Build the ordinary-report identity shared by collection and reporting."""
-        return cls(
-            binary_sha256=endpoint.target.binary_sha256,
-            file_sha256=file_spec.sha256,
-            treatment=endpoint.treatment,
-            timeout_sec=timeout_sec,
-            backend=endpoint.backend,
-            fact_directory_sha256=file_spec.fact_directory_sha256,
-        )
