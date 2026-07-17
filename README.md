@@ -6,7 +6,7 @@ across `egglog` and `egglog-experimental`.
 The goal is to make proof generation work with a reasonable slowdown before
 porting the winning strategy back upstream. The current success target is:
 
-- proof mode is less than `2x` slower than the non-proof baseline; and
+- proof-mode wall time is under `2x` the non-proof baseline; and
 - that claim is supported by benchmark reports with confidence intervals, not
   just point estimates.
 
@@ -44,7 +44,8 @@ changes and downstream behavior in one reviewable unit.
 
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
-proof-testing mode. Use `make proof-tests` for focused iteration and
+proof-testing mode. Proof testing turns checks into proof queries and snapshots
+the generated proofs. Use `make proof-tests` for focused iteration and
 `make rust-check` or `make check` for the final compatibility gate.
 
 ## Benchmarking
@@ -55,9 +56,9 @@ The public entrypoint is:
 ./bench.py [FILE ...] [OPTIONS]
 ```
 
-Every invocation compares exactly two endpoints over the same ordered files:
-a candidate and a baseline. An endpoint is one target, backend, and treatment.
-There are no implicit matrices or multi-way comparisons.
+Every benchmark invocation compares exactly two endpoints over the same ordered
+files: a candidate and a baseline. An endpoint is one target, backend, and
+treatment. There are no implicit matrices or multi-way comparisons.
 
 The default command compares proof mode with ordinary mode in the current
 checkout:
@@ -80,8 +81,20 @@ The endpoint defaults are:
 
 In particular, `--compare-backend` always defaults to `main`, even when the
 candidate uses another backend. `--compare-target` alone inherits the candidate
-target. The report begins with the exact endpoint, files, rounds, timeout, and
-report path so every ratio is interpretable.
+target. Every rendered report states the exact endpoints, files, rounds,
+timeout, and report path so every ratio is interpretable.
+
+Treatments map directly to engine modes:
+
+| Treatment | Engine behavior |
+| --- | --- |
+| `off` | no term or proof encoding |
+| `term` | `--term-encoding` |
+| `proofs` | `--proofs` |
+
+The `main` backend supports all three treatments; `dd` supports `term` and
+`proofs`. The engine's `--proof-testing` option is a correctness mode, not a
+benchmark treatment.
 
 ### Common comparisons
 
@@ -117,9 +130,10 @@ Compare current proofs with a previously cached, labeled ordinary baseline:
 
 That last form reuses the newest cache identity carrying `old-off` when it has
 enough matching rows. First create the label with a concrete source, for
-example `--compare-target old-off=@origin/main`. If a command changes more than
-one of target, backend, and treatment, the report warns that the ratio is a
-joint endpoint change and does not attribute the effect to one cause.
+example `--compare-target old-off=@origin/main`. Newest means the greatest
+`started_at`, with later JSONL order breaking ties. If a command changes more
+than one of target, backend, and treatment, the report warns that the ratio is
+a joint endpoint change and does not attribute the effect to one cause.
 
 ### Targets
 
@@ -133,9 +147,9 @@ Both `--target` and `--compare-target` accept the same syntax:
 - `label=` to reuse the newest cached identity with that explicit label.
 
 Quote `#` targets so the shell does not treat them as comments. Paths are used
-directly. Git refs and pull requests use an existing worktree at the resolved
-commit when available, otherwise the runner creates or reuses an isolated
-temporary worktree. It never stashes the main checkout.
+directly. Git refs and pull requests use an existing clean worktree at the
+resolved commit when available, otherwise the runner creates or reuses an
+isolated temporary worktree. It never stashes the main checkout.
 
 If differently spelled target selectors resolve to the same checkout, the
 runner builds that checkout once with the union of their required backend
@@ -174,9 +188,25 @@ With no positional files, the representative suite is:
 - `benchmarks/luminal-llama.egg`
 - `egglog/tests/web-demo/herbie.egg`
 
+The workloads are intentionally bounded proxies rather than an undifferentiated
+corpus:
+
+| Workload | Adaptation or scope | Correctness signal |
+| --- | --- | --- |
+| Math | Existing synthetic stress fixture | Existing file-test snapshot |
+| eggcc 2mm | Existing bounded container fixture | Generated `main` function type is checked |
+| Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
+| Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
+| Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
+| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks run through the proof checker |
+
 Benchmark files must not contain executable `(prove ...)` commands. Use
 `(check ...)` in timed workloads and test proof extraction separately, so
 printing or checking a proof does not become part of the timing boundary.
+
+Reports normally identify a selected file by filename. If names collide, they
+use the shortest distinguishing path suffix; persisted rows retain the invoked
+path.
 
 ### Detail levels and output
 
@@ -186,8 +216,8 @@ printing or checking a proof does not become part of the timing boundary.
 | --- | --- |
 | `summary` | comparison selection and headline summary |
 | `files` | per-file wall time and peak RSS estimates |
-| `phases` | per-file Search, Apply, Merge, Rebuild, and Other means |
-| `rulesets` | the top 10 ruleset timing changes for each file |
+| `phases` | per-file phase confidence intervals, wall shares, and change contributions |
+| `rulesets` | the top 10 changed rulesets per file, including phase deltas |
 
 The default is `summary`. For example:
 
@@ -206,15 +236,18 @@ of rows:
 
 For a one-file run, redundant lowest/highest rows collapse to one result. The
 ratio is always `candidate / baseline`: below `1x` is faster or uses less RSS,
-and above `1x` is slower or uses more RSS. Each statistical estimate includes
-its point estimate and, when defined, its 95% confidence interval.
+and above `1x` is slower or uses more RSS. Each statistical estimate shows its
+95% confidence interval when defined and otherwise shows its point estimate.
 
-Rich output goes to stderr. It prints detailed tables first and the headline
-summary last so the decision remains at the bottom of terminal output.
+Rich output goes to stderr. From top to bottom it prints rulesets, phases,
+files, the compact comparison definition, and the headline summary, omitting
+sections above the requested detail level. The most specific diagnostics are
+therefore above their broader context, while the decision remains at the
+bottom of terminal output.
 Detailed Rich tables are designed for terminals at least 120 columns wide; a
-narrower terminal receives one warning and still renders best-effort. Markdown
-goes to stdout, is independent of terminal width, and keeps the canonical
-selection, summary, files, phases, rulesets order.
+narrower terminal receives one warning and still renders best-effort without
+hiding file names. Markdown goes to stdout, is independent of terminal width,
+and keeps the canonical comparison, summary, files, phases, rulesets order.
 
 The remaining collection options are:
 
@@ -226,7 +259,8 @@ The remaining collection options are:
 - `--force-run`: append `N` fresh rows for both endpoints before selecting the
   newest rows.
 - `--format rich|markdown`: final human report format.
-- `--serve` and `--serve-port PORT`: open the cache-only live report.
+- `--open`: write the complete cache snapshot to an interactive HTML file and
+  open it. For the default cache, the output is `.reports.html`.
 
 Use `./bench.py --help` for the complete option reference.
 
@@ -246,44 +280,66 @@ nanosecond totals:
 - Merge: resolving and installing staged updates.
 - Rebuild: rebuilding indexes and e-graph state.
 
-The phase report aggregates all rulesets and displays Search, Apply, Merge, and
-Rebuild. `Other` is derived as process wall time minus those four phases, so it
-includes Unattributed plus process work outside recorded rulesets. A negative
-Other value is prefixed with `!`; it means recorded phase totals exceed wall
-time and should be treated as an attribution warning. Phase values are
-descriptive arithmetic means and do not claim confidence intervals.
+The phase report aggregates all rulesets and keeps two kinds of otherwise
+hidden time distinct:
+
+- Execution overhead is the stored Unattributed component: measured work
+  inside ruleset execution that cannot be split accurately into Search or
+  Apply.
+- Outside recorded rulesets is derived as process wall time minus Search,
+  Apply, Execution overhead, Merge, and Rebuild. It includes process setup,
+  reporting, teardown, and other work outside timed ruleset execution.
+
+Each file gets its own phase table. For both endpoints, it displays the phase
+mean's 95% confidence interval and the phase's share of that endpoint's wall
+time. It also displays the signed mean change and that phase's contribution to
+the file's total wall-time change. Contributions may be negative or exceed
+100% when phases offset each other. A negative Outside recorded rulesets value
+is prefixed with `!`; it means recorded phase totals exceed wall time and should
+be treated as an attribution warning.
 
 The ruleset report totals all five stored components for each ruleset, aligns
 the union of names across the two endpoints, and ranks by the absolute
-candidate-minus-baseline difference. It displays at most 10 rulesets per file
-and reports how many were available. Timings are aggregated across the selected
-observations; iterations are not separate report rows. A ruleset absent from
-one endpoint is displayed as `—`, while a measured zero remains `0 ns`.
+candidate-minus-baseline total difference. It omits exact-zero changes and
+displays at most 10 rulesets per file. Each row includes the baseline and
+candidate total confidence intervals, total change, and descriptive Search,
+Apply, Execution overhead, Merge, and Rebuild changes. Timings are aggregated
+across the selected observations; iterations are not separate report rows. A
+ruleset absent from one endpoint is displayed as `—`, while a measured zero
+remains `0 ns`.
 
 Benchmarks run single-threaded. This keeps Search and Apply attribution
 additive for main egglog's interleaved executor. The DD backend records the same
 schema at its natural search, apply, merge, and rebuild boundaries.
 
-### Live report
+### Interactive report
 
-Add `--serve` to print the ordinary report and then open a loopback-only browser
-view:
+Add `--open` to print the ordinary report, write one single-file HTML
+snapshot next to the JSONL cache, open it, and exit normally:
 
 ```bash
-./bench.py --detail rulesets --serve
-./bench.py --detail files --serve --serve-port 8765
+./bench.py --open
+./bench.py --report results.jsonl --open  # writes results.html
 ```
 
-The page reuses the exact renderer-neutral tables shown by Rich and Markdown.
-It can select a baseline endpoint, candidate endpoint, file subset, and
-cumulative detail level, and can swap the endpoints. Its endpoint menus contain
-only cache entries complete for the invocation's fixed files, rounds, and
-timeout. The JSONL is loaded once when the command starts; applying a selection
-recomputes the requested pair from that immutable in-process snapshot. A failed
-request leaves the prior report and selectors intact.
+The HTML embeds the complete loaded cache snapshot and the same Python analysis
+and catalog code used by the CLI. It immediately displays the invocation's full
+ruleset-detail report, then loads a pinned Pyodide runtime and SciPy over HTTPS
+to enable retargeting. The initial report preserves the invocation's endpoint
+provenance and file order; after Apply, retargeted endpoints and files use the
+latest cached provenance for each cache identity within that immutable snapshot.
+The page can select any two cached endpoints, any nonempty file subset, a cached
+timeout, and an available round count; it always shows all report sections.
+Combinations without enough matching observations remain selectable and produce
+explicit missing-result states. A failed request leaves the prior report and
+selectors intact.
 
-The live page never resolves a target, builds a binary, runs a benchmark, or
-modifies the JSONL. Stop it with Ctrl-C in the benchmark terminal.
+The snapshot never resolves a target, builds a binary, runs a benchmark,
+modifies the JSONL, or observes rows appended after it was created. If the
+network runtime cannot load, the initial static report remains readable and
+only retargeting is unavailable. The HTML contains the full cache, including
+machine-local paths and provenance, so treat it as potentially sensitive when
+sharing it.
 
 ### CPU profiling
 
@@ -302,12 +358,23 @@ iteration policy. `--open` loads the artifact in Samply; `--force-run` replaces
 the cached profile. Profiling is deliberately separate from the repeated-run
 benchmark statistics and pair report.
 
+On macOS, the default summary uses Samply leaf-sample CPU deltas to split
+observed CPU into application, other-library, and unattributed CPU, report
+application-symbol coverage, and rank top functions by self CPU. Profile
+Unattributed means a leaf sample could not be mapped to a library; it is not the
+benchmark's pre-merge Unattributed/Execution overhead. These are sampled CPU
+totals and shares, not wall time, engine phases, or confidence intervals. Other
+platforms still record and cache the artifact and print its viewer handoff
+without a CPU breakdown. `--top` limits functions, `--format` selects Rich or
+Markdown, and `--no-summary` prints only the artifact path.
+
 ## Reports and cache behavior
 
 `.reports.jsonl` is an append-only, disposable local cache. Each line is one
 measured process observation. The runner parses the file once into an indexed
-`ReportStore`; appends update both the JSONL and those indexes. No database or
-second persisted representation is created.
+`ReportStore`; appends update both the JSONL and those indexes. Normal
+collection creates no database or second cache representation; `--open`
+separately exports an HTML snapshot.
 
 Cache reuse is keyed by:
 
@@ -325,55 +392,21 @@ then by physical JSONL order. Without `--force-run`, it appends only missing
 rows. With `--force-run`, it appends a full fresh set and then selects the
 newest rows.
 
-Before any measured row is appended, all targets needing collection are built
-and preflighted for the required timing-summary interface. Fresh collection is
-serial and uses one untimed executable startup warmup per target. Operational
-cache, build, progress, and estimate output always goes to stderr.
+Before any measured row is appended, all targets needing collection are built.
+Fresh collection is serial; one untimed `<binary> --help` capability preflight
+per target verifies the required timing-summary interface. Each target prints
+one compact cached/required line and either `nothing to collect` or the fresh-run
+count and a coarse ETA; cached failures and timeouts are explicit, and fully
+cached runs omit the ETA. ETAs use successful observations for the exact cache
+key and mark unmatched runs as unestimated. Fresh TTY runs use transient
+progress, redirected output logs each completed run, and both end with status
+counts. All operational output goes to stderr.
 
-The trusted writer schema is defined once as `TypedDict` structures in
-`benchmarking/reports/records.py`. The standard-library JSON codec parses and
-serializes complete rows. A successful row
-contains provenance, cache coordinates, process timing, peak RSS, and this
-nested timing shape:
-
-```json
-{
-  "started_at": "2026-07-17T12:34:56Z",
-  "status": "success",
-  "target_label": null,
-  "target_source": ".",
-  "target_path": "/path/to/egglog-encoding",
-  "target_git_ref": "HEAD",
-  "target_git_sha": "abc123...",
-  "target_is_dirty": true,
-  "binary_sha256": "sha256:...",
-  "file_path": "egglog/tests/foo.egg",
-  "file_sha256": "sha256:...",
-  "fact_directory_path": null,
-  "fact_directory_sha256": "",
-  "backend": "main",
-  "treatment": "proofs",
-  "timeout_sec": 120,
-  "wall_sec": 1.23,
-  "max_rss_bytes": 123456789,
-  "error_exit_code": null,
-  "error_signal": null,
-  "error_message": null,
-  "timing_summary": {
-    "schema_version": 2,
-    "rulesets": [
-      {
-        "name": "rules",
-        "search_ns": 200,
-        "apply_ns": 100,
-        "unattributed_ns": 20,
-        "merge_ns": 40,
-        "rebuild_ns": 50
-      }
-    ]
-  }
-}
-```
+`benchmarking/reports/records.py` defines the sole trusted `TypedDict` schema
+and standard-library JSON codec. Each observation contains target and workload
+provenance, exact cache coordinates, status, wall time, peak RSS, and failure
+details. Successful observations also contain the version-2 per-ruleset timing
+summary: name plus Search, Apply, Unattributed, Merge, and Rebuild nanoseconds.
 
 Timed-out rows have null wall time, peak RSS, and timing summary. Failed rows
 have no timing summary and retain whatever process measurements the operating
@@ -388,20 +421,11 @@ caches: move or remove an incompatible report and recompute it.
 
 ### Report-analysis ownership
 
-The pure analysis layer produces five immutable named-row collections with
-stable responsibilities:
-
-- endpoints: the exact baseline and candidate;
-- summary: suite wall ratio and per-file wall/RSS tails;
-- files: per-file estimates and ratios;
-- phases: per-file phase means, deltas, and ratios; and
-- rulesets: top ruleset totals, deltas, and ratios.
-
-`store.py` owns physical row order and exact cache selection. `analysis.py`
-owns latest-observation status policy, statistics, classification, phase
-aggregation, ruleset alignment, and ranking. `comparison.py` supplies wording
-and maps the named rows to one renderer-neutral catalog. Rich, Markdown, and
-the live page serialize that same catalog rather than recomputing report facts.
+`ComparisonSpec` owns the exact endpoints, files, rounds, and timeout;
+`store.py` owns physical row order and cache selection. `analysis.py` computes
+immutable summary, file, phase, and ruleset rows, while `comparison.py` maps
+them to the renderer-neutral catalog. Rich, Markdown, and the interactive page
+serialize that catalog without recomputing report facts.
 
 ## Statistics
 
@@ -410,10 +434,14 @@ endpoint, and round. Python orchestration is outside the measured child
 process. The analysis keeps all selected observations; it does not report
 best-of-N timings or discard outliers by folklore.
 
+The JSONL does not retain round-pair identities. Fresh and cached reports both
+analyze the selected baseline and candidate observations as independent,
+unpaired samples.
+
 For one successful endpoint/file result, wall time and peak RSS use the
 arithmetic mean. With at least two samples, the report computes the ordinary
 95% t confidence interval for that mean using the unbiased sample variance.
-With one sample it reports a point estimate and explicitly labels it point-only.
+With one sample it reports a point estimate labeled `point only`.
 
 Pair comparisons use the candidate-to-baseline ratio of arithmetic means and a
 Fieller-style 95% confidence interval. If the interval is wholly below `1`, the
@@ -432,8 +460,9 @@ shown. No median or geometric mean is mixed into this minimal headline.
 
 A timed-out, failed, or otherwise incomplete selected result invalidates the
 suite result that depends on it. Valid per-file tail comparisons remain useful
-when an unrelated file is incomplete. Phase and ruleset tables are descriptive
-diagnostics and do not receive confidence intervals.
+when an unrelated file is incomplete. Phase endpoint means and ruleset totals
+receive confidence intervals; phase contributions and individual ruleset
+component deltas are descriptive diagnostics.
 
 The `<2x` proof goal is established only when the upper bound of the suite wall
 ratio's 95% confidence interval is below `2x` for a proofs-versus-off
@@ -458,47 +487,37 @@ Top-level ownership:
   `https://github.com/egraphs-good/egglog-experimental`.
 - `Cargo.toml`: root Cargo workspace integrating both subtrees.
 - `bench.py`: executable uv entrypoint.
-- `benchmarking/`: Python collection, reporting, live-view, and profiling code.
+- `benchmarking/`: Python collection, reporting, interactive-view, and
+  profiling code.
 - `tests/`: domain-focused pytest and Syrupy snapshot coverage.
 - `Makefile`: canonical validation and maintenance commands.
 - `pyproject.toml` and `uv.lock`: Python configuration and locked environment.
 - `.reports.jsonl`: ignored, disposable benchmark cache.
 - `.profiles/`: ignored Samply artifact cache.
 
-Python module boundaries:
+Python ownership is layered so new code has one clear home:
 
-- `benchmarking/cli.py` performs lazy top-level dispatch.
-- `benchmarking/benchmark.py` parses and composes the pair benchmark command.
-- `benchmarking/workloads.py` owns default workloads, path/content resolution,
-  fact directories, and timed-input validation.
-- `benchmarking/models.py` owns dependency-free endpoint, comparison, file,
-  cache-key, and backend contracts.
-- `benchmarking/targets.py` parses and materializes target sources, builds
-  binaries, hashes inputs, and constructs child commands.
-- `benchmarking/collection.py` resolves cache-aware targets, plans missing
-  observations, captures same-process timing summaries, and writes records.
-- `benchmarking/processes.py` measures child processes; `output.py` owns only
-  operational stderr presentation.
-- `benchmarking/profile.py` owns profile requests and Samply artifact caching;
-  `samply_analysis.py` reads and presents profile artifacts.
-- `benchmarking/reports/records.py` defines the sole trusted JSONL `TypedDict`
-  schema and its standard-library JSON codec.
-- `benchmarking/reports/store.py` loads and appends JSONL, preserves physical
-  order, indexes exact cache keys and labels, and discovers cached endpoints.
-- `benchmarking/reports/analysis.py` defines and computes one pair's immutable
-  statistics, summaries, phases, and rulesets without presentation concerns.
-- `benchmarking/reports/comparison.py` supplies report wording and maps those
-  analysis rows to the fixed catalog.
-- `benchmarking/reports/catalog.py` defines renderer-neutral sections, tables,
-  rows, cells, and messages.
-- `benchmarking/reports/render.py` alone owns Rich/Markdown syntax, ordering,
-  styling, and terminal-width behavior.
-- `benchmarking/reports/live.py` owns cache-only endpoint discovery, atomic
-  retargeting, eval-live adaptation, and the loopback server.
+- Commands: `cli.py` dispatches lazily; `benchmark.py` composes pair benchmark
+  requests; `profile.py` owns profile requests and Samply artifact caching.
+- Inputs and execution: `models.py` defines dependency-free identities and
+  invariants; `workloads.py` resolves and validates inputs; `targets.py`
+  materializes and builds targets and constructs commands; `collection.py`
+  plans and records observations; `processes.py` measures children; `output.py`
+  routes operational stderr.
+- Profile analysis: `samply_analysis.py` reads and presents Samply artifacts.
+- Report data: `reports/records.py` owns the JSONL schema and codec;
+  `reports/store.py` owns append/index/select operations; `reports/analysis.py`
+  computes renderer-independent statistics.
+- Report presentation: `reports/catalog.py` defines the document model;
+  `reports/comparison.py` supplies wording and maps analysis into that model;
+  `reports/render.py` owns Rich and Markdown; `reports/interactive_runtime.py`
+  owns cache-only retargeting; `reports/interactive.py` embeds the cache,
+  Python modules, and adjacent browser assets into the HTML artifact, then
+  writes and opens it.
 
-Every module has an ownership docstring. Package `__init__.py` files are
-documentation-only. Tests enforce those rules, the data-layer dependency
-boundary, and an acyclic static import graph.
+Every module has a more precise ownership docstring. Package `__init__.py`
+files are documentation-only; tests enforce that rule, the data-layer boundary,
+and an acyclic static import graph.
 
 ## Upstream subtrees
 
@@ -545,6 +564,9 @@ included in the split branch.
 - `release`: the optimized benchmark build.
 - `profiling`: release optimization plus symbols for profilers and samplers.
 
+Cargo's profile behavior is documented in the
+[Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html).
+
 Each report row records the exact benchmark binary hash.
 
 ## CI
@@ -555,10 +577,10 @@ CI runs on pull requests, manual dispatches, and pushes to `main`:
 - `rust`: `make rust-nits`, then `make rust-test`.
 - `benchmark-smoke`: a one-round pair comparison on
   `egglog/tests/integer_math.egg` through `make benchmark-smoke`.
-- `codspeed`: an in-process, proofs-only benchmark over a smaller workload set.
-  CodSpeed includes phase-clock execution but does not persist phase reports;
-  `./bench.py` remains the source for off/proofs, commit, and backend
-  comparisons with stored observations.
+- `codspeed`: an in-process, proofs-only benchmark over a smaller workload set
+  in simulation and memory modes. CodSpeed includes phase-clock execution but
+  does not persist phase reports; `./bench.py` remains the source for
+  off/proofs, commit, and backend comparisons with stored observations.
 
 Ruff and Mypy discover all repository-owned Python files from project
 configuration, so new modules under `benchmarking/` or `tests/` require no

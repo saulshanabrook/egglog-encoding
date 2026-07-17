@@ -282,7 +282,6 @@ def run_samply_record(
         temp_artifact.unlink()
     command = samply_record_command(samply_executable(), temp_artifact, name, iterations, workload)
     env = os.environ.copy()
-    env.pop("EGGLOG_TIMING_SUMMARY", None)
     env["RUST_LOG"] = "error"
     try:
         subprocess.run(
@@ -307,13 +306,10 @@ def run_samply_record(
 
 
 def open_samply_profile(artifact: Path, checkout_path: Path) -> None:
-    env = os.environ.copy()
-    env.pop("EGGLOG_TIMING_SUMMARY", None)
     try:
         subprocess.run(
             [samply_executable(), "load", str(artifact)],
             cwd=checkout_path,
-            env=env,
             check=True,
             stdout=sys.stderr,
             stderr=sys.stderr,

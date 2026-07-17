@@ -128,10 +128,24 @@ def test_store_does_not_import_analysis_or_presentation_layers() -> None:
         "benchmarking.reports.analysis",
         "benchmarking.reports.catalog",
         "benchmarking.reports.comparison",
-        "benchmarking.reports.live",
+        "benchmarking.reports.interactive",
+        "benchmarking.reports.interactive_runtime",
         "benchmarking.reports.render",
         "rich",
         "scipy",
+    }
+    assert imports.isdisjoint(forbidden)
+
+
+def test_interactive_runtime_does_not_import_the_host_adapter() -> None:
+    """Keep the Pyodide-compatible selection core independent of HTML export."""
+
+    imports = imported_module_names(ROOT / "benchmarking/reports/interactive_runtime.py")
+    forbidden = {
+        "benchmarking.reports.interactive",
+        "http.server",
+        "importlib",
+        "webbrowser",
     }
     assert imports.isdisjoint(forbidden)
 

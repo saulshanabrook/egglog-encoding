@@ -9,7 +9,6 @@ from benchmarking.reports.catalog import (
     ReportCatalog,
     ReportCell,
     ReportMessage,
-    ReportOptions,
     ReportRow,
     ReportTable,
 )
@@ -54,15 +53,15 @@ def test_phase_report_uses_split_means_and_wall_residual(tmp_path: Path) -> None
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("phases"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "phases")
 
     table = _only_table(catalog, "phases")
     rows = {_cell(row, table, "phase").raw: row for row in table.rows}
     assert _cell(rows["search"], table, "baseline").raw == 600_000_000.0
     assert _cell(rows["apply"], table, "candidate").raw == 200_000_000.0
-    assert _cell(rows["other"], table, "baseline").raw == -200_000_000.0
-    assert _cell(rows["other"], table, "baseline").display == "!-200 ms"
-    assert _cell(rows["other"], table, "candidate").display == "100 ms"
+    assert _cell(rows["outside"], table, "baseline").raw == -200_000_000.0
+    assert _cell(rows["outside"], table, "baseline").display == "!-200 ms · -20.0%"
+    assert _cell(rows["outside"], table, "candidate").display == "100 ms · 8.33%"
 
 
 def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
@@ -100,18 +99,18 @@ def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
 
     table = _only_table(catalog, "rulesets")
     names = tuple(_cell(row, table, "ruleset").display for row in table.rows)
     assert len(table.rows) == 10
     assert {"added", "removed"} <= set(names)
-    assert "Showing 10 of 13 rulesets" in (table.caption or "")
+    assert "Showing 10 of 13 changed rulesets" in (table.caption or "")
     added_row = next(row for row in table.rows if _cell(row, table, "ruleset").display == "added")
     removed_row = next(row for row in table.rows if _cell(row, table, "ruleset").display == "removed")
     assert _cell(added_row, table, "baseline").display == "—"
     assert _cell(removed_row, table, "candidate").display == "—"
-    assert _cell(added_row, table, "ratio").display == "—"
+    assert _cell(added_row, table, "delta").display == "+1.70 s"
 
 
 def test_failed_file_uses_dashes_and_ruleset_status_message(tmp_path: Path) -> None:
@@ -137,7 +136,7 @@ def test_failed_file_uses_dashes_and_ruleset_status_message(tmp_path: Path) -> N
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, "rulesets")
 
     phase_table = _only_table(catalog, "phases")
     assert all(_cell(row, phase_table, "candidate").display == "—" for row in phase_table.rows)

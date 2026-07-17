@@ -5,86 +5,305 @@
   
   ## Comparison
   
-  ### Endpoints
+  | Role | Target | Git | Backend | Treatment |
+  | --- | --- | --- | --- | --- |
+  | Baseline | baseline | abc123 | main | off |
+  | Candidate | candidate | abc123 | dd | proofs |
   
-  | Role | Target | Git | Dirty | Backend | Treatment |
-  | --- | --- | --- | --- | --- | --- |
-  | Baseline | baseline | abc123 | no | main | off |
-  | Candidate | candidate | abc123 | no | dd | proofs |
+  *2 file(s): math.egg, rewrite.egg · 2 round(s) per endpoint/file · 120 s timeout per run · Report: /tmp/benchmark-report.jsonl*
   
-  ### Run
+  *This comparison changes more than one of target, backend, and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.*
   
-  | Setting | Value |
-  | --- | --- |
-  | Ratio | candidate / baseline; below 1 is faster or uses less RSS, while above 1 is slower or uses more RSS |
-  | Files | 2: math.egg; rewrite.egg |
-  | Rounds | 2 per endpoint/file |
-  | Timeout | 120 s per run |
-  | Report | /tmp/benchmark-report.jsonl |
-  
-  This comparison changes more than one of target, backend, and treatment. Its ratios describe the joint endpoint change and do not isolate one cause.
-  
-  ## Benchmark summary
+  ## Summary — candidate dd/proofs vs baseline main/off
   
   | Metric | Scope | File(s) | Ratio (95% CI) | Result |
   | --- | --- | --- | ---: | --- |
-  | Wall time | Suite total | 2 files | 1.066x [0.983, 1.157] | CI includes 1 |
-  | Wall time | Lowest-ratio file | math.egg | 0.802x [0.652, 0.978] | faster |
-  | Wall time | Highest-ratio file | rewrite.egg | 1.199x [1.105, 1.303] | slower |
-  | Peak RSS | Lowest-ratio file | math.egg | 0.950x [0.867, 1.042] | CI includes 1 |
-  | Peak RSS | Highest-ratio file | rewrite.egg | 1.153x [1.082, 1.230] | higher RSS |
+  | Wall time | Suite total | 2 files | 0.983–1.16x | CI includes 1 |
+  | Wall time | Lowest-ratio file | math.egg | 0.652–0.978x | faster |
+  | Wall time | Highest-ratio file | rewrite.egg | 1.10–1.30x | slower |
+  | Peak RSS | Lowest-ratio file | math.egg | 0.867–1.04x | CI includes 1 |
+  | Peak RSS | Highest-ratio file | rewrite.egg | 1.08–1.23x | higher RSS |
+  
+  *Ratios are candidate / baseline; below 1 is lower and above 1 is higher.*
   
   ## Per-file results
   
-  ### Per-file wall time
+  ### Wall time
   
   | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
   | --- | ---: | ---: | ---: | --- |
-  | math.egg | 1.0100s [0.8829, 1.1371] | 0.8100s [0.6829, 0.9371] | 0.802x [0.652, 0.978] | faster |
-  | rewrite.egg | 2.0100s [1.8829, 2.1371] | 2.4100s [2.2829, 2.5371] | 1.199x [1.105, 1.303] | slower |
+  | math.egg | 0.883–1.14 s | 683–937 ms | 0.652–0.978x | faster |
+  | rewrite.egg | 1.88–2.14 s | 2.28–2.54 s | 1.10–1.30x | slower |
   
-  ### Per-file peak RSS
+  ### Peak RSS
   
   | File | Baseline (95% CI) | Candidate (95% CI) | Ratio (95% CI) | Result |
   | --- | ---: | ---: | ---: | --- |
-  | math.egg | 95.8 MiB [89.8, 101.9] | 91.1 MiB [85.0, 97.1] | 0.950x [0.867, 1.042] | CI includes 1 |
-  | rewrite.egg | 124.5 MiB [118.4, 130.5] | 143.5 MiB [137.5, 149.6] | 1.153x [1.082, 1.230] | higher RSS |
+  | math.egg | 89.8–101.9 MiB | 85.0–97.1 MiB | 0.867–1.04x | CI includes 1 |
+  | rewrite.egg | 118.4–130.5 MiB | 137.5–149.6 MiB | 1.08–1.23x | higher RSS |
   
   ## Phase comparison
   
-  | File | Phase | Baseline | Candidate | Delta | Ratio |
-  | --- | --- | ---: | ---: | ---: | ---: |
-  | math.egg | Search | 404 ms | 324 ms | -80.0 ms | 0.802x |
-  |  | Apply | 182 ms | 146 ms | -36.0 ms | 0.802x |
-  |  | Merge | 100 ms | 100 ms | 0 ns | 1.000x |
-  |  | Rebuild | 40.0 ms | 40.0 ms | 0 ns | 1.000x |
-  |  | Other | 284 ms | 200 ms | -84.0 ms | 0.704x |
-  | rewrite.egg | Search | 804 ms | 964 ms | 160 ms | 1.199x |
-  |  | Apply | 362 ms | 434 ms | 72.0 ms | 1.199x |
-  |  | Merge | 100 ms | 100 ms | 0 ns | 1.000x |
-  |  | Rebuild | 40.0 ms | 40.0 ms | 0 ns | 1.000x |
-  |  | Other | 704 ms | 872 ms | 168 ms | 1.239x |
+  *Endpoint cells show a 95% CI (or one-round point) and that phase's share of endpoint wall time. Delta is the signed candidate − baseline mean; Δ contribution is the phase's share of the wall-time change and may be negative or exceed 100% when phases offset. Execution overhead is stored per-ruleset unattributed time. Outside recorded rulesets is wall time minus all five recorded phases; ! marks a negative residual.*
   
-  *Delta is candidate − baseline. Phase values are descriptive means without confidence intervals. Other is wall time minus Search, Apply, Merge, and Rebuild; a leading ! means recorded phase totals exceed wall time.*
+  ### Phase comparison — math.egg
+  
+  | Phase | Baseline (95% CI · wall) | Candidate (95% CI · wall) | Delta | Δ contribution |
+  | --- | ---: | ---: | ---: | ---: |
+  | Search | 353–455 ms · 40.0% | 273–375 ms · 40.0% | -80.0 ms | +40.0% |
+  | Apply | 159–205 ms · 18.0% | 123–169 ms · 18.0% | -36.0 ms | +18.0% |
+  | Execution overhead | 0–0 ns · 0% | 0–0 ns · 0% | 0 ns | 0% |
+  | Merge | 100–100 ms · 9.90% | 100–100 ms · 12.3% | 0 ns | 0% |
+  | Rebuild | 40.0–40.0 ms · 3.96% | 40.0–40.0 ms · 4.94% | 0 ns | 0% |
+  | Outside recorded rulesets | 231–338 ms · 28.1% | 147–254 ms · 24.7% | -84.0 ms | +42.0% |
+  
+  ### Phase comparison — rewrite.egg
+  
+  | Phase | Baseline (95% CI · wall) | Candidate (95% CI · wall) | Delta | Δ contribution |
+  | --- | ---: | ---: | ---: | ---: |
+  | Search | 753–855 ms · 40.0% | 0.913–1.01 s · 40.0% | +160 ms | +40.0% |
+  | Apply | 339–385 ms · 18.0% | 411–457 ms · 18.0% | +72.0 ms | +18.0% |
+  | Execution overhead | 0–0 ns · 0% | 0–0 ns · 0% | 0 ns | 0% |
+  | Merge | 100–100 ms · 4.98% | 100–100 ms · 4.15% | 0 ns | 0% |
+  | Rebuild | 40.0–40.0 ms · 1.99% | 40.0–40.0 ms · 1.66% | 0 ns | 0% |
+  | Outside recorded rulesets | 651–758 ms · 35.0% | 819–926 ms · 36.2% | +168 ms | +42.0% |
   
   ## Ruleset comparison
   
+  *Totals show a 95% CI or one-round point. S/A/Exec/M/R are signed candidate − baseline mean deltas for Search, Apply, Execution overhead (stored unattributed time), Merge, and Rebuild.*
+  
   ### Ruleset comparison — math.egg
   
-  | Ruleset | Baseline total | Candidate total | Delta | Ratio |
-  | --- | ---: | ---: | ---: | ---: |
-  | simplify | 534 ms | 450 ms | -84.0 ms | 0.843x |
-  | finish | 192 ms | 160 ms | -32.0 ms | 0.833x |
-  
-  *Ruleset totals are descriptive means without confidence intervals.*
+  | Ruleset | Baseline total | Candidate total | Total Δ | S Δ | A Δ | Exec Δ | M Δ | R Δ |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | simplify | 481–588 ms | 397–504 ms | -84.0 ms | -60.0 ms | -24.0 ms | 0 ns | 0 ns | 0 ns |
+  | finish | 171–212 ms | 139–180 ms | -32.0 ms | -20.0 ms | -12.0 ms | 0 ns | 0 ns | 0 ns |
   
   ### Ruleset comparison — rewrite.egg
   
-  | Ruleset | Baseline total | Candidate total | Delta | Ratio |
-  | --- | ---: | ---: | ---: | ---: |
-  | simplify | 954 ms | 1.12 s | 168 ms | 1.176x |
-  | finish | 352 ms | 416 ms | 64.0 ms | 1.182x |
+  | Ruleset | Baseline total | Candidate total | Total Δ | S Δ | A Δ | Exec Δ | M Δ | R Δ |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+  | simplify | 0.901–1.01 s | 1.07–1.18 s | +168 ms | +120 ms | +48.0 ms | 0 ns | 0 ns | 0 ns |
+  | finish | 331–372 ms | 395–436 ms | +64.0 ms | +40.0 ms | +24.0 ms | 0 ns | 0 ns | 0 ns |
+  '''
+# ---
+# name: test_realistic_six_file_rich_120_snapshot
+  '''
+  ────────────────────────────────────────────────── Ruleset comparison ──────────────────────────────────────────────────
+  Totals show a 95% CI or one-round point. S/A/Exec/M/R are signed candidate − baseline mean deltas for Search, Apply, 
+  Execution overhead (stored unattributed time), Merge, and Rebuild.
+                                               Ruleset comparison — math.egg                                              
+                                                                                                                          
+    Ruleset          Baseline total     Candidate total     Total Δ        S Δ        A Δ     Exec Δ       M Δ       R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11         41.9–53.9 ms        37.7–48.5 ms    -4.79 ms   -2.42 ms   -1.21 ms    -242 us   -606 us   -303 us  
+    ruleset-10         38.4–49.4 ms        34.5–44.5 ms    -4.39 ms   -2.22 ms   -1.11 ms    -222 us   -556 us   -278 us  
+    ruleset-09         34.9–44.9 ms        31.4–40.4 ms    -3.99 ms   -2.02 ms   -1.01 ms    -202 us   -505 us   -252 us  
+    ruleset-08         31.4–40.4 ms        28.2–36.4 ms    -3.59 ms   -1.82 ms    -909 us    -182 us   -454 us   -227 us  
+    ruleset-07         27.9–35.9 ms        25.1–32.3 ms    -3.19 ms   -1.62 ms    -808 us    -162 us   -404 us   -202 us  
+    ruleset-06         24.4–31.4 ms        22.0–28.3 ms    -2.79 ms   -1.41 ms    -707 us    -141 us   -354 us   -177 us  
+    ruleset-05         20.9–26.9 ms        18.8–24.3 ms    -2.39 ms   -1.21 ms    -606 us    -121 us   -303 us   -152 us  
+    ruleset-04         17.4–22.5 ms        15.7–20.2 ms    -1.99 ms   -1.01 ms    -505 us    -101 us   -252 us   -126 us  
+    ruleset-03         14.0–18.0 ms        12.6–16.2 ms    -1.60 ms    -808 us    -404 us   -80.8 us   -202 us   -101 us  
+    ruleset-02         10.5–13.5 ms        9.42–12.1 ms    -1.20 ms    -606 us    -303 us   -60.6 us   -152 us  -75.8 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+                                           Ruleset comparison — eggcc-extract.egg                                         
+                                                                                                                          
+    Ruleset         Baseline total     Candidate total    Total Δ        S Δ        A Δ     Exec Δ        M Δ        R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11        73.6–94.8 ms        69.2–89.1 ms   -5.05 ms   -2.91 ms   -1.45 ms    -145 us    -364 us    -182 us  
+    ruleset-10        67.5–86.9 ms        63.5–81.7 ms   -4.63 ms   -2.67 ms   -1.33 ms    -133 us    -333 us    -167 us  
+    ruleset-09        61.4–79.0 ms        57.7–74.3 ms   -4.21 ms   -2.42 ms   -1.21 ms    -121 us    -303 us    -152 us  
+    ruleset-08        55.2–71.1 ms        51.9–66.9 ms   -3.79 ms   -2.18 ms   -1.09 ms    -109 us    -273 us    -136 us  
+    ruleset-07        49.1–63.2 ms        46.1–59.4 ms   -3.37 ms   -1.94 ms    -970 us   -97.0 us    -242 us    -121 us  
+    ruleset-06        43.0–55.3 ms        40.4–52.0 ms   -2.95 ms   -1.70 ms    -848 us   -84.8 us    -212 us    -106 us  
+    ruleset-05        36.8–47.4 ms        34.6–44.6 ms   -2.53 ms   -1.45 ms    -727 us   -72.7 us    -182 us   -90.9 us  
+    ruleset-04        30.7–39.5 ms        28.8–37.1 ms   -2.11 ms   -1.21 ms    -606 us   -60.6 us    -152 us   -75.8 us  
+    ruleset-03        24.5–31.6 ms        23.1–29.7 ms   -1.68 ms    -970 us    -485 us   -48.5 us    -121 us   -60.6 us  
+    ruleset-02        18.4–23.7 ms        17.3–22.3 ms   -1.26 ms    -727 us    -364 us   -36.4 us   -90.9 us   -45.5 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+                                      Ruleset comparison — pointer-analysis-small.egg                                     
+                                                                                                                          
+    Ruleset          Baseline total     Candidate total     Total Δ        S Δ       A Δ     Exec Δ        M Δ       R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11           105–136 ms          103–133 ms    -2.41 ms   -1.45 ms   -727 us   -48.5 us    -121 us  -60.6 us  
+    ruleset-10          96.6–124 ms         94.7–122 ms    -2.21 ms   -1.33 ms   -667 us   -44.4 us    -111 us  -55.5 us  
+    ruleset-09          87.9–113 ms         86.1–111 ms    -2.01 ms   -1.21 ms   -606 us   -40.4 us    -101 us  -50.5 us  
+    ruleset-08          79.1–102 ms        77.5–99.8 ms    -1.81 ms   -1.09 ms   -545 us   -36.4 us   -90.9 us  -45.5 us  
+    ruleset-07         70.3–90.5 ms        68.9–88.7 ms    -1.61 ms    -970 us   -485 us   -32.3 us   -80.8 us  -40.4 us  
+    ruleset-06         61.5–79.2 ms        60.3–77.6 ms    -1.41 ms    -848 us   -424 us   -28.3 us   -70.7 us  -35.4 us  
+    ruleset-05         52.7–67.9 ms        51.7–66.5 ms    -1.21 ms    -727 us   -364 us   -24.2 us   -60.6 us  -30.3 us  
+    ruleset-04         43.9–56.6 ms        43.0–55.4 ms    -1.00 ms    -606 us   -303 us   -20.2 us   -50.5 us  -25.2 us  
+    ruleset-03         35.1–45.3 ms        34.4–44.3 ms     -804 us    -485 us   -242 us   -16.2 us   -40.4 us  -20.2 us  
+    ruleset-02         26.4–33.9 ms        25.8–33.3 ms     -603 us    -364 us   -182 us   -12.1 us   -30.3 us  -15.2 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+                                            Ruleset comparison — hardboiled.egg                                           
+                                                                                                                          
+    Ruleset          Baseline total     Candidate total     Total Δ        S Δ       A Δ     Exec Δ        M Δ       R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11           137–177 ms          140–180 ms    +3.14 ms   +1.94 ms   +970 us   +48.5 us    +121 us  +60.6 us  
+    ruleset-10           126–162 ms          128–165 ms    +2.88 ms   +1.78 ms   +889 us   +44.4 us    +111 us  +55.5 us  
+    ruleset-09           114–147 ms          117–150 ms    +2.62 ms   +1.62 ms   +808 us   +40.4 us    +101 us  +50.5 us  
+    ruleset-08           103–133 ms          105–135 ms    +2.35 ms   +1.45 ms   +727 us   +36.4 us   +90.9 us  +45.5 us  
+    ruleset-07          91.5–118 ms         93.3–120 ms    +2.09 ms   +1.29 ms   +646 us   +32.3 us   +80.8 us  +40.4 us  
+    ruleset-06          80.0–103 ms         81.6–105 ms    +1.83 ms   +1.13 ms   +566 us   +28.3 us   +70.7 us  +35.4 us  
+    ruleset-05         68.6–88.3 ms        70.0–90.1 ms    +1.57 ms    +970 us   +485 us   +24.2 us   +60.6 us  +30.3 us  
+    ruleset-04         57.2–73.6 ms        58.3–75.1 ms    +1.31 ms    +808 us   +404 us   +20.2 us   +50.5 us  +25.2 us  
+    ruleset-03         45.7–58.9 ms        46.7–60.1 ms    +1.05 ms    +646 us   +323 us   +16.2 us   +40.4 us  +20.2 us  
+    ruleset-02         34.3–44.2 ms        35.0–45.1 ms     +785 us    +485 us   +242 us   +12.1 us   +30.3 us  +15.2 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+                                              Ruleset comparison — luminal.egg                                            
+                                                                                                                          
+    Ruleset         Baseline total     Candidate total    Total Δ        S Δ        A Δ     Exec Δ        M Δ        R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11          169–218 ms          179–231 ms   +11.6 ms   +7.27 ms   +3.64 ms    +145 us    +364 us    +182 us  
+    ruleset-10          155–199 ms          164–211 ms   +10.6 ms   +6.67 ms   +3.33 ms    +133 us    +333 us    +167 us  
+    ruleset-09          141–181 ms          149–192 ms   +9.67 ms   +6.06 ms   +3.03 ms    +121 us    +303 us    +152 us  
+    ruleset-08          127–163 ms          134–173 ms   +8.70 ms   +5.45 ms   +2.73 ms    +109 us    +273 us    +136 us  
+    ruleset-07          113–145 ms          119–154 ms   +7.73 ms   +4.85 ms   +2.42 ms   +97.0 us    +242 us    +121 us  
+    ruleset-06         98.6–127 ms          104–135 ms   +6.77 ms   +4.24 ms   +2.12 ms   +84.8 us    +212 us    +106 us  
+    ruleset-05         84.5–109 ms         89.6–115 ms   +5.80 ms   +3.64 ms   +1.82 ms   +72.7 us    +182 us   +90.9 us  
+    ruleset-04        70.4–90.7 ms        74.6–96.1 ms   +4.83 ms   +3.03 ms   +1.51 ms   +60.6 us    +152 us   +75.8 us  
+    ruleset-03        56.3–72.5 ms        59.7–76.9 ms   +3.87 ms   +2.42 ms   +1.21 ms   +48.5 us    +121 us   +60.6 us  
+    ruleset-02        42.2–54.4 ms        44.8–57.7 ms   +2.90 ms   +1.82 ms    +909 us   +36.4 us   +90.9 us   +45.5 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+                                              Ruleset comparison — herbie.egg                                             
+                                                                                                                          
+    Ruleset          Baseline total     Candidate total     Total Δ        S Δ        A Δ     Exec Δ       M Δ       R Δ  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    ruleset-11           201–259 ms          221–284 ms    +23.0 ms   +14.5 ms   +7.27 ms    +242 us   +606 us   +303 us  
+    ruleset-10           184–237 ms          202–261 ms    +21.1 ms   +13.3 ms   +6.67 ms    +222 us   +556 us   +278 us  
+    ruleset-09           167–215 ms          184–237 ms    +19.1 ms   +12.1 ms   +6.06 ms    +202 us   +505 us   +252 us  
+    ruleset-08           151–194 ms          166–213 ms    +17.2 ms   +10.9 ms   +5.45 ms    +182 us   +454 us   +227 us  
+    ruleset-07           134–172 ms          147–190 ms    +15.3 ms   +9.70 ms   +4.85 ms    +162 us   +404 us   +202 us  
+    ruleset-06           117–151 ms          129–166 ms    +13.4 ms   +8.48 ms   +4.24 ms    +141 us   +354 us   +177 us  
+    ruleset-05           100–129 ms          110–142 ms    +11.5 ms   +7.27 ms   +3.64 ms    +121 us   +303 us   +152 us  
+    ruleset-04          83.7–108 ms         92.0–119 ms    +9.57 ms   +6.06 ms   +3.03 ms    +101 us   +252 us   +126 us  
+    ruleset-03         66.9–86.2 ms        73.6–94.8 ms    +7.66 ms   +4.85 ms   +2.42 ms   +80.8 us   +202 us   +101 us  
+    ruleset-02         50.2–64.6 ms        55.2–71.1 ms    +5.74 ms   +3.64 ms   +1.82 ms   +60.6 us   +152 us  +75.8 us  
+                                                                                                                          
+  Showing 10 of 12 changed rulesets by absolute total delta.                                                              
+  ─────────────────────────────────────────────────── Phase comparison ───────────────────────────────────────────────────
+  Endpoint cells show a 95% CI (or one-round point) and that phase's share of endpoint wall time. Delta is the signed 
+  candidate − baseline mean; Δ contribution is the phase's share of the wall-time change and may be negative or exceed 
+  100% when phases offset. Execution overhead is stored per-ruleset unattributed time. Outside recorded rulesets is wall 
+  time minus all five recorded phases; ! marks a negative residual.
+                                                Phase comparison — math.egg                                               
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                  138–177 ms · 15.7%            124–160 ms · 17.6%   -15.8 ms           +7.88%  
+    Apply                                 68.9–88.7 ms · 7.84%          62.0–79.8 ms · 8.81%   -7.88 ms           +3.94%  
+    Execution overhead                    13.8–17.7 ms · 1.57%          12.4–16.0 ms · 1.76%   -1.58 ms          +0.788%  
+    Merge                                 34.4–44.3 ms · 3.92%          31.0–39.9 ms · 4.40%   -3.94 ms           +1.97%  
+    Rebuild                               17.2–22.2 ms · 1.96%          15.5–20.0 ms · 2.20%   -1.97 ms          +0.985%  
+    Outside recorded rulesets               669–718 ms · 69.0%            497–553 ms · 65.2%    -169 ms           +84.4%  
+                                                                                                                          
+                                            Phase comparison — eggcc-extract.egg                                          
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                  275–355 ms · 20.9%            259–333 ms · 21.9%   -18.9 ms           +12.6%  
+    Apply                                   138–177 ms · 10.5%            129–167 ms · 10.9%   -9.45 ms           +6.30%  
+    Execution overhead                    13.8–17.7 ms · 1.05%          12.9–16.7 ms · 1.09%    -945 us          +0.630%  
+    Merge                                 34.4–44.3 ms · 2.62%          32.4–41.7 ms · 2.73%   -2.36 ms           +1.58%  
+    Rebuild                               17.2–22.2 ms · 1.31%          16.2–20.8 ms · 1.37%   -1.18 ms          +0.788%  
+    Outside recorded rulesets               952–963 ms · 63.6%            839–842 ms · 62.0%    -117 ms           +78.1%  
+                                                                                                                          
+                                       Phase comparison — pointer-analysis-small.egg                                      
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                  413–532 ms · 23.6%            405–522 ms · 23.1%   -9.45 ms                —  
+    Apply                                   207–266 ms · 11.8%            202–261 ms · 11.6%   -4.73 ms                —  
+    Execution overhead                   13.8–17.7 ms · 0.786%         13.5–17.4 ms · 0.770%    -315 us                —  
+    Merge                                 34.4–44.3 ms · 1.96%          33.7–43.5 ms · 1.93%    -788 us                —  
+    Rebuild                              17.2–22.2 ms · 0.982%         16.9–21.7 ms · 0.963%    -394 us                —  
+    Outside recorded rulesets              1.19–1.26 s · 60.9%           1.20–1.27 s · 61.7%   +15.7 ms                —  
+                                                                                                                          
+                                             Phase comparison — hardboiled.egg                                            
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                  551–710 ms · 25.2%            562–724 ms · 23.3%   +12.6 ms           +5.04%  
+    Apply                                   275–355 ms · 12.6%            281–362 ms · 11.7%   +6.30 ms           +2.52%  
+    Execution overhead                   13.8–17.7 ms · 0.629%         14.0–18.1 ms · 0.583%    +315 us          +0.126%  
+    Merge                                 34.4–44.3 ms · 1.57%          35.1–45.2 ms · 1.46%    +788 us          +0.315%  
+    Rebuild                              17.2–22.2 ms · 0.786%         17.6–22.6 ms · 0.729%    +394 us          +0.158%  
+    Outside recorded rulesets              1.42–1.55 s · 59.3%           1.65–1.78 s · 62.2%    +230 ms           +91.8%  
+                                                                                                                          
+                                               Phase comparison — luminal.egg                                             
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                  689–887 ms · 26.2%            730–940 ms · 23.2%   +47.3 ms           +7.88%  
+    Apply                                   344–443 ms · 13.1%            365–470 ms · 11.6%   +23.6 ms           +3.94%  
+    Execution overhead                   13.8–17.7 ms · 0.524%         14.6–18.8 ms · 0.463%    +945 us          +0.158%  
+    Merge                                 34.4–44.3 ms · 1.31%          36.5–47.0 ms · 1.16%   +2.36 ms          +0.394%  
+    Rebuild                              17.2–22.2 ms · 0.655%         18.3–23.5 ms · 0.579%   +1.18 ms          +0.197%  
+    Outside recorded rulesets              1.65–1.84 s · 58.2%           2.17–2.38 s · 63.1%    +525 ms           +87.4%  
+                                                                                                                          
+                                               Phase comparison — herbie.egg                                              
+                                                                                                                          
+    Phase                             Baseline (95% CI · wall)     Candidate (95% CI · wall)      Delta   Δ contribution  
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Search                                0.826–1.06 s · 27.0%          0.909–1.17 s · 22.8%   +94.5 ms           +9.00%  
+    Apply                                   413–532 ms · 13.5%            455–585 ms · 11.4%   +47.3 ms           +4.50%  
+    Execution overhead                   13.8–17.7 ms · 0.450%         15.2–19.5 ms · 0.380%   +1.58 ms          +0.150%  
+    Merge                                 34.4–44.3 ms · 1.12%         37.9–48.8 ms · 0.951%   +3.94 ms          +0.375%  
+    Rebuild                              17.2–22.2 ms · 0.562%         18.9–24.4 ms · 0.476%   +1.97 ms          +0.188%  
+    Outside recorded rulesets              1.89–2.14 s · 57.4%           2.77–3.06 s · 63.9%    +901 ms           +85.8%  
+                                                                                                                          
+  ─────────────────────────────────────────────────── Per-file results ───────────────────────────────────────────────────
+                                                         Wall time                                                        
+                                                                                                                          
+    File                                  Baseline (95% CI)      Candidate (95% CI)      Ratio (95% CI)  Result           
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    math.egg                                   0.941–1.07 s              741–869 ms        0.723–0.885x  faster           
+    eggcc-extract.egg                           1.44–1.57 s             1.29–1.42 s        0.845–0.959x  faster           
+    pointer-analysis-small.egg                  1.94–2.07 s             1.94–2.07 s         0.956–1.05x  CI includes 1    
+    hardboiled.egg                              2.44–2.57 s             2.69–2.82 s          1.06–1.14x  slower           
+    luminal.egg                                 2.94–3.07 s             3.54–3.67 s          1.17–1.23x  slower           
+    herbie.egg                                  3.44–3.57 s             4.49–4.62 s          1.27–1.33x  slower           
+                                                                                                                          
+                                                          Peak RSS                                                        
+                                                                                                                          
+    File                                     Baseline (95% CI)       Candidate (95% CI)     Ratio (95% CI)  Result        
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    math.egg                                    89.8–101.9 MiB           99.3–111.4 MiB         1.01–1.20x  higher RSS    
+    eggcc-extract.egg                          108.9–121.0 MiB          118.4–130.5 MiB         1.01–1.16x  higher RSS    
+    pointer-analysis-small.egg                 127.9–140.1 MiB          137.5–149.6 MiB         1.01–1.14x  higher RSS    
+    hardboiled.egg                             147.0–159.1 MiB          156.5–168.7 MiB         1.01–1.12x  higher RSS    
+    luminal.egg                                166.1–178.2 MiB          175.6–187.7 MiB         1.01–1.11x  higher RSS    
+    herbie.egg                                 185.2–197.3 MiB          194.7–206.8 MiB         1.00–1.10x  higher RSS    
+                                                                                                                          
+  ────────────────────────────────────────────────────── Comparison ──────────────────────────────────────────────────────
+                                                                                                                          
+    Role                          Target              Git                 Backend               Treatment                 
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Baseline                      old                 abc123              main                  off                       
+    Candidate                     new                 abc123              main                  proofs                    
+                                                                                                                          
+  6 file(s): math.egg, eggcc-extract.egg, pointer-analysis-small.egg, hardboiled.egg, luminal.egg, herbie.egg · 2 round(s)
+  per endpoint/file · 120 s timeout per run · Report: six-files.jsonl                                                     
+  This comparison changes more than one of target, backend, and treatment. Its ratios describe the joint endpoint change 
+  and do not isolate one cause.
+  ────────────────────────────────────── Summary — new main/proofs vs old main/off ───────────────────────────────────────
+                                                                                                                          
+    Metric             Scope                             File(s)                       Ratio (95% CI)  Result             
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 
+    Wall time          Suite total                       6 files                           1.10–1.13x  slower             
+    Wall time          Lowest-ratio file                 math.egg                        0.723–0.885x  faster             
+    Wall time          Highest-ratio file                herbie.egg                        1.27–1.33x  slower             
+    Peak RSS           Lowest-ratio file                 herbie.egg                        1.00–1.10x  higher RSS         
+    Peak RSS           Highest-ratio file                math.egg                          1.01–1.20x  higher RSS         
+                                                                                                                          
+  Ratios are candidate / baseline; below 1 is lower and above 1 is higher.                                                
   
-  *Ruleset totals are descriptive means without confidence intervals.*
   '''
 # ---

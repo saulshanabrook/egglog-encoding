@@ -1,5 +1,6 @@
 /target/
 /.reports*.jsonl
+/.reports*.html
 /.profiles/
 /.bench-worktrees/
 /.venv/

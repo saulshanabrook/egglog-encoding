@@ -56,7 +56,12 @@ def test_analysis_computes_only_the_requested_detail_rows(tmp_path: Path) -> Non
     write_report(
         report,
         make_record(0, started_at="2026-07-15T12:00:00Z", binary_sha256="sha256:baseline"),
-        make_record(1, started_at="2026-07-15T12:00:01Z", binary_sha256="sha256:candidate"),
+        make_record(
+            1,
+            started_at="2026-07-15T12:00:01Z",
+            binary_sha256="sha256:candidate",
+            timing_summary=make_timing_summary(make_ruleset_timing(search_ns=400_000_001)),
+        ),
     )
 
     store = ReportStore(report)
@@ -253,7 +258,7 @@ def test_valid_tail_does_not_inherit_an_unrelated_invalid_file_issue(tmp_path: P
     assert all(row.issue is None for row in tails)
 
 
-def test_phase_rows_are_exact_components_and_other_is_wall_residual(tmp_path: Path) -> None:
+def test_phase_rows_are_exhaustive_and_outside_is_wall_residual(tmp_path: Path) -> None:
     report = tmp_path / "report.jsonl"
     comparison = _comparison(tmp_path)
     baseline_timing = make_timing_summary(
@@ -294,15 +299,62 @@ def test_phase_rows_are_exact_components_and_other_is_wall_residual(tmp_path: Pa
 
     phases = analyze_pair(ReportStore(report), comparison, "phases").phases
 
-    assert [row.phase for row in phases] == ["search", "apply", "merge", "rebuild", "other"]
+    assert [row.phase for row in phases] == [
+        "search",
+        "apply",
+        "unattributed",
+        "merge",
+        "rebuild",
+        "outside",
+    ]
     assert [(row.baseline_ns, row.candidate_ns) for row in phases] == [
         (100.0, 200.0),
         (200.0, 100.0),
+        (17.0, 23.0),
         (300.0, 600.0),
         (400.0, 200.0),
-        (500.0, 900.0),
+        (483.0, 877.0),
     ]
-    assert [row.delta_ns for row in phases] == [100.0, -100.0, 300.0, -200.0, 400.0]
+    assert [row.delta_ns for row in phases] == [100.0, -100.0, 6.0, 300.0, -200.0, 394.0]
+    assert [row.wall_delta_contribution for row in phases] == pytest.approx([0.2, -0.2, 0.012, 0.6, -0.4, 0.788])
+    assert sum(row.wall_delta_contribution or 0.0 for row in phases) == pytest.approx(1.0)
+    assert phases[0].baseline_wall_share == pytest.approx(100.0 / 1_500.0)
+    assert phases[-1].candidate_wall_share == pytest.approx(877.0 / 2_000.0)
+
+
+def test_phase_endpoints_have_student_t_intervals_and_wall_context(tmp_path: Path) -> None:
+    report = tmp_path / "report.jsonl"
+    comparison = _comparison(tmp_path, rounds=2)
+    records: list[ReportRecord] = []
+    for binary_sha256, searches, walls_ns in (
+        ("sha256:baseline", (100, 300), (1_000, 1_200)),
+        ("sha256:candidate", (200, 400), (1_500, 1_700)),
+    ):
+        for search_ns, wall_ns in zip(searches, walls_ns, strict=True):
+            records.append(
+                make_record(
+                    len(records),
+                    started_at=f"2026-07-15T12:00:{len(records):02d}Z",
+                    binary_sha256=binary_sha256,
+                    wall_sec=wall_ns / 1_000_000_000.0,
+                    timing_summary=make_timing_summary(
+                        make_ruleset_timing(search_ns=search_ns, apply_ns=0, merge_ns=0, rebuild_ns=0)
+                    ),
+                )
+            )
+    write_report(report, *records)
+
+    search = analyze_pair(ReportStore(report), comparison, "phases").phases[0]
+    half_width = 12.706204736432095 * 100.0
+
+    assert search.baseline_ns == 200
+    assert search.baseline_ci_low_ns == pytest.approx(200 - half_width)
+    assert search.baseline_ci_high_ns == pytest.approx(200 + half_width)
+    assert search.baseline_wall_share == pytest.approx(200 / 1_100)
+    assert search.candidate_ns == 300
+    assert search.candidate_wall_share == pytest.approx(300 / 1_600)
+    assert search.delta_ns == 100
+    assert search.wall_delta_contribution == pytest.approx(0.2)
 
 
 def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations(tmp_path: Path) -> None:
@@ -361,14 +413,14 @@ def test_ruleset_union_distinguishes_absence_from_zero_and_aggregates_iterations
 
     assert rows["baseline-only"].baseline_total_ns == 10
     assert rows["baseline-only"].candidate_total_ns is None
-    assert rows["baseline-only"].point is None
+    assert rows["baseline-only"].baseline_ci_low_ns == 10
+    assert rows["baseline-only"].baseline_ci_high_ns == 10
     assert rows["candidate-only"].baseline_total_ns is None
     assert rows["candidate-only"].candidate_total_ns == 20
-    assert rows["candidate-only"].point is None
     assert rows["sporadic"].baseline_total_ns == 4
-    assert rows["recorded-zero"].baseline_total_ns == 0
-    assert rows["recorded-zero"].candidate_total_ns == 0
-    assert rows["recorded-zero"].point is None
+    assert rows["baseline-only"].search_delta_ns == -10
+    assert rows["candidate-only"].search_delta_ns == 20
+    assert "recorded-zero" not in rows
 
 
 def test_ruleset_presentation_is_fixed_top_ten_by_absolute_delta_then_name(tmp_path: Path) -> None:

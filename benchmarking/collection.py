@@ -9,24 +9,21 @@ selection, statistics, and rendering belong in :mod:`benchmarking.reports`.
 
 from __future__ import annotations
 
-import json
 import tempfile
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
 
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
     Progress,
-    SpinnerColumn,
-    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
-from rich.table import Table
+from rich.table import Column
 from rich.text import Text
 
 from .models import (
@@ -42,12 +39,12 @@ from .models import (
     Treatment,
     backend_cargo_features,
 )
-from .output import RunnerOutput, display_target
+from .output import RunnerOutput
 from .processes import TimingResult, run_command
 from .reports.records import (
-    TIMING_SUMMARY_SCHEMA_VERSION,
     ReportRecord,
     TimingSummaryRecord,
+    parse_timing_summary,
 )
 from .reports.store import EstimateAggregate, ReportStore
 from .targets import (
@@ -57,8 +54,6 @@ from .targets import (
     target_row_for_request,
     workload_command,
 )
-
-TARGET_STARTUP_WARMUP_SUBPROCESSES = 1
 
 
 @dataclass(frozen=True)
@@ -73,10 +68,6 @@ class BenchmarkRunPlan:
     missing_observations: int
     estimate_key: EstimateKey
 
-    @property
-    def planned_processes(self) -> int:
-        return self.missing_observations
-
 
 @dataclass(frozen=True)
 class CollectionPlan:
@@ -88,13 +79,6 @@ class CollectionPlan:
     @property
     def total_missing_observations(self) -> int:
         return sum(run.missing_observations for run in self.runs)
-
-    @property
-    def total_planned_processes(self) -> int:
-        measured = sum(run.planned_processes for run in self.runs)
-        if measured == 0:
-            return 0
-        return TARGET_STARTUP_WARMUP_SUBPROCESSES + measured
 
 
 @dataclass(frozen=True)
@@ -208,10 +192,22 @@ def build_collection_plan(
 def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel) -> DurationEstimate:
     """Estimate all measured subprocesses in a collection plan."""
 
+    return _combined_estimate(
+        ((run.estimate_key, run.missing_observations) for run in plan.runs),
+        estimate_model,
+    )
+
+
+def _combined_estimate(
+    processes: Iterable[tuple[EstimateKey, int]],
+    estimate_model: EstimateModel,
+) -> DurationEstimate:
+    """Combine exact-key estimates without hiding how unknown runs propagate."""
+
     seconds = 0.0
     unknown_processes = 0
-    for run in plan.runs:
-        estimate = estimate_model.estimate_processes(run.estimate_key, run.planned_processes)
+    for key, count in processes:
+        estimate = estimate_model.estimate_processes(key, count)
         if estimate.seconds is None:
             unknown_processes += estimate.unknown_processes
         else:
@@ -380,24 +376,14 @@ def run_process(
                 "the selected target does not support the required benchmark interface"
             )
         try:
-            raw_summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+            summary = parse_timing_summary(summary_path.read_bytes())
+        except (OSError, ValueError, KeyError, TypeError) as error:
             raise ValueError(f"invalid timing summary from successful benchmark process: {error}") from error
-        summary = cast(TimingSummaryRecord, raw_summary)
-        try:
-            summary_version = summary["schema_version"]
-        except (KeyError, TypeError) as error:
-            raise ValueError("timing summary is missing schema_version") from error
-        if summary_version != TIMING_SUMMARY_SCHEMA_VERSION:
-            raise ValueError(
-                "unsupported timing summary schema_version "
-                f"{summary_version!r}; expected {TIMING_SUMMARY_SCHEMA_VERSION}"
-            )
         return ProcessObservation(result=result, timing_summary=summary)
 
 
-def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
-    """Warm the executable and preflight the required timing-summary flag."""
+def run_preflight(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
+    """Run an untimed ``--help`` capability preflight for the timing-summary interface."""
 
     return run_command(
         [str(binary_path), "--help"],
@@ -407,25 +393,23 @@ def run_startup_warmup(binary_path: Path, checkout_path: Path, timeout_sec: int)
     )
 
 
-def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> TimingResult | None:
+def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
     """Check one potentially fresh target before any timed collection begins.
 
-    The successful result is reused as that target's single startup warmup.
     A plan that is already fully cached needs neither a binary nor a preflight.
     """
 
     if plan.total_missing_observations == 0:
-        return None
+        return
     target = plan.target
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs fresh rows but has no build path")
-    startup_warmup = run_startup_warmup(target.binary_path, Path(target.row.path), timeout_sec)
-    if startup_warmup.status != "success":
-        message = f"target {target.display_label} startup warmup did not complete successfully"
-        if startup_warmup.error is not None:
-            message = f"{message}: {startup_warmup.error.message}"
+    result = run_preflight(target.binary_path, Path(target.row.path), timeout_sec)
+    if result.status != "success":
+        message = f"target {target.display_label} preflight failed"
+        if result.error is not None:
+            message = f"{message}: {result.error.message}"
         raise ValueError(message)
-    return startup_warmup
 
 
 def collection_label(
@@ -438,39 +422,80 @@ def collection_label(
     """Return a concise progress label for one measured observation."""
 
     filename = Path(file_spec.display_path).name
-    return f"{filename} {backend}/{treatment} {round_index + 1}/{rounds}"
+    return f"{filename} · {backend}/{treatment} · {round_index + 1}/{rounds}"
 
 
 def format_timing_result(result: TimingResult) -> str:
     """Format one subprocess result for operational progress output."""
 
-    if result.timing.wall_sec is None:
-        return result.status
-    return f"{result.status} {result.timing.wall_sec:.3f}s"
+    if result.status == "timed-out":
+        return result.error.message if result.error is not None else "timed out"
+    elapsed = "" if result.timing.wall_sec is None else f" after {result.timing.wall_sec:.3f}s"
+    if result.status == "failure":
+        detail = "" if result.error is None else f": {' '.join(result.error.message.splitlines())}"
+        return f"failed{elapsed}{detail}"
+    return f"succeeded{elapsed}"
 
 
 def format_duration(seconds: float | None) -> str:
-    """Format an estimated duration without implying unknown precision."""
+    """Format one coarse planning duration without benchmark-like precision."""
 
     if seconds is None:
         return "unknown"
-    if seconds < 60:
-        return f"{seconds:.3f}s"
-    minutes, remainder = divmod(seconds, 60)
+    if seconds < 1:
+        return "<1s"
+    rounded_seconds = round(seconds)
+    if rounded_seconds < 60:
+        return f"~{rounded_seconds}s"
+    minutes, remainder = divmod(rounded_seconds, 60)
     if minutes < 60:
-        return f"{int(minutes)}m{remainder:04.1f}s"
+        return f"~{minutes}m{remainder:02d}s"
     hours, minutes = divmod(minutes, 60)
-    return f"{int(hours)}h{int(minutes):02d}m{remainder:04.1f}s"
+    return f"~{hours}h{minutes:02d}m"
 
 
 def format_duration_estimate(estimate: DurationEstimate) -> str:
     """Format known and unknown parts of a collection estimate."""
 
     if estimate.seconds is None:
-        return f"unknown ({estimate.unknown_processes} runs)"
+        return f"unknown ({_run_count(estimate.unknown_processes, 'unestimated run')})"
     if estimate.unknown_processes:
-        return f"{format_duration(estimate.seconds)} + {estimate.unknown_processes} unknown"
+        if estimate.seconds < 1:
+            lower_bound = f"{estimate.seconds:.1f}s"
+        else:
+            lower_bound = format_duration(estimate.seconds).removeprefix("~")
+        return f"at least {lower_bound}; {_run_count(estimate.unknown_processes, 'unestimated run')}"
     return format_duration(estimate.seconds)
+
+
+def _format_progress_estimate(estimate: DurationEstimate) -> str:
+    """Keep the live ETA honest without crowding out the current workload."""
+
+    if estimate.seconds is None:
+        return "unknown"
+    if estimate.unknown_processes:
+        known = format_duration(estimate.seconds).removeprefix("~")
+        return f"≥{known} ({estimate.unknown_processes} unknown)"
+    return format_duration(estimate.seconds)
+
+
+def _run_count(count: int, singular: str) -> str:
+    """Pluralize one operational run count."""
+
+    return f"{count} {singular if count == 1 else singular + 's'}"
+
+
+def _status_counts_text(status_counts: Counter[Status]) -> str:
+    """Format result counts in stable, natural-language order."""
+
+    parts: list[str] = []
+    if status_counts["success"]:
+        parts.append(f"{status_counts['success']} successful")
+    if status_counts["failure"]:
+        parts.append(f"{status_counts['failure']} failed")
+    if status_counts["timed-out"]:
+        parts.append(f"{status_counts['timed-out']} timed out")
+    return ", ".join(parts)
 
 
 def remaining_estimate(
@@ -479,17 +504,7 @@ def remaining_estimate(
 ) -> DurationEstimate:
     """Estimate subprocesses still pending in the current target plan."""
 
-    seconds = 0.0
-    unknown_processes = 0
-    for key, count in remaining_processes.items():
-        estimate = estimate_model.estimate_processes(key, count)
-        if estimate.seconds is None:
-            unknown_processes += estimate.unknown_processes
-        else:
-            seconds += estimate.seconds
-    if seconds == 0.0 and unknown_processes:
-        return DurationEstimate(seconds=None, unknown_processes=unknown_processes)
-    return DurationEstimate(seconds=seconds, unknown_processes=unknown_processes)
+    return _combined_estimate(remaining_processes.items(), estimate_model)
 
 
 def emit_collection_plan(
@@ -497,35 +512,26 @@ def emit_collection_plan(
     plan: CollectionPlan,
     estimate_model: EstimateModel,
 ) -> None:
-    """Render cache sufficiency and exact-result estimates to stderr."""
+    """Render one compact cache and collection summary to stderr."""
 
+    cached_statuses = Counter(status for run in plan.runs for status in run.cached_statuses)
+    cached = cached_statuses.total()
+    required = sum(run.required_rows for run in plan.runs)
+    missing = plan.total_missing_observations
     total_estimate = collection_plan_estimate(plan, estimate_model)
-    table = Table(title=Text(f"{plan.target.display_label}: cache and estimate plan", style="bold"))
-    table.add_column("File", overflow="fold")
-    table.add_column("Endpoint", no_wrap=True)
-    table.add_column("Cached")
-    table.add_column("Missing")
-    table.add_column("Statuses")
-    table.add_column("Per run")
-    table.add_column("Fresh ETA")
-    for run in plan.runs:
-        estimate = estimate_model.estimate_processes(run.estimate_key, run.planned_processes)
-        process_mean = estimate_model.process_mean(run.estimate_key)
-        status_counts = Counter(run.cached_statuses)
-        statuses = ", ".join(f"{status}:{count}" for status, count in sorted(status_counts.items())) or "-"
-        table.add_row(
-            Text(Path(run.file.display_path).name),
-            Text(f"{run.backend}/{run.treatment}"),
-            Text(f"{len(run.cached_statuses)}/{run.required_rows}"),
-            Text(str(run.missing_observations)),
-            Text(statuses),
-            Text(format_duration(process_mean)),
-            Text(format_duration_estimate(estimate)),
-        )
-    output.console.print(table)
-    output.console.print(
-        Text.assemble("Estimated fresh collection time: ", (format_duration_estimate(total_estimate), "bold"))
+    cached_issues: Counter[Status] = Counter()
+    for status in ("failure", "timed-out"):
+        if cached_statuses[status]:
+            cached_issues[status] = cached_statuses[status]
+    cache_text = f"{cached}/{required} runs cached"
+    if cached_issues:
+        cache_text += f" ({_status_counts_text(cached_issues)})"
+    action_text = (
+        "nothing to collect"
+        if missing == 0
+        else f"collecting {missing} fresh · ETA {format_duration_estimate(total_estimate)}"
     )
+    output.console.print(Text(f"{plan.target.display_label}: {cache_text} · {action_text}"))
 
 
 def flat_report_record(
@@ -571,45 +577,51 @@ def collect_rows(
     timeout_sec: int,
     output: RunnerOutput,
     estimate_model: EstimateModel,
-    startup_warmup: TimingResult | None,
 ) -> None:
-    """Run and append every missing observation after successful preflight."""
+    """Run and append every missing observation after caller preflight."""
 
     target = plan.target
     if plan.total_missing_observations == 0:
         return
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs fresh rows but has no build path")
-    if startup_warmup is None or startup_warmup.status != "success":
-        raise ValueError(f"target {target.display_label} collection was not successfully preflighted")
     binary_path = target.binary_path
     total_observations = plan.total_missing_observations
-    planned_processes = plan.total_planned_processes
     remaining_processes: dict[EstimateKey, int] = {}
     for run in plan.runs:
-        if run.planned_processes > 0:
-            remaining_processes[run.estimate_key] = remaining_processes.get(run.estimate_key, 0) + run.planned_processes
-    output.console.print(
-        Text.assemble(
-            ("Collecting", "bold"),
-            " ",
-            display_target(target.row),
-            f" ({total_observations} observations, {planned_processes} subprocesses)",
-        )
-    )
+        if run.missing_observations > 0:
+            remaining_processes[run.estimate_key] = (
+                remaining_processes.get(run.estimate_key, 0) + run.missing_observations
+            )
     max_deficit = max(run.missing_observations for run in plan.runs)
     completed_observations = 0
+    result_counts: Counter[Status] = Counter()
 
-    def decrement_remaining(key: EstimateKey, count: int = 1) -> None:
-        current = remaining_processes.get(key, 0)
-        next_count = max(0, current - count)
-        if next_count:
-            remaining_processes[key] = next_count
-        else:
-            remaining_processes.pop(key, None)
-
-    def run_loop(progress: Progress, process_task: TaskID) -> None:
-        nonlocal completed_observations
+    with Progress(
+        TextColumn(
+            "{task.fields[current]}",
+            table_column=Column(ratio=1, no_wrap=True, overflow="ellipsis"),
+        ),
+        BarColumn(
+            bar_width=10,
+            complete_style="cyan",
+            finished_style="cyan",
+            pulse_style="cyan",
+            table_column=Column(no_wrap=True),
+        ),
+        MofNCompleteColumn(table_column=Column(no_wrap=True)),
+        TimeElapsedColumn(table_column=Column(no_wrap=True)),
+        TextColumn("ETA {task.fields[eta]}", table_column=Column(no_wrap=True)),
+        console=output.console,
+        transient=True,
+        disable=not output.console.is_terminal,
+    ) as progress:
+        process_task = progress.add_task(
+            "Collecting",
+            total=total_observations,
+            eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
+            current="starting",
+        )
         for round_index in range(max_deficit):
             for run in plan.runs:
                 if round_index >= run.missing_observations:
@@ -623,16 +635,11 @@ def collect_rows(
                     round_index,
                     run.missing_observations,
                 )
-
-                def update_progress(current: str, advance: int = 0) -> None:
-                    progress.update(
-                        process_task,
-                        advance=advance,
-                        eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
-                        current=current,
-                    )
-
-                update_progress(f"row {observation_number}/{total_observations} timed")
+                progress.update(
+                    process_task,
+                    eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
+                    current=label,
+                )
                 started_at = _now_iso()
                 observation = run_process(
                     binary_path,
@@ -642,57 +649,38 @@ def collect_rows(
                     run.treatment,
                     timeout_sec,
                 )
+                store.append(
+                    flat_report_record(
+                        started_at=started_at,
+                        target=target,
+                        run=run,
+                        timeout_sec=timeout_sec,
+                        observation=observation,
+                    )
+                )
                 estimate_model.record_process(run_key, observation.result)
-                decrement_remaining(run_key)
-                update_progress(
-                    "row "
-                    f"{observation_number}/{total_observations} timed; "
-                    f"last {format_timing_result(observation.result)}",
-                    advance=1,
-                )
-                record = flat_report_record(
-                    started_at=started_at,
-                    target=target,
-                    run=run,
-                    timeout_sec=timeout_sec,
-                    observation=observation,
-                )
-                store.append(record)
+                remaining_for_key = remaining_processes[run_key] - 1
+                if remaining_for_key:
+                    remaining_processes[run_key] = remaining_for_key
+                else:
+                    del remaining_processes[run_key]
                 completed_observations += 1
-                progress.console.print(Text(f"  {label}: fresh {format_timing_result(observation.result)}"))
-                update_progress(
-                    f"rows {completed_observations}/{total_observations}; "
-                    f"last {format_timing_result(observation.result)}"
+                result_counts[observation.result.status] += 1
+                progress.update(
+                    process_task,
+                    advance=1,
+                    eta=_format_progress_estimate(remaining_estimate(remaining_processes, estimate_model)),
+                    current=label,
                 )
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=10),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        TextColumn("eta"),
-        TextColumn("{task.fields[eta]}"),
-        TextColumn("{task.fields[current]}"),
-        console=output.console,
-        transient=True,
-    ) as progress:
-        process_task = progress.add_task(
-            "runs",
-            total=planned_processes,
-            eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
-            current=f"rows 0/{total_observations}",
+                if not output.console.is_terminal or observation.result.status != "success":
+                    progress.console.print(
+                        Text(
+                            f"  [{observation_number}/{total_observations}] {label}: "
+                            f"{format_timing_result(observation.result)}"
+                        )
+                    )
+    output.console.print(
+        Text(
+            f"{target.display_label}: collected {total_observations} fresh runs · {_status_counts_text(result_counts)}"
         )
-        progress.update(
-            process_task,
-            current="startup warmup",
-            eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
-        )
-        progress.update(
-            process_task,
-            advance=TARGET_STARTUP_WARMUP_SUBPROCESSES,
-            current=f"startup warmup; last {format_timing_result(startup_warmup)}",
-            eta=format_duration_estimate(remaining_estimate(remaining_processes, estimate_model)),
-        )
-        progress.console.print(Text(f"  startup warmup: {format_timing_result(startup_warmup)}"))
-        run_loop(progress, process_task)
+    )

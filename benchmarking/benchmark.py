@@ -36,9 +36,8 @@ from .models import (
     Treatment,
 )
 from .output import RunnerOutput
-from .reports.catalog import ReportOptions
 from .reports.comparison import build_report_catalog
-from .reports.live import LiveReportSession, serve_live_report
+from .reports.interactive import interactive_report_path, open_interactive_report, write_interactive_report
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.store import ReportStore
 from .targets import git_root_for_path, parse_target
@@ -128,21 +127,13 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         help="append fresh rows for both endpoints even when enough cached rows exist",
     )
     parser.add_argument(
-        "--serve",
+        "--open",
         action="store_true",
-        help="serve the completed shared report catalog on a local interactive web page",
-    )
-    parser.add_argument(
-        "--serve-port",
-        type=tcp_port,
-        default=None,
-        help="loopback TCP port for --serve (default: choose an available port)",
+        help="write an interactive HTML snapshot next to the report cache and open it",
     )
     args = parser.parse_args(argv)
     if args.report == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
-    if args.serve_port is not None and not args.serve:
-        parser.error("--serve-port requires --serve")
     args.command = "benchmark"
     return args
 
@@ -153,15 +144,6 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be positive")
-    return parsed
-
-
-def tcp_port(value: str) -> int:
-    """Parse one valid TCP port accepted by the live report server."""
-
-    parsed = positive_int(value)
-    if parsed > 65535:
-        raise argparse.ArgumentTypeError("must be at most 65535")
     return parsed
 
 
@@ -236,7 +218,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_argv = tuple(sys.argv[1:] if argv is None else argv)
     args = parse_benchmark_args(raw_argv)
     output = RunnerOutput()
-    live_session: LiveReportSession | None = None
     try:
         script_root = Path(__file__).resolve().parents[1]
         invocation_cwd = Path.cwd()
@@ -278,28 +259,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Preflight every fresh target before any measured observation can be
         # appended, then execute the already-validated plans in order.
         plans = collection_plans(store, comparison, bool(args.force_run))
-        preflights = tuple(preflight_collection(plan, comparison.timeout_sec) for plan in plans)
-        for plan, startup_warmup in zip(plans, preflights, strict=True):
+        for plan in plans:
+            preflight_collection(plan, comparison.timeout_sec)
+        for plan in plans:
             emit_collection_plan(output, plan, estimate_model)
-            collect_rows(store, plan, comparison.timeout_sec, output, estimate_model, startup_warmup)
+            collect_rows(store, plan, comparison.timeout_sec, output, estimate_model)
 
-        report_options = ReportOptions(detail=cast(DetailLevel, str(args.detail)))
-        catalog = build_report_catalog(store, comparison, report_options)
+        catalog = build_report_catalog(store, comparison, cast(DetailLevel, str(args.detail)))
         if args.format == "markdown":
             rendered = render_markdown_report_document(catalog)
             sys.stdout.write(rendered + "\n")
         else:
             output.console.print(render_rich_report_document(catalog, output.console.width))
-        if args.serve:
+        if args.open:
             if args.format == "markdown":
                 sys.stdout.flush()
-            live_session = LiveReportSession(store, comparison, report_options, catalog)
-        if live_session is not None:
-            serve_live_report(
-                live_session,
-                port=args.serve_port,
-                console=output.console,
+            interactive_path = write_interactive_report(
+                store,
+                comparison,
+                interactive_report_path(report_path),
             )
+            output.console.print(f"Interactive benchmark report: {interactive_path}")
+            open_interactive_report(interactive_path)
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         output.print_error(error)
         return 2

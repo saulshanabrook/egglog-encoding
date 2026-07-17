@@ -66,12 +66,21 @@ warning for detailed output and still render without error, and Markdown
 preserves full names and values independent of terminal width. Widths below 80
 have no readability guarantee.
 
-For live-report changes, manually run `--serve` against a report under `/tmp`
-with both an OS-selected port and one fixed `--serve-port`. In the browser,
-verify complete cached endpoint selection, endpoint swapping, file subsets,
-cumulative detail, an invalid Apply that preserves the prior selectors and
-report, and clean Ctrl-C shutdown. Scope changes must never build a target or
-collect a new row.
+For collection-status UI changes, exercise fully cached, partially cached, and
+fully fresh plans. Keep operational output compact, make reused and missing work
+clear, avoid zero-work estimates, and do not duplicate the final report or the
+progress display.
+
+For interactive-report changes, manually run `--open` against a report under
+`/tmp` and inspect the generated `file://` page. Verify that the complete
+initial report appears before the Python runtime is ready and preserves the
+invocation's endpoint provenance and file order. After Apply, selector
+provenance must come from the latest cached row for each identity. Verify that
+endpoint swapping, file subsets, timeout, and rounds retarget the report;
+incomplete combinations show explicit missing results; and invalid selector
+requests preserve the prior selectors and report. The command must exit after
+opening the page, and scope changes must never build a target, collect a row,
+or modify the JSONL.
 
 ## Benchmarking
 
@@ -79,13 +88,14 @@ collect a new row.
 - Keep `.reports.jsonl` append-only and ignored by git.
 - `--report` requires a filesystem path; literal `-` is rejected rather than
   treated as a streaming destination.
-- Runner status output always goes to stderr, including Rich progress and
-  summary tables.
+- Operational status, build diagnostics, and progress always go to stderr. The
+  final Rich report also uses stderr; the final Markdown report uses stdout.
 - Treat report JSONL as a disposable cache written and read only by this tool.
   Schema shape changes invalidate the cache and require recomputation; do not
   add migrations or field-by-field malformed-input validation.
 - The runner loads report JSONL once through the shared JSON codec into an
-  indexed `ReportStore`; live retargeting reuses that same snapshot.
+  indexed `ReportStore`; an interactive artifact embeds that complete snapshot
+  and retargets only within it.
 - Benchmark inputs should not contain executable `(prove ...)` commands; use
   `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,

@@ -2,8 +2,9 @@
 
 ``ReportStore`` loads the disposable report once, preserves physical row order,
 indexes exact cache keys and labels, appends observations written by this tool,
-and answers collection/live-discovery queries. Pair statistics and presentation
-rows belong in :mod:`benchmarking.reports.analysis`.
+and answers exact cache-selection queries. Pair statistics belong in
+:mod:`benchmarking.reports.analysis`; catalog construction belongs in
+:mod:`benchmarking.reports.comparison`.
 """
 
 from __future__ import annotations
@@ -17,11 +18,9 @@ from pathlib import Path
 from ..models import (
     Backend,
     EstimateKey,
-    FileSpec,
     Status,
     TargetRow,
     Treatment,
-    validate_unique_file_identities,
 )
 from .records import ReportRecord, parse_report_record, serialize_report_record
 
@@ -32,22 +31,6 @@ class CachedTarget:
 
     row: TargetRow
     binary_sha256: str
-
-
-@dataclass(frozen=True)
-class CachedEndpoint:
-    """One row-complete cached endpoint available to the live report."""
-
-    row: TargetRow
-    binary_sha256: str
-    backend: Backend
-    treatment: Treatment
-
-    @property
-    def cache_identity(self) -> tuple[str, Backend, Treatment]:
-        """Return the report-key dimensions shared by every endpoint file."""
-
-        return (self.binary_sha256, self.backend, self.treatment)
 
 
 @dataclass(frozen=True)
@@ -87,7 +70,7 @@ class ReportStore:
         try:
             with self.path.open("rb") as handle:
                 for line in handle:
-                    self._add(parse_report_record(line))
+                    self._index(self._indexed(parse_report_record(line)))
         except (OSError, ValueError, KeyError, TypeError) as error:
             raise ValueError(self._incompatible_report_message()) from error
 
@@ -103,11 +86,17 @@ class ReportStore:
 
         return len(self._rows)
 
+    @property
+    def records(self) -> tuple[ReportRecord, ...]:
+        """Return the loaded observations in fixed physical order."""
+
+        return tuple(row.record for row in self._rows)
+
     def append(self, record: ReportRecord) -> None:
         """Append one validated observation and update in-process indexes."""
 
-        normalized, encoded = serialize_report_record(record)
-        indexed = self._indexed(normalized)
+        encoded = serialize_report_record(record)
+        indexed = self._indexed(record)
         with self.path.open("ab") as handle:
             handle.write(encoded + b"\n")
         self._index(indexed)
@@ -130,11 +119,6 @@ class ReportStore:
             ),
             record["binary_sha256"],
         )
-
-    def selected_statuses(self, key: EstimateKey, rounds: int) -> tuple[Status, ...]:
-        """Select statuses from the latest rounds for one exact cache key."""
-
-        return tuple(row.record["status"] for row in self.latest_records(key, rounds))
 
     def selected_statuses_for_keys(
         self,
@@ -170,67 +154,6 @@ class ReportStore:
             if values:
                 aggregates.append(EstimateAggregate(key, len(values), math.fsum(values)))
         return tuple(aggregates)
-
-    def complete_cached_endpoints(
-        self,
-        files: Sequence[FileSpec],
-        rounds: int,
-        timeout_sec: int,
-    ) -> tuple[CachedEndpoint, ...]:
-        """Return endpoints with enough latest rows for every requested file."""
-
-        if not files:
-            raise ValueError("cached endpoint discovery requires at least one file")
-        validate_unique_file_identities(files)
-        if rounds < 1:
-            raise ValueError("rounds must be positive")
-        if timeout_sec < 1:
-            raise ValueError("timeout must be positive")
-
-        requested = tuple((file.sha256, file.fact_directory_sha256) for file in files)
-        requested_set = set(requested)
-        candidates = {
-            (key.binary_sha256, key.backend, key.treatment)
-            for key in self._by_key
-            if key.timeout_sec == timeout_sec and (key.file_sha256, key.fact_directory_sha256) in requested_set
-        }
-        complete: list[CachedEndpoint] = []
-        for binary_sha256, backend, treatment in candidates:
-            selected: list[IndexedRecord] = []
-            for file_sha256, fact_directory_sha256 in requested:
-                key = EstimateKey(
-                    binary_sha256=binary_sha256,
-                    file_sha256=file_sha256,
-                    treatment=treatment,
-                    timeout_sec=timeout_sec,
-                    backend=backend,
-                    fact_directory_sha256=fact_directory_sha256,
-                )
-                rows = self.latest_records(key, rounds)
-                if len(rows) != rounds:
-                    break
-                selected.extend(rows)
-            else:
-                newest = max(selected, key=lambda row: row.order_key).record
-                complete.append(
-                    CachedEndpoint(
-                        TargetRow(
-                            source=newest["target_source"],
-                            path=newest["target_path"],
-                            git_ref=newest["target_git_ref"],
-                            git_sha=newest["target_git_sha"],
-                            is_dirty=newest["target_is_dirty"],
-                            label=newest["target_label"],
-                        ),
-                        binary_sha256,
-                        backend,
-                        treatment,
-                    )
-                )
-        return tuple(sorted(complete, key=_cached_endpoint_order))
-
-    def _add(self, record: ReportRecord) -> None:
-        self._index(self._indexed(record))
 
     def _indexed(self, record: ReportRecord) -> IndexedRecord:
         return IndexedRecord(
@@ -275,9 +198,3 @@ def _estimate_key_order(key: EstimateKey) -> tuple[str, str, str, Backend, Treat
         key.treatment,
         key.timeout_sec,
     )
-
-
-def _cached_endpoint_order(endpoint: CachedEndpoint) -> tuple[str, Backend, Treatment, str]:
-    row = endpoint.row
-    label = row.label if row.label is not None else row.git_ref
-    return (label, endpoint.backend, endpoint.treatment, endpoint.binary_sha256)

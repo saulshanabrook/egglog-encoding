@@ -70,18 +70,33 @@ def parse_report_record(data: bytes | str) -> ReportRecord:
     return record
 
 
-def serialize_report_record(record: ReportRecord) -> tuple[ReportRecord, bytes]:
-    """Return a record and its newline-free JSON encoding."""
+def parse_timing_summary(data: bytes | str) -> TimingSummaryRecord:
+    """Parse one engine timing summary emitted by a benchmark process."""
+
+    summary = cast(TimingSummaryRecord, json.loads(data))
+    _require_current_timing_summary(summary)
+    return summary
+
+
+def serialize_report_record(record: ReportRecord) -> bytes:
+    """Return the record's validated, newline-free JSON encoding."""
 
     _require_current_timing(record)
-    return record, json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
+    return json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode()
 
 
 def _require_current_timing(record: ReportRecord) -> None:
     """Reject old timing data and keep successful rows self-contained."""
 
     summary = record["timing_summary"]
-    if summary is not None and summary["schema_version"] != TIMING_SUMMARY_SCHEMA_VERSION:
-        raise ValueError(f"unsupported timing summary schema_version {summary['schema_version']!r}")
+    if summary is not None:
+        _require_current_timing_summary(summary)
     if record["status"] == "success" and summary is None:
         raise ValueError("successful benchmark record is missing its timing summary")
+
+
+def _require_current_timing_summary(summary: TimingSummaryRecord) -> None:
+    """Reject timing summaries from an incompatible disposable cache format."""
+
+    if summary["schema_version"] != TIMING_SUMMARY_SCHEMA_VERSION:
+        raise ValueError(f"unsupported timing summary schema_version {summary['schema_version']!r}")

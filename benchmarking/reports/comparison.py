@@ -1,9 +1,9 @@
-"""Build and format the catalog for one baseline/candidate comparison.
+"""Build the canonical benchmark comparison document and format its values.
 
-The pure analysis layer owns selection, statistics, phase pairing, and ruleset
-ranking. This module maps its typed rows into the fixed
-selection-summary-files-phases-rulesets catalog and owns human-facing values
-shared by Rich, Markdown, and live adapters.
+This module maps typed statistics from :mod:`benchmarking.reports.analysis`
+into Comparison, Summary, Files, Phases, and Rulesets sections. It owns shared
+labels, units, interval formatting, and result wording; Rich and Markdown only
+serialize the resulting catalog.
 """
 
 from __future__ import annotations
@@ -12,12 +12,13 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..models import ComparisonSpec, DetailLevel, FileSpec
+from ..models import BenchmarkEndpoint, ComparisonSpec, DetailLevel, FileSpec
 from .analysis import (
     FileComparisonView,
     MetricName,
     PairReportViewData,
     PhaseComparisonView,
+    PhaseName,
     RatioSummary,
     ResultClass,
     RulesetComparisonView,
@@ -31,12 +32,10 @@ from .catalog import (
     ReportCell,
     ReportColumn,
     ReportMessage,
-    ReportOptions,
     ReportRow,
     ReportSection,
     ReportTable,
     TableAlignment,
-    TableLayout,
     report_id,
     text_cell,
 )
@@ -50,34 +49,48 @@ DETAIL_ORDER: dict[DetailLevel, int] = {
     "phases": 2,
     "rulesets": 3,
 }
-RATIO_DIRECTION = "candidate / baseline; below 1 is faster or uses less RSS, while above 1 is slower or uses more RSS"
+RATIO_DIRECTION = "Ratios are candidate / baseline; below 1 is lower and above 1 is higher."
 PHASE_CAPTION = (
-    "Delta is candidate − baseline. Phase values are descriptive means without confidence intervals. Other is "
-    "wall time minus Search, Apply, Merge, and Rebuild; a leading ! means recorded phase totals exceed wall time."
+    "Endpoint cells show a 95% CI (or one-round point) and that phase's share of endpoint wall time. "
+    "Delta is the signed candidate − baseline mean; Δ contribution is the phase's share of the wall-time "
+    "change and may be negative or exceed 100% when phases offset. Execution overhead is stored per-ruleset "
+    "unattributed time. Outside recorded rulesets is wall time minus all five recorded phases; ! marks a negative "
+    "residual."
 )
-RULESET_CAPTION = "Ruleset totals are descriptive means without confidence intervals."
+RULESET_CAPTION = (
+    "Totals show a 95% CI or one-round point. S/A/Exec/M/R are signed candidate − baseline mean deltas for "
+    "Search, Apply, Execution overhead (stored unattributed time), Merge, and Rebuild."
+)
+
+PHASE_LABELS: dict[PhaseName, str] = {
+    "search": "Search",
+    "apply": "Apply",
+    "unattributed": "Execution overhead",
+    "merge": "Merge",
+    "rebuild": "Rebuild",
+    "outside": "Outside recorded rulesets",
+}
 
 
 def build_report_catalog(
     store: ReportStore,
     comparison: ComparisonSpec,
-    options: ReportOptions | None = None,
+    detail: DetailLevel = "summary",
 ) -> ReportCatalog:
     """Analyze one pair and build its complete presentation catalog."""
 
-    options = ReportOptions() if options is None else options
-    views = analyze_pair(store, comparison, options.detail)
+    views = analyze_pair(store, comparison, detail)
     file_labels = report_file_labels(comparison.files)
 
     sections = [
         _selection_section(store.display_path, comparison, file_labels),
         _summary_section(comparison, views.summary, file_labels),
     ]
-    if _includes(options.detail, "files"):
+    if _includes(detail, "files"):
         sections.append(_files_section(views.files, comparison, file_labels))
-    if _includes(options.detail, "phases"):
+    if _includes(detail, "phases"):
         sections.append(_phases_section(views.phases, comparison, file_labels))
-    if _includes(options.detail, "rulesets"):
+    if _includes(detail, "rulesets"):
         sections.append(_rulesets_section(views, comparison, file_labels))
     return ReportCatalog(tuple(sections))
 
@@ -101,8 +114,10 @@ def _selection_section(
             ),
             text_cell(role, role.title()),
             endpoint.target.display_label,
-            text_cell(endpoint.target.row.git_sha, endpoint.target.row.git_sha[:12]),
-            text_cell(endpoint.target.row.is_dirty, "yes" if endpoint.target.row.is_dirty else "no"),
+            text_cell(
+                endpoint.target.row.git_sha,
+                _git_display(endpoint.target.row.git_sha, endpoint.target.row.is_dirty),
+            ),
             endpoint.backend,
             endpoint.treatment,
         )
@@ -110,38 +125,13 @@ def _selection_section(
     )
     endpoint_table = _table(
         report_id("table", "selection", "endpoints"),
-        "Endpoints",
-        ("role", "target", "git", "dirty", "backend", "treatment"),
-        ("Role", "Target", "Git", "Dirty", "Backend", "Treatment"),
+        "Comparison",
+        ("role", "target", "git", "backend", "treatment"),
+        ("Role", "Target", "Git", "Backend", "Treatment"),
         endpoint_rows,
+        caption=_comparison_caption(report_path, comparison, file_labels),
     )
-    selected_files = "; ".join(_file_with_facts(file, file_labels[file]) for file in comparison.files)
-    run_table = _table(
-        report_id("table", "selection", "run"),
-        "Run",
-        ("setting", "value"),
-        ("Setting", "Value"),
-        (
-            _row(report_id("row", "selection", "ratio"), "Ratio", RATIO_DIRECTION),
-            _row(
-                report_id("row", "selection", "files"),
-                "Files",
-                f"{len(comparison.files)}: {selected_files}",
-            ),
-            _row(
-                report_id("row", "selection", "rounds"),
-                "Rounds",
-                f"{comparison.rounds} per endpoint/file",
-            ),
-            _row(
-                report_id("row", "selection", "timeout"),
-                "Timeout",
-                f"{comparison.timeout_sec} s per run",
-            ),
-            _row(report_id("row", "selection", "report"), "Report", report_path),
-        ),
-    )
-    blocks: list[ReportBlock] = [endpoint_table, run_table]
+    blocks: list[ReportBlock] = [endpoint_table]
     changed = (
         comparison.baseline.target.binary_sha256 != comparison.candidate.target.binary_sha256,
         comparison.baseline.backend != comparison.candidate.backend,
@@ -160,6 +150,23 @@ def _selection_section(
     return ReportSection("selection", "Comparison", tuple(blocks))
 
 
+def _git_display(git_sha: str, is_dirty: bool) -> str:
+    suffix = " dirty" if is_dirty else ""
+    return f"{git_sha[:12]}{suffix}"
+
+
+def _comparison_caption(
+    report_path: str,
+    comparison: ComparisonSpec,
+    file_labels: dict[FileSpec, str],
+) -> str:
+    selected_files = ", ".join(_file_with_facts(file, file_labels[file]) for file in comparison.files)
+    return (
+        f"{len(comparison.files)} file(s): {selected_files} · {comparison.rounds} round(s) per endpoint/file · "
+        f"{comparison.timeout_sec} s timeout per run · Report: {report_path}"
+    )
+
+
 def _file_with_facts(file: FileSpec, label: str) -> str:
     if file.fact_directory is None:
         return label
@@ -171,6 +178,7 @@ def _summary_section(
     rows: Sequence[SummaryView],
     file_labels: dict[FileSpec, str],
 ) -> ReportSection:
+    title = f"Summary — {_endpoint_identity(comparison.candidate)} vs {_endpoint_identity(comparison.baseline)}"
     selected = _deduplicate_summary_rows(rows, len(comparison.files))
     report_rows: list[ReportRow] = []
     for row, scope in selected:
@@ -194,13 +202,18 @@ def _summary_section(
         )
     table = _table(
         report_id("table", "summary"),
-        "Benchmark summary",
+        title,
         ("metric", "scope", "file", "ratio", "result"),
         ("Metric", "Scope", "File(s)", "Ratio (95% CI)", "Result"),
         tuple(report_rows),
+        caption=RATIO_DIRECTION,
         alignments=("left", "left", "left", "right", "left"),
     )
-    return ReportSection("summary", "Benchmark summary", (table,))
+    return ReportSection("summary", title, (table,))
+
+
+def _endpoint_identity(endpoint: BenchmarkEndpoint) -> str:
+    return f"{endpoint.target.display_label} {endpoint.backend}/{endpoint.treatment}"
 
 
 def _deduplicate_summary_rows(
@@ -256,7 +269,7 @@ def _files_section(
             tables.append(
                 ReportMessage(
                     report_id("message", "files", metric),
-                    "Per-file peak RSS",
+                    "Peak RSS",
                     "Peak RSS is unavailable for the selected endpoints.",
                     tone="muted",
                 )
@@ -265,7 +278,7 @@ def _files_section(
         tables.append(
             _table(
                 report_id("table", "files", metric),
-                "Per-file wall time" if metric == "wall_sec" else "Per-file peak RSS",
+                "Wall time" if metric == "wall_sec" else "Peak RSS",
                 ("file", "baseline", "candidate", "ratio", "result"),
                 ("File", "Baseline (95% CI)", "Candidate (95% CI)", "Ratio (95% CI)", "Result"),
                 tuple(
@@ -296,7 +309,6 @@ def _files_section(
                     for row in metric_rows
                 ),
                 alignments=("left", "right", "right", "right", "left"),
-                layout="wide",
             )
         )
     return ReportSection("files", "Per-file results", tuple(tables))
@@ -307,41 +319,47 @@ def _phases_section(
     comparison: ComparisonSpec,
     file_labels: dict[FileSpec, str],
 ) -> ReportSection:
-    table = _table(
-        report_id("table", "phases"),
-        "Phase comparison",
-        ("benchmark", "phase", "baseline", "candidate", "delta", "ratio"),
-        ("File", "Phase", "Baseline", "Candidate", "Delta", "Ratio"),
-        tuple(
-            _row(
-                report_id(
-                    "row",
-                    "phases",
-                    comparison.files[row.file_order].sha256,
-                    comparison.files[row.file_order].fact_directory_sha256,
-                    row.phase,
-                ),
-                file_labels[comparison.files[row.file_order]],
-                text_cell(row.phase, row.phase.title()),
-                text_cell(
-                    row.baseline_ns,
-                    format_duration(row.baseline_ns, attribution=row.phase == "other"),
-                ),
-                text_cell(
-                    row.candidate_ns,
-                    format_duration(row.candidate_ns, attribution=row.phase == "other"),
-                ),
-                text_cell(row.delta_ns, format_duration(row.delta_ns)),
-                text_cell(row.point, _format_point_ratio(row.point)),
+    by_file: dict[int, list[PhaseComparisonView]] = {}
+    for row in rows:
+        by_file.setdefault(row.file_order, []).append(row)
+    blocks: list[ReportBlock] = [
+        ReportMessage(report_id("message", "phases", "guide"), None, PHASE_CAPTION, tone="muted")
+    ]
+    for file_order, file in enumerate(comparison.files):
+        blocks.append(
+            _table(
+                report_id("table", "phases", file.sha256, file.fact_directory_sha256),
+                f"Phase comparison — {file_labels[file]}",
+                ("phase", "baseline", "candidate", "delta", "wall_delta"),
+                ("Phase", "Baseline (95% CI · wall)", "Candidate (95% CI · wall)", "Delta", "Δ contribution"),
+                tuple(_phase_row(row, file) for row in by_file[file_order]),
+                alignments=("left", "right", "right", "right", "right"),
             )
-            for row in rows
+        )
+    return ReportSection("phases", "Phase comparison", tuple(blocks))
+
+
+def _phase_row(row: PhaseComparisonView, file: FileSpec) -> ReportRow:
+    return _row(
+        report_id("row", "phases", file.sha256, file.fact_directory_sha256, row.phase),
+        text_cell(row.phase, PHASE_LABELS[row.phase]),
+        _phase_estimate_cell(
+            row.baseline_ns,
+            row.baseline_ci_low_ns,
+            row.baseline_ci_high_ns,
+            row.baseline_wall_share,
+            attribution=row.phase == "outside",
         ),
-        caption=PHASE_CAPTION,
-        alignments=("left", "left", "right", "right", "right", "right"),
-        collapse_repeats=frozenset({"benchmark"}),
-        layout="wide",
+        _phase_estimate_cell(
+            row.candidate_ns,
+            row.candidate_ci_low_ns,
+            row.candidate_ci_high_ns,
+            row.candidate_wall_share,
+            attribution=row.phase == "outside",
+        ),
+        text_cell(row.delta_ns, format_duration(row.delta_ns, signed=True)),
+        text_cell(row.wall_delta_contribution, _format_percent(row.wall_delta_contribution, signed=True)),
     )
-    return ReportSection("phases", "Phase comparison", (table,))
 
 
 def _rulesets_section(
@@ -356,46 +374,68 @@ def _rulesets_section(
         row.file_order: row.issue for row in views.files if row.metric == "wall_sec" and row.issue is not None
     }
     blocks: list[ReportBlock] = []
+    if views.rulesets:
+        blocks.append(ReportMessage(report_id("message", "rulesets", "guide"), None, RULESET_CAPTION, tone="muted"))
     for file_order, file in enumerate(comparison.files):
         title = f"Ruleset comparison — {file_labels[file]}"
         rulesets = by_file.get(file_order, [])
         if not rulesets:
             issue = file_issues.get(file_order)
+            status = f"Status: {issue}" if issue is not None else "No nonzero ruleset timing differences."
             blocks.append(
                 ReportMessage(
                     report_id("message", "rulesets", file.sha256, file.fact_directory_sha256),
                     title,
-                    f"Status: {issue}" if issue is not None else "No rulesets recorded.",
+                    status,
                 )
             )
             continue
         count = rulesets[0].ruleset_count
-        caption = RULESET_CAPTION
-        if count > 10:
-            caption = (
-                f"Showing 10 of {count} rulesets, ranked by absolute candidate − baseline total-time difference. "
-                + caption
-            )
+        caption = None if count <= 10 else f"Showing 10 of {count} changed rulesets by absolute total delta."
         blocks.append(
             _table(
                 report_id("table", "rulesets", file.sha256, file.fact_directory_sha256),
                 title,
-                ("ruleset", "baseline", "candidate", "delta", "ratio"),
-                ("Ruleset", "Baseline total", "Candidate total", "Delta", "Ratio"),
+                (
+                    "ruleset",
+                    "baseline",
+                    "candidate",
+                    "delta",
+                    "search_delta",
+                    "apply_delta",
+                    "execution_delta",
+                    "merge_delta",
+                    "rebuild_delta",
+                ),
+                ("Ruleset", "Baseline total", "Candidate total", "Total Δ", "S Δ", "A Δ", "Exec Δ", "M Δ", "R Δ"),
                 tuple(
                     _row(
                         report_id("row", "rulesets", file.sha256, file.fact_directory_sha256, row.name),
                         text_cell(row.name, DEFAULT_RULESET if row.name == "" else row.name),
-                        text_cell(row.baseline_total_ns, format_duration(row.baseline_total_ns)),
-                        text_cell(row.candidate_total_ns, format_duration(row.candidate_total_ns)),
-                        text_cell(row.delta_ns, format_duration(row.delta_ns)),
-                        text_cell(row.point, _format_point_ratio(row.point)),
+                        _duration_estimate_cell(
+                            row.baseline_total_ns,
+                            row.baseline_ci_low_ns,
+                            row.baseline_ci_high_ns,
+                        ),
+                        _duration_estimate_cell(
+                            row.candidate_total_ns,
+                            row.candidate_ci_low_ns,
+                            row.candidate_ci_high_ns,
+                        ),
+                        text_cell(row.delta_ns, format_duration(row.delta_ns, signed=True)),
+                        text_cell(row.search_delta_ns, format_duration(row.search_delta_ns, signed=True)),
+                        text_cell(row.apply_delta_ns, format_duration(row.apply_delta_ns, signed=True)),
+                        text_cell(
+                            row.unattributed_delta_ns,
+                            format_duration(row.unattributed_delta_ns, signed=True),
+                        ),
+                        text_cell(row.merge_delta_ns, format_duration(row.merge_delta_ns, signed=True)),
+                        text_cell(row.rebuild_delta_ns, format_duration(row.rebuild_delta_ns, signed=True)),
                     )
                     for row in rulesets
                 ),
                 caption=caption,
-                alignments=("left", "right", "right", "right", "right"),
-                layout="wide",
+                alignments=("left", "right", "right", "right", "right", "right", "right", "right", "right"),
             )
         )
     return ReportSection("rulesets", "Ruleset comparison", tuple(blocks))
@@ -441,24 +481,50 @@ def report_file_labels(files: Sequence[FileSpec]) -> dict[FileSpec, str]:
     return labels
 
 
-def format_duration(value_ns: float | None, *, attribution: bool = False) -> str:
+def format_duration(
+    value_ns: float | None,
+    *,
+    attribution: bool = False,
+    signed: bool = False,
+) -> str:
     """Format nanoseconds with three significant digits and a local unit."""
 
     if value_ns is None:
         return NULL
     prefix = "!" if attribution and value_ns < 0 else ""
-    magnitude = abs(value_ns)
-    if magnitude == 0:
-        return "0 ns"
-    if magnitude < 1_000:
-        scaled, unit = value_ns, "ns"
-    elif magnitude < 1_000_000:
-        scaled, unit = value_ns / 1_000, "us"
-    elif magnitude < 1_000_000_000:
-        scaled, unit = value_ns / 1_000_000, "ms"
-    else:
-        scaled, unit = value_ns / 1_000_000_000, "s"
-    return f"{prefix}{_three_significant_digits(scaled)} {unit}"
+    divisor, unit = _duration_unit(abs(value_ns))
+    return f"{prefix}{_format_scaled(value_ns / divisor, signed=signed)} {unit}"
+
+
+def _format_duration_interval(
+    point_ns: float | None,
+    low_ns: float | None,
+    high_ns: float | None,
+    *,
+    attribution: bool = False,
+) -> str:
+    if point_ns is None:
+        return NULL
+    if low_ns is None or high_ns is None:
+        return format_duration(point_ns, attribution=attribution)
+    divisor, unit = _duration_unit(max(abs(point_ns), abs(low_ns), abs(high_ns)))
+    prefix = "!" if attribution and point_ns < 0 else ""
+    return f"{prefix}{_format_scaled(low_ns / divisor)}–{_format_scaled(high_ns / divisor)} {unit}"
+
+
+def _duration_unit(magnitude_ns: float) -> tuple[float, str]:
+    if magnitude_ns < 1_000:
+        return 1.0, "ns"
+    if magnitude_ns < 1_000_000:
+        return 1_000.0, "us"
+    if magnitude_ns < 1_000_000_000:
+        return 1_000_000.0, "ms"
+    return 1_000_000_000.0, "s"
+
+
+def _format_scaled(value: float, *, signed: bool = False) -> str:
+    prefix = "+" if signed and value > 0 else ""
+    return f"{prefix}{_three_significant_digits(value)}"
 
 
 def _three_significant_digits(value: float) -> str:
@@ -482,11 +548,33 @@ def _estimate_cell(
 ) -> ReportCell:
     if point is None:
         return text_cell(None, NULL)
-    formatter = format_bytes if rss else format_seconds_value
-    display = formatter(point)
-    if low is not None and high is not None:
-        display = _format_bytes_interval(point, low, high) if rss else f"{display} [{low:.4f}, {high:.4f}]"
+    if rss:
+        display = format_bytes(point) if low is None or high is None else _format_bytes_interval(point, low, high)
+    else:
+        display = _format_duration_interval(
+            point * 1_000_000_000.0,
+            None if low is None else low * 1_000_000_000.0,
+            None if high is None else high * 1_000_000_000.0,
+        )
     return text_cell(point, display)
+
+
+def _duration_estimate_cell(point: float | None, low: float | None, high: float | None) -> ReportCell:
+    return text_cell(point, _format_duration_interval(point, low, high))
+
+
+def _phase_estimate_cell(
+    point: float | None,
+    low: float | None,
+    high: float | None,
+    wall_share: float | None,
+    *,
+    attribution: bool,
+) -> ReportCell:
+    duration = _format_duration_interval(point, low, high, attribution=attribution)
+    display = duration if wall_share is None else f"{duration} · {_format_percent(wall_share)}"
+    tone: CellTone = "warning" if attribution and point is not None and point < 0 else "default"
+    return text_cell(point, display, tone=tone)
 
 
 def _ratio_cell(summary: RatioSummary) -> ReportCell:
@@ -496,18 +584,17 @@ def _ratio_cell(summary: RatioSummary) -> ReportCell:
 def format_ratio_summary(summary: RatioSummary) -> str:
     if summary.point is None:
         return NULL
-    point = f"{summary.point:.3f}x"
+    point = f"{_three_significant_digits(summary.point)}x"
     if summary.ci_low is None or summary.ci_high is None:
         return point
-    return f"{point} [{summary.ci_low:.3f}, {summary.ci_high:.3f}]"
+    return f"{_three_significant_digits(summary.ci_low)}–{_three_significant_digits(summary.ci_high)}x"
 
 
-def _format_point_ratio(point: float | None) -> str:
-    return NULL if point is None else f"{point:.3f}x"
-
-
-def format_seconds_value(value: float) -> str:
-    return f"{value:.4f}s"
+def _format_percent(value: float | None, *, signed: bool = False) -> str:
+    if value is None:
+        return NULL
+    prefix = "+" if signed and value > 0 else ""
+    return f"{prefix}{_three_significant_digits(value * 100)}%"
 
 
 def format_bytes(value: float) -> str:
@@ -517,10 +604,9 @@ def format_bytes(value: float) -> str:
 
 def _format_bytes_interval(point: float, low: float, high: float) -> str:
     divisor, unit = _byte_unit(max(abs(point), abs(low), abs(high)))
-    point_text = _format_bytes_in_unit(point, divisor, unit, include_unit=True)
     low_text = _format_bytes_in_unit(low, divisor, unit, include_unit=False)
     high_text = _format_bytes_in_unit(high, divisor, unit, include_unit=False)
-    return f"{point_text} [{low_text}, {high_text}]"
+    return f"{low_text}–{high_text} {unit}"
 
 
 def _byte_unit(value: float) -> tuple[float, str]:
@@ -574,25 +660,17 @@ def _table(
     *,
     caption: str | None = None,
     alignments: tuple[TableAlignment, ...] | None = None,
-    collapse_repeats: frozenset[str] = frozenset(),
-    layout: TableLayout = "standard",
 ) -> ReportTable:
     selected_alignments = alignments or tuple("left" for _ in labels)
     return ReportTable(
         table_id,
         title,
         tuple(
-            ReportColumn(
-                column_id,
-                label,
-                alignment,
-                collapse_repeats=column_id in collapse_repeats,
-            )
+            ReportColumn(column_id, label, alignment)
             for column_id, label, alignment in zip(column_ids, labels, selected_alignments, strict=True)
         ),
         rows,
         caption,
-        layout,
     )
 
 

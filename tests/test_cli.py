@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from benchmarking import benchmark, collection, models, processes, targets, workloads
+from benchmarking import benchmark, collection, models, targets, workloads
 from benchmarking import output as runner_output
 from benchmarking.reports.store import ReportStore
 
@@ -90,6 +90,8 @@ def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
         ("--backend", "main,dd"),
         ("--phase-timings",),
         ("--detailed-timing",),
+        ("--serve",),
+        ("--serve-port", "4312"),
         ("--detail", "3"),
         ("--report", "-"),
     ],
@@ -99,30 +101,12 @@ def test_pair_cli_rejects_removed_or_unsupported_options(argv: tuple[str, ...]) 
         benchmark.parse_benchmark_args(argv)
 
 
-def test_live_report_server_is_opt_in_with_an_optional_port() -> None:
+def test_interactive_report_is_opt_in() -> None:
     ordinary = benchmark.parse_benchmark_args([])
-    automatic_port = benchmark.parse_benchmark_args(["--serve"])
-    fixed_port = benchmark.parse_benchmark_args(["--serve", "--serve-port", "4312"])
+    interactive = benchmark.parse_benchmark_args(["--open"])
 
-    assert not ordinary.serve
-    assert ordinary.serve_port is None
-    assert automatic_port.serve
-    assert automatic_port.serve_port is None
-    assert fixed_port.serve
-    assert fixed_port.serve_port == 4312
-
-
-def test_live_report_port_requires_server(capsys: Any) -> None:
-    with pytest.raises(SystemExit):
-        benchmark.parse_benchmark_args(["--serve-port", "4312"])
-
-    assert "--serve-port requires --serve" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize("port", ["0", "65536"])
-def test_live_report_server_rejects_invalid_ports(port: str) -> None:
-    with pytest.raises(SystemExit):
-        benchmark.parse_benchmark_args(["--serve", "--serve-port", port])
+    assert not ordinary.open
+    assert interactive.open
 
 
 def test_endpoint_validation_uses_backend_registry(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -543,12 +527,11 @@ def test_main_preflights_both_fresh_targets_before_collecting(
     )
     preflighted: list[str] = []
 
-    def fail_new_preflight(plan: collection.CollectionPlan, _timeout: int) -> processes.TimingResult:
+    def fail_new_preflight(plan: collection.CollectionPlan, _timeout: int) -> None:
         label = plan.target.display_label
         preflighted.append(label)
         if label == "new":
             raise ValueError("target new does not support --timing-summary")
-        return processes.TimingResult("success", processes.TimingRow(wall_sec=0.1), None)
 
     monkeypatch.setattr(benchmark, "preflight_collection", fail_new_preflight)
     monkeypatch.setattr(

@@ -1,9 +1,9 @@
-"""Define renderer-neutral options and output contracts for pair reports.
+"""Define the renderer-neutral document model for benchmark pair reports.
 
-This module owns the cumulative detail option, stable presentation identities,
-raw-versus-display cells, section ordering, and structural invariants shared by
-Rich, Markdown, and live views. It performs no persistence queries, statistical
-analysis, or renderer-specific serialization.
+The catalog contains stable section, table, row, and cell identities plus the
+text and tones shared by Rich, Markdown, and interactive output. Statistical
+analysis lives in :mod:`benchmarking.reports.analysis`; renderer-specific
+layout lives in :mod:`benchmarking.reports.render`.
 """
 
 from __future__ import annotations
@@ -13,20 +13,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
-from ..models import DetailLevel
-
 type ReportScalar = str | int | float | bool | None
 TableAlignment = Literal["left", "right"]
 CellTone = Literal["default", "positive", "negative", "warning", "error", "muted"]
-TableLayout = Literal["standard", "wide"]
-MessageLayout = Literal["text", "caption"]
-
-
-@dataclass(frozen=True)
-class ReportOptions:
-    """The cumulative presentation detail requested for one comparison."""
-
-    detail: DetailLevel = "summary"
 
 
 @dataclass(frozen=True)
@@ -40,13 +29,11 @@ class ReportCell:
 
 @dataclass(frozen=True)
 class ReportColumn:
-    """One stable table column and its renderer-neutral display policy."""
+    """One stable table column and its shared alignment."""
 
     id: str
     label: str
     alignment: TableAlignment = "left"
-    collapse_repeats: bool = False
-    visible: bool = True
 
 
 @dataclass(frozen=True)
@@ -66,7 +53,6 @@ class ReportTable:
     columns: tuple[ReportColumn, ...]
     rows: tuple[ReportRow, ...]
     caption: str | None = None
-    layout: TableLayout = "standard"
 
     def __post_init__(self) -> None:
         _require_unique("column", (column.id for column in self.columns), owner=self.id)
@@ -81,13 +67,12 @@ class ReportTable:
 
 @dataclass(frozen=True)
 class ReportMessage:
-    """A titled status or untitled caption block within a report section."""
+    """A titled status or untitled explanatory block within a report section."""
 
     id: str
     title: str | None
     text: str
     tone: CellTone = "default"
-    layout: MessageLayout = "text"
 
 
 type ReportBlock = ReportTable | ReportMessage

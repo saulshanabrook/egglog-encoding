@@ -23,6 +23,13 @@ fn run_egglog(arguments: &[&Path]) -> Output {
     command.output().unwrap()
 }
 
+fn assert_duration(value: &serde_json::Value) {
+    let duration = value.as_object().unwrap();
+    assert_eq!(duration.len(), 2);
+    assert!(duration["secs"].is_u64());
+    assert!(duration["nanos"].is_u64());
+}
+
 #[test]
 fn timing_summary_is_compact_and_works_with_every_report_level() {
     let program = r#"
@@ -82,13 +89,66 @@ fn timing_summary_is_compact_and_works_with_every_report_level() {
             assert!(ruleset["merge_ns"].is_u64());
             assert!(ruleset["rebuild_ns"].is_u64());
         }
-        assert!(
-            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&report_path).unwrap())
-                .is_ok()
-        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
+        for iteration in report["iterations"].as_array().unwrap() {
+            let split = iteration["rule_set_report"]["pre_merge"]["Split"]
+                .as_object()
+                .unwrap();
+            assert_eq!(split.len(), 3);
+            assert_duration(&split["search"]);
+            assert_duration(&split["apply"]);
+            assert_duration(&split["unattributed"]);
+        }
 
         std::fs::remove_dir_all(directory).unwrap();
     }
+}
+
+#[test]
+fn parallel_saved_report_uses_combined_pre_merge_shape() {
+    let directory = temporary_directory("combined-report");
+    let program_path = directory.join("program.egg");
+    let report_path = directory.join("report.json");
+    let mut program = String::from(
+        r#"
+        (relation seeds (i64))
+        (relation results (i64))
+        (rule ((seeds x)) ((results x)))
+        "#,
+    );
+    for value in 0..10_001 {
+        program.push_str(&format!("(seeds {value})\n"));
+    }
+    program.push_str("(run 1)\n");
+    std::fs::write(&program_path, program).unwrap();
+
+    let output = run_egglog(&[
+        Path::new("--threads"),
+        Path::new("2"),
+        Path::new("--save-report"),
+        &report_path,
+        &program_path,
+    ]);
+    assert!(
+        output.status.success(),
+        "parallel egglog failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&report_path).unwrap()).unwrap();
+    let iterations = report["iterations"].as_array().unwrap();
+    assert!(!iterations.is_empty());
+    for iteration in iterations {
+        let combined = iteration["rule_set_report"]["pre_merge"]["Combined"]
+            .as_object()
+            .unwrap();
+        assert_eq!(combined.len(), 1);
+        assert_duration(&combined["elapsed"]);
+    }
+
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]

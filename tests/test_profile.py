@@ -221,11 +221,10 @@ def test_samply_record_uses_fixed_flags_and_replaces_artifact(
     artifact.write_bytes(b"old")
     profile = make_profile_data()
     commands: list[list[str]] = []
-    monkeypatch.setenv("EGGLOG_TIMING_SUMMARY", "/tmp/stale-phase-summary.json")
 
     def fake_run(command: list[str], **kwargs: Any) -> None:
         commands.append(command)
-        assert "EGGLOG_TIMING_SUMMARY" not in kwargs["env"]
+        assert kwargs["env"]["RUST_LOG"] == "error"
         output = Path(command[command.index("--output") + 1])
         write_profile(output, profile)
 
@@ -488,7 +487,6 @@ def test_open_samply_profile_redirects_viewer_output_and_handles_interrupt(
         calls.append(kwargs)
         raise KeyboardInterrupt
 
-    monkeypatch.setenv("EGGLOG_TIMING_SUMMARY", "/tmp/stale-phase-summary.json")
     monkeypatch.setattr(profile_runner, "samply_executable", lambda: "samply")
     monkeypatch.setattr(profile_runner.subprocess, "run", fake_run)
 
@@ -500,7 +498,7 @@ def test_open_samply_profile_redirects_viewer_output_and_handles_interrupt(
     assert call["check"]
     assert call["stdout"] is sys.stderr
     assert call["stderr"] is sys.stderr
-    assert "EGGLOG_TIMING_SUMMARY" not in call["env"]
+    assert "env" not in call
 
 
 @pytest.mark.parametrize("platform", ["linux", "win32"])

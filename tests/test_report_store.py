@@ -57,6 +57,7 @@ def test_append_indexes_the_exact_record_it_persists(tmp_path: Path) -> None:
     reopened = ReportStore(report)
 
     assert current == persisted == reopened.latest_records(key, 1)[0].record
+    assert store.records == reopened.records == (persisted,)
     assert current["wall_sec"] == 2.5
     assert store.successful_estimate_aggregates() == reopened.successful_estimate_aggregates()
 
@@ -172,61 +173,3 @@ def test_bulk_status_selection_uses_all_cache_dimensions_and_jsonl_tie_order(tmp
 
     assert selected[exact] == ("timed-out", "success")
     assert selected[other_facts] == ("success",)
-
-
-def test_complete_cached_endpoints_requires_latest_rounds_for_every_file_and_counts_any_status(
-    tmp_path: Path,
-) -> None:
-    report = tmp_path / "report.jsonl"
-    files = (
-        models.FileSpec("first.egg", tmp_path / "first.egg", "sha256:first", fact_directory_sha256="facts:first"),
-        models.FileSpec(
-            "second.egg",
-            tmp_path / "second.egg",
-            "sha256:second",
-            fact_directory_sha256="facts:second",
-        ),
-    )
-    records: list[ReportRecord] = []
-
-    def add(
-        binary: str,
-        file: models.FileSpec,
-        second: int,
-        *,
-        status: models.Status = "success",
-        label: str | None = None,
-        timeout_sec: int = 120,
-    ) -> None:
-        records.append(
-            make_record(
-                len(records),
-                started_at=f"2026-07-15T12:00:{second:02d}Z",
-                binary_sha256=binary,
-                file_sha256=file.sha256,
-                fact_directory_sha256=file.fact_directory_sha256,
-                status=status,
-                target_label=label,
-                timeout_sec=timeout_sec,
-            )
-        )
-
-    add("sha256:complete", files[0], 0, status="failure", label="old")
-    add("sha256:complete", files[0], 1, status="timed-out", label="middle")
-    add("sha256:complete", files[1], 2, label="new")
-    add("sha256:complete", files[1], 3, status="failure", label="newest")
-    add("sha256:incomplete", files[0], 4)
-    add("sha256:incomplete", files[0], 5)
-    add("sha256:incomplete", files[1], 6)
-    add("sha256:wrong-timeout", files[0], 7, timeout_sec=60)
-    add("sha256:wrong-timeout", files[0], 8, timeout_sec=60)
-    add("sha256:wrong-timeout", files[1], 9, timeout_sec=60)
-    add("sha256:wrong-timeout", files[1], 10, timeout_sec=60)
-    write_report(report, *records)
-
-    endpoints = ReportStore(report).complete_cached_endpoints(files, rounds=2, timeout_sec=120)
-
-    assert len(endpoints) == 1
-    assert endpoints[0].binary_sha256 == "sha256:complete"
-    assert endpoints[0].row.label == "newest"
-    assert endpoints[0].cache_identity == ("sha256:complete", "main", "off")

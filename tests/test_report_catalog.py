@@ -1,4 +1,4 @@
-"""Test stable report identities, raw cells, invariants, and display-only collapsing."""
+"""Test stable report identities, typed cells, and structural invariants."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from benchmarking.reports.catalog import (
 from benchmarking.reports.render import render_markdown_report_document
 
 
-def test_catalog_retains_full_repeated_values_and_renderer_collapses_them() -> None:
+def test_catalog_and_markdown_retain_full_repeated_values() -> None:
     table = ReportTable(
         report_id("table", "comparison", "sha256:target"),
         "Comparison",
         (
-            ReportColumn("file", "File", collapse_repeats=True),
+            ReportColumn("file", "File"),
             ReportColumn("ratio", "Ratio", "right"),
         ),
         (
@@ -38,7 +38,7 @@ def test_catalog_retains_full_repeated_values_and_renderer_collapses_them() -> N
     assert tuple(row.cells[1].raw for row in table.rows) == (1.0, 1.5)
     markdown = render_markdown_report_document(catalog)
     assert "| file.egg | 1.000x |" in markdown
-    assert "|  | 1.500x |" in markdown
+    assert "| file.egg | 1.500x |" in markdown
 
 
 def test_catalog_rejects_duplicate_ids_and_wrong_row_widths() -> None:
