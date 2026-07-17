@@ -1,4 +1,4 @@
-"""Verify SQL-backed phase and top-ruleset report semantics."""
+"""Verify phase and top-ruleset report semantics."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from benchmarking.reports.catalog import (
     ReportTable,
 )
 from benchmarking.reports.comparison import build_report_catalog, format_duration, report_file_labels
-from benchmarking.reports.database import ReportDatabase
 from benchmarking.reports.records import ReportRecord
+from benchmarking.reports.store import ReportStore
 
 from .conftest import make_endpoint, make_record, make_ruleset_timing, make_timing_summary, write_report
 
@@ -54,8 +54,7 @@ def test_phase_report_uses_split_means_and_wall_residual(tmp_path: Path) -> None
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, ReportOptions("phases"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("phases"))
 
     table = _only_table(catalog, "phases")
     rows = {_cell(row, table, "phase").raw: row for row in table.rows}
@@ -101,8 +100,7 @@ def test_rulesets_are_union_ranked_and_fixed_to_top_ten(tmp_path: Path) -> None:
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
 
     table = _only_table(catalog, "rulesets")
     names = tuple(_cell(row, table, "ruleset").display for row in table.rows)
@@ -139,8 +137,7 @@ def test_failed_file_uses_dashes_and_ruleset_status_message(tmp_path: Path) -> N
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
 
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
 
     phase_table = _only_table(catalog, "phases")
     assert all(_cell(row, phase_table, "candidate").display == "—" for row in phase_table.rows)

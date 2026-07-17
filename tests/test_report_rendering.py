@@ -12,17 +12,16 @@ from syrupy.assertion import SnapshotAssertion
 from benchmarking import models
 from benchmarking.reports.catalog import ReportOptions
 from benchmarking.reports.comparison import build_report_catalog
-from benchmarking.reports.database import ReportDatabase
 from benchmarking.reports.records import ReportRecord
 from benchmarking.reports.render import render_markdown_report_document, render_rich_report_document
+from benchmarking.reports.store import ReportStore
 
 from .conftest import make_endpoint, make_record, make_ruleset_timing, make_timing_summary, write_report
 
 
 def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: SnapshotAssertion) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
 
     markdown = render_markdown_report_document(catalog)
     stable = markdown.replace(str(report_path), "/tmp/benchmark-report.jsonl")
@@ -41,10 +40,26 @@ def test_realistic_pair_report_markdown_snapshot(tmp_path: Path, snapshot: Snaps
     assert "1.0100s [0.8829, 1.1371]" in markdown
 
 
+def test_selection_uses_backend_and_treatment_from_the_comparison(tmp_path: Path) -> None:
+    baseline = make_endpoint(target_label="main/off", binary_sha256="sha256:shared", backend="main", treatment="off")
+    candidate = make_endpoint(target_label="DD/term", binary_sha256="sha256:shared", backend="dd", treatment="term")
+    comparison = models.ComparisonSpec(
+        baseline,
+        candidate,
+        (models.FileSpec("file.egg", tmp_path / "file.egg", "sha256:file"),),
+        1,
+        120,
+    )
+
+    markdown = render_markdown_report_document(build_report_catalog(ReportStore(tmp_path / "report.jsonl"), comparison))
+
+    assert "| Baseline | main/off | abc123 | no | main | off |" in markdown
+    assert "| Candidate | DD/term | abc123 | no | dd | term |" in markdown
+
+
 def test_rich_report_is_readable_at_realistic_widths(tmp_path: Path) -> None:
     report_path, comparison = _pair_case(tmp_path)
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, ReportOptions("rulesets"))
+    catalog = build_report_catalog(ReportStore(report_path), comparison, ReportOptions("rulesets"))
 
     for width in (80, 119, 120, 160):
         console = Console(record=True, width=width, color_system=None)
@@ -68,12 +83,11 @@ def test_detail_level_is_cumulative(tmp_path: Path) -> None:
     }
 
     for detail, section_ids in expected.items():
-        with ReportDatabase(report_path) as database:
-            catalog = build_report_catalog(
-                database,
-                comparison,
-                ReportOptions(cast(models.DetailLevel, detail)),
-            )
+        catalog = build_report_catalog(
+            ReportStore(report_path),
+            comparison,
+            ReportOptions(cast(models.DetailLevel, detail)),
+        )
         assert tuple(section.id for section in catalog.sections) == section_ids
 
 
@@ -86,8 +100,7 @@ def test_one_file_summary_removes_redundant_wall_and_rss_tails(tmp_path: Path) -
         comparison.rounds,
         comparison.timeout_sec,
     )
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, one_file)
+    catalog = build_report_catalog(ReportStore(report_path), one_file)
 
     markdown = render_markdown_report_document(catalog)
 
@@ -106,8 +119,7 @@ def test_one_round_report_keeps_point_estimates_without_ci_brackets(tmp_path: Pa
         1,
         comparison.timeout_sec,
     )
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, one_round)
+    catalog = build_report_catalog(ReportStore(report_path), one_round)
 
     summary = render_markdown_report_document(catalog).partition("## Benchmark summary")[2]
 
@@ -136,8 +148,7 @@ def test_missing_rss_is_one_explicit_unavailable_summary(tmp_path: Path) -> None
         ),
     )
     comparison = models.ComparisonSpec(baseline, candidate, (file,), 1, 120)
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison)
+    catalog = build_report_catalog(ReportStore(report_path), comparison)
 
     markdown = render_markdown_report_document(catalog)
 

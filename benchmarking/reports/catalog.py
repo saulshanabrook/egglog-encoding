@@ -2,7 +2,7 @@
 
 This module owns the cumulative detail option, stable presentation identities,
 raw-versus-display cells, section ordering, and structural invariants shared by
-Rich, Markdown, and live views. It performs no database queries, statistical
+Rich, Markdown, and live views. It performs no persistence queries, statistical
 analysis, or renderer-specific serialization.
 """
 

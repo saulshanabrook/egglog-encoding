@@ -15,7 +15,7 @@ from rich.console import Console
 
 from benchmarking import benchmark, collection, models, output, processes, samply_analysis, targets
 from benchmarking import profile as profile_runner
-from benchmarking.reports.database import ReportDatabase
+from benchmarking.reports.store import ReportStore
 
 from .conftest import (
     ROOT,
@@ -123,7 +123,7 @@ def test_target_resolvers_share_materialization_and_select_build_profile(
 
     benchmark_target = collection.resolve_targets(
         ((request, (endpoint_request,)),),
-        cast(ReportDatabase, object()),
+        cast(ReportStore, object()),
         (file_spec,),
         1,
         120,

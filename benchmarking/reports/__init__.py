@@ -1,5 +1,5 @@
-"""Contain benchmark report contracts, analysis, and presentation boundaries.
+"""Contain benchmark report codec, cache, analysis, and presentation boundaries.
 
-Persisted records and DuckDB access live in sibling modules; this package
-initializer intentionally performs no imports, exports, or other side effects.
+The package initializer intentionally performs no imports, exports, or other
+side effects; callers use the module that owns each contract directly.
 """

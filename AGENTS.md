@@ -84,8 +84,8 @@ collect a new row.
 - Treat report JSONL as a disposable cache written and read only by this tool.
   Schema shape changes invalidate the cache and require recomputation; do not
   add migrations or field-by-field malformed-input validation.
-- The runner queries report JSONL directly through an explicitly typed DuckDB
-  view; it must not copy rows into a persistent or in-memory DuckDB table.
+- The runner loads report JSONL once through the shared Pydantic codec into an
+  indexed `ReportStore`; live retargeting reuses that same snapshot.
 - Benchmark inputs should not contain executable `(prove ...)` commands; use
   `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,

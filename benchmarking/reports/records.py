@@ -1,22 +1,25 @@
-"""Define the trusted JSONL record shapes written by the benchmark runner.
+"""Define and encode the trusted JSONL shapes written by the benchmark runner.
 
-The three persisted ``TypedDict`` shapes below mirror the same-named SQL types
-in ``reports/sql/schema.sql``. DuckDB access belongs in
-:mod:`benchmarking.reports.database`; derived immutable query results belong in
-:mod:`benchmarking.reports.results`.
+The three ``TypedDict`` definitions are the sole persisted schema. One reused
+Pydantic adapter parses and serializes whole observations; cache indexing lives
+in :mod:`benchmarking.reports.store`, while derived immutable rows live with
+their computations in :mod:`benchmarking.reports.analysis`.
 """
 
 from __future__ import annotations
 
 from typing import Final, Literal, TypedDict
 
+from pydantic import TypeAdapter
+
 from ..models import Backend, Status, Treatment
 
-TIMING_SUMMARY_SCHEMA_VERSION: Final = 2
+type TimingSummarySchemaVersion = Literal[2]
+TIMING_SUMMARY_SCHEMA_VERSION: Final[TimingSummarySchemaVersion] = 2
 
 
 class RulesetTimingRecord(TypedDict):
-    """Persisted engine time; mirrors SQL ``ruleset_timing_record_t``."""
+    """Persisted engine time for one ruleset."""
 
     name: str
     search_ns: int
@@ -27,14 +30,14 @@ class RulesetTimingRecord(TypedDict):
 
 
 class TimingSummaryRecord(TypedDict):
-    """Engine timing summary; mirrors SQL ``timing_summary_record_t``."""
+    """Versioned engine timing summary embedded in one successful row."""
 
-    schema_version: Literal[2]
+    schema_version: TimingSummarySchemaVersion
     rulesets: list[RulesetTimingRecord]
 
 
 class ReportRecord(TypedDict):
-    """One benchmark observation; mirrors SQL ``report_record_t``."""
+    """One complete benchmark observation persisted as one JSON line."""
 
     started_at: str
     status: Status
@@ -58,3 +61,29 @@ class ReportRecord(TypedDict):
     error_signal: int | None
     error_message: str | None
     timing_summary: TimingSummaryRecord | None
+
+
+REPORT_RECORD_CODEC: Final = TypeAdapter(ReportRecord)
+
+
+def parse_report_record(data: bytes | str) -> ReportRecord:
+    """Parse one JSON object and enforce the current trusted-writer contract."""
+
+    record = REPORT_RECORD_CODEC.validate_json(data)
+    _require_success_timing(record)
+    return record
+
+
+def serialize_report_record(record: ReportRecord) -> tuple[ReportRecord, bytes]:
+    """Return Pydantic's normalized record and its newline-free JSON encoding."""
+
+    validated = REPORT_RECORD_CODEC.validate_python(record)
+    _require_success_timing(validated)
+    return validated, REPORT_RECORD_CODEC.dump_json(validated)
+
+
+def _require_success_timing(record: ReportRecord) -> None:
+    """Keep successful rows self-contained for phase and ruleset analysis."""
+
+    if record["status"] == "success" and record["timing_summary"] is None:
+        raise ValueError("successful benchmark record is missing its timing summary")

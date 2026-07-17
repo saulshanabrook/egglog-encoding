@@ -11,8 +11,7 @@ import pytest
 
 from benchmarking import collection, models, processes
 from benchmarking import output as runner_output
-from benchmarking.reports.database import ReportDatabase
-from benchmarking.reports.results import EstimateAggregate
+from benchmarking.reports.store import EstimateAggregate, ReportStore
 
 from .conftest import ROOT, make_record, make_target, make_timing_summary, write_report
 
@@ -51,11 +50,9 @@ def test_collection_plan_counts_cache_and_missing_rows(tmp_path: Path) -> None:
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     selected_endpoint = endpoint(target)
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, (selected_endpoint,), (file_spec,), 2, 120, False)
-        force_plan = collection.build_collection_plan(
-            database, target, (selected_endpoint,), (file_spec,), 2, 120, True
-        )
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 2, 120, False)
+    force_plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 2, 120, True)
 
     assert plan.runs[0].cached_statuses == ("success",)
     assert plan.runs[0].missing_observations == 1
@@ -80,8 +77,7 @@ def test_collection_plan_does_not_reuse_main_rows_for_dd(tmp_path: Path) -> None
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     endpoints = (endpoint(target, "main", "term"), endpoint(target, "dd", "term"))
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, endpoints, (file_spec,), 1, 120, False)
+    plan = collection.build_collection_plan(ReportStore(report), target, endpoints, (file_spec,), 1, 120, False)
 
     main_run, dd_run = plan.runs
     assert main_run.backend == "main"
@@ -100,9 +96,9 @@ def test_pair_collection_reuses_each_endpoint_independently_and_force_runs_both(
     file_spec = models.FileSpec("file.egg", ROOT / "file.egg", "sha256:file")
     endpoints = (endpoint(target, "main", "off"), endpoint(target, "main", "proofs"))
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, endpoints, (file_spec,), 1, 120, False)
-        forced = collection.build_collection_plan(database, target, endpoints, (file_spec,), 1, 120, True)
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, endpoints, (file_spec,), 1, 120, False)
+    forced = collection.build_collection_plan(store, target, endpoints, (file_spec,), 1, 120, True)
 
     baseline, candidate = plan.runs
     assert baseline.cached_statuses == ("success",)
@@ -127,10 +123,10 @@ def test_collection_plan_writes_human_output_to_stderr(
     output = runner_output.RunnerOutput()
     selected_endpoint = endpoint(target)
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, (selected_endpoint,), (file_spec,), 2, 120, False)
-        model = collection.EstimateModel.from_aggregates(database.successful_estimate_aggregates())
-        collection.emit_collection_plan(output, plan, model)
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 2, 120, False)
+    model = collection.EstimateModel.from_aggregates(store.successful_estimate_aggregates())
+    collection.emit_collection_plan(output, plan, model)
 
     output_text = stream.getvalue()
     assert "cache and estimate plan" in output_text
@@ -157,18 +153,18 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
         lambda *_args: collection.ProcessObservation(success, summary),
     )
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, (selected_endpoint,), (file_spec,), 1, 120, False)
-        startup_warmup = collection.preflight_collection(plan, 120)
-        collection.collect_rows(
-            database,
-            plan,
-            120,
-            runner_output.RunnerOutput(),
-            collection.EstimateModel(),
-            startup_warmup,
-        )
-        selected = database.selected_statuses(models.EstimateKey.for_endpoint(selected_endpoint, file_spec, 120), 1)
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 1, 120, False)
+    startup_warmup = collection.preflight_collection(plan, 120)
+    collection.collect_rows(
+        store,
+        plan,
+        120,
+        runner_output.RunnerOutput(),
+        collection.EstimateModel(),
+        startup_warmup,
+    )
+    selected = store.selected_statuses(models.EstimateKey.for_endpoint(selected_endpoint, file_spec, 120), 1)
 
     persisted = json.loads(report.read_text(encoding="utf-8"))
     assert "row_index" not in persisted
@@ -200,17 +196,17 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
 
     monkeypatch.setattr(collection, "run_command", write_unsupported_summary)
 
-    with ReportDatabase(report) as database:
-        plan = collection.build_collection_plan(database, target, (selected_endpoint,), (file_spec,), 1, 120, False)
-        startup_warmup = processes.TimingResult("success", processes.TimingRow(wall_sec=0.1), None)
-        with pytest.raises(ValueError, match=r"unsupported timing summary.*1"):
-            collection.collect_rows(
-                database,
-                plan,
-                120,
-                runner_output.RunnerOutput(),
-                collection.EstimateModel(),
-                startup_warmup,
-            )
+    store = ReportStore(report)
+    plan = collection.build_collection_plan(store, target, (selected_endpoint,), (file_spec,), 1, 120, False)
+    startup_warmup = processes.TimingResult("success", processes.TimingRow(wall_sec=0.1), None)
+    with pytest.raises(ValueError, match=r"unsupported timing summary.*1"):
+        collection.collect_rows(
+            store,
+            plan,
+            120,
+            runner_output.RunnerOutput(),
+            collection.EstimateModel(),
+            startup_warmup,
+        )
 
     assert report.read_text(encoding="utf-8") == ""
