@@ -1,9 +1,9 @@
-"""Build the renderer-neutral catalog for one baseline/candidate comparison.
+"""Build and format the catalog for one baseline/candidate comparison.
 
-DuckDB owns sample selection, statistics, result classification, phase
-pairing, ruleset union, deltas, ratios, and top-ten ranking. This module only
-maps those typed rows into the fixed selection-summary-files-phases-rulesets
-catalog and formats values for Rich, Markdown, and live adapters.
+The pure analysis layer owns selection, statistics, phase pairing, and ruleset
+ranking. This module maps its typed rows into the fixed
+selection-summary-files-phases-rulesets catalog and owns human-facing values
+shared by Rich, Markdown, and live adapters.
 """
 
 from __future__ import annotations
@@ -12,9 +12,18 @@ import math
 from collections.abc import Sequence
 from pathlib import Path
 
-from scipy import stats
-
 from ..models import ComparisonSpec, DetailLevel, FileSpec
+from .analysis import (
+    FileComparisonView,
+    MetricName,
+    PairReportViewData,
+    PhaseComparisonView,
+    RatioSummary,
+    ResultClass,
+    RulesetComparisonView,
+    SummaryView,
+    analyze_pair,
+)
 from .catalog import (
     CellTone,
     ReportBlock,
@@ -31,18 +40,7 @@ from .catalog import (
     report_id,
     text_cell,
 )
-from .database import ReportDatabase
-from .results import (
-    EndpointView,
-    FileComparisonView,
-    MetricName,
-    PairReportViewData,
-    PhaseComparisonView,
-    RatioSummary,
-    ResultClass,
-    RulesetComparisonView,
-    SummaryView,
-)
+from .store import ReportStore
 
 NULL = "—"
 DEFAULT_RULESET = "<default ruleset>"
@@ -61,20 +59,18 @@ RULESET_CAPTION = "Ruleset totals are descriptive means without confidence inter
 
 
 def build_report_catalog(
-    database: ReportDatabase,
+    store: ReportStore,
     comparison: ComparisonSpec,
     options: ReportOptions | None = None,
 ) -> ReportCatalog:
-    """Query one SQL-owned pair analysis and build its complete catalog."""
+    """Analyze one pair and build its complete presentation catalog."""
 
     options = ReportOptions() if options is None else options
-    t_critical = None if comparison.rounds < 2 else float(stats.t.ppf(0.975, comparison.rounds - 1))
-    database.install_scope(comparison, t_critical)
-    views = database.report_view_data(options.detail)
+    views = analyze_pair(store, comparison, options.detail)
     file_labels = report_file_labels(comparison.files)
 
     sections = [
-        _selection_section(database.display_path, comparison, views.endpoints, file_labels),
+        _selection_section(store.display_path, comparison, file_labels),
         _summary_section(comparison, views.summary, file_labels),
     ]
     if _includes(options.detail, "files"):
@@ -93,20 +89,24 @@ def _includes(detail: DetailLevel, requested: DetailLevel) -> bool:
 def _selection_section(
     report_path: str,
     comparison: ComparisonSpec,
-    endpoints: Sequence[EndpointView],
     file_labels: dict[FileSpec, str],
 ) -> ReportSection:
     endpoint_rows = tuple(
         _row(
-            report_id("row", "selection", endpoint.endpoint_role, _endpoint_id(endpoint)),
-            text_cell(endpoint.endpoint_role, endpoint.endpoint_role.title()),
-            endpoint.target_label,
-            text_cell(endpoint.target_git_sha, endpoint.target_git_sha[:12]),
-            text_cell(endpoint.target_is_dirty, "yes" if endpoint.target_is_dirty else "no"),
+            report_id(
+                "row",
+                "selection",
+                role,
+                report_id("endpoint", *endpoint.cache_identity),
+            ),
+            text_cell(role, role.title()),
+            endpoint.target.display_label,
+            text_cell(endpoint.target.row.git_sha, endpoint.target.row.git_sha[:12]),
+            text_cell(endpoint.target.row.is_dirty, "yes" if endpoint.target.row.is_dirty else "no"),
             endpoint.backend,
             endpoint.treatment,
         )
-        for endpoint in endpoints
+        for role, endpoint in (("baseline", comparison.baseline), ("candidate", comparison.candidate))
     )
     endpoint_table = _table(
         report_id("table", "selection", "endpoints"),
@@ -158,10 +158,6 @@ def _selection_section(
             )
         )
     return ReportSection("selection", "Comparison", tuple(blocks))
-
-
-def _endpoint_id(endpoint: EndpointView) -> str:
-    return report_id("endpoint", endpoint.binary_sha256, endpoint.backend, endpoint.treatment)
 
 
 def _file_with_facts(file: FileSpec, label: str) -> str:

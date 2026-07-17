@@ -1,10 +1,10 @@
 """Serve one cached pair report as a live, cache-only browser application.
 
 This module adapts the shared report catalog to eval-live, discovers complete
-cached endpoints for the comparison's fixed files/rounds/timeout, validates
-browser retargeting requests, and owns the loopback HTTP server and static UI.
-It never resolves targets, builds binaries, or collects benchmark observations;
-SQL analysis and human-facing report wording remain in ``comparison``.
+cached endpoints from one loaded report snapshot, validates browser retargeting
+requests, and owns the loopback HTTP server and static UI. It never resolves
+targets, builds binaries, collects observations, or polls external cache edits;
+analysis and human-facing wording remain in their sibling modules.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ import webbrowser
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Protocol, cast
 
 from ..models import (
@@ -30,8 +29,7 @@ from ..models import (
 )
 from .catalog import CellTone, ReportCatalog, ReportCell, ReportMessage, ReportOptions, report_id
 from .comparison import build_report_catalog, report_file_labels
-from .database import ReportDatabase
-from .results import CachedEndpoint
+from .store import CachedEndpoint, ReportStore
 
 
 class ConsoleLike(Protocol):
@@ -78,21 +76,20 @@ class LiveReportSession:
 
     def __init__(
         self,
-        report_path: Path,
+        store: ReportStore,
         comparison: ComparisonSpec,
         options: ReportOptions,
         catalog: ReportCatalog,
     ) -> None:
-        self._report_path = report_path
+        self._store = store
         self._files = comparison.files
         self._rounds = comparison.rounds
         self._timeout_sec = comparison.timeout_sec
-        with ReportDatabase(report_path) as database:
-            cached = database.complete_cached_endpoints(
-                self._files,
-                self._rounds,
-                self._timeout_sec,
-            )
+        cached = store.complete_cached_endpoints(
+            self._files,
+            self._rounds,
+            self._timeout_sec,
+        )
         self._endpoints = tuple(_benchmark_endpoint(endpoint) for endpoint in cached)
         self._endpoint_by_id = {_endpoint_id(endpoint): endpoint for endpoint in self._endpoints}
         self._file_by_id = {_file_id(file): file for file in self._files}
@@ -134,10 +131,9 @@ class LiveReportSession:
         )
         options = ReportOptions(request.detail)
 
-        # Use a fresh transient catalog. A parse, SQL, or report-assembly error
-        # leaves both the published request and catalog untouched.
-        with ReportDatabase(self._report_path) as database:
-            catalog = build_report_catalog(database, comparison, options)
+        # Compute the replacement before publishing it so a report-assembly
+        # error leaves both the prior request and catalog untouched.
+        catalog = build_report_catalog(self._store, comparison, options)
         payload = self._payload(request, catalog)
         self._request = request
         self._catalog = catalog
@@ -145,7 +141,7 @@ class LiveReportSession:
 
     def _payload(self, request: LiveScopeRequest, catalog: ReportCatalog) -> dict[str, JsonValue]:
         return {
-            "report_path": str(self._report_path),
+            "report_path": self._store.display_path,
             "selectors": self._selector_payload(request),
             "sections": _catalog_payload(catalog),
         }

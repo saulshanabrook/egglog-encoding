@@ -10,7 +10,7 @@ import pytest
 
 from benchmarking import benchmark, collection, models, processes, targets, workloads
 from benchmarking import output as runner_output
-from benchmarking.reports.database import ReportDatabase
+from benchmarking.reports.store import ReportStore
 
 from .conftest import ROOT, make_record, make_target, write_report
 
@@ -90,7 +90,6 @@ def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
         ("--backend", "main,dd"),
         ("--phase-timings",),
         ("--detailed-timing",),
-        ("--duckdb-ui",),
         ("--detail", "3"),
         ("--report", "-"),
     ],
@@ -201,7 +200,7 @@ def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytes
     sentinel = cast(collection.CollectionPlan, object())
 
     def build_plan(
-        _database: ReportDatabase,
+        _store: ReportStore,
         target: models.ResolvedTarget,
         endpoints: tuple[models.BenchmarkEndpoint, ...],
         _files: tuple[models.FileSpec, ...],
@@ -214,7 +213,7 @@ def test_collection_plans_group_only_the_same_resolved_target(monkeypatch: pytes
 
     monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
 
-    plans = benchmark.collection_plans(cast(ReportDatabase, object()), comparison, True)
+    plans = benchmark.collection_plans(cast(ReportStore, object()), comparison, True)
 
     assert plans == (sentinel,)
     assert observed == [(shared_target, (comparison.baseline, comparison.candidate), True)]
@@ -240,7 +239,7 @@ def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
     observed: list[models.ResolvedTarget] = []
 
     def build_plan(
-        _database: ReportDatabase,
+        _store: ReportStore,
         target: models.ResolvedTarget,
         _endpoints: tuple[models.BenchmarkEndpoint, ...],
         _files: tuple[models.FileSpec, ...],
@@ -253,7 +252,7 @@ def test_collection_plans_keep_distinct_targets_with_the_same_binary_separate(
 
     monkeypatch.setattr(benchmark, "build_collection_plan", build_plan)
 
-    benchmark.collection_plans(cast(ReportDatabase, object()), comparison, False)
+    benchmark.collection_plans(cast(ReportStore, object()), comparison, False)
 
     assert observed == [baseline_target, candidate_target]
 
@@ -289,7 +288,7 @@ def test_shared_target_resolution_builds_union_backend_features(monkeypatch: pyt
                 ),
             ),
         ),
-        cast(ReportDatabase, object()),
+        cast(ReportStore, object()),
         (file_spec,),
         1,
         120,
@@ -343,7 +342,7 @@ def test_same_checkout_target_aliases_build_once_with_union_backend_features(
             (baseline_request, (baseline,)),
             (candidate_request, (candidate,)),
         ),
-        cast(ReportDatabase, object()),
+        cast(ReportStore, object()),
         (file_spec,),
         1,
         120,
@@ -405,18 +404,17 @@ def test_batch_target_resolution_reuses_complete_cache_label_before_building_pen
         (fresh_request, (models.EndpointRequest(fresh_request, "dd", "proofs"),)),
     )
 
-    with ReportDatabase(report) as database:
-        resolved = collection.resolve_targets(
-            groups,
-            database,
-            (file_spec,),
-            1,
-            120,
-            False,
-            tmp_path,
-            ROOT,
-            runner_output.RunnerOutput(),
-        )
+    resolved = collection.resolve_targets(
+        groups,
+        ReportStore(report),
+        (file_spec,),
+        1,
+        120,
+        False,
+        tmp_path,
+        ROOT,
+        runner_output.RunnerOutput(),
+    )
 
     assert materialized == [fresh_request]
     assert builds == [("dd-backend",)]
@@ -506,7 +504,7 @@ def test_main_validates_old_report_before_target_resolution(
 ) -> None:
     report = tmp_path / "old.jsonl"
     old = dict(make_record(0, started_at="2026-07-04T12:00:00Z"))
-    old["report_schema_version"] = 1
+    cast(dict[str, object], old["timing_summary"])["schema_version"] = 1
     report.write_text(json.dumps(old) + "\n", encoding="utf-8")
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
     monkeypatch.setattr(

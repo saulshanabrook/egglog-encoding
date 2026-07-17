@@ -38,9 +38,9 @@ from .models import (
 from .output import RunnerOutput
 from .reports.catalog import ReportOptions
 from .reports.comparison import build_report_catalog
-from .reports.database import ReportDatabase
 from .reports.live import LiveReportSession, serve_live_report
 from .reports.render import render_markdown_report_document, render_rich_report_document
+from .reports.store import ReportStore
 from .targets import git_root_for_path, parse_target
 from .workloads import resolve_files
 
@@ -207,7 +207,7 @@ def group_endpoint_requests(
 
 
 def collection_plans(
-    database: ReportDatabase,
+    store: ReportStore,
     comparison: ComparisonSpec,
     force_run: bool,
 ) -> tuple[CollectionPlan, ...]:
@@ -218,7 +218,7 @@ def collection_plans(
         endpoints_by_target.setdefault(endpoint.target, []).append(endpoint)
     return tuple(
         build_collection_plan(
-            database,
+            store,
             target,
             tuple(endpoints),
             comparison.files,
@@ -244,56 +244,56 @@ def main(argv: Sequence[str] | None = None) -> int:
         report_path = resolve_report_path(str(args.report), invocation_cwd)
         baseline_request, candidate_request = endpoint_requests(args)
 
-        # ReportDatabase validates the complete existing artifact before target
+        # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
-        with ReportDatabase(report_path) as database:
-            files = resolve_files(args.files, invocation_cwd, args.fact_directory)
-            estimate_model = EstimateModel.from_aggregates(database.successful_estimate_aggregates())
-            resolved_targets = resolve_targets(
-                group_endpoint_requests(baseline_request, candidate_request),
-                database,
-                files,
-                int(args.rounds),
-                int(args.timeout_sec),
-                bool(args.force_run),
-                invocation_cwd,
-                repo_root,
-                output,
-            )
-            comparison = ComparisonSpec(
-                baseline=BenchmarkEndpoint(
-                    resolved_targets[baseline_request.target],
-                    baseline_request.backend,
-                    baseline_request.treatment,
-                ),
-                candidate=BenchmarkEndpoint(
-                    resolved_targets[candidate_request.target],
-                    candidate_request.backend,
-                    candidate_request.treatment,
-                ),
-                files=files,
-                rounds=int(args.rounds),
-                timeout_sec=int(args.timeout_sec),
-            )
-            # Preflight every fresh target before any measured observation can
-            # be appended, then execute the already-validated plans in order.
-            plans = collection_plans(database, comparison, bool(args.force_run))
-            preflights = tuple(preflight_collection(plan, comparison.timeout_sec) for plan in plans)
-            for plan, startup_warmup in zip(plans, preflights, strict=True):
-                emit_collection_plan(output, plan, estimate_model)
-                collect_rows(database, plan, comparison.timeout_sec, output, estimate_model, startup_warmup)
+        store = ReportStore(report_path)
+        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
+        estimate_model = EstimateModel.from_aggregates(store.successful_estimate_aggregates())
+        resolved_targets = resolve_targets(
+            group_endpoint_requests(baseline_request, candidate_request),
+            store,
+            files,
+            int(args.rounds),
+            int(args.timeout_sec),
+            bool(args.force_run),
+            invocation_cwd,
+            repo_root,
+            output,
+        )
+        comparison = ComparisonSpec(
+            baseline=BenchmarkEndpoint(
+                resolved_targets[baseline_request.target],
+                baseline_request.backend,
+                baseline_request.treatment,
+            ),
+            candidate=BenchmarkEndpoint(
+                resolved_targets[candidate_request.target],
+                candidate_request.backend,
+                candidate_request.treatment,
+            ),
+            files=files,
+            rounds=int(args.rounds),
+            timeout_sec=int(args.timeout_sec),
+        )
+        # Preflight every fresh target before any measured observation can be
+        # appended, then execute the already-validated plans in order.
+        plans = collection_plans(store, comparison, bool(args.force_run))
+        preflights = tuple(preflight_collection(plan, comparison.timeout_sec) for plan in plans)
+        for plan, startup_warmup in zip(plans, preflights, strict=True):
+            emit_collection_plan(output, plan, estimate_model)
+            collect_rows(store, plan, comparison.timeout_sec, output, estimate_model, startup_warmup)
 
-            report_options = ReportOptions(detail=cast(DetailLevel, str(args.detail)))
-            catalog = build_report_catalog(database, comparison, report_options)
+        report_options = ReportOptions(detail=cast(DetailLevel, str(args.detail)))
+        catalog = build_report_catalog(store, comparison, report_options)
+        if args.format == "markdown":
+            rendered = render_markdown_report_document(catalog)
+            sys.stdout.write(rendered + "\n")
+        else:
+            output.console.print(render_rich_report_document(catalog, output.console.width))
+        if args.serve:
             if args.format == "markdown":
-                rendered = render_markdown_report_document(catalog)
-                sys.stdout.write(rendered + "\n")
-            else:
-                output.console.print(render_rich_report_document(catalog, output.console.width))
-            if args.serve:
-                if args.format == "markdown":
-                    sys.stdout.flush()
-                live_session = LiveReportSession(report_path, comparison, report_options, catalog)
+                sys.stdout.flush()
+            live_session = LiveReportSession(store, comparison, report_options, catalog)
         if live_session is not None:
             serve_live_report(
                 live_session,

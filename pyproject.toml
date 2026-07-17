@@ -3,7 +3,6 @@ name = "egglog-encoding"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "duckdb>=1.5.4",
     "eval-live @ git+https://github.com/saulshanabrook/eval-live@dbbb8455128a57b8e44168f48c027212b8fbd2c8",
     "rich>=13.7",
     "scipy>=1.14",

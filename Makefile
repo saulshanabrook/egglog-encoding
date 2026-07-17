@@ -58,7 +58,9 @@ benchmark-smoke:
 	uv run --locked ./bench.py --rounds 1 \
 		--report "$(BENCHMARK_SMOKE_REPORT)" --format markdown \
 		egglog/tests/integer_math.egg > /dev/null
-	test -s "$(BENCHMARK_SMOKE_REPORT)"
+	uv run --locked python -c \
+		'from pathlib import Path; import sys; from benchmarking.reports.store import ReportStore; assert ReportStore(Path(sys.argv[1])).row_count > 0' \
+		"$(BENCHMARK_SMOKE_REPORT)"
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details

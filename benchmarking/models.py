@@ -2,7 +2,7 @@
 
 This module owns endpoint selection, comparison scope, and the uniqueness rules
 required by cache-backed statistics. Feature-local requests, subprocess
-outcomes, persisted records, and DuckDB result rows live beside their owners.
+outcomes, persisted records, and derived report rows live beside their owners.
 """
 
 from __future__ import annotations

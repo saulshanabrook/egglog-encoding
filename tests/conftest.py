@@ -17,6 +17,7 @@ from benchmarking.reports.records import (
     RulesetTimingRecord,
     TimingSummaryRecord,
 )
+from benchmarking.reports.store import ReportStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -96,12 +97,11 @@ def make_timing_summary(*rulesets: RulesetTimingRecord) -> TimingSummaryRecord:
 
 
 def write_report(path: Path, *records: ReportRecord) -> None:
-    """Write deterministic JSONL fixtures without exercising production append."""
+    """Write deterministic fixtures through the production JSONL boundary."""
 
-    path.write_text(
-        "".join(json.dumps(record, separators=(",", ":"), sort_keys=True) + "\n" for record in records),
-        encoding="utf-8",
-    )
+    store = ReportStore(path)
+    for record in records:
+        store.append(record)
 
 
 def make_target(

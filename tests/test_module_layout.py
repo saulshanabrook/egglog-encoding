@@ -95,8 +95,8 @@ def test_data_boundary_does_not_import_runner_or_presentation_dependencies() -> 
     data_modules = (
         ROOT / "benchmarking/reports/catalog.py",
         ROOT / "benchmarking/reports/records.py",
-        ROOT / "benchmarking/reports/database.py",
-        ROOT / "benchmarking/reports/results.py",
+        ROOT / "benchmarking/reports/store.py",
+        ROOT / "benchmarking/reports/analysis.py",
     )
     violations: list[str] = []
     for path in data_modules:
@@ -112,11 +112,27 @@ def test_report_renderer_depends_only_on_the_shared_catalog_contract() -> None:
 
     imports = imported_module_names(ROOT / "benchmarking/reports/render.py")
     forbidden = {
-        "benchmarking.reports.database",
+        "benchmarking.reports.analysis",
         "benchmarking.reports.records",
-        "benchmarking.reports.results",
+        "benchmarking.reports.store",
     }
     assert "benchmarking.reports.catalog" in imports
+    assert imports.isdisjoint(forbidden)
+
+
+def test_store_does_not_import_analysis_or_presentation_layers() -> None:
+    """Keep persistence and cache selection reusable below derived reports."""
+
+    imports = imported_module_names(ROOT / "benchmarking/reports/store.py")
+    forbidden = {
+        "benchmarking.reports.analysis",
+        "benchmarking.reports.catalog",
+        "benchmarking.reports.comparison",
+        "benchmarking.reports.live",
+        "benchmarking.reports.render",
+        "rich",
+        "scipy",
+    }
     assert imports.isdisjoint(forbidden)
 
 

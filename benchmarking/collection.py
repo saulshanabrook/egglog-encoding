@@ -3,9 +3,8 @@
 This module owns cache-aware target resolution and execution plans, subprocess
 progress, same-run timing-summary capture, and construction of persisted
 records. Generic target parsing, checkout materialization, builds, and command
-construction belong in :mod:`benchmarking.targets`. Report loading,
-compatibility gating, selection, statistics, and rendering belong in
-:mod:`benchmarking.reports`.
+construction belong in :mod:`benchmarking.targets`. Report loading, cache
+selection, statistics, and rendering belong in :mod:`benchmarking.reports`.
 """
 
 from __future__ import annotations
@@ -45,13 +44,12 @@ from .models import (
 )
 from .output import RunnerOutput, display_target
 from .processes import TimingResult, run_command
-from .reports.database import ReportDatabase
 from .reports.records import (
     TIMING_SUMMARY_SCHEMA_VERSION,
     ReportRecord,
     TimingSummaryRecord,
 )
-from .reports.results import EstimateAggregate
+from .reports.store import EstimateAggregate, ReportStore
 from .targets import (
     build_resolved_target,
     materialize_git_ref,
@@ -162,7 +160,7 @@ def _now_iso() -> str:
 
 
 def build_collection_plan(
-    database: ReportDatabase,
+    store: ReportStore,
     target: ResolvedTarget,
     endpoints: tuple[BenchmarkEndpoint, ...],
     files: tuple[FileSpec, ...],
@@ -188,7 +186,7 @@ def build_collection_plan(
         for file_spec in files
         for endpoint in endpoints
     )
-    selected = database.selected_statuses_for_keys(tuple(request[3] for request in requests), rounds)
+    selected = store.selected_statuses_for_keys(tuple(request[3] for request in requests), rounds)
     runs: list[BenchmarkRunPlan] = []
     for file_spec, backend, treatment, estimate_key in requests:
         cached = selected[estimate_key]
@@ -225,7 +223,7 @@ def collection_plan_estimate(plan: CollectionPlan, estimate_model: EstimateModel
 
 def resolve_targets(
     request_groups: tuple[tuple[TargetRequest, tuple[EndpointRequest, ...]], ...],
-    database: ReportDatabase,
+    store: ReportStore,
     files: tuple[FileSpec, ...],
     rounds: int,
     timeout_sec: int,
@@ -247,7 +245,7 @@ def resolve_targets(
     for request, endpoint_requests in request_groups:
         target = _resolve_or_materialize_target(
             request,
-            database,
+            store,
             endpoint_requests,
             files,
             rounds,
@@ -288,7 +286,7 @@ def resolve_targets(
 
 def _resolve_or_materialize_target(
     request: TargetRequest,
-    database: ReportDatabase,
+    store: ReportStore,
     endpoint_requests: tuple[EndpointRequest, ...],
     files: tuple[FileSpec, ...],
     rounds: int,
@@ -303,7 +301,7 @@ def _resolve_or_materialize_target(
         raise ValueError("target resolution requires its exact endpoint requests")
     if request.is_label_lookup:
         assert request.label is not None
-        pointer = database.find_label_pointer(request.label)
+        pointer = store.find_label_pointer(request.label)
         if pointer is None:
             raise ValueError(f"no cached rows found for label {request.label!r}")
         cached_target = ResolvedTarget(
@@ -313,7 +311,7 @@ def _resolve_or_materialize_target(
             binary_path=None,
         )
         if not force_run and label_has_enough_rows(
-            database,
+            store,
             pointer.binary_sha256,
             endpoint_requests,
             files,
@@ -334,7 +332,7 @@ def _resolve_or_materialize_target(
 
 
 def label_has_enough_rows(
-    database: ReportDatabase,
+    store: ReportStore,
     binary_sha256: str,
     endpoint_requests: tuple[EndpointRequest, ...],
     files: tuple[FileSpec, ...],
@@ -355,7 +353,7 @@ def label_has_enough_rows(
         for file_spec in files
         for endpoint in endpoint_requests
     )
-    selected = database.selected_statuses_for_keys(keys, rounds)
+    selected = store.selected_statuses_for_keys(keys, rounds)
     return all(len(selected[key]) >= rounds for key in keys)
 
 
@@ -568,7 +566,7 @@ def flat_report_record(
 
 
 def collect_rows(
-    database: ReportDatabase,
+    store: ReportStore,
     plan: CollectionPlan,
     timeout_sec: int,
     output: RunnerOutput,
@@ -659,7 +657,7 @@ def collect_rows(
                     timeout_sec=timeout_sec,
                     observation=observation,
                 )
-                database.append(record)
+                store.append(record)
                 completed_observations += 1
                 progress.console.print(Text(f"  {label}: fresh {format_timing_result(observation.result)}"))
                 update_progress(

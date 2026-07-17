@@ -16,8 +16,8 @@ from benchmarking import models
 from benchmarking.reports import live
 from benchmarking.reports.catalog import ReportOptions
 from benchmarking.reports.comparison import build_report_catalog
-from benchmarking.reports.database import ReportDatabase
 from benchmarking.reports.records import ReportRecord
+from benchmarking.reports.store import ReportStore
 
 from .conftest import make_endpoint, make_record, write_report
 
@@ -92,6 +92,27 @@ def test_invalid_apply_restores_the_published_request_and_catalog(tmp_path: Path
             }
         )
     assert session.payload() == payload
+
+
+def test_retargeting_uses_the_loaded_snapshot_without_reparsing_jsonl(tmp_path: Path) -> None:
+    session, payload = _live_case(tmp_path)
+    report_path = Path(cast(str, payload["report_path"]))
+    with report_path.open("a", encoding="utf-8") as report:
+        report.write("not valid JSON\n")
+    selectors = cast(dict[str, object], payload["selectors"])
+    endpoints = cast(list[dict[str, object]], selectors["endpoints"])
+    files = cast(list[dict[str, object]], selectors["files"])
+
+    updated = session.apply(
+        {
+            "baseline_endpoint_id": endpoints[1]["id"],
+            "candidate_endpoint_id": endpoints[0]["id"],
+            "file_ids": [file["id"] for file in files],
+            "detail": "files",
+        }
+    )
+
+    assert cast(dict[str, object], updated["selectors"])["detail"] == "files"
 
 
 def test_http_routes_return_report_apply_errors_and_exact_assets(tmp_path: Path) -> None:
@@ -188,7 +209,7 @@ def _live_case(tmp_path: Path) -> tuple[live.LiveReportSession, dict[str, live.J
     write_report(report_path, *records)
     comparison = models.ComparisonSpec(endpoints[0], endpoints[1], files, 1, 120)
     options = ReportOptions("summary")
-    with ReportDatabase(report_path) as database:
-        catalog = build_report_catalog(database, comparison, options)
-    session = live.LiveReportSession(report_path, comparison, options, catalog)
+    store = ReportStore(report_path)
+    catalog = build_report_catalog(store, comparison, options)
+    session = live.LiveReportSession(store, comparison, options, catalog)
     return session, session.payload()
