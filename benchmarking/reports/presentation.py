@@ -555,6 +555,8 @@ def _ratio_cell(ratio: RatioEstimate) -> ReportCell:
 
 
 def format_ratio_summary(ratio: RatioEstimate) -> str:
+    """Show CI bounds when available, otherwise the point, to keep cells compact."""
+
     estimate = ratio.estimate
     if estimate.point is None:
         return NULL

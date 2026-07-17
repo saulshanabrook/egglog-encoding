@@ -100,6 +100,16 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert profile_args.format == "rich"
 
 
+def test_profile_main_reports_filesystem_errors(monkeypatch: pytest.MonkeyPatch, capsys: Any) -> None:
+    def fail(*_args: object) -> None:
+        raise PermissionError("[bold]read-only[/bold] artifact")
+
+    monkeypatch.setattr(profile_runner, "run_profile", fail)
+
+    assert profile_runner.main(["file.egg"]) == 2
+    assert "error: [bold]read-only[/bold] artifact" in capsys.readouterr().err
+
+
 def test_benchmark_and_profile_cli_accept_windows_fact_paths() -> None:
     file = r"C:\bench\file.egg"
     facts = r"D:\facts"

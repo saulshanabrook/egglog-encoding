@@ -478,7 +478,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         script_root = Path(__file__).resolve().parents[1]
         run_profile(args, console, Path.cwd(), git_root_for_path(script_root))
-    except (FileNotFoundError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         console.print(Text.assemble(("error:", "red"), " ", str(error)))
         return 2
     return 0

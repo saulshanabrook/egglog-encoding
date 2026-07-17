@@ -28,7 +28,7 @@ type JsonValue = JsonScalar | list[JsonValue] | dict[str, JsonValue]
 
 
 class _ScopeRequest(TypedDict):
-    """The trusted request shape emitted by the embedded JavaScript form."""
+    """The expected request shape emitted by the embedded JavaScript form."""
 
     baseline_endpoint_id: str
     candidate_endpoint_id: str
@@ -174,15 +174,27 @@ class InteractiveRuntime:
         if not isinstance(value, dict):
             raise ValueError("scope request must be a JSON object")
         request = cast(_ScopeRequest, value)
-        baseline_id = request["baseline_endpoint_id"]
-        candidate_id = request["candidate_endpoint_id"]
+        baseline_id = request.get("baseline_endpoint_id")
+        candidate_id = request.get("candidate_endpoint_id")
+        raw_file_ids = request.get("file_ids")
+        timeout_sec = request.get("timeout_sec")
+        rounds = request.get("rounds")
+        if not isinstance(baseline_id, str) or not isinstance(candidate_id, str):
+            raise ValueError("endpoint ids must be strings")
+        if not isinstance(raw_file_ids, list) or not all(isinstance(file_id, str) for file_id in raw_file_ids):
+            raise ValueError("file_ids must be a list of strings")
+        if not isinstance(timeout_sec, int) or isinstance(timeout_sec, bool):
+            raise ValueError("timeout_sec must be an integer")
+        if not isinstance(rounds, int) or isinstance(rounds, bool):
+            raise ValueError("rounds must be an integer")
+
         if baseline_id not in self._endpoint_by_id:
             raise ValueError(f"unknown baseline endpoint id: {baseline_id}")
         if candidate_id not in self._endpoint_by_id:
             raise ValueError(f"unknown candidate endpoint id: {candidate_id}")
         if baseline_id == candidate_id:
             raise ValueError("baseline and candidate endpoints must be different")
-        file_ids = tuple(request["file_ids"])
+        file_ids = tuple(raw_file_ids)
         if not file_ids:
             raise ValueError("file_ids must not be empty")
         if len(set(file_ids)) != len(file_ids):
@@ -190,10 +202,8 @@ class InteractiveRuntime:
         unknown_files = tuple(file_id for file_id in file_ids if file_id not in self._file_by_id)
         if unknown_files:
             raise ValueError(f"unknown file id(s): {', '.join(unknown_files)}")
-        timeout_sec = request["timeout_sec"]
         if timeout_sec not in self._timeouts:
             raise ValueError(f"unknown timeout: {timeout_sec}s")
-        rounds = request["rounds"]
         if rounds < 1:
             raise ValueError("rounds must be positive")
         if rounds > self._max_rounds:

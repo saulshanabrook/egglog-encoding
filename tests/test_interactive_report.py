@@ -133,6 +133,27 @@ def test_incomplete_scope_publishes_missing_cells_but_invalid_scope_rolls_back(t
     assert runtime.payload() == incomplete
 
 
+def test_scope_request_rejects_invalid_field_types_without_changing_report(tmp_path: Path) -> None:
+    runtime, payload, _store, comparison = _interactive_case(tmp_path)
+    valid = scope_for_comparison(comparison)
+    file_ids = cast(list[str], valid["file_ids"])
+    invalid_requests = (
+        (valid | {"baseline_endpoint_id": 1}, "endpoint ids must be strings"),
+        (valid | {"file_ids": "not-a-list"}, "file_ids must be a list of strings"),
+        (valid | {"file_ids": [1]}, "file_ids must be a list of strings"),
+        (valid | {"file_ids": {file_ids[0]: True}}, "file_ids must be a list of strings"),
+        (valid | {"timeout_sec": True}, "timeout_sec must be an integer"),
+        (valid | {"timeout_sec": 120.0}, "timeout_sec must be an integer"),
+        (valid | {"rounds": True}, "rounds must be an integer"),
+        (valid | {"rounds": 1.0}, "rounds must be an integer"),
+    )
+
+    for request, message in invalid_requests:
+        result = json.loads(runtime.apply_json(json.dumps(request)))
+        assert result == {"ok": False, "error": message}
+        assert runtime.payload() == payload
+
+
 def test_runtime_uses_loaded_snapshot_without_reparsing_jsonl(tmp_path: Path) -> None:
     runtime, payload, store, _comparison = _interactive_case(tmp_path)
     with store.path.open("a", encoding="utf-8") as report:

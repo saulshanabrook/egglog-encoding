@@ -117,6 +117,9 @@ def test_run_command_timeout_kills_descendant_processes(tmp_path: Path) -> None:
         else:
             pytest.fail(f"descendant process {descendant_pid} survived timeout cleanup")
     finally:
+        if descendant_pid is None:
+            with suppress(OSError, ValueError):
+                descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
         if descendant_pid is not None:
             with suppress(ProcessLookupError):
                 os.kill(descendant_pid, signal.SIGKILL)
