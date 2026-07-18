@@ -45,6 +45,9 @@ pub(crate) struct EncodingState {
     /// children's entries to build the natural term and its `Congr` connector.
     pub nat_conn: HashMap<String, (String, Option<String>)>,
     pub term_header_added: bool,
+    /// Whether the generic `get-fresh!` primitive has been registered yet (it is
+    /// registered once, idempotently, from the first eq-sort declaration).
+    pub get_fresh_registered: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
     // When Some term encoding is enabled.
@@ -69,6 +72,7 @@ impl EncodingState {
             fd_custom_funcs: HashSet::default(),
             nat_conn: HashMap::default(),
             term_header_added: false,
+            get_fresh_registered: false,
             original_typechecking: None,
             proofs_enabled: false,
             proof_names: EncodingNames::new(symbol_gen),
@@ -1533,8 +1537,10 @@ impl<'a> ProofInstrumentor<'a> {
         out_sort: &str,
     ) -> String {
         let v = self.fresh_var();
-        let get_fresh = crate::proofs::proof_fresh::get_fresh_prim_name(out_sort);
-        stmts.push(format!("(let {v} ({get_fresh}))"));
+        // The generic `get-fresh!` takes the target sort as a string literal so it
+        // types its output without per-sort primitives (its runtime ignores the arg).
+        let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
+        stmts.push(format!("(let {v} ({get_fresh} \"{out_sort}\"))"));
         stmts.push(format!("(set ({name} {args_joined} {v}) ())"));
         v
     }

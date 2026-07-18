@@ -127,50 +127,89 @@ impl Primitive for ViewProof {
     }
 }
 
-/// Deterministic name of a sort's mint primitive, e.g. `@get-fresh-Math!`.
-/// Both the encoder (emitting mint sites) and the typechecker (registering the
-/// primitive) compute it the same way.
-pub(crate) fn get_fresh_prim_name(sort_name: &str) -> String {
-    format!("@get-fresh-{sort_name}!")
-}
+/// Name of the single generic mint primitive. It takes the target sort as a
+/// string literal — `(get-fresh! "Math")` — so one primitive serves every
+/// eq-sort and the desugared program references a stable, always-registered name
+/// (rather than a per-sort `@`-name a name-sanitizer would mangle on re-parse).
+pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 
-/// Register a sort's `get-fresh!` primitive (`() -> <sort>`), minting from the
-/// backend's eq-class id counter. A no-op on backends that don't expose a
-/// counter (they assign ids deterministically and don't need an explicit mint).
-/// Called from the eq-sort's `Sort` command in typechecking so it survives
-/// re-parse of the desugared program.
-pub(crate) fn register_get_fresh(eg: &mut EGraph, sort_name: &str) {
+/// Register the generic `get-fresh!` primitive, minting from the backend's
+/// eq-class id counter. Idempotent: called from every eq-sort's `Sort` command in
+/// typechecking (so it survives re-parse on any e-graph), but only the first call
+/// registers it. A no-op on backends without an id counter.
+pub(crate) fn register_get_fresh(eg: &mut EGraph, _sort_name: &str) {
     // No counter → the backend assigns ids deterministically; nothing to mint.
     if eg.backend.eclass_id_counter().is_none() {
         return;
     }
-    let Some(sort) = eg.get_sort_by_name(sort_name).cloned() else {
+    if eg.proof_state.get_fresh_registered {
         return;
-    };
-    let get_fresh = GetFresh {
-        name: get_fresh_prim_name(sort_name),
-        sort,
-    };
-    eg.add_backend_op_primitive(get_fresh, WriteState::valid_contexts(), |backend, _| {
+    }
+    eg.proof_state.get_fresh_registered = true;
+    eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
         backend.register_get_fresh()
     });
 }
 
-/// `get-fresh!`: mint a fresh id of its output sort from the shared eq-class id
-/// counter. Impure by design — every call returns a new id. Carries type
-/// constraints only; the mint itself is serviced by the backend.
+/// `get-fresh! "Sort" -> Sort`: mint a fresh id of the named eq-sort from the
+/// shared eq-class id counter. Impure — every call returns a new id. The leading
+/// string names the output sort (its runtime ignores the arg and just mints); the
+/// mint itself is serviced by the backend.
 #[derive(Clone)]
-struct GetFresh {
-    name: String,
-    sort: ArcSort,
-}
+struct GetFresh;
 
 impl Primitive for GetFresh {
     fn name(&self) -> &str {
-        &self.name
+        GET_FRESH_PRIM_NAME
     }
     fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
-        // `() -> sort`: the single signature entry is the output.
-        SimpleTypeConstraint::new(&self.name, vec![self.sort.clone()], span.clone()).into_box()
+        Box::new(GetFreshTypeConstraint { span: span.clone() })
+    }
+}
+
+/// `(get-fresh! "Sort") -> Sort`: the leading string literal names the output
+/// eq-sort; the output is constrained to that sort.
+struct GetFreshTypeConstraint {
+    span: Span,
+}
+
+impl TypeConstraint for GetFreshTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[crate::core::AtomTerm],
+        typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, ArcSort>>> {
+        // `("Sort") -> out`: two signature entries (the string arg and the output).
+        let [arg, out] = arguments else {
+            return vec![crate::constraint::impossible(
+                crate::constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: crate::core::Atom {
+                        span: self.span.clone(),
+                        head: GET_FRESH_PRIM_NAME.to_string(),
+                        args: arguments.to_vec(),
+                    },
+                    expected: 2,
+                },
+            )];
+        };
+        let string_sort = typeinfo.get_sort_by_name("String");
+        // At real type-checking time the first arg is the sort-name string literal;
+        // resolve the output eq-sort from it. At `accept`/resolution time the
+        // constraint is run over placeholder literals (no real string), so fall
+        // back to only requiring the first arg to be a `String` — the output sort
+        // then comes from the already-resolved types.
+        if let crate::core::AtomTerm::Literal(_, crate::ast::Literal::String(sort_name)) = arg
+            && let Some(out_sort) = typeinfo.get_sort_by_name(sort_name)
+        {
+            let mut cs = vec![crate::constraint::assign(out.clone(), out_sort.clone())];
+            if let Some(ss) = string_sort {
+                cs.push(crate::constraint::assign(arg.clone(), ss.clone()));
+            }
+            return cs;
+        }
+        match string_sort {
+            Some(ss) => vec![crate::constraint::assign(arg.clone(), ss.clone())],
+            None => vec![],
+        }
     }
 }
