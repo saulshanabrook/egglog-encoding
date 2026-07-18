@@ -18,14 +18,19 @@
 
 use crate::*;
 
-/// Deterministic name of an FD view's `set-if-empty` primitive.
+/// Deterministic name of an FD view's `set-if-empty` primitive. The stable
+/// `set-if-empty-` prefix carries no internal-symbol marker, so a name-sanitizer
+/// leaves it alone; only the embedded `view_name` (a fresh internal symbol) is
+/// rewritten, and it is rewritten identically here and at the view's declaration,
+/// so the primitive stays resolvable when the desugared program is re-parsed.
 pub(crate) fn set_if_empty_prim_name(view_name: &str) -> String {
-    format!("@set-if-empty-{view_name}!")
+    format!("set-if-empty-{view_name}!")
 }
 
-/// Deterministic name of an FD view's proof-column read primitive.
+/// Deterministic name of an FD view's proof-column read primitive. See
+/// [`set_if_empty_prim_name`] for why the prefix carries no internal marker.
 pub(crate) fn view_proof_prim_name(view_name: &str) -> String {
-    format!("@view-proof-{view_name}")
+    format!("view-proof-{view_name}")
 }
 
 /// Register an FD view's `set-if-empty` primitive and (in proof mode) its
