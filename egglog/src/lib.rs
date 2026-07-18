@@ -539,6 +539,20 @@ impl EGraph {
             proofs::proof_encoding_helpers::OrientProof::max(),
             Some(orient_proof_validator(false)),
         );
+        // `select-eq test cand if-eq else`: keeps a custom FD-view merge's proof
+        // column stable (reuse a premise proof on an unchanged output). See
+        // [`crate::proofs::proof_encoding_helpers::SelectEqProof`].
+        let select_eq_validator: PrimitiveValidator =
+            Arc::new(|_: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+                let [test, cand, if_eq, els] = args else {
+                    return None;
+                };
+                Some(if test == cand { *if_eq } else { *els })
+            });
+        eg.add_pure_primitive(
+            proofs::proof_encoding_helpers::SelectEqProof,
+            Some(select_eq_validator),
+        );
 
         eg.rulesets
             .insert("".into(), Ruleset::Rules(Default::default()));

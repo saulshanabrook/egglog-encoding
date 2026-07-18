@@ -56,12 +56,11 @@ pub(crate) struct EncodingNames {
 pub(crate) enum Justification {
     Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
-    Merge(String, String, String), // function name, proof1, proof2
     /// Term-free merge justification for a merge-body subexpression: function
     /// name, the two premise (view) proof expressions, and the pre-order index of
     /// this subexpression in the merge body (matches the checker's
-    /// `subexpr_at_index`). Unlike `Merge`, it embeds no AST, so it needs neither
-    /// the merged term nor the function key/children — usable in a `:merge` action.
+    /// `subexpr_at_index`). It embeds no AST, so it needs neither the merged term
+    /// nor the function key/children — usable in a `:merge` action.
     MergeIdx(String, String, String, usize),
     /// Term-free merge justification for the whole view row (function name + two
     /// premise proof expressions). The conclusion `f(children, merged)` is
@@ -819,6 +818,68 @@ impl crate::constraint::TypeConstraint for OrientProofTypeConstraint {
             crate::constraint::eq(arguments[2].clone(), arguments[0].clone()),
             crate::constraint::eq(arguments[3].clone(), arguments[1].clone()),
             crate::constraint::eq(arguments[4].clone(), arguments[1].clone()),
+        ]
+    }
+}
+
+/// The `select-eq` primitive: `(select-eq test cand if-eq else) -> if-eq` when
+/// `test == cand`, else `else`. Typed `(T T P P) -> P` for any sorts `T` and `P`.
+///
+/// Used by a custom function's FD-view `:merge` to keep its proof column stable:
+/// when the merged output equals a colliding premise's output, reuse that
+/// premise's existing proof rather than mint a fresh one. Without this the proof
+/// column would change on every idempotent merge (`min`/`max`/...), bumping the
+/// row's timestamp and preventing saturation.
+#[derive(Clone)]
+pub(crate) struct SelectEqProof;
+
+impl crate::Primitive for SelectEqProof {
+    fn name(&self) -> &str {
+        "select-eq"
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn crate::constraint::TypeConstraint> {
+        Box::new(SelectEqProofTypeConstraint { span: span.clone() })
+    }
+}
+
+impl crate::PurePrim for SelectEqProof {
+    fn apply<'a, 'db>(&self, _state: crate::PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [test, cand, if_eq, els] = args else {
+            return None;
+        };
+        Some(if test == cand { *if_eq } else { *els })
+    }
+}
+
+struct SelectEqProofTypeConstraint {
+    span: Span,
+}
+
+impl crate::constraint::TypeConstraint for SelectEqProofTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[crate::core::AtomTerm],
+        _typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, crate::ArcSort>>> {
+        // `(test cand if-eq else) -> out`: `test`/`cand` share one sort;
+        // `if-eq`/`else`/`out` another.
+        if arguments.len() != 5 {
+            return vec![crate::constraint::impossible(
+                crate::constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: crate::core::Atom {
+                        span: self.span.clone(),
+                        head: "select-eq".to_string(),
+                        args: arguments.to_vec(),
+                    },
+                    expected: 5,
+                },
+            )];
+        }
+        vec![
+            crate::constraint::eq(arguments[1].clone(), arguments[0].clone()),
+            crate::constraint::eq(arguments[3].clone(), arguments[2].clone()),
+            crate::constraint::eq(arguments[4].clone(), arguments[2].clone()),
         ]
     }
 }
