@@ -20,7 +20,7 @@ use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
     CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
     MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId, TaggedRowBuffer, Value,
-    WrappedTable,
+    WrappedTable, make_external_func,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
@@ -310,6 +310,53 @@ impl EGraph {
         func: Box<dyn ExternalFunction + 'static>,
     ) -> ExternalFunctionId {
         self.db.add_external_function(func)
+    }
+
+    /// Register the term encoder's `set-if-empty` canonicalize op for the FD
+    /// view table named `view_name` (`n_keys` key columns), returning the
+    /// [`ExternalFunctionId`] its mint sites resolve to. At invoke: look up
+    /// `(view keys)`; if a row exists return its first output (the eclass);
+    /// otherwise insert `(keys, trailing-default-columns)` and return the first
+    /// default column. Serviced over this backend's db view table.
+    pub fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        _out_arity: usize,
+    ) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                let keys = &args[..n_keys];
+                if let Some(vals) = action.lookup_values(state, keys) {
+                    // Already canonicalized: reuse the committed eclass and skip
+                    // the insert, so the fresh id never enters the table.
+                    return Some(vals[0]);
+                }
+                action.insert(state, args.iter().copied());
+                Some(args[n_keys])
+            },
+        )))
+    }
+
+    /// Register the term encoder's view-proof reader for the FD view named
+    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> proof`, returning
+    /// output column 1 for `keys` or `fallback` when the key is absent.
+    pub fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
+        let registry = self.action_registry.clone();
+        self.register_external_func(Box::new(make_external_func(
+            move |state: &mut ExecutionState, args: &[Value]| {
+                let registry = registry.read().unwrap();
+                let action = registry.lookup_table(&view_name)?.clone();
+                let fallback = args[n_keys];
+                Some(match action.lookup_values(state, &args[..n_keys]) {
+                    Some(vals) => vals[1],
+                    None => fallback,
+                })
+            },
+        )))
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {

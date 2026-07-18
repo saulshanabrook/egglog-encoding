@@ -222,6 +222,19 @@ impl Backend for EGraph {
         EGraph::new_panic(self, message)
     }
 
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    ) -> ExternalFunctionId {
+        EGraph::register_set_if_empty(self, view_name, n_keys, out_arity)
+    }
+
+    fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
+        EGraph::register_view_proof(self, view_name, n_keys)
+    }
+
     fn set_report_level(&mut self, level: ReportLevel) {
         EGraph::set_report_level(self, level);
     }

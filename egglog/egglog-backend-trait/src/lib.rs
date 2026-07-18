@@ -87,6 +87,7 @@ use std::any::{Any, TypeId};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
+use egglog_numeric_id::NumericId;
 
 mod backend_impl;
 
@@ -327,6 +328,59 @@ pub trait Backend: Send + Sync {
     /// site, trigger the backend's normal early-stop path, and make the next
     /// [`Backend::run_rules`] return the provided message as an error.
     fn new_panic(&mut self, message: String) -> ExternalFunctionId;
+
+    // -- term-encoding mint/canonicalize ops --------------------------------
+    //
+    // The term encoder represents terms as relation rows minted with fresh ids
+    // and canonicalized against per-constructor "FD view" tables. These three
+    // ops let each backend service that minting/canonicalization against its
+    // own storage (db tables for the reference bridge; a host-side mirror for a
+    // relational backend), so the encoding does not reach into one backend's
+    // internals directly.
+
+    /// Register the `get-fresh!` mint op for one eq-sort. Returns the
+    /// [`ExternalFunctionId`] its mint sites (`(@get-fresh-<Sort>!)`) resolve
+    /// to. The default mints an impure `() -> id` value from the backend's
+    /// [`Backend::eclass_id_counter`], so it works for any counter-based
+    /// backend. Called only when [`Backend::eclass_id_counter`] is `Some`.
+    fn register_get_fresh(&mut self) -> ExternalFunctionId {
+        let counter = self
+            .eclass_id_counter()
+            .expect("register_get_fresh requires an eq-class id counter");
+        self.register_external_func(Box::new(egglog_core_relations::make_external_func(
+            move |state: &mut ExecutionState, _args: &[Value]| {
+                Some(Value::from_usize(state.inc_counter(counter)))
+            },
+        )))
+    }
+
+    /// Register the `set-if-empty` canonicalize op for the FD view table named
+    /// `view_name` (`n_keys` key columns, `out_arity` output columns
+    /// `(eclass, …)`). Returns the [`ExternalFunctionId`] its call sites resolve
+    /// to. Semantics at invoke: look up `(view keys)`; if a row exists return its
+    /// first output (the eclass); otherwise insert `(keys, default_vals)` — the
+    /// trailing `out_arity` args — and return `default_vals[0]`. The default
+    /// registers a panic, so a backend that cannot service it fails with a clear
+    /// message rather than silently.
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        _n_keys: usize,
+        _out_arity: usize,
+    ) -> ExternalFunctionId {
+        self.new_panic(format!(
+            "this backend does not support set-if-empty for view `{view_name}`"
+        ))
+    }
+
+    /// Register the view-proof reader for the FD view named `view_name`
+    /// (`n_keys` key columns): `(keys, fallback) -> proof`, returning output
+    /// column 1 for `keys` or `fallback` when the key is absent. Default panics.
+    fn register_view_proof(&mut self, view_name: String, _n_keys: usize) -> ExternalFunctionId {
+        self.new_panic(format!(
+            "this backend does not support view-proof reads for view `{view_name}`"
+        ))
+    }
 
     // -- diagnostics --------------------------------------------------------
 

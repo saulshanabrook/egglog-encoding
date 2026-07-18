@@ -172,6 +172,27 @@ pub struct EGraph {
     /// cloned external functions share this channel, matching the reference
     /// bridge's panic-function behavior.
     panic_message: Arc<Mutex<Option<String>>>,
+    /// Relation name → `FunctionId`, populated by `add_table`. Lets the term
+    /// encoder's `set-if-empty` / view-proof ops (registered by view NAME before
+    /// the view table exists) resolve their view to a live relation at invoke
+    /// time.
+    pub(crate) table_ids: HashMap<String, FunctionId>,
+    /// `set-if-empty` ops keyed by the `ExternalFunctionId` the frontend resolves
+    /// their call sites to. The interpreter services these against the `mirror`
+    /// instead of calling the (panic) db external function.
+    pub(crate) set_if_empty_ops: HashMap<ExternalFunctionId, ViewOp>,
+    /// View-proof reader ops, keyed like `set_if_empty_ops`.
+    pub(crate) view_proof_ops: HashMap<ExternalFunctionId, ViewOp>,
+}
+
+/// A term-encoding view op (`set-if-empty` or view-proof) the DD interpreter
+/// services against its `mirror`: the FD view table name plus its key/output
+/// column counts.
+#[derive(Clone)]
+pub(crate) struct ViewOp {
+    pub(crate) view_name: String,
+    pub(crate) n_keys: usize,
+    pub(crate) out_arity: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -238,6 +259,9 @@ impl EGraph {
             subsumed_versions: HashMap::new(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Default::default(),
+            table_ids: HashMap::new(),
+            set_if_empty_ops: HashMap::new(),
+            view_proof_ops: HashMap::new(),
         }
     }
 
@@ -886,11 +910,18 @@ impl<'a> MergeTransaction<'a> {
             }),
             MergeFn::Const(value) => Ok(value.rep()),
             MergeFn::Primitive(id, arguments) => {
-                let arguments = self
-                    .eval_args(arguments, owner, old, new, self_col, environment)?
-                    .into_iter()
-                    .map(Value::new)
-                    .collect::<Vec<_>>();
+                let args = self.eval_args(arguments, owner, old, new, self_col, environment)?;
+                // A custom merge lowered into the FD view's `:merge` may build
+                // terms, so the term encoder's `set-if-empty` / view-proof ops can
+                // be invoked here too. Service them against the transaction's own
+                // view state (the db external function for them only panics).
+                if let Some(op) = self.eg.set_if_empty_ops.get(id).cloned() {
+                    return self.set_if_empty_in_merge(&op, &args);
+                }
+                if let Some(op) = self.eg.view_proof_ops.get(id).cloned() {
+                    return self.view_proof_in_merge(&op, &args);
+                }
+                let arguments = args.into_iter().map(Value::new).collect::<Vec<_>>();
                 self.eg
                     .eval_prim_internal(*id, &arguments)?
                     .map(|value| value.rep())
@@ -963,6 +994,54 @@ impl<'a> MergeTransaction<'a> {
             },
         );
         Ok(Some(values))
+    }
+
+    /// Service a `set-if-empty` op invoked from inside a merge, against the
+    /// transaction's staged view state: return the e-class of the current
+    /// `(view keys)` row, or stage `(keys, default_vals)` and return the default
+    /// e-class. Mirrors [`crate::interpret`]'s action-time handler, but reads and
+    /// writes the transaction so same-transaction inserts and rollback apply.
+    fn set_if_empty_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
+        let view = self.view_op_table(op)?;
+        let n_keys = op.n_keys;
+        let key: Row = args[..n_keys].into();
+        if let Some(current) = self.current_row(view, n_keys, &key) {
+            return Ok(current.values[0]);
+        }
+        let values: Row = args[n_keys..n_keys + op.out_arity].into();
+        let eclass = values[0];
+        self.set_current(
+            view,
+            n_keys,
+            key,
+            CurrentRow {
+                values,
+                location: RowLocation::Live,
+                rows_for_key: 1,
+            },
+        );
+        Ok(eclass)
+    }
+
+    /// Service a view-proof read invoked from inside a merge: the proof column
+    /// (output col 1) of the current `(view keys)` row, or the `fallback` arg.
+    fn view_proof_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
+        let view = self.view_op_table(op)?;
+        let n_keys = op.n_keys;
+        let key: Row = args[..n_keys].into();
+        let fallback = args[n_keys];
+        Ok(match self.current_row(view, n_keys, &key) {
+            Some(current) => current.values[1],
+            None => fallback,
+        })
+    }
+
+    fn view_op_table(&self, op: &ViewOp) -> Result<FunctionId> {
+        self.eg
+            .table_ids
+            .get(&op.view_name)
+            .copied()
+            .ok_or_else(|| anyhow!("view op table `{}` is not registered", op.view_name))
     }
 }
 
@@ -2174,6 +2253,7 @@ impl Backend for EGraph {
                 });
             merge_level = merge_level.max(dependency.merge_level + 1);
         });
+        self.table_ids.insert(config.name.clone(), id);
         self.relations.push(RelationInfo {
             name: config.name,
             arity,
@@ -2403,6 +2483,48 @@ impl Backend for EGraph {
             )))
     }
 
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    ) -> ExternalFunctionId {
+        // The interpreter intercepts this id and services it against the mirror
+        // (see `interpret::apply_head`); the registered db function only fires if
+        // that interception is ever missed, so make it a loud error.
+        let id = Backend::new_panic(
+            self,
+            format!("set-if-empty for `{view_name}` reached the db path; DD must intercept it"),
+        );
+        self.set_if_empty_ops.insert(
+            id,
+            ViewOp {
+                view_name,
+                n_keys,
+                out_arity,
+            },
+        );
+        id
+    }
+
+    fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
+        let id = Backend::new_panic(
+            self,
+            format!("view-proof for `{view_name}` reached the db path; DD must intercept it"),
+        );
+        self.view_proof_ops.insert(
+            id,
+            ViewOp {
+                view_name,
+                n_keys,
+                // A view-proof reader never inserts, so out_arity is unused; the
+                // view always has (eclass, proof) outputs.
+                out_arity: 2,
+            },
+        );
+        id
+    }
+
     // -- capability flags ---------------------------------------------------
 
     fn requires_term_encoding(&self) -> bool {
@@ -2454,6 +2576,9 @@ impl Backend for EGraph {
             subsumed_versions: self.subsumed_versions.clone(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Arc::clone(&self.panic_message),
+            table_ids: self.table_ids.clone(),
+            set_if_empty_ops: self.set_if_empty_ops.clone(),
+            view_proof_ops: self.view_proof_ops.clone(),
         })
     }
 
