@@ -143,8 +143,11 @@ pub struct EGraph {
     /// A core-relations [`Database`] used purely as the base-value / primitive
     /// engine, so `Value`s are bit-for-bit identical to the reference backend.
     db: Database,
-    /// Monotonic fresh-id counter for `fresh_id` / `add_term`.
-    pub(crate) next_id: u32,
+    /// Monotonic fresh-id counter, shared by the native `FreshId` default
+    /// (`fresh_id_internal`) and the term encoder's `get-fresh!` primitive (via
+    /// [`Backend::eclass_id_counter`]) so the two id sources never collide. Lives
+    /// in `db` (survives `db.clone()`); `id_counter` is its handle.
+    pub(crate) id_counter: CounterId,
     /// Atom-less rules (`(rule () …)`) fire ONCE; an entry here marks a rule
     /// index as already fired. The DD dataflow has no input relation to drive an
     /// atom-less body, so this fired-marker is the one piece of seminaive
@@ -215,14 +218,18 @@ impl EGraph {
         // `register_type` is idempotent, so a later frontend registration is a
         // no-op that returns the same id.
         db.base_values_mut().register_type::<()>();
+        // One counter feeds both `fresh_id_internal` and `get-fresh!`. Burn its
+        // initial 0 so the first minted id is 1, keeping 0 as a "null"/padding
+        // sentinel for the fixed-width DD rows.
+        let id_counter = db.add_counter();
+        db.inc_counter(id_counter);
         EGraph {
             relations: Vec::new(),
             rules: Vec::new(),
             mirror: HashMap::new(),
             subsumed: HashMap::new(),
             db,
-            // Start at 1 so id 0 stays a "null"/padding sentinel.
-            next_id: 1,
+            id_counter,
             seen: HashMap::new(),
             dd_fused: DdWorkers::default(),
             next_row_version: 1,
@@ -435,9 +442,7 @@ impl EGraph {
     }
 
     pub(crate) fn fresh_id_internal(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+        self.db.inc_counter(self.id_counter) as u32
     }
 
     /// Apply full-row sets in dependency-ordered waves. Merge-generated sets
@@ -623,7 +628,7 @@ struct MergeTransaction<'a> {
 
 impl<'a> MergeTransaction<'a> {
     fn new(eg: &'a mut EGraph, sets: Vec<(FunctionId, Row)>) -> Self {
-        let next_id_at_start = eg.next_id;
+        let next_id_at_start = eg.db.read_counter(eg.id_counter) as u32;
         Self {
             eg,
             pending: sets,
@@ -638,7 +643,9 @@ impl<'a> MergeTransaction<'a> {
     fn run(mut self) -> Result<bool> {
         let result = self.run_inner();
         if result.is_err() {
-            self.eg.next_id = self.next_id_at_start;
+            self.eg
+                .db
+                .set_counter(self.eg.id_counter, self.next_id_at_start as usize);
         }
         result
     }
@@ -678,7 +685,8 @@ impl<'a> MergeTransaction<'a> {
             self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
         }
 
-        Ok(self.changed || self.eg.next_id != self.next_id_at_start)
+        Ok(self.changed
+            || self.eg.db.read_counter(self.eg.id_counter) as u32 != self.next_id_at_start)
     }
 
     fn ensure_state(&mut self, function: FunctionId, n_keys: usize) {
@@ -1488,12 +1496,12 @@ mod tests {
             false,
         );
         eg.insert_live_row(f, row(&[1, 10, 20]));
-        let next_id = eg.next_id;
+        let next_id = eg.db.read_counter(eg.id_counter);
 
         let error = eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap_err();
 
         assert!(error.to_string().contains("illegal merge attempted"));
-        assert_eq!(eg.next_id, next_id);
+        assert_eq!(eg.db.read_counter(eg.id_counter), next_id);
         assert!(eg.mirror[&fresh].is_empty());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 20])]));
     }
@@ -1679,7 +1687,7 @@ mod tests {
     fn lookup_or_create_finds_subsumed_rows() {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        eg.next_id = 100;
+        eg.db.set_counter(eg.id_counter, 100);
         eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
 
         let mut lookup_index = HashMap::new();
@@ -1687,7 +1695,7 @@ mod tests {
             interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index).unwrap();
 
         assert_eq!(value[0], 7);
-        assert_eq!(eg.next_id, 100);
+        assert_eq!(eg.db.read_counter(eg.id_counter), 100);
         assert!(eg.mirror[&f].is_empty());
     }
 
@@ -1961,7 +1969,11 @@ mod tests {
         assert_eq!(cloned.rules.len(), eg.rules.len());
         assert_eq!(cloned.mirror, eg.mirror);
         assert_eq!(cloned.subsumed, eg.subsumed);
-        assert_eq!(cloned.next_id, eg.next_id);
+        assert_eq!(cloned.id_counter, eg.id_counter);
+        assert_eq!(
+            cloned.db.read_counter(cloned.id_counter),
+            eg.db.read_counter(eg.id_counter)
+        );
         assert_eq!(cloned.next_row_version, eg.next_row_version);
         assert_eq!(cloned.live_versions, eg.live_versions);
         assert_eq!(cloned.all_versions, eg.all_versions);
@@ -2278,6 +2290,12 @@ impl Backend for EGraph {
         Some(self.db.add_counter())
     }
 
+    fn eclass_id_counter(&self) -> Option<CounterId> {
+        // Same counter `fresh_id_internal` mints from, so the term encoder's
+        // `get-fresh!` ids and native `FreshId`-default ids share one id space.
+        Some(self.id_counter)
+    }
+
     fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
         // The supported proof/term subset interns container values but does not
         // rely on merging distinct ids for one rebuilt value. Keep that subset's
@@ -2427,7 +2445,7 @@ impl Backend for EGraph {
             mirror: self.mirror.clone(),
             subsumed: self.subsumed.clone(),
             db: self.db.clone(),
-            next_id: self.next_id,
+            id_counter: self.id_counter,
             seen: self.seen.clone(),
             dd_fused: DdWorkers::default(),
             next_row_version: self.next_row_version,

@@ -122,7 +122,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
 
     // Snapshot the fresh-id counter: any hash-cons (`lookup_or_create`) this
     // call advances it, the O(1) signal that a new term row was created.
-    let next_id_at_start = eg.next_id;
+    let next_id_at_start = eg.db.read_counter(eg.id_counter);
 
     let mut writes: Vec<Write> = Vec::new();
     // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
@@ -162,7 +162,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
     // full before/after content compare. A hash-cons in `lookup_or_create`
     // always allocates a fresh id, so any term created this call advances
     // `next_id` — that alone is a real mirror change.
-    let mut changed = eg.next_id != next_id_at_start;
+    let mut changed = eg.db.read_counter(eg.id_counter) != next_id_at_start;
     let mut removes_by_func: RemovesByFunc = HashMap::new();
     let mut sets: Vec<(FunctionId, Row)> = Vec::new();
     let mut subsumes: Vec<(FunctionId, Vec<u32>)> = Vec::new();
