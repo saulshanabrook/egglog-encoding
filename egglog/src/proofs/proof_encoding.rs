@@ -883,6 +883,50 @@ impl<'a> ProofInstrumentor<'a> {
                       :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
             ));
         }
+        // Custom-with-merge FD views with an eq-sort output: canonicalize the output
+        // value when it is unioned to a smaller leader. We must NOT re-`set` the same
+        // key (that would re-run the user merge on `(out, out_canon)`); instead
+        // `delete` the stale row and `set` the canonical one, so the re-`set` sees an
+        // empty key and inserts without merging. The row proof is rewritten by
+        // congruence at the output position.
+        if fd
+            && fdecl.subtype == FunctionSubtype::Custom
+            && types[n - 1].is_eq_sort()
+            && n_keys == n - 1
+        {
+            let out_idx = n - 1;
+            let out_uf_name = self.uf_name(types[out_idx].name());
+            let (query_view, out_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
+            let out_canon = self.fresh_var();
+            let uf_prf = self.fresh_var();
+            let (proof_lets, pf_arg) = if proofs {
+                let congr = self.proof_names().congr_constructor.clone();
+                let proof_sort = self.proof_sort();
+                let mut lets = vec![];
+                let new_pf = self.mint(
+                    &mut lets,
+                    &congr,
+                    &format!("{view_prf} {out_idx} {uf_prf}"),
+                    &proof_sort,
+                );
+                (lets.join("\n                      "), new_pf)
+            } else {
+                (String::new(), "()".to_string())
+            };
+            let set_canon = self.update_fd_view(&fdecl.name, &key_vars, &out_canon, &pf_arg);
+            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
+            rules.push_str(&format!(
+                "(rule ({query_view}
+                        (= (values {out_canon} {uf_prf}) ({out_uf_name} {out_var}))
+                        (!= {out_var} {out_canon}))
+                     (
+                      {proof_lets}
+                      (delete ({view_name} {keys_str}))
+                      {set_canon}
+                     )
+                      :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
+            ));
+        }
         self.parse_program(&rules)
     }
 

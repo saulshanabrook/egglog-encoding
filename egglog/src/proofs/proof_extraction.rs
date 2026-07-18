@@ -111,14 +111,21 @@ impl ProofInstrumentor<'_> {
             panic!("Failed to remove globals from proof: {e}");
         }
 
-        // if the existence proof has a single premise, extract that premise proof
+        // If the existence proof is a single-premise rule, strip that wrapping rule
+        // and use its premise. Otherwise there is no wrapping rule to remove, so use
+        // the proof as-is (a valid existence proof need not be rule-justified — it may
+        // be `Fiat`/`Merge`/`Congr`/…; `check_proof` below validates it either way).
+        // Assuming a `Rule` here made this order-dependent: the witness is a
+        // constructor's first row, and a backend that iterates rows in a different
+        // order (e.g. the differential-dataflow backend's `HashSet` mirror) can
+        // surface a non-rule-justified row.
         let proof = proof_store.get(proof_id);
         let extra_rule_removed = match proof.justification() {
             Justification::Rule { premise_proofs, .. } => match premise_proofs.as_slice() {
                 [premise_proof_id] => *premise_proof_id,
                 _ => proof_id,
             },
-            _ => panic!("expected rule justification for existence proof"),
+            _ => proof_id,
         };
 
         // Check the proof before simplification
