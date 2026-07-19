@@ -2400,15 +2400,19 @@ impl EGraph {
                 desugared_before_proofs: vec![],
             })
         } else {
-            // Input expansion needs resolved schemas. Lower it once here so the
-            // encoded execution and proof checker consume the same fiat actions.
-            let resolved_before_proofs =
-                ProofInstrumentor::lower_inputs(self, resolved_before_proofs)?;
+            // Input expansion needs resolved schemas. Two lowerings from the same
+            // source: the proof checker consumes the per-row top-level fiat actions,
+            // while execution batches each `(input …)` into one bodyless fiat-loader
+            // rule so its mints are local rule-head lets (no per-mint global
+            // function — the O(N²)/many-tables blowup). Both produce the same facts
+            // and Fiat proofs.
+            let per_row_before_proofs =
+                ProofInstrumentor::lower_inputs(self, resolved_before_proofs.clone())?;
+            let for_execution =
+                ProofInstrumentor::lower_inputs_as_loader_rules(self, resolved_before_proofs)?;
             // Now remove globals for actual execution (but NOT from desugared_commands)
-            let typechecked_no_globals = proof_global_remover::remove_globals(
-                resolved_before_proofs.clone(),
-                &mut self.parser.symbol_gen,
-            );
+            let typechecked_no_globals =
+                proof_global_remover::remove_globals(for_execution, &mut self.parser.symbol_gen);
             for command in &typechecked_no_globals {
                 self.names.check_shadowing(command)?;
             }
@@ -2435,7 +2439,7 @@ impl EGraph {
             }
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
-                desugared_before_proofs: resolved_before_proofs,
+                desugared_before_proofs: per_row_before_proofs,
             })
         }
     }
