@@ -283,6 +283,26 @@ pub trait Backend: Send + Sync {
         None
     }
 
+    // -- native fact loading (`(input …)`) ----------------------------------
+    //
+    // The frontend loads `(input …)` facts by minting ids and inserting the
+    // encoded term/view (and, in proof mode, AST/proof) rows directly, rather
+    // than compiling and running a loader rule. Each backend services these
+    // against its own storage (db buffers for the reference bridge, the
+    // host-side mirror for Differential Dataflow), so input loading never falls
+    // back to rule compilation.
+
+    /// Mint a fresh eq-class id from the backend's shared counter (used for term,
+    /// AST, and proof ids). Panics on a backend without a counter.
+    fn fresh_eclass_id(&mut self) -> Value;
+
+    /// Insert a batch of logical rows and flush. Each `(func, row)` gives a
+    /// function id and its row as keys followed by all value columns (no
+    /// timestamp/subsumption — the backend fills those in). Duplicate view keys
+    /// are resolved by the view's `:merge` on flush, so callers plain-insert
+    /// rather than get-or-insert.
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>);
+
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 
     /// Run `f` against a fresh execution state and return whether it staged any

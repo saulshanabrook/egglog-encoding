@@ -195,6 +195,14 @@ impl Backend for EGraph {
         build_rule(self, rule)
     }
 
+    fn fresh_eclass_id(&mut self) -> Value {
+        EGraph::fresh_id(self)
+    }
+
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
+        EGraph::add_values(self, values);
+    }
+
     fn free_rule(&mut self, id: RuleId) {
         EGraph::free_rule(self, id);
     }

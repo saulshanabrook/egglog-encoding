@@ -2145,7 +2145,13 @@ impl EGraph {
                 }
             }
             ResolvedNCommand::Input { span, name, file } => {
-                self.input_file(span, &name, file)?;
+                // Term/proof encoding loads inputs natively into the encoded tables;
+                // off mode uses the plain relation loader.
+                if self.proof_state.original_typechecking.is_some() {
+                    self.native_input(span, &name, file)?;
+                } else {
+                    self.input_file(span, &name, file)?;
+                }
             }
             ResolvedNCommand::Output { span, file, exprs } => {
                 let mut filename = self.fact_directory.clone().unwrap_or_default();
@@ -2347,6 +2353,101 @@ impl EGraph {
         Ok(())
     }
 
+    /// Load `(input …)` facts natively in term/proof mode. For each row we mint a
+    /// term id (and, in proof mode, its AST + fiat-proof ids) and insert the
+    /// encoded term-relation, view, and proof rows directly via the backend SPI,
+    /// instead of compiling/running a loader rule. Rows are plain-inserted (no
+    /// get-or-insert): a duplicate view key is resolved by the view's `:merge`.
+    /// The proof checker keeps using the per-row top-level fiat actions
+    /// (`desugared_before_proofs`); this just materializes the same table state,
+    /// so it works identically on any backend that services `add_values`.
+    ///
+    /// Handles the constructor-shaped encoding (relations and constructors:
+    /// `(F children… term-id) Unit` + FD view `(children…) -> (term-id, proof)`).
+    fn native_input(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
+        // The CSV columns are the *original* (pre-encoding) base-typed inputs.
+        let function_type = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .and_then(|tc| tc.type_info.get_func_type(func_name))
+            .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"))
+            .clone();
+        let rows =
+            Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
+        let proofs = self.proof_state.proofs_enabled;
+        let unit_val = self.backend.base_values().get(());
+
+        // Convert literals to values up front (ends the `&backend` borrow before minting).
+        let value_rows: Vec<Vec<Value>> = rows
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|lit| match lit {
+                        Literal::Int(v) => self.backend.base_values().get(*v),
+                        Literal::Float(v) => self
+                            .backend
+                            .base_values()
+                            .get::<F>(core_relations::Boxed::new(*v)),
+                        Literal::String(v) => self.backend.base_values().get::<S>(v.clone().into()),
+                        Literal::Unit => unit_val,
+                        Literal::Bool(_) => unreachable!(),
+                    })
+                    .collect()
+            })
+            .collect();
+
+        // Resolve the encoded tables for this function.
+        let f_id = self.functions[func_name].backend_id;
+        let view_id = {
+            let n = self.proof_state.proof_names.view_name[func_name].clone();
+            self.functions[&n].backend_id
+        };
+        let proof_tables = proofs.then(|| {
+            let sort = self.proof_state.proof_names.fn_to_term_sort[func_name].clone();
+            let ast = self.proof_state.proof_names.sort_to_ast_constructor[&sort].clone();
+            let pf = self.proof_state.proof_names.term_proof_name[&sort].clone();
+            let fiat = self.proof_state.proof_names.fiat_constructor.clone();
+            (
+                self.functions[&ast].backend_id,
+                self.functions[&pf].backend_id,
+                self.functions[&fiat].backend_id,
+            )
+        });
+
+        let num_facts = value_rows.len();
+        let mut batch: Vec<(egglog_bridge::FunctionId, Vec<Value>)> = Vec::new();
+        for children in value_rows {
+            let fv = self.backend.fresh_eclass_id();
+            // Term-relation row: children + term id + Unit output.
+            let mut frow = children.clone();
+            frow.push(fv);
+            frow.push(unit_val);
+            batch.push((f_id, frow));
+            let view_proof = if let Some((ast_id, proof_func_id, fiat_id)) = proof_tables {
+                // Fiat proof of the base fact: `@Fiat(ast(fv), ast(fv))`.
+                let a1 = self.backend.fresh_eclass_id();
+                batch.push((ast_id, vec![fv, a1, unit_val]));
+                let a2 = self.backend.fresh_eclass_id();
+                batch.push((ast_id, vec![fv, a2, unit_val]));
+                let pf = self.backend.fresh_eclass_id();
+                batch.push((fiat_id, vec![a1, a2, pf, unit_val]));
+                batch.push((proof_func_id, vec![fv, pf]));
+                pf
+            } else {
+                unit_val
+            };
+            // FD view row: children + term id + proof (Unit when proofs are off).
+            let mut vrow = children;
+            vrow.push(fv);
+            vrow.push(view_proof);
+            batch.push((view_id, vrow));
+        }
+        self.backend.add_values(batch);
+        log::info!("Natively loaded {num_facts} facts into {func_name} from '{file}'.");
+        Ok(())
+    }
+
     /// Returns true if proofs are enabled.
     pub fn are_proofs_enabled(&self) -> bool {
         self.proof_state.proofs_enabled
@@ -2400,17 +2501,15 @@ impl EGraph {
                 desugared_before_proofs: vec![],
             })
         } else {
-            // Input expansion needs resolved schemas. Two lowerings from the same
-            // source: the proof checker consumes the per-row top-level fiat actions,
-            // while execution batches each `(input …)` into one bodyless fiat-loader
-            // rule so its mints are local rule-head lets (no per-mint global
-            // function — the O(N²)/many-tables blowup). Both produce the same facts
-            // and Fiat proofs.
+            // The proof checker consumes the per-row top-level fiat actions.
             let per_row_before_proofs =
                 ProofInstrumentor::lower_inputs(self, resolved_before_proofs.clone())?;
+            // Execution keeps constructor/relation `(input …)` as `Input` commands
+            // (loaded natively at run time by `EGraph::native_input`, inserting
+            // straight into the encoded tables — no loader rule, no per-mint global
+            // function); custom base-output inputs become a bodyless loader rule.
             let for_execution =
-                ProofInstrumentor::lower_inputs_as_loader_rules(self, resolved_before_proofs)?;
-            // Now remove globals for actual execution (but NOT from desugared_commands)
+                ProofInstrumentor::lower_inputs_for_execution(self, resolved_before_proofs)?;
             let typechecked_no_globals =
                 proof_global_remover::remove_globals(for_execution, &mut self.parser.symbol_gen);
             for command in &typechecked_no_globals {

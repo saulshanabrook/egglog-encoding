@@ -2398,6 +2398,19 @@ impl Backend for EGraph {
         Ok(id)
     }
 
+    fn fresh_eclass_id(&mut self) -> Value {
+        Value::new(self.fresh_id_internal())
+    }
+
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
+        // Insert each logical row (keys + value columns) straight into the mirror.
+        // Duplicate view keys are resolved by the view's `:merge` on the next run.
+        for (func, row) in values {
+            let r: Row = row.iter().map(|v| v.rep()).collect();
+            self.insert_live_row(func, r);
+        }
+    }
+
     fn free_rule(&mut self, id: RuleId) {
         if let Some(slot) = self.rules.get_mut(id.rep() as usize) {
             *slot = None;

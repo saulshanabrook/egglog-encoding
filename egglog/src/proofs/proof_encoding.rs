@@ -121,22 +121,42 @@ impl<'a> ProofInstrumentor<'a> {
         Ok(lowered)
     }
 
-    /// Like [`Self::lower_inputs`], but for the **execution** program: each
-    /// `(input …)` becomes a single bodyless "loader" rule (all rows' fiat actions
-    /// in its head) in a fresh ruleset, run once. Because the head is a rule body,
-    /// its fiat mints (`get-fresh!` etc.) are *local* rule-head `let`s rather than
-    /// top-level globals — so global-removal does not create a fresh function per
-    /// mint (the O(N²)/many-tables blowup). The proof checker keeps using the
-    /// per-row top-level form from [`Self::lower_inputs`]; the loader's head is
-    /// later instrumented with `Fiat`, so the resulting proofs are identical and no
-    /// loader rule ever appears in a proof.
-    pub(crate) fn lower_inputs_as_loader_rules(
+    /// Lower `(input …)` for the **execution** program. Constructor-shaped inputs
+    /// (constructors and relations — a fresh term id plus a `Unit` output) are kept
+    /// as `Input` commands and loaded natively at run time
+    /// ([`EGraph::native_input`]): the rows are inserted straight into the encoded
+    /// term/view/proof tables, with no rule to compile.
+    ///
+    /// Custom functions with a *base* output value (e.g. `(function f () String)`)
+    /// don't fit that shape, so each becomes a single bodyless "loader" rule (all
+    /// rows' fiat actions in its head) in a fresh ruleset, run once — the fiat mints
+    /// become *local* rule-head `let`s, so global-removal makes no per-mint function
+    /// (the O(N²)/many-tables blowup). The loader head is instrumented with `Fiat`,
+    /// so proofs match the per-row top-level form the checker uses and no loader
+    /// rule ever appears in a proof.
+    pub(crate) fn lower_inputs_for_execution(
         egraph: &mut EGraph,
         program: Vec<ResolvedNCommand>,
     ) -> Result<Vec<ResolvedNCommand>, Error> {
         let mut lowered = Vec::with_capacity(program.len());
         for command in program {
             if let ResolvedNCommand::Input { span, name, file } = &command {
+                // Only constructor-subtype functions get the FD view / term-sort
+                // encoding that `native_input` inserts into. `(relation …)` desugars
+                // to a constructor, so relations qualify; plain custom functions
+                // (with or without `:merge`, including `:no-merge` Unit-output ones)
+                // do not, and go through the loader rule.
+                let native_shape = egraph
+                    .proof_state
+                    .original_typechecking
+                    .as_ref()
+                    .and_then(|tc| tc.type_info.get_func_type(name))
+                    .map(|ft| ft.subtype == FunctionSubtype::Constructor)
+                    .unwrap_or(false);
+                if native_shape {
+                    lowered.push(command);
+                    continue;
+                }
                 let actions = Self::input_actions(egraph, span, name, file)?;
                 if actions.is_empty() {
                     continue;
@@ -2334,7 +2354,10 @@ impl<'a> ProofInstrumentor<'a> {
                 ));
             }
             ResolvedNCommand::Input { .. } => {
-                unreachable!("inputs should be lowered before term/proof instrumentation")
+                // Loaded natively at run time (see `EGraph::native_input`), inserting
+                // straight into the encoded tables. Pass the command through so
+                // `run_command` dispatches it.
+                res.push(command.to_command().make_unresolved());
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
