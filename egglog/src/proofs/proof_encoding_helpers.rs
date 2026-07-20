@@ -24,7 +24,6 @@ pub(crate) struct EncodingNames {
     pub(crate) proof_datatype: String,
     pub(crate) fiat_constructor: String,
     pub(crate) rule_constructor: String,
-    pub(crate) merge_fn_constructor: String,
     pub(crate) merge_fn_idx_constructor: String,
     pub(crate) merge_fn_row_constructor: String,
     pub(crate) eq_trans_constructor: String,
@@ -77,7 +76,6 @@ impl EncodingNames {
             proof_datatype: symbol_gen.fresh("Proof"),
             fiat_constructor: symbol_gen.fresh("Fiat"),
             rule_constructor: symbol_gen.fresh("Rule"),
-            merge_fn_constructor: symbol_gen.fresh("Merge"),
             merge_fn_idx_constructor: symbol_gen.fresh("MergeIdx"),
             merge_fn_row_constructor: symbol_gen.fresh("MergeRow"),
             eq_trans_constructor: symbol_gen.fresh("Trans"),
@@ -363,7 +361,6 @@ impl ProofInstrumentor<'_> {
             ref proof_datatype,
             ref fiat_constructor,
             ref rule_constructor,
-            ref merge_fn_constructor,
             ref merge_fn_idx_constructor,
             ref merge_fn_row_constructor,
             ref eq_trans_constructor,
@@ -397,10 +394,6 @@ impl ProofInstrumentor<'_> {
 (function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
 ;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
 (function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
-
-;; merge function justification- name of function and two proofs for the two terms being merged,
-;; and the proposition being justified t = t
-(function {merge_fn_constructor} (String {proof_datatype} {proof_datatype} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body

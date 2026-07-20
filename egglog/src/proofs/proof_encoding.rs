@@ -1500,13 +1500,7 @@ impl<'a> ProofInstrumentor<'a> {
                     let e_value =
                         self.instrument_action_expr(generic_expr, &mut res, justification);
                     let proof = if self.proofs_enabled() {
-                        let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
-                        self.term_proof_for_justification(
-                            &mut res,
-                            &e_value,
-                            &to_ast,
-                            justification,
-                        )
+                        self.global_value_proof(&mut res, func_type, &e_value, justification)
                     } else {
                         "()".to_string()
                     };
@@ -1614,6 +1608,39 @@ impl<'a> ProofInstrumentor<'a> {
                     &proof_sort,
                 )
             }
+        }
+    }
+
+    /// Proof stored in a global's FD view for the value `e` it aliases.
+    ///
+    /// When `e` is a built term (e.g. `(Plus …)`), `add_term_and_view` has already
+    /// proved its *natural* form — the literal term the checker reconstructs from
+    /// the global's `(let x e)` — and recorded a `connector : natural = e_value` in
+    /// `nat_conn`. Anchor the global's proof on that natural form (a reflexive
+    /// `e_value = e_value` routed through it) instead of fiat-ing the canonical
+    /// `e_value` directly: `e_value`'s shape may be a rewritten (canonicalized)
+    /// child the checker cannot establish, whereas the natural form is exactly the
+    /// global definition it can. An atomic value (a literal, or a bare reference to
+    /// another global) has no connector and is fiat-ed directly — a literal is
+    /// self-justifying and a global alias is already established.
+    fn global_value_proof(
+        &mut self,
+        res: &mut Vec<String>,
+        func_type: &FuncType,
+        e_value: &str,
+        justification: &Justification,
+    ) -> String {
+        if let Some((_nat, Some(connector))) =
+            self.egraph.proof_state.nat_conn.get(e_value).cloned()
+        {
+            let proof_sort = self.proof_sort();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym_conn = self.mint(res, &sym, &connector, &proof_sort);
+            self.mint(res, &trans, &format!("{sym_conn} {connector}"), &proof_sort)
+        } else {
+            let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+            self.term_proof_for_justification(res, e_value, &to_ast, justification)
         }
     }
 
@@ -2510,23 +2537,33 @@ impl<'a> ProofInstrumentor<'a> {
         for command in program {
             self.term_encode_command(&command, &mut res)?;
 
-            // Rebuild only needs to run after a command that can create new e-class
-            // merges. Among top-level actions only `union` does: a `let`/`set`/insert
-            // aliases or dedups under a fresh view key without merging e-classes. So
-            // we skip the rebuild after every non-`union` top-level action — this is
-            // what stops N global lets from triggering N rebuilds (quadratic). Any
-            // non-canonical id left behind is fixed by the next real rebuild (before a
-            // `run`/`check`), exactly as the native backend defers it.
-            let skip_rebuild = match &command {
-                ResolvedNCommand::Function(..)
-                | ResolvedNCommand::NormRule { .. }
-                | ResolvedNCommand::Sort { .. } => true,
-                ResolvedNCommand::CoreAction(action) => {
-                    !matches!(action, ResolvedAction::Union(..))
+            // A `set` (including a global-let's `(set (g) e)`) or a top-level
+            // expression over non-container sorts builds and dedups terms via
+            // `set-if-empty` without merging e-classes or deferring work, so no
+            // maintenance rebuild is needed after it — this is what stops N
+            // global-let `set`s from each triggering a rebuild (quadratic). We still
+            // rebuild after everything else: `union` merges e-classes, `delete`/
+            // `subsume` defer work to the maintenance ruleset, and a container-valued
+            // action needs the (`:naive`) container rebuild to recanonicalize it —
+            // all need the following rebuild to run.
+            fn touches_container(e: &ResolvedExpr) -> bool {
+                e.output_type().is_eq_container_sort()
+                    || matches!(e, ResolvedExpr::Call(_, _, args) if args.iter().any(touches_container))
+            }
+            let is_set_or_expr = match &command {
+                ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, e)) => !touches_container(e),
+                ResolvedNCommand::CoreAction(ResolvedAction::Set(_, _, args, rhs)) => {
+                    !args.iter().chain(std::iter::once(rhs)).any(touches_container)
                 }
                 _ => false,
             };
-            if !skip_rebuild {
+            if !matches!(
+                &command,
+                ResolvedNCommand::Function(..)
+                    | ResolvedNCommand::NormRule { .. }
+                    | ResolvedNCommand::Sort { .. }
+            ) && !is_set_or_expr
+            {
                 res.push(Command::RunSchedule(self.rebuild()));
             }
         }

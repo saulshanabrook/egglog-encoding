@@ -64,6 +64,9 @@ pub(crate) fn gather_global_actions(
 }
 
 /// Run a merge function and return the resulting term, as well as a set of propositions learned.
+/// Run a function's whole merge body with `old`/`new` bound to `old_term`/`new_term`,
+/// returning the merged term plus propositions learned. This is the `idx == 0` case
+/// of [`run_merge_subexpr`] (index 0 is the whole body).
 pub(crate) fn run_merge(
     term_dag: &mut TermDag,
     func_name: &str,
@@ -71,27 +74,7 @@ pub(crate) fn run_merge(
     old_term: TermId,
     new_term: TermId,
 ) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
-    let mut subst = HashMap::default();
-    subst.insert("old".to_string(), old_term);
-    subst.insert("new".to_string(), new_term);
-    for cmd in prog {
-        if let GenericNCommand::Function(func_decl) = cmd
-            && func_decl.name == func_name
-        {
-            // run the merge function for this function using eval_expr. The proof checker only
-            // evaluates the merged value; action-block merges aren't used under proofs.
-            let merge = func_decl.merge.as_ref().ok_or_else(|| {
-                ProofCheckError::from(ProofCheckErrorKind::FunctionNotFound {
-                    function_name: func_name.to_string(),
-                })
-            })?;
-            return eval_expr_with_subst("merge_function", &merge.result, term_dag, &subst);
-        }
-    }
-    Err(ProofCheckErrorKind::FunctionNotFound {
-        function_name: func_name.to_string(),
-    }
-    .into())
+    run_merge_subexpr(term_dag, func_name, prog, old_term, new_term, 0)
 }
 
 /// Find the subexpression at pre-order position `idx` in `expr`'s tree (index 0 is

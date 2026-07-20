@@ -61,16 +61,13 @@ enum RawProof {
     /// Given a rule name and proofs for each premise, produces a proof of a grounded equality t1 = t2 from the body of the rule.
     /// The subsitution is implicit- in [`ProofTerm`] they are explicit.
     Rule(String, Vec<RawProofId>, TermId, TermId),
-    /// Given two proofs f(c1, c2, ..., old) = f(c1, c2, ..., old) and f(c1, c2, ..., new) = f(c1, c2, ..., new) and a term t produces a proof
-    /// of t = t.
-    /// The term t is either f(c1, c2, ..., merge_fn) or some subexpression of the merge function. Here the merge function is evaluted on the terms old and new.
-    MergeFn(String, RawProofId, RawProofId, TermId),
-    /// Like [`RawProof::MergeFn`] but term-free: instead of an embedded conclusion, the
-    /// index `idx` identifies which subexpression of the merge body this justifies (a
-    /// pre-order index over the body tree). The conclusion is reconstructed during
-    /// conversion by evaluating subexpression `idx` on the premise outputs; the index
-    /// distinguishes nested subexpressions that share the same premises. Used by the
-    /// FD custom-function view merge, which runs without access to children.
+    /// A term-free merge proof: given proofs `f(…, old) = f(…, old)` and
+    /// `f(…, new) = f(…, new)`, the index `idx` identifies which subexpression of the
+    /// merge body this justifies (a pre-order index over the body tree). The
+    /// conclusion is reconstructed during conversion by evaluating subexpression
+    /// `idx` on the premise outputs; the index distinguishes nested subexpressions
+    /// that share the same premises. Used by the FD custom-function view merge, which
+    /// runs without access to children.
     MergeFnIdx(String, RawProofId, RawProofId, usize),
     /// Like [`RawProof::MergeFnIdx`] but for the FD view row (no index). The conclusion
     /// `f(children) = eval(whole merge body)` is reconstructed during conversion by
@@ -285,13 +282,6 @@ impl RawProofStore {
             let old_proof = self.parse_proof(args[1]);
             let new_proof = self.parse_proof(args[2]);
             RawProof::MergeFnRow(function, old_proof, new_proof)
-        } else if head == self.names.merge_fn_constructor {
-            assert!(args.len() == 4, "merge constructor should have 4 args");
-            let function = self.parse_string(args[0]);
-            let old_proof = self.parse_proof(args[1]);
-            let new_proof = self.parse_proof(args[2]);
-            let term = args[3];
-            RawProof::MergeFn(function, old_proof, new_proof, term)
         } else if head == self.names.eq_trans_constructor {
             assert!(args.len() == 2, "trans constructor should have 2 args");
             let left = self.parse_proof(args[0]);
@@ -485,6 +475,54 @@ impl ProofStore {
         })
     }
 
+    /// The two `MergeFn*` premise proofs are reflexive proofs of colliding view
+    /// terms `f(inputs.., output)`. Extract the view head, the shared input args,
+    /// and the two output values from the premises' rhs (read before reflexivizing).
+    fn merge_premise_view(
+        &self,
+        old_proof_id: ProofId,
+        new_proof_id: ProofId,
+    ) -> (String, Vec<TermId>, TermId, TermId) {
+        let old_view = self.id_to_proof[old_proof_id].rhs();
+        let new_view = self.id_to_proof[new_proof_id].rhs();
+        match (self.term_dag.get(old_view), self.term_dag.get(new_view)) {
+            (Term::App(old_head, old_args), Term::App(_new_head, new_args)) => {
+                let head = old_head.clone();
+                let old_output = *old_args.last().expect("merge view term has no args");
+                let new_output = *new_args.last().expect("merge view term has no args");
+                let inputs = old_args[..old_args.len() - 1].to_vec();
+                (head, inputs, old_output, new_output)
+            }
+            _ => panic!(
+                "MergeFn premise proofs should prove function application terms, got {:?} and {:?}",
+                self.term_dag.get(old_view),
+                self.term_dag.get(new_view)
+            ),
+        }
+    }
+
+    /// Build a `MergeFn` proof of `to_prove = to_prove` from the two premises,
+    /// reflexivizing each (rebuild can rewrite an eq-sort-input premise into a
+    /// non-reflexive congruence proof; reflexive premises pass through unchanged).
+    fn merge_fn_proof(
+        &mut self,
+        function: &str,
+        old_proof_id: ProofId,
+        new_proof_id: ProofId,
+        to_prove: TermId,
+    ) -> Proof {
+        let old_proof = self.reflexivize_premise(old_proof_id);
+        let new_proof = self.reflexivize_premise(new_proof_id);
+        Proof {
+            proposition: Proposition::new(to_prove, to_prove),
+            justification: Justification::MergeFn {
+                function: function.to_string(),
+                old_proof,
+                new_proof,
+            },
+        }
+    }
+
     /// Converts a raw proof into a user-facing proof, recursively converting sub-proofs as needed.
     /// This adds new metadata to the proof, such as the substitution for rules.
     ///
@@ -532,6 +570,11 @@ impl ProofStore {
                         .unwrap_or_else(|| panic!("could not find rule with name {name}"));
                     rule.body.iter().map(is_custom_func_fact).collect()
                 };
+                // `zip` intentionally aligns premises with the body facts and stops
+                // at the shorter: a body fact can contribute more than one premise
+                // proof (e.g. a container side condition), so there may be more
+                // premises than facts, and only the leading per-fact ones carry a
+                // reflexivization decision.
                 let converted_premises: Vec<ProofId> = converted_premises
                     .into_iter()
                     .zip(reflex_mask)
@@ -561,19 +604,6 @@ impl ProofStore {
                     },
                 }
             }
-            RawProof::MergeFn(function, old_raw, new_raw, to_prove) => {
-                let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
-                let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
-                let to_prove = raw_store.unwrap_ast(*to_prove);
-                Proof {
-                    proposition: Proposition::new(to_prove, to_prove),
-                    justification: Justification::MergeFn {
-                        function: function.clone(),
-                        old_proof: old_proof_id,
-                        new_proof: new_proof_id,
-                    },
-                }
-            }
             RawProof::MergeFnIdx(function, old_raw, new_raw, idx) => {
                 let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
                 let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
@@ -585,24 +615,12 @@ impl ProofStore {
                 // `idx` indexes all body nodes (pre-order, top node included). The
                 // conclusion is that node's own minted term, i.e. its existence proof in
                 // its FD view. The whole-view-row conclusion comes from `MergeFnRow`.
-                let old_view = self.id_to_proof[old_proof_id].rhs();
-                let new_view = self.id_to_proof[new_proof_id].rhs();
-                let (old_output, new_output) = match (
-                    self.term_dag.get(old_view),
-                    self.term_dag.get(new_view),
-                ) {
-                    (Term::App(_old_head, old_args), Term::App(_new_head, new_args)) => {
-                        let old_output = *old_args.last().expect("merge view term has no args");
-                        let new_output = *new_args.last().expect("merge view term has no args");
-                        (old_output, new_output)
-                    }
-                    _ => panic!(
-                        "MergeFnIdx premise proofs should prove function application terms, got {:?} and {:?}",
-                        self.term_dag.get(old_view),
-                        self.term_dag.get(new_view)
-                    ),
-                };
-                let (subexpr_term, _props) = run_merge_subexpr(
+                // The conclusion is subexpression `idx`'s own minted term (its
+                // existence proof in its FD view); the whole-view-row conclusion comes
+                // from `MergeFnRow`.
+                let (_head, _inputs, old_output, new_output) =
+                    self.merge_premise_view(old_proof_id, new_proof_id);
+                let (to_prove, _props) = run_merge_subexpr(
                     &mut self.term_dag,
                     function,
                     prog,
@@ -613,66 +631,22 @@ impl ProofStore {
                 .unwrap_or_else(|e| {
                     panic!("failed to run merge subexpr {idx} for {function}: {e}")
                 });
-                // The conclusion is that node's own minted term (its existence proof
-                // in its FD view); the whole-view-row conclusion comes from `MergeFnRow`.
-                let to_prove = subexpr_term;
-                // Reflexivize premises in case rebuild rewrote them into congruence
-                // proofs (eq-sort inputs); reflexive premises pass through unchanged.
-                let old_proof_id = self.reflexivize_premise(old_proof_id);
-                let new_proof_id = self.reflexivize_premise(new_proof_id);
-                Proof {
-                    proposition: Proposition::new(to_prove, to_prove),
-                    justification: Justification::MergeFn {
-                        function: function.clone(),
-                        old_proof: old_proof_id,
-                        new_proof: new_proof_id,
-                    },
-                }
+                self.merge_fn_proof(function, old_proof_id, new_proof_id, to_prove)
             }
             RawProof::MergeFnRow(function, old_raw, new_raw) => {
                 let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
                 let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
-                // The two premise proofs are reflexive proofs of the colliding view
-                // rows `f(c..., old_output)` and `f(c..., new_output)`. The conclusion
-                // is the whole view row `f(inputs..., merged)`, where `merged` is the
-                // whole merge body evaluated on the two premise outputs.
-                let old_view = self.id_to_proof[old_proof_id].rhs();
-                let new_view = self.id_to_proof[new_proof_id].rhs();
-                let (view_head, input_args, old_output, new_output) = match (
-                    self.term_dag.get(old_view),
-                    self.term_dag.get(new_view),
-                ) {
-                    (Term::App(old_head, old_args), Term::App(_new_head, new_args)) => {
-                        let head = old_head.clone();
-                        let old_output = *old_args.last().expect("merge view term has no args");
-                        let new_output = *new_args.last().expect("merge view term has no args");
-                        let inputs = old_args[..old_args.len() - 1].to_vec();
-                        (head, inputs, old_output, new_output)
-                    }
-                    _ => panic!(
-                        "MergeFnRow premise proofs should prove function application terms, got {:?} and {:?}",
-                        self.term_dag.get(old_view),
-                        self.term_dag.get(new_view)
-                    ),
-                };
+                // The conclusion is the whole view row `f(inputs..., merged)`, where
+                // `merged` is the whole merge body evaluated on the two premise outputs.
+                let (view_head, input_args, old_output, new_output) =
+                    self.merge_premise_view(old_proof_id, new_proof_id);
                 let (merged_child, _props) =
                     run_merge(&mut self.term_dag, function, prog, old_output, new_output)
                         .unwrap_or_else(|e| panic!("failed to run merge for {function}: {e}"));
                 let mut merged_args = input_args;
                 merged_args.push(merged_child);
                 let to_prove = self.term_dag.app(view_head, merged_args);
-                // Reflexivize premises in case rebuild rewrote them into congruence
-                // proofs (eq-sort inputs); reflexive premises pass through unchanged.
-                let old_proof_id = self.reflexivize_premise(old_proof_id);
-                let new_proof_id = self.reflexivize_premise(new_proof_id);
-                Proof {
-                    proposition: Proposition::new(to_prove, to_prove),
-                    justification: Justification::MergeFn {
-                        function: function.clone(),
-                        old_proof: old_proof_id,
-                        new_proof: new_proof_id,
-                    },
-                }
+                self.merge_fn_proof(function, old_proof_id, new_proof_id, to_prove)
             }
             RawProof::Trans(left_raw, right_raw) => {
                 let left_id = self.convert_raw_proof(prog, globals, raw_store, *left_raw);
