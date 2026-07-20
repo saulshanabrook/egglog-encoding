@@ -179,22 +179,30 @@ mod tests {
         );
         let rule_name_var = rule_name_vars[0];
 
-        let mut rule_uses = 0;
-        rule.head.clone().visit_exprs(&mut |expr| {
-            if let ResolvedExpr::Call(_, ResolvedCall::Func(func), args) = &expr
-                && func.name == rule_constructor
-            {
-                rule_uses += 1;
-                assert!(
-                    matches!(
-                        args.first(),
-                        Some(ResolvedExpr::Var(_, var)) if var.name == rule_name_var
-                    ),
-                    "generated Rule constructor did not reuse the rule-name variable"
-                );
-            }
-            expr
-        });
+        // Proof constructors are relations, so each `Rule` proof is emitted as a
+        // `(set (@Rule <rule-name> <rule-proof> <ast> <ast> <id>) ())` action, not a
+        // call expression. Count those set actions and check they reuse the hoisted
+        // rule-name variable as their first argument.
+        let rule_uses = rule
+            .head
+            .0
+            .iter()
+            .filter(|action| match action {
+                ResolvedAction::Set(_, ResolvedCall::Func(func), args, _)
+                    if func.name == rule_constructor =>
+                {
+                    assert!(
+                        matches!(
+                            args.first(),
+                            Some(ResolvedExpr::Var(_, var)) if var.name == rule_name_var
+                        ),
+                        "generated Rule constructor did not reuse the rule-name variable"
+                    );
+                    true
+                }
+                _ => false,
+            })
+            .count();
         assert!(
             rule_uses > 1,
             "expected the multi-action rule to emit multiple Rule constructors"
