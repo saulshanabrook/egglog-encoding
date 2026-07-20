@@ -166,15 +166,31 @@ The commutativity rule builds `(Add b a)` and unions it with `(Add a b)`:
        :name "commutativity")
 ```
 
-The body reads the view (see [Queries](#queries)); the head builds each term with
-`get-fresh!` + `set-if-empty`, then unions the two canonical ids with a `set` on
-`UF_Math`.
+The body query matches an `Add` row and binds `a` and `b` to its **canonical**
+children (a view read; see [Queries](#queries)). The head then builds the two
+terms and unions them:
+
+- **Build a term.** `(let ab (get-fresh! "Math"))` mints a fresh id and
+  `(set (Add a b ab) ())` records the term-relation row for that id. `ab` is that
+  specific new node.
+- **Canonicalize it.** `(set-if-empty-AddView! a b ab ())` interns the
+  application into the view keyed by its children `a b`. If a row for `(Add a b)`
+  already exists it returns that row's e-class; otherwise it installs `ab`. Either
+  way `ab_canon` is the *canonical* e-class for `(Add a b)`, so nothing downstream
+  ever sees the raw `ab`.
+- **Union.** `(set (UF_Math (ordering-max ab_canon ba_canon)) (values (ordering-min …) ()))`
+  points the larger of the two canonical e-classes at the smaller, the union-find
+  convention from [Data structures](#union-find). `ordering-max`/`min` make the
+  choice deterministic.
+
+So even the term-mode encoding already mints-then-canonicalizes every built term;
+proofs (next) just thread an equality alongside each of those steps.
 
 ## Building nested terms with proofs
 
-With proofs on, an action that builds a *nested* term must additionally thread a
-proof from the term as the rule built it to its canonical form, so the final
-`union` records a correct equality proof. Trace this rule:
+With proofs on, building a *nested* term additionally threads a proof from the
+term as the rule built it to its canonical form, so the final `union` can record
+a correct equality proof. Trace this rule:
 
 ```text
 (rule ((Seed a b c rewrite_var))
@@ -194,102 +210,95 @@ The body match binds `a b c rewrite_var` and yields the rule's premise proof,
 collected into a one-element list `prems = (PCons body_proof (PNil))`; every proof
 minted below is justified by `(Rule rule_name prems lhs rhs)`. Term, AST, and
 proof nodes are all relations, so a new node is a fresh id plus a row `set`
-(written inline below, e.g. `(Rule …)` means "mint a proof id and `set` its `Rule`
-row"). Two moves recur:
+(written inline below — e.g. `(Rule …)` means "mint a proof id and `set` its
+`Rule` row").
 
-- intern each application with `set-if-empty-<View>!`, which returns the
-  canonical e-class, so only canonical ids reach the view and union-find;
-- because a child may dedup to a *different* id than the one we built with, carry
-  a **connector** proof `built = canonical` and rewrite that child in the parent
-  with `Congr`.
+For each subterm we track up to three ids and the proofs between them:
+
+- **`e`** — the *natural* term, built with its children's as-built ids.
+- **`e'`** — the same term over **canonical children** (each child replaced by its
+  representative). It differs from `e` only when a child moved, and the proof
+  `e_to_e'` is a `Congr` rewriting those children.
+- **`e''`** — the view's **representative** for `e'`, returned by `set-if-empty`;
+  the view supplies the proof `e'_to_e''`.
+
+The connector handed up to the parent is `e_to_e''` (their composition). The
+natural node `e` is deliberately never interned, so its `Rule` proof keeps
+pointing at the shape the rule head wrote.
 
 ### Line 1 — `(let d (Add b c))`
 
-`b` and `c` come from the body match and are already canonical, so `d` needs no
-`Congr`.
+`b` and `c` are already canonical (they came from the body match), so there is no
+child to rewrite: `d' = d`, and the connector is just the view proof.
 
 ```text
-;; the term at its natural id, and its `d_nat = d_nat` rule proof
-(let d_nat (get-fresh! "Math"))
-(set (Add b c d_nat) ())
-(let d_prf (Rule rule_name prems (AstMath d_nat) (AstMath d_nat)))
-(set (MathProof d_nat) d_prf)
+;; natural d = (Add b c), with its `d = d` rule proof
+(let d (get-fresh! "Math"))
+(set (Add b c d) ())
+(let d_prf (Rule rule_name prems (AstMath d) (AstMath d)))
+(set (MathProof d) d_prf)
 
-;; intern (Add b c); `d` is the canonical e-class the view returns
-(let d_seed (get-fresh! "Math"))
-(set (Add b c d_seed) ())
-(set (MathProof d_seed) (Trans (Sym d_prf) d_prf))       ;; reflexive seed proof
-(let d (set-if-empty-AddView! b c d_seed (Trans (Sym d_prf) d_prf)))
-(let d_view_prf (view-proof-AddView b c …))              ;; proves `d = Add b c`
-
-;; connector `d_nat = d`, for when `d` is a child of the next term
-(let d_nat_to_d (Trans d_prf (Sym d_view_prf)))
+;; intern (Add b c); d' is the representative the view returns
+(let d' (set-if-empty-AddView! b c d d_prf))
+(let d'_prf (view-proof-AddView b c …))                  ;; proves `d' = (Add b c)`
+(let d_to_d' (Trans d_prf (Sym d'_prf)))                 ;; `d = d'`
 ```
-
-The minted `d_nat` is never written into the view, so its `Rule` proof keeps
-pointing at the shape the rule head wrote; `set-if-empty` seeds a *separate* node
-and returns the canonical `d`.
 
 ### Line 2 — `(let e (Add a d))`
 
-`d` was canonicalized, so the natural `e = Add(a, d_nat)` is rewritten to
-`Add(a, d)` with a `Congr` at child index 1 before interning.
+`d` was canonicalized to `d'`, so the natural `e = (Add a d)` is rewritten to
+`e' = (Add a d')` with a `Congr` at child index 1, then interned.
 
 ```text
-(let e_nat (get-fresh! "Math"))
-(set (Add a d_nat e_nat) ())
-(let e_prf (Rule rule_name prems (AstMath e_nat) (AstMath e_nat)))
-(set (MathProof e_nat) e_prf)
+;; natural e = (Add a d), over d's as-built id
+(let e (get-fresh! "Math"))
+(set (Add a d e) ())
+(let e_prf (Rule rule_name prems (AstMath e) (AstMath e)))
+(set (MathProof e) e_prf)
 
-(let e_nat_to_ad (Congr e_prf 1 d_nat_to_d))             ;; `e_nat = Add a d`
+;; e' = (Add a d'): rewrite child 1 (d -> d')
+(let e_to_e' (Congr e_prf 1 d_to_d'))                    ;; `e = e'`
 
-(let e_seed (get-fresh! "Math"))
-(set (Add a d e_seed) ())
-(set (MathProof e_seed) (Trans (Sym e_nat_to_ad) e_nat_to_ad))
-(let e (set-if-empty-AddView! a d e_seed (Trans (Sym e_nat_to_ad) e_nat_to_ad)))
-(let e_view_prf (view-proof-AddView a d …))              ;; proves `e = Add a d`
-
-(let e_nat_to_e (Trans e_nat_to_ad (Sym e_view_prf)))    ;; connector `e_nat = e`
+;; intern (Add a d'); e'' is the representative
+(let e'' (set-if-empty-AddView! a d' e' e_to_e'))
+(let e'_to_e'' (view-proof-AddView a d' …))              ;; proves `e'' = (Add a d')`
+(let e_to_e'' (Trans e_to_e' e'_to_e''))                 ;; connector `e = e''`
 ```
 
 ### Line 3 — `(let f (Neg e))`
 
-Same shape, one child, rewritten with the `e_nat = e` connector at index 0.
+Same shape with one child: rewrite `e -> e''` at index 0.
 
 ```text
-(let f_nat (get-fresh! "Math"))
-(set (Neg e_nat f_nat) ())
-(let f_prf (Rule rule_name prems (AstMath f_nat) (AstMath f_nat)))
-(set (MathProof f_nat) f_prf)
+(let f (get-fresh! "Math"))
+(set (Neg e f) ())
+(let f_prf (Rule rule_name prems (AstMath f) (AstMath f)))
+(set (MathProof f) f_prf)
 
-(let f_nat_to_ne (Congr f_prf 0 e_nat_to_e))             ;; `f_nat = Neg e`
+(let f_to_f' (Congr f_prf 0 e_to_e''))                   ;; f' = (Neg e''), `f = f'`
 
-(let f_seed (get-fresh! "Math"))
-(set (Neg e f_seed) ())
-(set (MathProof f_seed) (Trans (Sym f_nat_to_ne) f_nat_to_ne))
-(let f (set-if-empty-NegView! e f_seed (Trans (Sym f_nat_to_ne) f_nat_to_ne)))
-(let f_view_prf (view-proof-NegView e …))                ;; proves `f = Neg e`
-
-(let f_nat_to_f (Trans f_nat_to_ne (Sym f_view_prf)))    ;; connector `f_nat = f`
+(let f'' (set-if-empty-NegView! e'' f' f_to_f'))
+(let f'_to_f'' (view-proof-NegView e'' …))               ;; proves `f'' = (Neg e'')`
+(let f_to_f'' (Trans f_to_f' f'_to_f''))                 ;; connector `f = f''`
 ```
 
 ### The union — `(union rewrite_var f)`
 
-The rule justifies `rewrite_var = f_nat` directly; composing with the
-`f_nat = f` connector gives `rewrite_var = f`. The edge is oriented to the
-union-find's `larger -> smaller` convention with `proof-of-max`/`proof-of-min`.
+The rule justifies `rewrite_var = f` directly (over the natural `f`); composing
+with the `f = f''` connector gives `rewrite_var = f''`. The edge is oriented to
+the union-find's `larger -> smaller` convention with `proof-of-max`/`proof-of-min`.
 
 ```text
-(let rw_to_f_nat (Rule rule_name prems (AstMath rewrite_var) (AstMath f_nat)))
-(let rw_to_f (Trans rw_to_f_nat f_nat_to_f))             ;; `rewrite_var = f`
-(set (UF_Math (ordering-max rewrite_var f))
-     (values (ordering-min rewrite_var f) <rw_to_f oriented via proof-of-max/min>))
+(let rw_to_f (Rule rule_name prems (AstMath rewrite_var) (AstMath f)))
+(let rw_to_f'' (Trans rw_to_f f_to_f''))                 ;; `rewrite_var = f''`
+(set (UF_Math (ordering-max rewrite_var f''))
+     (values (ordering-min rewrite_var f'') <rw_to_f'' oriented via proof-of-max/min>))
 ```
 
-The discipline is the same at every level: build at natural ids, `Congr` each
-child that moved to its canonical id, intern with `set-if-empty` for the
-canonical parent id, and record a `natural = canonical` connector for the level
-above. Only canonical ids ever reach the view and union-find.
+The discipline is the same at every level: build the natural term, `Congr` each
+child that moved to its representative, intern with `set-if-empty` to get the
+representative id, and hand a `natural = representative` connector up to the
+parent. Only representative ids ever reach the view and union-find.
 
 ## Delete and subsume
 
