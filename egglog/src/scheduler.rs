@@ -417,6 +417,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            &mut egraph.unstable_fn_panic_ids,
             false, // seminaive query: Pure/Write contexts
         );
         if let Err(error) = qrule_builder.query(&rule.body, false) {
@@ -463,6 +464,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            &mut egraph.unstable_fn_panic_ids,
             true, // action rule reads the DB: Read/Full contexts
         );
         let entries = free_vars
@@ -548,6 +550,7 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
+                    owned_external_funcs: Vec::new(),
                 })
                 .unwrap()
         });

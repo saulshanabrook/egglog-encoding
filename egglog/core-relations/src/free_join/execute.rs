@@ -3,7 +3,7 @@
 use std::{
     cmp, iter, mem,
     ops::Range,
-    sync::{Arc, OnceLock, RwLock, atomic::AtomicUsize},
+    sync::{Arc, Mutex, OnceLock, RwLock, atomic::AtomicUsize},
 };
 
 use crate::{
@@ -38,8 +38,8 @@ use crate::{
 };
 
 use super::{
-    ActionId, AtomId, Database, HashColumnIndex, HashIndex, TableInfo, Variable,
-    get_column_index_from_tableinfo,
+    ActionId, AtomId, Database, GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex,
+    HashIndex, TableInfo, Variable, get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -661,6 +661,303 @@ impl Database {
             merge_time,
         }
     }
+
+    /// Search at most one executable rule plan once, then apply its head to
+    /// exactly the captured bindings only if the optional match-count guard
+    /// succeeds.
+    ///
+    /// An empty rule set represents a query that planning proved empty and
+    /// therefore has zero matches. More than one plan is rejected because a
+    /// guarded invocation is deliberately a single-search operation.
+    pub fn run_rule_set_guarded(
+        &mut self,
+        rule_set: &RuleSet,
+        expected_matches: Option<usize>,
+        report_level: ReportLevel,
+    ) -> Result<GuardedRuleSetRunOutcome, GuardedRuleSetRunError> {
+        if rule_set.plans.len() > 1 {
+            return Err(GuardedRuleSetRunError::MultipleExecutablePlans {
+                plan_count: rule_set.plans.len(),
+            });
+        }
+
+        let pre_merge_timer = Instant::now();
+        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let search_timer = Instant::now();
+        let captured = match rule_set.plans.values().next() {
+            None => Vec::new(),
+            Some((plan, _, _)) if run_in_parallel => {
+                let captured = Arc::new(Mutex::new(Vec::new()));
+                let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+                let db: &Database = self;
+                rayon::in_place_scope(|scope| {
+                    let join_state = JoinState::new(db, exec_state.clone());
+                    let mut binding_info = initial_binding_info(&join_state, plan);
+                    let mut action_buf = ScopedCaptureBuffer::new(scope, captured.clone());
+                    if intersect_plan_headers(&join_state, plan, &mut binding_info) {
+                        match plan {
+                            Plan::SinglePlan(plan) => join_state.run_join_stages(
+                                &plan.stages,
+                                &plan.atoms,
+                                plan.actions,
+                                &mut binding_info,
+                                &mut action_buf,
+                            ),
+                            Plan::DecomposedPlan(plan) => {
+                                let mut materializations: DenseIdMap<
+                                    MatId,
+                                    Arc<DashMap<Vec<Value>, RowBuffer>>,
+                                > = DenseIdMap::with_capacity(plan.stages.blocks.len());
+                                for i in 0..plan.stages.blocks.len() {
+                                    materializations
+                                        .insert(MatId::from_usize(i), Arc::new(Default::default()));
+                                }
+                                let specs: Arc<DenseIdMap<MatId, MatSpec>> = Arc::new(
+                                    plan.stages
+                                        .blocks
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, block)| (MatId::from_usize(i), block.1.clone()))
+                                        .collect(),
+                                );
+                                let mut materializations = Arc::new(materializations);
+                                let mut query_is_empty = false;
+
+                                for (mat_id, stage_block) in plan.stages.blocks.iter().enumerate() {
+                                    let mat_id = MatId::from_usize(mat_id);
+                                    rayon::in_place_scope(|stage_scope| {
+                                        let mut materializer = ScopedMaterializer {
+                                            scope: stage_scope,
+                                            specs: specs.clone(),
+                                            materializations: materializations.clone(),
+                                            scratch_key: Default::default(),
+                                            scratch_val: Default::default(),
+                                        };
+                                        join_state.run_join_stages(
+                                            &stage_block.0,
+                                            &plan.atoms,
+                                            mat_id,
+                                            &mut binding_info,
+                                            &mut materializer,
+                                        );
+                                    });
+                                    if materializations[mat_id].is_empty() {
+                                        query_is_empty = true;
+                                        break;
+                                    }
+                                    assert_eq!(Arc::strong_count(&materializations), 1);
+                                    let mut materializations_dearc =
+                                        Arc::unwrap_or_clone(materializations);
+                                    let materialization = mem::take(
+                                        Arc::get_mut(&mut materializations_dearc[mat_id]).unwrap(),
+                                    )
+                                    .into_iter()
+                                    .collect::<IndexMap<_, _>>();
+                                    binding_info
+                                        .materializations
+                                        .insert(mat_id, Arc::new(materialization));
+                                    materializations = Arc::new(materializations_dearc);
+                                }
+                                if !query_is_empty {
+                                    join_state.run_join_stages(
+                                        &plan.result_block,
+                                        &plan.atoms,
+                                        plan.actions,
+                                        &mut binding_info,
+                                        &mut action_buf,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    action_buf.publish();
+                });
+                Arc::try_unwrap(captured)
+                    .expect("all guarded search tasks must have completed")
+                    .into_inner()
+                    .unwrap()
+            }
+            Some((plan, _, _)) => {
+                let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+                let join_state = JoinState::new(self, exec_state);
+                let mut binding_info = initial_binding_info(&join_state, plan);
+                let mut action_buf = InPlaceCaptureBuffer::default();
+                if intersect_plan_headers(&join_state, plan, &mut binding_info) {
+                    match plan {
+                        Plan::SinglePlan(plan) => join_state.run_join_stages(
+                            &plan.stages,
+                            &plan.atoms,
+                            plan.actions,
+                            &mut binding_info,
+                            &mut action_buf,
+                        ),
+                        Plan::DecomposedPlan(plan) => {
+                            let mut materializations =
+                                DenseIdMap::with_capacity(plan.stages.blocks.len());
+                            for i in 0..plan.stages.blocks.len() {
+                                materializations.insert(MatId::from_usize(i), Default::default());
+                            }
+                            let mut materializer = InPlaceMaterializer {
+                                specs: &plan
+                                    .stages
+                                    .blocks
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, block)| (MatId::from_usize(i), block.1.clone()))
+                                    .collect(),
+                                materializations,
+                                scratch_key: Default::default(),
+                                scratch_val: Default::default(),
+                            };
+                            let mut query_is_empty = false;
+
+                            for (mat_id, stage_block) in plan.stages.blocks.iter().enumerate() {
+                                let mat_id = MatId::from_usize(mat_id);
+                                join_state.run_join_stages(
+                                    &stage_block.0,
+                                    &plan.atoms,
+                                    mat_id,
+                                    &mut binding_info,
+                                    &mut materializer,
+                                );
+                                if materializer.materializations[mat_id].is_empty() {
+                                    query_is_empty = true;
+                                    break;
+                                }
+                                binding_info.materializations.insert(
+                                    mat_id,
+                                    Arc::new(materializer.materializations.take(mat_id).unwrap()),
+                                );
+                            }
+                            if !query_is_empty {
+                                join_state.run_join_stages(
+                                    &plan.result_block,
+                                    &plan.atoms,
+                                    plan.actions,
+                                    &mut binding_info,
+                                    &mut action_buf,
+                                );
+                            }
+                        }
+                    }
+                }
+                action_buf.captured
+            }
+        };
+        let search_time = search_timer.elapsed();
+        let observed_matches = captured.len();
+
+        if let Some(expected_matches) = expected_matches
+            && expected_matches != observed_matches
+        {
+            return Ok(GuardedRuleSetRunOutcome::MatchCountMismatch {
+                expected_matches,
+                observed_matches,
+            });
+        }
+
+        let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
+        let apply_timer = Instant::now();
+        let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        if run_in_parallel {
+            rayon::in_place_scope(|scope| {
+                let mut action_buf =
+                    ScopedActionBuffer::new(scope, rule_set, match_counter.clone());
+                for captured in &captured {
+                    let bindings = captured.to_map();
+                    action_buf.push_bindings(captured.action, &bindings, || exec_state.clone());
+                }
+                if action_buf.needs_flush {
+                    action_buf.flush(&mut exec_state.clone());
+                }
+            });
+        } else {
+            let mut action_buf = InPlaceActionBuffer {
+                rule_set,
+                match_counter: match_counter.as_ref(),
+                batches: Default::default(),
+                apply_time: Duration::ZERO,
+            };
+            for captured in &captured {
+                let bindings = captured.to_map();
+                action_buf.push_bindings(captured.action, &bindings, || exec_state.clone());
+            }
+            action_buf.flush(&mut exec_state.clone());
+        }
+        let apply_time = apply_timer.elapsed();
+
+        let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>> = HashMap::default();
+        if let Some((plan, desc, symbol_map)) = rule_set.plans.values().next() {
+            let report_plan = match report_level {
+                ReportLevel::TimeOnly => None,
+                ReportLevel::WithPlan | ReportLevel::StageInfo => Some(plan.to_report(symbol_map)),
+            };
+            rule_reports
+                .entry(desc.clone())
+                .or_default()
+                .push(RuleReport {
+                    plan: report_plan,
+                    search_and_apply_time: search_time + apply_time,
+                    num_matches: match_counter.read_matches(plan.actions()),
+                });
+        }
+
+        let pre_merge_elapsed = pre_merge_timer.elapsed();
+        let pre_merge = if run_in_parallel {
+            PreMergeTiming::Combined {
+                elapsed: pre_merge_elapsed,
+            }
+        } else {
+            let unattributed = pre_merge_elapsed.saturating_sub(search_time + apply_time);
+            PreMergeTiming::Split {
+                search: search_time,
+                apply: apply_time,
+                unattributed,
+            }
+        };
+        let merge_timer = Instant::now();
+        let changed = self.merge_all();
+        let merge_time = merge_timer.elapsed();
+
+        Ok(GuardedRuleSetRunOutcome::Applied {
+            observed_matches,
+            report: RuleSetReport {
+                changed,
+                rule_reports,
+                pre_merge,
+                merge_time,
+            },
+        })
+    }
+}
+
+fn initial_binding_info(join_state: &JoinState<'_>, plan: &Plan) -> BindingInfo {
+    let mut binding_info = BindingInfo::default();
+    for (id, info) in plan.atoms().iter() {
+        let table = join_state.db.get_table(info.table);
+        binding_info.insert_subset(id, table.all());
+    }
+    binding_info
+}
+
+fn intersect_plan_headers(
+    join_state: &JoinState<'_>,
+    plan: &Plan,
+    binding_info: &mut BindingInfo,
+) -> bool {
+    for JoinHeader { atom, subset, .. } in plan.header() {
+        if subset.is_empty() {
+            return false;
+        }
+        let mut cur = Arc::try_unwrap(binding_info.unwrap_val(*atom)).unwrap();
+        debug_assert!(cur.cached_subsets.get().is_none());
+        cur.subset.intersect(subset.as_ref(), &join_state.pool);
+        if cur.subset.is_empty() {
+            return false;
+        }
+        binding_info.move_back_node(*atom, Arc::new(cur));
+    }
+    true
 }
 
 struct ActionState {
@@ -1834,6 +2131,28 @@ impl<'a> JoinState<'a> {
 
 const VAR_BATCH_SIZE: usize = 128;
 
+#[derive(Debug)]
+struct CapturedBinding {
+    action: ActionId,
+    /// Keep the complete query binding, rather than only RHS-used variables.
+    /// Besides making replay independent of query internals, this preserves
+    /// match multiplicity for heads that do not reference any body variables.
+    values: SmallVec<[(Variable, Value); 4]>,
+}
+
+impl CapturedBinding {
+    fn new(action: ActionId, bindings: &DenseIdMap<Variable, Value>) -> Self {
+        Self {
+            action,
+            values: bindings.iter().map(|(var, value)| (var, *value)).collect(),
+        }
+    }
+
+    fn to_map(&self) -> DenseIdMap<Variable, Value> {
+        self.values.iter().copied().collect()
+    }
+}
+
 /// A trait used to abstract over different ways of buffering actions together
 /// before running them.
 ///
@@ -1904,6 +2223,115 @@ trait ActionBuffer<'state, A: NumericId>: Send {
     /// avoiding the per-frame `ExecutionState::clone()` overhead.
     fn supports_parallel_drain(&self) -> bool {
         true
+    }
+}
+
+/// A serial action buffer that records body matches without executing heads.
+#[derive(Default)]
+struct InPlaceCaptureBuffer {
+    captured: Vec<CapturedBinding>,
+}
+
+impl<'state> ActionBuffer<'state, ActionId> for InPlaceCaptureBuffer {
+    type AsLocal<'a>
+        = Self
+    where
+        'state: 'a;
+
+    fn push_bindings(
+        &mut self,
+        action: ActionId,
+        bindings: &DenseIdMap<Variable, Value>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'state>,
+    ) {
+        self.captured.push(CapturedBinding::new(action, bindings));
+    }
+
+    fn flush(&mut self, _exec_state: &mut ExecutionState) {}
+
+    fn recur<'local>(
+        &mut self,
+        local: BorrowedLocalState<'local>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'state> + Send + 'state,
+        work: impl for<'a> FnOnce(BorrowedLocalState<'a>, &mut Self) + Send + 'state,
+    ) {
+        work(local, self);
+    }
+
+    fn supports_parallel_drain(&self) -> bool {
+        false
+    }
+}
+
+/// A parallel action buffer that records matches into thread-local vectors and
+/// publishes them only when a recursive task completes.
+struct ScopedCaptureBuffer<'inner, 'scope> {
+    scope: &'inner rayon::Scope<'scope>,
+    captured: Arc<Mutex<Vec<CapturedBinding>>>,
+    local: Vec<CapturedBinding>,
+}
+
+impl<'inner, 'scope> ScopedCaptureBuffer<'inner, 'scope> {
+    fn new(
+        scope: &'inner rayon::Scope<'scope>,
+        captured: Arc<Mutex<Vec<CapturedBinding>>>,
+    ) -> Self {
+        Self {
+            scope,
+            captured,
+            local: Vec::new(),
+        }
+    }
+
+    fn publish(&mut self) {
+        if self.local.is_empty() {
+            return;
+        }
+        self.captured.lock().unwrap().append(&mut self.local);
+    }
+}
+
+impl<'scope> ActionBuffer<'scope, ActionId> for ScopedCaptureBuffer<'_, 'scope> {
+    type AsLocal<'a>
+        = ScopedCaptureBuffer<'a, 'scope>
+    where
+        'scope: 'a;
+
+    fn push_bindings(
+        &mut self,
+        action: ActionId,
+        bindings: &DenseIdMap<Variable, Value>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
+    ) {
+        self.local.push(CapturedBinding::new(action, bindings));
+    }
+
+    fn flush(&mut self, _exec_state: &mut ExecutionState) {
+        self.publish();
+    }
+
+    fn recur<'local>(
+        &mut self,
+        mut local: BorrowedLocalState<'local>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'scope> + Send + 'scope,
+        work: impl for<'a> FnOnce(BorrowedLocalState<'a>, &mut ScopedCaptureBuffer<'a, 'scope>)
+        + Send
+        + 'scope,
+    ) {
+        let captured = self.captured.clone();
+        let mut inner = local.clone_state();
+        self.scope.spawn(move |scope| {
+            let mut buf = ScopedCaptureBuffer::new(scope, captured);
+            work(inner.borrow_mut(), &mut buf);
+            buf.publish();
+        });
+    }
+
+    fn morsel_size(&mut self, level: usize, total: usize) -> usize {
+        match level {
+            0 if total > 2 => 32,
+            _ => 256,
+        }
     }
 }
 

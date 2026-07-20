@@ -10,14 +10,15 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
-use egglog_bridge::{ActionRegistry, EGraph, QueryEntry, RuleBuilder};
+use egglog_bridge::{ActionRegistry, EGraph, GuardedRuleRunResult, QueryEntry, RuleBuilder};
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, GuardedRuleRun, GuardedRuleRunOutcome,
+    IterationReport, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+    RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -55,8 +56,12 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         seminaive,
         no_decomp,
         core,
+        owned_external_funcs,
     } = rule;
     let mut builder = egraph.new_rule(&name, seminaive);
+    for func in owned_external_funcs {
+        builder.own_external_func(func);
+    }
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
 
@@ -201,6 +206,27 @@ impl Backend for EGraph {
 
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
         EGraph::run_rules(self, run.rules)
+    }
+
+    fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome> {
+        Ok(
+            match EGraph::run_rule_guarded(self, run.rule, run.expected_matches)? {
+                GuardedRuleRunResult::Applied {
+                    observed_matches,
+                    report,
+                } => GuardedRuleRunOutcome::Applied {
+                    observed_matches,
+                    report,
+                },
+                GuardedRuleRunResult::MatchCountMismatch {
+                    expected_matches,
+                    observed_matches,
+                } => GuardedRuleRunOutcome::MatchCountMismatch {
+                    expected_matches,
+                    observed_matches,
+                },
+            },
+        )
     }
 
     fn flush_updates(&mut self) -> bool {

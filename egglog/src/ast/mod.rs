@@ -372,6 +372,7 @@ pub enum GenericSchedule<Head, Leaf> {
     Saturate(Span, Box<GenericSchedule<Head, Leaf>>),
     Repeat(Span, usize, Box<GenericSchedule<Head, Leaf>>),
     Run(Span, GenericRunConfig<Head, Leaf>),
+    RunRule(Span, GenericRunRuleConfig<Head, Leaf>),
     Sequence(Span, Vec<GenericSchedule<Head, Leaf>>),
 }
 
@@ -399,6 +400,10 @@ where
                     until: run_config.until.map(f),
                 },
             ),
+            GenericSchedule::RunRule(span, mut config) => {
+                config.selectors = f(config.selectors);
+                GenericSchedule::RunRule(span, config)
+            }
             GenericSchedule::Sequence(span, generic_schedules) => GenericSchedule::Sequence(
                 span,
                 generic_schedules
@@ -421,6 +426,7 @@ where
                 GenericSchedule::Repeat(span, size, Box::new(sched.flatten_sequences()))
             }
             GenericSchedule::Run(span, config) => GenericSchedule::Run(span, config),
+            GenericSchedule::RunRule(span, config) => GenericSchedule::RunRule(span, config),
             GenericSchedule::Sequence(span, scheds) => {
                 let mut flattened = Vec::new();
                 for sched in scheds.into_iter().map(Self::flatten_sequences) {
@@ -451,6 +457,9 @@ where
                 GenericSchedule::Repeat(span, size, Box::new(sched.visit_exprs(f)))
             }
             GenericSchedule::Run(span, config) => GenericSchedule::Run(span, config.visit_exprs(f)),
+            GenericSchedule::RunRule(span, config) => {
+                GenericSchedule::RunRule(span, config.visit_exprs(f))
+            }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds.into_iter().map(|s| s.visit_exprs(f)).collect(),
@@ -478,6 +487,9 @@ where
             GenericSchedule::Run(span, config) => {
                 GenericSchedule::Run(span, config.map_symbols(head, leaf))
             }
+            GenericSchedule::RunRule(span, config) => {
+                GenericSchedule::RunRule(span, config.map_symbols(head, leaf))
+            }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds
@@ -503,6 +515,9 @@ where
             }
             GenericSchedule::Run(span, config) => {
                 GenericSchedule::Run(span, config.map_string_symbols(fun))
+            }
+            GenericSchedule::RunRule(span, config) => {
+                GenericSchedule::RunRule(span, config.map_string_symbols(fun))
             }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
@@ -530,6 +545,7 @@ impl<Head: Display, Leaf: Display> Display for GenericSchedule<Head, Leaf> {
             GenericSchedule::Saturate(_ann, sched) => write!(f, "(saturate {sched})"),
             GenericSchedule::Repeat(_ann, size, sched) => write!(f, "(repeat {size} {sched})"),
             GenericSchedule::Run(_ann, config) => write!(f, "{config}"),
+            GenericSchedule::RunRule(_ann, config) => write!(f, "{config}"),
             GenericSchedule::Sequence(_ann, scheds) => {
                 write!(f, "(seq {})", ListDisplay(scheds, " "))
             }
@@ -1228,6 +1244,110 @@ impl Display for IdentSort {
 
 pub type RunConfig = GenericRunConfig<String, String>;
 pub(crate) type ResolvedRunConfig = GenericRunConfig<ResolvedCall, ResolvedVar>;
+
+pub type RunRuleConfig = GenericRunRuleConfig<String, String>;
+pub(crate) type ResolvedRunRuleConfig = GenericRunRuleConfig<ResolvedCall, ResolvedVar>;
+
+/// One explicit, full-database invocation of a named rule, optionally restricted
+/// by closed bindings. `selectors` is the normalized query form produced by
+/// typechecking; surface syntax populates `bindings` and leaves it empty.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GenericRunRuleConfig<Head, Leaf> {
+    pub rule: String,
+    pub bindings: Vec<(Leaf, GenericExpr<Head, Leaf>)>,
+    pub selectors: Vec<GenericFact<Head, Leaf>>,
+    pub expect: Option<usize>,
+}
+
+impl<Head, Leaf> GenericRunRuleConfig<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    fn visit_exprs(
+        self,
+        f: &mut impl FnMut(GenericExpr<Head, Leaf>) -> GenericExpr<Head, Leaf>,
+    ) -> Self {
+        Self {
+            rule: self.rule,
+            bindings: self
+                .bindings
+                .into_iter()
+                .map(|(var, expr)| (var, expr.visit_exprs(f)))
+                .collect(),
+            selectors: self
+                .selectors
+                .into_iter()
+                .map(|fact| fact.visit_exprs(f))
+                .collect(),
+            expect: self.expect,
+        }
+    }
+
+    fn map_symbols<Head2, Leaf2>(
+        self,
+        head: &mut impl FnMut(Head) -> Head2,
+        leaf: &mut impl FnMut(Leaf) -> Leaf2,
+    ) -> GenericRunRuleConfig<Head2, Leaf2>
+    where
+        Head2: Clone + Display,
+        Leaf2: Clone + PartialEq + Eq + Display + Hash,
+    {
+        GenericRunRuleConfig {
+            rule: self.rule,
+            bindings: self
+                .bindings
+                .into_iter()
+                .map(|(var, expr)| (leaf(var), expr.map_symbols(head, leaf)))
+                .collect(),
+            selectors: self
+                .selectors
+                .into_iter()
+                .map(|fact| fact.map_symbols(head, leaf))
+                .collect(),
+            expect: self.expect,
+        }
+    }
+
+    fn map_string_symbols(
+        self,
+        fun: &mut impl FnMut(String) -> String,
+    ) -> GenericRunRuleConfig<Head, Leaf> {
+        GenericRunRuleConfig {
+            rule: fun(self.rule),
+            bindings: self.bindings,
+            selectors: self.selectors,
+            expect: self.expect,
+        }
+    }
+}
+
+impl<Head: Display, Leaf: Display> Display for GenericRunRuleConfig<Head, Leaf> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "(run-rule {}", Literal::String(self.rule.clone()))?;
+        if !self.bindings.is_empty() {
+            write!(f, " :bind (")?;
+            for (i, (var, expr)) in self.bindings.iter().enumerate() {
+                if i > 0 {
+                    write!(f, " ")?;
+                }
+                write!(f, "({var} {expr})")?;
+            }
+            write!(f, ")")?;
+        }
+        if self.bindings.is_empty() && !self.selectors.is_empty() {
+            write!(
+                f,
+                " :internal-select ({})",
+                ListDisplay(&self.selectors, " ")
+            )?;
+        }
+        if let Some(expect) = self.expect {
+            write!(f, " :expect {expect}")?;
+        }
+        write!(f, ")")
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GenericRunConfig<Head, Leaf> {

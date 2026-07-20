@@ -241,6 +241,10 @@ pub struct TypeInfo {
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
+    /// Source-level resolved rules, keyed by their globally unique logical name.
+    /// This registry is typechecking metadata; the runtime keeps the post-global-
+    /// removal/instrumentation rule separately.
+    pub(crate) named_rules: IndexMap<String, ResolvedRule>,
 }
 
 // These methods need to be on the `EGraph` in order to
@@ -464,11 +468,13 @@ impl EGraph {
                 }
                 ResolvedNCommand::Function(resolved)
             }
-            NCommand::NormRule { rule } => ResolvedNCommand::NormRule {
-                rule: self
+            NCommand::NormRule { rule } => {
+                let resolved = self
                     .type_info
-                    .typecheck_rule(symbol_gen, rule, self.seminaive)?,
-            },
+                    .typecheck_rule(symbol_gen, rule, self.seminaive)?;
+                self.type_info.register_named_rule(&resolved)?;
+                ResolvedNCommand::NormRule { rule: resolved }
+            }
             NCommand::Sort {
                 span,
                 name,
@@ -712,6 +718,18 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    fn register_named_rule(&mut self, rule: &ResolvedRule) -> Result<(), TypeError> {
+        if let Some(previous) = self.named_rules.get(&rule.name) {
+            return Err(TypeError::DuplicateRuleName {
+                name: rule.name.clone(),
+                first: previous.span.clone(),
+                duplicate: rule.span.clone(),
+            });
+        }
+        self.named_rules.insert(rule.name.clone(), rule.clone());
+        Ok(())
+    }
+
     /// Adds a sort constructor to the typechecker's known set of types.
     pub fn add_presort<S: Presort>(&mut self, span: Span) -> Result<(), TypeError> {
         let name = S::presort_name();
@@ -1053,9 +1071,113 @@ impl TypeInfo {
                     },
                 )
             }
+            Schedule::RunRule(span, config) => {
+                let rule = self
+                    .named_rules
+                    .get(&config.rule)
+                    .ok_or_else(|| TypeError::NoSuchRule(config.rule.clone(), span.clone()))?;
+
+                let mut rule_vars: IndexMap<String, (Span, ResolvedVar)> = IndexMap::default();
+                for fact in &rule.body {
+                    fact.visit_vars(&mut |var_span, var| {
+                        if !var.is_global_ref {
+                            rule_vars
+                                .entry(var.name.clone())
+                                .or_insert_with(|| (var_span.clone(), var.clone()));
+                        }
+                    });
+                }
+
+                let mut seen_bindings = HashSet::default();
+                let mut bindings = Vec::with_capacity(config.bindings.len());
+                let mut selectors = Vec::with_capacity(config.bindings.len());
+                for (name, expr) in &config.bindings {
+                    if !seen_bindings.insert(name.clone()) {
+                        return Err(TypeError::DuplicateRunRuleBinding {
+                            rule: config.rule.clone(),
+                            variable: name.clone(),
+                            span: expr.span(),
+                        });
+                    }
+                    let Some((_, target)) = rule_vars.get(name) else {
+                        return Err(TypeError::UnknownRunRuleBinding {
+                            rule: config.rule.clone(),
+                            variable: name.clone(),
+                            span: expr.span(),
+                        });
+                    };
+
+                    let mut non_closed = None;
+                    expr.visit_vars(&mut |var_span, var| {
+                        if non_closed.is_none() && !self.global_sorts.contains_key(var) {
+                            non_closed = Some((var.clone(), var_span.clone()));
+                        }
+                    });
+                    if let Some((variable, span)) = non_closed {
+                        return Err(TypeError::RunRuleBindingNotClosed {
+                            rule: config.rule.clone(),
+                            variable,
+                            span,
+                        });
+                    }
+
+                    let resolved_expr = self.typecheck_expr_with_output(
+                        symbol_gen,
+                        expr,
+                        &Default::default(),
+                        target.sort.clone(),
+                        Context::Read,
+                    )?;
+                    let target_expr = ResolvedExpr::Var(expr.span(), target.clone());
+                    selectors.push(ResolvedFact::Eq(
+                        expr.span(),
+                        target_expr,
+                        resolved_expr.clone(),
+                    ));
+                    bindings.push((target.clone(), resolved_expr));
+                }
+
+                selectors.extend(self.typecheck_run_rule_selectors(
+                    symbol_gen,
+                    &config.selectors,
+                    &rule_vars,
+                )?);
+
+                ResolvedSchedule::RunRule(
+                    span.clone(),
+                    ResolvedRunRuleConfig {
+                        rule: config.rule.clone(),
+                        bindings,
+                        selectors,
+                        expect: config.expect,
+                    },
+                )
+            }
         };
 
         Result::Ok(schedule)
+    }
+
+    fn typecheck_run_rule_selectors(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        selectors: &[Fact],
+        rule_vars: &IndexMap<String, (Span, ResolvedVar)>,
+    ) -> Result<Vec<ResolvedFact>, TypeError> {
+        if selectors.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (query, mapped_facts) = Facts(selectors.to_vec()).to_query(self, symbol_gen);
+        let mut problem = Problem::default();
+        problem.add_query(&query, self, Context::Read)?;
+        for (name, (span, var)) in rule_vars {
+            problem.assign_local_var_type(name, span.clone(), var.sort.clone())?;
+        }
+        let assignment = problem
+            .solve(|sort: &ArcSort| sort.name())
+            .map_err(|error| error.to_type_error())?;
+        Ok(assignment.annotate_facts(&mapped_facts, self, Context::Read))
     }
 
     fn typecheck_rule(
@@ -1380,6 +1502,36 @@ pub enum TypeError {
     },
     #[error("{1}\nUnbound symbol {0}")]
     Unbound(String, Span),
+    #[error("{1}\nNo rule named {0:?} has been declared")]
+    NoSuchRule(String, Span),
+    #[error(
+        "{duplicate}\nRule name {name:?} is already in use by the rule declared at {first}; rule names are global"
+    )]
+    DuplicateRuleName {
+        name: String,
+        first: Span,
+        duplicate: Span,
+    },
+    #[error("{span}\nRule {rule:?} has no input variable named {variable}")]
+    UnknownRunRuleBinding {
+        rule: String,
+        variable: String,
+        span: Span,
+    },
+    #[error("{span}\nVariable {variable} is bound more than once in run-rule {rule:?}")]
+    DuplicateRunRuleBinding {
+        rule: String,
+        variable: String,
+        span: Span,
+    },
+    #[error(
+        "{span}\nBinding expressions in run-rule {rule:?} must be closed; found local variable {variable}"
+    )]
+    RunRuleBindingNotClosed {
+        rule: String,
+        variable: String,
+        span: Span,
+    },
     #[error(
         "{1}\nVariable {0} is ungrounded. A variable is grounded when it appears as an argument to a constructor or function in the query, not just under primitives or equalities."
     )]
@@ -1475,5 +1627,51 @@ mod test {
             }
             _ => panic!("Expected arity mismatch, got: {res:?}"),
         }
+    }
+
+    #[test]
+    fn run_rule_requires_a_declared_globally_unique_rule() {
+        let mut egraph = EGraph::default();
+        let missing = egraph.parse_and_run_program(None, r#"(run-schedule (run-rule "missing"))"#);
+        assert!(matches!(
+            missing,
+            Err(Error::TypeError(TypeError::NoSuchRule(name, _))) if name == "missing"
+        ));
+
+        let duplicate = egraph.parse_and_run_program(
+            None,
+            r#"
+                (relation R (i64))
+                (ruleset left)
+                (ruleset right)
+                (rule ((R x)) () :ruleset left :name "same")
+                (rule ((R x)) () :ruleset right :name "same")
+            "#,
+        );
+        assert!(matches!(
+            duplicate,
+            Err(Error::TypeError(TypeError::DuplicateRuleName { name, .. })) if name == "same"
+        ));
+    }
+
+    #[test]
+    fn run_rule_bindings_are_known_and_closed() {
+        let mut egraph = EGraph::default();
+        let result = egraph.parse_and_run_program(
+            None,
+            r#"
+                (relation R (i64))
+                (rule ((R x)) () :name "r")
+                (run-schedule (run-rule "r" :bind ((x y))))
+            "#,
+        );
+        assert!(matches!(
+            result,
+            Err(Error::TypeError(TypeError::RunRuleBindingNotClosed {
+                rule,
+                variable,
+                ..
+            })) if rule == "r" && variable == "y"
+        ));
     }
 }

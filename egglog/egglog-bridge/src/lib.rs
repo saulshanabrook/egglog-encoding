@@ -104,6 +104,20 @@ pub enum ColumnTy {
 define_id!(pub RuleId, u32, "An egglog-style rule");
 define_id!(pub FunctionId, u32, "An id representing an egglog function");
 define_id!(pub(crate) Timestamp, u32, "An abstract timestamp used to track execution of egglog rules");
+
+/// Result of one guarded, single-search rule invocation.
+#[derive(Debug)]
+pub enum GuardedRuleRunResult {
+    Applied {
+        observed_matches: usize,
+        report: IterationReport,
+    },
+    MatchCountMismatch {
+        expected_matches: usize,
+        observed_matches: usize,
+    },
+}
+
 impl Timestamp {
     fn to_value(self) -> Value {
         Value::new(self.rep())
@@ -714,6 +728,68 @@ impl EGraph {
     /// If the given rules are malformed, this method can return an error.
     pub fn run_rules(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         self.run_rules_inner(rules)
+    }
+
+    /// Search one rule body once and apply its head to the captured bindings
+    /// only when the optional exact match-count guard succeeds.
+    pub fn run_rule_guarded(
+        &mut self,
+        rule: RuleId,
+        expected_matches: Option<usize>,
+    ) -> Result<GuardedRuleRunResult> {
+        let ts = self.next_ts();
+        let uf_size_before = self.db.get_table(self.uf_table).len();
+        let outcome = run_rule_guarded_impl(
+            &mut self.db,
+            &mut self.rules,
+            rule,
+            expected_matches,
+            ts,
+            self.report_level,
+        )?;
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+
+        let (observed_matches, rule_set_report) = match outcome {
+            core_relations::GuardedRuleSetRunOutcome::Applied {
+                observed_matches,
+                report,
+            } => (observed_matches, report),
+            core_relations::GuardedRuleSetRunOutcome::MatchCountMismatch {
+                expected_matches,
+                observed_matches,
+            } => {
+                return Ok(GuardedRuleRunResult::MatchCountMismatch {
+                    expected_matches,
+                    observed_matches,
+                });
+            }
+        };
+
+        let mut report = IterationReport {
+            rule_set_report,
+            rebuild_time: Duration::ZERO,
+        };
+        let uf_size_after = self.db.get_table(self.uf_table).len();
+        if uf_size_before == uf_size_after {
+            self.inc_ts();
+            return Ok(GuardedRuleRunResult::Applied {
+                observed_matches,
+                report,
+            });
+        }
+
+        let rebuild_timer = Instant::now();
+        self.rebuild()?;
+        report.rebuild_time = rebuild_timer.elapsed();
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+        Ok(GuardedRuleRunResult::Applied {
+            observed_matches,
+            report,
+        })
     }
 
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
@@ -2008,6 +2084,32 @@ fn run_rules_impl(
     }
     let ruleset = rsb.build();
     Ok(db.run_rule_set(&ruleset, report_level))
+}
+
+fn run_rule_guarded_impl(
+    db: &mut Database,
+    rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
+    rule: RuleId,
+    expected_matches: Option<usize>,
+    next_ts: Timestamp,
+    report_level: ReportLevel,
+) -> Result<core_relations::GuardedRuleSetRunOutcome> {
+    let info = &mut rule_info[rule];
+    if info.cached_plan.is_none() {
+        info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
+    }
+    let cached_plan = info.cached_plan.as_ref().unwrap().plan.clone();
+    let mut rsb = db.new_rule_set();
+    let _ = rsb.add_rule_from_cached_plan(&cached_plan, &[]);
+    let rule_set = rsb.build();
+    let outcome = db.run_rule_set_guarded(&rule_set, expected_matches, report_level)?;
+    if matches!(
+        outcome,
+        core_relations::GuardedRuleSetRunOutcome::Applied { .. }
+    ) {
+        rule_info[rule].last_run_at = next_ts;
+    }
+    Ok(outcome)
 }
 
 // These markers are just used to make it easy to distinguish time spent in

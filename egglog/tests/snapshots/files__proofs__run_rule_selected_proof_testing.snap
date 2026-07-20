@@ -1,0 +1,12 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 279
+expression: proof_snapshot
+---
+(Sym
+  (= (Wrap (A)) (A))
+  (Rule
+    (= (A) (Wrap (A)))
+    (name "unwrap")
+    (premises (Fiat (= (Wrap (A)) (Wrap (A)))))
+    (substitution (root (Wrap (A))) (x (A)))))

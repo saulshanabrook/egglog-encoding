@@ -43,7 +43,8 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
+    RuleSpec, RuleValue, RuleVar,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -324,6 +325,13 @@ pub struct EGraph {
     pushed_egraph: Option<Box<Self>>,
     functions: IndexMap<String, Function>,
     rulesets: IndexMap<String, Ruleset>,
+    /// Runtime forms of globally named rules after global removal and any
+    /// term/proof instrumentation. `run-rule` specializes these forms.
+    named_rules: IndexMap<String, ResolvedRule>,
+    /// Panic callbacks embedded in `FunctionContainer` values must remain live
+    /// for as long as the e-graph can retain those values. Cache one callback
+    /// per unstable-function target for the lifetime of this `EGraph`.
+    unstable_fn_panic_ids: HashMap<String, ExternalFunctionId>,
     pub fact_directory: Option<PathBuf>,
     pub seminaive: bool,
     pub no_decomp: bool,
@@ -451,6 +459,8 @@ impl EGraph {
             pushed_egraph: Default::default(),
             functions: Default::default(),
             rulesets: Default::default(),
+            named_rules: Default::default(),
+            unstable_fn_panic_ids: Default::default(),
             fact_directory: None,
             seminaive: true,
             no_decomp: false,
@@ -558,6 +568,39 @@ struct ResolvedNCommandsWithOutput {
     resolved: Vec<ResolvedNCommand>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     resolved_before_proofs: Vec<ResolvedNCommand>,
+}
+
+#[derive(Clone)]
+enum PreparedSchedule {
+    Saturate(Span, Box<PreparedSchedule>),
+    Repeat(Span, usize, Box<PreparedSchedule>),
+    Run(Span, ResolvedRunConfig),
+    RunRule(PreparedRunRule),
+    Sequence(Span, Vec<PreparedSchedule>),
+}
+
+#[derive(Clone)]
+struct PreparedRunRule {
+    span: Span,
+    config: ResolvedRunRuleConfig,
+    rule_id: egglog_bridge::RuleId,
+    ruleset: String,
+}
+
+impl Display for PreparedSchedule {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PreparedSchedule::Saturate(_, schedule) => write!(f, "(saturate {schedule})"),
+            PreparedSchedule::Repeat(_, limit, schedule) => {
+                write!(f, "(repeat {limit} {schedule})")
+            }
+            PreparedSchedule::Run(_, config) => write!(f, "{config}"),
+            PreparedSchedule::RunRule(prepared) => write!(f, "{}", prepared.config),
+            PreparedSchedule::Sequence(_, schedules) => {
+                write!(f, "(seq {})", ListDisplay(schedules, " "))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -1209,14 +1252,68 @@ impl EGraph {
         }
     }
 
-    // returns whether the egraph was updated
+    // Prepare each static run-rule leaf once, then reuse its temporary naive
+    // specialization throughout repeat/saturate. Always release temporary rules,
+    // including when preparation or execution fails.
     fn run_schedule(&mut self, sched: &ResolvedSchedule) -> Result<RunReport, Error> {
+        let mut temporary_rules = Vec::new();
+        let prepared = match self.prepare_schedule(sched, &mut temporary_rules) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                for rule in temporary_rules {
+                    self.backend.free_rule(rule);
+                }
+                return Err(error);
+            }
+        };
+        let result = self.run_prepared_schedule(&prepared);
+        for rule in temporary_rules {
+            self.backend.free_rule(rule);
+        }
+        result
+    }
+
+    fn prepare_schedule(
+        &mut self,
+        sched: &ResolvedSchedule,
+        temporary_rules: &mut Vec<egglog_bridge::RuleId>,
+    ) -> Result<PreparedSchedule, Error> {
         match sched {
-            ResolvedSchedule::Run(span, config) => self.run_rules(span, config),
-            ResolvedSchedule::Repeat(_span, limit, sched) => {
+            ResolvedSchedule::Run(span, config) => {
+                Ok(PreparedSchedule::Run(span.clone(), config.clone()))
+            }
+            ResolvedSchedule::RunRule(span, config) => {
+                let prepared = self.prepare_run_rule(span, config)?;
+                temporary_rules.push(prepared.rule_id);
+                Ok(PreparedSchedule::RunRule(prepared))
+            }
+            ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
+                span.clone(),
+                *limit,
+                Box::new(self.prepare_schedule(sched, temporary_rules)?),
+            )),
+            ResolvedSchedule::Saturate(span, sched) => Ok(PreparedSchedule::Saturate(
+                span.clone(),
+                Box::new(self.prepare_schedule(sched, temporary_rules)?),
+            )),
+            ResolvedSchedule::Sequence(span, scheds) => {
+                let scheds = scheds
+                    .iter()
+                    .map(|sched| self.prepare_schedule(sched, temporary_rules))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(PreparedSchedule::Sequence(span.clone(), scheds))
+            }
+        }
+    }
+
+    fn run_prepared_schedule(&mut self, sched: &PreparedSchedule) -> Result<RunReport, Error> {
+        match sched {
+            PreparedSchedule::Run(span, config) => self.run_rules(span, config),
+            PreparedSchedule::RunRule(prepared) => self.run_prepared_rule(prepared),
+            PreparedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();
                 for _i in 0..*limit {
-                    let rec = self.run_schedule(sched)?;
+                    let rec = self.run_prepared_schedule(sched)?;
                     let can_stop = rec.can_stop;
                     report.union(rec);
                     if can_stop {
@@ -1225,7 +1322,7 @@ impl EGraph {
                 }
                 Ok(report)
             }
-            ResolvedSchedule::Saturate(_span, sched) => {
+            PreparedSchedule::Saturate(_span, sched) => {
                 let mut report = RunReport::default();
                 let mut i = 0usize;
                 loop {
@@ -1234,7 +1331,7 @@ impl EGraph {
                         "Saturate iteration {i} start: {}",
                         Self::schedule_for_log(sched)
                     );
-                    let rec = self.run_schedule(sched)?;
+                    let rec = self.run_prepared_schedule(sched)?;
                     let updated = rec.updated;
                     log::debug!(
                         "Saturate iteration {i} end: {}",
@@ -1248,13 +1345,81 @@ impl EGraph {
                 }
                 Ok(report)
             }
-            ResolvedSchedule::Sequence(_span, scheds) => {
+            PreparedSchedule::Sequence(_span, scheds) => {
                 let mut report = RunReport::default();
                 for sched in scheds {
-                    report.union(self.run_schedule(sched)?);
+                    report.union(self.run_prepared_schedule(sched)?);
                 }
                 Ok(report)
             }
+        }
+    }
+
+    fn prepare_run_rule(
+        &mut self,
+        span: &Span,
+        config: &ResolvedRunRuleConfig,
+    ) -> Result<PreparedRunRule, Error> {
+        let mut rule = self
+            .named_rules
+            .get(&config.rule)
+            .cloned()
+            .ok_or_else(|| Error::NoSuchRule(config.rule.clone(), span.clone()))?;
+        let ruleset = rule.ruleset.clone();
+        rule.body.extend(config.selectors.clone());
+        rule.eval_mode = RuleEvalMode::Naive;
+
+        // Match the ordinary rule compilation path, except this specialization is
+        // deliberately full/naive and never enters a user ruleset.
+        let union_to_set = self.proof_state.original_typechecking.is_none();
+        let core_rule = rule.to_canonicalized_core_rule(
+            &self.type_info,
+            &mut self.parser.symbol_gen,
+            union_to_set,
+        )?;
+        let mut translator = BackendRule::new(
+            &mut *self.backend,
+            &self.functions,
+            &self.type_info,
+            &mut self.unstable_fn_panic_ids,
+            true,
+        );
+        translator.query(&core_rule.body, rule.include_subsumed)?;
+        translator.actions(&core_rule.head)?;
+        let rule_id = translator.try_build(
+            &rule.name,
+            false,
+            self.no_decomp || rule.no_decomp,
+            core_rule.span,
+        )?;
+
+        Ok(PreparedRunRule {
+            span: span.clone(),
+            config: config.clone(),
+            rule_id,
+            ruleset,
+        })
+    }
+
+    fn run_prepared_rule(&mut self, prepared: &PreparedRunRule) -> Result<RunReport, Error> {
+        let outcome = self.backend.run_rule_guarded(GuardedRuleRun {
+            rule: prepared.rule_id,
+            expected_matches: prepared.config.expect,
+        });
+
+        match outcome.map_err(|error| Error::BackendError(error.to_string()))? {
+            GuardedRuleRunOutcome::Applied { report, .. } => {
+                Ok(RunReport::singleton(&prepared.ruleset, report))
+            }
+            GuardedRuleRunOutcome::MatchCountMismatch {
+                expected_matches,
+                observed_matches,
+            } => Err(Error::RunRuleMatchCountMismatch {
+                rule: prepared.config.rule.clone(),
+                expected: expected_matches,
+                observed: observed_matches,
+                span: prepared.span.clone(),
+            }),
         }
     }
 
@@ -1318,7 +1483,7 @@ impl EGraph {
         )
     }
 
-    fn schedule_for_log(sched: &ResolvedSchedule) -> String {
+    fn schedule_for_log(sched: &impl Display) -> String {
         Self::truncate_for_log(&sched.to_string(), 160)
     }
 
@@ -1372,6 +1537,7 @@ impl EGraph {
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
+        let runtime_rule = rule.clone();
         // The `:naive` rule option opts a single rule out of seminaive
         // evaluation. This widens primitive-context selection from
         // Pure/Write to Read/Full, so primitives that read or write the
@@ -1418,6 +1584,7 @@ impl EGraph {
                 &mut *self.backend,
                 &self.functions,
                 &self.type_info,
+                &mut self.unstable_fn_panic_ids,
                 requires_read_context,
             );
             translator.query(query, rule.include_subsumed)?;
@@ -1434,6 +1601,13 @@ impl EGraph {
             }
             indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
         };
+        if self
+            .named_rules
+            .insert(runtime_rule.name.clone(), runtime_rule)
+            .is_some()
+        {
+            unreachable!("global rule-name uniqueness is enforced during typechecking")
+        }
         Ok(rule.name)
     }
 
@@ -1451,6 +1625,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
         translator.actions(&actions)?;
@@ -1702,14 +1877,24 @@ impl EGraph {
         expr: &ResolvedExpr,
     ) -> Result<(ResolvedExpr, Vec<(String, Value)>), Error> {
         let mut bindings = Vec::new();
-        let expr = self.prepare_unstable_fn_targets_for_eval_inner(expr, &mut bindings)?;
-        Ok((expr, bindings))
+        let mut pending = HashMap::default();
+        match self.prepare_unstable_fn_targets_for_eval_inner(expr, &mut bindings, &mut pending) {
+            Ok(expr) => {
+                commit_unstable_fn_panics(&mut self.unstable_fn_panic_ids, &mut pending);
+                Ok((expr, bindings))
+            }
+            Err(error) => {
+                free_pending_unstable_fn_panics(&mut *self.backend, &mut pending);
+                Err(error)
+            }
+        }
     }
 
     fn prepare_unstable_fn_targets_for_eval_inner(
         &mut self,
         expr: &ResolvedExpr,
         bindings: &mut Vec<(String, Value)>,
+        pending: &mut HashMap<String, ExternalFunctionId>,
     ) -> Result<ResolvedExpr, Error> {
         match expr {
             ResolvedExpr::Lit(..) | ResolvedExpr::Var(..) => Ok(expr.clone()),
@@ -1734,10 +1919,12 @@ impl EGraph {
                                 .into(),
                         ));
                     }
-                    let panic_id = self.backend.new_panic(format!(
-                        "unstable-fn over `{name}` was applied in a context where its wrapped \
-                         function is not valid for this call site, if in a rule, add :naive."
-                    ));
+                    let panic_id = get_or_register_unstable_fn_panic(
+                        &mut *self.backend,
+                        &self.unstable_fn_panic_ids,
+                        pending,
+                        name,
+                    );
                     let resolved_function = {
                         let bridge = self
                             .backend
@@ -1758,13 +1945,7 @@ impl EGraph {
                             panic_id,
                         )
                     };
-                    let resolved_function = match resolved_function {
-                        Ok(resolved) => resolved,
-                        Err(error) => {
-                            self.backend.free_external_func(panic_id);
-                            return Err(error);
-                        }
-                    };
+                    let resolved_function = resolved_function?;
                     let fn_value = self.backend.base_values().get(resolved_function);
                     let binding_name = self.parser.symbol_gen.fresh("unstable_fn_target");
                     bindings.push((binding_name.clone(), fn_value));
@@ -1778,9 +1959,9 @@ impl EGraph {
                         },
                     ));
                     for child in &children[1..] {
-                        prepared_children.push(
-                            self.prepare_unstable_fn_targets_for_eval_inner(child, bindings)?,
-                        );
+                        prepared_children.push(self.prepare_unstable_fn_targets_for_eval_inner(
+                            child, bindings, pending,
+                        )?);
                     }
                     return Ok(ResolvedExpr::Call(
                         span.clone(),
@@ -1791,7 +1972,9 @@ impl EGraph {
 
                 let prepared_children = children
                     .iter()
-                    .map(|child| self.prepare_unstable_fn_targets_for_eval_inner(child, bindings))
+                    .map(|child| {
+                        self.prepare_unstable_fn_targets_for_eval_inner(child, bindings, pending)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 Ok(ResolvedExpr::Call(
                     span.clone(),
@@ -1820,6 +2003,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
         translator.rollback_external_funcs.push(ext_id);
@@ -1859,7 +2043,6 @@ impl EGraph {
             rules: &[id],
         });
         self.backend.free_rule(id);
-        self.backend.free_external_func(ext_id);
         let _ = rule_result.map_err(|e| {
             Error::BackendError(format!("Failed to evaluate expression '{expr}': {e}"))
         })?;
@@ -1915,6 +2098,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            &mut self.unstable_fn_panic_ids,
             true, // global query: Read context (may read the DB)
         );
         translator.rollback_external_funcs.push(ext_id);
@@ -1932,7 +2116,6 @@ impl EGraph {
             rules: &[id],
         });
         self.backend.free_rule(id);
-        self.backend.free_external_func(ext_id);
         run_result.map_err(|e| Error::BackendError(e.to_string()))?;
 
         let ext_sc_val = ext_sc.lock().unwrap().take();
@@ -2826,6 +3009,49 @@ impl EGraph {
 
 pub use crate::api::{ApiError, FromValue, FromValues, IntoValue, IntoValues, RawValues};
 
+fn unstable_fn_panic_message(name: &str) -> String {
+    format!(
+        "unstable-fn over `{name}` was applied in a context where its wrapped \
+         function is not valid for this call site, if in a rule, add :naive."
+    )
+}
+
+/// Return the persistent panic callback for `name`, registering it as pending
+/// on the first uncached use. Pending callbacks remain separate until the
+/// surrounding compilation or preparation operation commits.
+fn get_or_register_unstable_fn_panic(
+    backend: &mut dyn Backend,
+    committed: &HashMap<String, ExternalFunctionId>,
+    pending: &mut HashMap<String, ExternalFunctionId>,
+    name: &str,
+) -> ExternalFunctionId {
+    if let Some(id) = committed.get(name).or_else(|| pending.get(name)) {
+        return *id;
+    }
+    let id = backend.new_panic(unstable_fn_panic_message(name));
+    pending.insert(name.to_owned(), id);
+    id
+}
+
+fn commit_unstable_fn_panics(
+    committed: &mut HashMap<String, ExternalFunctionId>,
+    pending: &mut HashMap<String, ExternalFunctionId>,
+) {
+    for (name, id) in pending.drain() {
+        let previous = committed.insert(name, id);
+        debug_assert!(previous.is_none());
+    }
+}
+
+fn free_pending_unstable_fn_panics(
+    backend: &mut dyn Backend,
+    pending: &mut HashMap<String, ExternalFunctionId>,
+) {
+    for (_, id) in pending.drain() {
+        backend.free_external_func(id);
+    }
+}
+
 /// Build the runtime value backing a resolved `(unstable-fn name)` target.
 ///
 /// For table-backed functions, this captures the table action that
@@ -2954,6 +3180,8 @@ fn resolve_function_container_target_with_context(
 
 struct BackendRule<'a> {
     backend: &'a mut dyn Backend,
+    unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
+    pending_unstable_fn_panic_ids: HashMap<String, ExternalFunctionId>,
     entries: HashMap<core::ResolvedAtomTerm, core::GenericAtomTerm<RuleVar, RuleValue>>,
     next_var: u32,
     body: core::Query<RuleBodyCall, RuleVar, RuleValue>,
@@ -2973,10 +3201,13 @@ impl<'a> BackendRule<'a> {
         backend: &'a mut dyn Backend,
         functions: &'a IndexMap<String, Function>,
         type_info: &'a TypeInfo,
+        unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
         requires_read_context: bool,
     ) -> BackendRule<'a> {
         BackendRule {
             backend,
+            unstable_fn_panic_ids,
+            pending_unstable_fn_panic_ids: Default::default(),
             functions,
             type_info,
             requires_read_context,
@@ -3092,16 +3323,16 @@ impl<'a> BackendRule<'a> {
                     "`unstable-fn` is only supported on the reference bridge backend".into(),
                 ));
             }
-            // Pre-register a panic id used by `FunctionContainer::apply`
-            // when the wrapped function is applied in a context that
-            // doesn't admit it. Triggered at runtime via the egglog
-            // panic side channel so misuse surfaces as an `Err` from
-            // `run_rules` rather than a thread unwind.
-            let panic_id = self.backend.new_panic(format!(
-                "unstable-fn over `{name}` was applied in a context where its wrapped \
-                 function is not valid for this call site, if in a rule, add :naive."
-            ));
-            self.rollback_external_funcs.push(panic_id);
+            // Obtain the EGraph-lifetime panic id used by
+            // `FunctionContainer::apply` when the wrapped function is applied
+            // in a context that doesn't admit it. A new id remains pending
+            // until this rule is registered successfully.
+            let panic_id = get_or_register_unstable_fn_panic(
+                self.backend,
+                self.unstable_fn_panic_ids,
+                &mut self.pending_unstable_fn_panic_ids,
+                name,
+            );
             let bridge = self
                 .backend
                 .as_any()
@@ -3378,13 +3609,17 @@ impl<'a> BackendRule<'a> {
                 body: std::mem::take(&mut self.body),
                 head: std::mem::take(&mut self.head),
             },
+            owned_external_funcs: std::mem::take(&mut self.rollback_external_funcs),
         };
         let result = self
             .backend
             .add_rule(spec)
             .map_err(|error| Error::BackendError(error.to_string()));
         if result.is_ok() {
-            self.rollback_external_funcs.clear();
+            commit_unstable_fn_panics(
+                self.unstable_fn_panic_ids,
+                &mut self.pending_unstable_fn_panic_ids,
+            );
         }
         result
     }
@@ -3392,6 +3627,7 @@ impl<'a> BackendRule<'a> {
 
 impl Drop for BackendRule<'_> {
     fn drop(&mut self) {
+        free_pending_unstable_fn_panics(self.backend, &mut self.pending_unstable_fn_panic_ids);
         for id in self.rollback_external_funcs.drain(..) {
             self.backend.free_external_func(id);
         }
@@ -3441,6 +3677,17 @@ pub enum Error {
     CheckError(Vec<Fact>, Span),
     #[error("{1}\nNo such ruleset: {0}")]
     NoSuchRuleset(String, Span),
+    #[error("{1}\nNo such rule: {0:?}")]
+    NoSuchRule(String, Span),
+    #[error(
+        "{span}\nrun-rule {rule:?} expected {expected} match(es), but found {observed}; no rule actions were applied"
+    )]
+    RunRuleMatchCountMismatch {
+        rule: String,
+        expected: usize,
+        observed: usize,
+        span: Span,
+    },
     #[error(
         "{1}\nAttempted to add a rule to combined ruleset {0}. Combined rulesets may only depend on other rulesets."
     )]
@@ -3599,6 +3846,102 @@ mod tests {
         assert_ne!(occupied, shared);
         egraph.backend.free_external_func(shared);
         assert_eq!(register_probe(&mut egraph), shared);
+    }
+
+    #[test]
+    fn unstable_fn_panic_cache_is_persistent_and_bounded_across_rule_specialization() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (ruleset owned)
+                (sort Fn (UnstableFn (i64) i64))
+                (function id (i64) i64 :merge old)
+                (function slot () Fn :merge old)
+                (rule ()
+                    ((set (slot) (unstable-fn "id")))
+                    :ruleset owned
+                    :name "owns-panic")
+                "#,
+            )
+            .unwrap();
+
+        let panic_id = egraph.unstable_fn_panic_ids["id"];
+        assert_eq!(egraph.unstable_fn_panic_ids.len(), 1);
+
+        // Temporary naive specializations reuse the EGraph-lifetime callback;
+        // they neither grow the cache nor take rule-owned references.
+        for _ in 0..3 {
+            egraph
+                .parse_and_run_program(None, r#"(run-schedule (run-rule "owns-panic" :expect 1))"#)
+                .unwrap();
+            assert_eq!(egraph.unstable_fn_panic_ids.len(), 1);
+            assert_eq!(egraph.unstable_fn_panic_ids["id"], panic_id);
+        }
+
+        // Freeing the source rule must not invalidate FunctionContainer values
+        // already stored in the e-graph.
+        let permanent_rule = match &egraph.rulesets["owned"] {
+            Ruleset::Rules(rules) => rules["owns-panic"].1,
+            Ruleset::Combined(_) => unreachable!(),
+        };
+        egraph.backend.free_rule(permanent_rule);
+        assert_eq!(egraph.unstable_fn_panic_ids.len(), 1);
+        assert_eq!(egraph.unstable_fn_panic_ids["id"], panic_id);
+
+        let shared = egraph.backend.new_panic(unstable_fn_panic_message("id"));
+        assert_eq!(
+            shared, panic_id,
+            "the persistent cache must keep the embedded callback registered"
+        );
+        egraph.backend.free_external_func(shared);
+    }
+
+    #[test]
+    fn direct_unstable_fn_preparation_uses_the_persistent_cache() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort Fn (UnstableFn (i64) i64))
+                (function id (i64) i64 :merge old)
+                "#,
+            )
+            .unwrap();
+        let output = egraph.get_sort_by_name("Fn").unwrap().clone();
+        let mut parser = crate::ast::Parser::default();
+
+        for _ in 0..2 {
+            let expr = parser
+                .get_expr_from_string(None, r#"(unstable-fn "id")"#)
+                .unwrap();
+            let resolved = egraph
+                .typecheck_expr_with_bindings_and_output(&expr, &[], output.clone(), Context::Pure)
+                .unwrap();
+            let (_, bindings) = egraph
+                .prepare_unstable_fn_targets_for_eval(&resolved)
+                .unwrap();
+            assert_eq!(bindings.len(), 1);
+            assert_eq!(egraph.unstable_fn_panic_ids.len(), 1);
+        }
+
+        let expr = parser
+            .get_expr_from_string(None, r#"(unstable-fn "missing")"#)
+            .unwrap();
+        let resolved = egraph
+            .typecheck_expr_with_bindings_and_output(&expr, &[], output, Context::Pure)
+            .unwrap();
+        let error = egraph
+            .prepare_unstable_fn_targets_for_eval(&resolved)
+            .unwrap_err();
+        assert!(error.to_string().contains("No resolution for \"missing\""));
+        assert_eq!(
+            egraph.unstable_fn_panic_ids.len(),
+            1,
+            "failed direct preparation must not commit its pending panic"
+        );
     }
 
     #[test]
