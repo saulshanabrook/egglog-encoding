@@ -2403,11 +2403,26 @@ impl Backend for EGraph {
     }
 
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
-        // Insert each logical row (keys + value columns) straight into the mirror.
-        // Duplicate view keys are resolved by the view's `:merge` on the next run.
-        for (func, row) in values {
-            let r: Row = row.iter().map(|v| v.rep()).collect();
-            self.insert_live_row(func, r);
+        // Route through the merge-aware path (like the reference backend's staged
+        // flush) so that same-key/different-value rows are collapsed by each
+        // function's `:merge` — FD-view congruence unions colliding e-classes, and
+        // a `:no-merge` conflict is rejected — rather than coexisting as raw mirror
+        // rows.
+        let sets: Vec<(FunctionId, Row)> = values
+            .into_iter()
+            .map(|(func, row)| (func, row.iter().map(|v| v.rep()).collect()))
+            .collect();
+        if let Err(err) = self.apply_sets(sets) {
+            // `add_values` cannot return an error; stash it to surface on the next
+            // `run_rules` (the reference backend likewise reports a conflicting
+            // merge lazily rather than at load time).
+            let mut pending = self
+                .panic_message
+                .lock()
+                .expect("DD panic-message side channel must not be poisoned");
+            if pending.is_none() {
+                *pending = Some(err.to_string());
+            }
         }
     }
 
