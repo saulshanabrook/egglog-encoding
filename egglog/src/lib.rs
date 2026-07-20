@@ -2547,7 +2547,8 @@ impl EGraph {
 
                 // Now typecheck using self, adding term type information.
                 let desugared_typechecked = self.typecheck_program(&desugared)?;
-                // remove globals again, but this time allow primitive globals
+                // Remove the globals the term encoding itself introduced (its minted
+                // `let`s), the same way source-level globals were removed above.
                 let desugared_typechecked = remove_globals::remove_globals(
                     desugared_typechecked,
                     &mut self.parser.symbol_gen,
@@ -2680,10 +2681,6 @@ impl EGraph {
     ) -> Result<Vec<CommandOutput>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
         self.run_program(parsed)
-    }
-
-    pub fn zz_report(&self) -> &egglog_reports::RunReport {
-        &self.overall_run_report
     }
 
     /// Get the number of tuples in the database.

@@ -696,7 +696,6 @@ impl<'a> ProofInstrumentor<'a> {
             }
         );
         let view_sorts = format!("{in_sorts} {out_type}");
-        let proof_constructors = self.proof_functions(fdecl, &view_sorts);
 
         let view_sort = if output_is_eclass {
             schema.output().clone()
@@ -795,15 +794,9 @@ impl<'a> ProofInstrumentor<'a> {
             {view_decl}
             (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
             (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
-            {proof_constructors}
             {merge_rule}
             {delete_rule}",
         ))
-    }
-
-    fn proof_functions(&mut self, _fdecl: &ResolvedFunctionDecl, _view_sorts: &str) -> String {
-        // ViewProof is now merged into the view table as its output column
-        "".to_string()
     }
 
     /// Rebuild rules that keep a table's view canonical, fanned out one rule per

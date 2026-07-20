@@ -1429,8 +1429,6 @@ pub enum TypeError {
     UndefinedSort(String, Span),
     #[error("{1}\nUnbound function {0}")]
     UnboundFunction(String, Span),
-    #[error("{1}\nprove-exists requires constructor function, but {0} is not a constructor")]
-    ProveExistsRequiresConstructor(String, Span),
     #[error("{1}\nFunction already bound {0}")]
     FunctionAlreadyBound(String, Span),
     #[error("{1}\nSort {0} already declared.")]

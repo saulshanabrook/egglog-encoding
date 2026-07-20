@@ -63,19 +63,18 @@ impl ProofInstrumentor<'_> {
             }
         })?;
 
-        let proof_function_name = self
+        // `prove-exists` targets a constructor, whose eq-sort output has a proof
+        // table. A function with a base-sort output (e.g. `(function f (i64) i64)`)
+        // has none, so there is nothing to prove — reject it rather than panic.
+        let Some(proof_function_name) = self
             .egraph
             .proof_state
             .proof_func_parent
             .get(output_sort.name())
-            .unwrap_or_else(|| {
-                panic!(
-                    "no :internal-proof-func annotation recorded for sort {} (constructor {})",
-                    output_sort.name(),
-                    func.name
-                )
-            })
-            .clone();
+            .cloned()
+        else {
+            return Err(ProveExistsError::RequiresConstructor);
+        };
         let proof_function = self
             .egraph
             .functions
@@ -119,13 +118,10 @@ impl ProofInstrumentor<'_> {
         }
 
         // If the existence proof is a single-premise rule, strip that wrapping rule
-        // and use its premise. Otherwise there is no wrapping rule to remove, so use
-        // the proof as-is (a valid existence proof need not be rule-justified — it may
-        // be `Fiat`/`Merge`/`Congr`/…; `check_proof` below validates it either way).
-        // Assuming a `Rule` here made this order-dependent: the witness is a
-        // constructor's first row, and a backend that iterates rows in a different
-        // order (e.g. the differential-dataflow backend's `HashSet` mirror) can
-        // surface a non-rule-justified row.
+        // and use its premise; otherwise use the proof as-is (an existence proof need
+        // not be rule-justified — `check_proof` below validates it either way). Which
+        // shape arises depends on the witness row, chosen deterministically above, so
+        // this is stable across runs and backends.
         let proof = proof_store.get(proof_id);
         let extra_rule_removed = match proof.justification() {
             Justification::Rule { premise_proofs, .. } => match premise_proofs.as_slice() {
