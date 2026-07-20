@@ -1,88 +1,200 @@
 # Causal Slice v0 Design Validation
 
-Status: active experiment, 2026-07-20.
+Status: Bronze implemented and tested. The exact-plan boundary, mutable-state
+sidecar proposal, equality hook, and general sequential-wave claim were
+actively falsified rather than silently generalized.
+
+Date: 2026-07-20.
 
 ## Steering frame
 
-- Mission: falsify or establish the smallest sound instance of one traced
+- Mission: establish or falsify the smallest sound instance of one traced
   native run, one backward causal slice, and one unchanged proof-mode replay.
-- Non-goals: global minimum slicing, OR alternatives, delta debugging,
-  differential-dataflow support, proof/checker redesign, speculative epochs,
-  per-column provenance, or general mutation/container support before Bronze.
-- Exact base: PR #23 head
+- Non-goals: minimum slicing, alternative-producer OR nodes, delta debugging,
+  DD support, proof/checker redesign, speculative epochs, and per-column
+  provenance.
+- Exact fetched PR #23 head:
   `4940be37429e7adf16cc43283b38508e692cf045`.
-- Worktree: `/Users/saul/p/wt/egglog-encoding/causal-slice-arena-v0`.
+- Worktree:
+  `/Users/saul/p/wt/egglog-encoding/causal-slice-arena-v0`.
 - Branch: `agent/causal-slice-arena-v0`.
-- Current frontier: validate the proposed native evidence hooks, then import
-  only the already demonstrated relation-only Bronze slice as the passing
-  comparison.
-- Stop rule: after a hook is disproved by a reduced canary, record the exact
-  missing evidence and do not replace it with final-state guessing.
+- One implementation writer was used. Read-only reviewers audited native
+  hooks, equality/witnesses, replay waves, source transformation, and final
+  soundness.
+- Stop rule: preserve a reduced canary and fail closed when the native path
+  lacks match-time or commit-time evidence. Never substitute a final-state
+  scan or inverse endpoint search.
 
-## Competing hypotheses
+## Exact implemented contract
 
-| ID | Hypothesis | Confirming prediction | Disconfirming prediction | Status |
-|---|---|---|---|---|
-| H1 | PR #23 is a sufficient guarded replay leaf for fully grounded positive relation rules | a captured two-step transcript replays in ordinary and unchanged strict proof modes | a fully bound leaf cannot reproduce the captured grounding or complete head | pending |
-| H2 | final native join expansion exposes enough evidence for exact whole-row body support and complete replay bindings | every final grounding carries every logical variable plus stable source row identities or equivalent dependencies | an existential variable or source row identity is projected away before the action leaf | falsified on unmodified PR #23: the planner drops single-use, non-RHS variables, and final expansion drops `TaggedRowBuffer` tags |
-| H3 | one current dependency pointer per mutable row identity is viable | row identity survives commit/rekey/delete lifecycle without unsafe reuse | replacement, canonicalization, deletion, or slot reuse changes the identity without a repair hook | pending |
-| H4 | successful-union endpoint edges form a recoverable explanation forest without epochs | endpoints and the earlier unique path remain queryable after later canonicalization/rebuild | canonicalization destroys endpoint identity or makes an earlier path unrecoverable | pending |
-| H5 | replay witnesses can be captured once at match time and printed lazily | each supported binding has immutable syntax plus availability dependencies at the firing | witness syntax is only discoverable by later extraction/final inverse search | pending |
-| H6 | sequential `run-rule` is sound for fully grounded insert-only set relations | same-wave canaries retain original observations and do not gain uncaptured groundings | current-state re-query changes a captured grounded firing | pending |
-| H7 | sequential leaves preserve general shared-wave semantics | delete/write/subsume/lookups behave like one original wave | an earlier replay head changes a later captured firing or RHS read | expected to be falsified |
+The accepted fragment is intentionally narrow:
 
-## Invariant validation table
+- reference/native backend only;
+- one non-popped scope;
+- immutable set relations over scalar base sorts;
+- ground relation insertions as source initialization;
+- positive relation atoms only in bodies and checks;
+- complete heads containing relation insertions only;
+- default seminaive rules without subsumed-row matching;
+- one automatic computation schedule, followed by one or more positive checks;
+- all declarations, rules, source initialization, and checks retained;
+- source literals and names must round-trip through the current printer;
+- one-atom rules are accepted;
+- multi-atom rules are accepted only when they use one native bag (at most two
+  body atoms, or an explicit source `:no-decomp`) and every body variable that
+  occurs in one atom is also used by the head;
+- positive checks have at most two atoms; in a multi-atom check every variable
+  must occur in more than one atom.
 
-`Confirmed` means direct code plus a focused run/test. `Falsified` requires a
-reduced witness. `Uncertain` is not permission to implement around the gap.
+Those last restrictions match the current planner. One-atom rules use
+MinCover. Generic Join projects exactly a variable with one source-atom
+occurrence that is unused by the head. Queries with at most two atoms are a
+single plan; larger queries can be decomposed unless `:no-decomp` was already
+present in the source. The slicer preserves the original plan and planner
+flags; it does not normalize tracing to another planner.
 
-| Proposed invariant | Initial status | Required evidence | Final status / evidence |
-|---|---|---|---|
-| PR #23 exact guard is atomic before head effects | uncertain | existing `run_rule` test and implementation | pending |
-| complete match bindings exist at the final native action leaf | uncertain | free-join path audit and trace canary | falsified: `free_join/plan.rs` intentionally omits a single-use variable not needed by the RHS; `CapturedBinding` only copies the resulting dense map |
-| exact source `RowId`s survive factorized final match expansion | uncertain | `TaggedRowBuffer` to `push_bindings` dataflow | falsified at the action leaf: `expand_binding_sets` consumes the tag while expanding the match and passes only bindings onward |
-| decomposed intermediate rows can carry one shadow `DepId` | uncertain | materialization representation and projection audit | pending |
-| action lanes can carry a `PendingFireId` through every proposal | uncertain | action-buffer and mutation-buffer audit | pending |
-| commit can attribute effective insert/update/no-op to one origin | uncertain | table/merge commit boundary audit | pending |
-| `RowId` is stable across commit/replacement/rekey/delete/reuse | uncertain | table lifecycle audit plus canaries | pending |
-| RHS lookup hits/misses expose current row/tombstone evidence | uncertain | action execution and lookup hooks | pending |
-| successful union exposes pre-canonical endpoints and outcome | uncertain | union-find/write path audit plus canary | pending |
-| successful-union forest needs no epochs | uncertain | direct, redundant, later-union, congruence/rebuild canaries | pending |
-| scalar binding syntax is available without per-match extraction | uncertain | match-time base-value reconstruction canary | pending |
-| container same-ID rebuild is version distinguishable | uncertain | container rebuild identity canary | pending |
-| matched all-no-op firings can be discarded | uncertain | complete-head mixed no-op/effective canary | pending |
-| positive conjunctive check exposes one actual environment | uncertain | traced check query canary | pending |
-| sequential replay is sound for the declared Bronze fragment | uncertain | enabling and same-wave multi-fire canaries | pending |
-| general replay requires a shared-pre-state batch | uncertain | delete/write/subsume/RHS-read counterexamples | pending |
+The validator rejects unsupported constructs before the traced run, including
+equality or primitive filters, functions, constructors, unions, rewrites,
+delete, subsume, merges, RHS function lookups, external functions, containers,
+extracts, negative checks, push/pop, includes, I/O, input `run-rule`, and DD.
 
-## Circle roster
+## Design-invariant validation
 
-| Agent | Domain | Aim | Authority | Expected output | Stop |
-|---|---|---|---|---|---|
-| coordinator | implementation and synthesis | own the only code edits, experiments, integration, gates, and handoff | may implement within the prompt; no remote writes | sound vertical slice or minimal blocker | hard criteria pass or architecture assumption is reduced and falsified |
-| native-hooks | native joins, rows, action origins, commit/rebuild | classify H2/H3 and exact hook availability | read-only; no broad gates | path/line evidence and minimal missing-interface canaries | every assigned invariant is confirmed, falsified, or explicitly uncertain |
-| equality-witness | equality forest and replay witnesses | classify H4/H5 without speculative epochs | read-only; no code edits | endpoint/path/rekey analysis and focused canary designs | first decisive counterexample or all assumptions supported |
-| wave-source-review | wave batching, state canaries, source replay | independently falsify H6/H7 and review output contract | read-only; no code edits | reduced counterexamples and Bronze soundness criteria | monotone boundary and smallest batch requirement are precise |
+`Confirmed` means current code plus a focused run. `Falsified` has a reduced
+counterexample. `Reasoned only` is not an implemented or empirical claim.
+
+| Proposed invariant | Status | Exact evidence or correction |
+|---|---|---|
+| PR #23 can replay a captured, fully grounded positive relation firing | Confirmed for Bronze | complete transcript and sliced replay both pass ordinary and unchanged strict proof testing |
+| tracing can reuse the ordinary native plan and body search | Confirmed for accepted queries | `run_rules_impl_traced` builds the same cached rule set as ordinary execution; `run_rule_set_traced` records at the final action leaf without a second query |
+| trace mode preserves physical parallel ordering | Falsified as a claim | trace mode runs the same plan serially so event order is deterministic; accepted set inserts preserve logical matches and result, but physical parallel order is not claimed |
+| final native bindings always contain every source variable | Falsified in general | the projected-variable canary records only `x`; v0 statically rejects the plan shape before execution |
+| PR #23 partial `:bind` can replay a projected ordinary firing | Falsified | unbound query sees 1, `:bind ((x 1))` sees 2, and either complete `(x,y)` bind sees 1; no evidence selects one `y` as the projected firing |
+| exact source `RowId`s survive factorized final expansion | Falsified | `TaggedRowBuffer` carries a tag, but expansion discards it before `ActionBuffer::push_bindings` and has no source-atom identity |
+| decomposed materializations already carry a shadow dependency | Falsified on the current path | materialized rows have no `DepId`; v0 rejects potentially decomposed rules/checks |
+| naked `RowId` is a stable sidecar key | Falsified | generation changes, replacement, rebuild/rekey, deletion, compaction, and slot reuse invalidate or recycle IDs |
+| action lanes and mutation proposals carry a pending-fire origin | Falsified | `ActionState`, mutation buffers, and staged rows carry values but no `PendingFireId` |
+| commit reports which proposal was new, changed, redundant, or deleted | Falsified | current `TableChange` is aggregate and parallel staging may coalesce same-key proposals |
+| lookup hits and misses expose row/tombstone evidence | Falsified | vectorized lookup drops row identity and hit/miss provenance; there is no tombstone dependency |
+| successful union exposes raw endpoints, origin, and success | Falsified at the public hook | internal insert distinguishes redundant/successful union, but the result and proposal origin are discarded |
+| successful raw-endpoint edges form a forest without epochs in one scope | Reasoned only | every successful edge joins two components, so later edges cannot alter an earlier unique path; no end-to-end edge capture exists yet |
+| equality IDs are globally stable without epochs | Falsified | push/pop can reuse the same raw `Value` for a different term; cross-scope support needs rollback-aligned arenas or a scope epoch |
+| match-time endpoints provide printable witnesses by themselves | Falsified generally | only raw scalar endpoints are captured at the action leaf; literal `WitnessId`s are reconstructed post-run from append-only typed base values |
+| scalar literals can be printed without per-match extraction | Confirmed for the exercised `i64` path | typed base-value reconstruction produces source literals; unsafe strings fail closed; application/container witnesses remain unsupported |
+| a container outer value identifies immutable contents | Falsified | the same outer ID can survive content rebuild; an immutable container-version witness is required |
+| all-no-op firings need persistent replay events | Falsified for Bronze | all matches remain available for the diagnostic transcript, but only first logical producers become persistent fire events |
+| one positive check can root one complete actual environment | Confirmed within the planner boundary | one-atom variable check and two-atom constant/repeated-variable checks pass; projected/decomposed checks fail closed |
+| sequential grounded leaves preserve the supported monotone fragment | Confirmed | fully grounded set atoms have at most one complete row; prerequisites pre-exist; insertions commute and duplicates are no-ops |
+| sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
+| `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
+
+## Important implementation correction: pending lifetime
+
+The architectural arena is present, but the current trace transport is a debug
+spike rather than the final wave-local memory design:
+
+1. the native backend appends every `RuleMatch` and named binding to batches;
+2. the frontend keeps all batches through the schedule and checks;
+3. after the run, it reconstructs literal witnesses and `PendingFire`s;
+4. for a short interval, raw batches and pending firings coexist;
+5. only effective fires are promoted into the persistent `EventId` arena;
+6. the complete transcript deliberately retains all pending firings until
+   source emission.
+
+Therefore temporary tracing memory is `O(all matches + all captured bindings)`,
+not wave-local. The lower-bound counter is diagnostic only and excludes vector
+capacity and shared symbol allocation. A production patch needs a per-wave
+callback/sink that elaborates, promotes, and drops pending matches immediately;
+full-transcript retention should be opt-in.
+
+## Why `FactKey` is sound only for Bronze
+
+Bronze uses the complete grounded relation tuple as a stable logical identity.
+For immutable set relations there is at most one live row for that tuple, so a
+body grounding identifies the exact logical premise without relying on an
+unstable physical `RowId`. A match copies the current tuple dependency before
+the wave's output map is published.
+
+This does not generalize to functions, mutable rows, container versions,
+deletion, subsumption, custom merges, or absence. Those operations require
+match/commit evidence and versioned current-state sidecars.
+
+## Reduced planner counterexample
+
+```lisp
+(relation R (i64 i64))
+(relation S (i64))
+(relation Out (i64))
+(rule ((R x y) (S x)) ((Out x)) :name "copy")
+(R 1 10)
+(R 1 20)
+(S 1)
+```
+
+- ordinary `(run 1)`: one projected logical firing for `x = 1`;
+- `(run-rule "copy" :expect 1)`: one match;
+- `(run-rule "copy" :bind ((x 1)) :expect 1)`: atomically fails with two;
+- either complete `(x 1, y 10)` or `(x 1, y 20)` bind: one match.
+
+Forcing MinCover would create two traced firings and preserve the final state
+for idempotent set heads, but it would no longer be the ordinary execution's
+grounding multiset. V0 instead rejects this source. Exact support needs a
+projection-preserving post-plan selector plus one representative premise-row
+witness/dependency for the projected existential.
+
+## Wave result
+
+No batch primitive is required for the declared Bronze fragment. A general
+batch is required beyond it. Its minimum semantics are:
+
+1. group fires by original wave;
+2. resolve/query every guarded firing against one immutable pre-state;
+3. count post-filter logical matches and validate every guard before effects;
+4. execute complete heads in captured ordinal order into one shared mutation
+   state;
+5. commit once with native ordering and rebuild once;
+6. preserve dynamic RHS read semantics without synthetic selector premises.
+
+A loop around current `run-rule` does not meet that contract.
+
+## Equality result
+
+The proposed append-only successful-union forest is a plausible one-scope
+graph invariant and does not need speculative epochs inside that scope.
+However, it is unimplemented and not empirically validated end to end because
+the native union path does not expose both success and origin. The existing
+canary only establishes that native direct, redundant, and congruence equality
+behave under strict proof mode and that the slicer rejects them.
 
 ## Experiment ledger
 
-| ID | Question | Smallest repro / command | Expected discriminator | Result |
-|---|---|---|---|---|
-| E0 | Does the exact PR head pass its focused replay tests and baseline gates? | `cargo test -p egglog --test run_rule`; `make proof-tests`; `make check` | 4 guarded-run tests and both repository gates pass | passed: 4/4 focused; 192 reference plus 8 experimental proof fixtures; full `make check` passed |
-| E1 | Can one captured transcript replay in ordinary and proof modes? | two-rule/two-grounding relation chain | every leaf has complete bindings and `:expect 1` | pending |
-| E2 | Can one check-rooted backward slice remove an irrelevant branch? | Bronze relation fixture | 6 matched applications become 2 retained | pending |
-| E3 | Is sequential replay adequate for the monotone fragment? | same-wave enabling with fully bound fires | no new uncaptured grounding fires | pending |
-| E4 | Does mutation falsify sequential shared-wave replay? | delete/read and write/lookup canaries | sequential replay diverges from original wave | pending |
-| E5 | Does `:expect` count successful logical matches after primitive filters? | one relation candidate plus false equality filter | guard must fail if it counts logical matches | pending |
-| E6 | Are equality-forest endpoints/path stable? | direct/redundant/later union and rekey canaries | earlier path remains recoverable without final-class guessing | pending |
-| E7 | Are row IDs stable enough for current-state sidecars? | insert/overwrite/rekey/delete/reinsert probes | row sidecar identity remains valid or failure is localized | pending |
-| E8 | Is output deterministic and proof-checkable? | two independent slicer processes plus strict replay | byte-identical source and unchanged checker pass | pending |
+| ID | Question | Result |
+|---|---|---|
+| E0 | Does exact PR #23 pass focused and repository baselines? | passed: 4 replay tests, proof fixtures, and full `make check` |
+| E1 | Can six captured guarded leaves replay with no automatic schedule? | passed in ordinary and strict proof modes |
+| E2 | Can one backward slice remove an irrelevant dynamic branch? | passed: 6 matches/effective events become 2 retained events |
+| E3 | Does a two-body exact relation grounding carry both logical premises? | passed in ordinary and strict proof modes |
+| E4 | Are output programs deterministic and parseable? | passed: independent-process hashes are byte-identical; desugaring succeeds |
+| E5 | Does ordinary GJ expose all source variables? | falsified by the projected `y` canary; source rejected |
+| E6 | Is sequential replay adequate for Bronze? | passed for fully grounded positive set relations |
+| E7 | Does sequential replay preserve mutation waves? | falsified by insert/delete, delete/read, subsume/read, and lookup canaries |
+| E8 | Does `:expect` count after primitive filters? | falsified; source rejected before tracing |
+| E9 | Is the equality forest available from current hooks? | no; success plus origin is missing |
+| E10 | Are source planner flags preserved? | passed; emission preserves absence/presence of `:no-decomp` and validates it in the semantic rule mapping |
+| E11 | Are duplicate complete head rows counted once while the full head replays? | passed |
 
 ## Validation commands
 
 ```bash
 cargo test -p egglog --test run_rule
 cargo test -p egglog --test causal_slice
+cargo run -p egglog --example causal_slice -- \
+  .codex/causal-slice-v0/bronze.egg
+target/debug/egglog /tmp/causal-slice-v0-full.new.egg
+target/debug/egglog --proof-testing /tmp/causal-slice-v0-full.new.egg
+target/debug/egglog /tmp/causal-slice-v0-slice.new.egg
+target/debug/egglog --proof-testing /tmp/causal-slice-v0-slice.new.egg
+target/debug/egglog --mode desugar /tmp/causal-slice-v0-slice.new.egg
 make check
 make proof-tests
 cargo fmt --all -- --check
