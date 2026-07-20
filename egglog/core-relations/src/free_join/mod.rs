@@ -281,6 +281,9 @@ impl Counters {
         // NB: we may want to experiment with Ordering::Relaxed here.
         self.0[ctr].fetch_add(1, Ordering::Release)
     }
+    pub(crate) fn set(&self, ctr: CounterId, value: usize) {
+        self.0[ctr].store(value, Ordering::Release);
+    }
 }
 
 /// A collection of tables and indexes over them.
@@ -508,6 +511,13 @@ impl Database {
     /// Get the current value of the given counter.
     pub fn read_counter(&self, counter: CounterId) -> usize {
         self.counters.read(counter)
+    }
+
+    /// Overwrite the given counter's value. Used (by the differential-dataflow
+    /// backend) to roll a counter back to a previously read value, e.g. reclaiming
+    /// ids staged by an aborted action.
+    pub fn set_counter(&self, counter: CounterId, value: usize) {
+        self.counters.set(counter, value)
     }
 
     /// A helper for merging all pending updates. Used to write to the database after updates have
