@@ -2510,8 +2510,27 @@ impl EGraph {
             // function); custom base-output inputs become a bodyless loader rule.
             let for_execution =
                 ProofInstrumentor::lower_inputs_for_execution(self, resolved_before_proofs)?;
+            // Function-style global desugaring (same pass native/off mode uses):
+            // each global `(let x …)` becomes an `:internal-let` no-arg function
+            // `set` to its value, with RHS uses looked up in the query. Replaces the
+            // old constructor+`union` desugaring so the top level uses `set` (no
+            // union), and the global is a function with a view like any other.
             let typechecked_no_globals =
-                proof_global_remover::remove_globals(for_execution, &mut self.parser.symbol_gen);
+                remove_globals::remove_globals(for_execution, &mut self.parser.symbol_gen);
+            // The term encoder runs before the encoded program is typechecked, so it
+            // can't rely on the later typecheck to populate `global_sorts`. Register
+            // the new global functions' sorts eagerly so `is_global` recognizes them
+            // while encoding.
+            for command in &typechecked_no_globals {
+                if let GenericNCommand::Function(fdecl) = command
+                    && fdecl.internal_let
+                    && let Some(output_sort) = self.type_info.sorts.get(fdecl.schema.output())
+                {
+                    self.type_info
+                        .global_sorts
+                        .insert(fdecl.name.clone(), output_sort.clone());
+                }
+            }
             for command in &typechecked_no_globals {
                 self.names.check_shadowing(command)?;
             }

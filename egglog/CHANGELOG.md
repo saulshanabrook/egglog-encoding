@@ -2,6 +2,15 @@
 
 ## [Unreleased] - ReleaseDate
 
+- In the term/proof encoding, desugar global variables (`(let x …)`) with the
+  function-style `remove_globals` pass — a nullary `:internal-let` function `set`
+  to its value — instead of the old constructor-plus-`union` desugaring. The
+  global gets a functional-dependency view and rebuild rules like any other
+  function, its e-class column tracked by the constructor-style (union-composing)
+  rebuild rather than the custom-output (congruence) rebuild. Rebuilding is now
+  skipped after every non-`union` top-level action (a `let`/`set`/insert can't
+  merge e-classes), so a long run of global definitions no longer triggers a
+  rebuild per definition. The old `proof_global_remover` pass is removed.
 - Fix user-defined primitives (registered through the Rust API after construction) being reported as unbound under term encoding / proofs: primitive registration now also reaches the term-encoding typechecker, so the encoder can typecheck the encoded program. Previously callers had to manually register the primitive on `proof_state.original_typechecking` as well.
 - **Pluggable backend SPI.** `EGraph::with_backend(Box<dyn Backend>)` lets a third party drive the egglog frontend with their own backend (see the `egglog-backend-trait` crate and the `egglog-experimental-dd` example). A backend without a native union-find declares `Backend::requires_term_encoding()`; `EGraph::with_term_encoding()` opts such an e-graph into the term-encoding pipeline (congruence and rebuild lower to rules over `@uf` tables), and running a term-encoding-only backend without it now errors with `Error::BackendRequiresTermEncoding` instead of silently dropping `union`s.
 - Route the term/proof encoding's `get-fresh!` (id minting) and `set-if-empty` (view canonicalization) primitives through the backend SPI (`Backend::register_get_fresh` / `register_set_if_empty` / `register_view_proof`), so a backend can service them against its own storage instead of reaching into core-relations tables. The differential-dataflow backend implements them over its host-side mirror and now runs eq-sort programs under term/proof encoding.

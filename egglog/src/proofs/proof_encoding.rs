@@ -509,6 +509,18 @@ impl<'a> ProofInstrumentor<'a> {
     fn is_fd_view(&self, fdecl: &ResolvedFunctionDecl) -> bool {
         fdecl.subtype == FunctionSubtype::Constructor
             || (fdecl.subtype == FunctionSubtype::Custom && fdecl.merge.is_some())
+            // Globals (`:internal-let` no-arg functions): use the FD pair-valued
+            // view `() -> (val, proof)` (like a constructor) so a global can be read
+            // as `(@xView)` in queries and actions. The default `:no-merge`
+            // all-column view is keyed by the value and can't be read in an action.
+            || fdecl.internal_let
+    }
+
+    /// A global is a `:internal-let` function; in the encoding it is treated like a
+    /// nullary constructor (FD view, congruence merge, readable value+proof) rather
+    /// than a `:no-merge` custom function.
+    fn is_encoded_global(&self, fdecl: &ResolvedFunctionDecl) -> bool {
+        fdecl.internal_let
     }
 
     /// Like [`Self::is_fd_view`], for a resolved [`FuncType`] at an action/query
@@ -628,7 +640,12 @@ impl<'a> ProofInstrumentor<'a> {
     /// (a conflict panic for eq-sort outputs, a native `:no-merge` `current` helper
     /// for primitive outputs).
     fn handle_merge_or_congruence(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        if fdecl.subtype == FunctionSubtype::Custom && fdecl.merge.is_none() {
+        // Globals use the constructor-style congruence view (handled by the view's
+        // own `:merge`), so they need no extra `:no-merge` conflict rule.
+        if fdecl.subtype == FunctionSubtype::Custom
+            && fdecl.merge.is_none()
+            && !self.is_encoded_global(fdecl)
+        {
             let child_names = fdecl
                 .schema
                 .input
@@ -660,9 +677,19 @@ impl<'a> ProofInstrumentor<'a> {
         let delete_rule = self.delete_and_subsume(fdecl);
         let to_delete_name = self.delete_name(&fdecl.name);
         let subsumed_name = self.subsumed_name(&fdecl.name);
+        // True when the function's output value *is* its eclass, so the term
+        // relation needs no separate output column and the view is the
+        // congruence FD `(children) -> (eclass, proof)`. Holds for constructors
+        // (output is the built term) and for encoded globals (a nullary Custom
+        // `:internal-let` function whose output is the term it aliases): both
+        // give term row `(children eclass)`. A Custom function returning a
+        // distinct value (e.g. `-> i64`) is false — it keeps an output column
+        // plus a fresh eclass column.
+        let output_is_eclass =
+            fdecl.subtype == FunctionSubtype::Constructor || self.is_encoded_global(fdecl);
         let term_sorts = format!(
             "{in_sorts} {}",
-            if fdecl.subtype == FunctionSubtype::Constructor {
+            if output_is_eclass {
                 "".to_string()
             } else {
                 schema.output().to_string()
@@ -671,7 +698,7 @@ impl<'a> ProofInstrumentor<'a> {
         let view_sorts = format!("{in_sorts} {out_type}");
         let proof_constructors = self.proof_functions(fdecl, &view_sorts);
 
-        let view_sort = if fdecl.subtype == FunctionSubtype::Constructor {
+        let view_sort = if output_is_eclass {
             schema.output().clone()
         } else {
             fresh_sort.clone()
@@ -714,7 +741,7 @@ impl<'a> ProofInstrumentor<'a> {
         if fd_view && fdecl.subtype == FunctionSubtype::Custom {
             self.egraph.proof_state.fd_custom_funcs.insert(name.clone());
         }
-        let view_decl = if fdecl.subtype == FunctionSubtype::Constructor {
+        let view_decl = if output_is_eclass {
             // Two rows conflicting on the same children are congruent: keep the
             // smaller eclass and union the two eclasses in the sort's `@UF`. In
             // proof mode the view proofs (`eclass = f(children)`) compose into the
@@ -801,6 +828,11 @@ impl<'a> ProofInstrumentor<'a> {
         // customs use the all-key view.
         let fd = self.is_fd_view(fdecl);
         let proofs = self.proofs_enabled();
+        // A global's output *is* its e-class (like a constructor's), so it takes the
+        // e-class rebuild below (union-tracking) — not the custom-output rebuild
+        // (congruence), which would emit a nonsensical `Congr` on its nullary term.
+        let output_is_eclass =
+            fdecl.subtype == FunctionSubtype::Constructor || self.is_encoded_global(fdecl);
         let types = fdecl.resolved_schema.view_types();
         let n = types.len();
         let child = |i: usize| format!("c{i}_");
@@ -931,7 +963,7 @@ impl<'a> ProofInstrumentor<'a> {
         // merge FD views — their output column is not a unioned eclass to keep
         // canonical, and re-`set`ting it would wrongly re-run the user merge. A stale
         // custom output is resolved instead by `find_canonical` during extraction.
-        if fd && fdecl.subtype == FunctionSubtype::Constructor {
+        if fd && output_is_eclass {
             let eclass_uf_name = self.uf_name(types[n - 1].name());
             let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
             let eclass_canon = self.fresh_var();
@@ -973,6 +1005,7 @@ impl<'a> ProofInstrumentor<'a> {
         // congruence at the output position.
         if fd
             && fdecl.subtype == FunctionSubtype::Custom
+            && !self.is_encoded_global(fdecl)
             && types[n - 1].is_eq_sort()
             && n_keys == n - 1
         {
@@ -1301,9 +1334,14 @@ impl<'a> ProofInstrumentor<'a> {
                 }
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
+                        // Constructors and encoded globals both have the FD view
+                        // `(children) -> (eclass, proof)`, so the same view read binds
+                        // the e-class + proof. Other custom lookups are banned here by
+                        // proof normal form.
                         assert!(
-                            func_type.subtype == FunctionSubtype::Constructor,
-                            "Only constructor function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
+                            func_type.subtype == FunctionSubtype::Constructor
+                                || self.egraph.type_info.is_global(&func_type.name),
+                            "Only constructor (or global) function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
                         );
 
                         let fv = self.fresh_var();
@@ -1454,16 +1492,41 @@ impl<'a> ProofInstrumentor<'a> {
                 res.push(format!("(let {} {})", v.name, v2));
             }
             ResolvedAction::Set(_span, h, generic_exprs, generic_expr) => {
-                let mut exprs = vec![];
-                for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
-                    exprs.push(self.instrument_action_expr(e, &mut res, justification));
-                }
-
                 let ResolvedCall::Func(func_type) = h else {
                     panic!(
                         "Set action on non-function, should have been prevented by typechecking"
                     );
                 };
+
+                // Global definition `(set (x) e)`: x is a nullary `:internal-let`
+                // function aliasing e. Store e's value+proof directly in x's FD view
+                // (x's e-class *is* e's) — no term mint, which would use the wrong
+                // arity for x's term relation (its output is the eclass, so it has
+                // no separate output column).
+                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                    let e_value =
+                        self.instrument_action_expr(generic_expr, &mut res, justification);
+                    let proof = if self.proofs_enabled() {
+                        let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+                        self.term_proof_for_justification(
+                            &mut res,
+                            &e_value,
+                            &to_ast,
+                            justification,
+                        )
+                    } else {
+                        "()".to_string()
+                    };
+                    // Term row (`x`'s e-class is e's) + the FD view `() -> (val, proof)`.
+                    res.push(format!("(set ({} {e_value}) ())", func_type.name));
+                    res.push(self.update_fd_view(&func_type.name, &[], &e_value, &proof));
+                    return res;
+                }
+
+                let mut exprs = vec![];
+                for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
+                    exprs.push(self.instrument_action_expr(e, &mut res, justification));
+                }
 
                 let (add_code, _fv) = self.add_term_and_view(func_type, &exprs, justification);
                 res.extend(add_code);
@@ -1621,6 +1684,36 @@ impl<'a> ProofInstrumentor<'a> {
         stmts.push(format!("(let {v} ({get_fresh} \"{out_sort}\"))"));
         stmts.push(format!("(set ({name} {args_joined} {v}) ())"));
         v
+    }
+
+    /// Read an encoded global's value from its FD view `() -> (val, proof)`, for a
+    /// global reference `(x)` appearing in an action. `set-if-empty` returns the
+    /// stored e-class (a global is `set` before it is used, so the fresh fallback is
+    /// dead code that only fires on a malformed program). The value read is already
+    /// the view's canonical e-class, so no natural/deduped connector is recorded.
+    fn lookup_global(&mut self, name: &str, res: &mut Vec<String>) -> String {
+        let view = self.view_name(name);
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
+        let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
+        let view_sort = self
+            .proof_names()
+            .fn_to_term_sort
+            .get(name)
+            .expect("term sort recorded in term_and_view")
+            .clone();
+        let fresh_e = self.fresh_var();
+        res.push(format!("(let {fresh_e} ({get_fresh} \"{view_sort}\"))"));
+        let vx = self.fresh_var();
+        let fallback_proof = if self.proofs_enabled() {
+            let to_ast = self.fname_to_ast_name(name).to_string();
+            self.term_proof_for_justification(res, &fresh_e, &to_ast, &Justification::Fiat)
+        } else {
+            "()".to_string()
+        };
+        res.push(format!(
+            "(let {vx} ({set_if_empty} {fresh_e} {fallback_proof}))"
+        ));
+        vx
     }
 
     /// The `Proof` datatype's sort name (mint target for proof relations).
@@ -1931,20 +2024,14 @@ impl<'a> ProofInstrumentor<'a> {
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
                         if func_type.subtype == FunctionSubtype::Custom {
-                            // Globals are desugared to no-arg functions (in non-proof mode)
-                            // They're allowed, in proof mode they are constructors.
-                            // The term is a relation, so mint its row and return the
-                            // fresh eclass id rather than emitting a value expression.
+                            // Proof normal form bans looking up custom functions in
+                            // actions — EXCEPT encoded globals. A global is a nullary
+                            // `:internal-let` function with the FD view
+                            // `() -> (val, proof)`; read its value+proof from the view
+                            // (`set-if-empty` returns the stored e-class, `view-proof`
+                            // its proof). This is the only custom lookup allowed here.
                             if self.egraph.type_info.is_global(&func_type.name) {
-                                let view_sort = self
-                                    .proof_names()
-                                    .fn_to_term_sort
-                                    .get(&func_type.name)
-                                    .expect("term sort recorded in term_and_view")
-                                    .clone();
-                                let args_joined = ListDisplay(&args, " ").to_string();
-                                let name = func_type.name.clone();
-                                return self.mint(res, &name, &args_joined, &view_sort);
+                                return self.lookup_global(&func_type.name, res);
                             }
                             panic!(
                                 "Found a function lookup in actions, should have been prevented by typechecking"
@@ -2430,12 +2517,23 @@ impl<'a> ProofInstrumentor<'a> {
         for command in program {
             self.term_encode_command(&command, &mut res)?;
 
-            // run rebuilding after every command except a few
-            if let ResolvedNCommand::Function(..)
-            | ResolvedNCommand::NormRule { .. }
-            | ResolvedNCommand::Sort { .. } = &command
-            {
-            } else {
+            // Rebuild only needs to run after a command that can create new e-class
+            // merges. Among top-level actions only `union` does: a `let`/`set`/insert
+            // aliases or dedups under a fresh view key without merging e-classes. So
+            // we skip the rebuild after every non-`union` top-level action — this is
+            // what stops N global lets from triggering N rebuilds (quadratic). Any
+            // non-canonical id left behind is fixed by the next real rebuild (before a
+            // `run`/`check`), exactly as the native backend defers it.
+            let skip_rebuild = match &command {
+                ResolvedNCommand::Function(..)
+                | ResolvedNCommand::NormRule { .. }
+                | ResolvedNCommand::Sort { .. } => true,
+                ResolvedNCommand::CoreAction(action) => {
+                    !matches!(action, ResolvedAction::Union(..))
+                }
+                _ => false,
+            };
+            if !skip_rebuild {
                 res.push(Command::RunSchedule(self.rebuild()));
             }
         }

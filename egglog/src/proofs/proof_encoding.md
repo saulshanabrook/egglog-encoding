@@ -216,7 +216,7 @@ This has the added benefit of allowing us to keep terms around
 # Globals
 
 *Before the term encoding*, egglog desugars all global
-  variables to constructors with the `proof_global_remover.rs` pass.
+  variables to nullary functions with the `remove_globals.rs` pass.
 This makes the encoding simpler and makes it so the backend
   need not worry about globals.
 The above program doesn't have any global variables, so it stays the same.
@@ -233,11 +233,14 @@ Would desugar to this before term encoding:
 ```text
 (sort Math)
 (constructor Add (i64 i64) Math)
-(constructor g1 () Math)
-(union (g1) (Add 1 2))
+(function g1 () Math :internal-let)
+(set (g1) (Add 1 2))
 (rule ((= (g1) (Add 2 3)))
       ((Add 3 4)))
 ```
+The global is a nullary `:internal-let` function `set` to its value (no
+`union` at the top level), so it gets a view table and rebuild rules like any
+other function; references to `g1` become the lookup `(g1)`.
 
 
 
