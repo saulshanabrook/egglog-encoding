@@ -150,7 +150,16 @@ pub struct EGraph {
     /// Opt-in batches of match-time bindings. Each inner vector is one bounded
     /// native ruleset iteration and is populated by the same join that applies
     /// the rule heads.
-    rule_match_trace: Option<Vec<Vec<core_relations::RuleMatch>>>,
+    rule_match_trace: Option<RuleMatchTraceState>,
+}
+
+#[derive(Clone, Default)]
+struct RuleMatchTraceState {
+    batches: Vec<Vec<core_relations::RuleMatch>>,
+    /// Complete-binding plans exist only for the duration of one traced
+    /// source command, so ordinary EGraphs and long-lived rules pay no
+    /// persistent memory cost.
+    cached_plans: HashMap<RuleId, CachedPlanInfo>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -251,7 +260,7 @@ impl EGraph {
             self.rule_match_trace.is_none(),
             "a rule match trace is already active"
         );
-        self.rule_match_trace = Some(Vec::new());
+        self.rule_match_trace = Some(RuleMatchTraceState::default());
         Ok(())
     }
 
@@ -262,7 +271,7 @@ impl EGraph {
 
     /// Finish the active trace and return its per-iteration match batches.
     pub fn take_rule_match_trace(&mut self) -> Option<Vec<Vec<core_relations::RuleMatch>>> {
-        self.rule_match_trace.take()
+        self.rule_match_trace.take().map(|trace| trace.batches)
     }
 
     fn next_ts(&self) -> Timestamp {
@@ -822,13 +831,16 @@ impl EGraph {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report = if self.rule_match_trace.is_some() {
-            let (report, matches) =
-                run_rules_impl_traced(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
-            self.rule_match_trace
-                .as_mut()
-                .expect("trace presence was checked above")
-                .push(matches);
+        let rule_set_report = if let Some(trace) = self.rule_match_trace.as_mut() {
+            let (report, matches) = run_rules_impl_traced(
+                &mut self.db,
+                &mut self.rules,
+                rules,
+                ts,
+                self.report_level,
+                &mut trace.cached_plans,
+            )?;
+            trace.batches.push(matches);
             report
         } else {
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?
@@ -2113,12 +2125,13 @@ fn run_rules_impl_traced(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
+    cached_plans: &mut HashMap<RuleId, CachedPlanInfo>,
 ) -> Result<(RuleSetReport, Vec<core_relations::RuleMatch>)> {
     let previous_timestamps = rules
         .iter()
         .map(|rule| (*rule, rule_info[*rule].last_run_at))
         .collect::<Vec<_>>();
-    let ruleset = build_rule_set(db, rule_info, rules, next_ts)?;
+    let ruleset = build_trace_rule_set(db, rule_info, rules, next_ts, cached_plans)?;
     match db.run_rule_set_traced(&ruleset, report_level) {
         Ok(result) => Ok(result),
         Err(error) => {
@@ -2131,6 +2144,31 @@ fn run_rules_impl_traced(
             Err(error.into())
         }
     }
+}
+
+fn build_trace_rule_set(
+    db: &mut Database,
+    rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
+    rules: &[RuleId],
+    next_ts: Timestamp,
+    cached_plans: &mut HashMap<RuleId, CachedPlanInfo>,
+) -> Result<core_relations::RuleSet> {
+    for rule in rules {
+        if !cached_plans.contains_key(rule) {
+            let info = &rule_info[*rule];
+            let plan = info.query.build_trace_cached_plan(db, &info.desc)?;
+            cached_plans.insert(*rule, plan);
+        }
+    }
+    let mut rsb = db.new_rule_set();
+    for rule in rules {
+        let info = &mut rule_info[*rule];
+        let cached_plan = &cached_plans[rule];
+        info.query
+            .add_rules_from_cached(&mut rsb, info.last_run_at, cached_plan);
+        info.last_run_at = next_ts;
+    }
+    Ok(rsb.build())
 }
 
 fn build_rule_set(

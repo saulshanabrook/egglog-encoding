@@ -58,10 +58,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     report(format_args!(
-        "causal slice: {} waves, {} matched, {} effective, {} no-op, {} retained; bytes {} -> {} (full {}); traced run {:?}",
+        "causal slice: {} waves, {} pending, {} promoted, {} no-op, {} retained; bytes {} -> {} (full {}); traced run {:?}",
         slice.stats.waves,
-        slice.stats.matched_applications,
-        slice.stats.effective_applications,
+        slice.stats.pending_firings,
+        slice.stats.promoted_events,
         slice.stats.no_op_applications,
         slice.stats.retained_applications,
         slice.stats.original_bytes,
@@ -70,13 +70,18 @@ fn main() -> ExitCode {
         slice.stats.traced_run_time,
     ));
     report(format_args!(
-        "trace volume: {} application source bindings; {} observation matches / {} source bindings; {} raw bindings; max batch {}; >= {} bytes",
+        "trace volume: {} application source bindings; {} observation matches / {} source bindings; {} raw bindings; max batch {}; >= {} bytes; arenas: {} source events, {} deps, {} witnesses, {} equality edges, {} prefixes",
         slice.stats.captured_bindings,
         slice.stats.observation_matches,
         slice.stats.observation_bindings,
         slice.stats.raw_trace_bindings,
         slice.stats.max_batch_matches,
         slice.stats.raw_trace_lower_bound_bytes,
+        slice.stats.source_events,
+        slice.stats.dependency_nodes,
+        slice.stats.witness_nodes,
+        slice.stats.equality_edges,
+        slice.stats.prefix_fallbacks,
     ));
     ExitCode::SUCCESS
 }

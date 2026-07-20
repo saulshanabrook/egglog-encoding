@@ -37,13 +37,130 @@ fn full_manual_transcript_replays_in_normal_and_proof_modes() {
 }
 
 #[test]
+fn trace_retains_body_variables_that_the_rule_head_does_not_use() {
+    let source = r#"
+        (relation R (i64 i64))
+        (relation Out (i64))
+        (rule ((R x y)) ((Out x)) :name "copy")
+        (R 1 10)
+        (R 1 20)
+        (run 1)
+        (check (Out 1))
+    "#;
+    let slice = causal_slice_program(Some("private-variable.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.matched_applications, 2);
+    assert!(
+        slice
+            .full_transcript_source
+            .contains(":bind ((x 1) (y 10)) :expect 1")
+    );
+    assert!(
+        slice
+            .full_transcript_source
+            .contains(":bind ((x 1) (y 20)) :expect 1")
+    );
+
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        let mut ordinary = EGraph::default();
+        ordinary
+            .parse_and_run_program(
+                Some("private-variable-replay.egg".to_owned()),
+                replay_source,
+            )
+            .unwrap();
+
+        let mut strict_proofs = EGraph::new_with_proofs().with_proof_testing();
+        strict_proofs
+            .parse_and_run_program(
+                Some("private-variable-replay.egg".to_owned()),
+                replay_source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn trace_retains_private_variables_in_multi_atom_generic_joins() {
+    let source = r#"
+        (relation R (i64 i64))
+        (relation S (i64))
+        (relation Out (i64))
+        (rule ((R x y) (S x)) ((Out x)) :name "copy")
+        (R 1 10)
+        (R 1 20)
+        (S 1)
+        (run 1)
+        (check (Out 1))
+    "#;
+    let slice = causal_slice_program(Some("private-gj-variable.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.pending_firings, 2);
+    assert!(
+        slice
+            .full_transcript_source
+            .contains(":bind ((x 1) (y 10)) :expect 1")
+    );
+    assert!(
+        slice
+            .full_transcript_source
+            .contains(":bind ((x 1) (y 20)) :expect 1")
+    );
+
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(Some("private-gj-replay.egg".to_owned()), replay_source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn positive_check_trace_retains_every_variable_in_one_environment() {
+    let source = r#"
+        (relation R (i64 i64))
+        (relation S (i64))
+        (relation T (i64))
+        (R 1 2)
+        (S 1)
+        (T 2)
+        (run 1)
+        (check (R x y) (S x) (T y))
+    "#;
+    let slice =
+        causal_slice_program(Some("private-check-variable.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.pending_firings, 0);
+    assert_eq!(slice.stats.retained_applications, 0);
+    assert_eq!(slice.stats.observation_matches, 1);
+    assert_eq!(slice.stats.observation_bindings, 2);
+    assert_eq!(slice.stats.witness_nodes, 2);
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("private-check-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays() {
     let slice = causal_slice_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
 
     assert_eq!(slice.stats.matched_applications, 6);
+    assert_eq!(slice.stats.pending_firings, 6);
     assert_eq!(slice.stats.effective_applications, 6);
+    assert_eq!(slice.stats.effective_output_rows, 6);
+    assert_eq!(slice.stats.promoted_events, 6);
     assert_eq!(slice.stats.no_op_applications, 0);
     assert_eq!(slice.stats.retained_applications, 2);
+    assert_eq!(slice.stats.source_events, 2);
+    assert!(slice.stats.dependency_nodes >= 9);
+    assert_eq!(slice.stats.witness_nodes, 2);
+    assert_eq!(slice.stats.equality_edges, 0);
+    assert_eq!(slice.stats.prefix_fallbacks, 0);
     assert_eq!(slice.stats.observation_count, 1);
     assert_eq!(slice.stats.waves, 3);
     assert_eq!(slice.stats.captured_bindings, 6);
@@ -335,6 +452,152 @@ fn sequential_replay_is_not_shared_wave_replay_for_delete() {
         error
             .to_string()
             .contains("expected 1 match(es), but found 0")
+    );
+}
+
+#[test]
+fn sequential_replay_silently_changes_insert_delete_commit_order() {
+    let ordinary = r#"
+        (relation Trigger ())
+        (relation R (i64))
+        (ruleset mutate)
+        (rule ((Trigger)) ((R 1)) :ruleset mutate :name "insert-r")
+        (rule ((Trigger)) ((delete (R 1))) :ruleset mutate :name "delete-r")
+        (Trigger)
+        (run-schedule (run mutate))
+        (check (R 1))
+    "#;
+    EGraph::default()
+        .parse_and_run_program(None, ordinary)
+        .unwrap();
+
+    let sequential = ordinary
+        .replace(
+            "(run-schedule (run mutate))",
+            r#"(run-schedule (seq
+              (run-rule "insert-r" :expect 1)
+              (run-rule "delete-r" :expect 1)))"#,
+        )
+        .replace("(check (R 1))", "(fail (check (R 1)))");
+    EGraph::default()
+        .parse_and_run_program(None, &sequential)
+        .unwrap();
+}
+
+#[test]
+fn sequential_replay_does_not_preserve_subsume_query_prestate() {
+    let ordinary = r#"
+        (relation Trigger ())
+        (relation R (i64))
+        (relation Seen (i64))
+        (ruleset mutate)
+        (rule ((Trigger)) ((subsume (R 1))) :ruleset mutate :name "subsume-r")
+        (rule ((R x)) ((Seen x)) :ruleset mutate :name "read-r")
+        (Trigger)
+        (R 1)
+        (run-schedule (run mutate))
+        (check (Seen 1))
+    "#;
+    EGraph::default()
+        .parse_and_run_program(None, ordinary)
+        .unwrap();
+
+    let sequential = ordinary.replace(
+        "(run-schedule (run mutate))",
+        r#"(run-schedule (seq
+          (run-rule "subsume-r" :expect 1)
+          (run-rule "read-r" :bind ((x 1)) :expect 1)))"#,
+    );
+    let error = EGraph::default()
+        .parse_and_run_program(None, &sequential)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("expected 1 match(es), but found 0")
+    );
+}
+
+#[test]
+fn sequential_replay_changes_dynamic_rhs_lookup_state() {
+    let ordinary = r#"
+        (function F (i64) i64 :merge new)
+        (function G (i64) i64 :merge new)
+        (relation Trigger ())
+        (ruleset mutate)
+        (rule ((Trigger)) ((set (F 1) 1)) :ruleset mutate :name "write-f" :naive)
+        (rule ((Trigger)) ((set (G 1) (F 1))) :ruleset mutate :name "read-f" :naive)
+        (set (F 1) 0)
+        (Trigger)
+        (run-schedule (run mutate))
+        (check (= (G 1) 0))
+    "#;
+    EGraph::default()
+        .parse_and_run_program(None, ordinary)
+        .unwrap();
+
+    let sequential = ordinary
+        .replace(
+            "(run-schedule (run mutate))",
+            r#"(run-schedule (seq
+              (run-rule "write-f" :expect 1)
+              (run-rule "read-f" :expect 1)))"#,
+        )
+        .replace("(check (= (G 1) 0))", "(check (= (G 1) 1))");
+    EGraph::default()
+        .parse_and_run_program(None, &sequential)
+        .unwrap();
+}
+
+#[test]
+fn additive_same_key_writes_happen_to_match_in_both_wave_models() {
+    let ordinary = r#"
+        (function F (i64) i64 :merge (+ old new))
+        (relation Trigger ())
+        (ruleset mutate)
+        (rule ((Trigger)) ((set (F 1) 1)) :ruleset mutate :name "write-one")
+        (rule ((Trigger)) ((set (F 1) 2)) :ruleset mutate :name "write-two")
+        (Trigger)
+        (run-schedule (run mutate))
+        (check (= (F 1) 3))
+    "#;
+    let sequential = ordinary.replace(
+        "(run-schedule (run mutate))",
+        r#"(run-schedule (seq
+          (run-rule "write-one" :expect 1)
+          (run-rule "write-two" :expect 1)))"#,
+    );
+
+    for source in [ordinary, sequential.as_str()] {
+        EGraph::default()
+            .parse_and_run_program(None, source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn native_direct_redundant_and_congruence_equalities_pass_strict_proofs() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (let $a1 (A 1))
+        (let $a2 (A 2))
+        (let $f1 (F $a1))
+        (let $f2 (F $a2))
+        (union $a1 $a2)
+        (union $a1 $a2)
+        (run 1)
+        (check (= $f1 $f2))
+    "#;
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, source)
+        .unwrap();
+
+    let error = causal_slice_program(Some("equality.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("functions, constructors, datatypes, or custom sorts")
     );
 }
 

@@ -37,14 +37,30 @@ pub struct CausalSliceStats {
     pub source_facts: usize,
     pub observation_count: usize,
     pub waves: usize,
+    /// Groundings materialized by the native join before head-effect
+    /// classification. These are wave-local pending firings in the causal
+    /// model, even though the full-transcript diagnostic keeps them until
+    /// source emission.
+    pub pending_firings: usize,
     pub matched_applications: usize,
     /// Applications selected as the first logical producer of at least one
     /// previously absent tuple in a traced wave. This is not native commit
     /// attribution when multiple matches produce the same tuple.
     pub effective_applications: usize,
+    pub effective_output_rows: usize,
     /// Matched applications that were not selected as a logical producer.
     pub no_op_applications: usize,
+    /// Persistent fire events promoted because at least one complete head
+    /// action inserted a previously absent relation row.
+    pub promoted_events: usize,
     pub retained_applications: usize,
+    /// Unique source-row events. Source commands themselves remain unsliced
+    /// in v0.
+    pub source_events: usize,
+    pub dependency_nodes: usize,
+    pub witness_nodes: usize,
+    pub equality_edges: usize,
+    pub prefix_fallbacks: usize,
     /// Source-variable pairs captured for scheduled rule applications.
     pub captured_bindings: usize,
     pub observation_matches: usize,
@@ -120,18 +136,181 @@ struct FactKey {
     args: Vec<Literal>,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum Producer {
-    Source,
-    Event(usize),
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct DepId(u32);
+
+impl DepId {
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct EventId(u32);
+
+impl EventId {
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct WitnessId(u32);
+
+impl WitnessId {
+    fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 #[derive(Clone, Debug)]
-struct ApplicationEvent {
+enum DepNode {
+    Empty,
+    Event(EventId),
+    And(DepId, DepId),
+}
+
+#[derive(Clone, Debug)]
+struct DepArena {
+    nodes: Vec<DepNode>,
+}
+
+impl Default for DepArena {
+    fn default() -> Self {
+        Self {
+            nodes: vec![DepNode::Empty],
+        }
+    }
+}
+
+impl DepArena {
+    const EMPTY: DepId = DepId(0);
+
+    fn push(&mut self, node: DepNode) -> Result<DepId, CausalSliceError> {
+        let id = u32::try_from(self.nodes.len()).map_err(|_| {
+            CausalSliceError::Invariant("dependency arena exceeded u32 capacity".to_owned())
+        })?;
+        self.nodes.push(node);
+        Ok(DepId(id))
+    }
+
+    fn event(&mut self, event: EventId) -> Result<DepId, CausalSliceError> {
+        self.push(DepNode::Event(event))
+    }
+
+    fn and(&mut self, left: DepId, right: DepId) -> Result<DepId, CausalSliceError> {
+        if left == Self::EMPTY {
+            Ok(right)
+        } else if right == Self::EMPTY || left == right {
+            Ok(left)
+        } else {
+            self.push(DepNode::And(left, right))
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum WitnessNode {
+    Literal { sort: String, value: Literal },
+}
+
+#[derive(Clone, Debug, Default)]
+struct WitnessArena {
+    nodes: Vec<WitnessNode>,
+    ids: IndexMap<WitnessNode, WitnessId>,
+}
+
+impl WitnessArena {
+    fn intern_literal(
+        &mut self,
+        sort: &str,
+        value: Literal,
+    ) -> Result<WitnessId, CausalSliceError> {
+        let node = WitnessNode::Literal {
+            sort: sort.to_owned(),
+            value,
+        };
+        if let Some(id) = self.ids.get(&node) {
+            return Ok(*id);
+        }
+        let id = WitnessId(u32::try_from(self.nodes.len()).map_err(|_| {
+            CausalSliceError::Invariant("witness arena exceeded u32 capacity".to_owned())
+        })?);
+        self.nodes.push(node.clone());
+        self.ids.insert(node, id);
+        Ok(id)
+    }
+
+    fn literal(&self, id: WitnessId) -> &Literal {
+        match &self.nodes[id.index()] {
+            WitnessNode::Literal { value, .. } => value,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BindingWitness {
+    syntax: WitnessId,
+    endpoint: Value,
+}
+
+impl BindingWitness {
+    fn literal(self, witnesses: &WitnessArena) -> &Literal {
+        // The endpoint is intentionally retained with the immutable syntax.
+        // V0 does not print it or resolve it through the final database.
+        let _captured_endpoint = self.endpoint;
+        witnesses.literal(self.syntax)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GroundedFire {
     rule: String,
-    bindings: IndexMap<String, Literal>,
-    dependencies: Vec<usize>,
+    wave: u32,
+    ordinal: u32,
+    bindings: IndexMap<String, BindingWitness>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingFire {
+    grounding: GroundedFire,
+    promoted: Option<EventId>,
+}
+
+#[derive(Clone, Debug)]
+enum EventKind {
+    Source { fact: FactKey },
+    Fire(GroundedFire),
+}
+
+#[derive(Clone, Debug)]
+struct ReplayEvent {
+    kind: EventKind,
+    prerequisites: DepId,
     effective_outputs: Vec<FactKey>,
+}
+
+#[derive(Clone, Debug, Default)]
+struct EventArena {
+    events: Vec<ReplayEvent>,
+}
+
+impl EventArena {
+    fn push(&mut self, event: ReplayEvent) -> Result<EventId, CausalSliceError> {
+        let id = EventId(u32::try_from(self.events.len()).map_err(|_| {
+            CausalSliceError::Invariant("event arena exceeded u32 capacity".to_owned())
+        })?);
+        self.events.push(event);
+        Ok(id)
+    }
+}
+
+struct Elaboration {
+    pending_fires: Vec<PendingFire>,
+    events: EventArena,
+    dependencies: DepArena,
+    producers: IndexMap<FactKey, DepId>,
+    source_events: usize,
 }
 
 /// Trace one ordinary reference-backend execution and emit a guarded manual
@@ -198,37 +377,63 @@ pub fn causal_slice_program(
     let raw_trace_lower_bound_bytes = total_raw_matches * std::mem::size_of::<RuleMatch>()
         + raw_trace_bindings * std::mem::size_of::<(std::sync::Arc<str>, Value)>();
 
-    let (events, final_producers) =
-        elaborate_events(&egraph, &rules, &source_facts, &schedule_batches)?;
-    let roots = observation_roots(&egraph, &checks, &check_batches, &final_producers)?;
-    let captured_bindings = events.iter().map(|event| event.bindings.len()).sum();
+    let mut witnesses = WitnessArena::default();
+    let Elaboration {
+        pending_fires,
+        events,
+        mut dependencies,
+        producers: final_producers,
+        source_events,
+    } = elaborate_events(
+        &egraph,
+        &rules,
+        &source_facts,
+        &schedule_batches,
+        &mut witnesses,
+    )?;
+    let roots = observation_roots(
+        &egraph,
+        &checks,
+        &check_batches,
+        &final_producers,
+        &mut dependencies,
+        &mut witnesses,
+    )?;
+    let captured_bindings = pending_fires
+        .iter()
+        .map(|fire| fire.grounding.bindings.len())
+        .sum();
     let observation_bindings = check_batches
         .iter()
         .zip(&checks)
         .map(|(batches, check)| batches.iter().map(Vec::len).sum::<usize>() * check.var_sorts.len())
         .sum();
-    let retained = backward_slice(&events, roots);
+    let retained = backward_slice(&events, &dependencies, roots);
     drop(schedule_batches);
     drop(check_batches);
 
     let schedule_span = command_schedule_span(&commands[schedule_index])
         .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
-    let all_event_ids: IndexSet<usize> = (0..events.len()).collect();
     let full_transcript_source = emit_program(
         &commands,
         schedule_index,
         &schedule_span,
         &rules,
-        &events,
-        &all_event_ids,
+        pending_fires.iter().map(|fire| &fire.grounding),
+        &witnesses,
     );
     let source = emit_program(
         &commands,
         schedule_index,
         &schedule_span,
         &rules,
-        &events,
-        &retained,
+        retained
+            .iter()
+            .filter_map(|event| match &events.events[event.index()].kind {
+                EventKind::Source { .. } => None,
+                EventKind::Fire(fire) => Some(fire),
+            }),
+        &witnesses,
     );
 
     validate_emitted_program(
@@ -239,19 +444,37 @@ pub fn causal_slice_program(
     )?;
     validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
 
-    let effective_applications = events
+    let effective_applications = pending_fires
         .iter()
-        .filter(|event| !event.effective_outputs.is_empty())
+        .filter(|fire| fire.promoted.is_some())
         .count();
+    let retained_applications = retained
+        .iter()
+        .filter(|event| matches!(events.events[event.index()].kind, EventKind::Fire(_)))
+        .count();
+    let effective_output_rows = events
+        .events
+        .iter()
+        .filter(|event| matches!(event.kind, EventKind::Fire(_)))
+        .map(|event| event.effective_outputs.len())
+        .sum::<usize>();
     let stats = CausalSliceStats {
         original_bytes: input.len(),
         source_facts: source_facts.len(),
         observation_count: checks.len(),
         waves,
-        matched_applications: events.len(),
+        pending_firings: pending_fires.len(),
+        matched_applications: pending_fires.len(),
         effective_applications,
-        no_op_applications: events.len() - effective_applications,
-        retained_applications: retained.len(),
+        effective_output_rows,
+        no_op_applications: pending_fires.len() - effective_applications,
+        promoted_events: effective_applications,
+        retained_applications,
+        source_events,
+        dependency_nodes: dependencies.nodes.len(),
+        witness_nodes: witnesses.nodes.len(),
+        equality_edges: 0,
+        prefix_fallbacks: 0,
         captured_bindings,
         observation_matches,
         observation_bindings,
@@ -767,16 +990,30 @@ fn elaborate_events(
     rules: &IndexMap<String, RuleModel>,
     source_facts: &[FactKey],
     batches: &[Vec<RuleMatch>],
-) -> Result<(Vec<ApplicationEvent>, IndexMap<FactKey, Producer>), CausalSliceError> {
+    witnesses: &mut WitnessArena,
+) -> Result<Elaboration, CausalSliceError> {
+    let mut dependencies = DepArena::default();
+    let mut events = EventArena::default();
     let mut producers = IndexMap::default();
+    let mut source_events = 0;
     for fact in source_facts {
-        producers.entry(fact.clone()).or_insert(Producer::Source);
+        if producers.contains_key(fact) {
+            continue;
+        }
+        let event = events.push(ReplayEvent {
+            kind: EventKind::Source { fact: fact.clone() },
+            prerequisites: DepArena::EMPTY,
+            effective_outputs: vec![fact.clone()],
+        })?;
+        let dependency = dependencies.event(event)?;
+        producers.insert(fact.clone(), dependency);
+        source_events += 1;
     }
 
-    let mut events = Vec::new();
-    for batch in batches {
-        let mut new_outputs = IndexMap::<FactKey, usize>::default();
-        for captured in batch {
+    let mut pending_fires = Vec::new();
+    for (wave, batch) in batches.iter().enumerate() {
+        let mut new_outputs = IndexMap::<FactKey, DepId>::default();
+        for (ordinal, captured) in batch.iter().enumerate() {
             let rule_name = captured.rule.as_ref();
             let model = rules.get(rule_name).ok_or_else(|| {
                 CausalSliceError::Invariant(format!(
@@ -788,16 +1025,16 @@ fn elaborate_events(
                 &captured.bindings,
                 &model.var_order,
                 &model.var_sorts,
+                witnesses,
             )?;
-            let body = ground_atoms(&model.body, &bindings)?;
-            let head = ground_atoms(&model.head, &bindings)?;
+            let body = ground_atoms(&model.body, &bindings, witnesses)?;
+            let head = ground_atoms(&model.head, &bindings, witnesses)?;
 
-            let mut dependencies = IndexSet::default();
+            let mut premise_dependencies = IndexSet::default();
             for fact in &body {
                 match producers.get(fact) {
-                    Some(Producer::Source) => {}
-                    Some(Producer::Event(event)) => {
-                        dependencies.insert(*event);
+                    Some(dependency) => {
+                        premise_dependencies.insert(*dependency);
                     }
                     None if new_outputs.contains_key(fact) => {
                         return Err(CausalSliceError::Invariant(format!(
@@ -813,38 +1050,70 @@ fn elaborate_events(
                     }
                 }
             }
+            let mut prerequisites = DepArena::EMPTY;
+            for dependency in premise_dependencies {
+                prerequisites = dependencies.and(prerequisites, dependency)?;
+            }
 
-            let event_id = events.len();
             let mut effective_outputs = Vec::new();
             for fact in head {
                 if !producers.contains_key(&fact) && !new_outputs.contains_key(&fact) {
-                    new_outputs.insert(fact.clone(), event_id);
                     effective_outputs.push(fact);
                 }
             }
-            events.push(ApplicationEvent {
+            let grounding = GroundedFire {
                 rule: rule_name.to_owned(),
+                wave: u32::try_from(wave).map_err(|_| {
+                    CausalSliceError::Invariant("wave index exceeded u32 capacity".to_owned())
+                })?,
+                ordinal: u32::try_from(ordinal).map_err(|_| {
+                    CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
+                })?,
                 bindings,
-                dependencies: dependencies.into_iter().collect(),
-                effective_outputs,
+            };
+            let promoted = if effective_outputs.is_empty() {
+                None
+            } else {
+                let event = events.push(ReplayEvent {
+                    kind: EventKind::Fire(grounding.clone()),
+                    prerequisites,
+                    effective_outputs: effective_outputs.clone(),
+                })?;
+                let dependency = dependencies.event(event)?;
+                for fact in effective_outputs {
+                    new_outputs.insert(fact, dependency);
+                }
+                Some(event)
+            };
+            pending_fires.push(PendingFire {
+                grounding,
+                promoted,
             });
         }
 
         // A bounded ruleset iteration searches against one pre-state. Publish
         // all newly produced rows only after every captured match is elaborated.
-        for (fact, event) in new_outputs {
-            producers.insert(fact, Producer::Event(event));
+        for (fact, dependency) in new_outputs {
+            producers.insert(fact, dependency);
         }
     }
-    Ok((events, producers))
+    Ok(Elaboration {
+        pending_fires,
+        events,
+        dependencies,
+        producers,
+        source_events,
+    })
 }
 
 fn observation_roots(
     egraph: &EGraph,
     checks: &[CheckModel],
     traces: &[Vec<Vec<RuleMatch>>],
-    producers: &IndexMap<FactKey, Producer>,
-) -> Result<IndexSet<usize>, CausalSliceError> {
+    producers: &IndexMap<FactKey, DepId>,
+    dependencies: &mut DepArena,
+    witnesses: &mut WitnessArena,
+) -> Result<DepId, CausalSliceError> {
     if checks.len() != traces.len() {
         return Err(CausalSliceError::Invariant(format!(
             "captured {} check traces for {} observations",
@@ -853,7 +1122,7 @@ fn observation_roots(
         )));
     }
 
-    let mut roots = IndexSet::default();
+    let mut root = DepArena::EMPTY;
     for (check, batches) in checks.iter().zip(traces) {
         let captured = batches
             .iter()
@@ -865,13 +1134,17 @@ fn observation_roots(
                 )
             })?;
         let var_order = check.var_sorts.keys().cloned().collect::<Vec<_>>();
-        let bindings =
-            reconstruct_bindings(egraph, &captured.bindings, &var_order, &check.var_sorts)?;
-        for fact in ground_atoms(&check.atoms, &bindings)? {
+        let bindings = reconstruct_bindings(
+            egraph,
+            &captured.bindings,
+            &var_order,
+            &check.var_sorts,
+            witnesses,
+        )?;
+        for fact in ground_atoms(&check.atoms, &bindings, witnesses)? {
             match producers.get(&fact) {
-                Some(Producer::Source) => {}
-                Some(Producer::Event(event)) => {
-                    roots.insert(*event);
+                Some(dependency) => {
+                    root = dependencies.and(root, *dependency)?;
                 }
                 None => {
                     return Err(CausalSliceError::Invariant(format!(
@@ -882,7 +1155,7 @@ fn observation_roots(
             }
         }
     }
-    Ok(roots)
+    Ok(root)
 }
 
 fn reconstruct_bindings(
@@ -890,7 +1163,8 @@ fn reconstruct_bindings(
     captured: &[(std::sync::Arc<str>, Value)],
     var_order: &[String],
     var_sorts: &IndexMap<String, String>,
-) -> Result<IndexMap<String, Literal>, CausalSliceError> {
+    witnesses: &mut WitnessArena,
+) -> Result<IndexMap<String, BindingWitness>, CausalSliceError> {
     let captured_by_name = captured
         .iter()
         .map(|(name, value)| (name.as_ref(), *value))
@@ -927,14 +1201,21 @@ fn reconstruct_bindings(
                 ),
             });
         }
-        result.insert(var.clone(), literal);
+        let syntax = witnesses.intern_literal(sort_name, literal)?;
+        let binding = BindingWitness {
+            syntax,
+            endpoint: value,
+        };
+        debug_assert_eq!(binding.endpoint, value);
+        result.insert(var.clone(), binding);
     }
     Ok(result)
 }
 
 fn ground_atoms(
     atoms: &[AtomTemplate],
-    bindings: &IndexMap<String, Literal>,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
 ) -> Result<Vec<FactKey>, CausalSliceError> {
     atoms
         .iter()
@@ -944,11 +1225,14 @@ fn ground_atoms(
                 .iter()
                 .map(|arg| match arg {
                     AtomArg::Lit(literal) => Ok(literal.clone()),
-                    AtomArg::Var(_, var) => bindings.get(var).cloned().ok_or_else(|| {
-                        CausalSliceError::Invariant(format!(
-                            "grounding omitted source variable `{var}`"
-                        ))
-                    }),
+                    AtomArg::Var(_, var) => bindings
+                        .get(var)
+                        .map(|binding| binding.literal(witnesses).clone())
+                        .ok_or_else(|| {
+                            CausalSliceError::Invariant(format!(
+                                "grounding omitted source variable `{var}`"
+                            ))
+                        }),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(FactKey {
@@ -959,45 +1243,65 @@ fn ground_atoms(
         .collect()
 }
 
-fn backward_slice(events: &[ApplicationEvent], roots: IndexSet<usize>) -> IndexSet<usize> {
+fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> IndexSet<EventId> {
     let mut retained = IndexSet::default();
-    let mut work = roots.into_iter().collect::<Vec<_>>();
-    while let Some(event) = work.pop() {
-        if retained.insert(event) {
-            work.extend(events[event].dependencies.iter().copied());
+    let mut visited_dependencies = HashSet::default();
+    let mut work = vec![root];
+    while let Some(dependency) = work.pop() {
+        if !visited_dependencies.insert(dependency) {
+            continue;
+        }
+        match dependencies.nodes[dependency.index()] {
+            DepNode::Empty => {}
+            DepNode::And(left, right) => {
+                work.push(right);
+                work.push(left);
+            }
+            DepNode::Event(event) => {
+                if retained.insert(event) {
+                    let replay_event = &events.events[event.index()];
+                    if let EventKind::Source { fact } = &replay_event.kind {
+                        let _retained_source_fact = fact;
+                    }
+                    work.push(replay_event.prerequisites);
+                }
+            }
         }
     }
     retained.sort_unstable();
     retained
 }
 
-fn emit_program(
+fn emit_program<'a>(
     commands: &[Command],
     schedule_index: usize,
     schedule_span: &Span,
     rules: &IndexMap<String, RuleModel>,
-    events: &[ApplicationEvent],
-    retained: &IndexSet<usize>,
+    fires: impl IntoIterator<Item = &'a GroundedFire>,
+    witnesses: &WitnessArena,
 ) -> String {
-    let leaves = retained
-        .iter()
-        .map(|event_id| {
-            let event = &events[*event_id];
-            let model = &rules[&event.rule];
+    let mut previous_position = None;
+    let leaves = fires
+        .into_iter()
+        .map(|fire| {
+            let position = (fire.wave, fire.ordinal);
+            if let Some(previous) = previous_position {
+                debug_assert!(previous < position);
+            }
+            previous_position = Some(position);
+            let model = &rules[&fire.rule];
             let bindings = model
                 .var_order
                 .iter()
                 .map(|var| {
-                    (
-                        var.clone(),
-                        Expr::Lit(schedule_span.clone(), event.bindings[var].clone()),
-                    )
+                    let literal = fire.bindings[var].literal(witnesses).clone();
+                    (var.clone(), Expr::Lit(schedule_span.clone(), literal))
                 })
                 .collect();
             Schedule::RunRule(
                 schedule_span.clone(),
                 RunRuleConfig {
-                    rule: event.rule.clone(),
+                    rule: fire.rule.clone(),
                     bindings,
                     selectors: Vec::new(),
                     expect: Some(1),
