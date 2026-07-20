@@ -10,7 +10,6 @@ readme = { workspace = true }
 
 [dependencies]
 hashbrown = { workspace = true, features = ["serde"] }
-indexmap = { workspace = true }
 rustc-hash = { workspace = true }
 web-time = { workspace = true }
 serde = { workspace = true }

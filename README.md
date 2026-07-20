@@ -6,587 +6,591 @@ across `egglog` and `egglog-experimental`.
 The goal is to make proof generation work with a reasonable slowdown before
 porting the winning strategy back upstream. The current success target is:
 
-- proof mode is less than `2x` slower than the non-proof baseline; and
+- proof-mode wall time is under `2x` the non-proof baseline; and
 - that claim is supported by benchmark reports with confidence intervals, not
   just point estimates.
 
 ## Daily workflow
 
-The development loop is:
+Run the complete Python and Rust validation suite through the root Makefile:
 
 ```bash
-# Run all egglog and egglog-experimental tests.
-cargo test --workspace
-
-# Run proof-focused tests while iterating.
-cargo test --workspace --test files 'proofs/'
-
-# Run lint checks across the workspace.
-cargo clippy --workspace --all-targets
-
-# Build release binaries for benchmark comparisons.
-cargo build --release --workspace
-
-# Run or reuse the default benchmark report.
-./bench.py
+make check
 ```
 
+Hygiene checks and tests can be run independently. `nits` never runs tests:
+
+```bash
+make nits           # lockfile, formatting checks, linting, and type checking
+make test           # Python and Rust tests
+make python-check   # complete Python validation
+make rust-check     # complete Rust validation
+make python-nits    # Python hygiene only
+make rust-nits      # rustfmt check and Clippy only
+make proof-tests    # proof-focused subset of the workspace tests
+make benchmark-smoke
+make update-snapshots
+make format         # apply Ruff and rustfmt formatting
+```
+
+`make benchmark-smoke` uses a one-round comparison and writes its disposable
+JSONL report to `/tmp/egglog-encoding-bench-smoke.jsonl`. Override
+`BENCHMARK_SMOKE_REPORT` to choose another path. `make update-snapshots` is the
+explicit review action for accepting intentional Markdown report changes.
+
 The root workspace includes both `egglog` and `egglog-experimental`.
-`egglog-experimental` depends on the workspace `egglog` crate, which keeps proof
-changes and downstream experimental behavior in the same reviewable unit.
+`egglog-experimental` depends on the workspace `egglog` crate, keeping proof
+changes and downstream behavior in one reviewable unit.
 
-Proof-specific file tests use one filter prefix:
-
-- `proofs/`: explicit `(prove ...)` fixtures under `tests/proofs` plus every
-  proof-compatible file under proof-testing mode. Checks are treated as prove
-  commands and generated proofs are saved as snapshots.
-
-This filter is a subset of the full workspace test run. Use it for fast proof
-iteration and reserve `cargo test --workspace` for the final compatibility gate.
+Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
+fixtures under `tests/proofs` plus every proof-compatible file under
+proof-testing mode. Proof testing turns checks into proof queries and snapshots
+the generated proofs. Use `make proof-tests` for focused iteration and
+`make rust-check` or `make check` for the final compatibility gate.
 
 ## Benchmarking
 
-The public benchmark entrypoint is an executable Python script:
+The public entrypoint is:
 
 ```bash
 ./bench.py [FILE ...] [OPTIONS]
 ```
 
-Python dependencies and tool configuration live in `pyproject.toml`; `uv.lock`
-pins the environment used by CI and local checks.
+Every benchmark invocation compares exactly two endpoints over the same ordered
+files: a candidate and a baseline. An endpoint is one target, backend, and
+treatment. There are no implicit matrices or multi-way comparisons.
 
-The default command is equivalent to:
+The default command compares proof mode with ordinary mode in the current
+checkout:
 
 ```bash
-./bench.py --target .
+./bench.py
+
+# Equivalent endpoint selection:
+./bench.py \
+  --target . --backend main --treatment proofs \
+  --compare-target . --compare-backend main --compare-treatment off
 ```
 
-It builds the current checkout, runs the default representative benchmark
-files, appends any missing observations to `.reports.jsonl`, and prints a
-Rich terminal report to stderr. Use `--report -` to stream newly measured
-report rows to stdout while keeping progress, summaries, build diagnostics, and
-errors on stderr.
+The endpoint defaults are:
+
+| Endpoint | Target | Backend | Treatment |
+| --- | --- | --- | --- |
+| Candidate | `.` | `main` | `proofs` |
+| Baseline | candidate target | `main` | `off` |
+
+In particular, `--compare-backend` always defaults to `main`, even when the
+candidate uses another backend. `--compare-target` alone inherits the candidate
+target. Every rendered report states the exact endpoints, files, rounds,
+timeout, and report path so every ratio is interpretable.
+
+Treatments map directly to engine modes:
+
+| Treatment | Engine behavior |
+| --- | --- |
+| `off` | no term or proof encoding |
+| `term` | `--term-encoding` |
+| `proofs` | `--proofs` |
+
+The `main` backend supports all three treatments; `dd` supports `term` and
+`proofs`. The engine's `--proof-testing` option is a correctness mode, not a
+benchmark treatment.
+
+### Common comparisons
+
+Proof overhead in the current checkout is the default:
+
+```bash
+./bench.py
+```
+
+Compare the current proof implementation with proof mode on `origin/main`:
+
+```bash
+./bench.py --compare-target @origin/main --compare-treatment proofs
+```
+
+Compare the DD backend with main while holding proof mode fixed:
+
+```bash
+./bench.py --backend dd --compare-treatment proofs
+```
+
+Compare term encoding with ordinary mode:
+
+```bash
+./bench.py --treatment term
+```
+
+Compare current proofs with a previously cached, labeled ordinary baseline:
+
+```bash
+./bench.py --compare-target old-off=
+```
+
+That last form reuses the newest cache identity carrying `old-off` when it has
+enough matching rows. First create the label with a concrete source, for
+example `--compare-target old-off=@origin/main`. Newest means the greatest
+`started_at`, with later JSONL order breaking ties. If a command changes more
+than one of target, backend, and treatment, the report warns that the ratio is
+a joint endpoint change and does not attribute the effect to one cause.
 
 ### Targets
 
-Targets describe the builds being compared. Use one `--target` per build:
+Both `--target` and `--compare-target` accept the same syntax:
 
-```bash
-./bench.py --target @origin/main --target .
-./bench.py --target @origin/main --target '#33'
-./bench.py --target main=@origin/main --target mine=.
-./bench.py --target before=@abc123 --target after=@HEAD
-./bench.py --target old=/tmp/egglog-old --target new=/tmp/egglog-new
-./bench.py --target prev-run=
-```
+- `.` for the current checkout;
+- `/path/to/repo` for another local checkout;
+- `@main`, `@origin/main`, or `@abc123` for a git ref from this repository;
+- `'#33'` for the latest head of pull request 33 from `origin`;
+- `label=SOURCE` to assign a stable report label to any source; or
+- `label=` to reuse the newest cached identity with that explicit label.
 
-Target syntax:
+Quote `#` targets so the shell does not treat them as comments. Paths are used
+directly. Git refs and pull requests use an existing clean worktree at the
+resolved commit when available, otherwise the runner creates or reuses an
+isolated temporary worktree. It never stashes the main checkout.
 
-- `--target .` uses the current checkout.
-- `--target /path/to/repo` uses another local checkout.
-- `--target @main`, `--target @origin/main`, or `--target @abc123` uses a git
-  ref, branch, tag, or commit from this repo.
-- `--target '#33'` fetches PR 33 from `origin` and uses the latest PR head
-  commit. Quote or escape the `#` so your shell does not treat it as a comment.
-- `--target label=SOURCE` gives the target an explicit report label.
-- `--target label=` reuses the latest cached target identity with that label
-  from `--report`.
+If differently spelled target selectors resolve to the same checkout, the
+runner builds that checkout once with the union of their required backend
+features, so neither endpoint can overwrite the binary recorded for the other.
 
-Behavior:
+A cache-only `label=` target skips materialization and building when every
+requested endpoint/file already has enough rows. If more rows are required, a
+clean cached git revision can be rebuilt; a label pointing to a dirty checkout
+requires a new `label=SOURCE` request.
 
-- Git refs use the `@` prefix. PR targets use the `#` prefix. Paths do not.
-- If no target is provided, the only target is `.`.
-- If any target is provided, the target list is exactly what was specified.
-- The first target is the comparison baseline.
-- Explicit labels are display names. Cache identity is derived from the
-  persisted report fields described below.
-- PR targets get labels like `#33` by default. Use `--target label='#33'` to
-  choose a different display/report label.
-- `label=` lookup only considers rows that were written with explicit
-  `target.label`. If the same label appears for multiple binary hashes, the
-  row with the latest `started_at` timestamp for that label is the definitive
-  label pointer, with ties broken by later JSONL file order. When that pointer
-  refers to a clean git SHA, the runner rebuilds that SHA in an isolated
-  worktree to collect more samples. When it points to a dirty checkout, it is
-  report-only unless the user supplies a new `label=SOURCE`.
-- Targets are built and measured sequentially. Path targets use the provided
-  checkout directly. Git-ref and PR targets use an existing worktree at the
-  resolved commit when one exists; otherwise the runner creates or reuses an
-  isolated temporary worktree instead of stashing local changes in the main
-  checkout.
+The baseline and candidate may share a binary, as the default proof-overhead
+comparison does, but their complete cache identities—binary SHA-256, backend,
+and treatment—must differ.
 
 ### Files
 
-Positional arguments are benchmark files. Use `--fact-directory` for workloads
-containing `(input ...)` commands:
+Positional paths select benchmark files. Use `--fact-directory` for explicitly
+selected workloads containing `(input ...)` commands:
 
 ```bash
 ./bench.py egglog/tests/foo.egg egglog/tests/bar.egg
 ./bench.py benchmarks/pointer.egg --fact-directory benchmarks/data/pointer
 ```
 
-If no files are provided, the default target benchmark suite is:
+Paths are resolved relative to the command invocation directory, not relative
+to either target. Both endpoints therefore run the exact same file and fact
+directory contents. Their SHA-256 hashes are part of the cache identity.
+
+With no positional files, the representative suite is:
 
 - `egglog/tests/math-microbenchmark.egg`
 - `egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg`
-- `benchmarks/pointer-analysis-small.egg`, with its checked-in sample data in
+- `benchmarks/pointer-analysis-small.egg`, with
   `benchmarks/data/pointer-analysis-small`
 - `egglog/tests/hardboiled_conv1d_32.egg`
 - `benchmarks/luminal-llama.egg`
 - `egglog/tests/web-demo/herbie.egg`
 
-These six files are proof-compatible representative examples under the current
-`egglog-experimental` CLI and run under the default `off`, `term`, and `proofs`
-treatment matrix. The eggcc fixture is the heavy container/proof benchmark in
-the default suite. The pointer-analysis workload uses the first 100 rows from
-each input relation of the artifact's smallest `initdb.bc` dataset so all three
-treatments complete within the standard timeout.
+The workloads are intentionally bounded proxies rather than an undifferentiated
+corpus:
 
-| Workload | Compatibility adaptation | Correctness signal |
+| Workload | Adaptation or scope | Correctness signal |
 | --- | --- | --- |
-| Math | Existing synthetic stress fixture | Existing checks and proof snapshots |
-| eggcc 2mm | Existing bounded container fixture | Existing checks and proof snapshots |
-| Pointer analysis | 100-row samples for 23 input relations; three legacy function declarations become constructors because current egglog requires merge modes and disallows rule-body lookup on `:no-merge` functions | Known `constant_points_to` row is derived |
+| Math | Existing synthetic stress fixture | Existing file-test snapshot |
+| eggcc 2mm | Existing bounded container fixture | Generated `main` function type is checked |
+| Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
-| Luminal | Static Llama graph imported from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
-| Herbie | Static engine proxy; no end-to-end Racket orchestration or FPCore corpus | All 14 existing checks run through the proof checker |
+| Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
+| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks run through the proof checker |
 
-Relative file paths are resolved relative to the directory where `./bench.py`
-was invoked, not relative to each target checkout. The same file contents are
-used for every target, and `file.sha256` records the exact benchmark input. The
-default workload table also owns any per-file fact-directory configuration.
-Final report tables normally show only each filename. If selected files share a
-filename, the report uses the shortest path suffix that distinguishes them. The
-initial collection plan and machine-readable report rows retain full paths.
+Benchmark files must not contain executable `(prove ...)` commands. Use
+`(check ...)` in timed workloads and test proof extraction separately, so
+printing or checking a proof does not become part of the timing boundary.
 
-### Options
+Reports normally identify a selected file by filename. If names collide, they
+use the shortest distinguishing path suffix; persisted rows retain the invoked
+path.
 
-The benchmark CLI exposes the routine collection and reporting options:
+### Detail levels and output
 
-- `--report <path|->`: JSONL report/cache path. Default:
-  `.reports.jsonl`. Use `--report -` to stream measured report rows to stdout;
-  in that mode no cache file is loaded.
-- `--rounds <n>`: fresh collection rounds per file and target, and matching
-  report rows required per cache cell. Default: `6`.
-- `--timeout-sec <n>`: per-process timeout. Default: `120`.
-- `--fact-directory <path>`: fact directory used by explicitly selected
-  benchmark files. The default suite supplies its fixture-specific fact
-  directory internally.
-- `--treatments <list>`: comma-separated treatments. Default:
-  `off,term,proofs`.
-- `--force-run`: append new observations even when enough matching rows already
-  exist.
+`--detail` is cumulative:
 
-### Treatments
+| Value | Added report content |
+| --- | --- |
+| `summary` | comparison selection and headline summary |
+| `files` | per-file wall time and peak RSS estimates |
+| `phases` | per-file phase confidence intervals, wall shares, and change contributions |
+| `rulesets` | the top 10 changed rulesets per file, including phase deltas |
 
-The default treatment matrix is:
-
-- `off`: run without proof or term flags.
-- `term`: run with `--term-encoding`.
-- `proofs`: run with `--proofs`.
-
-`--proof-testing` is a correctness mode, not a benchmark treatment, and does not
-appear in performance headlines.
-Use `--treatments proofs` when iterating on proof performance across two or more
-targets and you only need same-treatment proof-mode comparisons.
-
-The measured command shape is:
+The default is `summary`. For example:
 
 ```bash
-RUST_LOG=error <build-dir>/target/release/egglog-experimental \
-  --mode no-messages \
-  -j 1 \
-  [--fact-directory <path>] \
-  [--term-encoding | --proofs] \
-  <file.egg>
+./bench.py --detail files
+./bench.py --detail phases
+./bench.py --detail rulesets --format markdown > benchmark-report.md
 ```
 
-Benchmarking is single-threaded by default.
+The headline summary answers the most common questions with a small fixed set
+of rows:
 
-## Reports
+- the fixed-suite wall-time ratio, using the sum of the per-file means;
+- the lowest and highest per-file wall-time ratios; and
+- the lowest and highest per-file peak-RSS ratios.
 
-`.reports.jsonl` is the canonical benchmark artifact and is ignored by git.
-Use `--report <path>` to choose a different report file. Use `--report -` to
-write newly measured report rows to stdout instead of a file. All progress,
-summary, and diagnostic output always goes to stderr, so stdout can be
-piped as report JSONL whenever `--report -` is used.
+For a one-file run, redundant lowest/highest rows collapse to one result. The
+ratio is always `candidate / baseline`: below `1x` is faster or uses less RSS,
+and above `1x` is slower or uses more RSS. Each statistical estimate shows its
+95% confidence interval when defined and otherwise shows its point estimate.
 
-The report file is append-only JSONL. Each line records one process execution
-and is a measured timing observation, not a derived summary. The row contains
-the flat fields needed to recompute cache identity. The report does not store
-`row_index`; the runner derives row order from the JSONL file order when it
-loads the report.
+Rich output goes to stderr. From top to bottom it prints rulesets, phases,
+files, the compact comparison definition, and the headline summary, omitting
+sections above the requested detail level. The most specific diagnostics are
+therefore above their broader context, while the decision remains at the
+bottom of terminal output.
+Detailed Rich tables are designed for terminals at least 120 columns wide; a
+narrower terminal receives one warning and still renders best-effort without
+hiding file names. Markdown goes to stdout, is independent of terminal width,
+and keeps the canonical comparison, summary, files, phases, rulesets order.
 
-Row fields:
+The remaining collection options are:
 
-- `started_at`: ISO timestamp for the measured child process start.
-- `status`: `success`, `timed-out`, or `failure`.
-- `binary_sha256`: SHA-256 of the built `target/release/egglog-experimental`
-  binary.
-- `treatment`: `off`, `term`, or `proofs`.
-- `timeout_sec`: per-process timeout.
+- `--report PATH`: append-only report/cache path; default `.reports.jsonl`.
+  A filesystem path is required; `-` is not a streaming destination.
+- `--rounds N`: selected observations required for every endpoint/file;
+  default `6`.
+- `--timeout-sec N`: per-process timeout; default `120`.
+- `--force-run`: append `N` fresh rows for both endpoints before selecting the
+  newest rows.
+- `--format rich|markdown`: final human report format.
+- `--open`: write the complete cache snapshot to an interactive HTML file and
+  open it. For the default cache, the output is `.reports.html`.
 
-Target fields:
+Use `./bench.py --help` for the complete option reference.
 
-- `target_label`: explicit display label, present only when the target was
-  passed as `label=SOURCE`; otherwise `null`.
-- `target_source`: original `--target` source string, such as `.`,
-  `/path/to/repo`, `@main`, or `#33`.
-- `target_path`: absolute checkout path used for the build.
-- `target_git_ref`: git ref used for the checkout, or `HEAD` for path targets.
-- `target_git_sha`: resolved HEAD commit used for the build.
-- `target_is_dirty`: whether the checkout had relevant local changes when
-  built.
+### Engine timing
 
-File fields:
+Every successful benchmark observation records timing from the same measured
+process. Timing collection is always enabled; requesting a detailed report does
+not rerun a diagnostic process or change the cache key.
 
-- `file_path`: benchmark file path as invoked.
-- `file_sha256`: SHA-256 of the file contents.
-- `fact_directory_path`: absolute fact-directory path, or `null` when the
-  workload has no external facts.
-- `fact_directory_sha256`: deterministic SHA-256 of relative file names and
-  contents under the fact directory, or the empty string when absent.
+The engine records these components per ruleset and the JSONL stores their raw
+nanosecond totals:
 
-Timing fields:
+- Search: matching and join execution.
+- Apply: executing rule-head instructions and staging updates.
+- Unattributed: measured pre-merge work that cannot be accurately classified
+  as Search or Apply.
+- Merge: resolving and installing staged updates.
+- Rebuild: rebuilding indexes and e-graph state.
 
-- `wall_sec`: measured child-process wall time.
-- `user_sec`: child-process user CPU time when available, otherwise `null`.
-- `system_sec`: child-process system CPU time when available, otherwise `null`.
-- `cpu_wall_ratio`: `(user_sec + system_sec) / wall_sec` when available,
-  otherwise `null`.
-- `max_rss_bytes`: child-process max resident set size in bytes when available,
-  otherwise `null`.
+The pre-merge boundary is backend-defined. Main egglog measures one contiguous
+pre-merge interval and records the remainder after Search and Apply as
+Unattributed. DD directly times its native Search and Apply regions and defines
+its pre-merge total as their sum, so DD records zero Unattributed time. DD work
+outside those phase boundaries remains part of Outside recorded rulesets.
 
-For `status: timed-out`, `wall_sec`, `user_sec`, `system_sec`,
-`cpu_wall_ratio`, and `max_rss_bytes` are `null`. The row records only that the
-run did not complete before `timeout_sec`, so the true runtime is greater than
-the timeout.
+The phase report aggregates all rulesets and keeps two kinds of otherwise
+hidden time distinct:
 
-Rows with `status: timed-out` or `status: failure` can include:
+- Execution overhead is the stored Unattributed component: measured work
+  inside ruleset execution that cannot be split accurately into Search or
+  Apply.
+- Outside recorded rulesets is derived as process wall time minus Search,
+  Apply, Execution overhead, Merge, and Rebuild. It includes process setup,
+  reporting, teardown, and other work outside timed ruleset execution.
 
-- `error_exit_code`: process exit code when available.
-- `error_signal`: terminating signal when available.
-- `error_message`: short runner-generated error message.
+Each file gets its own phase table. For both endpoints, it displays the phase
+mean's 95% confidence interval and the phase's share of that endpoint's wall
+time. It also displays the signed mean change and that phase's contribution to
+the file's total wall-time change. Contributions may be negative or exceed
+100% when phases offset each other. A negative Outside recorded rulesets value
+is prefixed with `!`; it means recorded phase totals exceed wall time and should
+be treated as an attribution warning.
 
-Example row:
+The ruleset report totals all five stored components for each ruleset, aligns
+the union of names across the two endpoints, and ranks by the absolute
+candidate-minus-baseline total difference. It omits exact-zero changes and
+displays at most 10 rulesets per file. Each row includes the baseline and
+candidate total confidence intervals, total change, and descriptive Search,
+Apply, Execution overhead, Merge, and Rebuild changes. Timings are aggregated
+across the selected observations; iterations are not separate report rows. A
+ruleset absent from one endpoint is displayed as `—`, while a measured zero
+remains `0 ns`.
 
-```json
-{
-  "started_at": "2026-07-04T12:34:56Z",
-  "status": "success",
-  "target_label": null,
-  "target_source": ".",
-  "target_path": "/Users/saul/p/egglog-encoding",
-  "target_git_ref": "HEAD",
-  "target_git_sha": "abc123...",
-  "target_is_dirty": true,
-  "binary_sha256": "sha256:...",
-  "file_path": "egglog/tests/foo.egg",
-  "file_sha256": "sha256:...",
-  "fact_directory_path": null,
-  "fact_directory_sha256": "",
-  "backend": "main",
-  "treatment": "proofs",
-  "timeout_sec": 120,
-  "wall_sec": 1.23,
-  "user_sec": 1.18,
-  "system_sec": 0.04,
-  "cpu_wall_ratio": 0.99,
-  "max_rss_bytes": 123456789,
-  "error_exit_code": null,
-  "error_signal": null,
-  "error_message": null
-}
+Benchmarks run single-threaded. This keeps Search and Apply attribution
+additive for main egglog's interleaved executor. The DD backend records the same
+schema at its natural search, apply, merge, and rebuild boundaries.
+
+### Interactive report
+
+Add `--open` to print the ordinary report, write one single-file HTML
+snapshot next to the JSONL cache, open it, and exit normally:
+
+```bash
+./bench.py --open
+./bench.py --report results.jsonl --open  # writes results.html
 ```
 
-Running `./bench.py` always prints the report. For each target/file/treatment
-cell, cache sufficiency is at least `--rounds` matching rows of any status. If
-enough matching rows exist, the script takes the `--rounds` most recent rows by
-`started_at`, breaking timestamp ties by later JSONL file order, analyzes them,
-and prints. If observations are missing, it collects only the missing rows,
-appends them, then prints. With `--force-run`, the script always appends new
-rows first and then analyzes the `--rounds` most recent matching rows by
-`started_at` and JSONL file order.
+The HTML embeds the complete loaded cache snapshot and the same Python analysis
+and catalog code used by the CLI. It immediately displays the invocation's full
+ruleset-detail report, then loads a pinned Pyodide runtime and SciPy over HTTPS
+to enable retargeting. The initial report preserves the invocation's endpoint
+provenance and file order; after Apply, retargeted endpoints and files use the
+latest cached provenance for each cache identity within that immutable snapshot.
+The page can select any two cached endpoints, any nonempty file subset, a cached
+timeout, and an available round count; it always shows all report sections.
+Combinations without enough matching observations remain selectable and produce
+explicit missing-result states. A failed request leaves the prior report and
+selectors intact.
 
-The stderr output shows the cache plan and final selected observations.
-The cache plan reports cached rows, missing rows, selected cached statuses,
-exact-cell duration estimates, and estimated fresh collection time. Estimates
-use only successful rows with the same binary SHA-256, file SHA-256,
-fact-directory SHA-256, backend, treatment, and timeout; if no exact successful
-rows exist, the estimate is reported as unknown rather than borrowing data from
-another target, binary, or input dataset.
-During fresh collection, `observations` are measured report rows and
-`subprocesses` are child process launches, including the one target startup
-warmup when fresh rows are needed. Peak RSS is collected from the measured child
-process resource usage and rendered separately from wall-time ratios.
+The snapshot never resolves a target, builds a binary, runs a benchmark,
+modifies the JSONL, or observes rows appended after it was created. If the
+network runtime cannot load, the initial static report remains readable and
+only retargeting is unavailable. The HTML contains the full cache, including
+machine-local paths and provenance, so treat it as potentially sensitive when
+sharing it.
 
-The printed report is ordered so the final decision summary comes last. It
-starts with report metadata and a target tree showing source, git revision,
-binary hash, and checkout path. Multi-target reports then print per-file
-wall-time changes and per-file peak RSS changes before per-target diagnostics.
-The final `Benchmark summary` section contains the suite-level wall-time result
-plus peak-RSS summaries. Multi-target wall-time ratios are `target / baseline`:
-values below `1x` are faster than the baseline, and values above `1x` are
-slower. The adjacent wall-time change column is derived from the same ratio:
-negative percentages are faster and positive percentages are slower. Peak RSS
-changes are rendered separately with less/more wording so memory is not mixed
-into wall-time interpretation. Within-target overhead ratios are printed before
-raw wall-time and peak-RSS tables. Result cells are labeled `faster`, `slower`,
-`less`, `more`, `unclear`, `point only`, or `invalid`.
+### CPU profiling
+
+Benchmark reports answer whether and where performance changed. Use the
+separate Samply command when a particular endpoint needs call-stack diagnosis:
+
+```bash
+./bench.py profile FILE
+./bench.py profile FILE --target @origin/main --treatment proofs --open
+./bench.py profile FILE --backend dd --profile-seconds 20
+```
+
+Profiling selects one target, backend, treatment, and file. Artifacts are cached
+under `.profiles/` by binary, file, fact-directory, backend, treatment, and
+iteration policy. `--open` loads the artifact in Samply; `--force-run` replaces
+the cached profile. Profiling is deliberately separate from the repeated-run
+benchmark statistics and pair report.
+
+On macOS, the default summary uses Samply leaf-sample CPU deltas to split
+observed CPU into application, other-library, and unattributed CPU, report
+application-symbol coverage, and rank top functions by self CPU. Profile
+Unattributed means a leaf sample could not be mapped to a library; it is not the
+benchmark's pre-merge Unattributed/Execution overhead. These are sampled CPU
+totals and shares, not wall time, engine phases, or confidence intervals. Other
+platforms still record and cache the artifact and print its viewer handoff
+without a CPU breakdown. `--top` limits functions, `--format` selects Rich or
+Markdown, and `--no-summary` prints only the artifact path.
+
+## Reports and cache behavior
+
+`.reports.jsonl` is an append-only, disposable local cache. Each line is one
+measured process observation. The runner parses the file once into an indexed
+`ReportStore`; appends update both the JSONL and those indexes. Normal
+collection creates no database or second cache representation; `--open`
+separately exports an HTML snapshot.
+
+Cache reuse is keyed by:
+
+- binary SHA-256;
+- file SHA-256;
+- fact-directory SHA-256;
+- backend;
+- treatment; and
+- timeout.
+
+Target source, path, git revision, dirty state, labels, and display paths are
+provenance rather than cache-key dimensions. The runner selects the newest
+`--rounds` rows for each exact endpoint/file, ordering first by `started_at` and
+then by physical JSONL order. Without `--force-run`, it appends only missing
+rows. With `--force-run`, it appends a full fresh set and then selects the
+newest rows.
+
+Before any measured row is appended, all targets needing collection are built.
+Fresh collection is serial; one untimed `<binary> --help` capability preflight
+per target verifies the required timing-summary interface. Each target prints
+one compact cached/required line and either `nothing to collect` or the fresh-run
+count; cached failures and timeouts are explicit. Fresh TTY runs use transient
+progress with elapsed time, redirected output logs each completed run, and both
+end with status counts. All operational output goes to stderr.
+
+`benchmarking/reports/store.py` defines the sole trusted `TypedDict` schema,
+standard-library JSON codec, cache key, and append/index/select operations.
+Each observation contains target and workload
+provenance, exact cache coordinates, status, wall time, peak RSS, and failure
+details. A top-level report schema version covers both the persisted shape and
+measurement semantics, so methodology changes cannot silently reuse stale
+measurements. Successful observations also contain the version-2 per-ruleset
+timing summary: name plus Search, Apply, Unattributed, Merge, and Rebuild
+nanoseconds.
+
+Timed-out rows have null wall time, peak RSS, and timing summary. Failed rows
+have no timing summary and retain whatever process measurements the operating
+system supplied. Either status makes a dependent statistical comparison
+incomplete instead of averaging only successful rows.
+
+This tool is the only supported reader and writer. The codec rejects old report
+and timing-summary schema versions and requires successful rows to contain
+timing data. It trusts the tool's typed writer rather than repeating the
+`TypedDict` as runtime field-by-field validation. A schema change intentionally
+invalidates existing caches: move or remove an incompatible report and recompute
+it.
+
+### Report-analysis ownership
+
+`ComparisonSpec` owns the exact endpoints, files, rounds, and timeout;
+`store.py` owns physical row order and cache selection. `analysis.py` computes
+immutable summary, file, phase, and ruleset rows, while `presentation.py` maps
+them to the renderer-neutral catalog. Rich, Markdown, and the interactive page
+serialize that catalog without recomputing report facts.
 
 ## Statistics
 
-The benchmark unit is a full process execution of `egglog-experimental` on one
-`.egg` file under one treatment. Python orchestration overhead is outside the
-measured child process.
+The benchmark unit is a complete `egglog-experimental` process for one file,
+endpoint, and round. Python orchestration is outside the measured child
+process. The analysis keeps all selected observations; it does not report
+best-of-N timings or discard outliers by folklore.
 
-Collection and analysis behavior:
+The JSONL does not retain round-pair identities. Fresh and cached reports both
+analyze the selected baseline and candidate observations as independent,
+unpaired samples.
 
-- Fresh complete collection uses paired execution rounds: each round runs the
-  same target/file across all selected treatments in a balanced order.
-  Cached analysis uses the selected rows as unpaired independent samples rather
-  than recovering persisted round groups.
-- When fresh rows are needed for a target, the runner starts with one untimed
-  executable startup warmup. It does not use best-of-N or discard runs by
-  folklore.
-- The runner builds each target with `cargo build --release` before deciding
-  whether cached timing rows can be reused.
-- Cache identity comes from persisted fields: binary SHA-256, file SHA-256,
-  fact-directory SHA-256, backend, treatment, and timeout. Target source, path,
-  git ref, git SHA, dirty flag, and fact-directory path are provenance/display
-  fields; they do not prevent reuse when the content hashes match.
-- Timeouts are incomplete cells. The report shows where timeouts happened, but
-  does not compute percent improvement, ratio confidence intervals, suite-pass
-  overhead, or geometric-mean overhead for comparisons that include timed-out
-  cells.
-- Failures are invalid cells. Any target/file/treatment failure invalidates
-  comparisons that depend on that cell until replacement observations are
-  appended, for example with `--force-run`, and the selected latest rows for the
-  cell are successful.
+For one successful endpoint/file result, wall time and peak RSS use the
+arithmetic mean. With at least two samples, the report computes the ordinary
+95% t confidence interval for that mean using the unbiased sample variance.
+With one sample it reports a point estimate labeled `point only`.
 
-For a successful one-system target/file/treatment cell, the analysis computes
-the arithmetic mean and the one-system t interval from "Quantifying Performance
-Changes with Effect Size Confidence Intervals", Section 6.2. With `n` selected
-successful `wall_sec` samples, sample mean `m`, unbiased sample variance `s^2`,
-and 95% t critical value `t` with `n - 1` degrees of freedom:
+Pair comparisons use the candidate-to-baseline ratio of arithmetic means and a
+Fieller-style 95% confidence interval. If the interval is wholly below `1`, the
+candidate is faster or uses less RSS; if wholly above `1`, it is slower or uses
+more RSS; if it includes `1`, the direction is unclear at this confidence
+level. If a valid interval cannot be calculated, the point estimate remains
+visible with its availability explanation.
 
-```text
-ci = [m - t * sqrt(s^2 / n), m + t * sqrt(s^2 / n)]
-```
+The fixed-suite wall result sums each endpoint's per-file means and divides the
+candidate sum by the baseline sum. Its uncertainty propagates the per-file
+mean variances through the same ratio method. It answers whether the selected
+suite's total runtime changed. The lowest/highest file rows answer whether any
+individual workload improved and where the worst relative regression occurred.
+Peak RSS has no additive suite total, so only its lowest/highest file ratios are
+shown. No median or geometric mean is mixed into this minimal headline.
 
-If `n < 2`, the printed report shows the mean because the interval is
-undefined. When a confidence interval is defined, the printed report shows the
-range, such as `[0.0183s, 0.0251s]`.
+A timed-out, failed, or otherwise incomplete selected result invalidates the
+suite result that depends on it. Valid per-file tail comparisons remain useful
+when an unrelated file is incomplete. Phase endpoint means and ruleset totals
+receive confidence intervals; phase contributions and individual ruleset
+component deltas are descriptive diagnostics.
 
-For a successful pairwise comparison, the analysis uses the one-level
-Kalibera/Jones ratio-of-means confidence interval from "Quantifying Performance
-Changes with Effect Size Confidence Intervals", Section
-6.2.[^benchmark-provenance]
-
-For baseline samples `B` and candidate samples `C`, with sample means `b` and
-`c`, unbiased sample variances `s_b^2` and `s_c^2`, equal sample count `n`, and
-95% t critical value `t` with `n - 1` degrees of freedom, the point ratio is:
-
-```text
-ratio = c / b
-```
-
-The Fieller-style interval is:
-
-```text
-a = b^2 - t^2 * s_b^2 / n
-d = c^2 - t^2 * s_c^2 / n
-center = b * c / a
-half_width = sqrt((b * c)^2 - a * d) / a
-ci = [center - half_width, center + half_width]
-```
-
-If `a <= 0` or the radicand is negative, the interval is undefined and the
-comparison is inconclusive rather than using a different interval method. The
-runner does not use arithmetic averages of percentages.
-
-The benchmark files are the workload suite under evaluation. This follows the
-Kalibera/Jones experiment-design framing: define the systems, workload set,
-treatments, and repetition policy, then quantify uncertainty in the measured
-means for that experiment. For `suite-pass` overhead, the runner sums the
-per-file means for the candidate treatment and divides by the summed per-file
-baseline means. Its confidence interval applies the same Fieller-style ratio
-interval to the summed means, propagating run-to-run timing variance for the
-specified suite.
-
-For multi-target wall-time comparisons, the runner uses the same ratio-of-means
-method with the first target as the baseline. It compares the same treatment
-between targets, for example `candidate proofs / baseline proofs`, and prints
-the fixed-suite wall-time change for each treatment, an equal-file geometric
-mean ratio, and per-file ratios for diagnostics. This is separate from proof
-overhead, which remains a within-target ratio such as `proofs / off`.
-
-The report includes:
-
-- per-file wall-time estimates for each treatment;
-- per-file peak RSS estimates for each treatment when memory samples are
-  available;
-- `term / off` overhead;
-- `proofs / off` total proof overhead;
-- `proofs / term` marginal proof-generation overhead;
-- total suite time ratio (`proofs/off`): summed mean proof time divided by
-  summed mean baseline time, with a fixed-suite confidence interval;
-- equal-file geometric mean ratio (`proofs/off`), which gives each benchmark
-  file equal weight in the summary;
-- for multiple targets, suite and per-file same-treatment wall-time changes
-  relative to the first target, plus peak RSS changes with confidence intervals
-  relative to the first target.
-
-When a confidence interval is defined, printed estimate cells show the interval
-range. When it is undefined, they show the point estimate.
-
-The `<2x` goal is established only when the suite-pass proof overhead has a 95%
-confidence interval upper bound below `2x`. This gate matches the project goal:
-proof mode keeps total execution time for the specified benchmark suite below
-`2x` the non-proof baseline, with uncertainty from repeated executions
-accounted for. The printed suite summary has no separate status column; the gate
-comes from the suite-pass confidence interval upper bound.
+The `<2x` proof goal is established only when the upper bound of the suite wall
+ratio's 95% confidence interval is below `2x` for a proofs-versus-off
+comparison.
 
 Methodology references:
 
-- Kalibera and Jones, "Rigorous Benchmarking in Reasonable Time" (ISMM 2013):
-  use an explicit experiment design, repeated benchmark units, and confidence
-  intervals.
-- Kalibera and Jones, "Quantifying Performance Changes with Effect Size
-  Confidence Intervals" (University of Kent Technical Report 4-12): report
-  effect sizes as ratios of mean execution times with confidence intervals.
-- Fieller, "Some Problems in Interval Estimation" (1954), and Franz, "Ratios:
-  A Short Guide to Confidence Limits and Proper Use" (2007): compute confidence
-  intervals for ratios directly.
-- Chen and Revels, "Robust Benchmarking in Noisy Environments" (2016): keep raw
-  observations and avoid best-of-N summaries because timing data can be noisy
-  and non-normal.
-- Georges, Buytaert, and Eeckhout, "Statistically Rigorous Java Performance
-  Evaluation" (OOPSLA 2007): report repeated-run means with uncertainty, not
-  informal best/average/worst tables.
-- Barrett, Bolz-Tereick, Killick, Mount, and Tratt, "Virtual Machine Warmup
-  Blows Hot and Cold" (OOPSLA 2017): make the startup warmup policy explicit.
-- Oleksenko, Kuvaiskii, Bhatotia, and Fetzer, "FEX: A Software Systems
-  Evaluator" (DSN 2017): make the build-run-collect-report pipeline
-  reproducible.
-
-[^benchmark-provenance]: Earlier scripts in
-    [`saulshanabrook/egglog_repro`](https://github.com/saulshanabrook/egglog_repro)
-    and
-    [discussion #15](https://github.com/saulshanabrook/saulshanabrook/discussions/15)
-    helped identify this method, but they are provenance only. The statistics
-    implementation comes from the cited papers.
+- Kalibera and Jones, “Rigorous Benchmarking in Reasonable Time” (ISMM 2013).
+- Kalibera and Jones, “Quantifying Performance Changes with Effect Size
+  Confidence Intervals” (University of Kent Technical Report 4-12).
+- Fieller, “Some Problems in Interval Estimation” (1954).
+- Chen and Revels, “Robust Benchmarking in Noisy Environments” (2016).
+- Georges, Buytaert, and Eeckhout, “Statistically Rigorous Java Performance
+  Evaluation” (OOPSLA 2007).
 
 ## Repository layout
 
-Layout:
+Top-level ownership:
 
 - `egglog/`: subtree of `https://github.com/egraphs-good/egglog`.
 - `egglog-experimental/`: subtree of
   `https://github.com/egraphs-good/egglog-experimental`.
-- `Cargo.toml`: root workspace that includes both subtrees and any benchmark
-  helper crates.
-- `bench.py`: executable uv entrypoint for benchmark collection and reporting.
-- `test_bench.py`: top-level pytest coverage for benchmark-runner logic.
-- `pyproject.toml`: Python dependencies plus mypy, pytest, and ruff config.
-- `uv.lock`: locked Python environment for benchmark-runner dependencies and
-  developer tools.
-- `.reports.jsonl`: ignored local benchmark report/cache.
-- `AGENTS.md`: guidance for authors and LLMs on test order, benchmark
-  expectations, and upstream/subtree hygiene.
-- `.github/`: CI workflows.
+- `Cargo.toml`: root Cargo workspace integrating both subtrees.
+- `bench.py`: executable uv entrypoint.
+- `benchmarking/`: Python collection, reporting, interactive-view, and
+  profiling code.
+- `tests/`: domain-focused pytest and Syrupy snapshot coverage.
+- `Makefile`: canonical validation and maintenance commands.
+- `pyproject.toml` and `uv.lock`: Python configuration and locked environment.
+- `.reports.jsonl`: ignored, disposable benchmark cache.
+- `.profiles/`: ignored Samply artifact cache.
 
-The root README is the orientation and workflow reference.
+Python ownership is layered so new code has one clear home:
+
+- Commands: `bench.py` dispatches lazily; `benchmark.py` composes pair benchmark
+  requests; `profile.py` owns profile requests and Samply artifact caching.
+- Inputs and execution: `models.py` defines dependency-free identities and
+  invariants; `workloads.py` resolves and validates inputs; `targets.py`
+  materializes and builds targets and constructs commands; `collection.py`
+  plans and records observations; `processes.py` measures children. Commands
+  share one Rich stderr console directly.
+- Profile analysis: `samply_analysis.py` reads and presents Samply artifacts.
+- Report data: `reports/store.py` owns the JSONL schema, codec, cache key, and
+  append/index/select operations; `reports/analysis.py` computes
+  renderer-independent statistics.
+- Report presentation: `reports/catalog.py` defines the document model;
+  `reports/presentation.py` supplies wording and maps analysis into that model;
+  `reports/render.py` owns Rich and Markdown; `reports/interactive_runtime.py`
+  owns cache-only retargeting; `reports/interactive.py` embeds the cache,
+  Python modules, and adjacent browser assets into the HTML artifact, then
+  writes and opens it.
+
+Every module has a more precise ownership docstring. Package `__init__.py`
+files are documentation-only; tests enforce that rule, the data-layer boundary,
+and an acyclic static import graph.
 
 ## Upstream subtrees
 
 `egglog/` and `egglog-experimental/` are git subtrees, not submodules. The root
 workspace owns integration, CI, benchmarking, and local documentation, while
-subtree-local source changes can be synced with or proposed back to the
-upstream repositories.
+subtree-local changes can be synchronized with their upstream repositories.
 
-To pull new upstream `egglog` changes into this repo:
+To pull upstream changes:
 
 ```bash
 git remote add upstream-egglog https://github.com/egraphs-good/egglog.git
 git fetch upstream-egglog main
 git subtree pull --prefix=egglog upstream-egglog main --squash
-```
 
-To pull new upstream `egglog-experimental` changes:
-
-```bash
 git remote add upstream-egglog-experimental \
   https://github.com/egraphs-good/egglog-experimental.git
 git fetch upstream-egglog-experimental main
-git subtree pull --prefix=egglog-experimental upstream-egglog-experimental main --squash
+git subtree pull --prefix=egglog-experimental \
+  upstream-egglog-experimental main --squash
 ```
 
-If the remotes already exist, skip the `git remote add` command. Commit or
-stash local subtree edits before pulling, then run the root workspace checks
-after resolving any conflicts.
+If the remotes already exist, skip `git remote add`. Commit or stash local
+subtree edits before pulling, then run the root workspace checks.
 
-To propose subtree-local changes upstream, split the subtree history into a
-normal branch and push that branch to a fork or upstream branch:
+To create an upstreamable branch containing only one subtree:
 
 ```bash
 git subtree split --prefix=egglog -b split/egglog
 git push https://github.com/<you>/egglog.git split/egglog:<branch-name>
-```
 
-For `egglog-experimental`:
-
-```bash
 git subtree split --prefix=egglog-experimental -b split/egglog-experimental
 git push https://github.com/<you>/egglog-experimental.git \
   split/egglog-experimental:<branch-name>
 ```
 
-Open the upstream PR from the pushed branch. Root-only files such as
-`bench.py`, this README, and `.github/workflows/build.yml` are not included in
-the split branch.
+Root-only files such as `bench.py`, this README, and CI configuration are not
+included in the split branch.
 
-## Profiles
+## Cargo profiles
 
-Configured profiles:
-
-- `dev`: `opt-level = 3`, which Cargo defines as all optimizations, with
-  `line-tables-only` debug info for tracebacks.
-- `test`: Cargo's built-in test profile inherits `dev`, so `cargo test` uses
-  the same optimized build settings.
-- `release`: Cargo's built-in optimized release profile for benchmark binaries.
-- `profiling`: inherits `release` and adds debug symbols for profilers and
-  samplers.
+- `dev`: `opt-level = 3`, with `line-tables-only` debug information.
+- `test`: Cargo's built-in test profile, inheriting the optimized development
+  configuration.
+- `release`: the optimized benchmark build.
+- `profiling`: release optimization plus symbols for profilers and samplers.
 
 Cargo's profile behavior is documented in the
 [Cargo profile reference](https://doc.rust-lang.org/cargo/reference/profiles.html).
 
-Each benchmark report row records the binary hash used for that observation.
+Each report row records the exact benchmark binary hash.
 
 ## CI
 
-CI runs on pull requests, manual dispatch, and pushes to `main`. It runs these
-job groups:
+CI runs on pull requests, manual dispatches, and pushes to `main`:
 
-- `python`: `uv lock --check`, ruff/mypy checks for the top-level benchmark
-  runner files, and pytest.
-- `rust`: workspace tests, proof-focused tests, and clippy.
-- `benchmark-smoke`: a one-round `./bench.py` run on
-  `egglog/tests/integer_math.egg`.
-- `codspeed`: an in-process, proofs-only `egglog-experimental` benchmark
-  harness over a smaller representative file set, run through CodSpeed in both
-  simulation and memory modes. CodSpeed tracks proof-mode movement without
-  invoking `./bench.py`; the CLI benchmark report remains the source for the
-  full off/term/proofs comparison.
+- `python`: `make python-nits`, then `make python-test`.
+- `rust`: `make rust-nits`, then `make rust-test`.
+- `benchmark-smoke`: a one-round pair comparison on
+  `egglog/tests/integer_math.egg` through `make benchmark-smoke`.
+- `codspeed`: an in-process, proofs-only benchmark over a smaller workload set
+  in simulation and memory modes. CodSpeed includes phase-clock execution but
+  does not persist phase reports; `./bench.py` remains the source for
+  off/proofs, commit, and backend comparisons with stored observations.
 
-Python checks are run as separate commands:
-
-```bash
-uv lock --check
-uv run --locked ruff format --check bench.py test_bench.py
-uv run --locked ruff check bench.py test_bench.py
-uv run --locked mypy bench.py test_bench.py
-uv run --locked pytest -q
-```
-
-Use `uv run ruff format bench.py test_bench.py` to apply formatting locally.
+Ruff and Mypy discover all repository-owned Python files from project
+configuration, so new modules under `benchmarking/` or `tests/` require no
+Makefile edits.

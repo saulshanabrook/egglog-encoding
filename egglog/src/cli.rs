@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::str::FromStr;
 
 use clap::Parser;
+use egglog_reports::TimingSummaryV2;
 use env_logger::Env;
 use std::path::PathBuf;
 
@@ -64,6 +65,12 @@ struct Args {
     report_level: ReportLevel,
     #[clap(long)]
     save_report: Option<PathBuf>,
+    /// Writes compact per-ruleset timing JSON after all inputs succeed.
+    ///
+    /// This requires `--threads 1` because parallel search and apply overlap
+    /// and therefore cannot be reported as additive wall-clock phases.
+    #[clap(long)]
+    timing_summary: Option<PathBuf>,
     /// Treat missing `$` prefixes on globals as errors instead of warnings
     #[clap(long = "strict-mode")]
     strict_mode: bool,
@@ -105,6 +112,11 @@ where
 
     let args = Args::parse_from(args);
 
+    if args.timing_summary.is_some() && args.threads != 1 {
+        log::error!("--timing-summary requires --threads 1 for accurate phase timing");
+        std::process::exit(2);
+    }
+
     if args.term_encoding {
         egraph = egraph.with_term_encoding_enabled();
     }
@@ -128,7 +140,7 @@ where
     }
     if args.inputs.is_empty() {
         match egraph.repl(args.mode) {
-            Ok(()) => std::process::exit(0),
+            Ok(()) => {}
             Err(err) => {
                 log::error!("{err}");
                 std::process::exit(1)
@@ -209,6 +221,20 @@ where
         )
         .expect("Failed to serialize report");
         log::info!("Saved report to {report_path:?}");
+    }
+
+    if let Some(summary_path) = args.timing_summary {
+        let summary = TimingSummaryV2::from_run_report(egraph.get_overall_run_report())
+            .unwrap_or_else(|error| {
+                log::error!("failed to create timing summary: {error}");
+                std::process::exit(1);
+            });
+        let mut file = std::fs::File::create(&summary_path)
+            .unwrap_or_else(|_| panic!("Failed to create timing summary file at {summary_path:?}"));
+        serde_json::to_writer(&mut file, &summary).expect("Failed to serialize timing summary");
+        file.write_all(b"\n")
+            .expect("Failed to finish writing timing summary");
+        log::info!("Saved timing summary to {summary_path:?}");
     }
 
     // no need to drop the egraph if we are going to exit

@@ -138,7 +138,11 @@ fn proof_mode_rejects_fail_wrapped_input() {
         .unwrap_err();
 
     assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(error.to_string().contains("`fail` wrapping an `input` command"));
+    assert!(
+        error
+            .to_string()
+            .contains("`fail` wrapping an `input` command")
+    );
 }
 
 #[test]

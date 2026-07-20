@@ -590,9 +590,7 @@ pub(crate) fn command_supports_proof_encoding(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && type_info
-            .expr_has_function_lookup(&merge.result)
-            .is_some()
+        && type_info.expr_has_function_lookup(&merge.result).is_some()
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }

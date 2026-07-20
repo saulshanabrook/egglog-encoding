@@ -22,11 +22,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
-      - run: uv lock --check
-      - run: uv run --locked ruff format --check bench.py test_bench.py
-      - run: uv run --locked ruff check bench.py test_bench.py
-      - run: uv run --locked mypy bench.py test_bench.py
-      - run: uv run --locked pytest -q
+      - run: make python-nits
+      - run: make python-test
 
   rust:
     permissions:
@@ -38,10 +35,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - run: rustup component add clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: rustup component add clippy rustfmt
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - run: make rust-nits
+      - run: make rust-test
 
   benchmark-smoke:
     permissions:
@@ -54,8 +51,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@v6
-      - uses: Swatinem/rust-cache@v2
-      - run: uv run --locked ./bench.py --rounds 1 --treatments off --timeout-sec 120 --report .reports.ci.jsonl egglog/tests/integer_math.egg
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - run: make benchmark-smoke
 
   codspeed:
     name: codspeed (${{ matrix.mode }})
@@ -78,7 +75,7 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-codspeed@5.0.1
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo codspeed build --measurement-mode ${{ matrix.mode }} -p egglog-experimental --bench files
       - uses: CodSpeedHQ/action@v4
         with:

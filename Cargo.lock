@@ -712,6 +712,7 @@ dependencies = [
  "libtest-mimic",
  "log",
  "num",
+ "serde_json",
 ]
 
 [[package]]
@@ -732,6 +733,7 @@ dependencies = [
  "log",
  "serde",
  "timely",
+ "web-time",
 ]
 
 [[package]]
@@ -747,7 +749,6 @@ version = "2.0.0"
 dependencies = [
  "clap",
  "hashbrown 0.16.1",
- "indexmap",
  "rustc-hash",
  "serde",
  "serde_json",

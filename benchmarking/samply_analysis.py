@@ -1,6 +1,6 @@
-"""Read, summarize, and present saved Samply profile artifacts.
+"""Read, symbolicate, summarize, and present saved Samply profile artifacts.
 
-Profile execution, caching, and viewer lifecycle remain owned by ``bench.py``.
+Profile execution, caching, calibration, and viewer lifecycle belong in ``profile``.
 """
 
 from __future__ import annotations

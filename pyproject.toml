@@ -3,9 +3,7 @@ name = "egglog-encoding"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "numpy>=2.0",
-    "pandas>=2.2",
-    "pandera[pandas,mypy]>=0.26",
+    "eval-live @ git+https://github.com/saulshanabrook/eval-live@dbbb8455128a57b8e44168f48c027212b8fbd2c8",
     "rich>=13.7",
     "scipy>=1.14",
 ]
@@ -13,14 +11,24 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.17",
-    "pandas-stubs>=2.2",
     "pytest>=8.0",
     "ruff>=0.12",
+    "syrupy>=5.5.2",
 ]
 
 [tool.mypy]
 python_version = "3.12"
-plugins = ["pandera.mypy"]
+files = ["."]
+exclude = [
+    "^\\.bench-worktrees/",
+    "^\\.venv/",
+    "^build/",
+    "^dist/",
+    "^egglog/",
+    "^egglog-experimental/",
+    "^generated/",
+    "^target/",
+]
 check_untyped_defs = true
 disallow_untyped_defs = true
 no_implicit_optional = true
@@ -34,11 +42,22 @@ module = ["scipy.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["test_bench.py"]
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 120
+extend-exclude = [
+    ".bench-worktrees",
+    ".venv",
+    "build",
+    "dist",
+    "egglog",
+    "egglog-experimental",
+    "generated",
+    "target",
+]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

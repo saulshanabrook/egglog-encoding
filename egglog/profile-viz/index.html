@@ -315,6 +315,35 @@
             return secs * 1000 + nanos / 1000000;
         }
 
+        function normalizePreMergeTiming(ruleSetReport) {
+            const timing = ruleSetReport.pre_merge;
+            if (timing && timing.Split) {
+                const search = durationToMs(timing.Split.search);
+                const apply = durationToMs(timing.Split.apply);
+                const executionOverhead = durationToMs(timing.Split.unattributed);
+                return {
+                    kind: 'split',
+                    search,
+                    apply,
+                    executionOverhead,
+                    combined: 0,
+                    total: search + apply + executionOverhead,
+                };
+            }
+            if (timing && timing.Combined) {
+                const combined = durationToMs(timing.Combined.elapsed);
+                return {
+                    kind: 'combined',
+                    search: 0,
+                    apply: 0,
+                    executionOverhead: 0,
+                    combined,
+                    total: combined,
+                };
+            }
+            throw new Error('Unsupported pre_merge timing data');
+        }
+
         function visualizeData() {
             createSummaryStats();
             createIterationChart();
@@ -333,7 +362,7 @@
 
             let totalTime = 0;
             profileData.iterations.forEach(iter => {
-                totalTime += durationToMs(iter.rule_set_report.search_and_apply_time);
+                totalTime += normalizePreMergeTiming(iter.rule_set_report).total;
                 totalTime += durationToMs(iter.rule_set_report.merge_time);
                 totalTime += durationToMs(iter.rebuild_time);
             });
@@ -365,24 +394,70 @@
             const ctx = document.getElementById('iterationChart').getContext('2d');
             const sortByTime = document.getElementById('sortIterations').checked;
             let iterations = profileData.iterations.map((iter, i) => {
-                const searchApply = durationToMs(iter.rule_set_report.search_and_apply_time);
+                const preMerge = normalizePreMergeTiming(iter.rule_set_report);
                 const merge = durationToMs(iter.rule_set_report.merge_time);
                 const rebuild = durationToMs(iter.rebuild_time);
                 return {
                     label: `Iteration ${i + 1}`,
-                    searchApply,
+                    preMergeKind: preMerge.kind,
+                    search: preMerge.search,
+                    apply: preMerge.apply,
+                    executionOverhead: preMerge.executionOverhead,
+                    combinedPreMerge: preMerge.combined,
                     merge,
                     rebuild,
-                    total: searchApply + merge + rebuild
+                    total: preMerge.total + merge + rebuild
                 };
             });
             if (sortByTime) {
                 iterations.sort((a, b) => b.total - a.total);
             }
             const labels = iterations.map(it => it.label);
-            const searchApplyData = iterations.map(it => it.searchApply);
+            const searchData = iterations.map(it => it.search);
+            const applyData = iterations.map(it => it.apply);
+            const executionOverheadData = iterations.map(it => it.executionOverhead);
+            const combinedPreMergeData = iterations.map(it => it.combinedPreMerge);
             const mergeData = iterations.map(it => it.merge);
             const rebuildData = iterations.map(it => it.rebuild);
+            const datasets = [];
+            if (iterations.some(it => it.preMergeKind === 'split')) {
+                datasets.push(
+                    {
+                        label: 'Search',
+                        data: searchData,
+                        backgroundColor: '#9b59b6',
+                    },
+                    {
+                        label: 'Apply',
+                        data: applyData,
+                        backgroundColor: '#3498db',
+                    },
+                    {
+                        label: 'Execution overhead',
+                        data: executionOverheadData,
+                        backgroundColor: '#f39c12',
+                    }
+                );
+            }
+            if (iterations.some(it => it.preMergeKind === 'combined')) {
+                datasets.push({
+                    label: 'Pre-merge (combined)',
+                    data: combinedPreMergeData,
+                    backgroundColor: '#95a5a6',
+                });
+            }
+            datasets.push(
+                {
+                    label: 'Merge',
+                    data: mergeData,
+                    backgroundColor: '#2ecc71',
+                },
+                {
+                    label: 'Rebuild',
+                    data: rebuildData,
+                    backgroundColor: '#e74c3c',
+                }
+            );
 
             if (iterationChart) {
                 iterationChart.destroy();
@@ -392,23 +467,7 @@
                 type: 'bar',
                 data: {
                     labels: labels,
-                    datasets: [
-                        {
-                            label: 'Merge',
-                            data: mergeData,
-                            backgroundColor: '#2ecc71',
-                        },
-                        {
-                            label: 'Rebuild',
-                            data: rebuildData,
-                            backgroundColor: '#e74c3c',
-                        },
-                        {
-                            label: 'Search & Apply',
-                            data: searchApplyData,
-                            backgroundColor: '#3498db',
-                        }
-                    ]
+                    datasets
                 },
                 options: {
                     responsive: true,
@@ -443,13 +502,13 @@
             selector.innerHTML = '<strong>Select Iteration:</strong>';
             const sortByTime = document.getElementById('sortIterations').checked;
             let iterations = profileData.iterations.map((iter, i) => {
-                const searchApply = durationToMs(iter.rule_set_report.search_and_apply_time);
+                const preMerge = normalizePreMergeTiming(iter.rule_set_report);
                 const merge = durationToMs(iter.rule_set_report.merge_time);
                 const rebuild = durationToMs(iter.rebuild_time);
                 return {
                     label: `Iteration ${i + 1}`,
                     index: i,
-                    total: searchApply + merge + rebuild
+                    total: preMerge.total + merge + rebuild
                 };
             });
             if (sortByTime) {

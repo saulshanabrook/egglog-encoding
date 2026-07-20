@@ -28,12 +28,13 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
-    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
+use web_time::Duration;
 
 mod compile;
 mod dd_native;
@@ -232,6 +233,16 @@ impl EGraph {
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Default::default(),
         }
+    }
+
+    fn empty_iteration_report() -> IterationReport {
+        let mut report = IterationReport::default();
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: Duration::ZERO,
+            apply: Duration::ZERO,
+            unattributed: Duration::ZERO,
+        };
+        report
     }
 
     pub(crate) fn info(&self, f: FunctionId) -> &RelationInfo {
@@ -1395,6 +1406,74 @@ mod tests {
     }
 
     #[test]
+    fn split_phase_timings_are_reported_at_every_report_level() {
+        for level in [
+            ReportLevel::TimeOnly,
+            ReportLevel::WithPlan,
+            ReportLevel::StageInfo,
+        ] {
+            let mut eg = EGraph::new();
+            Backend::set_report_level(&mut eg, level);
+            let input = id_table(&mut eg, "input", 2);
+            let output = id_table(&mut eg, "output", 2);
+            for i in 0..512 {
+                eg.insert_live_row(input, row(&[i, i + 1]));
+            }
+
+            let mut rule = TestRule::new("timed");
+            let x = rule.new_var(ColumnTy::Id);
+            let y = rule.new_var(ColumnTy::Id);
+            rule.query_table(input, &[x.clone(), y.clone()], Some(false));
+            rule.set(output, &[x, y]);
+            let rule = rule.build(&mut eg);
+
+            let report = run_rules(&mut eg, &[rule]).unwrap();
+            let PreMergeTiming::Split {
+                search,
+                apply,
+                unattributed,
+            } = report.rule_set_report.pre_merge
+            else {
+                panic!("DD execution must report split timing");
+            };
+            assert!(
+                search > Duration::ZERO,
+                "missing search timing at {level:?}"
+            );
+            assert!(apply > Duration::ZERO, "missing apply timing at {level:?}");
+            assert_eq!(unattributed, Duration::ZERO);
+            assert!(
+                report.rule_set_report.merge_time > Duration::ZERO,
+                "missing merge timing at {level:?}"
+            );
+            assert_eq!(report.rebuild_time, Duration::ZERO);
+        }
+    }
+
+    #[test]
+    fn phase_timing_is_available_for_an_empty_ruleset() {
+        let mut eg = EGraph::new();
+
+        let report = Backend::run_rules(
+            &mut eg,
+            RuleSetRun {
+                name: Some("empty"),
+                rules: &[],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.rule_set_report.pre_merge,
+            PreMergeTiming::Split {
+                search: Duration::ZERO,
+                apply: Duration::ZERO,
+                unattributed: Duration::ZERO,
+            }
+        );
+    }
+
+    #[test]
     fn join_planning_failure_is_returned_without_unwinding() {
         let mut eg = EGraph::new();
         let wide = id_table(&mut eg, "wide", dd_native::W);
@@ -2320,7 +2399,7 @@ impl Backend for EGraph {
             return Err(anyhow!(message));
         }
         if run.rules.is_empty() {
-            return Ok(IterationReport::default());
+            return Ok(Self::empty_iteration_report());
         }
         let rules: Vec<(usize, RuleSpec)> = run
             .rules
@@ -2335,17 +2414,27 @@ impl Backend for EGraph {
             })
             .collect();
         if rules.is_empty() {
-            return Ok(IterationReport::default());
+            return Ok(Self::empty_iteration_report());
         }
 
-        let changed = interpret::run_iteration(self, &rules);
+        let result = interpret::run_iteration(self, &rules);
         if let Some(message) = self.take_panic_message() {
             return Err(anyhow!(message));
         }
-        let changed = changed?;
+        let result = result?;
 
         let mut report = IterationReport::default();
-        report.rule_set_report.changed = changed;
+        report.rule_set_report.changed = result.changed;
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: result.search_time,
+            apply: result.apply_time,
+            unattributed: Duration::ZERO,
+        };
+        report.rule_set_report.merge_time = result.merge_time;
+        // The DD backend has no native union-find rebuild phase. Term/proof
+        // canonicalization is expressed as ordinary rules and is therefore
+        // already included in the ruleset timings.
+        report.rebuild_time = Duration::ZERO;
         Ok(report)
     }
 
