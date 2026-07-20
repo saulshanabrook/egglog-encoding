@@ -97,6 +97,108 @@ fn guarded_rule_uses_one_full_search_and_preserves_seminaive_epoch_on_mismatch()
 }
 
 #[test]
+fn traced_lookup_or_insert_keeps_exact_match_origins_for_hits_and_shared_predictions() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let id = ColumnTy::Id;
+    let integer = ColumnTy::Base(int_base);
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![integer, integer, id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "trace-source".into(),
+        can_subsume: false,
+    });
+    let target = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![integer, id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "trace-target".into(),
+        can_subsume: false,
+    });
+    let sink = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![integer, integer, id],
+        default: DefaultVal::Fail,
+        merge: MergeFn::UnionId,
+        name: "trace-sink".into(),
+        can_subsume: false,
+    });
+
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    egraph.add_term(source, &[zero, zero]);
+    egraph.add_term(source, &[one, zero]);
+    egraph.add_term(source, &[one, one]);
+    let existing_result = egraph.add_term(target, &[zero]);
+
+    let rule = {
+        let mut builder = egraph.new_rule("traced applications", true);
+        let key = builder.new_var_named(integer, "key");
+        let tag = builder.new_var_named(integer, "tag");
+        let source_result = builder.new_var_named(id, "source-result");
+        builder
+            .query_table(
+                source,
+                &[key.clone(), tag.clone(), source_result],
+                Some(false),
+            )
+            .unwrap();
+        let result = builder.lookup(target, std::slice::from_ref(&key), || {
+            "target lookup failed".into()
+        });
+        builder.set(sink, &[key, tag, result.into()]);
+        builder.build()
+    };
+
+    egraph.begin_rule_match_trace().unwrap();
+    egraph.run_rules(&[rule]).unwrap();
+    let batches = egraph.take_rule_match_trace().unwrap();
+    assert_eq!(batches.len(), 1);
+    let trace = &batches[0];
+    assert_eq!(trace.matches.len(), 3);
+    assert_eq!(trace.applications.len(), 3);
+
+    let target_table = egraph.funcs[target].table;
+    assert!(
+        trace
+            .applications
+            .iter()
+            .all(|application| application.table == target_table)
+    );
+    assert_eq!(
+        trace
+            .applications
+            .iter()
+            .map(|application| application.origin.index())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        trace
+            .applications
+            .iter()
+            .map(|application| application.newly_staged)
+            .collect::<Vec<_>>(),
+        vec![false, true, false]
+    );
+    assert_eq!(trace.applications[0].result, existing_result);
+    assert_eq!(trace.applications[1].result, trace.applications[2].result);
+    let instruction = trace.applications[0].instruction;
+    assert!(
+        trace
+            .applications
+            .iter()
+            .all(|application| application.instruction == instruction)
+    );
+}
+
+#[test]
 fn dropped_rule_builder_releases_panics() {
     let mut egraph = EGraph::default();
     let unit_type = egraph.base_values_mut().register_type::<()>();

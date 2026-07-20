@@ -39,8 +39,8 @@ use crate::{
 
 use super::{
     ActionId, AtomId, Database, GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex,
-    HashIndex, RuleMatch, RuleMatchTraceError, TableInfo, Variable,
-    get_column_index_from_tableinfo,
+    HashIndex, RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError, TableApplication,
+    TableInfo, Variable, get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -361,23 +361,23 @@ impl Database {
         &mut self,
         rule_set: &RuleSet,
         report_level: ReportLevel,
-    ) -> Result<(RuleSetReport, Vec<RuleMatch>), RuleMatchTraceError> {
+    ) -> Result<(RuleSetReport, RuleExecutionTrace), RuleMatchTraceError> {
         for (plan, desc, _) in rule_set.plans.values() {
             if matches!(plan, Plan::DecomposedPlan(_)) {
                 return Err(RuleMatchTraceError::DecomposedPlan { rule: desc.clone() });
             }
         }
 
-        let mut matches = Vec::new();
-        let report = self.run_rule_set_impl(rule_set, report_level, Some(&mut matches));
-        Ok((report, matches))
+        let mut trace = RuleExecutionTrace::default();
+        let report = self.run_rule_set_impl(rule_set, report_level, Some(&mut trace));
+        Ok((report, trace))
     }
 
     fn run_rule_set_impl(
         &mut self,
         rule_set: &RuleSet,
         report_level: ReportLevel,
-        trace: Option<&mut Vec<RuleMatch>>,
+        trace: Option<&mut RuleExecutionTrace>,
     ) -> RuleSetReport {
         if rule_set.plans.is_empty() {
             return RuleSetReport {
@@ -1009,6 +1009,8 @@ struct ActionState {
     n_runs: usize,
     len: usize,
     bindings: Bindings,
+    /// Lane-aligned match origins, allocated only for serial traced runs.
+    origins: Option<Vec<RuleMatchId>>,
 }
 
 impl Default for ActionState {
@@ -1017,6 +1019,7 @@ impl Default for ActionState {
             n_runs: 0,
             len: 0,
             bindings: Bindings::new(VAR_BATCH_SIZE),
+            origins: None,
         }
     }
 }
@@ -2395,7 +2398,7 @@ struct InPlaceActionBuffer<'a> {
 }
 
 struct InPlaceRuleMatchTrace<'a> {
-    output: &'a mut Vec<RuleMatch>,
+    output: &'a mut RuleExecutionTrace,
     rules: DenseIdMap<ActionId, TraceRuleInfo<'a>>,
 }
 
@@ -2416,7 +2419,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         bindings: &DenseIdMap<Variable, Value>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
-        if let Some(trace) = self.trace.as_mut() {
+        let origin = if let Some(trace) = self.trace.as_mut() {
             let info = &trace.rules[action];
             let mut named_bindings = Vec::with_capacity(info.symbols.vars.len());
             for (var, value) in bindings.iter() {
@@ -2424,11 +2427,15 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
                     named_bindings.push((name.clone(), *value));
                 }
             }
-            trace.output.push(RuleMatch {
+            let origin = RuleMatchId::from_index(trace.output.matches.len());
+            trace.output.matches.push(RuleMatch {
                 rule: info.rule.clone(),
                 bindings: named_bindings,
             });
-        }
+            Some(origin)
+        } else {
+            None
+        };
 
         let action_state = self.batches.get_or_default(action);
         action_state.n_runs += 1;
@@ -2439,12 +2446,33 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         unsafe {
             action_state.bindings.push(bindings, &action_info.used_vars);
         }
+        if let Some(origin) = origin {
+            action_state
+                .origins
+                .get_or_insert_with(Vec::new)
+                .push(origin);
+        }
         if action_state.len >= VAR_BATCH_SIZE {
             let mut state = to_exec_state();
             let apply_timer = Instant::now();
-            let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
+            let succeeded = if let Some(trace) = self.trace.as_mut() {
+                state.run_instrs_traced(
+                    &action_info.instrs,
+                    &mut action_state.bindings,
+                    action_state
+                        .origins
+                        .as_deref()
+                        .expect("traced action batches retain lane origins"),
+                    &mut trace.output.applications,
+                )
+            } else {
+                state.run_instrs(&action_info.instrs, &mut action_state.bindings)
+            };
             self.apply_time += apply_timer.elapsed();
             action_state.bindings.clear();
+            if let Some(origins) = action_state.origins.as_mut() {
+                origins.clear();
+            }
             self.match_counter.inc_matches(action, succeeded);
             action_state.len = 0;
         }
@@ -2457,6 +2485,9 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             self.rule_set,
             self.match_counter,
             Some(&mut self.apply_time),
+            self.trace
+                .as_mut()
+                .map(|trace| &mut trace.output.applications),
         );
     }
 
@@ -2540,6 +2571,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
             self.rule_set,
             self.match_counter.as_ref(),
             None,
+            None,
         );
         self.needs_flush = false;
     }
@@ -2569,6 +2601,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
                     &mut buf.batches,
                     buf.rule_set,
                     buf.match_counter.as_ref(),
+                    None,
                     None,
                 );
             }
@@ -2634,15 +2667,39 @@ fn flush_action_states(
     rule_set: &RuleSet,
     match_counter: &MatchCounter,
     mut apply_time: Option<&mut Duration>,
+    mut application_trace: Option<&mut Vec<TableApplication>>,
 ) {
-    for (action, ActionState { bindings, len, .. }) in actions.iter_mut() {
+    for (
+        action,
+        ActionState {
+            bindings,
+            len,
+            origins,
+            ..
+        },
+    ) in actions.iter_mut()
+    {
         if *len > 0 {
             let apply_timer = apply_time.is_some().then(Instant::now);
-            let succeeded = exec_state.run_instrs(&rule_set.actions[action].instrs, bindings);
+            let succeeded = if let Some(applications) = application_trace.as_deref_mut() {
+                exec_state.run_instrs_traced(
+                    &rule_set.actions[action].instrs,
+                    bindings,
+                    origins
+                        .as_deref()
+                        .expect("traced action batches retain lane origins"),
+                    applications,
+                )
+            } else {
+                exec_state.run_instrs(&rule_set.actions[action].instrs, bindings)
+            };
             if let (Some(total), Some(timer)) = (apply_time.as_deref_mut(), apply_timer) {
                 *total += timer.elapsed();
             }
             bindings.clear();
+            if let Some(origins) = origins.as_mut() {
+                origins.clear();
+            }
             match_counter.inc_matches(action, succeeded);
             *len = 0;
         }

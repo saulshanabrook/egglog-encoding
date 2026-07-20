@@ -99,6 +99,44 @@ pub struct RuleMatch {
     pub bindings: Vec<(Arc<str>, Value)>,
 }
 
+/// The index of one [`RuleMatch`] within a [`RuleExecutionTrace`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RuleMatchId(u32);
+
+impl RuleMatchId {
+    fn from_index(index: usize) -> Self {
+        Self(u32::try_from(index).expect("one traced iteration exceeded u32 match capacity"))
+    }
+
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// One constructor/function application evaluated by a rule head. This is
+/// captured while the original action lane is live, before later commits or
+/// canonicalization can erase its match-time endpoints.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableApplication {
+    pub origin: RuleMatchId,
+    pub instruction: u32,
+    pub table: TableId,
+    pub args: Vec<Value>,
+    pub result: Value,
+    /// True only for the first lane that staged this absent key in the shared
+    /// execution state. False covers both database hits and later lanes that
+    /// reused the same predicted row.
+    pub newly_staged: bool,
+}
+
+/// Evidence captured by the same native join/action execution that applies a
+/// bounded ruleset iteration.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuleExecutionTrace {
+    pub matches: Vec<RuleMatch>,
+    pub applications: Vec<TableApplication>,
+}
+
 /// A traced run must use a single-bag plan because tree decomposition can lose
 /// bindings at intermediate materializations. A single-bag planner may still
 /// project variables, so callers must validate their required binding set.

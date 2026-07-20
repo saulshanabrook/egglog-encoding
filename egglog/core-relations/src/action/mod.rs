@@ -16,12 +16,16 @@ use crate::{
     numeric_id::{DenseIdMap, NumericId},
 };
 use egglog_concurrency::NotificationList;
+use hashbrown::hash_map::Entry;
 use smallvec::SmallVec;
 
 use crate::{
     BaseValues, ContainerValues, ExternalFunctionId, WrappedTable,
     common::Value,
-    free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
+    free_join::{
+        CounterId, Counters, ExternalFunctions, RuleMatchId, TableApplication, TableId, TableInfo,
+        Variable,
+    },
     pool::{Clear, Pooled, with_pool_set},
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -598,22 +602,60 @@ impl<'a> ExecutionState<'a> {
 impl ExecutionState<'_> {
     /// Returns the number of matches that make it to the end of the instructions
     pub(crate) fn run_instrs(&mut self, instrs: &[Instr], bindings: &mut Bindings) -> usize {
+        self.run_instrs_impl(instrs, bindings, None)
+    }
+
+    /// Run one rule-head batch while associating constructor/function
+    /// applications with the exact logical matches that supplied its lanes.
+    pub(crate) fn run_instrs_traced(
+        &mut self,
+        instrs: &[Instr],
+        bindings: &mut Bindings,
+        origins: &[RuleMatchId],
+        applications: &mut Vec<TableApplication>,
+    ) -> usize {
+        self.run_instrs_impl(instrs, bindings, Some((origins, applications)))
+    }
+
+    fn run_instrs_impl(
+        &mut self,
+        instrs: &[Instr],
+        bindings: &mut Bindings,
+        mut trace: Option<(&[RuleMatchId], &mut Vec<TableApplication>)>,
+    ) -> usize {
         if bindings.var_offsets.next_id().rep() == 0 {
             // If we have no variables, we want to run the rules once.
             bindings.matches = 1;
         }
+        if let Some((origins, _)) = trace.as_ref() {
+            assert_eq!(bindings.matches, origins.len());
+        }
 
         // Vectorized execution for larger batch sizes
         let mut mask = with_pool_set(|ps| Mask::new(0..bindings.matches, ps));
-        for instr in instrs {
+        for (instruction, instr) in instrs.iter().enumerate() {
             if mask.is_empty() {
                 return 0;
             }
-            self.run_instr(&mut mask, instr, bindings);
+            let instruction_trace = trace.as_mut().map(|(origins, applications)| {
+                (
+                    *origins,
+                    u32::try_from(instruction)
+                        .expect("one rule head exceeded u32 instruction capacity"),
+                    &mut **applications,
+                )
+            });
+            self.run_instr(&mut mask, instr, bindings, instruction_trace);
         }
         mask.count_ones()
     }
-    fn run_instr(&mut self, mask: &mut Mask, inst: &Instr, bindings: &mut Bindings) {
+    fn run_instr(
+        &mut self,
+        mask: &mut Mask,
+        inst: &Instr,
+        bindings: &mut Bindings,
+        trace: Option<(&[RuleMatchId], u32, &mut Vec<TableApplication>)>,
+    ) {
         fn assert_impl(
             bindings: &mut Bindings,
             mask: &mut Mask,
@@ -652,40 +694,29 @@ impl ExecutionState<'_> {
                     self.db.table_info[*table_id].table.new_buffer()
                 });
                 let table = &self.db.table_info[*table_id].table;
+                let mut active_mask = trace.as_ref().map(|_| mask.clone());
+                let mut newly_staged = trace.as_ref().map(|_| vec![false; bindings.matches]);
                 // Do two passes over the current vector. First, do a round of lookups. Then, for
                 // any offsets where the lookup failed, insert the default value.
                 let mut mask_copy = mask.clone();
                 table.lookup_row_vectorized(&mut mask_copy, bindings, args, *dst_col, *dst_var);
                 mask_copy.symmetric_difference(mask);
-                if mask_copy.is_empty() {
-                    return;
-                }
-                let mut out = bindings.take(*dst_var).unwrap();
-                for_each_binding_with_mask!(mask_copy, args.as_slice(), bindings, |iter| {
-                    iter.assign_vec(&mut out.vals, |offset, key| {
-                        // First, check if the entry is already in the table:
-                        // if let Some(row) = table.get_row_column(&key, *dst_col) {
-                        //     return row;
-                        // }
-                        // If not, insert the default value.
-                        //
-                        // We avoid doing this more than once by using the
-                        // `predicted` map.
-                        let prediction_key = (
-                            *table_id,
-                            SmallVec::<[Value; 3]>::from_slice(key.as_slice()),
-                        );
-                        let buffers = &mut self.buffers;
-                        // Bind some mutable references because the closure passed
-                        // to or_insert_with is `move`.
-                        let ctrs = &self.db.counters;
-                        let bindings = &bindings;
-                        let pool = pool.clone();
-                        let row =
-                            self.predicted
-                                .data
-                                .entry(prediction_key)
-                                .or_insert_with(move || {
+                if !mask_copy.is_empty() {
+                    let mut out = bindings.take(*dst_var).unwrap();
+                    for_each_binding_with_mask!(mask_copy, args.as_slice(), bindings, |iter| {
+                        iter.assign_vec(&mut out.vals, |offset, key| {
+                            // We avoid constructing the same absent key more than
+                            // once by sharing the predicted row across action lanes.
+                            let prediction_key = (
+                                *table_id,
+                                SmallVec::<[Value; 3]>::from_slice(key.as_slice()),
+                            );
+                            let row = match self.predicted.data.entry(prediction_key) {
+                                Entry::Occupied(entry) => entry.into_mut(),
+                                Entry::Vacant(entry) => {
+                                    if let Some(newly_staged) = newly_staged.as_mut() {
+                                        newly_staged[offset] = true;
+                                    }
                                     let mut row = pool.get();
                                     row.extend_from_slice(key.as_slice());
                                     // Extend the key with the default values.
@@ -697,20 +728,44 @@ impl ExecutionState<'_> {
                                                 bindings[*v][offset]
                                             }
                                             WriteVal::IncCounter(ctr) => {
-                                                Value::from_usize(ctrs.inc(*ctr))
+                                                Value::from_usize(self.db.counters.inc(*ctr))
                                             }
                                             WriteVal::CurrentVal(ix) => row[*ix],
                                         };
                                         row.push(val)
                                     }
                                     // Insert it into the table.
-                                    buffers.stage_insert(*table_id, &row);
-                                    row
-                                });
-                        row[dst_col.index()]
+                                    self.buffers.stage_insert(*table_id, &row);
+                                    entry.insert(row)
+                                }
+                            };
+                            row[dst_col.index()]
+                        });
                     });
-                });
-                bindings.replace(out);
+                    bindings.replace(out);
+                }
+                if let (Some((origins, instruction, applications)), Some(mut active_mask)) =
+                    (trace, active_mask.take())
+                {
+                    let results = &bindings[*dst_var];
+                    let newly_staged = newly_staged
+                        .as_deref()
+                        .expect("application trace allocation follows trace presence");
+                    for_each_binding_with_mask!(active_mask, args.as_slice(), bindings, |iter| {
+                        iter.zip(results).zip(origins).zip(newly_staged).for_each(
+                            |(((args, result), origin), newly_staged)| {
+                                applications.push(TableApplication {
+                                    origin: *origin,
+                                    instruction,
+                                    table: *table_id,
+                                    args: args.as_slice().to_vec(),
+                                    result: *result,
+                                    newly_staged: *newly_staged,
+                                });
+                            },
+                        );
+                    });
+                }
             }
             Instr::LookupWithDefault {
                 table,

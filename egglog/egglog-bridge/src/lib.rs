@@ -150,7 +150,7 @@ pub struct EGraph {
     /// Opt-in batches of match-time bindings. Each inner vector is one bounded
     /// native ruleset iteration and is populated by the same join that applies
     /// the rule heads.
-    rule_match_trace: Option<Vec<Vec<core_relations::RuleMatch>>>,
+    rule_match_trace: Option<Vec<core_relations::RuleExecutionTrace>>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -257,7 +257,7 @@ impl EGraph {
     }
 
     /// Finish the active trace and return its per-iteration match batches.
-    pub fn take_rule_match_trace(&mut self) -> Option<Vec<Vec<core_relations::RuleMatch>>> {
+    pub fn take_rule_match_trace(&mut self) -> Option<Vec<core_relations::RuleExecutionTrace>> {
         self.rule_match_trace.take()
     }
 
@@ -819,12 +819,12 @@ impl EGraph {
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
         let rule_set_report = if self.rule_match_trace.is_some() {
-            let (report, matches) =
+            let (report, trace) =
                 run_rules_impl_traced(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
             self.rule_match_trace
                 .as_mut()
                 .expect("trace presence was checked above")
-                .push(matches);
+                .push(trace);
             report
         } else {
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?
@@ -2109,7 +2109,7 @@ fn run_rules_impl_traced(
     rules: &[RuleId],
     next_ts: Timestamp,
     report_level: ReportLevel,
-) -> Result<(RuleSetReport, Vec<core_relations::RuleMatch>)> {
+) -> Result<(RuleSetReport, core_relations::RuleExecutionTrace)> {
     let previous_timestamps = rules
         .iter()
         .map(|rule| (*rule, rule_info[*rule].last_run_at))

@@ -18,7 +18,7 @@ use crate::{
         Action, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
         RuleEvalMode, RunRuleConfig, Schedule, Span,
     },
-    core_relations::{RuleMatch, Value},
+    core_relations::{RuleExecutionTrace, RuleMatch, Value},
     util::{HashMap, HashSet, IndexMap, IndexSet},
 };
 
@@ -385,27 +385,30 @@ pub fn causal_slice_program_with_fact_directory(
     let observation_matches = check_batches
         .iter()
         .flat_map(|batches| batches.iter())
-        .map(Vec::len)
+        .map(|batch| batch.matches.len())
         .sum::<usize>();
     let observation_trace_bindings = check_batches
         .iter()
         .flat_map(|batches| batches.iter())
-        .flatten()
+        .flat_map(|batch| &batch.matches)
         .map(|event| event.bindings.len())
         .sum::<usize>();
     let schedule_trace_bindings = schedule_batches
         .iter()
-        .flatten()
+        .flat_map(|batch| &batch.matches)
         .map(|event| event.bindings.len())
         .sum::<usize>();
     let max_batch_matches = schedule_batches
         .iter()
         .chain(check_batches.iter().flat_map(|batches| batches.iter()))
-        .map(Vec::len)
+        .map(|batch| batch.matches.len())
         .max()
         .unwrap_or(0);
-    let total_raw_matches =
-        schedule_batches.iter().map(Vec::len).sum::<usize>() + observation_matches;
+    let total_raw_matches = schedule_batches
+        .iter()
+        .map(|batch| batch.matches.len())
+        .sum::<usize>()
+        + observation_matches;
     let raw_trace_bindings = schedule_trace_bindings + observation_trace_bindings;
     let raw_trace_lower_bound_bytes = total_raw_matches * std::mem::size_of::<RuleMatch>()
         + raw_trace_bindings * std::mem::size_of::<(std::sync::Arc<str>, Value)>();
@@ -439,7 +442,13 @@ pub fn causal_slice_program_with_fact_directory(
     let observation_bindings = check_batches
         .iter()
         .zip(&checks)
-        .map(|(batches, check)| batches.iter().map(Vec::len).sum::<usize>() * check.var_sorts.len())
+        .map(|(batches, check)| {
+            batches
+                .iter()
+                .map(|batch| batch.matches.len())
+                .sum::<usize>()
+                * check.var_sorts.len()
+        })
         .sum();
     let retained = backward_slice(&events, &dependencies, roots);
     drop(schedule_batches);
@@ -532,7 +541,7 @@ pub fn causal_slice_program_with_fact_directory(
 fn run_one_traced_command(
     egraph: &mut EGraph,
     command: Command,
-) -> Result<Vec<Vec<RuleMatch>>, CausalSliceError> {
+) -> Result<Vec<RuleExecutionTrace>, CausalSliceError> {
     let native = egraph
         .backend
         .as_any_mut()
@@ -1151,7 +1160,7 @@ fn elaborate_events(
     egraph: &EGraph,
     rules: &IndexMap<String, RuleModel>,
     source_facts: &[FactKey],
-    batches: &[Vec<RuleMatch>],
+    batches: &[RuleExecutionTrace],
     witnesses: &mut WitnessArena,
 ) -> Result<Elaboration, CausalSliceError> {
     let mut dependencies = DepArena::default();
@@ -1175,7 +1184,7 @@ fn elaborate_events(
     let mut pending_fires = Vec::new();
     for (wave, batch) in batches.iter().enumerate() {
         let mut new_outputs = IndexMap::<FactKey, DepId>::default();
-        for (ordinal, captured) in batch.iter().enumerate() {
+        for (ordinal, captured) in batch.matches.iter().enumerate() {
             let rule_name = captured.rule.as_ref();
             let model = rules.get(rule_name).ok_or_else(|| {
                 CausalSliceError::Invariant(format!(
@@ -1272,7 +1281,7 @@ fn elaborate_events(
 fn observation_roots(
     egraph: &EGraph,
     checks: &[CheckModel],
-    traces: &[Vec<Vec<RuleMatch>>],
+    traces: &[Vec<RuleExecutionTrace>],
     producers: &IndexMap<FactKey, DepId>,
     dependencies: &mut DepArena,
     witnesses: &mut WitnessArena,
@@ -1289,7 +1298,7 @@ fn observation_roots(
     for (check, batches) in checks.iter().zip(traces) {
         let captured = batches
             .iter()
-            .flat_map(|batch| batch.iter())
+            .flat_map(|batch| batch.matches.iter())
             .next()
             .ok_or_else(|| {
                 CausalSliceError::Invariant(
