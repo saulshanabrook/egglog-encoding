@@ -28,7 +28,8 @@ pub use common::Value;
 pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GuardedRuleSetRunError,
-    GuardedRuleSetRunOutcome, TableId, Variable, make_external_func, plan::PlanStrategy,
+    GuardedRuleSetRunOutcome, RuleMatch, RuleMatchTraceError, TableId, Variable,
+    make_external_func, plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};

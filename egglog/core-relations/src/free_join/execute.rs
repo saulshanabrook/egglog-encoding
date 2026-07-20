@@ -39,7 +39,8 @@ use crate::{
 
 use super::{
     ActionId, AtomId, Database, GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex,
-    HashIndex, TableInfo, Variable, get_column_index_from_tableinfo,
+    HashIndex, RuleMatch, RuleMatchTraceError, TableInfo, Variable,
+    get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -346,6 +347,36 @@ impl Prober {
 
 impl Database {
     pub fn run_rule_set(&mut self, rule_set: &RuleSet, report_level: ReportLevel) -> RuleSetReport {
+        self.run_rule_set_impl(rule_set, report_level, None)
+    }
+
+    /// Run one ordinary ruleset iteration while retaining every match-time
+    /// binding already produced by the native join. This does not issue a
+    /// second query. Tracing is intentionally serial and single-bag: those are
+    /// the two execution boundaries at which complete named bindings are still
+    /// available without provenance sidecars.
+    pub fn run_rule_set_traced(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+    ) -> Result<(RuleSetReport, Vec<RuleMatch>), RuleMatchTraceError> {
+        for (plan, desc, _) in rule_set.plans.values() {
+            if matches!(plan, Plan::DecomposedPlan(_)) {
+                return Err(RuleMatchTraceError::DecomposedPlan { rule: desc.clone() });
+            }
+        }
+
+        let mut matches = Vec::new();
+        let report = self.run_rule_set_impl(rule_set, report_level, Some(&mut matches));
+        Ok((report, matches))
+    }
+
+    fn run_rule_set_impl(
+        &mut self,
+        rule_set: &RuleSet,
+        report_level: ReportLevel,
+        trace: Option<&mut Vec<RuleMatch>>,
+    ) -> RuleSetReport {
         if rule_set.plans.is_empty() {
             return RuleSetReport {
                 pre_merge: PreMergeTiming::Split {
@@ -361,7 +392,10 @@ impl Database {
         let pre_merge_timer = Instant::now();
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
-        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        // Match ordering and write attribution must be deterministic in the v0
+        // trace. More importantly, parallel staging can coalesce same-key
+        // writes after their originating match has been erased.
+        let run_in_parallel = trace.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut split_time = None;
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         if run_in_parallel {
@@ -512,11 +546,19 @@ impl Database {
             // Just run all of the plans in order with a single in-place action
             // buffer.
             let mut serial_search_time = Duration::ZERO;
+            let trace = trace.map(|output| {
+                let mut rules = DenseIdMap::with_capacity(rule_set.actions.n_ids());
+                for (plan, rule, symbols) in rule_set.plans.values() {
+                    rules.insert(plan.actions(), TraceRuleInfo { rule, symbols });
+                }
+                InPlaceRuleMatchTrace { output, rules }
+            });
             let mut action_buf = InPlaceActionBuffer {
                 rule_set,
                 match_counter: match_counter.as_ref(),
                 batches: Default::default(),
                 apply_time: Duration::ZERO,
+                trace,
             };
             for (plan, desc, symbol_map) in rule_set.plans.values() {
                 let report_plan = match report_level {
@@ -877,6 +919,7 @@ impl Database {
                 match_counter: match_counter.as_ref(),
                 batches: Default::default(),
                 apply_time: Duration::ZERO,
+                trace: None,
             };
             for captured in &captured {
                 let bindings = captured.to_map();
@@ -2344,6 +2387,19 @@ struct InPlaceActionBuffer<'a> {
     /// Time spent executing rule-head instruction batches. Buffer management
     /// and match accounting deliberately remain outside the apply phase.
     apply_time: Duration,
+    /// Present only for the opt-in, serial match trace. The rule set provides
+    /// the stable source names associated with core variables.
+    trace: Option<InPlaceRuleMatchTrace<'a>>,
+}
+
+struct InPlaceRuleMatchTrace<'a> {
+    output: &'a mut Vec<RuleMatch>,
+    rules: DenseIdMap<ActionId, TraceRuleInfo<'a>>,
+}
+
+struct TraceRuleInfo<'a> {
+    rule: &'a Arc<str>,
+    symbols: &'a crate::query::SymbolMap,
 }
 
 impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> {
@@ -2358,6 +2414,20 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         bindings: &DenseIdMap<Variable, Value>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
+        if let Some(trace) = self.trace.as_mut() {
+            let info = &trace.rules[action];
+            let mut named_bindings = Vec::with_capacity(info.symbols.vars.len());
+            for (var, value) in bindings.iter() {
+                if let Some(name) = info.symbols.vars.get(&var) {
+                    named_bindings.push((name.clone(), *value));
+                }
+            }
+            trace.output.push(RuleMatch {
+                rule: info.rule.clone(),
+                bindings: named_bindings,
+            });
+        }
+
         let action_state = self.batches.get_or_default(action);
         action_state.n_runs += 1;
         action_state.len += 1;

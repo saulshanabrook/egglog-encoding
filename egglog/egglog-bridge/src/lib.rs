@@ -147,6 +147,10 @@ pub struct EGraph {
     /// [`WriteState`] / [`FullState`] can resolve table actions at
     /// invoke time. Mutated in place from [`add_table`](EGraph::add_table).
     action_registry: Arc<std::sync::RwLock<ActionRegistry>>,
+    /// Opt-in batches of match-time bindings. Each inner vector is one bounded
+    /// native ruleset iteration and is populated by the same join that applies
+    /// the rule heads.
+    rule_match_trace: Option<Vec<Vec<core_relations::RuleMatch>>>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -210,6 +214,7 @@ impl Default for EGraph {
             panic_funcs,
             report_level: Default::default(),
             action_registry,
+            rule_match_trace: None,
         }
     }
 }
@@ -239,6 +244,27 @@ pub struct FunctionConfig {
 }
 
 impl EGraph {
+    /// Start an opt-in native match trace. Traced rules must have been compiled
+    /// with the single-bag (`no_decomp`) planning policy.
+    pub fn begin_rule_match_trace(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            self.rule_match_trace.is_none(),
+            "a rule match trace is already active"
+        );
+        self.rule_match_trace = Some(Vec::new());
+        Ok(())
+    }
+
+    /// Whether an opt-in native match trace is currently active.
+    pub fn rule_match_trace_enabled(&self) -> bool {
+        self.rule_match_trace.is_some()
+    }
+
+    /// Finish the active trace and return its per-iteration match batches.
+    pub fn take_rule_match_trace(&mut self) -> Option<Vec<Vec<core_relations::RuleMatch>>> {
+        self.rule_match_trace.take()
+    }
+
     fn next_ts(&self) -> Timestamp {
         Timestamp::from_usize(self.db.read_counter(self.timestamp_counter))
     }
@@ -796,8 +822,17 @@ impl EGraph {
         let ts = self.next_ts();
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
-        let rule_set_report =
-            run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
+        let rule_set_report = if self.rule_match_trace.is_some() {
+            let (report, matches) =
+                run_rules_impl_traced(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
+            self.rule_match_trace
+                .as_mut()
+                .expect("trace presence was checked above")
+                .push(matches);
+            report
+        } else {
+            run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?
+        };
         if let Some(message) = self.panic_message.lock().unwrap().take() {
             return Err(PanicError(message).into());
         }
@@ -2068,6 +2103,42 @@ fn run_rules_impl(
     next_ts: Timestamp,
     report_level: ReportLevel,
 ) -> Result<RuleSetReport> {
+    let ruleset = build_rule_set(db, rule_info, rules, next_ts)?;
+    Ok(db.run_rule_set(&ruleset, report_level))
+}
+
+fn run_rules_impl_traced(
+    db: &mut Database,
+    rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
+    rules: &[RuleId],
+    next_ts: Timestamp,
+    report_level: ReportLevel,
+) -> Result<(RuleSetReport, Vec<core_relations::RuleMatch>)> {
+    let previous_timestamps = rules
+        .iter()
+        .map(|rule| (*rule, rule_info[*rule].last_run_at))
+        .collect::<Vec<_>>();
+    let ruleset = build_rule_set(db, rule_info, rules, next_ts)?;
+    match db.run_rule_set_traced(&ruleset, report_level) {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            // A trace-policy rejection happens before native execution. Keep
+            // seminaive freshness unchanged so a caller may recover and run
+            // the same rules normally.
+            for (rule, timestamp) in previous_timestamps {
+                rule_info[rule].last_run_at = timestamp;
+            }
+            Err(error.into())
+        }
+    }
+}
+
+fn build_rule_set(
+    db: &mut Database,
+    rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
+    rules: &[RuleId],
+    next_ts: Timestamp,
+) -> Result<core_relations::RuleSet> {
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
@@ -2082,8 +2153,7 @@ fn run_rules_impl(
             .add_rules_from_cached(&mut rsb, info.last_run_at, cached_plan);
         info.last_run_at = next_ts;
     }
-    let ruleset = rsb.build();
-    Ok(db.run_rule_set(&ruleset, report_level))
+    Ok(rsb.build())
 }
 
 fn run_rule_guarded_impl(

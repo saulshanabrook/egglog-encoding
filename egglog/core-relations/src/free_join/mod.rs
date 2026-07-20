@@ -90,6 +90,24 @@ pub enum GuardedRuleSetRunError {
     MultipleExecutablePlans { plan_count: usize },
 }
 
+/// One logical rule-body match captured immediately before its complete head
+/// is applied. Values are deliberately opaque here; the egglog frontend owns
+/// the type information needed to turn them back into source syntax.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RuleMatch {
+    pub rule: Arc<str>,
+    pub bindings: Vec<(Arc<str>, Value)>,
+}
+
+/// A traced run must use a single-bag plan so the final join leaf still owns
+/// every named body variable. Tree decomposition may project private variables
+/// out of intermediate materializations.
+#[derive(Debug, Error)]
+pub enum RuleMatchTraceError {
+    #[error("rule match tracing requires single-bag plans; `{rule}` was decomposed")]
+    DecomposedPlan { rule: Arc<str> },
+}
+
 #[derive(Debug)]
 pub(crate) struct ProcessedConstraints {
     /// The subset of the table matching the fast constraints. If there are no

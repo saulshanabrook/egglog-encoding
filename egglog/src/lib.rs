@@ -1,6 +1,7 @@
 #![doc = include_str!("lib.md")]
 pub mod api;
 pub mod ast;
+pub mod causal_slice;
 #[cfg(feature = "bin")]
 mod cli;
 mod command_macro;
@@ -2096,6 +2097,11 @@ impl EGraph {
                 Some(Value::new_const(0))
             })));
 
+        let trace_no_decomp = self
+            .backend
+            .as_any()
+            .downcast_ref::<egglog_bridge::EGraph>()
+            .is_some_and(egglog_bridge::EGraph::rule_match_trace_enabled);
         let mut translator = BackendRule::new(
             &mut *self.backend,
             &self.functions,
@@ -2112,7 +2118,7 @@ impl EGraph {
             Vec::new(),
             egglog_bridge::ColumnTy::Id,
         );
-        let id = translator.try_build("check_facts", false, false, span.clone())?;
+        let id = translator.try_build("check_facts", false, trace_no_decomp, span.clone())?;
         let run_result = self.backend.run_rules(RuleSetRun {
             name: None,
             rules: &[id],
