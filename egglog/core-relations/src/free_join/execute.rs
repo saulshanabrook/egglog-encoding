@@ -352,9 +352,11 @@ impl Database {
 
     /// Run one ordinary ruleset iteration while retaining every match-time
     /// binding already produced by the native join. This does not issue a
-    /// second query. Tracing is intentionally serial and single-bag: those are
-    /// the two execution boundaries at which complete named bindings are still
-    /// available without provenance sidecars.
+    /// second query. Tracing is intentionally serial and single-bag so match
+    /// order is deterministic and no named binding is lost at a decomposed
+    /// materialization boundary. The selected single-bag planner may still
+    /// project variables; callers must validate that every binding they need
+    /// is present.
     pub fn run_rule_set_traced(
         &mut self,
         rule_set: &RuleSet,

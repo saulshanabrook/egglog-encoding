@@ -81,7 +81,7 @@ fn trace_retains_body_variables_that_the_rule_head_does_not_use() {
 }
 
 #[test]
-fn trace_retains_private_variables_in_multi_atom_generic_joins() {
+fn projected_generic_join_variable_is_an_explicit_replay_boundary() {
     let source = r#"
         (relation R (i64 i64))
         (relation S (i64))
@@ -93,39 +93,55 @@ fn trace_retains_private_variables_in_multi_atom_generic_joins() {
         (run 1)
         (check (Out 1))
     "#;
-    let slice = causal_slice_program(Some("private-gj-variable.egg".to_owned()), source).unwrap();
+    // The ordinary Generic Join plan projects `y`, so both the original run
+    // and an unbound run-rule see one logical firing.
+    EGraph::default()
+        .parse_and_run_program(Some("private-gj-variable.egg".to_owned()), source)
+        .unwrap();
+    let unbound = source.replace("(run 1)", "(run-schedule (run-rule \"copy\" :expect 1))");
+    EGraph::default()
+        .parse_and_run_program(Some("private-gj-unbound.egg".to_owned()), &unbound)
+        .unwrap();
 
-    assert_eq!(slice.stats.pending_firings, 2);
-    assert!(
-        slice
-            .full_transcript_source
-            .contains(":bind ((x 1) (y 10)) :expect 1")
+    // Binding x specializes the query, exposes both y extensions, and makes
+    // PR #23's atomic exact-count guard fail. Fully binding y succeeds, but no
+    // match-time evidence tells us which extension represents the projected
+    // ordinary firing.
+    let partial = source.replace(
+        "(run 1)",
+        "(run-schedule (run-rule \"copy\" :bind ((x 1)) :expect 1))",
     );
+    let error = EGraph::default()
+        .parse_and_run_program(Some("private-gj-partial.egg".to_owned()), &partial)
+        .unwrap_err();
     assert!(
-        slice
-            .full_transcript_source
-            .contains(":bind ((x 1) (y 20)) :expect 1")
+        error
+            .to_string()
+            .contains("expected 1 match(es), but found 2")
     );
+    let fully_bound = source.replace(
+        "(run 1)",
+        "(run-schedule (run-rule \"copy\" :bind ((x 1) (y 10)) :expect 1))",
+    );
+    EGraph::default()
+        .parse_and_run_program(Some("private-gj-bound.egg".to_owned()), &fully_bound)
+        .unwrap();
 
-    for replay_source in [&slice.full_transcript_source, &slice.source] {
-        EGraph::new_with_proofs()
-            .with_proof_testing()
-            .parse_and_run_program(Some("private-gj-replay.egg".to_owned()), replay_source)
-            .unwrap();
-    }
+    let error =
+        causal_slice_program(Some("private-gj-variable.egg".to_owned()), source).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("Generic Join may project"));
+    assert!(message.contains("projection-preserving match selector"));
+    assert!(message.contains("private-gj-variable.egg"));
 }
 
 #[test]
 fn positive_check_trace_retains_every_variable_in_one_environment() {
     let source = r#"
         (relation R (i64 i64))
-        (relation S (i64))
-        (relation T (i64))
         (R 1 2)
-        (S 1)
-        (T 2)
         (run 1)
-        (check (R x y) (S x) (T y))
+        (check (R x y))
     "#;
     let slice =
         causal_slice_program(Some("private-check-variable.egg".to_owned()), source).unwrap();
@@ -141,6 +157,68 @@ fn positive_check_trace_retains_every_variable_in_one_environment() {
     }] {
         make_egraph()
             .parse_and_run_program(Some("private-check-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn projected_check_variable_and_decomposed_check_fail_closed() {
+    let projected = r#"
+        (relation R (i64 i64))
+        (relation S (i64))
+        (R 1 2)
+        (S 1)
+        (run 1)
+        (check (R x y) (S x))
+    "#;
+    let error =
+        causal_slice_program(Some("projected-check.egg".to_owned()), projected).unwrap_err();
+    assert!(error.to_string().contains("check variable `y`"));
+    assert!(error.to_string().contains("Generic Join may project"));
+
+    let decomposed = r#"
+        (relation R (i64))
+        (relation S (i64))
+        (relation T (i64))
+        (R 1)
+        (S 1)
+        (T 1)
+        (run 1)
+        (check (R x) (S x) (T x))
+    "#;
+    let error =
+        causal_slice_program(Some("decomposed-check.egg".to_owned()), decomposed).unwrap_err();
+    assert!(error.to_string().contains("potentially tree-decomposed"));
+    assert!(error.to_string().contains("materialized intermediate rows"));
+}
+
+#[test]
+fn two_body_relation_rule_replays_both_exact_premises() {
+    let source = r#"
+        (relation A (i64))
+        (relation B (i64))
+        (relation Goal (i64))
+        (rule ((A x) (B x)) ((Goal x)) :name "join")
+        (A 1)
+        (B 1)
+        (run 1)
+        (check (Goal 1))
+    "#;
+    let slice = causal_slice_program(Some("two-body.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.pending_firings, 1);
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"join\" :bind ((x 1)) :expect 1)")
+    );
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("two-body-replay.egg".to_owned()), &slice.source)
             .unwrap();
     }
 }
@@ -224,6 +302,25 @@ fn anonymous_rule_names_are_source_based_and_stable() {
 }
 
 #[test]
+fn emitted_rules_preserve_source_no_decomp_flags() {
+    let source = r#"
+        (relation A (i64))
+        (relation B (i64))
+        (rule ((A x)) ((B x)) :name "copy")
+        (A 1)
+        (run 1)
+        (check (B 1))
+    "#;
+    let ordinary = causal_slice_program(Some("ordinary-plan.egg".to_owned()), source).unwrap();
+    assert!(!ordinary.source.contains(":no-decomp"));
+
+    let no_decomp_source = source.replace(":name \"copy\")", ":name \"copy\" :no-decomp)");
+    let no_decomp =
+        causal_slice_program(Some("no-decomp-plan.egg".to_owned()), &no_decomp_source).unwrap();
+    assert!(no_decomp.source.contains(":no-decomp"));
+}
+
+#[test]
 fn duplicate_anonymous_rules_get_distinct_names_and_no_ops_are_separated() {
     let source = r#"
         (relation A (i64))
@@ -250,6 +347,29 @@ fn duplicate_anonymous_rules_get_distinct_names_and_no_ops_are_separated() {
     let mut replay = EGraph::default();
     replay
         .parse_and_run_program(Some("duplicates-replay.egg".to_owned()), &slice.source)
+        .unwrap();
+}
+
+#[test]
+fn duplicate_head_actions_count_one_output_but_replay_the_complete_head() {
+    let source = r#"
+        (relation A (i64))
+        (relation B (i64))
+        (rule ((A x)) ((B x) (B x)) :name "duplicate-head")
+        (A 1)
+        (run 1)
+        (check (B 1))
+    "#;
+    let slice = causal_slice_program(Some("duplicate-head.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.pending_firings, 1);
+    assert_eq!(slice.stats.promoted_events, 1);
+    assert_eq!(slice.stats.effective_output_rows, 1);
+    assert_eq!(slice.source.matches("(B x)").count(), 2);
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("duplicate-head-replay.egg".to_owned()), &slice.source)
         .unwrap();
 }
 

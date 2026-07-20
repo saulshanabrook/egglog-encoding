@@ -806,24 +806,6 @@ impl Query {
         Ok(CachedPlanInfo { plan, atom_mapping })
     }
 
-    /// Build the plan used by the opt-in causal match trace. Generic Join may
-    /// intentionally project a single-use variable that is irrelevant to the
-    /// head. Manual replay needs a concrete witness for every named body
-    /// variable, so tracing uses a complete-binding Free Join plan instead.
-    /// The causal slicer admits only insert-only set relations, where
-    /// enumerating these otherwise existential variables cannot change the
-    /// observable result.
-    pub(crate) fn build_trace_cached_plan(
-        &self,
-        db: &mut core_relations::Database,
-        desc: &str,
-    ) -> Result<CachedPlanInfo> {
-        let mut query = self.clone();
-        query.plan_strategy = PlanStrategy::MinCover;
-        query.no_decomp = true;
-        query.build_cached_plan(db, desc)
-    }
-
     /// Add rules to the [`RuleSetBuilder`] for the query specified by the [`CachedPlanInfo`].
     ///
     /// A [`CachedPlanInfo`] is a compiled RHS and partial LHS for an egglog rules. In order to

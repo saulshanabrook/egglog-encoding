@@ -99,9 +99,9 @@ pub struct RuleMatch {
     pub bindings: Vec<(Arc<str>, Value)>,
 }
 
-/// A traced run must use a single-bag plan so the final join leaf still owns
-/// every named body variable. Tree decomposition may project private variables
-/// out of intermediate materializations.
+/// A traced run must use a single-bag plan because tree decomposition can lose
+/// bindings at intermediate materializations. A single-bag planner may still
+/// project variables, so callers must validate their required binding set.
 #[derive(Debug, Error)]
 pub enum RuleMatchTraceError {
     #[error("rule match tracing requires single-bag plans; `{rule}` was decomposed")]

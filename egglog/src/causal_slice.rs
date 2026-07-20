@@ -38,9 +38,9 @@ pub struct CausalSliceStats {
     pub observation_count: usize,
     pub waves: usize,
     /// Groundings materialized by the native join before head-effect
-    /// classification. These are wave-local pending firings in the causal
-    /// model, even though the full-transcript diagnostic keeps them until
-    /// source emission.
+    /// classification. The current debug API retains every raw trace batch
+    /// through the run, then constructs these pending firings post-run; a
+    /// production tracer should elaborate and discard them wave by wave.
     pub pending_firings: usize,
     pub matched_applications: usize,
     /// Applications selected as the first logical producer of at least one
@@ -84,8 +84,9 @@ pub struct SourceRuleMapping {
     pub source_location: String,
     pub original_name: Option<String>,
     pub registered_name: String,
-    /// A normalized copy of the complete logical definition. Planner flags,
-    /// names, and spans are intentionally excluded.
+    /// A normalized copy of the complete logical definition and source
+    /// planner flags. The registered name and spans are intentionally
+    /// excluded.
     pub semantic_definition: String,
 }
 
@@ -619,8 +620,6 @@ fn name_and_prepare_rules(
             );
         }
 
-        // Planner-only restriction required for complete match-time bindings.
-        rule.no_decomp = true;
         mapping.push(SourceRuleMapping {
             source_command_index: command_index,
             source_location: rule.span.to_string(),
@@ -786,6 +785,15 @@ fn model_rule(
     if rule.head.0.is_empty() {
         return unsupported(&rule.span, format!("an empty head on rule `{}`", rule.name));
     }
+    if rule.body.len() > 2 && !rule.no_decomp {
+        return unsupported(
+            &rule.span,
+            format!(
+                "potentially tree-decomposed rule `{}`; causal slice v0 has no provenance for materialized intermediate rows",
+                rule.name
+            ),
+        );
+    }
 
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
@@ -824,6 +832,27 @@ fn model_rule(
         head.push(atom);
     }
 
+    // Generic Join deliberately projects a variable that occurs in only one
+    // body atom when the head does not use it. A later `run-rule :bind` query
+    // specializes the plan and can enumerate several extensions of that
+    // projected firing, so PR #23 cannot replay the ordinary physical match
+    // with an exact guard. One-atom rules use MinCover and retain every column.
+    if body.len() > 1 {
+        let body_occurrences = variable_atom_occurrences(&body);
+        let head_vars = atom_variables(&head);
+        if let Some(var) = var_order.iter().find(|var| {
+            body_occurrences.get(var.as_str()).copied() == Some(1)
+                && !head_vars.contains(var.as_str())
+        }) {
+            return unsupported(
+                &rule.span,
+                format!(
+                    "multi-atom rule variable `{var}` that Generic Join may project; exact replay requires a projection-preserving match selector and a representative premise-row witness"
+                ),
+            );
+        }
+    }
+
     Ok(RuleModel {
         body,
         head,
@@ -840,6 +869,13 @@ fn model_check(
     if facts.is_empty() {
         return unsupported(span, "an empty positive check".to_owned());
     }
+    if facts.len() > 2 {
+        return unsupported(
+            span,
+            "a potentially tree-decomposed positive check; causal slice v0 has no provenance for materialized intermediate rows"
+                .to_owned(),
+        );
+    }
     let mut atoms = Vec::new();
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
@@ -851,7 +887,48 @@ fn model_check(
         register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
         atoms.push(atom);
     }
+    if atoms.len() > 1 {
+        let occurrences = variable_atom_occurrences(&atoms);
+        if let Some(var) = var_order
+            .iter()
+            .find(|var| occurrences.get(var.as_str()).copied() == Some(1))
+        {
+            return unsupported(
+                span,
+                format!(
+                    "multi-atom check variable `{var}` that Generic Join may project; exact observation capture requires a projection-preserving match witness"
+                ),
+            );
+        }
+    }
     Ok(CheckModel { atoms, var_sorts })
+}
+
+fn variable_atom_occurrences(atoms: &[AtomTemplate]) -> HashMap<&str, usize> {
+    let mut occurrences = HashMap::default();
+    for atom in atoms {
+        let mut vars_in_atom = HashSet::default();
+        for arg in &atom.args {
+            if let AtomArg::Var(_, var) = arg {
+                vars_in_atom.insert(var.as_str());
+            }
+        }
+        for var in vars_in_atom {
+            *occurrences.entry(var).or_default() += 1;
+        }
+    }
+    occurrences
+}
+
+fn atom_variables(atoms: &[AtomTemplate]) -> HashSet<&str> {
+    atoms
+        .iter()
+        .flat_map(|atom| &atom.args)
+        .filter_map(|arg| match arg {
+            AtomArg::Var(_, var) => Some(var.as_str()),
+            AtomArg::Lit(_) => None,
+        })
+        .collect()
 }
 
 fn model_source_fact(
@@ -1055,12 +1132,13 @@ fn elaborate_events(
                 prerequisites = dependencies.and(prerequisites, dependency)?;
             }
 
-            let mut effective_outputs = Vec::new();
+            let mut effective_outputs = IndexSet::default();
             for fact in head {
                 if !producers.contains_key(&fact) && !new_outputs.contains_key(&fact) {
-                    effective_outputs.push(fact);
+                    effective_outputs.insert(fact);
                 }
             }
+            let effective_outputs = effective_outputs.into_iter().collect::<Vec<_>>();
             let grounding = GroundedFire {
                 rule: rule_name.to_owned(),
                 wave: u32::try_from(wave).map_err(|_| {
@@ -1449,8 +1527,8 @@ fn semantic_rule_definition(rule: &crate::ast::Rule) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!(
-        "ruleset={};eval={:?};include_subsumed={};body=({body});head={}",
-        rule.ruleset, rule.eval_mode, rule.include_subsumed, head
+        "ruleset={};eval={:?};include_subsumed={};no_decomp={};body=({body});head={}",
+        rule.ruleset, rule.eval_mode, rule.include_subsumed, rule.no_decomp, head
     )
 }
 
