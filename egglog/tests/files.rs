@@ -22,6 +22,10 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
         file: "subsume-relation.egg",
         reason: "proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches",
     },
+    ManualProofDisable {
+        file: "set_sort_function.egg",
+        reason: "wraps an eq-sort `:no-merge` conflict in `(fail (set …))`, but the encoding detects such conflicts during rebuild (a generated panic rule) rather than eagerly, so the wrapped `set` does not fail within the `fail`; pending Part B (native `:no-merge`)",
+    },
 ];
 
 // These proof-testing runs are still executed, but their proof snapshots are

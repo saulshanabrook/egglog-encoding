@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- `(fail <command>+)` now accepts multiple commands, running them in order and succeeding if any one fails (previously it wrapped a single command). Desugaring, global removal, and proof encoding keep the whole expansion of a wrapped command inside the `fail`, so `fail` now works over commands that expand to several — including `(fail (set …))` under the term/proof encoding.
 - In the term/proof encoding, load `(input …)` for custom functions (with or without `:merge`, including `:no-merge` `Unit`-output ones) natively via `EGraph::native_input`, the same path already used for constructors and relations. This removes the per-input bodyless "loader rule" (and its fresh ruleset) that custom-function inputs used to compile to.
 - Make proof extraction deterministic so proof-mode snapshot tests no longer flake on backends with nondeterministic row order (the differential-dataflow backend).
 - Speed up freeing external functions, which was quadratic in the number of short-lived one-shot rules created (e.g. under the term/proof encoding).

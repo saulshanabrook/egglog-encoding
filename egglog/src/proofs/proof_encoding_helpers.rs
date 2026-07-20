@@ -485,10 +485,6 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
     FailInputCommand,
     #[error(
-        "`fail` requires exactly one atomic encoded command; wrapped `set` and multi-operation commands are not supported."
-    )]
-    FailNonAtomicCommand,
-    #[error(
         "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
     )]
     LetBindingWithNonEqSort,
@@ -703,13 +699,15 @@ pub(crate) fn command_supports_proof_encoding(
                 Ok(())
             }
         }
-        GenericCommand::Fail(_, command) => match command.as_ref() {
-            GenericCommand::Input { .. } => Err(ProofEncodingUnsupportedReason::FailInputCommand),
-            GenericCommand::Action(ResolvedAction::Set(..)) => {
-                Err(ProofEncodingUnsupportedReason::FailNonAtomicCommand)
+        GenericCommand::Fail(_, commands) => {
+            for command in commands {
+                if let GenericCommand::Input { .. } = command {
+                    return Err(ProofEncodingUnsupportedReason::FailInputCommand);
+                }
+                command_supports_proof_encoding(command, type_info)?;
             }
-            command => command_supports_proof_encoding(command, type_info),
-        },
+            Ok(())
+        }
         // let binding with non-eq sort not supported by proof_global_desugar
         ResolvedCommand::Action(ResolvedAction::Let(_, _, expr)) => {
             // let binding with non-eq sort not supported by proof_global_desugar

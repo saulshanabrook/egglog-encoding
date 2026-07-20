@@ -139,7 +139,11 @@ where
     },
     Push(usize),
     Pop(Span, usize),
-    Fail(Span, Box<GenericNCommand<Head, Leaf>>),
+    /// Assert that at least one of the wrapped commands fails. The commands run
+    /// in order; the first error is swallowed (the `fail` succeeds), and if none
+    /// error the `fail` itself errors. A `Vec` because desugaring / proof encoding
+    /// can expand one source command into several.
+    Fail(Span, Vec<GenericNCommand<Head, Leaf>>),
     Input {
         span: Span,
         name: String,
@@ -232,9 +236,10 @@ where
             },
             GenericNCommand::Push(n) => GenericCommand::Push(*n),
             GenericNCommand::Pop(span, n) => GenericCommand::Pop(span.clone(), *n),
-            GenericNCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span.clone(), Box::new(cmd.to_command()))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span.clone(),
+                cmds.iter().map(|cmd| cmd.to_command()).collect(),
+            ),
             GenericNCommand::Input { span, name, file } => GenericCommand::Input {
                 span: span.clone(),
                 name: name.clone(),
@@ -260,9 +265,12 @@ where
             GenericNCommand::RunSchedule(schedule) => {
                 GenericNCommand::RunSchedule(schedule.visit_queries(f))
             }
-            GenericNCommand::Fail(span, cmd) => {
-                GenericNCommand::Fail(span, Box::new(cmd.visit_queries(f)))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericNCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_queries(&mut *f))
+                    .collect(),
+            ),
             GenericNCommand::Sort { .. }
             | GenericNCommand::Function(..)
             | GenericNCommand::AddRuleset(..)
@@ -344,9 +352,12 @@ where
             },
             GenericNCommand::Push(n) => GenericNCommand::Push(n),
             GenericNCommand::Pop(span, n) => GenericNCommand::Pop(span, n),
-            GenericNCommand::Fail(span, cmd) => {
-                GenericNCommand::Fail(span, Box::new(cmd.visit_exprs(f)))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericNCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_exprs(&mut *f))
+                    .collect(),
+            ),
             GenericNCommand::Input { span, name, file } => {
                 GenericNCommand::Input { span, name, file }
             }
@@ -996,8 +1007,8 @@ where
     /// `pop` the current egraph, restoring the previous one.
     /// The argument specifies how many egraphs to pop.
     Pop(Span, usize),
-    /// Assert that a command fails with an error.
-    Fail(Span, Box<GenericCommand<Head, Leaf>>),
+    /// Assert that at least one of the wrapped commands fails with an error.
+    Fail(Span, Vec<GenericCommand<Head, Leaf>>),
     /// Include another egglog file directly as text and run it.
     Include(Span, String),
     /// User-defined command.
@@ -1204,7 +1215,7 @@ where
                 file,
                 exprs,
             } => write!(f, "(output {file:?} {})", ListDisplay(exprs, " ")),
-            GenericCommand::Fail(_span, cmd) => write!(f, "(fail {cmd})"),
+            GenericCommand::Fail(_span, cmds) => write!(f, "(fail {})", ListDisplay(cmds, " ")),
             GenericCommand::Include(_span, file) => write!(f, "(include {file:?})"),
             GenericCommand::Datatypes { span: _, datatypes } => {
                 let datatypes: Vec<_> = datatypes
@@ -2010,9 +2021,12 @@ where
             }
             GenericCommand::Push(n) => GenericCommand::Push(n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.map_string_symbols(fun)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.map_string_symbols(&mut *fun))
+                    .collect(),
+            ),
             GenericCommand::Include(span, file) => GenericCommand::Include(span, file),
             GenericCommand::UserDefined(span, name, exprs) => {
                 GenericCommand::UserDefined(span, name, exprs)
@@ -2101,9 +2115,12 @@ where
             GenericCommand::RunSchedule(schedule) => {
                 GenericCommand::RunSchedule(schedule.visit_exprs(f))
             }
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.visit_exprs(f)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_exprs(&mut *f))
+                    .collect(),
+            ),
             // All other commands don't contain expressions
             cmd => cmd,
         }
@@ -2257,9 +2274,12 @@ where
             },
             GenericCommand::Push(n) => GenericCommand::Push(n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.map_symbols(head, leaf)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.map_symbols(&mut *head, &mut *leaf))
+                    .collect(),
+            ),
             GenericCommand::Include(span, file) => GenericCommand::Include(span, file),
             GenericCommand::UserDefined(span, name, exprs) => {
                 GenericCommand::UserDefined(span, name, exprs)
@@ -2283,9 +2303,12 @@ where
                 rule: rule.visit_actions(f),
             },
             GenericCommand::Action(action) => GenericCommand::Action(f(action)),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.visit_actions(f)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_actions(&mut *f))
+                    .collect(),
+            ),
             other => other,
         }
     }

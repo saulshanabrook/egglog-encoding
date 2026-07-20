@@ -972,16 +972,16 @@ impl Parser {
                 [file] => vec![Command::Include(span, file.expect_string("file name")?)],
                 _ => return error!(span, "usage: (include <file name>)"),
             },
-            "fail" => match tail {
-                [subcommand] => {
-                    let mut cs = self.parse_command(subcommand)?;
-                    if cs.len() != 1 {
-                        todo!("extend Fail to work with multiple parsed commands")
-                    }
-                    vec![Command::Fail(span, Box::new(cs.remove(0)))]
+            "fail" => {
+                if tail.is_empty() {
+                    return error!(span, "usage: (fail <command>+)");
                 }
-                _ => return error!(span, "usage: (fail <command>)"),
-            },
+                let mut cs = vec![];
+                for subcommand in tail {
+                    cs.extend(self.parse_command(subcommand)?);
+                }
+                vec![Command::Fail(span, cs)]
+            }
             _ => self
                 .parse_action(sexp)?
                 .into_iter()

@@ -146,7 +146,10 @@ fn proof_mode_rejects_fail_wrapped_input() {
 }
 
 #[test]
-fn proof_mode_rejects_fail_wrapped_set() {
+fn proof_mode_allows_fail_wrapping_set() {
+    // A `(fail (set …))` is now accepted by proof encoding (it used to be rejected
+    // as a non-atomic wrapped command). The set succeeds, so `fail` reports that
+    // its wrapped command did not fail.
     let error = EGraph::new_with_proofs()
         .parse_and_run_program(
             None,
@@ -157,26 +160,33 @@ fn proof_mode_rejects_fail_wrapped_set() {
         )
         .unwrap_err();
 
-    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("exactly one atomic encoded command")
-    );
+    assert!(matches!(error, Error::ExpectFail(..)));
 }
 
 #[test]
-fn proof_mode_rejects_fail_wrapped_multi_operation_encoding() {
+fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
+    // A wrapped command that encodes to several commands is now accepted;
+    // declaring the function succeeds, so `fail` reports it did not fail.
     let error = EGraph::new_with_proofs()
         .parse_and_run_program(None, "(fail (function score () i64 :no-merge))")
         .unwrap_err();
 
-    assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(
-        error
-            .to_string()
-            .contains("exactly one atomic encoded command")
-    );
+    assert!(matches!(error, Error::ExpectFail(..)));
+}
+
+#[test]
+fn proof_mode_fail_catches_failure_among_wrapped_commands() {
+    // `fail` runs every wrapped command in order and succeeds when any one fails:
+    // the set succeeds and the mismatched check fails, so the `fail` passes.
+    EGraph::new_with_proofs()
+        .parse_and_run_program(
+            None,
+            r#"
+            (function score () i64 :no-merge)
+            (fail (set (score) 1) (check (= (score) 2)))
+            "#,
+        )
+        .unwrap();
 }
 
 #[test]

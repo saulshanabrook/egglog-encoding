@@ -2343,19 +2343,14 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::RunSchedule(schedule) => {
                 res.push(Command::RunSchedule(self.instrument_schedule(schedule)));
             }
-            ResolvedNCommand::Fail(span, cmd) => {
+            ResolvedNCommand::Fail(span, cmds) => {
+                // Encode every wrapped command and keep the whole flattened result
+                // inside one `fail` (a single command can encode to several).
                 let mut encoded = vec![];
-                self.term_encode_command(cmd, &mut encoded)?;
-                if encoded.len() != 1 {
-                    return Err(Error::UnsupportedProofCommand {
-                        command: cmd.to_command().to_string(),
-                        reason: ProofEncodingUnsupportedReason::FailNonAtomicCommand,
-                    });
+                for cmd in cmds {
+                    self.term_encode_command(cmd, &mut encoded)?;
                 }
-                res.push(Command::Fail(
-                    span.clone(),
-                    Box::new(encoded.pop().unwrap()),
-                ));
+                res.push(Command::Fail(span.clone(), encoded));
             }
             ResolvedNCommand::Input { .. } => {
                 // Loaded natively at run time (see `EGraph::native_input`), inserting

@@ -2156,11 +2156,18 @@ impl EGraph {
                 })?;
                 return Ok(vec![res]);
             }
-            ResolvedNCommand::Fail(span, c) => {
-                let result = self.run_command(*c);
-                if let Err(e) = result {
-                    log::info!("Command failed as expected: {e}");
-                } else {
+            ResolvedNCommand::Fail(span, cmds) => {
+                // Run the wrapped commands in order; the first error is the expected
+                // failure. If none error, the `fail` assertion itself fails.
+                let mut any_failed = false;
+                for c in cmds {
+                    if let Err(e) = self.run_command(c) {
+                        log::info!("Command failed as expected: {e}");
+                        any_failed = true;
+                        break;
+                    }
+                }
+                if !any_failed {
                     return Err(Error::ExpectFail(span));
                 }
             }

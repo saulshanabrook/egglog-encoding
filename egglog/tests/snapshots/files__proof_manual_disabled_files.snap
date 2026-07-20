@@ -3,5 +3,6 @@ source: egglog/tests/files.rs
 expression: "snapshot.join(\"\\n\")"
 ---
 eggcc-2mm.egg: the full benchmark exceeds the routine proof harness resource budget; the bounded eggcc-2mm-pass1 fixture covers this workload in proof benchmarks
+set_sort_function.egg: wraps an eq-sort `:no-merge` conflict in `(fail (set …))`, but the encoding detects such conflicts during rebuild (a generated panic rule) rather than eagerly, so the wrapped `set` does not fail within the `fail`; pending Part B (native `:no-merge`)
 subsume-relation.egg: proof-testing rewrites a check on a subsumed relation row into a prove query that no longer matches
 subsume.egg: proof-testing rewrites a check on a subsumed expression into a prove query that no longer matches

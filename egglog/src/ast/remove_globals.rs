@@ -185,14 +185,15 @@ impl GlobalRemover<'_> {
                 };
                 vec![GenericNCommand::NormRule { rule: new_rule }]
             }
-            // Handle the corner case where a global command is wrap in (fail )
-            GenericNCommand::Fail(span, cmd) => {
-                let mut removed = self.remove_globals_cmd(*cmd);
-                let last = removed.pop().unwrap();
-                let boxed_last = Box::new(last);
-                let new_command = GenericNCommand::Fail(span, boxed_last);
-                removed.push(new_command);
-                removed
+            // Handle the corner case where a global command is wrapped in (fail).
+            // Remove globals from every wrapped command and keep the whole flattened
+            // result inside the `fail` (not just the last command).
+            GenericNCommand::Fail(span, cmds) => {
+                let mut removed = vec![];
+                for cmd in cmds {
+                    removed.extend(self.remove_globals_cmd(cmd));
+                }
+                vec![GenericNCommand::Fail(span, removed)]
             }
             _ => vec![cmd.visit_exprs(&mut replace_global_vars)],
         }

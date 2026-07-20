@@ -38,7 +38,6 @@ repro-new-backend-python-vec.egg
 repro-unsound.egg
 repro-vec-unequal.egg
 set.egg
-set_sort_function.egg
 stresstest_large_expr.egg
 taylor51.egg
 towers-of-hanoi.egg

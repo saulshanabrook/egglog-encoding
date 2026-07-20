@@ -630,9 +630,12 @@ impl EGraph {
                 span.clone(),
                 self.type_info.typecheck_facts(symbol_gen, facts)?,
             ),
-            NCommand::Fail(span, cmd) => {
-                ResolvedNCommand::Fail(span.clone(), Box::new(self.typecheck_command(cmd)?))
-            }
+            NCommand::Fail(span, cmds) => ResolvedNCommand::Fail(
+                span.clone(),
+                cmds.iter()
+                    .map(|cmd| self.typecheck_command(cmd))
+                    .collect::<Result<_, _>>()?,
+            ),
             NCommand::RunSchedule(schedule) => ResolvedNCommand::RunSchedule(
                 self.type_info.typecheck_schedule(symbol_gen, schedule)?,
             ),
