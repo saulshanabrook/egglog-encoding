@@ -343,6 +343,80 @@ fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays
 }
 
 #[test]
+fn rule_created_constructor_witness_drives_sliced_replay_and_strict_proofs() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (relation Seed (i64))
+        (relation Mid (Expr))
+        (relation Goal (Expr))
+        (relation Irrelevant (Expr))
+        (rule ((Seed n)) ((Mid (F (A n)))) :name "build")
+        (rule ((Mid x)) ((Goal x)) :name "finish")
+        (rule ((Mid x)) ((Irrelevant x)) :name "irrelevant")
+        (Seed 7)
+        (run 3)
+        (check (Goal x))
+    "#;
+
+    let slice = causal_slice_program(Some("constructor-witness.egg".to_owned()), source).unwrap();
+    assert!(!slice.source.contains("(run 3)"));
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"build\" :bind ((n 7)) :expect 1)")
+    );
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"finish\" :bind ((x (F (A 7)))) :expect 1)")
+    );
+    assert!(!slice.source.contains("run-rule \"irrelevant\""));
+    assert_eq!(slice.stats.retained_applications, 2);
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("constructor-witness-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+
+    let second = causal_slice_program(Some("constructor-witness.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.source, second.source);
+}
+
+#[test]
+fn source_constructor_witness_is_available_to_manual_replay() {
+    let source = r#"
+        (datatype Expr (A i64))
+        (relation Seed (Expr))
+        (relation Goal (Expr))
+        (rule ((Seed x)) ((Goal x)) :name "copy")
+        (Seed (A 7))
+        (run 1)
+        (check (Goal x))
+    "#;
+
+    let slice = causal_slice_program(Some("source-witness.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(Seed (A 7))"));
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"copy\" :bind ((x (A 7))) :expect 1)")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("source-witness-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn anonymous_rule_names_are_source_based_and_stable() {
     let source = r#"
         (relation A (i64))
@@ -776,7 +850,7 @@ fn native_direct_redundant_and_congruence_equalities_pass_strict_proofs() {
     assert!(
         error
             .to_string()
-            .contains("functions, constructors, datatypes, or custom sorts")
+            .contains("a non-relation initialization action")
     );
 }
 

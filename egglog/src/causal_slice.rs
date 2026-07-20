@@ -18,7 +18,8 @@ use crate::{
         Action, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
         RuleEvalMode, RunRuleConfig, Schedule, Span,
     },
-    core_relations::{RuleExecutionTrace, RuleMatch, Value},
+    core_relations::{RuleExecutionTrace, RuleMatch, TableApplication, TableId, Value},
+    literal_to_value,
     util::{HashMap, HashSet, IndexMap, IndexSet},
 };
 
@@ -109,6 +110,12 @@ struct RelationDecl {
 }
 
 #[derive(Clone, Debug)]
+struct ConstructorDecl {
+    inputs: Vec<String>,
+    output: String,
+}
+
+#[derive(Clone, Debug)]
 struct AtomTemplate {
     relation: String,
     args: Vec<AtomArg>,
@@ -118,6 +125,11 @@ struct AtomTemplate {
 enum AtomArg {
     Var(Span, String),
     Lit(Literal),
+    App {
+        function: String,
+        args: Vec<AtomArg>,
+        input_sorts: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -134,10 +146,22 @@ struct CheckModel {
     var_sorts: IndexMap<String, String>,
 }
 
+#[derive(Clone, Debug)]
+struct SourceFact {
+    command_index: usize,
+    atom: AtomTemplate,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-struct FactKey {
+struct TypedEndpoint {
+    sort: String,
+    value: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct RowKey {
     relation: String,
-    args: Vec<Literal>,
+    args: Vec<TypedEndpoint>,
 }
 
 type SourceCommandExpansions = IndexMap<usize, Vec<Command>>;
@@ -217,13 +241,29 @@ impl DepArena {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum WitnessNode {
-    Literal { sort: String, value: Literal },
+    Literal {
+        sort: String,
+        value: Literal,
+    },
+    App {
+        sort: String,
+        function: String,
+        children: Vec<WitnessId>,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct WitnessRecord {
+    node: WitnessNode,
+    original_value: Option<Value>,
+    availability: DepId,
 }
 
 #[derive(Clone, Debug, Default)]
 struct WitnessArena {
-    nodes: Vec<WitnessNode>,
+    nodes: Vec<WitnessRecord>,
     ids: IndexMap<WitnessNode, WitnessId>,
+    endpoints: IndexMap<TypedEndpoint, WitnessId>,
 }
 
 impl WitnessArena {
@@ -242,15 +282,118 @@ impl WitnessArena {
         let id = WitnessId(u32::try_from(self.nodes.len()).map_err(|_| {
             CausalSliceError::Invariant("witness arena exceeded u32 capacity".to_owned())
         })?);
-        self.nodes.push(node.clone());
+        self.nodes.push(WitnessRecord {
+            node: node.clone(),
+            original_value: None,
+            availability: DepArena::EMPTY,
+        });
         self.ids.insert(node, id);
         Ok(id)
     }
 
-    fn literal(&self, id: WitnessId) -> &Literal {
-        match &self.nodes[id.index()] {
-            WitnessNode::Literal { value, .. } => value,
+    fn intern_app(
+        &mut self,
+        sort: &str,
+        function: &str,
+        children: Vec<WitnessId>,
+        endpoint: Value,
+        availability: DepId,
+    ) -> Result<WitnessId, CausalSliceError> {
+        let node = WitnessNode::App {
+            sort: sort.to_owned(),
+            function: function.to_owned(),
+            children,
+        };
+        let id = if let Some(id) = self.ids.get(&node).copied() {
+            id
+        } else {
+            let id = WitnessId(u32::try_from(self.nodes.len()).map_err(|_| {
+                CausalSliceError::Invariant("witness arena exceeded u32 capacity".to_owned())
+            })?);
+            self.nodes.push(WitnessRecord {
+                node: node.clone(),
+                original_value: Some(endpoint),
+                availability,
+            });
+            self.ids.insert(node, id);
+            id
+        };
+        self.bind_endpoint(sort, endpoint, id)?;
+        Ok(id)
+    }
+
+    fn bind_endpoint(
+        &mut self,
+        sort: &str,
+        endpoint: Value,
+        id: WitnessId,
+    ) -> Result<(), CausalSliceError> {
+        let key = TypedEndpoint {
+            sort: sort.to_owned(),
+            value: endpoint,
+        };
+        if let Some(previous) = self.endpoints.get(&key) {
+            if *previous != id {
+                return Err(CausalSliceError::Unsupported {
+                    location: format!("captured `{sort}` value"),
+                    reason: "one runtime endpoint with conflicting replay witnesses".to_owned(),
+                });
+            }
+            return Ok(());
         }
+        if let Some(previous) = self.nodes[id.index()].original_value {
+            if previous != endpoint {
+                return Err(CausalSliceError::Unsupported {
+                    location: format!("captured `{sort}` constructor application"),
+                    reason: "one source term producing distinct runtime endpoints in the same no-equality trace"
+                        .to_owned(),
+                });
+            }
+        } else {
+            self.nodes[id.index()].original_value = Some(endpoint);
+        }
+        self.endpoints.insert(key, id);
+        Ok(())
+    }
+
+    fn by_endpoint(&self, sort: &str, endpoint: Value) -> Option<WitnessId> {
+        self.endpoints
+            .get(&TypedEndpoint {
+                sort: sort.to_owned(),
+                value: endpoint,
+            })
+            .copied()
+    }
+
+    fn set_availability(&mut self, id: WitnessId, availability: DepId) {
+        let record = &mut self.nodes[id.index()];
+        if record.availability == DepArena::EMPTY {
+            record.availability = availability;
+        }
+    }
+
+    fn availability(&self, id: WitnessId) -> DepId {
+        self.nodes[id.index()].availability
+    }
+
+    fn expr(&self, id: WitnessId, span: &Span) -> Expr {
+        match &self.nodes[id.index()].node {
+            WitnessNode::Literal { value, .. } => Expr::Lit(span.clone(), value.clone()),
+            WitnessNode::App {
+                function, children, ..
+            } => Expr::Call(
+                span.clone(),
+                function.clone(),
+                children
+                    .iter()
+                    .map(|child| self.expr(*child, span))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn endpoint(&self, id: WitnessId) -> Option<Value> {
+        self.nodes[id.index()].original_value
     }
 }
 
@@ -261,11 +404,11 @@ struct BindingWitness {
 }
 
 impl BindingWitness {
-    fn literal(self, witnesses: &WitnessArena) -> &Literal {
+    fn expr(self, witnesses: &WitnessArena, span: &Span) -> Expr {
         // The endpoint is intentionally retained with the immutable syntax.
         // V0 does not print it or resolve it through the final database.
         let _captured_endpoint = self.endpoint;
-        witnesses.literal(self.syntax)
+        witnesses.expr(self.syntax, span)
     }
 }
 
@@ -285,7 +428,7 @@ struct PendingFire {
 
 #[derive(Clone, Debug)]
 enum EventKind {
-    Source { fact: FactKey },
+    Source { row: RowKey },
     Fire(GroundedFire),
 }
 
@@ -293,7 +436,7 @@ enum EventKind {
 struct ReplayEvent {
     kind: EventKind,
     prerequisites: DepId,
-    effective_outputs: Vec<FactKey>,
+    effective_outputs: Vec<RowKey>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -315,16 +458,41 @@ struct Elaboration {
     pending_fires: Vec<PendingFire>,
     events: EventArena,
     dependencies: DepArena,
-    producers: IndexMap<FactKey, DepId>,
+    producers: IndexMap<RowKey, DepId>,
     source_events: usize,
 }
 
 struct ProgramModel {
     rules: IndexMap<String, RuleModel>,
     checks: Vec<CheckModel>,
-    source_facts: Vec<FactKey>,
+    source_facts: Vec<SourceFact>,
+    constructors: IndexMap<String, ConstructorDecl>,
     source_expansions: SourceCommandExpansions,
     schedule_index: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraceFunctionKind {
+    Relation,
+    Constructor,
+}
+
+#[derive(Clone, Debug)]
+struct TraceFunctionMeta {
+    name: String,
+    input_sorts: Vec<String>,
+    output_sort: String,
+    kind: TraceFunctionKind,
+}
+
+struct ElaborationInput<'a> {
+    egraph: &'a EGraph,
+    rules: &'a IndexMap<String, RuleModel>,
+    relations: &'a IndexMap<String, RelationDecl>,
+    source_facts: &'a [SourceFact],
+    source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
+    batches: &'a [RuleExecutionTrace],
+    trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
 }
 
 /// Trace one ordinary reference-backend execution and emit a guarded manual
@@ -350,20 +518,28 @@ pub fn causal_slice_program_with_fact_directory(
     let mut commands = parser.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
 
-    let relations = collect_relations(&commands, source_name)?;
+    let (relations, constructors) = collect_declarations(&commands, source_name)?;
     let rule_mapping = name_and_prepare_rules(&mut commands, source_name)?;
     let ProgramModel {
         rules,
         checks,
         source_facts,
+        constructors,
         source_expansions,
         schedule_index,
-    } = validate_and_model(&commands, &relations, source_name, fact_directory)?;
+    } = validate_and_model(
+        &commands,
+        &relations,
+        &constructors,
+        source_name,
+        fact_directory,
+    )?;
 
     let mut egraph = EGraph::default();
     let trace_start = Instant::now();
     let mut schedule_batches = None;
     let mut check_batches = Vec::new();
+    let mut source_traces = IndexMap::default();
 
     for (command_index, command) in commands.iter().cloned().enumerate() {
         if command_index == schedule_index {
@@ -373,6 +549,8 @@ pub fn causal_slice_program_with_fact_directory(
             check_batches.push(run_one_traced_command(&mut egraph, command)?);
         } else if let Some(expansion) = source_expansions.get(&command_index) {
             egraph.run_program(expansion.clone())?;
+        } else if matches!(command, Command::Action(..)) {
+            source_traces.insert(command_index, run_one_traced_command(&mut egraph, command)?);
         } else {
             egraph.run_program(vec![command])?;
         }
@@ -413,6 +591,7 @@ pub fn causal_slice_program_with_fact_directory(
     let raw_trace_lower_bound_bytes = total_raw_matches * std::mem::size_of::<RuleMatch>()
         + raw_trace_bindings * std::mem::size_of::<(std::sync::Arc<str>, Value)>();
 
+    let trace_functions = trace_function_metadata(&egraph, &relations, &constructors)?;
     let mut witnesses = WitnessArena::default();
     let Elaboration {
         pending_fires,
@@ -421,15 +600,21 @@ pub fn causal_slice_program_with_fact_directory(
         producers: final_producers,
         source_events,
     } = elaborate_events(
-        &egraph,
-        &rules,
-        &source_facts,
-        &schedule_batches,
+        ElaborationInput {
+            egraph: &egraph,
+            rules: &rules,
+            relations: &relations,
+            source_facts: &source_facts,
+            source_traces: &source_traces,
+            batches: &schedule_batches,
+            trace_functions: &trace_functions,
+        },
         &mut witnesses,
     )?;
     let roots = observation_roots(
         &egraph,
         &checks,
+        &relations,
         &check_batches,
         &final_producers,
         &mut dependencies,
@@ -567,38 +752,176 @@ fn run_one_traced_command(
     Ok(batches)
 }
 
-fn collect_relations(
-    commands: &[Command],
-    source_name: &str,
-) -> Result<IndexMap<String, RelationDecl>, CausalSliceError> {
-    let mut relations = IndexMap::default();
-    for (index, command) in commands.iter().enumerate() {
-        if let Command::Relation { span, name, inputs } = command {
-            for sort in inputs {
-                if !matches!(sort.as_str(), "i64" | "String" | "bool" | "f64" | "Unit") {
-                    return unsupported(
-                        span,
-                        format!("relation `{name}` with non-scalar sort `{sort}`"),
-                    );
+fn trace_function_metadata(
+    egraph: &EGraph,
+    relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+) -> Result<IndexMap<TableId, TraceFunctionMeta>, CausalSliceError> {
+    let native = egraph
+        .backend
+        .as_any()
+        .downcast_ref::<egglog_bridge::EGraph>()
+        .ok_or_else(|| {
+            CausalSliceError::Invariant(
+                "causal tracing is implemented only by the reference backend".to_owned(),
+            )
+        })?;
+    let mut result = IndexMap::default();
+    for (name, function) in egraph.functions_iter() {
+        let kind = if relations.contains_key(name) {
+            TraceFunctionKind::Relation
+        } else if constructors.contains_key(name) {
+            TraceFunctionKind::Constructor
+        } else {
+            continue;
+        };
+        if function.is_hidden()
+            || function.is_let_binding()
+            || function.term_constructor().is_some()
+        {
+            return Err(CausalSliceError::Unsupported {
+                location: format!("declaration `{name}`"),
+                reason: "a hidden, global, or encoded view table in constructor tracing".to_owned(),
+            });
+        }
+        if function.schema().outputs.len() != 1 {
+            return Err(CausalSliceError::Unsupported {
+                location: format!("declaration `{name}`"),
+                reason: "a tuple-output table in constructor tracing".to_owned(),
+            });
+        }
+        let input_sorts = function
+            .schema()
+            .input
+            .iter()
+            .map(|sort| sort.name().to_owned())
+            .collect::<Vec<_>>();
+        let output_sort = function.schema().output().name().to_owned();
+        match kind {
+            TraceFunctionKind::Relation => {
+                let expected = &relations[name].sorts;
+                if &input_sorts != expected {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "runtime schema for relation `{name}` differs from its parsed declaration: inputs {input_sorts:?} vs {expected:?}"
+                    )));
                 }
             }
-            if relations
-                .insert(
-                    name.clone(),
-                    RelationDecl {
-                        sorts: inputs.clone(),
-                    },
-                )
-                .is_some()
-            {
-                return Err(CausalSliceError::Unsupported {
-                    location: format!("{source_name}: top-level command {index}"),
-                    reason: format!("duplicate relation declaration `{name}`"),
-                });
+            TraceFunctionKind::Constructor => {
+                let expected = &constructors[name];
+                if input_sorts != expected.inputs || output_sort != expected.output {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "runtime schema for constructor `{name}` differs from its parsed declaration"
+                    )));
+                }
             }
         }
+        let table = native.function_table_id(function.backend_id);
+        if result
+            .insert(
+                table,
+                TraceFunctionMeta {
+                    name: name.clone(),
+                    input_sorts,
+                    output_sort,
+                    kind,
+                },
+            )
+            .is_some()
+        {
+            return Err(CausalSliceError::Invariant(format!(
+                "two source functions share traced table {table:?}"
+            )));
+        }
     }
-    Ok(relations)
+    Ok(result)
+}
+
+fn collect_declarations(
+    commands: &[Command],
+    source_name: &str,
+) -> Result<
+    (
+        IndexMap<String, RelationDecl>,
+        IndexMap<String, ConstructorDecl>,
+    ),
+    CausalSliceError,
+> {
+    let mut relations = IndexMap::default();
+    let mut constructors = IndexMap::default();
+    let datatype_sorts = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Datatype { name, .. } => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let supported_sort = |sort: &str| {
+        matches!(sort, "i64" | "String" | "bool" | "f64" | "Unit") || datatype_sorts.contains(sort)
+    };
+    for (index, command) in commands.iter().enumerate() {
+        match command {
+            Command::Datatype {
+                span,
+                name,
+                variants,
+            } => {
+                for variant in variants {
+                    for sort in &variant.types {
+                        if !supported_sort(sort) {
+                            return unsupported(
+                                &variant.span,
+                                format!(
+                                    "datatype constructor `{}` with unsupported input sort `{sort}`",
+                                    variant.name
+                                ),
+                            );
+                        }
+                    }
+                    if constructors
+                        .insert(
+                            variant.name.clone(),
+                            ConstructorDecl {
+                                inputs: variant.types.clone(),
+                                output: name.clone(),
+                            },
+                        )
+                        .is_some()
+                    {
+                        return unsupported(
+                            span,
+                            format!("duplicate constructor declaration `{}`", variant.name),
+                        );
+                    }
+                }
+            }
+            Command::Relation { span, name, inputs } => {
+                for sort in inputs {
+                    if !supported_sort(sort) {
+                        return unsupported(
+                            span,
+                            format!("relation `{name}` with unsupported sort `{sort}`"),
+                        );
+                    }
+                }
+                if relations
+                    .insert(
+                        name.clone(),
+                        RelationDecl {
+                            sorts: inputs.clone(),
+                        },
+                    )
+                    .is_some()
+                {
+                    return Err(CausalSliceError::Unsupported {
+                        location: format!("{source_name}: top-level command {index}"),
+                        reason: format!("duplicate relation declaration `{name}`"),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok((relations, constructors))
 }
 
 fn name_and_prepare_rules(
@@ -677,6 +1000,7 @@ fn name_and_prepare_rules(
 fn validate_and_model(
     commands: &[Command],
     relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
     source_name: &str,
     fact_directory: Option<&Path>,
 ) -> Result<ProgramModel, CausalSliceError> {
@@ -689,7 +1013,7 @@ fn validate_and_model(
 
     for (index, command) in commands.iter().enumerate() {
         match command {
-            Command::Relation { .. } | Command::AddRuleset(..) => {
+            Command::Relation { .. } | Command::Datatype { .. } | Command::AddRuleset(..) => {
                 if schedule_index.is_some() {
                     return unsupported_command(
                         command,
@@ -706,7 +1030,7 @@ fn validate_and_model(
                         "rule declaration after the computation schedule".to_owned(),
                     );
                 }
-                let model = model_rule(rule, relations)?;
+                let model = model_rule(rule, relations, constructors)?;
                 if rules.insert(rule.name.clone(), model).is_some() {
                     return unsupported(
                         &rule.span,
@@ -721,7 +1045,7 @@ fn validate_and_model(
                         "ordinary action after the computation schedule",
                     );
                 }
-                source_facts.push(model_source_fact(action, relations)?);
+                source_facts.push(model_source_fact(index, action, relations, constructors)?);
             }
             Command::Input { span, name, file } => {
                 if schedule_index.is_some() {
@@ -752,9 +1076,12 @@ fn validate_and_model(
                     for literal in &args {
                         validate_printable_literal(span, literal)?;
                     }
-                    let fact = FactKey {
-                        relation: name.clone(),
-                        args,
+                    let fact = SourceFact {
+                        command_index: index,
+                        atom: AtomTemplate {
+                            relation: name.clone(),
+                            args: args.iter().cloned().map(AtomArg::Lit).collect(),
+                        },
                     };
                     expansion.push(source_fact_command(span, &fact));
                     source_facts.push(fact);
@@ -785,7 +1112,7 @@ fn validate_and_model(
                     return unsupported(span, "a positive check before the schedule".to_owned());
                 }
                 observations_started = true;
-                checks.push(model_check(span, facts, relations)?);
+                checks.push(model_check(span, facts, relations, constructors)?);
             }
             Command::Fail(span, command) if matches!(command.as_ref(), Command::Check(..)) => {
                 return unsupported(span, "negative checks / proof of absence".to_owned());
@@ -800,7 +1127,6 @@ fn validate_and_model(
             }
             Command::Function { .. }
             | Command::Constructor { .. }
-            | Command::Datatype { .. }
             | Command::Datatypes { .. }
             | Command::Sort { .. } => {
                 return unsupported_command(
@@ -851,6 +1177,7 @@ fn validate_and_model(
         rules,
         checks,
         source_facts,
+        constructors: constructors.clone(),
         source_expansions,
         schedule_index,
     })
@@ -859,6 +1186,7 @@ fn validate_and_model(
 fn model_rule(
     rule: &crate::ast::Rule,
     relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
 ) -> Result<RuleModel, CausalSliceError> {
     if rule.body.is_empty() {
         return unsupported(&rule.span, format!("an empty body on rule `{}`", rule.name));
@@ -886,7 +1214,16 @@ fn model_rule(
                 format!("equality or primitive filters in rule `{}`", rule.name),
             );
         };
-        let atom = model_atom(expr, relations, "rule body")?;
+        let atom = model_atom(expr, relations, constructors, "rule body")?;
+        if atom.args.iter().any(atom_arg_contains_app) {
+            return unsupported(
+                &rule.span,
+                format!(
+                    "nested constructor matching in rule `{}`; v0 only binds constructed values through variables",
+                    rule.name
+                ),
+            );
+        }
         register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
         body.push(atom);
     }
@@ -899,15 +1236,15 @@ fn model_rule(
                 format!("a non-insert head action in rule `{}`", rule.name),
             );
         };
-        let atom = model_atom(expr, relations, "rule head")?;
+        let atom = model_atom(expr, relations, constructors, "rule head")?;
         for arg in &atom.args {
-            if let AtomArg::Var(span, var) = arg
-                && !var_sorts.contains_key(var)
-            {
-                return unsupported(
-                    span,
-                    format!("head-only variable `{var}` in rule `{}`", rule.name),
-                );
+            for (span, var) in atom_arg_vars(arg) {
+                if !var_sorts.contains_key(var) {
+                    return unsupported(
+                        span,
+                        format!("head-only variable `{var}` in rule `{}`", rule.name),
+                    );
+                }
             }
         }
         head.push(atom);
@@ -946,6 +1283,7 @@ fn model_check(
     span: &Span,
     facts: &[Fact],
     relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
 ) -> Result<CheckModel, CausalSliceError> {
     if facts.is_empty() {
         return unsupported(span, "an empty positive check".to_owned());
@@ -964,7 +1302,7 @@ fn model_check(
         let GenericFact::Fact(expr) = fact else {
             return unsupported(span, "equality or primitive facts in a check".to_owned());
         };
-        let atom = model_atom(expr, relations, "positive check")?;
+        let atom = model_atom(expr, relations, constructors, "positive check")?;
         register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
         atoms.push(atom);
     }
@@ -990,7 +1328,7 @@ fn variable_atom_occurrences(atoms: &[AtomTemplate]) -> HashMap<&str, usize> {
     for atom in atoms {
         let mut vars_in_atom = HashSet::default();
         for arg in &atom.args {
-            if let AtomArg::Var(_, var) = arg {
+            for (_, var) in atom_arg_vars(arg) {
                 vars_in_atom.insert(var.as_str());
             }
         }
@@ -1005,55 +1343,66 @@ fn atom_variables(atoms: &[AtomTemplate]) -> HashSet<&str> {
     atoms
         .iter()
         .flat_map(|atom| &atom.args)
-        .filter_map(|arg| match arg {
-            AtomArg::Var(_, var) => Some(var.as_str()),
-            AtomArg::Lit(_) => None,
-        })
+        .flat_map(atom_arg_vars)
+        .map(|(_, var)| var.as_str())
         .collect()
 }
 
 fn model_source_fact(
+    command_index: usize,
     action: &Action,
     relations: &IndexMap<String, RelationDecl>,
-) -> Result<FactKey, CausalSliceError> {
+    constructors: &IndexMap<String, ConstructorDecl>,
+) -> Result<SourceFact, CausalSliceError> {
     let GenericAction::Expr(_, expr) = action else {
         return unsupported_action(action, "a non-relation initialization action");
     };
-    let atom = model_atom(expr, relations, "source initialization")?;
-    let mut args = Vec::new();
-    for arg in atom.args {
-        match arg {
-            AtomArg::Lit(literal) => args.push(literal),
-            AtomArg::Var(span, var) => {
-                return unsupported(
-                    &span,
-                    format!("non-ground source initialization variable `{var}`"),
-                );
-            }
+    let atom = model_atom(expr, relations, constructors, "source initialization")?;
+    for arg in &atom.args {
+        if let Some((span, var)) = atom_arg_vars(arg).into_iter().next() {
+            return unsupported(
+                span,
+                format!("non-ground source initialization variable `{var}"),
+            );
         }
     }
-    Ok(FactKey {
-        relation: atom.relation,
-        args,
+    Ok(SourceFact {
+        command_index,
+        atom,
     })
 }
 
-fn source_fact_command(span: &Span, fact: &FactKey) -> Command {
+fn source_fact_command(span: &Span, fact: &SourceFact) -> Command {
     let args = fact
+        .atom
         .args
         .iter()
-        .cloned()
-        .map(|literal| Expr::Lit(span.clone(), literal))
+        .map(|arg| source_atom_arg_expr(span, arg))
         .collect();
     Command::Action(GenericAction::Expr(
         span.clone(),
-        Expr::Call(span.clone(), fact.relation.clone(), args),
+        Expr::Call(span.clone(), fact.atom.relation.clone(), args),
     ))
+}
+
+fn source_atom_arg_expr(span: &Span, arg: &AtomArg) -> Expr {
+    match arg {
+        AtomArg::Lit(literal) => Expr::Lit(span.clone(), literal.clone()),
+        AtomArg::App { function, args, .. } => Expr::Call(
+            span.clone(),
+            function.clone(),
+            args.iter()
+                .map(|arg| source_atom_arg_expr(span, arg))
+                .collect(),
+        ),
+        AtomArg::Var(_, var) => panic!("validated source fact retained variable `{var}`"),
+    }
 }
 
 fn model_atom(
     expr: &Expr,
     relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
     context: &str,
 ) -> Result<AtomTemplate, CausalSliceError> {
     let GenericExpr::Call(span, relation, args) = expr else {
@@ -1077,31 +1426,89 @@ fn model_atom(
     }
     let args = args
         .iter()
-        .map(|arg| match arg {
-            GenericExpr::Var(span, var) => {
-                if var == "_" || var.starts_with('@') {
-                    unsupported(
-                        span,
-                        "wildcard or parser-generated variables (they have no stable source binding)",
-                    )
-                } else {
-                    Ok(AtomArg::Var(span.clone(), var.clone()))
-                }
-            }
-            GenericExpr::Lit(span, literal) => {
-                validate_printable_literal(span, literal)?;
-                Ok(AtomArg::Lit(literal.clone()))
-            }
-            GenericExpr::Call(span, head, _) => unsupported(
-                span,
-                format!("nested call `{head}` in a relation tuple in {context}"),
-            ),
-        })
+        .zip(&declaration.sorts)
+        .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, context))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(AtomTemplate {
         relation: relation.clone(),
         args,
     })
+}
+
+fn model_atom_arg(
+    expr: &Expr,
+    expected_sort: &str,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    context: &str,
+) -> Result<AtomArg, CausalSliceError> {
+    match expr {
+        GenericExpr::Var(span, var) => {
+            if var == "_" || var.starts_with('@') {
+                unsupported(
+                    span,
+                    "wildcard or parser-generated variables (they have no stable source binding)",
+                )
+            } else {
+                Ok(AtomArg::Var(span.clone(), var.clone()))
+            }
+        }
+        GenericExpr::Lit(span, literal) => {
+            validate_printable_literal(span, literal)?;
+            Ok(AtomArg::Lit(literal.clone()))
+        }
+        GenericExpr::Call(span, function, args) => {
+            let constructor =
+                constructors
+                    .get(function)
+                    .ok_or_else(|| CausalSliceError::Unsupported {
+                        location: span.to_string(),
+                        reason: format!("nested non-constructor call `{function}` in {context}"),
+                    })?;
+            if constructor.output != expected_sort {
+                return unsupported(
+                    span,
+                    format!(
+                        "constructor `{function}` returning `{}` where `{expected_sort}` is required in {context}",
+                        constructor.output
+                    ),
+                );
+            }
+            if args.len() != constructor.inputs.len() {
+                return unsupported(
+                    span,
+                    format!(
+                        "constructor `{function}` with arity {} instead of {} in {context}",
+                        args.len(),
+                        constructor.inputs.len()
+                    ),
+                );
+            }
+            Ok(AtomArg::App {
+                function: function.clone(),
+                args: args
+                    .iter()
+                    .zip(&constructor.inputs)
+                    .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, context))
+                    .collect::<Result<Vec<_>, _>>()?,
+                input_sorts: constructor.inputs.clone(),
+            })
+        }
+    }
+}
+
+fn atom_arg_contains_app(arg: &AtomArg) -> bool {
+    match arg {
+        AtomArg::App { .. } => true,
+        AtomArg::Var(..) | AtomArg::Lit(..) => false,
+    }
+}
+
+fn atom_arg_vars(arg: &AtomArg) -> Vec<(&Span, &String)> {
+    match arg {
+        AtomArg::Var(span, var) => vec![(span, var)],
+        AtomArg::Lit(_) => Vec::new(),
+        AtomArg::App { args, .. } => args.iter().flat_map(atom_arg_vars).collect(),
+    }
 }
 
 fn register_atom_vars(
@@ -1112,24 +1519,40 @@ fn register_atom_vars(
 ) -> Result<(), CausalSliceError> {
     let declaration = &relations[&atom.relation];
     for (arg, sort) in atom.args.iter().zip(&declaration.sorts) {
-        let AtomArg::Var(span, var) = arg else {
-            continue;
-        };
-        match sorts.get(var) {
-            Some(previous) if previous != sort => {
-                return unsupported(
-                    span,
-                    format!("variable `{var}` used at both sort `{previous}` and `{sort}`"),
-                );
-            }
-            Some(_) => {}
-            None => {
-                sorts.insert(var.clone(), sort.clone());
-                order.push(var.clone());
-            }
-        }
+        register_arg_vars(arg, sort, order, sorts)?;
     }
     Ok(())
+}
+
+fn register_arg_vars(
+    arg: &AtomArg,
+    sort: &str,
+    order: &mut Vec<String>,
+    sorts: &mut IndexMap<String, String>,
+) -> Result<(), CausalSliceError> {
+    match arg {
+        AtomArg::Var(span, var) => match sorts.get(var) {
+            Some(previous) if previous != sort => unsupported(
+                span,
+                format!("variable `{var}` used at both sort `{previous}` and `{sort}`"),
+            ),
+            Some(_) => Ok(()),
+            None => {
+                sorts.insert(var.clone(), sort.to_owned());
+                order.push(var.clone());
+                Ok(())
+            }
+        },
+        AtomArg::Lit(_) => Ok(()),
+        AtomArg::App {
+            args, input_sorts, ..
+        } => {
+            for (arg, sort) in args.iter().zip(input_sorts) {
+                register_arg_vars(arg, sort, order, sorts)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> {
@@ -1157,33 +1580,92 @@ fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> 
 }
 
 fn elaborate_events(
-    egraph: &EGraph,
-    rules: &IndexMap<String, RuleModel>,
-    source_facts: &[FactKey],
-    batches: &[RuleExecutionTrace],
+    input: ElaborationInput<'_>,
     witnesses: &mut WitnessArena,
 ) -> Result<Elaboration, CausalSliceError> {
+    let ElaborationInput {
+        egraph,
+        rules,
+        relations,
+        source_facts,
+        source_traces,
+        batches,
+        trace_functions,
+    } = input;
     let mut dependencies = DepArena::default();
     let mut events = EventArena::default();
     let mut producers = IndexMap::default();
     let mut source_events = 0;
     for fact in source_facts {
-        if producers.contains_key(fact) {
-            continue;
+        let rows = if let Some(batches) = source_traces.get(&fact.command_index) {
+            let mut observed = Vec::new();
+            let mut new_rows = Vec::new();
+            for batch in batches {
+                for application in &batch.applications {
+                    if application.origin.index() >= batch.matches.len() {
+                        return Err(CausalSliceError::Invariant(format!(
+                            "source application origin {} exceeded {} matches",
+                            application.origin.index(),
+                            batch.matches.len()
+                        )));
+                    }
+                }
+                let applications = batch.applications.iter().collect::<Vec<_>>();
+                let effects =
+                    elaborate_fire_applications(egraph, &applications, trace_functions, witnesses)?;
+                observed.extend(effects.observed_rows);
+                new_rows.extend(effects.new_rows);
+                // Source commands are preserved in full, so their constructor
+                // syntax is available before every replay leaf without a
+                // retained dynamic firing dependency.
+            }
+            let expected = ground_atoms(
+                egraph,
+                std::slice::from_ref(&fact.atom),
+                &IndexMap::default(),
+                witnesses,
+                relations,
+            )?;
+            if !same_row_multiset(&expected, &observed) {
+                return Err(CausalSliceError::Invariant(format!(
+                    "native source applications for command {} do not match its source relation fact",
+                    fact.command_index
+                )));
+            }
+            new_rows
+        } else {
+            vec![source_row(egraph, relations, fact, witnesses)?]
+        };
+        for row in rows {
+            if producers.contains_key(&row) {
+                continue;
+            }
+            let event = events.push(ReplayEvent {
+                kind: EventKind::Source { row: row.clone() },
+                prerequisites: DepArena::EMPTY,
+                effective_outputs: vec![row.clone()],
+            })?;
+            let dependency = dependencies.event(event)?;
+            producers.insert(row, dependency);
+            source_events += 1;
         }
-        let event = events.push(ReplayEvent {
-            kind: EventKind::Source { fact: fact.clone() },
-            prerequisites: DepArena::EMPTY,
-            effective_outputs: vec![fact.clone()],
-        })?;
-        let dependency = dependencies.event(event)?;
-        producers.insert(fact.clone(), dependency);
-        source_events += 1;
     }
 
     let mut pending_fires = Vec::new();
     for (wave, batch) in batches.iter().enumerate() {
-        let mut new_outputs = IndexMap::<FactKey, DepId>::default();
+        let mut applications_by_origin = vec![Vec::new(); batch.matches.len()];
+        for application in &batch.applications {
+            let origin = application.origin.index();
+            let Some(applications) = applications_by_origin.get_mut(origin) else {
+                return Err(CausalSliceError::Invariant(format!(
+                    "application origin {origin} exceeded {} matches",
+                    batch.matches.len()
+                )));
+            };
+            applications.push(application);
+        }
+
+        let mut new_outputs = IndexMap::<RowKey, DepId>::default();
         for (ordinal, captured) in batch.matches.iter().enumerate() {
             let rule_name = captured.rule.as_ref();
             let model = rules.get(rule_name).ok_or_else(|| {
@@ -1198,25 +1680,24 @@ fn elaborate_events(
                 &model.var_sorts,
                 witnesses,
             )?;
-            let body = ground_atoms(&model.body, &bindings, witnesses)?;
-            let head = ground_atoms(&model.head, &bindings, witnesses)?;
+            let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
 
             let mut premise_dependencies = IndexSet::default();
-            for fact in &body {
-                match producers.get(fact) {
+            for row in &body {
+                match producers.get(row) {
                     Some(dependency) => {
                         premise_dependencies.insert(*dependency);
                     }
-                    None if new_outputs.contains_key(fact) => {
+                    None if new_outputs.contains_key(row) => {
                         return Err(CausalSliceError::Invariant(format!(
                             "rule `{rule_name}` matched a tuple produced only in the same wave: {}",
-                            display_fact(fact)
+                            display_row(row)
                         )));
                     }
                     None => {
                         return Err(CausalSliceError::Invariant(format!(
-                            "rule `{rule_name}` matched without a known structural premise: {}",
-                            display_fact(fact)
+                            "rule `{rule_name}` matched without a known source row: {}",
+                            display_row(row)
                         )));
                     }
                 }
@@ -1225,14 +1706,29 @@ fn elaborate_events(
             for dependency in premise_dependencies {
                 prerequisites = dependencies.and(prerequisites, dependency)?;
             }
-
-            let mut effective_outputs = IndexSet::default();
-            for fact in head {
-                if !producers.contains_key(&fact) && !new_outputs.contains_key(&fact) {
-                    effective_outputs.insert(fact);
-                }
+            for binding in bindings.values() {
+                prerequisites =
+                    dependencies.and(prerequisites, witnesses.availability(binding.syntax))?;
             }
-            let effective_outputs = effective_outputs.into_iter().collect::<Vec<_>>();
+
+            let effects = elaborate_fire_applications(
+                egraph,
+                &applications_by_origin[ordinal],
+                trace_functions,
+                witnesses,
+            )?;
+            let expected_head = ground_atoms(egraph, &model.head, &bindings, witnesses, relations)?;
+            if !same_row_multiset(&expected_head, &effects.observed_rows) {
+                return Err(CausalSliceError::Invariant(format!(
+                    "native applications for rule `{rule_name}` do not match its complete source head"
+                )));
+            }
+
+            let effective_outputs = effects
+                .new_rows
+                .into_iter()
+                .filter(|row| !producers.contains_key(row) && !new_outputs.contains_key(row))
+                .collect::<Vec<_>>();
             let grounding = GroundedFire {
                 rule: rule_name.to_owned(),
                 wave: u32::try_from(wave).map_err(|_| {
@@ -1243,7 +1739,7 @@ fn elaborate_events(
                 })?,
                 bindings,
             };
-            let promoted = if effective_outputs.is_empty() {
+            let promoted = if effective_outputs.is_empty() && effects.new_witnesses.is_empty() {
                 None
             } else {
                 let event = events.push(ReplayEvent {
@@ -1252,8 +1748,11 @@ fn elaborate_events(
                     effective_outputs: effective_outputs.clone(),
                 })?;
                 let dependency = dependencies.event(event)?;
-                for fact in effective_outputs {
-                    new_outputs.insert(fact, dependency);
+                for row in effective_outputs {
+                    new_outputs.insert(row, dependency);
+                }
+                for witness in effects.new_witnesses {
+                    witnesses.set_availability(witness, dependency);
                 }
                 Some(event)
             };
@@ -1265,8 +1764,8 @@ fn elaborate_events(
 
         // A bounded ruleset iteration searches against one pre-state. Publish
         // all newly produced rows only after every captured match is elaborated.
-        for (fact, dependency) in new_outputs {
-            producers.insert(fact, dependency);
+        for (row, dependency) in new_outputs {
+            producers.insert(row, dependency);
         }
     }
     Ok(Elaboration {
@@ -1281,8 +1780,9 @@ fn elaborate_events(
 fn observation_roots(
     egraph: &EGraph,
     checks: &[CheckModel],
+    relations: &IndexMap<String, RelationDecl>,
     traces: &[Vec<RuleExecutionTrace>],
-    producers: &IndexMap<FactKey, DepId>,
+    producers: &IndexMap<RowKey, DepId>,
     dependencies: &mut DepArena,
     witnesses: &mut WitnessArena,
 ) -> Result<DepId, CausalSliceError> {
@@ -1296,6 +1796,13 @@ fn observation_roots(
 
     let mut root = DepArena::EMPTY;
     for (check, batches) in checks.iter().zip(traces) {
+        if batches.iter().any(|batch| !batch.applications.is_empty()) {
+            return Err(CausalSliceError::Unsupported {
+                location: "positive check trace".to_owned(),
+                reason: "an observation that stages constructor or relation applications"
+                    .to_owned(),
+            });
+        }
         let captured = batches
             .iter()
             .flat_map(|batch| batch.matches.iter())
@@ -1313,15 +1820,18 @@ fn observation_roots(
             &check.var_sorts,
             witnesses,
         )?;
-        for fact in ground_atoms(&check.atoms, &bindings, witnesses)? {
-            match producers.get(&fact) {
+        for binding in bindings.values() {
+            root = dependencies.and(root, witnesses.availability(binding.syntax))?;
+        }
+        for row in ground_atoms(egraph, &check.atoms, &bindings, witnesses, relations)? {
+            match producers.get(&row) {
                 Some(dependency) => {
                     root = dependencies.and(root, *dependency)?;
                 }
                 None => {
                     return Err(CausalSliceError::Invariant(format!(
                         "positive check selected a tuple with no source or rule producer: {}",
-                        display_fact(&fact)
+                        display_row(&row)
                     )));
                 }
             }
@@ -1357,23 +1867,24 @@ fn reconstruct_bindings(
         let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
             CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
         })?;
-        let mut termdag = TermDag::default();
-        let term = sort.reconstruct_termdag_base(egraph.backend.base_values(), value, &mut termdag);
-        let expr = termdag.term_to_expr(&term, Span::Panic);
-        let GenericExpr::Lit(_, literal) = expr else {
-            return Err(CausalSliceError::Invariant(format!(
-                "scalar binding `{var}` of sort `{sort_name}` was not printable as a literal"
-            )));
+        let syntax = if sort.is_eq_sort() {
+            witnesses.by_endpoint(sort_name, value).ok_or_else(|| {
+                CausalSliceError::Unsupported {
+                    location: format!("captured binding `{var}`"),
+                    reason: format!(
+                        "a `{sort_name}` endpoint without a match-time constructor witness"
+                    ),
+                }
+            })?
+        } else {
+            scalar_witness(
+                egraph,
+                sort_name,
+                value,
+                witnesses,
+                &format!("binding `{var}`"),
+            )?
         };
-        if !literal_is_source_stable(&literal) {
-            return Err(CausalSliceError::Unsupported {
-                location: format!("captured binding `{var}`"),
-                reason: format!(
-                    "a `{sort_name}` witness that egglog's source printer cannot round-trip"
-                ),
-            });
-        }
-        let syntax = witnesses.intern_literal(sort_name, literal)?;
         let binding = BindingWitness {
             syntax,
             endpoint: value,
@@ -1385,34 +1896,305 @@ fn reconstruct_bindings(
 }
 
 fn ground_atoms(
+    egraph: &EGraph,
     atoms: &[AtomTemplate],
     bindings: &IndexMap<String, BindingWitness>,
     witnesses: &WitnessArena,
-) -> Result<Vec<FactKey>, CausalSliceError> {
+    relations: &IndexMap<String, RelationDecl>,
+) -> Result<Vec<RowKey>, CausalSliceError> {
     atoms
         .iter()
         .map(|atom| {
+            let declaration = &relations[&atom.relation];
             let args = atom
                 .args
                 .iter()
-                .map(|arg| match arg {
-                    AtomArg::Lit(literal) => Ok(literal.clone()),
-                    AtomArg::Var(_, var) => bindings
-                        .get(var)
-                        .map(|binding| binding.literal(witnesses).clone())
-                        .ok_or_else(|| {
-                            CausalSliceError::Invariant(format!(
-                                "grounding omitted source variable `{var}`"
-                            ))
-                        }),
-                })
+                .zip(&declaration.sorts)
+                .map(|(arg, sort)| ground_arg(egraph, arg, sort, bindings, witnesses))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(FactKey {
+            Ok(RowKey {
                 relation: atom.relation.clone(),
                 args,
             })
         })
         .collect()
+}
+
+struct FireApplicationEffects {
+    observed_rows: Vec<RowKey>,
+    new_rows: Vec<RowKey>,
+    new_witnesses: Vec<WitnessId>,
+}
+
+fn elaborate_fire_applications(
+    egraph: &EGraph,
+    applications: &[&TableApplication],
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    witnesses: &mut WitnessArena,
+) -> Result<FireApplicationEffects, CausalSliceError> {
+    let mut observed_rows = Vec::new();
+    let mut new_rows = Vec::new();
+    let mut new_witnesses = Vec::new();
+    for application in applications {
+        let meta = trace_functions.get(&application.table).ok_or_else(|| {
+            CausalSliceError::Unsupported {
+                location: format!("native action instruction {}", application.instruction),
+                reason: format!("an application of unmodeled table {:?}", application.table),
+            }
+        })?;
+        if application.args.len() != meta.input_sorts.len() {
+            return Err(CausalSliceError::Invariant(format!(
+                "application of `{}` captured {} arguments for runtime arity {}",
+                meta.name,
+                application.args.len(),
+                meta.input_sorts.len()
+            )));
+        }
+        match meta.kind {
+            TraceFunctionKind::Relation => {
+                let row = RowKey {
+                    relation: meta.name.clone(),
+                    args: meta
+                        .input_sorts
+                        .iter()
+                        .zip(&application.args)
+                        .map(|(sort, value)| TypedEndpoint {
+                            sort: sort.clone(),
+                            value: *value,
+                        })
+                        .collect(),
+                };
+                observed_rows.push(row.clone());
+                if application.newly_staged {
+                    new_rows.push(row);
+                }
+            }
+            TraceFunctionKind::Constructor => {
+                let children = meta
+                    .input_sorts
+                    .iter()
+                    .zip(&application.args)
+                    .map(|(sort, value)| {
+                        endpoint_witness(egraph, sort, *value, witnesses, &meta.name)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let expected = WitnessNode::App {
+                    sort: meta.output_sort.clone(),
+                    function: meta.name.clone(),
+                    children: children.clone(),
+                };
+                if application.newly_staged {
+                    let was_known = witnesses
+                        .by_endpoint(&meta.output_sort, application.result)
+                        .is_some();
+                    let witness = witnesses.intern_app(
+                        &meta.output_sort,
+                        &meta.name,
+                        children,
+                        application.result,
+                        DepArena::EMPTY,
+                    )?;
+                    if !was_known {
+                        new_witnesses.push(witness);
+                    }
+                } else {
+                    let witness = witnesses
+                        .by_endpoint(&meta.output_sort, application.result)
+                        .ok_or_else(|| CausalSliceError::Unsupported {
+                            location: format!("constructor application `{}`", meta.name),
+                            reason: "a table hit without a previously captured constructor witness"
+                                .to_owned(),
+                        })?;
+                    if witnesses.nodes[witness.index()].node != expected {
+                        return Err(CausalSliceError::Unsupported {
+                            location: format!("constructor application `{}`", meta.name),
+                            reason: "a table hit whose match-time syntax conflicts with its captured witness"
+                                .to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    new_rows.sort_by_key(|row| {
+        observed_rows
+            .iter()
+            .position(|observed| observed == row)
+            .unwrap_or(usize::MAX)
+    });
+    new_rows.dedup();
+    new_witnesses.sort_unstable_by_key(|id| id.index());
+    new_witnesses.dedup();
+    Ok(FireApplicationEffects {
+        observed_rows,
+        new_rows,
+        new_witnesses,
+    })
+}
+
+fn endpoint_witness(
+    egraph: &EGraph,
+    sort: &str,
+    value: Value,
+    witnesses: &mut WitnessArena,
+    function: &str,
+) -> Result<WitnessId, CausalSliceError> {
+    if let Some(witness) = witnesses.by_endpoint(sort, value) {
+        return Ok(witness);
+    }
+    let runtime_sort = egraph
+        .get_sort_by_name(sort)
+        .ok_or_else(|| CausalSliceError::Invariant(format!("runtime sort `{sort}` disappeared")))?;
+    if runtime_sort.is_eq_sort() {
+        return Err(CausalSliceError::Unsupported {
+            location: format!("constructor application `{function}`"),
+            reason: format!("a `{sort}` child endpoint without an earlier immutable witness"),
+        });
+    }
+    scalar_witness(
+        egraph,
+        sort,
+        value,
+        witnesses,
+        &format!("constructor `{function}` argument"),
+    )
+}
+
+fn scalar_witness(
+    egraph: &EGraph,
+    sort_name: &str,
+    value: Value,
+    witnesses: &mut WitnessArena,
+    location: &str,
+) -> Result<WitnessId, CausalSliceError> {
+    if let Some(witness) = witnesses.by_endpoint(sort_name, value) {
+        return Ok(witness);
+    }
+    let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
+        CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
+    })?;
+    let mut termdag = TermDag::default();
+    let term = sort.reconstruct_termdag_base(egraph.backend.base_values(), value, &mut termdag);
+    let expr = termdag.term_to_expr(&term, Span::Panic);
+    let GenericExpr::Lit(_, literal) = expr else {
+        return Err(CausalSliceError::Unsupported {
+            location: location.to_owned(),
+            reason: format!("a non-scalar `{sort_name}` value without a constructor witness"),
+        });
+    };
+    if !literal_is_source_stable(&literal) {
+        return Err(CausalSliceError::Unsupported {
+            location: location.to_owned(),
+            reason: format!(
+                "a `{sort_name}` witness that egglog's source printer cannot round-trip"
+            ),
+        });
+    }
+    let witness = witnesses.intern_literal(sort_name, literal)?;
+    witnesses.bind_endpoint(sort_name, value, witness)?;
+    Ok(witness)
+}
+
+fn source_row(
+    egraph: &EGraph,
+    relations: &IndexMap<String, RelationDecl>,
+    fact: &SourceFact,
+    witnesses: &mut WitnessArena,
+) -> Result<RowKey, CausalSliceError> {
+    let declaration = &relations[&fact.atom.relation];
+    for (arg, sort) in fact.atom.args.iter().zip(&declaration.sorts) {
+        let AtomArg::Lit(literal) = arg else {
+            return Err(CausalSliceError::Unsupported {
+                location: format!("source command {}", fact.command_index),
+                reason: "a constructed source value without native application evidence".to_owned(),
+            });
+        };
+        let value = literal_to_value(egraph.backend.base_values(), literal);
+        let witness = witnesses.intern_literal(sort, literal.clone())?;
+        witnesses.bind_endpoint(sort, value, witness)?;
+    }
+    ground_atoms(
+        egraph,
+        std::slice::from_ref(&fact.atom),
+        &IndexMap::default(),
+        witnesses,
+        relations,
+    )?
+    .pop()
+    .ok_or_else(|| CausalSliceError::Invariant("source grounding produced no row".to_owned()))
+}
+
+fn ground_arg(
+    egraph: &EGraph,
+    arg: &AtomArg,
+    sort: &str,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+) -> Result<TypedEndpoint, CausalSliceError> {
+    let value = match arg {
+        AtomArg::Lit(literal) => literal_to_value(egraph.backend.base_values(), literal),
+        AtomArg::Var(_, var) => bindings
+            .get(var)
+            .map(|binding| binding.endpoint)
+            .ok_or_else(|| {
+                CausalSliceError::Invariant(format!("grounding omitted source variable `{var}`"))
+            })?,
+        AtomArg::App {
+            function,
+            args,
+            input_sorts,
+            ..
+        } => {
+            let children = args
+                .iter()
+                .zip(input_sorts)
+                .map(|(arg, sort)| {
+                    let endpoint = ground_arg(egraph, arg, sort, bindings, witnesses)?;
+                    witnesses.by_endpoint(sort, endpoint.value).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "grounded constructor `{function}` child lacked its captured witness"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let node = WitnessNode::App {
+                sort: sort.to_owned(),
+                function: function.clone(),
+                children,
+            };
+            let witness =
+                witnesses
+                    .ids
+                    .get(&node)
+                    .ok_or_else(|| CausalSliceError::Unsupported {
+                        location: format!("grounded constructor `{function}`"),
+                        reason: "syntax that was unavailable at the captured firing".to_owned(),
+                    })?;
+            witnesses.endpoint(*witness).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "constructor witness `{function}` has no runtime endpoint"
+                ))
+            })?
+        }
+    };
+    Ok(TypedEndpoint {
+        sort: sort.to_owned(),
+        value,
+    })
+}
+
+fn same_row_multiset(left: &[RowKey], right: &[RowKey]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut unmatched = right.to_vec();
+    for row in left {
+        let Some(index) = unmatched.iter().position(|candidate| candidate == row) else {
+            return false;
+        };
+        unmatched.swap_remove(index);
+    }
+    unmatched.is_empty()
 }
 
 fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> IndexSet<EventId> {
@@ -1432,8 +2214,8 @@ fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> 
             DepNode::Event(event) => {
                 if retained.insert(event) {
                     let replay_event = &events.events[event.index()];
-                    if let EventKind::Source { fact } = &replay_event.kind {
-                        let _retained_source_fact = fact;
+                    if let EventKind::Source { row } = &replay_event.kind {
+                        let _retained_source_row = row;
                     }
                     work.push(replay_event.prerequisites);
                 }
@@ -1467,8 +2249,10 @@ fn emit_program<'a>(
                 .var_order
                 .iter()
                 .map(|var| {
-                    let literal = fire.bindings[var].literal(witnesses).clone();
-                    (var.clone(), Expr::Lit(schedule_span.clone(), literal))
+                    (
+                        var.clone(),
+                        fire.bindings[var].expr(witnesses, schedule_span),
+                    )
                 })
                 .collect();
             Schedule::RunRule(
@@ -1588,12 +2372,8 @@ fn validate_replay_schedule(
                     config.rule
                 )));
             }
-            if config
-                .bindings
-                .iter()
-                .any(|(_, expr)| !matches!(expr, GenericExpr::Lit(..)))
-            {
-                return unsupported(span, "a non-literal replay witness".to_owned());
+            for (_, expr) in &config.bindings {
+                validate_closed_replay_witness(expr, span)?;
             }
             Ok(())
         }
@@ -1609,6 +2389,22 @@ fn validate_replay_schedule(
                 "an automatic run, repeat, or saturate node in emitted source".to_owned(),
             )
         }
+    }
+}
+
+fn validate_closed_replay_witness(expr: &Expr, span: &Span) -> Result<(), CausalSliceError> {
+    match expr {
+        GenericExpr::Lit(..) => Ok(()),
+        GenericExpr::Call(_, _, args) => {
+            for arg in args {
+                validate_closed_replay_witness(arg, span)?;
+            }
+            Ok(())
+        }
+        GenericExpr::Var(_, var) => unsupported(
+            span,
+            format!("a replay witness containing free variable `{var}`"),
+        ),
     }
 }
 
@@ -1645,17 +2441,17 @@ fn command_schedule_span(command: &Command) -> Option<Span> {
     })
 }
 
-fn display_fact(fact: &FactKey) -> String {
-    if fact.args.is_empty() {
-        format!("({})", fact.relation)
+fn display_row(row: &RowKey) -> String {
+    if row.args.is_empty() {
+        format!("({})", row.relation)
     } else {
-        let args = fact
+        let args = row
             .args
             .iter()
-            .map(ToString::to_string)
+            .map(|endpoint| format!("<{}>", endpoint.sort))
             .collect::<Vec<_>>()
             .join(" ");
-        format!("({} {args})", fact.relation)
+        format!("({} {args})", row.relation)
     }
 }
 

@@ -244,6 +244,13 @@ pub struct FunctionConfig {
 }
 
 impl EGraph {
+    /// Return the core table backing a source-visible function. This is used
+    /// by opt-in native trace consumers to recover typed function metadata
+    /// from low-level table application events.
+    pub fn function_table_id(&self, function: FunctionId) -> TableId {
+        self.funcs[function].table
+    }
+
     /// Start an opt-in native match trace. Traced rules must compile to a
     /// single-bag plan whose final binding contains every required source
     /// variable.
