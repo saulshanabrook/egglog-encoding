@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- The term/proof encoding no longer supports `:no-merge` functions: a program declaring one is reported unsupported and must run on the native backend (which handles `:no-merge` conflict semantics directly). This removes the rule/`current`-helper machinery the encoding previously used to emulate `:no-merge`. Give a function a `:merge` (e.g. `:merge old`) to keep it proof/term-encoding supported.
 - `(fail <command>+)` now accepts multiple commands, running them in order and succeeding if any one fails (previously it wrapped a single command). Desugaring, global removal, and proof encoding keep the whole expansion of a wrapped command inside the `fail`, so `fail` now works over commands that expand to several — including `(fail (set …))` under the term/proof encoding.
 - In the term/proof encoding, load `(input …)` for custom functions (with or without `:merge`, including `:no-merge` `Unit`-output ones) natively via `EGraph::native_input`, the same path already used for constructors and relations. This removes the per-input bodyless "loader rule" (and its fresh ruleset) that custom-function inputs used to compile to.
 - Make proof extraction deterministic so proof-mode snapshot tests no longer flake on backends with nondeterministic row order (the differential-dataflow backend).

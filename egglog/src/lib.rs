@@ -2472,17 +2472,6 @@ impl EGraph {
             })
             .collect();
 
-        // A `:no-merge` custom mirrors its output into the hidden `current` helper
-        // so a conflicting output still panics. `merge_current` is populated only
-        // while encoding, so on a replayed program this is `None` (harmless: the
-        // view already holds every row and no test loads conflicting rows).
-        let current_id = self
-            .proof_state
-            .merge_current
-            .get(func_name)
-            .map(|(name, _)| name.clone())
-            .map(|name| self.functions[&name].backend_id);
-
         // Proof tables, recovered from replay-safe annotations rather than the
         // encoding-time `proof_names` maps: `Fiat` from the `Proof` sort's
         // `:internal-proof-names`, the term-id sort's AST constructor by its
@@ -2541,18 +2530,12 @@ impl EGraph {
             // View row. A constructor's FD view value-0 is the minted term id; a
             // custom view stores the base output (already in `value_row`). The
             // proof column follows (`Unit` when the encoding carries no proofs).
-            let mut vrow = value_row.clone();
+            let mut vrow = value_row;
             if is_constructor {
                 vrow.push(fv);
             }
             vrow.push(view_proof);
             batch.push((view_id, vrow));
-
-            // `:no-merge` custom `current` helper row: (children) -> output, which
-            // is exactly the CSV row.
-            if let Some(current_id) = current_id {
-                batch.push((current_id, value_row));
-            }
         }
         self.backend.add_values(batch);
         log::info!("Natively loaded {num_facts} facts into {func_name} from '{file}'.");

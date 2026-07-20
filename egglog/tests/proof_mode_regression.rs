@@ -66,8 +66,8 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
                 None,
                 r#"
                 (relation Edge (String String))
-                (function score (String) i64 :no-merge)
-                (function seen (String) Unit :no-merge)
+                (function score (String) i64 :merge old)
+                (function seen (String) Unit :merge old)
                 (input Edge "edges.tsv")
                 (input score "scores.tsv")
                 (input seen "seen.tsv")
@@ -83,45 +83,18 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
 }
 
 #[test]
-fn term_and_proof_modes_allow_no_merge_outputs_in_the_same_eclass() {
-    for mut egraph in [
-        EGraph::new_with_term_encoding(),
-        EGraph::new_with_proofs().with_proof_testing(),
-    ] {
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (sort Foo)
-                (function bar () Foo :no-merge)
-                (constructor baz () Foo)
-                (constructor qux () Foo)
-                (set (bar) (baz))
-                (union (baz) (qux))
-                (set (bar) (qux))
-                "#,
-            )
-            .unwrap();
-    }
-}
-
-#[test]
-fn term_and_proof_modes_reject_distinct_no_merge_primitive_outputs() {
+fn term_and_proof_modes_reject_no_merge_functions() {
+    // `:no-merge` functions are not modeled by the term/proof encoding; a program
+    // declaring one is unsupported (it must run on the native backend instead).
     for mut egraph in [
         EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs().with_proof_testing(),
     ] {
         let error = egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (function score () i64 :no-merge)
-                (set (score) 1)
-                (set (score) 2)
-                "#,
-            )
+            .parse_and_run_program(None, "(function score () i64 :no-merge)")
             .unwrap_err();
-        assert!(error.to_string().contains("Illegal merge attempted"));
+        assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
+        assert!(error.to_string().contains("`:no-merge`"));
     }
 }
 
@@ -147,14 +120,14 @@ fn proof_mode_rejects_fail_wrapped_input() {
 
 #[test]
 fn proof_mode_allows_fail_wrapping_set() {
-    // A `(fail (set …))` is now accepted by proof encoding (it used to be rejected
-    // as a non-atomic wrapped command). The set succeeds, so `fail` reports that
-    // its wrapped command did not fail.
+    // A `(fail (set …))` is accepted by proof encoding (it used to be rejected as a
+    // non-atomic wrapped command). The set succeeds, so `fail` reports that its
+    // wrapped command did not fail.
     let error = EGraph::new_with_proofs()
         .parse_and_run_program(
             None,
             r#"
-            (function score () i64 :no-merge)
+            (function score () i64 :merge old)
             (fail (set (score) 1))
             "#,
         )
@@ -168,7 +141,7 @@ fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
     // A wrapped command that encodes to several commands is now accepted;
     // declaring the function succeeds, so `fail` reports it did not fail.
     let error = EGraph::new_with_proofs()
-        .parse_and_run_program(None, "(fail (function score () i64 :no-merge))")
+        .parse_and_run_program(None, "(fail (function score () i64 :merge old))")
         .unwrap_err();
 
     assert!(matches!(error, Error::ExpectFail(..)));
@@ -182,7 +155,7 @@ fn proof_mode_fail_catches_failure_among_wrapped_commands() {
         .parse_and_run_program(
             None,
             r#"
-            (function score () i64 :no-merge)
+            (function score () i64 :merge old)
             (fail (set (score) 1) (check (= (score) 2)))
             "#,
         )

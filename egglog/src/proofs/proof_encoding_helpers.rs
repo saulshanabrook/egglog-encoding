@@ -502,6 +502,10 @@ pub enum ProofEncodingUnsupportedReason {
         "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
     )]
     MergeActionBlock,
+    #[error(
+        "`:no-merge` functions are not supported by the term/proof encoding; run them on the native backend (without term encoding or proofs), or give the function a `:merge` (e.g. `:merge old`)."
+    )]
+    NoMergeFunction,
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -584,6 +588,22 @@ pub(crate) fn command_supports_proof_encoding(
         && schema.is_tuple_output()
     {
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
+    }
+
+    // `:no-merge` functions (a `function` decl with no `:merge`) are not modeled by
+    // the encoding — the native backend handles their conflict semantics directly.
+    // A file using one is proof-unsupported and runs plain only. Constructors and
+    // relations are `Constructor` commands (not `Function`), and encoded globals
+    // (`:internal-let`, produced by `remove_globals`, which runs before this check
+    // in the plain-resolve path `file_supports_proofs` uses) have their own FD-view
+    // encoding — both are excluded.
+    if let crate::ast::GenericCommand::Function {
+        merge: None,
+        let_binding: false,
+        ..
+    } = command
+    {
+        return Err(ProofEncodingUnsupportedReason::NoMergeFunction);
     }
 
     // A `:merge` action block runs actions before its result; the proof encoding only instruments

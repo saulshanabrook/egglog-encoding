@@ -39,11 +39,6 @@ pub(crate) struct EncodingState {
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
     pub container_rebuild_proof_name: HashMap<String, String>,
-    /// `:no-merge` custom function name -> (hidden current-value function,
-    /// input arity). The `current` helper carries the native (non-FD) merge so a
-    /// `:no-merge` conflict on a primitive output still panics; `update_view`
-    /// writes the output value into it.
-    pub merge_current: HashMap<String, (String, usize)>,
     /// Names of custom (non-constructor) functions that have a `:merge`, so their
     /// encoded view takes the FD pair-valued shape `(children) -> (eclass, proof)`
     /// (the user merge runs in that view's own `:merge`).
@@ -76,7 +71,6 @@ impl EncodingState {
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
-            merge_current: HashMap::default(),
             fd_custom_funcs: HashSet::default(),
             term_header_added: false,
             original_typechecking: None,
@@ -525,84 +519,6 @@ impl<'a> ProofInstrumentor<'a> {
         }
     }
 
-    /// Use native `:no-merge` for primitive outputs and compare UF leaders for eq-sort outputs.
-    fn handle_no_merge_fn(
-        &mut self,
-        fdecl: &ResolvedFunctionDecl,
-        child_names: &[String],
-        child_names_str: &str,
-        rebuilding_ruleset: &str,
-    ) -> String {
-        let name = &fdecl.name;
-        let output_is_eq_sort = fdecl.resolved_schema.output().is_eq_sort();
-
-        if !output_is_eq_sort {
-            let input_sorts = ListDisplay(&fdecl.schema.input, " ");
-            let output_sort = fdecl.schema.output();
-            let current_name = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh(&format!("{name}Current"));
-            self.egraph
-                .proof_state
-                .merge_current
-                .insert(name.clone(), (current_name.clone(), child_names.len()));
-            return format!(
-                "(function {current_name} ({input_sorts}) {output_sort}
-                    :no-merge
-                    :unextractable
-                    :internal-hidden)"
-            );
-        }
-
-        // Distinct encoded values can already belong to the same e-class. Wait
-        // for their encoded UF leaders before deciding whether the conflict is real.
-        let view_name = self.view_name(name);
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
-        let uf_name = self.uf_name(fdecl.resolved_schema.output().name());
-
-        format!(
-            "(rule (({view_name} {child_names_str} old)
-                    ({view_name} {child_names_str} new)
-                    (= (values old_leader_ old_proof_) ({uf_name} old))
-                    (= (values new_leader_ new_proof_) ({uf_name} new))
-                    (!= old_leader_ new_leader_)
-                    (= (ordering-max old new) new))
-                   ((panic \"Illegal merge attempted for function {name}\"))
-                    :ruleset {rebuilding_ruleset}
-                    :name \"{fresh_name}\")"
-        )
-    }
-
-    /// Generate the extra rule (if any) that handles a function's merge or
-    /// congruence. Constructors and custom functions with a `:merge` are handled
-    /// entirely by their FD view's own `:merge` (congruence / the user merge), so
-    /// they emit no extra rule. Only `:no-merge` custom functions still need a rule
-    /// (a conflict panic for eq-sort outputs, a native `:no-merge` `current` helper
-    /// for primitive outputs).
-    fn handle_merge_or_congruence(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        // Globals use the constructor-style congruence view (handled by the view's
-        // own `:merge`), so they need no extra `:no-merge` conflict rule.
-        if fdecl.subtype == FunctionSubtype::Custom
-            && fdecl.merge.is_none()
-            && !self.is_encoded_global(fdecl)
-        {
-            let child_names = fdecl
-                .schema
-                .input
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("c{i}_"))
-                .collect::<Vec<_>>();
-            let child_names_str = child_names.join(" ");
-            let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
-            self.handle_no_merge_fn(fdecl, &child_names, &child_names_str, &rebuilding_ruleset)
-        } else {
-            String::new()
-        }
-    }
-
     /// Each function/constructor gets a term table and a view table.
     /// The term table stores underlying representative terms.
     /// The view table stores child terms and their eclass.
@@ -636,7 +552,6 @@ impl<'a> ProofInstrumentor<'a> {
                 schema.output().to_string()
             }
         );
-        let view_sorts = format!("{in_sorts} {out_type}");
 
         let view_sort = if output_is_eclass {
             schema.output().clone()
@@ -653,7 +568,6 @@ impl<'a> ProofInstrumentor<'a> {
             .proof_names
             .fn_to_term_sort
             .insert(name.clone(), view_sort.clone());
-        let merge_rule = self.handle_merge_or_congruence(fdecl);
         // View is always a function (returning Proof or Unit), with :merge old
         let proof_type = self.proof_type_str().to_string();
         let mut view_flags = String::new();
@@ -675,8 +589,8 @@ impl<'a> ProofInstrumentor<'a> {
         // {Unit|Proof})` keyed on children only. Constructors always use it (their
         // `:merge` resolves congruence: keep the smaller eclass, union the two in
         // the sort's `@UF`). Custom functions with a `:merge` also use it (their
-        // `:merge` runs the user merge — no union). `:no-merge` customs keep the
-        // all-column `(children output) -> {Unit|Proof}` form.
+        // `:merge` runs the user merge — no union). `:no-merge` functions never
+        // reach here: they are rejected up front by `command_supports_proof_encoding`.
         let fd_view = self.is_fd_view(fdecl);
         if fd_view && fdecl.subtype == FunctionSubtype::Custom {
             self.egraph.proof_state.fd_custom_funcs.insert(name.clone());
@@ -723,9 +637,9 @@ impl<'a> ProofInstrumentor<'a> {
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {custom_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         } else {
-            format!(
-                "(function {view_name} ({view_sorts}) {proof_type} :merge old :internal-term-constructor {name}{view_flags})"
-            )
+            // The only remaining case is a `:no-merge` function, which
+            // `command_supports_proof_encoding` rejects before encoding.
+            unreachable!("`:no-merge` functions are not encoded (rejected up front)")
         };
         self.parse_program(&format!(
             "
@@ -735,7 +649,6 @@ impl<'a> ProofInstrumentor<'a> {
             {view_decl}
             (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
             (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
-            {merge_rule}
             {delete_rule}",
         ))
     }
@@ -1596,21 +1509,10 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// Update a non-FD (all-key) view with the given arguments (children + output).
-    /// View is always a function (returning Proof or Unit). For a `:no-merge`
-    /// primitive-output custom, also writes the output into its native-merge
-    /// `current` helper so a conflicting output still panics.
+    /// View is always a function (returning Proof or Unit).
     fn update_view(&mut self, fname: &str, args: &[String], proof: &str) -> String {
         let view_name = self.view_name(fname);
-        let view_update = format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "));
-        if let Some((current_name, input_arity)) =
-            self.egraph.proof_state.merge_current.get(fname).cloned()
-            && args.len() == input_arity + 1
-        {
-            let inputs = ListDisplay(&args[..input_arity], " ");
-            let output = &args[input_arity];
-            return format!("{view_update}\n(set ({current_name} {inputs}) {output})");
-        }
-        view_update
+        format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "))
     }
 
     /// Write a row into a constructor's functional-dependency view
