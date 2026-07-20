@@ -1,12 +1,14 @@
 use crate::{
     ResolvedCall, Term, TermDag, TermId,
-    ast::{FunctionSubtype, ResolvedExpr, ResolvedFact, ResolvedNCommand},
+    ast::{FunctionSubtype, GenericNCommand, ResolvedExpr, ResolvedFact, ResolvedNCommand},
     proofs::{
-        proof_checker::{gather_globals, run_merge, run_merge_subexpr},
+        proof_checker::{
+            ProofCheckError, ProofCheckErrorKind, eval_expr_with_subst, gather_globals, run_merge,
+        },
         proof_encoding_helpers::EncodingNames,
     },
     typechecking::{FuncType, PrimitiveValidator},
-    util::{HEntry, HashMap, IndexSet, SymbolGen},
+    util::{HEntry, HashMap, HashSet, IndexSet, SymbolGen},
 };
 use egglog_ast::generic_ast::Literal;
 use egglog_numeric_id::{DenseIdMap, NumericId, define_id};
@@ -23,6 +25,73 @@ impl fmt::Display for ProofId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.index())
     }
+}
+
+/// Find the subexpression at pre-order position `idx` in `expr`'s tree (index 0
+/// is `expr` itself). Must mirror the indexing the proof encoder uses to tag
+/// `MergeFnIdx` proofs.
+fn subexpr_at_index(expr: &ResolvedExpr, idx: usize) -> Option<&ResolvedExpr> {
+    let mut counter = 0;
+    fn walk<'a>(
+        expr: &'a ResolvedExpr,
+        target: usize,
+        counter: &mut usize,
+    ) -> Option<&'a ResolvedExpr> {
+        if *counter == target {
+            return Some(expr);
+        }
+        *counter += 1;
+        if let ResolvedExpr::Call(_, _, args) = expr {
+            for arg in args {
+                if let Some(found) = walk(arg, target, counter) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+    walk(expr, idx, &mut counter)
+}
+
+/// Run subexpression `idx` of a function's merge body with `old`/`new` bound to
+/// `old_term`/`new_term`, returning the resulting term. `idx` is a pre-order
+/// index over the merge body tree (see [`subexpr_at_index`]); `idx == 0` is the
+/// whole body. Evaluating the subexpression reconstructs the term the FD
+/// custom-function view merge minted at that position, so each nested
+/// merge-body subexpression yields its own conclusion. Used when converting a
+/// `MergeFnIdx`/`MergeFnRow` raw proof into its `MergeFn` conclusion.
+fn run_merge_subexpr(
+    term_dag: &mut TermDag,
+    func_name: &str,
+    prog: &[ResolvedNCommand],
+    old_term: TermId,
+    new_term: TermId,
+    idx: usize,
+) -> Result<(TermId, HashSet<Proposition>), ProofCheckError> {
+    let mut subst = HashMap::default();
+    subst.insert("old".to_string(), old_term);
+    subst.insert("new".to_string(), new_term);
+    for cmd in prog {
+        if let GenericNCommand::Function(func_decl) = cmd
+            && func_decl.name == func_name
+        {
+            let merge = func_decl.merge.as_ref().ok_or_else(|| {
+                ProofCheckError::from(ProofCheckErrorKind::FunctionNotFound {
+                    function_name: func_name.to_string(),
+                })
+            })?;
+            let subexpr = subexpr_at_index(&merge.result, idx).ok_or_else(|| {
+                ProofCheckError::from(ProofCheckErrorKind::FunctionNotFound {
+                    function_name: format!("{func_name} (merge subexpr index {idx} out of range)"),
+                })
+            })?;
+            return eval_expr_with_subst("merge_function", subexpr, term_dag, &subst);
+        }
+    }
+    Err(ProofCheckErrorKind::FunctionNotFound {
+        function_name: func_name.to_string(),
+    }
+    .into())
 }
 
 /// A proof straight from the e-graph, not exposed to users.
