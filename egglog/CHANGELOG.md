@@ -2,6 +2,7 @@
 
 ## [Unreleased] - ReleaseDate
 
+- In the term/proof encoding, load `(input …)` for custom functions (with or without `:merge`, including `:no-merge` `Unit`-output ones) natively via `EGraph::native_input`, the same path already used for constructors and relations. This removes the per-input bodyless "loader rule" (and its fresh ruleset) that custom-function inputs used to compile to.
 - Make proof extraction deterministic so proof-mode snapshot tests no longer flake on backends with nondeterministic row order (the differential-dataflow backend).
 - Speed up freeing external functions, which was quadratic in the number of short-lived one-shot rules created (e.g. under the term/proof encoding).
 - Speed up `core-relations`' `merge_all` by resetting only the tables that changed during the call instead of every table.

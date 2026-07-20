@@ -452,19 +452,20 @@ impl Parser {
                                     proof_func =
                                         Some(pf.expect_atom("internal-proof-func function name")?);
                                 }
-                                (":internal-proof-names", [congr, trans, sym, normalize]) => {
+                                (":internal-proof-names", [congr, trans, sym, normalize, fiat]) => {
                                     proof_constructors = Some(ProofConstructorNames {
                                         congr: congr.expect_atom("congr constructor")?,
                                         trans: trans.expect_atom("trans constructor")?,
                                         sym: sym.expect_atom("sym constructor")?,
                                         normalize: normalize
                                             .expect_atom("container-normalize constructor")?,
+                                        fiat: fiat.expect_atom("fiat constructor")?,
                                     });
                                 }
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }

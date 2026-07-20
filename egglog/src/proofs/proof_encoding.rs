@@ -44,11 +44,6 @@ pub(crate) struct EncodingState {
     /// name alone. Constructors are always FD (known from the subtype) and so are
     /// not recorded here.
     pub fd_custom_funcs: HashSet<String>,
-    /// Ruleset names of the bodyless "input loader" rules the encoding emits for
-    /// `(input …)` execution (see [`ProofInstrumentor::lower_inputs_as_loader_rules`]).
-    /// Recorded so the term-encoding `NormRule` arm instruments their heads with
-    /// `Fiat` (local rule-head lets) rather than as a normal rule.
-    pub input_loader_rulesets: HashSet<String>,
     /// Term-construction side channel (proof mode): maps a constructor term's
     /// canonical e-class var to `(natural e-class var, connector proof var)`,
     /// where the connector proves `natural = canonical`. A parent term reads its
@@ -77,7 +72,6 @@ impl EncodingState {
             container_rebuild_proof_name: HashMap::default(),
             merge_current: HashMap::default(),
             fd_custom_funcs: HashSet::default(),
-            input_loader_rulesets: HashSet::default(),
             nat_conn: HashMap::default(),
             term_header_added: false,
             original_typechecking: None,
@@ -115,78 +109,6 @@ impl<'a> ProofInstrumentor<'a> {
                         .into_iter()
                         .map(ResolvedNCommand::CoreAction),
                 );
-            } else {
-                lowered.push(command);
-            }
-        }
-        Ok(lowered)
-    }
-
-    /// Lower `(input …)` for the **execution** program. Constructor-shaped inputs
-    /// (constructors and relations — a fresh term id plus a `Unit` output) are kept
-    /// as `Input` commands and loaded natively at run time
-    /// ([`EGraph::native_input`]): the rows are inserted straight into the encoded
-    /// term/view/proof tables, with no rule to compile.
-    ///
-    /// Custom functions with a *base* output value (e.g. `(function f () String)`)
-    /// don't fit that shape, so each becomes a single bodyless "loader" rule (all
-    /// rows' fiat actions in its head) in a fresh ruleset, run once — the fiat mints
-    /// become *local* rule-head `let`s, so global-removal makes no per-mint function
-    /// (the O(N²)/many-tables blowup). The loader head is instrumented with `Fiat`,
-    /// so proofs match the per-row top-level form the checker uses and no loader
-    /// rule ever appears in a proof.
-    pub(crate) fn lower_inputs_for_execution(
-        egraph: &mut EGraph,
-        program: Vec<ResolvedNCommand>,
-    ) -> Result<Vec<ResolvedNCommand>, Error> {
-        let mut lowered = Vec::with_capacity(program.len());
-        for command in program {
-            if let ResolvedNCommand::Input { span, name, file } = &command {
-                // Only constructor-subtype functions get the FD view / term-sort
-                // encoding that `native_input` inserts into. `(relation …)` desugars
-                // to a constructor, so relations qualify; plain custom functions
-                // (with or without `:merge`, including `:no-merge` Unit-output ones)
-                // do not, and go through the loader rule.
-                let native_shape = egraph
-                    .proof_state
-                    .original_typechecking
-                    .as_ref()
-                    .and_then(|tc| tc.type_info.get_func_type(name))
-                    .map(|ft| ft.subtype == FunctionSubtype::Constructor)
-                    .unwrap_or(false);
-                if native_shape {
-                    lowered.push(command);
-                    continue;
-                }
-                let actions = Self::input_actions(egraph, span, name, file)?;
-                if actions.is_empty() {
-                    continue;
-                }
-                let ruleset = egraph.parser.symbol_gen.fresh("input_loader_ruleset");
-                let rule_name = egraph.parser.symbol_gen.fresh("input_loader");
-                egraph
-                    .proof_state
-                    .input_loader_rulesets
-                    .insert(ruleset.clone());
-                let rule = ResolvedRule {
-                    span: span.clone(),
-                    head: ResolvedActions::new(actions),
-                    body: vec![],
-                    name: rule_name,
-                    ruleset: ruleset.clone(),
-                    eval_mode: RuleEvalMode::Naive,
-                    no_decomp: false,
-                    include_subsumed: false,
-                };
-                lowered.push(ResolvedNCommand::AddRuleset(span.clone(), ruleset.clone()));
-                lowered.push(ResolvedNCommand::NormRule { rule });
-                lowered.push(ResolvedNCommand::RunSchedule(ResolvedSchedule::Run(
-                    span.clone(),
-                    ResolvedRunConfig {
-                        ruleset,
-                        until: None,
-                    },
-                )));
             } else {
                 lowered.push(command);
             }
@@ -2153,23 +2075,6 @@ impl<'a> ProofInstrumentor<'a> {
     /// adding to term and view tables in actions.
     /// When proofs are enabled we query proof tables, then build a proof for the rule in the actions.
     /// Finally, each view update also updates the proof tables.
-    /// Instrument a bodyless input-loader rule (see
-    /// [`Self::lower_inputs_as_loader_rules`]). Unlike [`Self::instrument_rule`],
-    /// the head is instrumented with `Fiat` (not the rule's own justification), so
-    /// input facts get the same base-fact proofs as the per-row top-level form and
-    /// the loader rule never appears in a proof. The empty body fires the head once
-    /// when the loader ruleset is run; `:naive` because the head reads the database
-    /// (`set-if-empty` / view-proof). The mints land as local rule-head `let`s, so
-    /// no per-mint global function is created.
-    fn instrument_input_loader_rule(&mut self, rule: &ResolvedRule) -> Vec<Command> {
-        self.egraph.proof_state.nat_conn.clear();
-        let block = self
-            .instrument_actions(&rule.head.0, &Justification::Fiat)
-            .join("\n");
-        let instrumented = format!("(rule () ({block}) :ruleset {} :naive)", rule.ruleset);
-        self.parse_program(&instrumented)
-    }
-
     fn instrument_rule(&mut self, rule: &ResolvedRule) -> Vec<Command> {
         // `nat_conn` maps this unit's freshly-minted vars (and let-bound names) to
         // their natural/connector; it is scoped to a single generated program, so
@@ -2417,16 +2322,7 @@ impl<'a> ProofInstrumentor<'a> {
                 res.extend(self.rebuilding_subsumed_rules(fdecl));
             }
             ResolvedNCommand::NormRule { rule } => {
-                if self
-                    .egraph
-                    .proof_state
-                    .input_loader_rulesets
-                    .contains(&rule.ruleset)
-                {
-                    res.extend(self.instrument_input_loader_rule(rule));
-                } else {
-                    res.extend(self.instrument_rule(rule));
-                }
+                res.extend(self.instrument_rule(rule));
             }
             ResolvedNCommand::CoreAction(action) => {
                 // Each global action is its own generated program, so naturals do
@@ -2553,9 +2449,10 @@ impl<'a> ProofInstrumentor<'a> {
             }
             let is_set_or_expr = match &command {
                 ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, e)) => !touches_container(e),
-                ResolvedNCommand::CoreAction(ResolvedAction::Set(_, _, args, rhs)) => {
-                    !args.iter().chain(std::iter::once(rhs)).any(touches_container)
-                }
+                ResolvedNCommand::CoreAction(ResolvedAction::Set(_, _, args, rhs)) => !args
+                    .iter()
+                    .chain(std::iter::once(rhs))
+                    .any(touches_container),
                 _ => false,
             };
             if !matches!(

@@ -50,6 +50,11 @@ pub struct ProofConstructorNames {
     pub trans: String,
     pub sym: String,
     pub normalize: String,
+    /// The `Fiat` justification constructor. Recorded here so that
+    /// [`EGraph::native_input`] can recover it (to mint base-fact proofs for
+    /// `(input …)` rows) when replaying an encoded program in a fresh e-graph,
+    /// where the encoding-time `proof_names` maps are unavailable.
+    pub fiat: String,
 }
 
 #[derive(Clone, Debug)]
@@ -1044,8 +1049,8 @@ where
                 if let Some(pc) = proof_constructors {
                     write!(
                         f,
-                        " :internal-proof-names {} {} {} {}",
-                        pc.congr, pc.trans, pc.sym, pc.normalize
+                        " :internal-proof-names {} {} {} {} {}",
+                        pc.congr, pc.trans, pc.sym, pc.normalize, pc.fiat
                     )?;
                 }
                 write!(f, ")")
