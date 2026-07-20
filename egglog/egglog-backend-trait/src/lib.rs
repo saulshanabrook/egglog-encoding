@@ -205,6 +205,12 @@ pub type ContainerMergeFn =
 ///
 /// See the crate docs for which methods are required vs. optional and how the
 /// ergonomic sugar on `dyn Backend` relates to the `_dyn` methods here.
+///
+/// Under the term/proof encoding the frontend lowers e-graph constructors to
+/// relation tables plus functional-dependency view functions, and `union` to a
+/// `:merge` on a union-find function. A backend therefore needs no dedicated
+/// `union` or `constructor` operation — generic tables, rules, and `:merge`
+/// suffice.
 pub trait Backend: Send + Sync {
     // -- table lifecycle ----------------------------------------------------
 

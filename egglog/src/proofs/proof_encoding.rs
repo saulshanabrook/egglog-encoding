@@ -33,11 +33,16 @@ pub(crate) struct EncodingState {
     /// `:no-merge` conflict on a primitive output still panics; `update_view`
     /// writes the output value into it.
     pub merge_current: HashMap<String, (String, usize)>,
-    /// Custom function names whose view uses the FD pair-valued shape (custom
-    /// functions with a `:merge`, whose user merge runs in the view's own
-    /// `:merge`). Recorded when the view is declared so query/action sites (which
-    /// only have a name / [`FuncType`]) route as FD. Constructors are always FD
-    /// and are detected by subtype, so they are not recorded here.
+    /// Names of custom (non-constructor) functions that have a `:merge`, so their
+    /// encoded view takes the FD pair-valued shape `(children) -> (eclass, proof)`
+    /// (the user merge runs in that view's own `:merge`).
+    ///
+    /// Needed only because query/action sites see a [`FuncType`] (name, subtype,
+    /// sorts) that reveals a constructor but *not* whether a `Custom` function has
+    /// a `:merge`. We record the merge-having customs here when their view is
+    /// declared, so [`Self::func_type_is_fd_view`] can route them as FD from the
+    /// name alone. Constructors are always FD (known from the subtype) and so are
+    /// not recorded here.
     pub fd_custom_funcs: HashSet<String>,
     /// Ruleset names of the bodyless "input loader" rules the encoding emits for
     /// `(input …)` execution (see [`ProofInstrumentor::lower_inputs_as_loader_rules`]).

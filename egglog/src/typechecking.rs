@@ -384,15 +384,6 @@ impl EGraph {
         });
     }
 
-    /// Shared registration engine. Stores one primitive definition, plus
-    /// one runtime id per valid [`Context`]. Each wrapper carries its
-    /// specific context stamped onto the state wrapper at invoke time.
-    ///
-    /// The typechecker filters by the context-id mask at each call site;
-    /// an `unstable-fn` value built around the primitive bakes *all*
-    /// signature-matching context ids, and `FunctionContainer::apply`
-    /// picks the one whose context matches the application ctx — so
-    /// values flow freely across contexts.
     /// Register a term-encoding op primitive whose runtime entrypoint is minted
     /// by the backend SPI (`register_get_fresh` / `register_set_if_empty` /
     /// `register_view_proof`) rather than by wrapping the primitive in a registry
@@ -416,6 +407,15 @@ impl EGraph {
         });
     }
 
+    /// Shared registration engine. Stores one primitive definition, plus
+    /// one runtime id per valid [`Context`]. Each wrapper carries its
+    /// specific context stamped onto the state wrapper at invoke time.
+    ///
+    /// The typechecker filters by the context-id mask at each call site;
+    /// an `unstable-fn` value built around the primitive bakes *all*
+    /// signature-matching context ids, and `FunctionContainer::apply`
+    /// picks the one whose context matches the application ctx — so
+    /// values flow freely across contexts.
     fn register_per_context<T, F>(
         &mut self,
         x: T,
