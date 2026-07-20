@@ -2,6 +2,14 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Make `EGraph::free_external_func` (egglog-bridge) O(1) instead of scanning the
+  whole `panic_funcs` map on every call. It now consults a reverse `id -> message`
+  index to find (or rule out) a cached panic directly. The old full scan ran on
+  every freed external function — including non-panic ones like the encoding's
+  `get-fresh!`/`set-if-empty` — and `panic_funcs` grows with the program, so
+  freeing the many short-lived one-shot action rules (e.g. one per encoded global
+  definition) was quadratic. The reverse index is a `BTreeMap` so it adds no new
+  randomly-seeded hasher and leaves other tables' iteration order unchanged.
 - Make `core-relations`' `Database::merge_all` reset the cached indexes of only
   the tables modified during the call (tracked via the notification list),
   instead of scanning and resetting every table on every call. Unmodified tables'

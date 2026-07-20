@@ -27,6 +27,7 @@ use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
 use hashbrown::HashMap;
+use std::collections::BTreeMap;
 use indexmap::IndexSet;
 use log::info;
 use once_cell::sync::Lazy;
@@ -126,6 +127,18 @@ pub struct EGraph {
     /// also serve as a debugging tool in the case that the number of panic messages grows without
     /// bound.
     panic_funcs: HashMap<String, CachedPanic>,
+    /// Reverse index `id -> message` for [`EGraph::panic_funcs`]. Lets
+    /// [`EGraph::free_external_func`] find a cached panic's entry — or determine
+    /// that a func is not a cached panic at all — in O(1), instead of scanning
+    /// the whole (id-unindexed) `panic_funcs` map on every free. That scan made
+    /// freeing one-shot action rules O(number of cached panics), which grows with
+    /// the program, so a long run of one-shot actions was quadratic.
+    // `BTreeMap` (not `HashMap`) on purpose: it introduces no new randomly-seeded
+    // hasher, so the seed sequence of the other hash tables is unchanged. Some
+    // backends' row iteration order (which order-dependent proof extraction reads)
+    // depends on that sequence, so a `HashMap` here would needlessly shift it.
+    // Lookups are by a small integer id, so a `BTreeMap` is more than fast enough.
+    panic_func_ids: BTreeMap<ExternalFunctionId, String>,
     report_level: ReportLevel,
     /// Live registry of name-indexed action handles. Shared (via
     /// `Arc<RwLock<_>>`) with state wrappers and primitive callbacks
@@ -163,11 +176,13 @@ impl Default for EGraph {
         // same message reuses the id.
         let panic_message: SideChannel<String> = Default::default();
         let mut panic_funcs: HashMap<String, CachedPanic> = Default::default();
+        let mut panic_func_ids: BTreeMap<ExternalFunctionId, String> = Default::default();
         let default_panic_msg = "primitive panicked".to_string();
         let default_panic_id = db.add_external_function(Box::new(Panic(
             default_panic_msg.clone(),
             panic_message.clone(),
         )));
+        panic_func_ids.insert(default_panic_id, default_panic_msg.clone());
         panic_funcs.insert(
             default_panic_msg,
             CachedPanic {
@@ -194,6 +209,7 @@ impl Default for EGraph {
             funcs: Default::default(),
             panic_message,
             panic_funcs,
+            panic_func_ids,
             report_level: Default::default(),
             action_registry,
         }
@@ -360,18 +376,22 @@ impl EGraph {
     }
 
     pub fn free_external_func(&mut self, func: ExternalFunctionId) {
+        // A cached panic with more than one reference is kept alive (just
+        // decrement); one at its last reference — or any func that is not a
+        // cached panic — is freed from the database. The reverse index makes the
+        // "is this a cached panic, and which entry?" question O(1); previously we
+        // scanned all of `panic_funcs` on every call (see `panic_func_ids`).
         let mut free = true;
-        self.panic_funcs.retain(|_, cached| {
-            if cached.id != func {
-                true
-            } else if cached.references > 1 {
-                cached.references -= 1;
-                free = false;
-                true
-            } else {
-                false
+        if let Some(message) = self.panic_func_ids.get(&func).cloned()
+            && let Some(cached) = self.panic_funcs.get_mut(&message) {
+                if cached.references > 1 {
+                    cached.references -= 1;
+                    free = false;
+                } else {
+                    self.panic_funcs.remove(&message);
+                    self.panic_func_ids.remove(&func);
+                }
             }
-        });
         if free {
             self.db.free_external_function(func);
         }
@@ -2132,6 +2152,7 @@ impl EGraph {
         }
         let panic = Panic(message.clone(), self.panic_message.clone());
         let id = self.db.add_external_function(Box::new(panic));
+        self.panic_func_ids.insert(id, message.clone());
         self.panic_funcs
             .insert(message, CachedPanic { id, references: 1 });
         id
