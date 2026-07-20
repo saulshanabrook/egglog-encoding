@@ -557,6 +557,13 @@ impl EGraph {
         eg.rulesets
             .insert("".into(), Ruleset::Rules(Default::default()));
 
+        // The generic `get-fresh!` mint primitive is registered on every e-graph
+        // (a no-op without an eclass-id counter). Doing it here — rather than
+        // per-eq-sort — means it is present whenever the *encoded* program is run,
+        // including when the already-desugared program is replayed in a plain
+        // e-graph (e.g. the desugar proof-testing path).
+        crate::proofs::proof_fresh::register_get_fresh(&mut eg);
+
         eg
     }
 }
@@ -589,8 +596,17 @@ impl EGraph {
     /// commands.
     pub fn new_with_term_encoding() -> Self {
         let mut egraph = EGraph::default();
-        egraph.proof_state.original_typechecking = Some(Box::new(egraph.clone()));
+        let typechecker = egraph.clone();
+        egraph.enable_term_encoding(typechecker);
         egraph
+    }
+
+    /// Enable the term/proof encoding pipeline with `typechecker` as the head of
+    /// the re-typechecking chain. (`get-fresh!` is already registered on every
+    /// e-graph by [`Self::with_backend`], so no per-`Sort` re-registration is
+    /// needed.)
+    fn enable_term_encoding(&mut self, typechecker: EGraph) {
+        self.proof_state.original_typechecking = Some(Box::new(typechecker));
     }
 
     /// Create a new e-graph with proof generation enabled.
@@ -605,7 +621,8 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
-        self.proof_state.original_typechecking = Some(Box::new(self.clone()));
+        let typechecker = self.clone();
+        self.enable_term_encoding(typechecker);
         self
     }
 
@@ -617,7 +634,7 @@ impl EGraph {
     /// union-find. Re-typechecking after the encoder runs uses a default
     /// (bridge-backed) e-graph, so this backend need not implement typechecking.
     pub fn with_term_encoding(mut self) -> Self {
-        self.proof_state.original_typechecking = Some(Box::new(EGraph::default()));
+        self.enable_term_encoding(EGraph::default());
         self
     }
 
@@ -625,7 +642,7 @@ impl EGraph {
     /// bridge-backed e-graph for parsing/typechecking before instrumentation.
     #[doc(hidden)]
     pub fn with_term_encoding_typechecker(mut self, typechecker: EGraph) -> Self {
-        self.proof_state.original_typechecking = Some(Box::new(typechecker));
+        self.enable_term_encoding(typechecker);
         self
     }
 

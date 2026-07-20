@@ -55,9 +55,6 @@ pub(crate) struct EncodingState {
     /// children's entries to build the natural term and its `Congr` connector.
     pub nat_conn: HashMap<String, (String, Option<String>)>,
     pub term_header_added: bool,
-    /// Whether the generic `get-fresh!` primitive has been registered yet (it is
-    /// registered once, idempotently, from the first eq-sort declaration).
-    pub get_fresh_registered: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
     // When Some term encoding is enabled.
@@ -83,7 +80,6 @@ impl EncodingState {
             input_loader_rulesets: HashSet::default(),
             nat_conn: HashMap::default(),
             term_header_added: false,
-            get_fresh_registered: false,
             original_typechecking: None,
             proofs_enabled: false,
             proof_names: EncodingNames::new(symbol_gen),

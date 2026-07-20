@@ -139,18 +139,16 @@ impl Primitive for ViewProof {
 pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 
 /// Register the generic `get-fresh!` primitive, minting from the backend's
-/// eq-class id counter. Idempotent: called from every eq-sort's `Sort` command in
-/// typechecking (so it survives re-parse on any e-graph), but only the first call
-/// registers it. A no-op on backends without an id counter.
-pub(crate) fn register_get_fresh(eg: &mut EGraph, _sort_name: &str) {
+/// eq-class id counter. Called once when the term/proof encoding is enabled (see
+/// [`EGraph::enable_term_encoding`]); the registration walks the typechecker
+/// chain, so the primitive is available both during encoding and when the
+/// desugared program is re-parsed. A no-op on backends without an id counter
+/// (those assign ids deterministically and need no mint primitive).
+pub(crate) fn register_get_fresh(eg: &mut EGraph) {
     // No counter → the backend assigns ids deterministically; nothing to mint.
     if eg.backend.eclass_id_counter().is_none() {
         return;
     }
-    if eg.proof_state.get_fresh_registered {
-        return;
-    }
-    eg.proof_state.get_fresh_registered = true;
     eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
         backend.register_get_fresh()
     });
