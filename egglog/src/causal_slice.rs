@@ -5,7 +5,10 @@
 //! reconstructs exact relation tuples for a monotone fragment, and emits a
 //! source program whose only schedule leaves are guarded `run-rule` calls.
 
-use std::time::{Duration, Instant};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use thiserror::Error;
 
@@ -136,6 +139,8 @@ struct FactKey {
     relation: String,
     args: Vec<Literal>,
 }
+
+type SourceCommandExpansions = IndexMap<usize, Vec<Command>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct DepId(u32);
@@ -314,6 +319,14 @@ struct Elaboration {
     source_events: usize,
 }
 
+struct ProgramModel {
+    rules: IndexMap<String, RuleModel>,
+    checks: Vec<CheckModel>,
+    source_facts: Vec<FactKey>,
+    source_expansions: SourceCommandExpansions,
+    schedule_index: usize,
+}
+
 /// Trace one ordinary reference-backend execution and emit a guarded manual
 /// replay slice. The accepted language is intentionally fail-closed; see
 /// [`CausalSliceError::Unsupported`] for source-located boundary diagnostics.
@@ -321,14 +334,31 @@ pub fn causal_slice_program(
     filename: Option<String>,
     input: &str,
 ) -> Result<CausalSlice, CausalSliceError> {
+    causal_slice_program_with_fact_directory(filename, input, None)
+}
+
+/// Trace and slice a program while resolving supported scalar relation inputs
+/// relative to `fact_directory`. Input rows are embedded as ordinary source
+/// facts in both replay projections, so the emitted programs are independent
+/// of the external files.
+pub fn causal_slice_program_with_fact_directory(
+    filename: Option<String>,
+    input: &str,
+    fact_directory: Option<&Path>,
+) -> Result<CausalSlice, CausalSliceError> {
     let mut parser = EGraph::default();
     let mut commands = parser.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
 
     let relations = collect_relations(&commands, source_name)?;
     let rule_mapping = name_and_prepare_rules(&mut commands, source_name)?;
-    let (rules, checks, source_facts, schedule_index) =
-        validate_and_model(&commands, &relations, source_name)?;
+    let ProgramModel {
+        rules,
+        checks,
+        source_facts,
+        source_expansions,
+        schedule_index,
+    } = validate_and_model(&commands, &relations, source_name, fact_directory)?;
 
     let mut egraph = EGraph::default();
     let trace_start = Instant::now();
@@ -341,6 +371,8 @@ pub fn causal_slice_program(
             schedule_batches = Some(batches);
         } else if matches!(command, Command::Check(..)) {
             check_batches.push(run_one_traced_command(&mut egraph, command)?);
+        } else if let Some(expansion) = source_expansions.get(&command_index) {
+            egraph.run_program(expansion.clone())?;
         } else {
             egraph.run_program(vec![command])?;
         }
@@ -422,6 +454,7 @@ pub fn causal_slice_program(
         &rules,
         pending_fires.iter().map(|fire| &fire.grounding),
         &witnesses,
+        &source_expansions,
     );
     let source = emit_program(
         &commands,
@@ -435,6 +468,7 @@ pub fn causal_slice_program(
                 EventKind::Fire(fire) => Some(fire),
             }),
         &witnesses,
+        &source_expansions,
     );
 
     validate_emitted_program(
@@ -635,18 +669,12 @@ fn validate_and_model(
     commands: &[Command],
     relations: &IndexMap<String, RelationDecl>,
     source_name: &str,
-) -> Result<
-    (
-        IndexMap<String, RuleModel>,
-        Vec<CheckModel>,
-        Vec<FactKey>,
-        usize,
-    ),
-    CausalSliceError,
-> {
+    fact_directory: Option<&Path>,
+) -> Result<ProgramModel, CausalSliceError> {
     let mut rules = IndexMap::default();
     let mut checks = Vec::new();
     let mut source_facts = Vec::new();
+    let mut source_expansions = SourceCommandExpansions::default();
     let mut schedule_index = None;
     let mut observations_started = false;
 
@@ -685,6 +713,44 @@ fn validate_and_model(
                     );
                 }
                 source_facts.push(model_source_fact(action, relations)?);
+            }
+            Command::Input { span, name, file } => {
+                if schedule_index.is_some() {
+                    return unsupported(
+                        span,
+                        "an input command after the computation schedule".to_owned(),
+                    );
+                }
+                let relation = relations.get(name).ok_or_else(|| {
+                    CausalSliceError::Unsupported {
+                        location: span.to_string(),
+                        reason: format!(
+                            "input into `{name}`; causal slice input support is limited to declared relations"
+                        ),
+                    }
+                })?;
+                for sort in &relation.sorts {
+                    if !matches!(sort.as_str(), "i64" | "f64" | "String") {
+                        return unsupported(
+                            span,
+                            format!("input relation `{name}` with unsupported TSV sort `{sort}`"),
+                        );
+                    }
+                }
+                let rows = EGraph::read_input_rows(fact_directory, &relation.sorts, span, file)?;
+                let mut expansion = Vec::with_capacity(rows.len());
+                for args in rows {
+                    for literal in &args {
+                        validate_printable_literal(span, literal)?;
+                    }
+                    let fact = FactKey {
+                        relation: name.clone(),
+                        args,
+                    };
+                    expansion.push(source_fact_command(span, &fact));
+                    source_facts.push(fact);
+                }
+                source_expansions.insert(index, expansion);
             }
             Command::RunSchedule(schedule) => {
                 if schedule_index.replace(index).is_some() {
@@ -772,7 +838,13 @@ fn validate_and_model(
             reason: "a program without at least one positive check root".to_owned(),
         });
     }
-    Ok((rules, checks, source_facts, schedule_index))
+    Ok(ProgramModel {
+        rules,
+        checks,
+        source_facts,
+        source_expansions,
+        schedule_index,
+    })
 }
 
 fn model_rule(
@@ -955,6 +1027,19 @@ fn model_source_fact(
         relation: atom.relation,
         args,
     })
+}
+
+fn source_fact_command(span: &Span, fact: &FactKey) -> Command {
+    let args = fact
+        .args
+        .iter()
+        .cloned()
+        .map(|literal| Expr::Lit(span.clone(), literal))
+        .collect();
+    Command::Action(GenericAction::Expr(
+        span.clone(),
+        Expr::Call(span.clone(), fact.relation.clone(), args),
+    ))
 }
 
 fn model_atom(
@@ -1357,6 +1442,7 @@ fn emit_program<'a>(
     rules: &IndexMap<String, RuleModel>,
     fires: impl IntoIterator<Item = &'a GroundedFire>,
     witnesses: &WitnessArena,
+    source_expansions: &SourceCommandExpansions,
 ) -> String {
     let mut previous_position = None;
     let leaves = fires
@@ -1399,6 +1485,11 @@ fn emit_program<'a>(
                 };
                 let replay = Command::RunSchedule(replay_schedule);
                 rendered.push_str(&replay.to_string());
+                rendered.push('\n');
+            }
+        } else if let Some(expansion) = source_expansions.get(&index) {
+            for command in expansion {
+                rendered.push_str(&command.to_string());
                 rendered.push('\n');
             }
         } else {

@@ -2381,52 +2381,32 @@ impl EGraph {
         Ok(vec![])
     }
 
-    fn read_input_file(
+    pub(crate) fn read_input_rows(
         fact_directory: Option<&std::path::Path>,
-        function_type: &FuncType,
+        row_schema: &[String],
         span: &Span,
         file: &str,
     ) -> Result<Vec<Vec<Literal>>, Error> {
         let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
         filename.push(file);
 
-        for sort in &function_type.input {
-            match sort.name() {
-                "i64" | "f64" | "String" => {}
-                name => panic!("Unsupported type {name} for input"),
-            }
-        }
-        if function_type.subtype != FunctionSubtype::Constructor {
-            for sort in &function_type.outputs {
-                match sort.name() {
-                    "i64" | "String" | "Unit" => {}
-                    name => panic!("Unsupported type {name} for input"),
-                }
-            }
-        }
-
         log::info!("Opening file '{filename:?}'...");
         let contents = std::fs::read_to_string(&filename)
             .map_err(|error| Error::IoError(filename, error, span.clone()))?;
-        let mut row_schema = function_type.input.clone();
-        // Relations desugar to constructors, so their implicit output is not a TSV column.
-        if function_type.subtype == FunctionSubtype::Custom {
-            row_schema.extend(function_type.outputs.iter().cloned());
-        }
 
         let mut rows = Vec::with_capacity(contents.lines().count());
         for line in contents.lines() {
             let mut fields = line.split('\t').map(str::trim);
             let mut row = Vec::with_capacity(row_schema.len());
-            for sort in &row_schema {
-                if sort.name() == "Unit" {
+            for sort in row_schema {
+                if sort == "Unit" {
                     row.push(Literal::Unit);
                     continue;
                 }
                 let Some(raw) = fields.next() else {
                     break;
                 };
-                let literal = match sort.name() {
+                let literal = match sort.as_str() {
                     "i64" => raw
                         .parse()
                         .map(Literal::Int)
@@ -2450,6 +2430,44 @@ impl EGraph {
             rows.push(row);
         }
         Ok(rows)
+    }
+
+    fn read_input_file(
+        fact_directory: Option<&std::path::Path>,
+        function_type: &FuncType,
+        span: &Span,
+        file: &str,
+    ) -> Result<Vec<Vec<Literal>>, Error> {
+        for sort in &function_type.input {
+            match sort.name() {
+                "i64" | "f64" | "String" => {}
+                name => panic!("Unsupported type {name} for input"),
+            }
+        }
+        if function_type.subtype != FunctionSubtype::Constructor {
+            for sort in &function_type.outputs {
+                match sort.name() {
+                    "i64" | "String" | "Unit" => {}
+                    name => panic!("Unsupported type {name} for input"),
+                }
+            }
+        }
+
+        let mut row_schema = function_type
+            .input
+            .iter()
+            .map(|sort| sort.name().to_owned())
+            .collect::<Vec<_>>();
+        // Relations desugar to constructors, so their implicit output is not a TSV column.
+        if function_type.subtype == FunctionSubtype::Custom {
+            row_schema.extend(
+                function_type
+                    .outputs
+                    .iter()
+                    .map(|sort| sort.name().to_owned()),
+            );
+        }
+        Self::read_input_rows(fact_directory, &row_schema, span, file)
     }
 
     fn input_file(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {

@@ -1,4 +1,21 @@
-use egglog::{EGraph, causal_slice::causal_slice_program};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use egglog::{
+    EGraph,
+    causal_slice::{causal_slice_program, causal_slice_program_with_fact_directory},
+};
+
+static NEXT_INPUT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
+fn input_directory() -> std::path::PathBuf {
+    let directory = std::env::temp_dir().join(format!(
+        "egglog-causal-slice-input-{}-{}",
+        std::process::id(),
+        NEXT_INPUT_DIRECTORY.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir(&directory).unwrap();
+    directory
+}
 
 const ORIGINAL: &str = include_str!("../../.codex/causal-slice-v0/bronze.egg");
 
@@ -33,6 +50,48 @@ fn full_manual_transcript_replays_in_normal_and_proof_modes() {
 
         let mut replay = make_egraph();
         replay.parse_and_run_program(None, FULL_TRANSCRIPT).unwrap();
+    }
+}
+
+#[test]
+fn scalar_relation_input_is_embedded_as_replayable_source_facts() {
+    let directory = input_directory();
+    std::fs::write(directory.join("seed.tsv"), "1\n2\n").unwrap();
+    let source = r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (relation Irrelevant (i64))
+        (rule ((Seed x)) ((Goal x)) :name "goal")
+        (rule ((Seed x)) ((Irrelevant x)) :name "irrelevant")
+        (input Seed "seed.tsv")
+        (run 1)
+        (check (Goal 2))
+    "#;
+
+    let slice = causal_slice_program_with_fact_directory(
+        Some("input.egg".to_owned()),
+        source,
+        Some(&directory),
+    )
+    .unwrap();
+
+    assert_eq!(slice.stats.source_facts, 2);
+    assert!(!slice.source.contains("(input"));
+    assert!(slice.source.contains("(Seed 1)"));
+    assert!(slice.source.contains("(Seed 2)"));
+    assert!(!slice.source.contains("irrelevant\" :bind"));
+
+    // The replay is self-contained: it must not fall back to the original
+    // external fact source after slicing.
+    std::fs::remove_dir_all(directory).unwrap();
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        EGraph::default()
+            .parse_and_run_program(Some("input-replay.egg".to_owned()), replay_source)
+            .unwrap();
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(Some("input-replay.egg".to_owned()), replay_source)
+            .unwrap();
     }
 }
 
