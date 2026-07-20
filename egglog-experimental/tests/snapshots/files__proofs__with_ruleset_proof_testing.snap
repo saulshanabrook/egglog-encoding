@@ -11,11 +11,8 @@ expression: snapshot
   (premises)
   (substitution))
 (let t0 (Add (Num 2) (Num 3)))
-(let t1 (Add (Num 3) (Num 2)))
-(Sym
-  (= t0 t1)
-  (Rule
-    (= t1 t0)
-    (name "(rewrite (Add a b) (Add b a) :ruleset optimization)")
-    (premises (Fiat (= t0 t0)))
-    (substitution (a (Num 2)) (b (Num 3)) (@rewrite_var__ t0))))
+(Rule
+  (= t0 (Add (Num 3) (Num 2)))
+  (name "(rewrite (Add a b) (Add b a) :ruleset optimization)")
+  (premises (Fiat (= t0 t0)))
+  (substitution (a (Num 2)) (b (Num 3)) (@rewrite_var__ t0)))

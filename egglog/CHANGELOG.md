@@ -2,6 +2,11 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Make proof extraction deterministic: `prove_exists` and the root extractor now
+  select the lexicographically-smallest matching row as the witness instead of
+  whichever row the backend happens to yield first. A backend with nondeterministic
+  row order (the differential-dataflow backend's hash-set mirror) previously made
+  the extracted existence proof — and hence proof snapshots — vary run to run.
 - Make `EGraph::free_external_func` (egglog-bridge) O(1) instead of scanning the
   whole `panic_funcs` map on every call. It now consults a reverse `id -> message`
   index to find (or rule out) a cached panic directly. The old full scan ran on

@@ -114,6 +114,10 @@ impl RootExtractor {
                         matching_rows.push(row.vals.to_vec());
                     }
                 });
+            // Reconstruct from the lexicographically-smallest matching row so the
+            // chosen term does not depend on the backend's (possibly nondeterministic)
+            // row iteration order — see `prove_exists`.
+            matching_rows.sort();
 
             for row in matching_rows {
                 let num_children = func.extraction_num_children();

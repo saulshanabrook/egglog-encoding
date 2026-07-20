@@ -1,7 +1,7 @@
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
 use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
-use crate::{ResolvedCall, TermDag};
+use crate::{ResolvedCall, TermDag, Value};
 use egglog_backend_trait::BackendExt;
 use thiserror::Error;
 
@@ -45,15 +45,22 @@ impl ProofInstrumentor<'_> {
         let output_index = function.extraction_output_index();
 
         let mut termdag = TermDag::default();
-        let mut witness_value = None;
 
-        self.egraph.backend.for_each_while(backend_id, |row| {
-            witness_value = Some(row.vals[output_index]);
-            false
+        // Pick the lexicographically-smallest row as the witness rather than
+        // whichever row the backend happens to yield first. A backend whose row
+        // order is not deterministic (e.g. the differential-dataflow backend's
+        // hash-set mirror) would otherwise make the extracted existence proof —
+        // and thus proof snapshots — vary run to run.
+        let mut best_row: Option<Vec<Value>> = None;
+        self.egraph.backend.for_each(backend_id, |row| {
+            if best_row.as_deref().is_none_or(|best| row.vals < best) {
+                best_row = Some(row.vals.to_vec());
+            }
         });
-
-        let witness_value = witness_value.ok_or_else(|| ProveExistsError::QueryDidNotMatch {
-            constructor: func.name.clone(),
+        let witness_value = best_row.map(|row| row[output_index]).ok_or_else(|| {
+            ProveExistsError::QueryDidNotMatch {
+                constructor: func.name.clone(),
+            }
         })?;
 
         let proof_function_name = self
