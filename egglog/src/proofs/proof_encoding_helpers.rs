@@ -503,9 +503,9 @@ pub enum ProofEncodingUnsupportedReason {
     )]
     MergeActionBlock,
     #[error(
-        "`:no-merge` functions are not supported by the term/proof encoding; run them on the native backend (without term encoding or proofs), or give the function a `:merge` (e.g. `:merge old`)."
+        "eq-sort-output `:no-merge` functions are not supported by the term/proof encoding (their conflict check needs union-find leaders); run them on the native backend, or give the function a `:merge` (e.g. `:merge old`). Primitive/`Unit`-output `:no-merge` functions are supported."
     )]
-    NoMergeFunction,
+    NoMergeEqSortFunction,
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -590,20 +590,26 @@ pub(crate) fn command_supports_proof_encoding(
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
     }
 
-    // `:no-merge` functions (a `function` decl with no `:merge`) are not modeled by
-    // the encoding — the native backend handles their conflict semantics directly.
-    // A file using one is proof-unsupported and runs plain only. Constructors and
-    // relations are `Constructor` commands (not `Function`), and encoded globals
-    // (`:internal-let`, produced by `remove_globals`, which runs before this check
-    // in the plain-resolve path `file_supports_proofs` uses) have their own FD-view
-    // encoding — both are excluded.
+    // An eq-sort-output `:no-merge` function is not modeled by the encoding: its
+    // conflict check needs union-find leaders (raw id equality is not e-class
+    // equality), which the encoding has no eager hook for. A file using one is
+    // proof-unsupported and runs plain only. Primitive/`Unit`-output `:no-merge` IS
+    // supported (raw equality is equality there — encoded as an FD view declared
+    // native `:no-merge` + `:internal-identity-vals 1`). Constructors/relations are
+    // `Constructor` commands (not `Function`), and encoded globals (`:internal-let`,
+    // produced by `remove_globals` before this check in the plain-resolve path
+    // `file_supports_proofs` uses) have their own FD-view encoding — both excluded.
     if let crate::ast::GenericCommand::Function {
         merge: None,
         let_binding: false,
+        schema,
         ..
     } = command
+        && type_info
+            .get_sort_by_name(schema.output())
+            .is_some_and(|sort| sort.is_eq_sort())
     {
-        return Err(ProofEncodingUnsupportedReason::NoMergeFunction);
+        return Err(ProofEncodingUnsupportedReason::NoMergeEqSortFunction);
     }
 
     // A `:merge` action block runs actions before its result; the proof encoding only instruments

@@ -66,8 +66,8 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
                 None,
                 r#"
                 (relation Edge (String String))
-                (function score (String) i64 :merge old)
-                (function seen (String) Unit :merge old)
+                (function score (String) i64 :no-merge)
+                (function seen (String) Unit :no-merge)
                 (input Edge "edges.tsv")
                 (input score "scores.tsv")
                 (input seen "seen.tsv")
@@ -83,15 +83,16 @@ fn term_and_proof_modes_lower_input_rows_as_fiat_actions() {
 }
 
 #[test]
-fn term_and_proof_modes_reject_no_merge_functions() {
-    // `:no-merge` functions are not modeled by the term/proof encoding; a program
-    // declaring one is unsupported (it must run on the native backend instead).
+fn term_and_proof_modes_reject_eq_sort_no_merge_functions() {
+    // Eq-sort-output `:no-merge` is not modeled by the encoding (its conflict check
+    // needs union-find leaders); such a program is unsupported and runs plain only.
+    // Primitive/Unit-output `:no-merge` is supported (see the input test above).
     for mut egraph in [
         EGraph::new_with_term_encoding(),
         EGraph::new_with_proofs().with_proof_testing(),
     ] {
         let error = egraph
-            .parse_and_run_program(None, "(function score () i64 :no-merge)")
+            .parse_and_run_program(None, "(sort Foo) (function bar () Foo :no-merge)")
             .unwrap_err();
         assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
         assert!(error.to_string().contains("`:no-merge`"));

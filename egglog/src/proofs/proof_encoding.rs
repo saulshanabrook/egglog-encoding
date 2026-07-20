@@ -39,17 +39,6 @@ pub(crate) struct EncodingState {
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
     pub container_rebuild_proof_name: HashMap<String, String>,
-    /// Names of custom (non-constructor) functions that have a `:merge`, so their
-    /// encoded view takes the FD pair-valued shape `(children) -> (eclass, proof)`
-    /// (the user merge runs in that view's own `:merge`).
-    ///
-    /// Needed only because query/action sites see a [`FuncType`] (name, subtype,
-    /// sorts) that reveals a constructor but *not* whether a `Custom` function has
-    /// a `:merge`. We record the merge-having customs here when their view is
-    /// declared, so [`Self::func_type_is_fd_view`] can route them as FD from the
-    /// name alone. Constructors are always FD (known from the subtype) and so are
-    /// not recorded here.
-    pub fd_custom_funcs: HashSet<String>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -71,7 +60,6 @@ impl EncodingState {
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
-            fd_custom_funcs: HashSet::default(),
             term_header_added: false,
             original_typechecking: None,
             proofs_enabled: false,
@@ -426,17 +414,14 @@ impl<'a> ProofInstrumentor<'a> {
     }
 
     /// Whether `fdecl`'s view uses the FD pair-valued shape `(children) ->
-    /// (values output proof)`, keyed on children only. Constructors always do; a
-    /// custom function does iff it has a `:merge` (its user merge runs in the
-    /// view's own `:merge`). `:no-merge` customs keep the all-column view.
+    /// (values output proof)`, keyed on children only. Every encoded function now
+    /// does: constructors and globals (congruence `:merge`), custom `:merge`
+    /// functions (the user merge), and primitive/`Unit`-output `:no-merge` customs
+    /// (native `:no-merge` + `:internal-identity-vals 1`). Eq-sort-output
+    /// `:no-merge` — the only non-FD shape — is rejected before encoding, so this
+    /// is true for every function that reaches the encoder.
     fn is_fd_view(&self, fdecl: &ResolvedFunctionDecl) -> bool {
-        fdecl.subtype == FunctionSubtype::Constructor
-            || (fdecl.subtype == FunctionSubtype::Custom && fdecl.merge.is_some())
-            // Globals (`:internal-let` no-arg functions): use the FD pair-valued
-            // view `() -> (val, proof)` (like a constructor) so a global can be read
-            // as `(@xView)` in queries and actions. The default `:no-merge`
-            // all-column view is keyed by the value and can't be read in an action.
-            || self.is_encoded_global(fdecl)
+        fdecl.subtype == FunctionSubtype::Constructor || fdecl.subtype == FunctionSubtype::Custom
     }
 
     /// A global is a `:internal-let` function; in the encoding it is treated like a
@@ -451,18 +436,6 @@ impl<'a> ProofInstrumentor<'a> {
     /// `(children) -> (eclass, proof)`. Holds for constructors and encoded globals.
     fn output_is_eclass(&self, fdecl: &ResolvedFunctionDecl) -> bool {
         fdecl.subtype == FunctionSubtype::Constructor || self.is_encoded_global(fdecl)
-    }
-
-    /// Like [`Self::is_fd_view`], for a resolved [`FuncType`] at an action/query
-    /// site. Constructors are always FD; custom FD functions are recorded in
-    /// `fd_custom_funcs` when their view is declared.
-    fn func_type_is_fd_view(&self, func_type: &FuncType) -> bool {
-        func_type.subtype == FunctionSubtype::Constructor
-            || self
-                .egraph
-                .proof_state
-                .fd_custom_funcs
-                .contains(&func_type.name)
     }
 
     /// The `:merge` expression for a custom function's FD pair-valued view
@@ -585,16 +558,13 @@ impl<'a> ProofInstrumentor<'a> {
         if let Some(cost) = fdecl.cost {
             view_flags.push_str(&format!(" :internal-cost {cost}"));
         }
-        // An FD view is a functional-dependency tuple `(children) -> (output,
-        // {Unit|Proof})` keyed on children only. Constructors always use it (their
-        // `:merge` resolves congruence: keep the smaller eclass, union the two in
-        // the sort's `@UF`). Custom functions with a `:merge` also use it (their
-        // `:merge` runs the user merge — no union). `:no-merge` functions never
-        // reach here: they are rejected up front by `command_supports_proof_encoding`.
-        let fd_view = self.is_fd_view(fdecl);
-        if fd_view && fdecl.subtype == FunctionSubtype::Custom {
-            self.egraph.proof_state.fd_custom_funcs.insert(name.clone());
-        }
+        // Every encoded function uses the FD pair-valued view `(children) ->
+        // (output, {Unit|Proof})` keyed on children only. Constructors and globals
+        // resolve conflicts by congruence (`:merge`); custom `:merge` functions run
+        // the user merge; primitive/`Unit`-output `:no-merge` customs use a native
+        // `:no-merge` view guarded by `:internal-identity-vals 1` (a children
+        // collision keeps the old row iff the output value column is unchanged, and
+        // panics otherwise). Eq-sort-output `:no-merge` is rejected before encoding.
         let view_decl = if output_is_eclass {
             // Two rows conflicting on the same children are congruent: keep the
             // smaller eclass and union the two eclasses in the sort's `@UF`. In
@@ -628,7 +598,7 @@ impl<'a> ProofInstrumentor<'a> {
             format!(
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {congruence_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
-        } else if fd_view {
+        } else if fdecl.merge.is_some() {
             // Custom function with a `:merge`: FD pair-valued view keyed on children;
             // the value is `(output {Unit|Proof})` and the `:merge` runs the user
             // merge once (see `custom_view_merge`). No `@UF` union.
@@ -637,9 +607,19 @@ impl<'a> ProofInstrumentor<'a> {
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {custom_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         } else {
-            // The only remaining case is a `:no-merge` function, which
-            // `command_supports_proof_encoding` rejects before encoding.
-            unreachable!("`:no-merge` functions are not encoded (rejected up front)")
+            // Primitive/`Unit`-output `:no-merge` custom (eq-sort `:no-merge` is
+            // rejected before encoding). The FD view is declared native `:no-merge`
+            // with `:internal-identity-vals 1`: a children collision keeps the old
+            // row when value column 0 (the output) is unchanged — raw equality is
+            // equality for a primitive output — and panics when it differs. The
+            // proof column (value column 1) is a payload the identity guard ignores.
+            debug_assert!(
+                !fdecl.resolved_schema.output().is_eq_sort(),
+                "eq-sort `:no-merge` must be rejected by command_supports_proof_encoding"
+            );
+            format!(
+                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :no-merge :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
+            )
         };
         self.parse_program(&format!(
             "
@@ -1004,29 +984,15 @@ impl<'a> ProofInstrumentor<'a> {
                 }
 
                 let view_name = self.view_name(head.name());
-                let is_fd = self
-                    .egraph
-                    .proof_state
-                    .fd_custom_funcs
-                    .contains(head.name());
 
-                // Query the view and bind the row's existence proof (`proof_var`).
-                // A custom-with-merge FD view is keyed by children with value
-                // `(output {Unit|Proof})`: bind the output `v` (pair-first) and the
-                // proof (pair-second). A `:no-merge` custom's all-key view takes `v`
-                // in the key with the proof as its (sole) value.
+                // Every custom function has the FD pair-valued view keyed by children
+                // with value `(output {Unit|Proof})`: bind the output `v` (pair-first)
+                // and the row's existence proof `proof_var` (pair-second).
                 let proof_var = self.fresh_var();
-                if is_fd {
-                    let children_str = ListDisplay(&new_args, " ");
-                    res.push(format!(
-                        "(= (values {v} {proof_var}) ({view_name} {children_str}))"
-                    ));
-                } else {
-                    let mut all_args = new_args;
-                    all_args.push(v.to_string());
-                    let args_str = ListDisplay(all_args, " ");
-                    res.push(format!("(= {proof_var} ({view_name} {args_str}))"));
-                }
+                let children_str = ListDisplay(&new_args, " ");
+                res.push(format!(
+                    "(= (values {v} {proof_var}) ({view_name} {children_str}))"
+                ));
 
                 if self.egraph.proof_state.proofs_enabled {
                     let congr = self.proof_names().congr_constructor.clone();
@@ -1627,19 +1593,15 @@ impl<'a> ProofInstrumentor<'a> {
             } else {
                 "()".to_string()
             };
-            if self.func_type_is_fd_view(func_type) {
-                // Custom-with-merge FD view: key on the children, value
-                // `(output {Unit|Proof})`. `args` ends with the output value (from
-                // the `(set (f c..) v)` action). `view_proof_var` proves the row's
-                // f-application term `f(children, output)` (what `fv` extracts to),
-                // exactly the premise that `MergeRow`/`MergeIdx` reconstruct their
-                // conclusion from. A children-key collision runs the user merge (see
-                // `custom_view_merge`).
-                let (output, children) = args.split_last().expect("custom set needs an output");
-                res.push(self.update_fd_view(&func_type.name, children, output, &view_proof_var));
-            } else {
-                res.push(self.update_view(&func_type.name, args, &view_proof_var));
-            }
+            // Every custom function has the FD pair-valued view: key on the children,
+            // value `(output {Unit|Proof})`. `args` ends with the output value (from
+            // the `(set (f c..) v)` action). `view_proof_var` proves the row's
+            // f-application term `f(children, output)` (what `fv` extracts to) — the
+            // premise `MergeRow`/`MergeIdx` reconstruct their conclusion from. A
+            // children-key collision runs the view's `:merge` (the user merge) or, for
+            // a `:no-merge` custom, the native `:no-merge` identity-vals guard.
+            let (output, children) = args.split_last().expect("custom set needs an output");
+            res.push(self.update_fd_view(&func_type.name, children, output, &view_proof_var));
             return (res, fv);
         }
 
