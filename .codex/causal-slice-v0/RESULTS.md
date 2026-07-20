@@ -59,6 +59,20 @@ The first form writes the slice to stdout; `--full` writes every captured
 grounding. Both write trace/event statistics to stderr. Unsupported source
 returns a source-located diagnostic before native execution.
 
+Integrated strict benchmark path:
+
+```bash
+target/release/egglog-experimental --causal-slice --proof-testing SOURCE.egg
+uv run --locked ./bench.py \
+  --compare-treatment proof-testing \
+  --treatment causal-proof-testing SOURCE.egg
+```
+
+The causal treatment is one measured process: ordinary native trace, slice
+construction and source emission, followed by the existing strict proof
+replay/checker. `--causal-slice` is reference-backend-only, serial, and
+requires exactly one file plus `--proof-testing`.
+
 ## Implemented and tested facts
 
 ### Native trace
@@ -172,6 +186,7 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | deterministic anonymous naming | implemented and tested | parsed AST source location plus ordinal and collision suffix |
 | complete manual transcript | implemented and tested | 6 guarded leaves, no automatic schedule |
 | dynamic rule-application slice | implemented and tested | 6 promoted events become 2 retained |
+| scalar relation `input` | implemented and tested | TSV rows use the shared native parser and are embedded as source facts; replay passes after the fact directory is deleted |
 | no-op promotion filtering | implemented and tested | duplicate-rule and duplicate-head canaries |
 | strict proof checker | unchanged and passing | exact two-step proof above |
 | physical source `RowId` provenance | not implemented | factorized expansion discards tags; Bronze uses grounded logical rows |
@@ -185,7 +200,7 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | application/global/constructor witnesses | rejected | proactive syntax/availability witness hook absent |
 | containers | rejected | same outer ID can represent changed contents |
 | push/pop | rejected | runtime IDs can be reused after restore |
-| external effects, I/O, include | rejected | reproducibility/hidden schedules unproven |
+| output effects, includes, opaque I/O | rejected | reproducibility/hidden schedules unproven; scalar relation input is the one admitted I/O normalization |
 | DD backend | rejected | reference backend only |
 | globally minimum slice | not attempted | one deterministic actual support only |
 
@@ -307,6 +322,39 @@ RSS is page-granular and toy-specific. More importantly, the implementation
 retains all trace batches, so its asymptotic temporary memory is still
 `O(all matches + bindings)` even though this tiny process delta is small.
 
+One release-mode public-runner smoke observation compared the new integrated
+candidate against strict proof testing of the original Bronze source:
+
+| Metric | Original strict proof | Integrated causal strict proof | Candidate / baseline |
+|---|---:|---:|---:|
+| wall time | 17.2 ms | 10.6 ms | 0.617x |
+| peak RSS | 9.7 MiB | 10.1 MiB | 1.05x |
+
+This is one point-only sample, not speedup evidence. Its purpose was to prove
+that the public runner builds, caches, and measures the complete one-process
+pipeline under distinct treatment identities.
+
+## Current benchmark frontier
+
+All six default workloads now have an explicit capability frontier. None is
+yet admitted end to end; failures remain diagnostics rather than timed rows.
+
+| Workload | Current first boundary | Major subsequent requirements |
+|---|---|---|
+| `math-microbenchmark.egg` | datatype/application values | rewrite-generated rules, equality/congruence provenance, and a conservative root for print-only observation |
+| `pointer-analysis-small.egg` | non-scalar `Allocation` relation | constructor witnesses, equality support, exact projected/decomposed join premises; scalar input provenance is now implemented |
+| `herbie.egg` | non-scalar `Math` relation | application witnesses, rewrites, custom merges, primitive filters, and multiple temporal boundaries |
+| `luminal-llama.egg` | non-scalar `IList` relation | application/container witnesses, multiple schedules, delete/subsume, and mutable-state batching |
+| `hardboiled_conv1d_32.egg` | non-scalar `BinOp` relation | containers, functions, rewrites, filters, broad joins, subsume, and batch replay |
+| `eggcc-2mm-pass1.egg` | non-scalar `Type` relation | constructors, functions/merges, broad joins, multiple schedules, globals, delete/subsume, containers, and stateful primitives |
+
+The implementation order selected from these failures is: application/global
+witnesses and non-scalar relation tuples; successful-union/equality and
+rewrite mapping; exact projected/decomposed premise evidence; immutable
+functions; shared-prestate batch plus mutable state; then containers and
+opaque/stateful primitives. Pointer analysis is the first intended unmodified
+default workload because it avoids delete, subsume, and custom merges.
+
 ## Validation status
 
 Baseline on exact PR #23 before changes:
@@ -315,7 +363,7 @@ Baseline on exact PR #23 before changes:
 - `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
 - `make check`: passed.
 
-Final implementation:
+Bronze implementation at the initial handoff:
 
 - `cargo test -p egglog --test run_rule`: 4 passed;
 - `cargo test -p egglog --test causal_slice`: 24 passed;
@@ -343,20 +391,23 @@ Final implementation:
   globally epoch-free equality endpoints, post-filter `:expect`, and general
   sequential-wave equivalence.
 
-## Recommended next patch
+## Recommended next patches
 
-The smallest next patch should solve evidence/lifetime before expanding syntax:
+The benchmark path and scalar relation inputs are now implemented. The next
+capability patches should follow the observed default-suite frontier:
 
-1. stream each native wave into a callback that elaborates and drops pending
-   matches; retain full transcripts only on request;
-2. carry source atom plus exact row tag, or an equivalent stable premise
-   witness, through final expansion;
-3. add a projection-preserving selector/witness so projected ordinary firings
-   can be named without changing their count;
-4. add lane-aligned origins and serial per-proposal commit receipts;
-5. use those receipts for generation-aware row sidecars and successful union
-   edges;
-6. then add native `run-rule-batch` for mutable/shared-pre-state waves.
+1. capture immutable application/global witnesses at creation time and admit
+   non-scalar relation tuples without final extraction;
+2. add successful-union receipts, equality dependencies, and deterministic
+   rewrite/birewrite source-to-registered-rule mappings;
+3. preserve exact logical premise rows and projected variables through Generic
+   Join and decomposed plans;
+4. stream each native wave into a callback so raw matches do not coexist with
+   the entire elaborated arena;
+5. add lane-aligned origins, dynamic reads, commit receipts, and guarded
+   shared-prestate batch replay before mutation support;
+6. add delete/subsume visibility, custom merges, containers, and opaque
+   externals only after their focused canaries pass.
 
 ## Commit and diff summary
 
@@ -370,9 +421,11 @@ Local reviewable commits:
 5. `aff5345c` — preserve ordinary planner semantics, fail closed on projected
    or decomposed cases, preserve source planner flags, and fix duplicate-output
    accounting;
-6. final documentation commit — record the validated boundary and final runs.
+6. `984c9fa6` — record the validated boundary and initial final runs;
+7. `f292c6a` — add one-process strict causal benchmark treatments and CLI;
+8. `f6a9b09` — normalize scalar relation inputs into self-contained replay
+   source facts.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
-logic changed. At handoff there are no uncommitted changes and nothing has been
-pushed.
+logic changed. Nothing has been pushed.

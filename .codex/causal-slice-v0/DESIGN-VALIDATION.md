@@ -33,6 +33,8 @@ The accepted fragment is intentionally narrow:
 - one non-popped scope;
 - immutable set relations over scalar base sorts;
 - ground relation insertions as source initialization;
+- scalar relation TSV input normalized once into the same ground source facts
+  used by traced execution and emitted replay;
 - positive relation atoms only in bodies and checks;
 - complete heads containing relation insertions only;
 - default seminaive rules without subsumed-row matching;
@@ -56,7 +58,8 @@ flags; it does not normalize tracing to another planner.
 The validator rejects unsupported constructs before the traced run, including
 equality or primitive filters, functions, constructors, unions, rewrites,
 delete, subsume, merges, RHS function lookups, external functions, containers,
-extracts, negative checks, push/pop, includes, I/O, input `run-rule`, and DD.
+extracts, negative checks, push/pop, includes, output/opaque I/O, input
+`run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -87,6 +90,7 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | sequential grounded leaves preserve the supported monotone fragment | Confirmed | fully grounded set atoms have at most one complete row; prerequisites pre-exist; insertions commute and duplicates are no-ops |
 | sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
 | `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
+| scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
 
 ## Important implementation correction: pending lifetime
 
@@ -182,6 +186,8 @@ behave under strict proof mode and that the slicer rejects them.
 | E9 | Is the equality forest available from current hooks? | no; success plus origin is missing |
 | E10 | Are source planner flags preserved? | passed; emission preserves absence/presence of `:no-decomp` and validates it in the semantic rule mapping |
 | E11 | Are duplicate complete head rows counted once while the full head replays? | passed |
+| E12 | Can the public runner measure trace + slice + unchanged strict replay as one treatment? | passed: one release Bronze observation for each strict treatment; timing is point-only |
+| E13 | Can scalar relation input become self-contained source provenance? | passed: two TSV rows become source facts and both ordinary/strict replays pass with the directory removed |
 
 ## Validation commands
 
