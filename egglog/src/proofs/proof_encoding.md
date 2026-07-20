@@ -142,6 +142,66 @@ A rule for an eq-sort child instead re-keys the row: it `set`s the view at the
 Because `UF_<Sort>` has no row for a canonical term (identity-on-miss), a column already at its
   leader simply doesn't match, so no self-loops or default lookups are needed.
 
+## Rebuild indexes
+
+Rather than fan out one rebuild rule per eq-sort child column, the encoding rebuilds a
+  view's eq-sort children with a *single* rule driven by a `UF_<Sort>` edge, mirroring how
+  a native rebuild iterates the e-nodes that reference a changed e-class.
+This needs a materialized *rebuild index* per child eq-sort — a term→row map — so that,
+  given a term that just gained a leader, the rule finds the rows containing it by key
+  lookup instead of scanning the view.
+Consider a constructor with two eq-sort children:
+
+```text
+(constructor Cons (Math Math) Math)
+(function ConsIndex_Math (Math Math Math) Unit :merge old :internal-hidden :unextractable)
+```
+
+`ConsIndex_Math` holds, for each view row `(ConsView c0 c1)` and each eq-sort child, an
+  entry `(<child> c0 c1)`: the referenced child first, then the row's key. The encoding
+  writes these entries wherever it writes the view and deletes them wherever it deletes a
+  view row, keeping the index in sync (subsumption keeps the row, so it leaves the index
+  alone).
+The index is a `:merge` function rather than a relation so that a `set` and a `delete` of
+  the same index key in one rebuild round resolve exactly as the view's own `set`/`delete`
+  do; a plain relation resolves that conflict differently and can drift out of sync with
+  the view under concurrent re-keying.
+
+The single rebuild rule is driven by the `UF_<Sort>` edge and the index alone; it reads
+  the view row's `(eclass, proof)` on the *right-hand side* with per-value-column read
+  primitives (`ConsView_col0` / `ConsView_col1`) rather than joining the view in the body.
+  It then canonicalizes *every* eq-sort child in its action with the `uf_canon` primitive
+  (the child's `UF_<Sort>` leader, or the child itself when it has no row — the
+  identity-on-miss lookup a plain fact can't express):
+
+```text
+(rule ((= (values leader pf) (UF_Math follower))
+       (!= follower leader)
+       (ConsIndex_Math follower c0 c1))
+      ((let e  (ConsView_col0 c0 c1))
+       (let vp (ConsView_col1 c0 c1))
+       (let nc0 (uf_canon c0))
+       (let nc1 (uf_canon c1))
+       (set (ConsView nc0 nc1) (values e ()))
+       (set (ConsIndex_Math nc0 nc0 nc1) ()) (set (ConsIndex_Math nc1 nc0 nc1) ())
+       (delete (ConsView c0 c1))
+       (delete (ConsIndex_Math c0 c0 c1)) (delete (ConsIndex_Math c1 c0 c1)))
+       :ruleset rebuilding :unsafe-seminaive :name "rebuild_rule" :internal-include-subsumed)
+```
+
+Keeping the view out of the body matters for performance: joining the tuple view there
+  roughly doubles the rebuild's cost per firing, whereas the RHS reads are direct keyed
+  lookups. `uf_canon` and the view reads touch tables in the action, so the rule is
+  `:unsafe-seminaive`; the driving `UF_<Sort>` delta and the index make those reads sound
+  (every child that changes produces a delta the rule fires on). The `(!= follower leader)`
+  guard is required: it keeps the rule from re-keying a row to itself when `follower` is
+  already its own leader, a no-op the fixpoint would otherwise never stop repeating. In
+  proof mode the action folds one `Congr` step per child onto the view proof; reflexive
+  (unchanged) children drop in the proof simplifier. A constructor view keeps a separate
+  rule for its eclass *value* (the view `:merge` rewrites it without ever seeing the row
+  key, so it cannot be indexed); container columns rebuild structurally rather than through
+  `UF_<Sort>`.
+
 ```text
 (function v3 () Math :no-merge :unextractable :internal-let)
 (set (v3) (Add 1 2))

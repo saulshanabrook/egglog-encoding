@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 266
 expression: proof_snapshot
 ---
 (let t0
@@ -253,5 +254,5 @@ expression: proof_snapshot
         (t1 (Type "struct s*"))))
     (Fiat (= () ())))
   (substitution
-    (@v920 (expr-points-to (Expr "u")))
-    (@v921 (expr-points-to (Expr "sp")))))
+    (@v1090 (expr-points-to (Expr "u")))
+    (@v1091 (expr-points-to (Expr "sp")))))

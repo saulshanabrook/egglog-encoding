@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 266
 expression: proof_snapshot
 ---
 (let t0 (vec-of (vec-of (w (b)))))
@@ -29,4 +30,4 @@ expression: proof_snapshot
             0)
           0)
         0))
-    (substitution (@rewrite_var__1 t1) (@v40 (b)) (@v41 (vec-of (vec-of (b)))))))
+    (substitution (@rewrite_var__1 t1) (@v43 (b)) (@v44 (vec-of (vec-of (b)))))))

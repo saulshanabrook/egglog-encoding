@@ -10,6 +10,192 @@
 use crate::exec_state::{Internal, RegistrySealed};
 use crate::*;
 
+/// Deterministic names of an eq-sort's canonicalization primitives, derived from
+/// its single `UF_<S>` table name. Both the encoder (generating rebuild rules)
+/// and the typechecker (registering the primitives) compute them the same way,
+/// so no extra annotation is needed.
+pub(crate) fn uf_canon_prim_name(uf_name: &str) -> String {
+    format!("{uf_name}_canon")
+}
+pub(crate) fn uf_canon_proof_prim_name(uf_name: &str) -> String {
+    format!("{uf_name}_canon_proof")
+}
+pub(crate) fn view_col_prim_name(view_name: &str, col: usize) -> String {
+    format!("{view_name}_col{col}")
+}
+
+/// Register a view's per-value-column read primitives, one per output column:
+/// `<view>_col<i>(keys...) -> <col_i sort>` looks up the view row by key and
+/// returns value column `i`. Lets the single-rule rebuild read the view's
+/// `(eclass, proof)` on the RHS (action) instead of joining it in the body.
+pub(crate) fn register_view_read(
+    eg: &mut EGraph,
+    view_name: &str,
+    key_sorts: Vec<ArcSort>,
+    out_sorts: Vec<ArcSort>,
+) {
+    for (col, out) in out_sorts.into_iter().enumerate() {
+        eg.add_read_primitive(
+            ViewCol {
+                name: view_col_prim_name(view_name, col),
+                view_name: view_name.to_string(),
+                key_sorts: key_sorts.clone(),
+                out_sort: out,
+                col,
+            },
+            None,
+        );
+    }
+}
+
+/// Reads value column `col` of a view row by its key (see [`register_view_read`]).
+#[derive(Clone)]
+struct ViewCol {
+    name: String,
+    view_name: String,
+    key_sorts: Vec<ArcSort>,
+    out_sort: ArcSort,
+    col: usize,
+}
+
+impl Primitive for ViewCol {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        let mut sig = self.key_sorts.clone();
+        sig.push(self.out_sort.clone());
+        SimpleTypeConstraint::new(&self.name, sig, span.clone()).into_box()
+    }
+}
+
+impl ReadPrim for ViewCol {
+    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let action = state.registry().lookup_table(&self.view_name)?;
+        let values = action.lookup_values(state.es(), args)?;
+        Some(values[self.col])
+    }
+}
+
+/// Register an eq-sort's single-term canonicalization primitives so the
+/// single-rule rebuild can canonicalize each child in its action: `uf_canon`
+/// (`S -> S`, the `UF_<S>` leader or the term itself on miss) and, in proof
+/// mode, `uf_canon_proof` (`S -> Proof`, the `UF_<S>` row's `key = leader`
+/// proof, or the reflexive `<S>Proof(term)` on miss). Both read `UF_<S>` (and
+/// `uf_canon_proof` also the reflexive proof table), so they are only valid in a
+/// rule's action under `:unsafe-seminaive`, where the driving `UF_<S>` delta and
+/// the term→row index make the read sound. Called from the eq-sort's `Sort`
+/// command in typechecking, mirroring [`register_container_rebuild_from_spec`].
+pub(crate) fn register_uf_canon(
+    eg: &mut EGraph,
+    sort_name: &str,
+    uf_name: &str,
+    term_proof_name: Option<&str>,
+) {
+    let Some(sort) = eg.get_sort_by_name(sort_name).cloned() else {
+        return;
+    };
+    let mut uf_names = HashMap::default();
+    uf_names.insert(sort_name.to_string(), uf_name.to_string());
+
+    eg.add_read_primitive(
+        UfCanon {
+            name: uf_canon_prim_name(uf_name),
+            sort: sort.clone(),
+            uf_names: uf_names.clone(),
+        },
+        None,
+    );
+
+    if let Some(term_proof_name) = term_proof_name {
+        let proof_sort: ArcSort = std::sync::Arc::new(EqSort {
+            name: eg.proof_state.proof_names.proof_datatype.clone(),
+        });
+        eg.add_read_primitive(
+            UfCanonProof {
+                name: uf_canon_proof_prim_name(uf_name),
+                sort,
+                proof_sort,
+                uf_names,
+                term_proof_name: term_proof_name.to_string(),
+            },
+            None,
+        );
+    }
+}
+
+/// `uf_canon`: an eq-sort term's `UF_<S>` leader (one hop), or the term itself
+/// when it has no row (it is already a root). Chains flatten over rebuild
+/// iterations, as in [`rebuild_container_value_rec`].
+#[derive(Clone)]
+struct UfCanon {
+    name: String,
+    sort: ArcSort,
+    uf_names: HashMap<String, String>,
+}
+
+impl Primitive for UfCanon {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            &self.name,
+            vec![self.sort.clone(), self.sort.clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+}
+
+impl ReadPrim for UfCanon {
+    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let leader = lookup_uf_row(&state, &self.uf_names, &self.sort, args[0], false)
+            .map(|(leader, _)| leader)
+            .unwrap_or(args[0]);
+        Some(leader)
+    }
+}
+
+/// `uf_canon_proof`: the proof `term = leader` from the `UF_<S>` row, or the
+/// reflexive `<S>Proof(term)` (`term = term`) when the term has no row. The
+/// rebuild rule folds one `@Congr` step per child with this proof; reflexive
+/// (unchanged) children collapse out in the proof simplifier.
+#[derive(Clone)]
+struct UfCanonProof {
+    name: String,
+    sort: ArcSort,
+    proof_sort: ArcSort,
+    uf_names: HashMap<String, String>,
+    term_proof_name: String,
+}
+
+impl Primitive for UfCanonProof {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn TypeConstraint> {
+        SimpleTypeConstraint::new(
+            &self.name,
+            vec![self.sort.clone(), self.proof_sort.clone()],
+            span.clone(),
+        )
+        .into_box()
+    }
+}
+
+impl ReadPrim for UfCanonProof {
+    fn apply<'a, 'db>(&self, state: ReadState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        if let Some((_leader, Some(proof))) =
+            lookup_uf_row(&state, &self.uf_names, &self.sort, args[0], true)
+        {
+            return Some(proof);
+        }
+        // Reflexive: `<S>Proof(term)` proves `term = term`.
+        state.lookup(&self.term_proof_name, args[0]).ok().flatten()
+    }
+}
+
 /// Register a container sort's rebuild primitives from its
 /// [`ContainerRebuildSpec`]. Called when a container Sort command carrying an
 /// `:internal-container-rebuild` annotation is typechecked, so the primitives

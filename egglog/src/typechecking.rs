@@ -1,7 +1,9 @@
 use std::hash::Hasher;
 
 use crate::Context;
-use crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec;
+use crate::proofs::proof_container_rebuild::{
+    register_container_rebuild_from_spec, register_uf_canon,
+};
 use crate::{
     core::{CoreActionContext, CoreRule, GenericActionsExt, QueryConstraints, ResolvedCall},
     *,
@@ -454,6 +456,20 @@ impl EGraph {
         let command: ResolvedNCommand = match command {
             NCommand::Function(fdecl) => {
                 let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
+                // A constructor's tuple-output FD view registers per-value-column
+                // read primitives so the single-rule rebuild can read its
+                // `(eclass, proof)` on the RHS. Registered here (not just during
+                // encoding) so they survive re-parse of the desugared program.
+                if resolved.term_constructor.is_some()
+                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && ft.outputs.len() >= 2
+                {
+                    let (name, input, outputs) =
+                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    crate::proofs::proof_container_rebuild::register_view_read(
+                        self, &name, input, outputs,
+                    );
+                }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
@@ -517,6 +533,12 @@ impl EGraph {
                 // is re-parsed.
                 if let Some(spec) = container_rebuild {
                     register_container_rebuild_from_spec(self, name, spec);
+                }
+                // An eq-sort under the term/proof encoding registers its
+                // single-term canonicalization primitives (used by the
+                // single-rule rebuild), derived from its `UF_<S>` table.
+                if let Some((uf_ctor, _uf_index)) = uf {
+                    register_uf_canon(self, name, uf_ctor, proof_func.as_deref());
                 }
                 ResolvedNCommand::Sort {
                     span: span.clone(),
