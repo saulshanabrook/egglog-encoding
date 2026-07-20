@@ -529,9 +529,18 @@ impl Database {
         let mut ever_changed = false;
         let do_parallel = parallelize_db_level_op(self.total_size_estimate);
         let mut to_merge = IndexSet::default();
+        // Tables modified during this call (accumulated from the notification list
+        // here and inside `merge_simple`). Only these need their cached indexes
+        // reset at the end: an unmodified table's index is still valid — its
+        // version is unchanged, so `Index::refresh` would be a no-op. Resetting
+        // *every* table instead is O(all tables) per call, which is quadratic when
+        // many small tables each trigger a merge (e.g. a long run of global-`let`
+        // definitions in the term/proof encoding, one view table apiece).
+        let mut touched: IndexSet<TableId> = IndexSet::default();
         loop {
             to_merge.clear();
             let to_merge_vec = self.notification_list.reset();
+            touched.extend(to_merge_vec.iter().copied());
             // `merge_simple` is faster but ignores read/write-dependency ordering, so it is only
             // sound when no dirty table's merge reads another table (e.g. a `Construct`/`Function`
             // lookup inside a `:merge`). With a read dependency, an unordered merge could observe a
@@ -542,7 +551,7 @@ impl Database {
                     .iter()
                     .any(|table| self.deps.has_read_deps(*table))
             {
-                ever_changed |= self.merge_simple(to_merge_vec);
+                ever_changed |= self.merge_simple(to_merge_vec, &mut touched);
                 break;
             }
             for table in to_merge_vec {
@@ -574,7 +583,13 @@ impl Database {
                 // Then initialize read dependencies (this two-phase structure is why we have an
                 // Option in the tables_merging map).
                 for table in stratum.intersection(&to_merge).copied() {
-                    tables_merging[table].0 = Some(self.tables.unwrap_val(table));
+                    let val = self.tables.unwrap_val(table);
+                    // Maintain `total_size_estimate` incrementally (subtract the
+                    // pre-merge length now, add the post-merge length on drain
+                    // below), so the reset loop no longer re-sums every table.
+                    self.total_size_estimate =
+                        self.total_size_estimate.wrapping_sub(val.table.len());
+                    tables_merging[table].0 = Some(val);
                 }
                 let db = self.read_only_view();
                 changed |= if do_parallel {
@@ -597,34 +612,47 @@ impl Database {
                         .unwrap_or(false)
                 };
                 for (id, (table, _)) in tables_merging.drain() {
-                    self.tables.insert(id, table.unwrap());
+                    let val = table.unwrap();
+                    self.total_size_estimate =
+                        self.total_size_estimate.wrapping_add(val.table.len());
+                    self.tables.insert(id, val);
                 }
             }
             ever_changed |= changed;
         }
-        // Reset all indexes to force an update on the next access.
-        let mut size_estimate = 0;
-        for (_, info) in self.tables.iter_mut() {
-            info.column_indexes.update(|_, ti| {
-                Arc::get_mut(ti).unwrap().reset();
-            });
-            info.indexes.update(|_, ti| {
-                Arc::get_mut(ti).unwrap().reset();
-            });
-            size_estimate += info.table.len();
+        // Reset the cached indexes of the tables modified during this call so they
+        // refresh on next access. Unmodified tables keep their still-valid cached
+        // indexes. `total_size_estimate` was maintained incrementally at each merge
+        // (above and in `merge_simple`), so we no longer re-sum every table here.
+        for table in touched.iter().copied() {
+            if let Some(info) = self.tables.get_mut(table) {
+                info.column_indexes.update(|_, ti| {
+                    Arc::get_mut(ti).unwrap().reset();
+                });
+                info.indexes.update(|_, ti| {
+                    Arc::get_mut(ti).unwrap().reset();
+                });
+            }
         }
-        self.total_size_estimate = size_estimate;
         ever_changed
     }
 
     /// A "fast path" merge method that is not optimized for parallelism and does not respect read
     /// and write dependencies. This ends up being faster than the full "strata-aware" option in
     /// the body of `merge_all`.
-    fn merge_simple(&mut self, mut to_merge: SmallVec<[TableId; 4]>) -> bool {
+    fn merge_simple(
+        &mut self,
+        mut to_merge: SmallVec<[TableId; 4]>,
+        touched: &mut IndexSet<TableId>,
+    ) -> bool {
         let mut changed = false;
         while !to_merge.is_empty() {
             for table_id in to_merge.iter().copied() {
                 let mut info = self.tables.unwrap_val(table_id);
+                // Maintain `total_size_estimate` incrementally (see `merge_all`'s
+                // reset loop, which no longer re-sums every table).
+                self.total_size_estimate =
+                    self.total_size_estimate.wrapping_sub(info.table.len());
                 // Pre-seed the table's OWN buffer so a self-referential merge — one that stages a
                 // write back into its own table (e.g. the term encoder's `@UF` recursive
                 // parent-union) — can stage it. The table has been `unwrap_val`'d out of
@@ -636,9 +664,12 @@ impl Database {
                 bufs.insert(table_id, info.table.new_buffer());
                 let mut es = ExecutionState::new(self.read_only_view(), bufs);
                 changed |= info.table.merge(&mut es).added || es.changed;
+                self.total_size_estimate =
+                    self.total_size_estimate.wrapping_add(info.table.len());
                 self.tables.insert(table_id, info);
             }
             to_merge = self.notification_list.reset();
+            touched.extend(to_merge.iter().copied());
         }
         changed
     }

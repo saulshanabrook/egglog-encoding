@@ -2,6 +2,14 @@
 
 ## [Unreleased] - ReleaseDate
 
+- Make `core-relations`' `Database::merge_all` reset the cached indexes of only
+  the tables modified during the call (tracked via the notification list),
+  instead of scanning and resetting every table on every call. Unmodified tables'
+  indexes stay valid (their version is unchanged, so `Index::refresh` is a no-op),
+  and `total_size_estimate` is now maintained incrementally at each merge. This
+  removes an O(all-tables)-per-call cost that was quadratic when many small tables
+  each trigger a merge (e.g. a long run of global definitions under the
+  term/proof encoding, one view table apiece).
 - In the term/proof encoding, desugar global variables (`(let x …)`) with the
   function-style `remove_globals` pass — a nullary `:internal-let` function `set`
   to its value — instead of the old constructor-plus-`union` desugaring. The
