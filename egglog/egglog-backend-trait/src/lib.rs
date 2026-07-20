@@ -210,7 +210,9 @@ pub type ContainerMergeFn =
 /// relation tables plus functional-dependency view functions, and `union` to a
 /// `:merge` on a union-find function. A backend therefore needs no dedicated
 /// `union` or `constructor` operation — generic tables, rules, and `:merge`
-/// suffice.
+/// suffice. This holds when evaluating actions too: a `union` action becomes a
+/// `:merge` write and a constructor application becomes a table insert, so the
+/// backend never sees union/constructor as primitive operations.
 pub trait Backend: Send + Sync {
     // -- table lifecycle ----------------------------------------------------
 
