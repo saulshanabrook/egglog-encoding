@@ -177,8 +177,8 @@ impl EGraph {
         ) {
             match &rulesets[ruleset] {
                 Ruleset::Rules(rules) => {
-                    for (rule_name, (core_rule, _)) in rules.iter() {
-                        ids.push((rule_name.clone(), core_rule));
+                    for (rule_name, rule) in rules.iter() {
+                        ids.push((rule_name.clone(), &rule.core));
                     }
                 }
                 Ruleset::Combined(sub_rulesets) => {
@@ -524,7 +524,7 @@ mod test {
         let Ruleset::Rules(rules) = &egraph.rulesets["test"] else {
             unreachable!()
         };
-        let rule = rules["test-rule"].0.clone();
+        let rule = rules["test-rule"].core.clone();
         (egraph, rule)
     }
 

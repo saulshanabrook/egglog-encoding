@@ -26,9 +26,8 @@ pub use ast::{ResolvedExpr, ResolvedFact, ResolvedVar};
 #[cfg(feature = "bin")]
 pub use cli::*;
 use constraint::{Constraint, Problem, SimpleTypeConstraint, TypeConstraint};
-use core::CoreActionContext;
-use core::ResolvedAtomTerm;
 pub use core::{Atom, AtomTerm};
+use core::{CoreActionContext, ResolvedAtomTerm, specialize_core_rule};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 pub use core_relations::{BaseValue, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
@@ -325,9 +324,6 @@ pub struct EGraph {
     pushed_egraph: Option<Box<Self>>,
     functions: IndexMap<String, Function>,
     rulesets: IndexMap<String, Ruleset>,
-    /// Runtime forms of globally named rules after global removal and any
-    /// term/proof instrumentation. `run-rule` specializes these forms.
-    named_rules: IndexMap<String, ResolvedRule>,
     /// Panic callbacks embedded in `FunctionContainer` values must remain live
     /// for as long as the e-graph can retain those values. Cache one callback
     /// per unstable-function target for the lifetime of this `EGraph`.
@@ -459,7 +455,6 @@ impl EGraph {
             pushed_egraph: Default::default(),
             functions: Default::default(),
             rulesets: Default::default(),
-            named_rules: Default::default(),
             unstable_fn_panic_ids: Default::default(),
             fact_directory: None,
             seminaive: true,
@@ -1360,22 +1355,28 @@ impl EGraph {
         span: &Span,
         config: &ResolvedRunRuleConfig,
     ) -> Result<PreparedRunRule, Error> {
-        let mut rule = self
-            .named_rules
-            .get(&config.rule)
-            .cloned()
+        let (ruleset, core_rule, substitutions, include_subsumed, no_decomp) = self
+            .rulesets
+            .iter()
+            .find_map(|(ruleset_name, ruleset)| match ruleset {
+                Ruleset::Rules(rules) => rules.get(&config.rule).map(|registered| {
+                    (
+                        ruleset_name.clone(),
+                        registered.core.clone(),
+                        registered.substitutions.clone(),
+                        registered.include_subsumed,
+                        registered.no_decomp,
+                    )
+                }),
+                Ruleset::Combined(_) => None,
+            })
             .ok_or_else(|| Error::NoSuchRule(config.rule.clone(), span.clone()))?;
-        let ruleset = rule.ruleset.clone();
-        rule.body.extend(config.selectors.clone());
-        rule.eval_mode = RuleEvalMode::Naive;
-
-        // Match the ordinary rule compilation path, except this specialization is
-        // deliberately full/naive and never enters a user ruleset.
-        let union_to_set = self.proof_state.original_typechecking.is_none();
-        let core_rule = rule.to_canonicalized_core_rule(
+        let core_rule = specialize_core_rule(
+            &core_rule,
+            &config.selectors,
+            &substitutions,
             &self.type_info,
             &mut self.parser.symbol_gen,
-            union_to_set,
         )?;
         let mut translator = BackendRule::new(
             &mut *self.backend,
@@ -1384,12 +1385,12 @@ impl EGraph {
             &mut self.unstable_fn_panic_ids,
             true,
         );
-        translator.query(&core_rule.body, rule.include_subsumed)?;
+        translator.query(&core_rule.body, include_subsumed)?;
         translator.actions(&core_rule.head)?;
         let rule_id = translator.try_build(
-            &rule.name,
+            &config.rule,
             false,
-            self.no_decomp || rule.no_decomp,
+            self.no_decomp || no_decomp,
             core_rule.span,
         )?;
 
@@ -1510,8 +1511,8 @@ impl EGraph {
         ) {
             match &rulesets[ruleset] {
                 Ruleset::Rules(rules) => {
-                    for (_, id) in rules.values() {
-                        ids.push(*id);
+                    for rule in rules.values() {
+                        ids.push(rule.backend_id);
                     }
                 }
                 Ruleset::Combined(sub_rulesets) => {
@@ -1537,7 +1538,8 @@ impl EGraph {
     }
 
     fn add_rule(&mut self, rule: ast::ResolvedRule) -> Result<String, Error> {
-        let runtime_rule = rule.clone();
+        let rule_name = rule.name.clone();
+        let ruleset_name = rule.ruleset.clone();
         // The `:naive` rule option opts a single rule out of seminaive
         // evaluation. This widens primitive-context selection from
         // Pure/Write to Read/Full, so primitives that read or write the
@@ -1573,11 +1575,12 @@ impl EGraph {
             }
         }
 
-        let core_rule = rule.to_canonicalized_core_rule(
+        let canonicalized = rule.to_canonicalized_core_rule_with_substitutions(
             &self.type_info,
             &mut self.parser.symbol_gen,
             union_to_set,
         )?;
+        let core_rule = canonicalized.core;
         let (query, actions) = (&core_rule.body, &core_rule.head);
         let rule_id = {
             let mut translator = BackendRule::new(
@@ -1592,23 +1595,22 @@ impl EGraph {
             translator.try_build(&rule.name, seminaive, no_decomp, core_rule.span.clone())?
         };
 
-        let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&rule.ruleset) else {
+        let Some(Ruleset::Rules(rules)) = self.rulesets.get_mut(&ruleset_name) else {
             unreachable!("ruleset was validated before compiling the rule")
         };
-        match rules.entry(rule.name.clone()) {
+        match rules.entry(rule_name.clone()) {
             indexmap::map::Entry::Occupied(_) => {
-                panic!("Rule '{}' was already present", rule.name)
+                panic!("Rule '{}' was already present", rule_name)
             }
-            indexmap::map::Entry::Vacant(e) => e.insert((core_rule, rule_id)),
+            indexmap::map::Entry::Vacant(e) => e.insert(RegisteredRule {
+                core: core_rule,
+                backend_id: rule_id,
+                substitutions: canonicalized.substitutions,
+                include_subsumed: rule.include_subsumed,
+                no_decomp: rule.no_decomp,
+            }),
         };
-        if self
-            .named_rules
-            .insert(runtime_rule.name.clone(), runtime_rule)
-            .is_some()
-        {
-            unreachable!("global rule-name uniqueness is enforced during typechecking")
-        }
-        Ok(rule.name)
+        Ok(rule_name)
     }
 
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
@@ -2972,6 +2974,12 @@ impl EGraph {
 
         let ruleset = self.parser.symbol_gen.fresh("query_ruleset");
         prelude::add_ruleset(self, &ruleset)?;
+        let named_rule_checkpoint = self.type_info.named_rule_checkpoint();
+        let original_named_rule_checkpoint = self
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .map(|egraph| egraph.type_info.named_rule_checkpoint());
         // From here on, we OWN the ruleset and the rule and have to
         // clean them up on every exit path. Run the rest in a closure
         // and tear down before propagating.
@@ -2995,8 +3003,16 @@ impl EGraph {
         // succeeded or not.
         if let Some(Ruleset::Rules(rules)) = self.rulesets.swap_remove(&ruleset) {
             for (_, rule) in rules {
-                self.backend.free_rule(rule.1);
+                self.backend.free_rule(rule.backend_id);
             }
+        }
+        self.type_info
+            .restore_named_rule_checkpoint(named_rule_checkpoint);
+        if let (Some(original), Some(checkpoint)) = (
+            self.proof_state.original_typechecking.as_mut(),
+            original_named_rule_checkpoint,
+        ) {
+            original.type_info.restore_named_rule_checkpoint(checkpoint);
         }
         outcome?;
 
@@ -3748,6 +3764,38 @@ mod tests {
 
     use crate::PureState;
 
+    #[test]
+    fn query_error_restores_named_rule_metadata() {
+        let mut egraph = EGraph::new_with_term_encoding();
+        egraph
+            .parse_and_run_program(None, "(relation R (i64)) (R 1)")
+            .unwrap();
+        let main_checkpoint = egraph.type_info.named_rule_checkpoint();
+        let original_checkpoint = egraph
+            .proof_state
+            .original_typechecking
+            .as_ref()
+            .unwrap()
+            .type_info
+            .named_rule_checkpoint();
+
+        egraph
+            .query(crate::vars![x: i64], crate::facts![(R x)])
+            .unwrap_err();
+
+        assert_eq!(egraph.type_info.named_rule_checkpoint(), main_checkpoint);
+        assert_eq!(
+            egraph
+                .proof_state
+                .original_typechecking
+                .as_ref()
+                .unwrap()
+                .type_info
+                .named_rule_checkpoint(),
+            original_checkpoint
+        );
+    }
+
     #[derive(Clone)]
     struct InnerProduct {
         vec: ArcSort,
@@ -3883,7 +3931,7 @@ mod tests {
         // Freeing the source rule must not invalidate FunctionContainer values
         // already stored in the e-graph.
         let permanent_rule = match &egraph.rulesets["owned"] {
-            Ruleset::Rules(rules) => rules["owns-panic"].1,
+            Ruleset::Rules(rules) => rules["owns-panic"].backend_id,
             Ruleset::Combined(_) => unreachable!(),
         };
         egraph.backend.free_rule(permanent_rule);

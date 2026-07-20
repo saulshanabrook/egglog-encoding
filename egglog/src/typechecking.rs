@@ -230,6 +230,39 @@ impl Debug for PrimitiveWithId {
 }
 
 /// Stores resolved typechecking information.
+#[derive(Clone)]
+struct NamedRuleTypeInfo {
+    declaration_span: Span,
+    input_vars: Box<[RuleInputTypeInfo]>,
+}
+
+#[derive(Clone)]
+struct RuleInputTypeInfo {
+    occurrence_span: Span,
+    var: ResolvedVar,
+}
+
+impl NamedRuleTypeInfo {
+    fn from_rule(rule: &ResolvedRule) -> Self {
+        let mut input_vars = Vec::new();
+        let mut seen = HashSet::default();
+        for fact in &rule.body {
+            fact.visit_vars(&mut |span, var| {
+                if !var.is_global_ref && seen.insert(var.name.clone()) {
+                    input_vars.push(RuleInputTypeInfo {
+                        occurrence_span: span.clone(),
+                        var: var.clone(),
+                    });
+                }
+            });
+        }
+        Self {
+            declaration_span: rule.span.clone(),
+            input_vars: input_vars.into_boxed_slice(),
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct TypeInfo {
     mksorts: HashMap<String, MkSort>,
@@ -241,10 +274,9 @@ pub struct TypeInfo {
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
-    /// Source-level resolved rules, keyed by their globally unique logical name.
-    /// This registry is typechecking metadata; the runtime keeps the post-global-
-    /// removal/instrumentation rule separately.
-    pub(crate) named_rules: IndexMap<String, ResolvedRule>,
+    /// Typechecking metadata for globally named rules. Runtime rule templates
+    /// live with their compiled ruleset entries.
+    named_rules: IndexMap<String, NamedRuleTypeInfo>,
 }
 
 // These methods need to be on the `EGraph` in order to
@@ -722,12 +754,21 @@ impl TypeInfo {
         if let Some(previous) = self.named_rules.get(&rule.name) {
             return Err(TypeError::DuplicateRuleName {
                 name: rule.name.clone(),
-                first: previous.span.clone(),
+                first: previous.declaration_span.clone(),
                 duplicate: rule.span.clone(),
             });
         }
-        self.named_rules.insert(rule.name.clone(), rule.clone());
+        self.named_rules
+            .insert(rule.name.clone(), NamedRuleTypeInfo::from_rule(rule));
         Ok(())
+    }
+
+    pub(crate) fn named_rule_checkpoint(&self) -> usize {
+        self.named_rules.len()
+    }
+
+    pub(crate) fn restore_named_rule_checkpoint(&mut self, checkpoint: usize) {
+        self.named_rules.truncate(checkpoint);
     }
 
     /// Adds a sort constructor to the typechecker's known set of types.
@@ -1072,21 +1113,10 @@ impl TypeInfo {
                 )
             }
             Schedule::RunRule(span, config) => {
-                let rule = self
+                let rule_info = self
                     .named_rules
                     .get(&config.rule)
                     .ok_or_else(|| TypeError::NoSuchRule(config.rule.clone(), span.clone()))?;
-
-                let mut rule_vars: IndexMap<String, (Span, ResolvedVar)> = IndexMap::default();
-                for fact in &rule.body {
-                    fact.visit_vars(&mut |var_span, var| {
-                        if !var.is_global_ref {
-                            rule_vars
-                                .entry(var.name.clone())
-                                .or_insert_with(|| (var_span.clone(), var.clone()));
-                        }
-                    });
-                }
 
                 let mut seen_bindings = HashSet::default();
                 let mut bindings = Vec::with_capacity(config.bindings.len());
@@ -1099,7 +1129,12 @@ impl TypeInfo {
                             span: expr.span(),
                         });
                     }
-                    let Some((_, target)) = rule_vars.get(name) else {
+                    let Some(target) = rule_info
+                        .input_vars
+                        .iter()
+                        .find(|input| input.var.name == *name)
+                        .map(|input| &input.var)
+                    else {
                         return Err(TypeError::UnknownRunRuleBinding {
                             rule: config.rule.clone(),
                             variable: name.clone(),
@@ -1140,7 +1175,7 @@ impl TypeInfo {
                 selectors.extend(self.typecheck_run_rule_selectors(
                     symbol_gen,
                     &config.selectors,
-                    &rule_vars,
+                    &rule_info.input_vars,
                 )?);
 
                 ResolvedSchedule::RunRule(
@@ -1162,7 +1197,7 @@ impl TypeInfo {
         &self,
         symbol_gen: &mut SymbolGen,
         selectors: &[Fact],
-        rule_vars: &IndexMap<String, (Span, ResolvedVar)>,
+        rule_vars: &[RuleInputTypeInfo],
     ) -> Result<Vec<ResolvedFact>, TypeError> {
         if selectors.is_empty() {
             return Ok(Vec::new());
@@ -1171,8 +1206,12 @@ impl TypeInfo {
         let (query, mapped_facts) = Facts(selectors.to_vec()).to_query(self, symbol_gen);
         let mut problem = Problem::default();
         problem.add_query(&query, self, Context::Read)?;
-        for (name, (span, var)) in rule_vars {
-            problem.assign_local_var_type(name, span.clone(), var.sort.clone())?;
+        for input in rule_vars {
+            problem.assign_local_var_type(
+                &input.var.name,
+                input.occurrence_span.clone(),
+                input.var.sort.clone(),
+            )?;
         }
         let assignment = problem
             .solve(|sort: &ArcSort| sort.name())
@@ -1648,10 +1687,17 @@ mod test {
                 (rule ((R x)) () :ruleset right :name "same")
             "#,
         );
-        assert!(matches!(
+        let Err(Error::TypeError(TypeError::DuplicateRuleName {
+            name,
+            first,
             duplicate,
-            Err(Error::TypeError(TypeError::DuplicateRuleName { name, .. })) if name == "same"
-        ));
+        })) = duplicate
+        else {
+            panic!("expected duplicate rule name, got: {duplicate:?}")
+        };
+        assert_eq!(name, "same");
+        assert!(first.string().contains(":ruleset left"));
+        assert!(duplicate.string().contains(":ruleset right"));
     }
 
     #[test]
@@ -1672,6 +1718,25 @@ mod test {
                 variable,
                 ..
             })) if rule == "r" && variable == "y"
+        ));
+
+        let unknown = egraph
+            .parse_and_run_program(None, r#"(run-schedule (run-rule "r" :bind ((missing 1))))"#);
+        assert!(matches!(
+            unknown,
+            Err(Error::TypeError(TypeError::UnknownRunRuleBinding {
+                rule,
+                variable,
+                ..
+            })) if rule == "r" && variable == "missing"
+        ));
+
+        let mismatch = egraph
+            .parse_and_run_program(None, r#"(run-schedule (run-rule "r" :bind ((x "bad"))))"#);
+        assert!(matches!(
+            mismatch,
+            Err(Error::TypeError(TypeError::Mismatch { expected, actual, .. }))
+                if expected.name() == "i64" && actual.name() == "String"
         ));
     }
 }

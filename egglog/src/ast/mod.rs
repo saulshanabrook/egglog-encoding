@@ -8,8 +8,8 @@ pub mod remove_globals;
 use std::cmp::max;
 
 use crate::core::{
-    GenericAtom, GenericAtomTerm, GenericExprExt, HeadOps, HeadOrEq, Query, ResolvedCall,
-    ResolvedCoreRule,
+    GenericAtom, GenericAtomTerm, GenericExprExt, HeadOps, HeadOrEq, Query, ResolvedAtomTerm,
+    ResolvedCall, ResolvedCoreRule,
 };
 use crate::*;
 pub use egglog_ast::generic_ast::{
@@ -54,10 +54,21 @@ pub struct ProofConstructorNames {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct RegisteredRule {
+    pub(crate) core: ResolvedCoreRule,
+    pub(crate) backend_id: egglog_bridge::RuleId,
+    /// Canonicalization aliases for source variables no longer present in
+    /// `core`. `run-rule` applies these aliases to its selectors.
+    pub(crate) substitutions: Box<[(ResolvedVar, ResolvedAtomTerm)]>,
+    pub(crate) include_subsumed: bool,
+    pub(crate) no_decomp: bool,
+}
+
+#[derive(Clone, Debug)]
 /// The egglog internal representation of already compiled rules
 pub(crate) enum Ruleset {
     /// Represents a ruleset with a set of rules.
-    Rules(IndexMap<String, (ResolvedCoreRule, egglog_bridge::RuleId)>),
+    Rules(IndexMap<String, RegisteredRule>),
     /// A combined ruleset may contain other rulesets.
     Combined(Vec<String>),
 }
