@@ -242,3 +242,50 @@ fn timing_summary_rejects_parallel_execution() {
     assert!(!summary_path.exists());
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn causal_slice_runs_the_emitted_program_under_strict_proof_testing() {
+    let directory = temporary_directory("causal-proof-testing");
+    let program_path = directory.join("program.egg");
+    let summary_path = directory.join("summary.json");
+    std::fs::write(
+        &program_path,
+        r#"
+        (relation Seed (i64))
+        (relation Middle (i64))
+        (relation Goal (i64))
+        (relation Irrelevant (i64))
+
+        (rule ((Seed x)) ((Middle x)) :name "seed-middle")
+        (rule ((Middle x)) ((Goal x)) :name "middle-goal")
+        (rule ((Seed x)) ((Irrelevant x)) :name "irrelevant")
+
+        (Seed 1)
+        (Seed 2)
+        (run 3)
+        (check (Goal 1))
+        "#,
+    )
+    .unwrap();
+
+    let output = run_egglog(&[
+        Path::new("--causal-slice"),
+        Path::new("--proof-testing"),
+        Path::new("--mode"),
+        Path::new("no-messages"),
+        Path::new("--timing-summary"),
+        &summary_path,
+        &program_path,
+    ]);
+
+    assert!(
+        output.status.success(),
+        "causal proof testing failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(summary_path.is_file());
+    let summary: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&summary_path).unwrap()).unwrap();
+    assert_eq!(summary["schema_version"], 2);
+    std::fs::remove_dir_all(directory).unwrap();
+}

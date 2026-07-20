@@ -14,8 +14,16 @@ from typing import Literal
 
 Status = Literal["success", "timed-out", "failure"]
 Backend = str
-Treatment = Literal["off", "term", "proofs"]
+Treatment = Literal["off", "term", "proofs", "proof-testing", "causal-proof-testing"]
 DetailLevel = Literal["summary", "files", "phases", "rulesets"]
+
+TREATMENTS: tuple[Treatment, ...] = (
+    "off",
+    "term",
+    "proofs",
+    "proof-testing",
+    "causal-proof-testing",
+)
 
 
 @dataclass(frozen=True)
@@ -26,7 +34,7 @@ class BackendSpec:
 
 
 BACKEND_SPECS: dict[Backend, BackendSpec] = {
-    "main": BackendSpec(("off", "term", "proofs"), ()),
+    "main": BackendSpec(TREATMENTS, ()),
     "dd": BackendSpec(("term", "proofs"), ("--backend", "dd"), ("dd-backend",)),
 }
 

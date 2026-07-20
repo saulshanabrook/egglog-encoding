@@ -83,6 +83,11 @@ struct Args {
     /// Enable proof testing, turning all `check` statements into `prove` statements
     #[clap(long)]
     proof_testing: bool,
+    /// Replace one supported input program's computation schedule with a
+    /// causally sliced sequence of guarded rule applications before strict
+    /// proof testing.
+    #[clap(long, requires = "proof_testing")]
+    causal_slice: bool,
 }
 
 /// Start a command-line interface for the E-graph.
@@ -114,6 +119,24 @@ where
 
     if args.timing_summary.is_some() && args.threads != 1 {
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");
+        std::process::exit(2);
+    }
+    if args.causal_slice && args.threads != 1 {
+        log::error!("--causal-slice requires --threads 1");
+        std::process::exit(2);
+    }
+    if args.causal_slice && args.inputs.len() != 1 {
+        log::error!("--causal-slice requires exactly one input file");
+        std::process::exit(2);
+    }
+    if args.causal_slice
+        && egraph
+            .backend
+            .as_any_mut()
+            .downcast_mut::<egglog_bridge::EGraph>()
+            .is_none()
+    {
+        log::error!("--causal-slice is implemented only for the reference backend");
         std::process::exit(2);
     }
 
@@ -148,10 +171,24 @@ where
         }
     } else {
         for input in &args.inputs {
-            let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
+            let original_program = std::fs::read_to_string(input).unwrap_or_else(|_| {
                 let arg = input.to_string_lossy();
                 panic!("Failed to read file {arg}")
             });
+            let program = if args.causal_slice {
+                match causal_slice::causal_slice_program(
+                    Some(input.to_string_lossy().into_owned()),
+                    &original_program,
+                ) {
+                    Ok(slice) => slice.source,
+                    Err(error) => {
+                        log::error!("{error}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                original_program
+            };
 
             match run_commands(
                 &mut egraph,

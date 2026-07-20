@@ -82,6 +82,24 @@ def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     assert args.detail == "rulesets"
 
 
+def test_pair_cli_accepts_strict_and_causal_proof_treatments() -> None:
+    args = benchmark.parse_benchmark_args(
+        [
+            "--compare-treatment",
+            "proof-testing",
+            "--treatment",
+            "causal-proof-testing",
+        ]
+    )
+    baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert baseline.treatment == "proof-testing"
+    assert candidate.treatment == "causal-proof-testing"
+
+    with pytest.raises(ValueError, match="backend dd does not support treatment causal-proof-testing"):
+        models.EndpointRequest(targets.parse_target("."), "dd", "causal-proof-testing")
+
+
 @pytest.mark.parametrize("detail", ["summary", "files", "phases", "rulesets"])
 def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
     assert benchmark.parse_benchmark_args(["--detail", detail]).detail == detail

@@ -25,11 +25,13 @@ BuildProfile = Literal["release", "profiling"]
 
 
 def treatment_flags(treatment: Treatment) -> list[str]:
-    if treatment == "off":
-        return []
-    if treatment == "term":
-        return ["--term-encoding"]
-    return ["--proofs"]
+    return {
+        "off": [],
+        "term": ["--term-encoding"],
+        "proofs": ["--proofs"],
+        "proof-testing": ["--proof-testing"],
+        "causal-proof-testing": ["--causal-slice", "--proof-testing"],
+    }[treatment]
 
 
 def backend_flags(backend: Backend) -> list[str]:
