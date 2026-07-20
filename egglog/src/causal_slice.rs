@@ -129,6 +129,7 @@ enum AtomArg {
         function: String,
         args: Vec<AtomArg>,
         input_sorts: Vec<String>,
+        output_sort: String,
     },
 }
 
@@ -136,6 +137,7 @@ enum AtomArg {
 struct RuleModel {
     body: Vec<AtomTemplate>,
     head: Vec<AtomTemplate>,
+    head_constructors: Vec<AtomArg>,
     var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
 }
@@ -918,6 +920,56 @@ fn collect_declarations(
                     });
                 }
             }
+            Command::Constructor {
+                span,
+                name,
+                schema,
+                unextractable,
+                hidden,
+                let_binding,
+                term_constructor,
+                ..
+            } => {
+                if *unextractable || *hidden || *let_binding || term_constructor.is_some() {
+                    return unsupported(
+                        span,
+                        format!(
+                            "standalone constructor `{name}` with extraction, hidden, global, or encoded-view annotations"
+                        ),
+                    );
+                }
+                let [output] = schema.outputs.as_slice() else {
+                    return unsupported(
+                        span,
+                        format!("tuple-output standalone constructor `{name}`"),
+                    );
+                };
+                for sort in schema.input.iter().chain(std::iter::once(output)) {
+                    if !supported_sort(sort) {
+                        return unsupported(
+                            span,
+                            format!(
+                                "standalone constructor `{name}` with unsupported sort `{sort}`"
+                            ),
+                        );
+                    }
+                }
+                if constructors
+                    .insert(
+                        name.clone(),
+                        ConstructorDecl {
+                            inputs: schema.input.clone(),
+                            output: output.clone(),
+                        },
+                    )
+                    .is_some()
+                {
+                    return unsupported(
+                        span,
+                        format!("duplicate constructor declaration `{name}`"),
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -1013,7 +1065,10 @@ fn validate_and_model(
 
     for (index, command) in commands.iter().enumerate() {
         match command {
-            Command::Relation { .. } | Command::Datatype { .. } | Command::AddRuleset(..) => {
+            Command::Relation { .. }
+            | Command::Datatype { .. }
+            | Command::Constructor { .. }
+            | Command::AddRuleset(..) => {
                 if schedule_index.is_some() {
                     return unsupported_command(
                         command,
@@ -1125,10 +1180,7 @@ fn validate_and_model(
                     "rewrites, unions, or congruence",
                 );
             }
-            Command::Function { .. }
-            | Command::Constructor { .. }
-            | Command::Datatypes { .. }
-            | Command::Sort { .. } => {
+            Command::Function { .. } | Command::Datatypes { .. } | Command::Sort { .. } => {
                 return unsupported_command(
                     command,
                     index,
@@ -1229,6 +1281,7 @@ fn model_rule(
     }
 
     let mut head = Vec::new();
+    let mut head_constructors = Vec::new();
     for action in &rule.head.0 {
         let GenericAction::Expr(_, expr) = action else {
             return unsupported_action(
@@ -1236,8 +1289,32 @@ fn model_rule(
                 format!("a non-insert head action in rule `{}`", rule.name),
             );
         };
-        let atom = model_atom(expr, relations, constructors, "rule head")?;
-        for arg in &atom.args {
+        let GenericExpr::Call(span, function, _) = expr else {
+            return unsupported_action(
+                action,
+                format!("a non-call head action in rule `{}`", rule.name),
+            );
+        };
+        let args = if relations.contains_key(function) {
+            let atom = model_atom(expr, relations, constructors, "rule head")?;
+            let args = atom.args.clone();
+            head.push(atom);
+            args
+        } else if let Some(constructor) = constructors.get(function) {
+            let constructor = model_atom_arg(expr, &constructor.output, constructors, "rule head")?;
+            let args = vec![constructor.clone()];
+            head_constructors.push(constructor);
+            args
+        } else {
+            return unsupported(
+                span,
+                format!(
+                    "primitive or function call `{function}` in rule `{}` head",
+                    rule.name
+                ),
+            );
+        };
+        for arg in &args {
             for (span, var) in atom_arg_vars(arg) {
                 if !var_sorts.contains_key(var) {
                     return unsupported(
@@ -1247,7 +1324,6 @@ fn model_rule(
                 }
             }
         }
-        head.push(atom);
     }
 
     // Generic Join deliberately projects a variable that occurs in only one
@@ -1257,7 +1333,12 @@ fn model_rule(
     // with an exact guard. One-atom rules use MinCover and retain every column.
     if body.len() > 1 {
         let body_occurrences = variable_atom_occurrences(&body);
-        let head_vars = atom_variables(&head);
+        let mut head_vars = atom_variables(&head);
+        for constructor in &head_constructors {
+            for (_, var) in atom_arg_vars(constructor) {
+                head_vars.insert(var.as_str());
+            }
+        }
         if let Some(var) = var_order.iter().find(|var| {
             body_occurrences.get(var.as_str()).copied() == Some(1)
                 && !head_vars.contains(var.as_str())
@@ -1274,6 +1355,7 @@ fn model_rule(
     Ok(RuleModel {
         body,
         head,
+        head_constructors,
         var_order,
         var_sorts,
     })
@@ -1491,6 +1573,7 @@ fn model_atom_arg(
                     .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, context))
                     .collect::<Result<Vec<_>, _>>()?,
                 input_sorts: constructor.inputs.clone(),
+                output_sort: constructor.output.clone(),
             })
         }
     }
@@ -1717,6 +1800,14 @@ fn elaborate_events(
                 trace_functions,
                 witnesses,
             )?;
+            for constructor in &model.head_constructors {
+                let AtomArg::App { output_sort, .. } = constructor else {
+                    return Err(CausalSliceError::Invariant(
+                        "modeled constructor head lost its application node".to_owned(),
+                    ));
+                };
+                ground_arg(egraph, constructor, output_sort, &bindings, witnesses)?;
+            }
             let expected_head = ground_atoms(egraph, &model.head, &bindings, witnesses, relations)?;
             if !same_row_multiset(&expected_head, &effects.observed_rows) {
                 return Err(CausalSliceError::Invariant(format!(

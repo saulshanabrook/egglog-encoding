@@ -417,6 +417,40 @@ fn source_constructor_witness_is_available_to_manual_replay() {
 }
 
 #[test]
+fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
+    let source = r#"
+        (datatype Expr (A String))
+        (constructor make (String) Expr)
+        (relation Seed (String))
+        (relation Goal (Expr))
+        (rule ((Seed x))
+              ((make x) (Goal (make x)))
+              :name "build")
+        (Seed "x")
+        (run 1)
+        (check (Goal y))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("standalone-constructor.egg".to_owned()), source).unwrap();
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"build\" :bind ((x \"x\")) :expect 1)")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("standalone-constructor-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn anonymous_rule_names_are_source_based_and_stable() {
     let source = r#"
         (relation A (i64))
