@@ -1558,7 +1558,7 @@ impl EGraph {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut runs = Vec::with_capacity(batch.fires.len());
-        for fire in &batch.fires {
+        for fire in batch.fires.iter() {
             let group_index = fire.group as usize;
             let group = &batch.groups[group_index];
             let (_, rule_id, substitutions) = &groups[group_index];

@@ -1,4 +1,9 @@
-use egglog::{CommandOutput, EGraph, Error, TypeError};
+use std::sync::Arc;
+
+use egglog::{
+    CommandOutput, EGraph, Error, TypeError,
+    ast::{Command, Schedule},
+};
 
 const SETUP: &str = r#"
     (datatype Expr (A) (B) (Wrap Expr))
@@ -11,6 +16,39 @@ const SETUP: &str = r#"
     (let $wrapped-a (Wrap (A)))
     (let $wrapped-b (Wrap (B)))
 "#;
+
+#[test]
+fn packed_run_rule_batch_clones_share_the_fire_tape() {
+    fn packed_batch(schedule: &Schedule) -> Option<&egglog::ast::PackedRunRuleBatch> {
+        match schedule {
+            Schedule::RunRuleBatchPacked(_, batch) => Some(batch),
+            Schedule::Sequence(_, schedules) => schedules.iter().find_map(packed_batch),
+            _ => None,
+        }
+    }
+
+    let commands = EGraph::default()
+        .parse_program(
+            None,
+            r#"
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (1 2)
+                    :groups (("copy" (x)))
+                    :fires ((0 0) (0 1))))
+            "#,
+        )
+        .unwrap();
+    let batch = commands
+        .iter()
+        .find_map(|command| match command {
+            Command::RunSchedule(schedule) => packed_batch(schedule),
+            _ => None,
+        })
+        .expect("expected one packed rule batch");
+    let cloned = batch.clone();
+    assert!(Arc::ptr_eq(&batch.fires, &cloned.fires));
+}
 
 #[test]
 fn run_rule_mismatch_is_atomic_and_a_later_run_recovers() {

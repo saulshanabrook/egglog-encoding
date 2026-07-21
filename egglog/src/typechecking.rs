@@ -1189,7 +1189,7 @@ impl TypeInfo {
         }
 
         let mut witness_sorts: Vec<Option<ArcSort>> = vec![None; batch.witnesses.len()];
-        for fire in &batch.fires {
+        for fire in batch.fires.iter() {
             let group = groups.get(fire.group as usize).ok_or_else(|| {
                 invalid(
                     fire.span.clone(),

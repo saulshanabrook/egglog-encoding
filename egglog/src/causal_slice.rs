@@ -4408,7 +4408,7 @@ fn validate_replay_packed_batch(
             )));
         }
     }
-    for fire in &batch.fires {
+    for fire in batch.fires.iter() {
         let Some(group) = batch.groups.get(fire.group as usize) else {
             return Err(CausalSliceError::Invariant(format!(
                 "packed replay references unknown group {}",

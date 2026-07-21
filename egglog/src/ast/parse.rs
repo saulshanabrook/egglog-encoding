@@ -1211,7 +1211,7 @@ impl Parser {
                         GenericPackedRunRuleBatch {
                             witnesses,
                             groups,
-                            fires,
+                            fires: fires.into(),
                         },
                     ));
                 }

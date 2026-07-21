@@ -5,7 +5,7 @@ mod parse;
 pub mod proof_global_remover;
 pub mod remove_globals;
 
-use std::cmp::max;
+use std::{cmp::max, sync::Arc};
 
 use crate::core::{
     GenericAtom, GenericAtomTerm, GenericExprExt, HeadOps, HeadOrEq, Query, ResolvedAtomTerm,
@@ -1340,7 +1340,7 @@ pub struct PackedRuleFire {
 pub struct GenericPackedRunRuleBatch<Head, Leaf> {
     pub witnesses: Vec<GenericExpr<Head, Leaf>>,
     pub groups: Vec<GenericPackedRuleGroup<Leaf>>,
-    pub fires: Vec<PackedRuleFire>,
+    pub fires: Arc<[PackedRuleFire]>,
 }
 
 impl<Head, Leaf> GenericPackedRunRuleBatch<Head, Leaf>

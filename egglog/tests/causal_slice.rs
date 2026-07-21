@@ -32,7 +32,7 @@ fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
                 }
             }
             Schedule::RunRuleBatchPacked(_, batch) => {
-                for fire in &batch.fires {
+                for fire in batch.fires.iter() {
                     let group = &batch.groups[fire.group as usize];
                     firings.push((
                         group.rule.clone(),
