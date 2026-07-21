@@ -40,6 +40,7 @@ mod compile;
 mod dd_native;
 mod interpret;
 pub mod monotone;
+mod schedule_compiler;
 
 use compile::{validate_merge, visit_merge_read_dependencies, ReadKey, Row};
 
@@ -488,7 +489,7 @@ impl EGraph {
         }
     }
 
-    fn take_panic_message(&self) -> Option<String> {
+    pub(crate) fn take_panic_message(&self) -> Option<String> {
         self.panic_message
             .lock()
             .expect("DD panic-message side channel must not be poisoned")
@@ -2160,6 +2161,120 @@ mod tests {
         assert!(eg.mirror[&uf].contains(&row(&[75, 4, 0])));
     }
 
+    /// Datalog transitive closure: (edge, path) relations plus base/trans
+    /// rules, seeded with a 1→5 chain.
+    fn closure_fixture(eg: &mut EGraph) -> (FunctionId, FunctionId, RuleId, RuleId) {
+        let unit_ty = eg.db.base_values().get_ty::<()>();
+        let relation = |eg: &mut EGraph, name: &str| {
+            Backend::add_table(
+                eg,
+                FunctionConfig {
+                    schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+                    n_vals: 1,
+                    n_identity_vals: None,
+                    default: DefaultVal::Fail,
+                    merge: MergeFn::Old,
+                    name: name.to_string(),
+                    can_subsume: false,
+                },
+            )
+        };
+        let edge = relation(eg, "edge");
+        let path = relation(eg, "path");
+        for (a, b) in [(1, 2), (2, 3), (3, 4), (4, 5)] {
+            eg.insert_live_row(edge, row(&[a, b, 0]));
+        }
+        let unit = constant(0, ColumnTy::Base(unit_ty));
+        let base = {
+            let mut rb = TestRule::new("base");
+            let x = rb.new_var(ColumnTy::Id);
+            let y = rb.new_var(ColumnTy::Id);
+            rb.query_table(edge, &[x.clone(), y.clone(), unit.clone()], Some(false));
+            rb.set(path, &[x, y, unit.clone()]);
+            rb.build(eg)
+        };
+        let trans = {
+            let mut rb = TestRule::new("trans");
+            let x = rb.new_var(ColumnTy::Id);
+            let y = rb.new_var(ColumnTy::Id);
+            let z = rb.new_var(ColumnTy::Id);
+            rb.query_table(path, &[x.clone(), y.clone(), unit.clone()], Some(false));
+            rb.query_table(edge, &[y, z.clone(), unit.clone()], Some(false));
+            rb.set(path, &[x, z, unit]);
+            rb.build(eg)
+        };
+        (edge, path, base, trans)
+    }
+
+    /// The compiled dataflow path must engage on the datalog subset and agree
+    /// with the interpreter exactly, for both saturation and bounded runs.
+    #[test]
+    fn compiled_schedule_matches_interpreter() {
+        for (spec_of, expected_paths) in [
+            // (saturate (run closure)): full transitive closure of the chain.
+            (
+                (|rules: Vec<RuleId>| {
+                    ScheduleSpec::Saturate(Box::new(ScheduleSpec::Run {
+                        ruleset: "closure".to_string(),
+                        rules,
+                    }))
+                }) as fn(Vec<RuleId>) -> ScheduleSpec,
+                10usize, // all (i, j) with 1 <= i < j <= 5
+            ),
+            // (run 2): base pass then one transitive pass.
+            (
+                |rules| {
+                    ScheduleSpec::Repeat(
+                        2,
+                        Box::new(ScheduleSpec::Run {
+                            ruleset: "closure".to_string(),
+                            rules,
+                        }),
+                    )
+                },
+                7, // 4 edges + 3 two-step paths
+            ),
+        ] {
+            let mut compiled = EGraph::new();
+            let (_, path_c, base_c, trans_c) = closure_fixture(&mut compiled);
+            let spec = spec_of(vec![base_c, trans_c]);
+            let leaves = crate::schedule_compiler::try_run_compiled(&mut compiled, &spec)
+                .expect("the datalog subset must take the compiled path")
+                .expect("compiled schedule must run");
+            assert!(leaves.iter().any(|leaf| leaf.iteration.changed()));
+
+            let mut interpreted = EGraph::new();
+            let (_, path_i, base_i, trans_i) = closure_fixture(&mut interpreted);
+            let spec = spec_of(vec![base_i, trans_i]);
+            let mut leaf_reports = Vec::new();
+            interpreted
+                .execute_schedule(&spec, &mut leaf_reports)
+                .expect("interpreted schedule must run");
+
+            assert_eq!(compiled.mirror[&path_c], interpreted.mirror[&path_i]);
+            assert_eq!(compiled.mirror[&path_c].len(), expected_paths);
+        }
+    }
+
+    /// Repeat(0) compiles to a no-op region (the loop's gate feeds nothing).
+    #[test]
+    fn compiled_repeat_zero_is_a_no_op() {
+        let mut eg = EGraph::new();
+        let (_, path, base, trans) = closure_fixture(&mut eg);
+        let spec = ScheduleSpec::Repeat(
+            0,
+            Box::new(ScheduleSpec::Run {
+                ruleset: "closure".to_string(),
+                rules: vec![base, trans],
+            }),
+        );
+        let leaves = crate::schedule_compiler::try_run_compiled(&mut eg, &spec)
+            .expect("the datalog subset must take the compiled path")
+            .expect("compiled schedule must run");
+        assert!(leaves.iter().all(|leaf| !leaf.iteration.changed()));
+        assert!(!eg.mirror.contains_key(&path) || eg.mirror[&path].is_empty());
+    }
+
     #[test]
     fn clone_preserves_authoritative_state_and_rebuilds_transient_join() {
         let mut eg = EGraph::new();
@@ -2621,10 +2736,13 @@ impl Backend for EGraph {
         &mut self,
         schedule: &ScheduleSpec,
     ) -> Option<Result<Vec<ScheduleLeafReport>>> {
-        // Take the whole schedule tree: today this interprets it over
-        // `run_rules` with the frontend's exact control flow (so reports are
-        // identical), and it is the seam where schedule regions will compile
-        // into native dataflow fixpoints (docs/rebuild-in-dataflow.md).
+        // Take the whole schedule tree: schedules in the compiled subset run
+        // as ONE dataflow with in-scope fixpoints (`schedule_compiler`);
+        // everything else interprets over `run_rules` with the frontend's
+        // exact control flow, so reports are identical either way.
+        if let Some(outcome) = schedule_compiler::try_run_compiled(self, schedule) {
+            return Some(outcome);
+        }
         let mut leaves = Vec::new();
         Some(self.execute_schedule(schedule, &mut leaves).map(|_| leaves))
     }
