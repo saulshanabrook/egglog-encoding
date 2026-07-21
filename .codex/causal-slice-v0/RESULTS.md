@@ -28,6 +28,15 @@ reachability, so an unsupported but causally irrelevant firing does not poison
 a sound slice. The same unsupported construct still fails closed when its
 event is retained.
 
+Closed immutable BigInt/BigRat source globals and their later rule/check uses
+are now included. Each native traced wave snapshots the zero-key global table
+against the same pre-state as its rule query. When a later union changes the
+endpoint denoted by a global, the backward slice retains the successful-union
+forest path from its definition endpoint to its use-time endpoint. This avoids
+both final-state lookup and stale definition-time IDs. A later global that
+shadows an earlier `$`-prefixed local remains fail-closed because the unchanged
+strict proof checker resolves the replayed spelling as the global.
+
 Anonymous rewrites and birewrites are now lowered through the parsed AST into
 deterministically named replayable rules, including stable one-to-many source
 mapping. Bare immutable constructor source terms and rewrite-projected source
@@ -280,7 +289,9 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | delete/subsume | rejected | state provenance absent and sequential replay diverges |
 | constructor lookups | implemented for exact captured syntax | lookup availability plus output equality path are retained; equal-but-different body syntax needs exact native row evidence |
 | mutable functions, merges, other RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
-| constructor witnesses | implemented and tested | source, rule-created, standalone, nested, and constructor-union canaries; globals remain rejected |
+| constructor witnesses | implemented and tested | source, rule-created, standalone, nested, constructor-union, BigInt/BigRat, and closed-global canaries |
+| dynamic source globals | implemented for closed immutable constructor globals | exact native pre-wave endpoints are captured once per wave; changed endpoints retain their successful-union path; local/global shadowing fails closed |
+| inert custom-function declarations | preserved | declarations may remain in source, while every read, write, merge, or default-value use remains rejected without state provenance |
 | rewrite/birewrite replay | implemented and tested | deterministic parsed lowering, stable source mapping, projected binding aliases, ordinary and strict canaries |
 | print-only observations | conservative Prefix fallback | every effective preceding event is retained; each `print-size` root is reported; no size reduction is claimed |
 | containers | rejected | same outer ID can represent changed contents |
@@ -346,6 +357,22 @@ No epoch is needed for this tested one-scope forest. Congruence/rebuild unions
 without an originating firing and relation-row rekeys remain fail-closed when
 retained. The global no-epoch claim is still false: push/pop can reuse
 `Value(0)` for another term.
+
+### Dynamic globals
+
+The first implementation stored only a global's definition-time endpoint. A
+two-wave canary applied `union (B) $a` after `$a` was defined as `(A)`: wave 1
+reported the applied raw edge `(B, A)`, while wave 2 read `$a` as the canonical
+`B` endpoint and reported a redundant `(B, B)`. Reusing the definition endpoint
+therefore falsified exact grounding.
+
+The native trace now snapshots every declared zero-key global immediately
+before each bounded query and stores those values on the same
+`RuleExecutionTrace`. Rule and check models distinguish globals from locals,
+exclude them from replay binding schemas, and add the equality-forest support
+between definition and use endpoints. A stronger canary makes an earlier union
+otherwise irrelevant and confirms backward reachability retains it solely for
+a later global-valued head. Both ordinary and unchanged strict replay pass.
 
 ### Sequential waves
 
@@ -531,19 +558,19 @@ validation bucket rather than being timed as successful rows.
 |---|---|---|
 | `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | immutable `BigRat` constructor input sort | canonical BigInt/BigRat witnesses, global lets, custom merges, primitive filters, and multiple temporal boundaries |
+| `herbie.egg` | pure `(+ a b)` nested in a lowered rewrite head | BigInt/BigRat globals, exact dynamic global endpoints, and inert `hi`/`lo` declarations are admitted; pure primitive result provenance, dynamic custom functions, push/pop, and multiple schedules remain |
 | `luminal-llama.egg` | `IList` declared through `datatype*` | recursive datatype lowering, six schedule boundaries, delete/subsume, functions, and mutable-state provenance |
-| `hardboiled_conv1d_32.egg` | bare EqSort `Variable` | container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
-| `eggcc-2mm-pass1.egg` | bare EqSort `TypeList` | custom merges, unextractable functions, multiple temporal schedules, containers, delete/subsume, and stateful primitives |
+| `hardboiled_conv1d_32.egg` | constructor `Call` consumes container sort `VecExpr` | container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
+| `eggcc-2mm-pass1.egg` | standalone constructor `TLConcat` is `:unextractable` | custom merges, unextractable constructor witnesses, multiple temporal schedules, containers, delete/subsume, and stateful primitives |
 
-The next implementation order selected from these results is: admit bare
-union-find sort declarations (but not presorts), which advances both
-Hardboiled and eggcc; admit canonical immutable BigInt/BigRat witnesses for
-Herbie; share the packed fire tape across AST transformations and avoid the
-redundant full-source validation parse; then preserve exact body-row evidence
-for retained chained lookups. Guarded shared-prestate batch replay is
-implemented; mutable commit, delete/subsume, container-version, and opaque
-external provenance remain fail-closed.
+The current selection point is between two executable hooks: capture/validate
+pure primitive results for Herbie's lowered rewrite heads, or prove that
+`:unextractable` affects extraction only and admit exact syntax witnesses for
+eggcc. Hardboiled and Luminal require versioned container provenance before
+their current declarations can be used soundly. Guarded shared-prestate batch
+replay and exact global snapshots are implemented; mutable commit,
+delete/subsume, container-version, and opaque external provenance remain
+fail-closed.
 
 ## Validation status
 
@@ -592,6 +619,18 @@ Current packed replay continuation:
 - `make proof-tests` and `make check` have not yet been rerun after the packed
   batch commits; their last complete runs passed before this continuation.
 
+Current global/declaration continuation:
+
+- `cargo test -p egglog --test causal_slice`: 60 passed;
+- `cargo test -p egglog --test run_rule`: 16 passed;
+- `cargo test -p egglog-core-relations -p egglog-bridge`: 86 unit tests and 2
+  doctests passed;
+- `cargo clippy -p egglog-core-relations -p egglog-bridge -p egglog --tests --
+  -D warnings`, formatting, and `git diff --check`: passed;
+- the four unsupported default workloads were rerun at `e15058be`; their exact
+  first boundaries are recorded above;
+- `make proof-tests` and `make check` remain pending after the newest commits.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -600,6 +639,11 @@ Current packed replay continuation:
   successful unions, immutable constructor witnesses, deterministic rewrite
   lowering, and conservative print-prefix replay are included. Exact wave-11
   math now passes the unchanged checker and the public benchmark runner.
+- Implemented/tested fact: closed BigInt/BigRat globals can appear in source
+  facts, rule bodies, complete heads, constructor lookups, rewrites, unions,
+  and positive checks. Their native pre-wave values and equality causes are
+  exact; inert custom-function declarations are preserved without admitting
+  mutable table behavior.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
@@ -615,15 +659,14 @@ Current packed replay continuation:
 
 ## Recommended next patches
 
-The benchmark path, scalar inputs, immutable constructor witnesses, direct
-unions, guarded shared-prestate batches, and two real fixtures are implemented.
-The next patches should be:
+The benchmark path, scalar inputs, immutable constructor/global witnesses,
+direct unions, guarded shared-prestate batches, and two real fixtures are
+implemented. The next patches should be:
 
-1. admit bare EqSort declarations while continuing to reject all container
-   presorts, then add canonical immutable BigInt/BigRat witnesses;
-2. store the packed fire tape in shared immutable storage so typechecking,
-   proof instrumentation, and schedule preparation do not deep-clone 836,160
-   fires;
+1. trace or otherwise exactly validate a narrow whitelist of pure primitive
+   results used by retained complete heads, starting with Herbie's BigRat `+`;
+2. audit and, if sound, admit `:unextractable` constructors when replay syntax
+   comes from the native match/action trace rather than extraction;
 3. avoid reparsing the generated source solely for in-process validation after
    the already-validated parsed/source rule mapping is available;
 4. stream each native wave into a callback, or otherwise compact completed
@@ -683,6 +726,15 @@ Local reviewable commits:
 28. `df849e39` — add guarded same-prestate rule batches;
 29. `fd3d8b0e` — add compact grounded batch syntax and execution;
 30. `b7be8efd` — emit one compact replay batch per retained wave.
+31. `cac77815` — record the exact compact math benchmark;
+32. `6ef19b6b`, `b85e13c6` — admit bare equality sorts and immutable BigInt/
+    BigRat declaration sorts;
+33. `1e02d7f2` — share packed replay fire tapes across AST clones;
+34. `dc651847` — replay closed BigInt/BigRat source globals;
+35. `f3cb3040`, `6f06f2b0` — model dynamic globals, capture exact pre-wave
+    endpoints, and retain endpoint-changing equality causes;
+36. `e15058be` — preserve inert custom-function declarations while keeping all
+    mutable uses fail-closed.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker

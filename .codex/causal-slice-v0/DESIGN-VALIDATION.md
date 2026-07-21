@@ -4,7 +4,7 @@ Status: Bronze implemented and tested. The exact-plan boundary, mutable-state
 sidecar proposal, equality hook, and general sequential-wave claim were
 actively falsified rather than silently generalized.
 
-Date: 2026-07-20.
+Date: 2026-07-21.
 
 ## Current validated extension beyond Bronze
 
@@ -37,7 +37,13 @@ record. The current implementation additionally confirms:
   environments in original ordinal order, and commits once per wave;
 - the exact 11-wave math fixture now passes ordinary and unchanged strict proof
   replay and produces a public benchmark row. Its full Prefix remains a
-  measured performance loss rather than a semantic or completion blocker.
+  measured performance loss rather than a semantic or completion blocker;
+- closed immutable source globals are distinguished from local variables and
+  excluded from replay bindings. The native trace snapshots their exact
+  zero-key values against each wave pre-state; when canonicalization changes a
+  value, the slice retains the successful-union path from definition to use;
+- inert custom-function declarations are preserved, while any read, write,
+  merge, or default use remains fail-closed without mutable-state provenance.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -99,8 +105,9 @@ flags; it does not normalize tracing to another planner.
 The initial validator rejected all equality, constructors, unions, and
 rewrites. The current extension above admits immutable constructors, direct
 unions, restricted constructor lookup binders, parsed rewrite/birewrite
-lowering, and a print-only Prefix fallback. It still rejects primitive
-filters, mutable functions, delete, subsume, custom merges, other RHS function
+lowering, closed immutable globals, inert custom-function declarations, and a
+print-only Prefix fallback. It still rejects primitive filters and results,
+mutable functions, delete, subsume, custom merges, other RHS function
 lookups, external functions, containers, extracts, negative checks, push/pop,
 includes, output/opaque I/O, input `run-rule`, and DD.
 
@@ -128,6 +135,9 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | match-time endpoints provide printable witnesses by themselves | Falsified generally | syntax-specific literal/application witnesses are required; one preferred endpoint witness fails for equal-syntax chained lookups |
 | scalar literals can be printed without per-match extraction | Confirmed | typed base-value reconstruction produces source literals and unsafe strings fail closed |
 | immutable constructor syntax can be captured from native applications | Confirmed | source, rule-created, nested, standalone, and constructor-union canaries pass ordinary and strict replay |
+| one definition-time global endpoint remains valid for every later use | Falsified | after an applied union, wave 2 reads the global's canonical endpoint while the saved definition ID is stale |
+| one per-wave global snapshot identifies the value queried by every firing in that wave | Confirmed | snapshots are taken immediately before the shared native query; direct, rewrite, lookup-output, redundant-union, and equality-dependency canaries pass strict replay |
+| changed global endpoints need no causal dependency | Falsified | a reduced three-rule slice fails without the earlier union; retaining the definition-to-use forest path makes ordinary and strict replay pass |
 | one preferred witness identifies a constructor body row after equality | Falsified | retained chained-lookup canary requires exact native body-row/version evidence; witness inverse search is forbidden |
 | a container outer value identifies immutable contents | Falsified | the same outer ID can survive content rebuild; an immutable container-version witness is required |
 | all-no-op firings need persistent replay events | Falsified for Bronze | all matches remain available for the diagnostic transcript, but only first logical producers become persistent fire events |
@@ -254,6 +264,10 @@ retained. Push/pop remains outside the no-epoch claim.
 | E22 | Is the exact 11-wave math workload benchmark-ready with compact packed replay? | yes: generation, ordinary replay, unchanged strict replay, and one fresh public-runner comparison all succeed |
 | E23 | Does exact math save time with the current observation? | no: one public-runner round measured 20.629 s / 9.254 GB causal versus 6.807 s / 3.758 GB original, or 3.03x wall and 2.46x RSS |
 | E24 | Are sequential `run-rule` leaves the general replay primitive? | no: reduced mutation/lookup canaries require guarded same-prestate batching; the packed batch implementation passes 15 focused replay tests |
+| E25 | Is a source global's definition endpoint sufficient for later waves? | no: the two-wave `(B), $a=(A)` canary reports native redundant `(B,B)` after the first union, not `(B,A)` |
+| E26 | Can exact global values be captured without a second body query? | yes: the native bridge snapshots zero-key global tables once immediately before each bounded query |
+| E27 | Does backward reachability retain a global's endpoint-changing cause? | yes: an otherwise irrelevant union is retained solely for a later global-valued head; ordinary and strict replay pass |
+| E28 | Can inert custom-function declarations be admitted without merge provenance? | yes: declaration-only strict replay passes and the paired dynamic `set` canary remains rejected |
 
 ## Validation commands
 
