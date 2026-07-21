@@ -418,7 +418,7 @@ impl WitnessId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 struct SyntaxId(u32);
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum DepNode {
     Empty,
     Event(EventId),
@@ -436,7 +436,7 @@ enum DepNode {
     Prefix(EventId),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct DepArena {
     nodes: Vec<DepNode>,
 }
@@ -552,6 +552,67 @@ struct WitnessArena {
 struct WitnessSnapshot {
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     app_instance_lengths: IndexMap<(String, String), usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct CanonicalAppSignature {
+    children: Box<[TypedEndpoint]>,
+    output: TypedEndpoint,
+}
+
+#[derive(Debug, Default)]
+struct AppGroupIndex {
+    synced_len: usize,
+    buckets: HashMap<CanonicalAppSignature, Vec<usize>>,
+    unresolved: Vec<usize>,
+}
+
+#[derive(Debug, Default)]
+struct WaveAppIndex {
+    groups: HashMap<(String, String), AppGroupIndex>,
+}
+
+impl WaveAppIndex {
+    fn synchronize_group(
+        &mut self,
+        key: &(String, String),
+        witnesses: &WitnessArena,
+        equality_forest: &EqualityForest,
+    ) -> Result<(), CausalSliceError> {
+        let instances = witnesses
+            .app_instances
+            .get(key)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let group = self.groups.entry(key.clone()).or_default();
+        if group.synced_len > instances.len() {
+            return Err(CausalSliceError::Invariant(format!(
+                "wave application index for `{}::{}` observed a shrinking append-only witness group",
+                key.0, key.1
+            )));
+        }
+
+        let mut pending = std::mem::take(&mut group.unresolved);
+        pending.extend(group.synced_len..instances.len());
+        group.synced_len = instances.len();
+        for position in pending {
+            let witness = instances[position];
+            let Some(signature) = canonical_app_signature(
+                witnesses,
+                &witnesses.nodes[witness.index()].node,
+                witnesses.endpoint(witness),
+                equality_forest,
+            ) else {
+                group.unresolved.push(position);
+                continue;
+            };
+            let bucket = group.buckets.entry(signature).or_default();
+            if let Err(insertion) = bucket.binary_search(&position) {
+                bucket.insert(insertion, position);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl WitnessArena {
@@ -6183,7 +6244,6 @@ fn elaborate_source_fact(
                 witnesses,
                 prefix_fallback,
                 None,
-                None,
             )?;
             observed.extend(effects.observed_rows);
             new_rows.extend(effects.new_rows);
@@ -6639,7 +6699,6 @@ fn elaborate_prefix_replay(
                             witnesses,
                             true,
                             None,
-                            None,
                         )?;
                         effective_output_rows += effects.new_rows.len();
                         if effects.new_rows.is_empty() && effects.new_witnesses.is_empty() {
@@ -6730,7 +6789,6 @@ fn elaborate_prefix_replay(
                 trace_functions,
                 witnesses,
                 true,
-                None,
                 None,
             )?;
             for constructor in model.head_constructors.iter().chain(&model.head_subsumes) {
@@ -7015,6 +7073,7 @@ fn elaborate_events(
     let mut opaque_promoted_events = 0usize;
     let mut equality_prefix_fallbacks = 0usize;
     for (wave, batch) in batches.iter().enumerate() {
+        let mut wave_app_index = WaveAppIndex::default();
         witnesses.load_current_globals(&batch.globals)?;
         let prestate_witness_snapshot = witnesses.snapshot();
         let prestate_witnesses = snapshot_primitive_result_witnesses(batch, witnesses);
@@ -7156,8 +7215,11 @@ fn elaborate_events(
                     trace_functions,
                     witnesses,
                     prefix_fallback,
-                    Some(&equality_forest),
-                    Some(&mut dependencies),
+                    Some(CausalApplicationInput {
+                        equality_forest: &equality_forest,
+                        dependencies: &mut dependencies,
+                        app_index: &mut wave_app_index,
+                    }),
                 ) {
                     Ok(effects) => effects,
                     Err(CausalSliceError::Unsupported { .. })
@@ -7175,8 +7237,11 @@ fn elaborate_events(
                             trace_functions,
                             witnesses,
                             prefix_fallback,
-                            Some(&equality_forest),
-                            Some(&mut dependencies),
+                            Some(CausalApplicationInput {
+                                equality_forest: &equality_forest,
+                                dependencies: &mut dependencies,
+                                app_index: &mut wave_app_index,
+                            }),
                         )?
                     }
                     Err(error) => return Err(error),
@@ -7382,6 +7447,7 @@ fn elaborate_events(
                             output: &output,
                             equality_forest: &equality_forest,
                             snapshot: Some(&prestate_witness_snapshot),
+                            app_index: &mut wave_app_index,
                         },
                         &mut dependencies,
                     )?;
@@ -7436,8 +7502,11 @@ fn elaborate_events(
                 trace_functions,
                 witnesses,
                 prefix_fallback,
-                Some(&equality_forest),
-                Some(&mut dependencies),
+                Some(CausalApplicationInput {
+                    equality_forest: &equality_forest,
+                    dependencies: &mut dependencies,
+                    app_index: &mut wave_app_index,
+                }),
             )?;
             alias_captured_head_syntaxes(
                 AliasCapturedHeadInput {
@@ -7451,6 +7520,7 @@ fn elaborate_events(
                 witnesses,
                 &mut dependencies,
                 &mut effects,
+                &mut wave_app_index,
             )?;
             let mut opaque_error =
                 effects
@@ -8471,6 +8541,7 @@ struct GroundApplicationInput<'a> {
     output: &'a TypedEndpoint,
     equality_forest: &'a EqualityForest,
     snapshot: Option<&'a WitnessSnapshot>,
+    app_index: &'a mut WaveAppIndex,
 }
 
 fn ground_application_availability(
@@ -8486,6 +8557,7 @@ fn ground_application_availability(
         output,
         equality_forest,
         snapshot,
+        app_index,
     } = input;
     let AtomArg::App {
         function,
@@ -8524,6 +8596,7 @@ fn ground_application_availability(
         equality_forest,
         dependencies,
         snapshot,
+        app_index,
     )?
     .ok_or_else(|| CausalSliceError::Unsupported {
         location: format!("grounded constructor `{function}`"),
@@ -9951,15 +10024,28 @@ fn elaborate_fire_primitives(
     Ok((availability, deferred))
 }
 
+struct CausalApplicationInput<'a> {
+    equality_forest: &'a EqualityForest,
+    dependencies: &'a mut DepArena,
+    app_index: &'a mut WaveAppIndex,
+}
+
 fn elaborate_fire_applications<'a>(
     egraph: &EGraph,
     applications: impl IntoIterator<Item = &'a TableApplication>,
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
     witnesses: &mut WitnessArena,
     prefix_fallback: bool,
-    equality_forest: Option<&EqualityForest>,
-    mut dependencies: Option<&mut DepArena>,
+    causal: Option<CausalApplicationInput<'_>>,
 ) -> Result<FireApplicationEffects, CausalSliceError> {
+    let (equality_forest, mut dependencies, mut app_index) = match causal {
+        Some(CausalApplicationInput {
+            equality_forest,
+            dependencies,
+            app_index,
+        }) => (Some(equality_forest), Some(dependencies), Some(app_index)),
+        None => (None, None, None),
+    };
     let mut observed_rows = Vec::new();
     let mut new_rows = Vec::new();
     let mut new_witnesses = Vec::new();
@@ -10068,6 +10154,12 @@ fn elaborate_fire_applications<'a>(
                                     equality_forest,
                                     dependencies,
                                     None,
+                                    app_index.as_deref_mut().ok_or_else(|| {
+                                        CausalSliceError::Invariant(
+                                            "causal constructor lookup has no wave application index"
+                                                .to_owned(),
+                                        )
+                                    })?,
                                 )?
                             {
                                 witnesses.alias_app_endpoint(
@@ -10190,6 +10282,7 @@ fn alias_captured_head_syntaxes(
     witnesses: &mut WitnessArena,
     dependencies: &mut DepArena,
     effects: &mut FireApplicationEffects,
+    app_index: &mut WaveAppIndex,
 ) -> Result<(), CausalSliceError> {
     let AliasCapturedHeadInput {
         egraph,
@@ -10277,6 +10370,7 @@ fn alias_captured_head_syntaxes(
             equality_forest,
             dependencies,
             None,
+            app_index,
         )? {
             witnesses.alias_app_endpoint(expected, captured.result, availability)?;
             effects.read_dependencies.push(availability);
@@ -10303,11 +10397,12 @@ fn congruent_app_availability(
     equality_forest: &EqualityForest,
     dependencies: &mut DepArena,
     snapshot: Option<&WitnessSnapshot>,
+    app_index: &mut WaveAppIndex,
 ) -> Result<Option<DepId>, CausalSliceError> {
     let WitnessNode::App {
         sort,
         function,
-        children,
+        children: _,
     } = expected
     else {
         return Err(CausalSliceError::Invariant(
@@ -10315,7 +10410,20 @@ fn congruent_app_availability(
         ));
     };
     let key = (sort.clone(), function.clone());
+    app_index.synchronize_group(&key, witnesses, equality_forest)?;
     let Some(candidates) = witnesses.app_instances.get(&key) else {
+        return Ok(None);
+    };
+    let Some(signature) =
+        canonical_app_signature(witnesses, expected, Some(output), equality_forest)
+    else {
+        return Ok(None);
+    };
+    let Some(positions) = app_index
+        .groups
+        .get(&key)
+        .and_then(|group| group.buckets.get(&signature))
+    else {
         return Ok(None);
     };
     let visible = snapshot
@@ -10328,7 +10436,68 @@ fn congruent_app_availability(
         })
         .unwrap_or(candidates.len())
         .min(candidates.len());
-    for candidate in candidates[..visible].iter().rev().copied() {
+    congruent_app_availability_from_positions(
+        witnesses,
+        expected,
+        output,
+        equality_forest,
+        dependencies,
+        candidates,
+        positions
+            .iter()
+            .rev()
+            .copied()
+            .filter(|position| *position < visible),
+    )
+}
+
+fn canonical_app_signature(
+    witnesses: &WitnessArena,
+    application: &WitnessNode,
+    output: Option<Value>,
+    equality_forest: &EqualityForest,
+) -> Option<CanonicalAppSignature> {
+    let WitnessNode::App { sort, children, .. } = application else {
+        return None;
+    };
+    let children = children
+        .iter()
+        .map(|child| {
+            let value = witnesses.endpoint(*child)?;
+            let sort = match &witnesses.nodes[child.index()].node {
+                WitnessNode::Literal { sort, .. } | WitnessNode::App { sort, .. } => sort,
+            };
+            Some(equality_forest.canonical_endpoint(&TypedEndpoint {
+                sort: sort.clone(),
+                value,
+            }))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(CanonicalAppSignature {
+        children: children.into_boxed_slice(),
+        output: equality_forest.canonical_endpoint(&TypedEndpoint {
+            sort: sort.clone(),
+            value: output?,
+        }),
+    })
+}
+
+fn congruent_app_availability_from_positions(
+    witnesses: &WitnessArena,
+    expected: &WitnessNode,
+    output: Value,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+    candidates: &[WitnessId],
+    positions: impl IntoIterator<Item = usize>,
+) -> Result<Option<DepId>, CausalSliceError> {
+    let WitnessNode::App { sort, children, .. } = expected else {
+        return Err(CausalSliceError::Invariant(
+            "congruence lookup received a literal witness".to_owned(),
+        ));
+    };
+    for position in positions {
+        let candidate = candidates[position];
         let Some(candidate_output) = witnesses.endpoint(candidate) else {
             continue;
         };
@@ -10405,6 +10574,45 @@ fn congruent_app_availability(
         return Ok(Some(availability));
     }
     Ok(None)
+}
+
+#[cfg(test)]
+fn congruent_app_availability_linear(
+    witnesses: &WitnessArena,
+    expected: &WitnessNode,
+    output: Value,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+    snapshot: Option<&WitnessSnapshot>,
+) -> Result<Option<DepId>, CausalSliceError> {
+    let WitnessNode::App { sort, function, .. } = expected else {
+        return Err(CausalSliceError::Invariant(
+            "congruence lookup received a literal witness".to_owned(),
+        ));
+    };
+    let key = (sort.clone(), function.clone());
+    let Some(candidates) = witnesses.app_instances.get(&key) else {
+        return Ok(None);
+    };
+    let visible = snapshot
+        .map(|snapshot| {
+            snapshot
+                .app_instance_lengths
+                .get(&key)
+                .copied()
+                .unwrap_or(0)
+        })
+        .unwrap_or(candidates.len())
+        .min(candidates.len());
+    congruent_app_availability_from_positions(
+        witnesses,
+        expected,
+        output,
+        equality_forest,
+        dependencies,
+        candidates,
+        (0..visible).rev(),
+    )
 }
 
 fn witness_contains_bigrat_primitive(witnesses: &WitnessArena, witness: WitnessId) -> bool {
@@ -11896,6 +12104,41 @@ fn unsupported_command<T>(
 mod tests {
     use super::*;
 
+    fn assert_index_matches_linear(
+        witnesses: &WitnessArena,
+        expected: &WitnessNode,
+        output: Value,
+        equality_forest: &EqualityForest,
+        snapshot: Option<&WitnessSnapshot>,
+        app_index: &mut WaveAppIndex,
+        initial_dependencies: &DepArena,
+    ) -> Option<DepId> {
+        let mut indexed_dependencies = initial_dependencies.clone();
+        let indexed = congruent_app_availability(
+            witnesses,
+            expected,
+            output,
+            equality_forest,
+            &mut indexed_dependencies,
+            snapshot,
+            app_index,
+        )
+        .unwrap();
+        let mut linear_dependencies = initial_dependencies.clone();
+        let linear = congruent_app_availability_linear(
+            witnesses,
+            expected,
+            output,
+            equality_forest,
+            &mut linear_dependencies,
+            snapshot,
+        )
+        .unwrap();
+        assert_eq!(indexed, linear);
+        assert_eq!(indexed_dependencies, linear_dependencies);
+        indexed
+    }
+
     #[test]
     fn replay_witness_callables_include_nested_applications() {
         let mut witnesses = WitnessArena::default();
@@ -12062,29 +12305,198 @@ mod tests {
 
         let expected = witnesses.nodes[syntax.index()].node.clone();
         let equality_forest = EqualityForest::default();
-        let mut dependencies = DepArena::default();
+        let mut app_index = WaveAppIndex::default();
         assert_eq!(
-            congruent_app_availability(
+            assert_index_matches_linear(
                 &witnesses,
                 &expected,
                 endpoint,
                 &equality_forest,
-                &mut dependencies,
                 Some(&snapshot),
-            )
-            .unwrap(),
+                &mut app_index,
+                &DepArena::default(),
+            ),
             None
         );
         assert_eq!(
-            congruent_app_availability(
+            assert_index_matches_linear(
                 &witnesses,
                 &expected,
                 endpoint,
                 &equality_forest,
-                &mut dependencies,
                 None,
+                &mut app_index,
+                &DepArena::default(),
+            ),
+            Some(DepArena::EMPTY)
+        );
+    }
+
+    #[test]
+    fn wave_app_index_preserves_snapshot_and_reverse_candidate_choice() {
+        let egraph = EGraph::default();
+        let first_child_endpoint = egraph.base_to_value(21_i64);
+        let second_child_endpoint = egraph.base_to_value(22_i64);
+        let output = egraph.base_to_value(23_i64);
+        let mut dependencies = DepArena::default();
+        let first_dependency = dependencies.event(EventId(0)).unwrap();
+        let second_dependency = dependencies.event(EventId(1)).unwrap();
+        let equality_dependency = dependencies.event(EventId(2)).unwrap();
+        let mut witnesses = WitnessArena::default();
+        let first_child = witnesses
+            .intern_app(
+                "Expr",
+                "Leaf",
+                Vec::new(),
+                first_child_endpoint,
+                DepArena::EMPTY,
+                true,
             )
-            .unwrap(),
+            .unwrap();
+        witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![first_child],
+                output,
+                first_dependency,
+                true,
+            )
+            .unwrap();
+        let snapshot = witnesses.snapshot();
+        let second_child = witnesses
+            .intern_app(
+                "Expr",
+                "Leaf",
+                Vec::new(),
+                second_child_endpoint,
+                DepArena::EMPTY,
+                true,
+            )
+            .unwrap();
+        let mut equality_forest = EqualityForest::default();
+        let receipt = UnionReceipt {
+            origin: None,
+            lhs: first_child_endpoint,
+            rhs: second_child_endpoint,
+            outcome: UnionOutcome::Applied {
+                parent: first_child_endpoint,
+                child: second_child_endpoint,
+            },
+        };
+        equality_forest.observe_receipt(&receipt).unwrap();
+        equality_forest
+            .add_explanation(
+                AppliedEquality {
+                    left: TypedEndpoint {
+                        sort: "Expr".to_owned(),
+                        value: first_child_endpoint,
+                    },
+                    right: TypedEndpoint {
+                        sort: "Expr".to_owned(),
+                        value: second_child_endpoint,
+                    },
+                    parent: first_child_endpoint,
+                    child: second_child_endpoint,
+                    commit_ordinal: 0,
+                },
+                equality_dependency,
+            )
+            .unwrap();
+        let expected = WitnessNode::App {
+            sort: "Expr".to_owned(),
+            function: "A".to_owned(),
+            children: vec![second_child],
+        };
+        let mut app_index = WaveAppIndex::default();
+
+        let first_result = assert_index_matches_linear(
+            &witnesses,
+            &expected,
+            output,
+            &equality_forest,
+            Some(&snapshot),
+            &mut app_index,
+            &dependencies,
+        );
+        assert!(first_result.is_some());
+        witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![second_child],
+                output,
+                second_dependency,
+                true,
+            )
+            .unwrap();
+
+        let snapshot_result = assert_index_matches_linear(
+            &witnesses,
+            &expected,
+            output,
+            &equality_forest,
+            Some(&snapshot),
+            &mut app_index,
+            &dependencies,
+        );
+        let current_result = assert_index_matches_linear(
+            &witnesses,
+            &expected,
+            output,
+            &equality_forest,
+            None,
+            &mut app_index,
+            &dependencies,
+        );
+        assert_eq!(snapshot_result, first_result);
+        assert_eq!(current_result, Some(second_dependency));
+    }
+
+    #[test]
+    fn wave_app_index_retries_candidates_with_late_child_endpoints() {
+        let egraph = EGraph::default();
+        let child_endpoint = egraph.base_to_value(31_i64);
+        let output = egraph.base_to_value(32_i64);
+        let mut witnesses = WitnessArena::default();
+        let child = witnesses
+            .intern_syntax_app("Expr", "Leaf", Vec::new())
+            .unwrap();
+        let application = witnesses
+            .intern_syntax_app("Expr", "A", vec![child])
+            .unwrap();
+        witnesses
+            .bind_endpoint("Expr", output, application)
+            .unwrap();
+        let expected = witnesses.nodes[application.index()].node.clone();
+        let equality_forest = EqualityForest::default();
+        let mut app_index = WaveAppIndex::default();
+
+        assert_eq!(
+            assert_index_matches_linear(
+                &witnesses,
+                &expected,
+                output,
+                &equality_forest,
+                None,
+                &mut app_index,
+                &DepArena::default(),
+            ),
+            None
+        );
+        witnesses
+            .bind_endpoint("Expr", child_endpoint, child)
+            .unwrap();
+        assert_eq!(
+            assert_index_matches_linear(
+                &witnesses,
+                &expected,
+                output,
+                &equality_forest,
+                None,
+                &mut app_index,
+                &DepArena::default(),
+            ),
             Some(DepArena::EMPTY)
         );
     }

@@ -1,5 +1,121 @@
 # Causal Slice v0 Results
 
+## Active goal baseline: validator generality, Hardboiled, and Eggcc cost
+
+The continuation goal started from clean commit
+`9d89d9e5f656dd13cb0ef2ab56320174149088f4`; its runtime code is identical to
+the validated implementation at `0d229525eca197dd3c59938b911736332952508c`.
+No implementation change preceded these measurements.
+
+The revised continuation resumed from that same HEAD with two existing
+uncommitted files: this ledger and `egglog/src/causal_slice.rs`. The starting
+diff was 487 insertions and 12 deletions (85 documentation lines and 414 Rust
+lines). A live `gh pr view 23` query on 2026-07-21 reported PR #23 head
+`4940be37429e7adf16cc43283b38508e692cf045`; that commit remains an ancestor of
+the worktree and the base was not changed.
+
+Focused baseline gates passed:
+
+- `cargo test -p egglog --test run_rule --test causal_slice`: 146 passed;
+- `cargo test -p egglog-experimental --test causal_slice`: 3 passed;
+- `make proof-tests`: 200 passed.
+
+Two independent release processes emitted byte-identical proof projections,
+and every projection passed the unchanged strict proof checker:
+
+| Workload | SHA-256 |
+|---|---|
+| Eggcc 2mm pass 1 | `66fa8e9ac6485f8567c69f8a581b4d0953602a5310c46d11fb4047748346537c` |
+| Pointer analysis | `391fb1ddee90bb7ab77a3f949206f1394583d961d76a91a173d8fe7397021a88` |
+| Luminal Llama | `2cd512285720a54619bffa7b4bd72236258edb5bdddb86b798ce378f6a3c71b1` |
+
+The emitted sources and generator logs are under
+`/tmp/causal-goal-baseline-9d89d9e5.v0T9IE`. Hardboiled exits 1 with the
+expected first boundary: `Call` contains the opaque container sort `VecExpr`
+in its positive check.
+
+Fresh balanced six-round release comparisons used 120-second process
+timeouts and reversed endpoint order within each of three pairs:
+
+| Comparison | Eggcc wall ratio | Pointer wall ratio | Luminal wall ratio | Serial suite ratio |
+|---|---:|---:|---:|---:|
+| causal / strict | 1.30–1.32x | 0.129–0.131x | 0.0723–0.0778x | 0.348–0.367x |
+| causal / native | 6.09–6.33x | 6.11–6.69x | 3.16–3.28x | 5.33–5.49x |
+
+The append-only reports are
+`/tmp/causal-goal-frozen-vs-strict-9d89d9e5.XXXXXX.jsonl` and
+`/tmp/causal-goal-frozen-vs-native-9d89d9e5.Xbxlv7`. These are historical
+diagnostics, not endpoints for another experiment: the revised goal explicitly
+withdraws the old six-round and native-overhead cohorts.
+
+Current performance question: does replacing the family-wide scan in
+`congruent_app_availability` with a wave-local canonical application index
+materially reduce Eggcc elaboration without changing replay semantics?
+
+- H1: the repeated candidate scan is dominant. Prediction: a lazy index keyed
+  by canonical child and output roots cuts generator elaboration substantially
+  and produces byte-identical projections.
+- H2: endpoint deduplication, snapshot cloning, or string-heavy witness
+  bookkeeping dominates instead. Prediction: candidate counts shrink but
+  generator elaboration and integrated wall time do not move enough to retain
+  the index.
+- Initial falsification gate: keep the patch only if all semantic/differential
+  tests pass, emitted sources remain byte-identical, and Eggcc's integrated
+  generator time improves by at least 20%. Later user steering simplified the
+  final public comparison to one shared append-only `/tmp` report and one
+  three-round strict `proof-testing` versus `causal-proof-testing` run. Cached
+  rows are reused by default; `--force-run` is reserved for replacing noisy or
+  contended samples. Native-overhead and separate causal A/B cohorts are no
+  longer completion gates.
+
+The first index experiment supports H1 and is retained. A wave-local lazy
+index stores witness positions under canonical typed child endpoints and the
+canonical output endpoint. It incrementally incorporates same-wave witnesses,
+filters positions through the captured snapshot prefix, retries candidates
+whose children initially lacked endpoints, preserves reverse insertion
+preference, and still runs the original exact dependency construction on every
+selected candidate. The old linear candidate enumeration remains only as a
+`cfg(test)` differential oracle.
+
+Three release generator runs at `/tmp/causal-index-eggcc.8C9MZ7` measured:
+
+| Phase | Frozen baseline | Indexed | Point change |
+|---|---:|---:|---:|
+| traced native run | 1.296–1.312 s | 1.294–1.296 s | unchanged |
+| elaboration | 5.851–5.871 s | 3.621–3.684 s | about 38% lower |
+| generator total | 7.254–7.289 s | 5.023–5.088 s | about 30% lower |
+
+All three Eggcc projections retained SHA-256
+`66fa8e9ac6485f8567c69f8a581b4d0953602a5310c46d11fb4047748346537c`
+and passed strict replay. Pointer and Luminal also remained byte-identical and
+passed strict replay; Luminal's diagnostic generator point improved from
+1.403 s to 1.317 s. The 50% elaboration target was not reached, but the
+predeclared 20% integrated retention threshold was exceeded. This is a
+three-sample phase diagnostic, not the final benchmark comparison.
+
+An independent read-only review found no semantic blocker. The equality forest
+is immutable while a wave uses the index, current-wave unions are published
+only after every firing is elaborated, and the index is discarded before the
+next wave. The differential canary now indexes one candidate, appends another
+candidate in the same wave, and proves both snapshot and current selection
+still match the linear oracle. Peak-memory cost remains unmeasured: keys own
+typed endpoint sort strings and one position per indexed application. The
+final strict-versus-causal report must include RSS before this is called a
+finished performance result.
+
+Checkpoint validation after the incremental-append canary:
+
+- `cargo test -p egglog --lib causal_slice::tests`: 7 passed;
+- `cargo test -p egglog --test causal_slice`: 126 passed;
+- `cargo test -p egglog --test run_rule`: 20 passed;
+- `cargo test -p egglog-experimental --test causal_slice`: 3 passed;
+- `cargo clippy -p egglog --lib --tests -- -D warnings`: passed;
+- `cargo fmt --all -- --check` and `git diff --check`: passed.
+
+The previously recorded post-index `make proof-tests` run also passed all 200
+tests; the subsequent change touched only the differential unit canary and this
+ledger.
+
 ## Current checkpoint: positive-check proof projection
 
 Commit `0d229525eca197dd3c59938b911736332952508c` is the current
@@ -1124,17 +1240,23 @@ Current scoped/rebuild/observation continuation:
 - Empirical measurement: a separate balanced six-round cohort gives 9.212 s
   causal versus 1.731 s native serial total, or 5.32x; the suite ratio CI is
   5.08–5.58x. The approximately-2x-native target is not met.
-- Plausible but untested: a canonical child-tuple witness index may remove
-  much Eggcc elaboration cost; a streaming wave sink may reduce trace-memory
-  overlap; and exact match-premise transport may unlock several currently
-  rejected equal-row, decomposed-join, and mutable-read cases.
+- Implemented/tested after this historical checkpoint: a canonical
+  child-tuple witness index removes about 38% of Eggcc elaboration in the
+  three-sample diagnostic recorded at the top of this file.
+- Plausible but untested: a streaming wave sink may reduce trace-memory overlap;
+  exact match-premise transport may unlock several currently rejected
+  equal-row, decomposed-join, and mutable-read cases.
 - Falsified: general complete match bindings, partial-bind replay of projected
   firings, naked `RowId` stability, one preferred syntax as constructor-body
   provenance, globally epoch-free equality endpoints, standalone
   pre-filter `:expect`, deriving a successful query result from `RuleMatch`
   alone, and general sequential-wave equivalence.
 
-## Recommended next patches
+## Historical recommended next patches
+
+> This ordering predates the active-goal section at the top of the file. Item
+> 1 is complete, its proposed six-round rerun is withdrawn, and the remaining
+> work is governed by the current capability-interface and Hardboiled plan.
 
 Source projection, guarded shared-prestate replay, scalar inputs, immutable
 constructor/global witnesses, direct unions, and exact `:merge new` state are
