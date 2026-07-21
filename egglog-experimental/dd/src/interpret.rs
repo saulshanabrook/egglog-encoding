@@ -106,7 +106,6 @@ use crate::{EGraph, TableDefault, ViewOp};
 pub(crate) type Env = HashMap<u32, u32>;
 
 type DdDeltaRows = HashMap<ReadKey, Vec<(Vec<u32>, isize)>>;
-type LookupIndex = HashMap<FunctionId, HashMap<Row, Row>>;
 
 /// Retractions batched per function: the key length plus the set of keys to
 /// remove, so one `retain` pass drops them all.
@@ -188,10 +187,6 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
     let next_id_at_start = eg.db.read_counter(eg.id_counter);
 
     let mut writes: Vec<Write> = Vec::new();
-    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
-    // constructor hash-cons). Built lazily per function so repeated lookups in
-    // one iteration are O(1) instead of rescanning the growing mirror each time.
-    let mut lookup_index = LookupIndex::new();
 
     // Compute every rule's binding envs FIRST (so the whole atom-bearing ruleset
     // runs on one fused DD worker via `fused_bindings`), THEN
@@ -203,13 +198,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
     phase_timing::time("apply_head", || -> Result<()> {
         for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
             for mut env in envs {
-                apply_head(
-                    eg,
-                    &rule.core.head,
-                    &mut env,
-                    &mut writes,
-                    &mut lookup_index,
-                )?;
+                apply_head(eg, &rule.core.head, &mut env, &mut writes)?;
             }
         }
         Ok(())
@@ -360,71 +349,103 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     let fused_positions =
         fused_caller_positions(&atom_positions, &atom_rule_idxs, &fused_rule_idxs)?;
 
-    // Distinct relation read views across the whole ruleset. We diff versioned
-    // current snapshots rather than plain row sets: if another ruleset removes and
-    // reinserts the same row between two invocations, the row is present in both
-    // end states but has a fresh version. Feeding `-row` then `+row` as separate
-    // DD steps preserves the reference backend's hidden-timestamp behavior
-    // without replaying transient rows that are no longer visible.
-    let mut removals_batch: DdDeltaRows = HashMap::new();
-    let mut insertions_batch: DdDeltaRows = HashMap::new();
+    // Build the signed delta batches for this step. A brand-new worker (no
+    // cursors yet — first use, or rebuilt after a clone/free_rule) subscribes to
+    // each read view's event log and is seeded with the view's full current
+    // contents. An existing worker folds only its unread event-log window per
+    // view: a row whose events net to `-1` is retracted, `+1` inserted, and a
+    // net-zero row whose LAST event is an insert was removed and reinserted —
+    // feeding `-row` then `+row` as separate DD steps preserves the reference
+    // backend's hidden-timestamp refire behavior. Net-zero rows ending absent
+    // (transients) are never replayed. This is O(delta), not O(state).
+    let mut delta_batches: Vec<DdDeltaRows> = Vec::new();
     phase_timing::time("diff", || {
-        let fed = eg.dd_fused_fed_versions.entry(key.clone()).or_default();
-        for &read in &all_reads {
-            let cur = match read.mode {
-                ReadMode::Live => eg.live_versions.get(&read.func),
-                ReadMode::Subsumed => eg.subsumed_versions.get(&read.func),
-                ReadMode::All => eg.all_versions.get(&read.func),
-            };
-            let cur_empty: HashMap<Row, u64> = HashMap::new();
-            let cur = cur.unwrap_or(&cur_empty);
-            let prev = fed.entry(read).or_default();
-            if prev == cur {
-                continue;
-            }
-
-            let mut removals = Vec::new();
-            let mut insertions = Vec::new();
-            for row in prev.keys() {
-                if !cur.contains_key(row) {
-                    removals.push((row.to_vec(), -1));
+        if !eg.dd_fused_cursors.contains_key(&key) {
+            let mut cursors = HashMap::new();
+            let mut seed: DdDeltaRows = HashMap::new();
+            for &read in &all_reads {
+                let log = eg.event_logs.entry(read).or_default();
+                cursors.insert(read, log.end());
+                let rows = view_rows(eg, read);
+                if !rows.is_empty() {
+                    seed.insert(read, rows);
                 }
             }
-            for (row, version) in cur {
-                match prev.get(row) {
-                    None => insertions.push((row.to_vec(), 1)),
-                    Some(prev_version) if prev_version != version => {
+            eg.dd_fused_cursors.insert(key.clone(), cursors);
+            if !seed.is_empty() {
+                delta_batches.push(seed);
+            }
+            return;
+        }
+
+        let mut removals_batch: DdDeltaRows = HashMap::new();
+        let mut insertions_batch: DdDeltaRows = HashMap::new();
+        let cursors = eg
+            .dd_fused_cursors
+            .get_mut(&key)
+            .expect("DD cursor invariant: checked above");
+        for &read in &all_reads {
+            let log = eg
+                .event_logs
+                .get(&read)
+                .expect("DD cursor invariant: a cached worker subscribes to every view it reads");
+            let cursor = cursors
+                .get_mut(&read)
+                .expect("DD cursor invariant: a cached worker has a cursor per view");
+            let start = cursor
+                .checked_sub(log.base)
+                .expect("DD cursor invariant: consumed events are never drained past a cursor");
+            if start >= log.events.len() {
+                continue;
+            }
+            phase_timing::note("diff_rows_scanned", log.events.len() - start);
+
+            // Fold the window per row: net presence change plus last event
+            // sign (events are real state transitions, so the last sign is
+            // end-of-window presence).
+            let mut folded: HashMap<&Row, (isize, i8)> = HashMap::new();
+            for (row, sign) in &log.events[start..] {
+                let entry = folded.entry(row).or_insert((0, 0));
+                entry.0 += *sign as isize;
+                entry.1 = *sign;
+            }
+            let mut removals = Vec::new();
+            let mut insertions = Vec::new();
+            for (row, (net, last)) in folded {
+                match net.cmp(&0) {
+                    std::cmp::Ordering::Less => removals.push((row.to_vec(), -1)),
+                    std::cmp::Ordering::Greater => insertions.push((row.to_vec(), 1)),
+                    std::cmp::Ordering::Equal if last > 0 => {
                         removals.push((row.to_vec(), -1));
                         insertions.push((row.to_vec(), 1));
                     }
-                    Some(_) => {}
+                    std::cmp::Ordering::Equal => {}
                 }
             }
-            phase_timing::note("diff_rows_scanned", prev.len() + cur.len());
             if !removals.is_empty() {
                 removals_batch.insert(read, removals);
             }
             if !insertions.is_empty() {
                 insertions_batch.insert(read, insertions);
             }
-            *prev = cur.clone();
+            *cursor = log.end();
+        }
+        phase_timing::note(
+            "delta_removals",
+            removals_batch.values().map(|r| r.len()).sum::<usize>(),
+        );
+        phase_timing::note(
+            "delta_insertions",
+            insertions_batch.values().map(|r| r.len()).sum::<usize>(),
+        );
+        if !removals_batch.is_empty() {
+            delta_batches.push(removals_batch);
+        }
+        if !insertions_batch.is_empty() {
+            delta_batches.push(insertions_batch);
         }
     });
-    phase_timing::note(
-        "delta_removals",
-        removals_batch.values().map(|r| r.len()).sum::<usize>(),
-    );
-    phase_timing::note(
-        "delta_insertions",
-        insertions_batch.values().map(|r| r.len()).sum::<usize>(),
-    );
-    let mut delta_batches: Vec<DdDeltaRows> = Vec::new();
-    if !removals_batch.is_empty() {
-        delta_batches.push(removals_batch);
-    }
-    if !insertions_batch.is_empty() {
-        delta_batches.push(insertions_batch);
-    }
+    drain_consumed_events(eg, &all_reads);
 
     // Step the shared worker once per nonempty signed-delta phase. A version
     // change may require a removal phase followed by an insertion phase.
@@ -542,7 +563,6 @@ fn apply_head(
     head: &GenericCoreActions<RuleActionCall, RuleVar, RuleValue>,
     env: &mut Env,
     writes: &mut Vec<Write>,
-    lookup_index: &mut LookupIndex,
 ) -> Result<()> {
     for action in &head.0 {
         match action {
@@ -555,7 +575,7 @@ fn apply_head(
                             .copied()
                             .map(Value::new)
                             .collect::<Vec<_>>();
-                        let values = lookup_or_create(eg, *id, &key, lookup_index)?;
+                        let values = lookup_or_create(eg, *id, &key)?;
                         Some(Value::new(values[0]))
                     }
                     RuleActionCall::Primitive { id, .. } => {
@@ -569,9 +589,9 @@ fn apply_head(
                         // function for them only panics); every other primitive
                         // runs on the embedded db.
                         if let Some(op) = eg.set_if_empty_ops.get(id).cloned() {
-                            Some(set_if_empty_apply(eg, &op, &arguments, lookup_index)?)
+                            Some(set_if_empty_apply(eg, &op, &arguments)?)
                         } else if let Some(op) = eg.view_proof_ops.get(id).cloned() {
-                            Some(view_proof_apply(eg, &op, &arguments, lookup_index)?)
+                            Some(view_proof_apply(eg, &op, &arguments)?)
                         } else {
                             eg.eval_prim_internal(*id, &arguments)?
                         }
@@ -618,6 +638,47 @@ fn apply_head(
     Ok(())
 }
 
+/// All rows currently visible in a relation read view, as `+1` seed deltas for
+/// a freshly built fused worker.
+fn view_rows(eg: &EGraph, read: ReadKey) -> Vec<(Vec<u32>, isize)> {
+    let mut out = Vec::new();
+    let mut push = |store: &HashMap<FunctionId, HashSet<Row>>| {
+        if let Some(rows) = store.get(&read.func) {
+            out.extend(rows.iter().map(|r| (r.to_vec(), 1isize)));
+        }
+    };
+    match read.mode {
+        ReadMode::Live => push(&eg.mirror),
+        ReadMode::Subsumed => push(&eg.subsumed),
+        ReadMode::All => {
+            push(&eg.mirror);
+            push(&eg.subsumed);
+        }
+    }
+    out
+}
+
+/// Advance each view's event log past the prefix that every subscribed fused
+/// worker has already consumed, so logs stay proportional to unconsumed work.
+fn drain_consumed_events(eg: &mut EGraph, reads: &[ReadKey]) {
+    for read in reads {
+        let min = eg
+            .dd_fused_cursors
+            .values()
+            .filter_map(|cursors| cursors.get(read))
+            .min()
+            .copied();
+        let Some(min) = min else { continue };
+        if let Some(log) = eg.event_logs.get_mut(read) {
+            let consumed = min.saturating_sub(log.base);
+            if consumed > 0 {
+                log.events.drain(..consumed);
+                log.base = min;
+            }
+        }
+    }
+}
+
 fn term_value(term: &GenericAtomTerm<RuleVar, RuleValue>, env: &Env) -> Option<u32> {
     match term {
         GenericAtomTerm::Var(_, variable) => env.get(&variable.id).copied(),
@@ -638,15 +699,10 @@ fn resolve_terms(terms: &[GenericAtomTerm<RuleVar, RuleValue>], env: &Env) -> Re
 
 /// Look up the output of `func` for input `key`. If absent, create the row with
 /// a fresh id (eq-sort constructor semantics — mirrors `add_term`). The created
-/// row is written directly into the mirror so subsequent lookups in the same
-/// iteration see it (hash-cons).
-pub(crate) fn lookup_or_create(
-    eg: &mut EGraph,
-    func: FunctionId,
-    key: &[Value],
-    index: &mut LookupIndex,
-) -> Result<Row> {
-    if let Some(values) = lookup_existing(eg, func, key, index) {
+/// row is written directly into the mirror (which maintains the persistent
+/// key index) so subsequent lookups in the same iteration see it (hash-cons).
+pub(crate) fn lookup_or_create(eg: &mut EGraph, func: FunctionId, key: &[Value]) -> Result<Row> {
+    if let Some(values) = lookup_existing(eg, func, key) {
         return Ok(values);
     }
     let (n_keys, _, default, _) = eg.function_spec(func);
@@ -673,9 +729,7 @@ pub(crate) fn lookup_or_create(
             ));
         }
     };
-    let k: Row = key.iter().map(|value| value.rep()).collect();
     let values: Row = vec![value].into_boxed_slice();
-    index.entry(func).or_default().insert(k, values.clone());
     let mut full: Vec<u32> = key.iter().map(|v| v.rep()).collect();
     full.push(value);
     let row = full.into_boxed_slice();
@@ -683,40 +737,13 @@ pub(crate) fn lookup_or_create(
     Ok(values)
 }
 
-/// Look up all current outputs of `func` for input `key` without creating a row.
-pub(crate) fn lookup_existing(
-    eg: &EGraph,
-    func: FunctionId,
-    key: &[Value],
-    index: &mut LookupIndex,
-) -> Option<Row> {
-    let n_keys = eg.n_keys(func);
-    // Lazily build the key->outputs index for this function from live ∪ subsumed
-    // rows so repeated lookups within one iteration are O(1) instead of O(state)
-    // scans. A subsumed constructor row is still the current table row in the
-    // reference backend; looking it up must not mint a fresh visible row.
-    let idx = index.entry(func).or_insert_with(|| {
-        let live_len = eg.mirror.get(&func).map_or(0, |rows| rows.len());
-        let subsumed_len = eg.subsumed.get(&func).map_or(0, |rows| rows.len());
-        let mut values_by_key = HashMap::with_capacity(live_len + subsumed_len);
-        if let Some(set) = eg.mirror.get(&func) {
-            for row in set.iter() {
-                let key: Row = row[..n_keys].into();
-                let values: Row = row[n_keys..].into();
-                values_by_key.insert(key, values);
-            }
-        }
-        if let Some(set) = eg.subsumed.get(&func) {
-            for row in set.iter() {
-                let key: Row = row[..n_keys].into();
-                let values: Row = row[n_keys..].into();
-                values_by_key.entry(key).or_insert(values);
-            }
-        }
-        values_by_key
-    });
-    let key: Row = key.iter().map(|value| value.rep()).collect();
-    idx.get(&key).cloned()
+/// Look up the current outputs of `func` for input `key` without creating a
+/// row, through the persistent key index. A subsumed constructor row is still
+/// the current table row in the reference backend; looking it up must not mint
+/// a fresh visible row.
+pub(crate) fn lookup_existing(eg: &EGraph, func: FunctionId, key: &[Value]) -> Option<Row> {
+    let key: Vec<u32> = key.iter().map(|value| value.rep()).collect();
+    eg.index_lookup_live_first(func, &key)
 }
 
 /// Service the term encoder's `set-if-empty` op against the mirror: return the
@@ -724,24 +751,16 @@ pub(crate) fn lookup_existing(
 /// `(keys, default_vals)` — the args after the keys — and return the default
 /// e-class. Writes immediately (like `lookup_or_create`) so repeated term
 /// construction in one iteration dedups to the same e-class.
-fn set_if_empty_apply(
-    eg: &mut EGraph,
-    op: &ViewOp,
-    args: &[Value],
-    index: &mut LookupIndex,
-) -> Result<Value> {
+fn set_if_empty_apply(eg: &mut EGraph, op: &ViewOp, args: &[Value]) -> Result<Value> {
     let view = *eg
         .table_ids
         .get(&op.view_name)
         .ok_or_else(|| anyhow!("set-if-empty view `{}` is not registered", op.view_name))?;
     let keys = &args[..op.n_keys];
-    if let Some(values) = lookup_existing(eg, view, keys, index) {
+    if let Some(values) = lookup_existing(eg, view, keys) {
         return Ok(Value::new(values[0]));
     }
     let end = op.n_keys + op.out_arity;
-    let key_row: Row = keys.iter().map(|v| v.rep()).collect();
-    let val_row: Row = args[op.n_keys..end].iter().map(|v| v.rep()).collect();
-    index.entry(view).or_default().insert(key_row, val_row);
     let full: Row = args[..end].iter().map(|v| v.rep()).collect();
     eg.insert_live_row(view, full);
     Ok(args[op.n_keys])
@@ -750,19 +769,14 @@ fn set_if_empty_apply(
 /// Service the term encoder's view-proof read against the mirror: the proof
 /// column (output col 1) of the existing `(view keys)` row, or the `fallback`
 /// arg (the one after the keys) when the key is absent.
-fn view_proof_apply(
-    eg: &mut EGraph,
-    op: &ViewOp,
-    args: &[Value],
-    index: &mut LookupIndex,
-) -> Result<Value> {
+fn view_proof_apply(eg: &mut EGraph, op: &ViewOp, args: &[Value]) -> Result<Value> {
     let view = *eg
         .table_ids
         .get(&op.view_name)
         .ok_or_else(|| anyhow!("view-proof view `{}` is not registered", op.view_name))?;
     let keys = &args[..op.n_keys];
     let fallback = args[op.n_keys];
-    Ok(match lookup_existing(eg, view, keys, index) {
+    Ok(match lookup_existing(eg, view, keys) {
         Some(values) => Value::new(values[1]),
         None => fallback,
     })

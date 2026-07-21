@@ -28,8 +28,8 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
-    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, ReadMode, ReportLevel, RuleActionCall, RuleBodyCall,
+    RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -43,6 +43,25 @@ use compile::{validate_merge, visit_merge_read_dependencies, ReadKey, Row};
 
 type LocatedValues = (Row, RowLocation);
 type RowReplacement = (Row, LocatedValues);
+
+/// An append-only signed row event log for one relation read view, with a
+/// drained-prefix offset so cursors stay absolute across truncation.
+#[derive(Default)]
+pub(crate) struct EventLog {
+    /// Absolute position of `events[0]` (everything before it was consumed by
+    /// every subscribed fused worker and drained).
+    pub(crate) base: usize,
+    /// Signed state transitions: `+1` row became visible in this view, `-1` it
+    /// left. Only real transitions are logged, so within any window a row's
+    /// last event sign tells its end-of-window presence.
+    pub(crate) events: Vec<(Row, i8)>,
+}
+
+impl EventLog {
+    pub(crate) fn end(&self) -> usize {
+        self.base + self.events.len()
+    }
+}
 
 mod dd_workers {
     use hashbrown::HashMap;
@@ -158,16 +177,24 @@ pub struct EGraph {
     /// whole ruleset), keyed by the sorted live rule-index list. This is the
     /// join path the interpreter drives.
     pub(crate) dd_fused: DdWorkers,
-    /// Monotone version assigned whenever a row becomes visible in one of the
-    /// DD read views. This stands in for the reference backend's hidden
-    /// timestamp: removing and reinserting the same row gives it a fresh version,
-    /// so seminaive rules can fire on it again.
-    pub(crate) next_row_version: u64,
-    pub(crate) live_versions: HashMap<FunctionId, HashMap<Row, u64>>,
-    pub(crate) all_versions: HashMap<FunctionId, HashMap<Row, u64>>,
-    pub(crate) subsumed_versions: HashMap<FunctionId, HashMap<Row, u64>>,
-    /// Per-ruleset, per-function version snapshot last fed to the fused DD join.
-    pub(crate) dd_fused_fed_versions: HashMap<Vec<usize>, HashMap<ReadKey, HashMap<Row, u64>>>,
+    /// Persistent per-function `key -> present rows` index over live ∪ subsumed
+    /// rows, maintained incrementally by [`Self::record_row_event`]. Keys are
+    /// the leading `n_keys` columns; each entry lists a present row's value
+    /// columns and location, in insertion order (a key transiently holds more
+    /// than one entry when raw seed inserts collide before a merge transaction
+    /// normalizes them). This is what makes merge transactions, lookups, and
+    /// keyed removals O(keys touched) instead of O(table).
+    pub(crate) by_key: HashMap<FunctionId, HashMap<Row, Vec<LocatedValues>>>,
+    /// Per-view append-only row event logs (`+1` insert, `-1` remove), written
+    /// by [`Self::record_row_event`] for every view some live fused worker
+    /// reads. Each worker consumes its unread suffix through
+    /// [`Self::dd_fused_cursors`]; folding that window per row reproduces the
+    /// remove/insert (and remove-then-reinsert refire) batches the DD join
+    /// needs, in O(delta). Fully-consumed prefixes are drained.
+    pub(crate) event_logs: HashMap<ReadKey, EventLog>,
+    /// Per-ruleset, per-view absolute cursor (`EventLog::base`-relative) of the
+    /// events already fed to that ruleset's fused worker.
+    pub(crate) dd_fused_cursors: HashMap<Vec<usize>, HashMap<ReadKey, usize>>,
     /// Deferred error channel used by panic primitives. The embedded database's
     /// cloned external functions share this channel, matching the reference
     /// bridge's panic-function behavior.
@@ -214,9 +241,12 @@ impl CurrentRow {
     }
 }
 
+/// Transaction-local overlay over the persistent [`EGraph::by_key`] index:
+/// only keys this transaction touched are materialized here; everything else
+/// is read through the index on demand.
 #[derive(Default)]
 struct FunctionMergeState {
-    current: HashMap<Row, CurrentRow>,
+    staged: HashMap<Row, CurrentRow>,
     original: HashMap<Row, Option<CurrentRow>>,
     touched: Vec<Row>,
 }
@@ -253,11 +283,9 @@ impl EGraph {
             id_counter,
             seen: HashMap::new(),
             dd_fused: DdWorkers::default(),
-            next_row_version: 1,
-            live_versions: HashMap::new(),
-            all_versions: HashMap::new(),
-            subsumed_versions: HashMap::new(),
-            dd_fused_fed_versions: HashMap::new(),
+            by_key: HashMap::new(),
+            event_logs: HashMap::new(),
+            dd_fused_cursors: HashMap::new(),
             panic_message: Default::default(),
             table_ids: HashMap::new(),
             set_if_empty_ops: HashMap::new(),
@@ -529,35 +557,6 @@ impl EGraph {
         inserted
     }
 
-    fn current_rows_by_key(&self, f: FunctionId, n_keys: usize) -> HashMap<Row, CurrentRow> {
-        let live_len = self.mirror.get(&f).map(|set| set.len()).unwrap_or(0);
-        let subsumed_len = self.subsumed.get(&f).map(|set| set.len()).unwrap_or(0);
-        let mut cur = HashMap::with_capacity(live_len + subsumed_len);
-        for (location, store) in [
-            (RowLocation::Live, &self.mirror),
-            (RowLocation::Subsumed, &self.subsumed),
-        ] {
-            if let Some(rows) = store.get(&f) {
-                for row in rows.iter() {
-                    let values: Row = row[n_keys..].into();
-                    let key: Row = row[..n_keys].into();
-                    cur.entry(key)
-                        .and_modify(|current: &mut CurrentRow| {
-                            current.values = values.clone();
-                            current.location = location;
-                            current.rows_for_key += 1;
-                        })
-                        .or_insert(CurrentRow {
-                            values,
-                            location,
-                            rows_for_key: 1,
-                        });
-                }
-            }
-        }
-        cur
-    }
-
     fn replace_located_rows(
         &mut self,
         f: FunctionId,
@@ -596,6 +595,30 @@ impl EGraph {
         keylen: usize,
         keys: &HashSet<Box<[u32]>>,
     ) -> bool {
+        // Fast path: exact-key removals resolve each key through the
+        // persistent index — O(keys) instead of an O(table) retain scan. A
+        // non-key-length prefix (allowed by the delete action's shape) still
+        // scans.
+        if keylen == self.info(f).n_keys {
+            let mut changed = false;
+            for key in keys {
+                let Some(entries) = self.by_key.get(&f).and_then(|k| k.get(&key[..])) else {
+                    continue;
+                };
+                for (values, location) in entries.clone() {
+                    let row = row_with_values(key, &values);
+                    let (store, deltas) = match location {
+                        RowLocation::Live => (&mut self.mirror, (-1, -1, 0)),
+                        RowLocation::Subsumed => (&mut self.subsumed, (0, -1, -1)),
+                    };
+                    if store.get_mut(&f).is_some_and(|rows| rows.remove(&row)) {
+                        self.record_row_event(f, row, deltas.0, deltas.1, deltas.2);
+                        changed = true;
+                    }
+                }
+            }
+            return changed;
+        }
         let mut changed = false;
         let removed_live = remove_keys_from_store(&mut self.mirror, f, keylen, keys);
         changed |= !removed_live.is_empty();
@@ -618,22 +641,84 @@ impl EGraph {
         all_delta: isize,
         subsumed_delta: isize,
     ) {
-        let version = if live_delta > 0 || all_delta > 0 || subsumed_delta > 0 {
-            let version = self.next_row_version;
-            self.next_row_version += 1;
-            Some(version)
-        } else {
-            None
-        };
-        update_version_map(&mut self.live_versions, func, &row, live_delta, version);
-        update_version_map(&mut self.all_versions, func, &row, all_delta, version);
-        update_version_map(
-            &mut self.subsumed_versions,
-            func,
-            &row,
-            subsumed_delta,
-            version,
-        );
+        // Maintain the persistent key index. The live/subsumed deltas describe
+        // exactly which located entry appears or disappears (the all view is a
+        // union, not separate storage).
+        let n_keys = self.info(func).n_keys;
+        let key: Row = row[..n_keys].into();
+        let values: Row = row[n_keys..].into();
+        for (delta, location) in [
+            (live_delta, RowLocation::Live),
+            (subsumed_delta, RowLocation::Subsumed),
+        ] {
+            match delta.cmp(&0) {
+                std::cmp::Ordering::Greater => {
+                    self.by_key
+                        .entry(func)
+                        .or_default()
+                        .entry(key.clone())
+                        .or_default()
+                        .push((values.clone(), location));
+                }
+                std::cmp::Ordering::Less => {
+                    if let Some(keys) = self.by_key.get_mut(&func) {
+                        if let Some(entries) = keys.get_mut(&key) {
+                            if let Some(pos) = entries
+                                .iter()
+                                .position(|(v, loc)| *loc == location && *v == values)
+                            {
+                                entries.remove(pos);
+                            }
+                            if entries.is_empty() {
+                                keys.remove(&key);
+                            }
+                        }
+                    }
+                }
+                std::cmp::Ordering::Equal => {}
+            }
+        }
+
+        // Append to the event log of every subscribed view this transition
+        // touches. Unsubscribed views (no live fused worker reads them) are not
+        // logged: a worker built later seeds from the full current state.
+        for (delta, mode) in [
+            (live_delta, ReadMode::Live),
+            (all_delta, ReadMode::All),
+            (subsumed_delta, ReadMode::Subsumed),
+        ] {
+            if delta != 0 {
+                if let Some(log) = self.event_logs.get_mut(&ReadKey { func, mode }) {
+                    log.events.push((row.clone(), delta.signum() as i8));
+                }
+            }
+        }
+    }
+
+    /// The current row for `key` in `func` (last inserted wins when raw seed
+    /// inserts transiently collide), with the number of rows present for the
+    /// key — the lazy replacement for whole-table merge-state snapshots.
+    fn index_current_row(&self, func: FunctionId, key: &[u32]) -> Option<CurrentRow> {
+        let entries = self.by_key.get(&func)?.get(key)?;
+        let (values, location) = entries.last()?;
+        Some(CurrentRow {
+            values: values.clone(),
+            location: *location,
+            rows_for_key: entries.len(),
+        })
+    }
+
+    /// The output columns for `key`, preferring live rows over subsumed ones (a
+    /// subsumed constructor row is still the current table row, so it must
+    /// resolve rather than mint a fresh one).
+    pub(crate) fn index_lookup_live_first(&self, func: FunctionId, key: &[u32]) -> Option<Row> {
+        let entries = self.by_key.get(&func)?.get(key)?;
+        entries
+            .iter()
+            .rev()
+            .find(|(_, loc)| *loc == RowLocation::Live)
+            .or_else(|| entries.last())
+            .map(|(values, _)| values.clone())
     }
 }
 
@@ -675,81 +760,95 @@ impl<'a> MergeTransaction<'a> {
     }
 
     fn run_inner(&mut self) -> Result<bool> {
-        while !self.pending.is_empty() {
-            let mut wave = std::mem::take(&mut self.pending);
-            wave.sort_by_key(|(function, _)| (self.eg.info(*function).merge_level, function.rep()));
-            for (function, row) in wave {
-                self.apply_set(function, &row)?;
+        interpret::phase_timing::time("mt_apply", || -> Result<()> {
+            while !self.pending.is_empty() {
+                let mut wave = std::mem::take(&mut self.pending);
+                wave.sort_by_key(|(function, _)| {
+                    (self.eg.info(*function).merge_level, function.rep())
+                });
+                for (function, row) in wave {
+                    self.apply_set(function, &row)?;
+                }
+                self.pending = std::mem::take(&mut self.next_wave);
             }
-            self.pending = std::mem::take(&mut self.next_wave);
-        }
+            Ok(())
+        })?;
 
         let states = std::mem::take(&mut self.states);
-        for function in std::mem::take(&mut self.state_order) {
-            let state = states
-                .get(&function)
-                .expect("merge state order must reference initialized state");
-            let n_keys = self.eg.n_keys(function);
-            let mut replacements = Vec::new();
-            for key in &state.touched {
-                let current = state
-                    .current
-                    .get(key)
-                    .expect("a touched merge key must have a current row");
-                let original = state.original[key].as_ref();
-                let already_normalized = original.is_some_and(|old| {
-                    old.rows_for_key == 1
-                        && old.location == current.location
-                        && old.values == current.values
-                });
-                if !already_normalized {
-                    replacements.push((key.clone(), current.located()));
+        interpret::phase_timing::time("mt_land", || {
+            for function in std::mem::take(&mut self.state_order) {
+                let state = states
+                    .get(&function)
+                    .expect("merge state order must reference initialized state");
+                let n_keys = self.eg.n_keys(function);
+                let mut replacements = Vec::new();
+                for key in &state.touched {
+                    let current = state
+                        .staged
+                        .get(key)
+                        .expect("a touched merge key must have a staged row");
+                    let original = state.original[key].as_ref();
+                    let already_normalized = original.is_some_and(|old| {
+                        old.rows_for_key == 1
+                            && old.location == current.location
+                            && old.values == current.values
+                    });
+                    if !already_normalized {
+                        replacements.push((key.clone(), current.located()));
+                    }
                 }
+                interpret::phase_timing::note("mt_replacements", replacements.len());
+                self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
             }
-            self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
-        }
+        });
 
         Ok(self.changed
             || self.eg.db.read_counter(self.eg.id_counter) as u32 != self.next_id_at_start)
     }
 
-    fn ensure_state(&mut self, function: FunctionId, n_keys: usize) {
+    fn ensure_state(&mut self, function: FunctionId) {
         if self.states.contains_key(&function) {
             return;
         }
         self.state_order.push(function);
-        self.states.insert(
-            function,
-            FunctionMergeState {
-                current: self.eg.current_rows_by_key(function, n_keys),
-                ..FunctionMergeState::default()
-            },
-        );
+        self.states
+            .insert(function, FunctionMergeState::default());
     }
 
     fn current_row(
         &mut self,
         function: FunctionId,
-        n_keys: usize,
+        _n_keys: usize,
         key: &[u32],
     ) -> Option<CurrentRow> {
-        self.ensure_state(function, n_keys);
-        self.states[&function].current.get(key).cloned()
+        self.ensure_state(function);
+        if let Some(staged) = self.states[&function].staged.get(key) {
+            return Some(staged.clone());
+        }
+        self.eg.index_current_row(function, key)
     }
 
-    fn set_current(&mut self, function: FunctionId, n_keys: usize, key: Row, current: CurrentRow) {
-        self.ensure_state(function, n_keys);
+    /// Stage `current` for `key`. `seen` is the caller's own `current_row`
+    /// result for this key: on the key's first touch the overlay was empty
+    /// then, so it doubles as the pre-transaction row without re-querying the
+    /// index.
+    fn set_current(
+        &mut self,
+        function: FunctionId,
+        key: Row,
+        current: CurrentRow,
+        seen: Option<CurrentRow>,
+    ) {
+        self.ensure_state(function);
         let state = self
             .states
             .get_mut(&function)
             .expect("merge state was initialized");
         if !state.original.contains_key(&key) {
-            state
-                .original
-                .insert(key.clone(), state.current.get(&key).cloned());
+            state.original.insert(key.clone(), seen);
             state.touched.push(key.clone());
         }
-        state.current.insert(key, current);
+        state.staged.insert(key, current);
     }
 
     fn apply_set(&mut self, function: FunctionId, row: &[u32]) -> Result<()> {
@@ -767,13 +866,13 @@ impl<'a> MergeTransaction<'a> {
         let Some(old) = self.current_row(function, n_keys, &key) else {
             self.set_current(
                 function,
-                n_keys,
                 key,
                 CurrentRow {
                     values: incoming,
                     location: RowLocation::Live,
                     rows_for_key: 1,
                 },
+                None,
             );
             return Ok(());
         };
@@ -818,15 +917,16 @@ impl<'a> MergeTransaction<'a> {
             values.into_boxed_slice()
         };
 
+        let location = old.location;
         self.set_current(
             function,
-            n_keys,
             key,
             CurrentRow {
                 values: merged,
-                location: old.location,
+                location,
                 rows_for_key: 1,
             },
+            Some(old),
         );
         Ok(())
     }
@@ -985,13 +1085,13 @@ impl<'a> MergeTransaction<'a> {
         let values = vec![value].into_boxed_slice();
         self.set_current(
             function,
-            n_keys,
             key.into(),
             CurrentRow {
                 values: values.clone(),
                 location: RowLocation::Live,
                 rows_for_key: 1,
             },
+            None,
         );
         Ok(Some(values))
     }
@@ -1012,13 +1112,13 @@ impl<'a> MergeTransaction<'a> {
         let eclass = values[0];
         self.set_current(
             view,
-            n_keys,
             key,
             CurrentRow {
                 values,
                 location: RowLocation::Live,
                 rows_for_key: 1,
             },
+            None,
         );
         Ok(eclass)
     }
@@ -1069,29 +1169,6 @@ fn remove_keys_from_store(
         });
     }
     removed
-}
-
-fn update_version_map(
-    versions: &mut HashMap<FunctionId, HashMap<Row, u64>>,
-    func: FunctionId,
-    row: &Row,
-    delta: isize,
-    version: Option<u64>,
-) {
-    match delta.cmp(&0) {
-        std::cmp::Ordering::Greater => {
-            versions.entry(func).or_default().insert(
-                row.clone(),
-                version.expect("positive row event needs a version"),
-            );
-        }
-        std::cmp::Ordering::Less => {
-            if let Some(rows) = versions.get_mut(&func) {
-                rows.remove(row);
-            }
-        }
-        std::cmp::Ordering::Equal => {}
-    }
 }
 
 #[cfg(test)]
@@ -1742,7 +1819,7 @@ mod tests {
             None,
             true,
         );
-        eg.subsumed.entry(f).or_default().insert(row(&[1, 10, 20]));
+        eg.insert_located_row(f, RowLocation::Subsumed, row(&[1, 10, 20]));
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap());
         assert!(eg.mirror[&f].is_empty());
@@ -1753,7 +1830,7 @@ mod tests {
     fn merge_set_preserves_subsumed_status() {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        eg.subsumed.entry(f).or_default().insert(row(&[1, 10]));
+        eg.insert_located_row(f, RowLocation::Subsumed, row(&[1, 10]));
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 11]))]).unwrap());
 
@@ -1767,11 +1844,9 @@ mod tests {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
         eg.db.set_counter(eg.id_counter, 100);
-        eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
+        eg.insert_located_row(f, RowLocation::Subsumed, row(&[42, 7]));
 
-        let mut lookup_index = HashMap::new();
-        let value =
-            interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index).unwrap();
+        let value = interpret::lookup_or_create(&mut eg, f, &[Value::new(42)]).unwrap();
 
         assert_eq!(value[0], 7);
         assert_eq!(eg.db.read_counter(eg.id_counter), 100);
@@ -1782,8 +1857,8 @@ mod tests {
     fn merge_set_collapses_live_subsumed_key_duplicate() {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        eg.mirror.entry(f).or_default().insert(row(&[1, 10]));
-        eg.subsumed.entry(f).or_default().insert(row(&[1, 11]));
+        eg.insert_live_row(f, row(&[1, 10]));
+        eg.insert_located_row(f, RowLocation::Subsumed, row(&[1, 11]));
 
         assert!(eg.apply_sets(vec![(f, row(&[1, 12]))]).unwrap());
 
@@ -2033,7 +2108,7 @@ mod tests {
         eg.insert_live_row(uf, row(&[75, 40, 0]));
         run_rules(&mut eg, &[rule]).unwrap();
         assert!(!eg.dd_fused.is_empty());
-        assert!(!eg.dd_fused_fed_versions.is_empty());
+        assert!(!eg.dd_fused_cursors.is_empty());
         let panic = Backend::new_panic(&mut eg, "cloned panic".to_owned());
 
         let mut cloned = Backend::clone_boxed(&eg);
@@ -2043,20 +2118,18 @@ mod tests {
             .expect("DD clone must retain its concrete backend type");
 
         assert!(cloned.dd_fused.is_empty());
-        assert!(cloned.dd_fused_fed_versions.is_empty());
+        assert!(cloned.dd_fused_cursors.is_empty());
+        assert!(cloned.event_logs.is_empty());
         assert_eq!(cloned.relations.len(), eg.relations.len());
         assert_eq!(cloned.rules.len(), eg.rules.len());
         assert_eq!(cloned.mirror, eg.mirror);
         assert_eq!(cloned.subsumed, eg.subsumed);
+        assert_eq!(cloned.by_key, eg.by_key);
         assert_eq!(cloned.id_counter, eg.id_counter);
         assert_eq!(
             cloned.db.read_counter(cloned.id_counter),
             eg.db.read_counter(eg.id_counter)
         );
-        assert_eq!(cloned.next_row_version, eg.next_row_version);
-        assert_eq!(cloned.live_versions, eg.live_versions);
-        assert_eq!(cloned.all_versions, eg.all_versions);
-        assert_eq!(cloned.subsumed_versions, eg.subsumed_versions);
 
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             cloned.eval_prim_internal(panic, &[Value::new(7)])
@@ -2071,7 +2144,7 @@ mod tests {
         assert!(cloned.mirror[&uf].contains(&row(&[90, 4, 0])));
         assert!(!eg.mirror[&uf].contains(&row(&[90, 4, 0])));
         assert!(!cloned.dd_fused.is_empty());
-        assert!(!cloned.dd_fused_fed_versions.is_empty());
+        assert!(!cloned.dd_fused_cursors.is_empty());
     }
 
     #[test]
@@ -2349,13 +2422,15 @@ impl Backend for EGraph {
             return None;
         }
         let key = key.iter().map(|value| value.rep()).collect::<Vec<_>>();
-        let find = |rows: Option<&HashSet<Row>>| {
-            rows?
-                .iter()
-                .find(|row| row[..key.len()] == key[..])
-                .map(|row| row[..info.arity].iter().copied().map(Value::new).collect())
-        };
-        find(self.mirror.get(&func)).or_else(|| find(self.subsumed.get(&func)))
+        let values = self.index_lookup_live_first(func, &key)?;
+        Some(
+            key.iter()
+                .chain(values.iter())
+                .take(info.arity)
+                .copied()
+                .map(Value::new)
+                .collect(),
+        )
     }
 
     fn lookup_id(&self, func: FunctionId, key: &[Value]) -> Option<Value> {
@@ -2434,8 +2509,15 @@ impl Backend for EGraph {
             // Any fused ruleset that included this rule is now stale: drop it so
             // it is rebuilt (without the freed rule) on the next `run_rules`.
             self.dd_fused.retain(|key| !key.contains(&i));
-            self.dd_fused_fed_versions
-                .retain(|key, _| !key.contains(&i));
+            self.dd_fused_cursors.retain(|key, _| !key.contains(&i));
+            // Drop event logs no remaining worker subscribes to (a later worker
+            // seeds from the full current state instead of replaying events).
+            let subscribed: HashSet<ReadKey> = self
+                .dd_fused_cursors
+                .values()
+                .flat_map(|reads| reads.keys().copied())
+                .collect();
+            self.event_logs.retain(|read, _| subscribed.contains(read));
         }
     }
 
@@ -2586,9 +2668,10 @@ impl Backend for EGraph {
 
     fn clone_boxed(&self) -> Box<dyn Backend> {
         // Timely workers are transient and cannot be cloned. The authoritative
-        // relation/rule/database/mirror/version state is copied, while workers
-        // and their fed-version snapshots start empty. The next `run_rules`
-        // lazily rebuilds the fused dataflow and feeds the cloned current state.
+        // relation/rule/database/mirror/index state is copied, while workers,
+        // their cursors, and the event logs start empty. The next `run_rules`
+        // lazily rebuilds the fused dataflow and seeds it from the cloned
+        // current state.
         Box::new(Self {
             relations: self.relations.clone(),
             rules: self.rules.clone(),
@@ -2598,11 +2681,9 @@ impl Backend for EGraph {
             id_counter: self.id_counter,
             seen: self.seen.clone(),
             dd_fused: DdWorkers::default(),
-            next_row_version: self.next_row_version,
-            live_versions: self.live_versions.clone(),
-            all_versions: self.all_versions.clone(),
-            subsumed_versions: self.subsumed_versions.clone(),
-            dd_fused_fed_versions: HashMap::new(),
+            by_key: self.by_key.clone(),
+            event_logs: HashMap::new(),
+            dd_fused_cursors: HashMap::new(),
             panic_message: Arc::clone(&self.panic_message),
             table_ids: self.table_ids.clone(),
             set_if_empty_ops: self.set_if_empty_ops.clone(),
