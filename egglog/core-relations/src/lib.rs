@@ -29,9 +29,9 @@ pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, 
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GroundedBinding,
     GroundedRuleSetRun, GuardedRuleSetBatchRunOutcome, GuardedRuleSetRunError,
-    GuardedRuleSetRunOutcome, RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError,
-    TableApplication, TableId, UnionOutcome, UnionReceipt, Variable, make_external_func,
-    plan::PlanStrategy,
+    GuardedRuleSetRunOutcome, PrimitiveApplication, RuleExecutionTrace, RuleMatch, RuleMatchId,
+    RuleMatchTraceError, TableApplication, TableId, UnionOutcome, UnionReceipt, Variable,
+    make_external_func, plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};

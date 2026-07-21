@@ -179,6 +179,19 @@ pub struct TableApplication {
     pub newly_staged: bool,
 }
 
+/// One successful external-function application evaluated by a rule head.
+/// The frontend uses the resolved function ID and exact lane values to admit
+/// only proof-validating pure primitives; opaque external calls remain
+/// unsupported.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveApplication {
+    pub origin: RuleMatchId,
+    pub instruction: u32,
+    pub function: ExternalFunctionId,
+    pub args: Vec<Value>,
+    pub result: Value,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UnionOutcome {
     Applied { parent: Value, child: Value },
@@ -205,6 +218,7 @@ pub struct RuleExecutionTrace {
     pub globals: Vec<(Arc<str>, Value)>,
     pub matches: Vec<RuleMatch>,
     pub applications: Vec<TableApplication>,
+    pub primitives: Vec<PrimitiveApplication>,
     pub unions: Vec<UnionReceipt>,
 }
 

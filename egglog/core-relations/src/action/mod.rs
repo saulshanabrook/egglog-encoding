@@ -23,8 +23,8 @@ use crate::{
     BaseValues, ContainerValues, ExternalFunctionId, WrappedTable,
     common::Value,
     free_join::{
-        CounterId, Counters, ExternalFunctions, RuleMatchId, TableApplication, TableId, TableInfo,
-        Variable,
+        CounterId, Counters, ExternalFunctions, PrimitiveApplication, RuleMatchId,
+        TableApplication, TableId, TableInfo, Variable,
     },
     pool::{Clear, Pooled, with_pool_set},
     table_spec::{ColumnId, MutationBuffer},
@@ -625,21 +625,26 @@ impl ExecutionState<'_> {
         bindings: &mut Bindings,
         origins: &[RuleMatchId],
         applications: &mut Vec<TableApplication>,
+        primitives: &mut Vec<PrimitiveApplication>,
     ) -> usize {
-        self.run_instrs_impl(instrs, bindings, Some((origins, applications)))
+        self.run_instrs_impl(instrs, bindings, Some((origins, applications, primitives)))
     }
 
     fn run_instrs_impl(
         &mut self,
         instrs: &[Instr],
         bindings: &mut Bindings,
-        mut trace: Option<(&[RuleMatchId], &mut Vec<TableApplication>)>,
+        mut trace: Option<(
+            &[RuleMatchId],
+            &mut Vec<TableApplication>,
+            &mut Vec<PrimitiveApplication>,
+        )>,
     ) -> usize {
         if bindings.var_offsets.next_id().rep() == 0 {
             // If we have no variables, we want to run the rules once.
             bindings.matches = 1;
         }
-        if let Some((origins, _)) = trace.as_ref() {
+        if let Some((origins, _, _)) = trace.as_ref() {
             assert_eq!(bindings.matches, origins.len());
         }
 
@@ -649,12 +654,13 @@ impl ExecutionState<'_> {
             if mask.is_empty() {
                 return 0;
             }
-            let instruction_trace = trace.as_mut().map(|(origins, applications)| {
+            let instruction_trace = trace.as_mut().map(|(origins, applications, primitives)| {
                 (
                     *origins,
                     u32::try_from(instruction)
                         .expect("one rule head exceeded u32 instruction capacity"),
                     &mut **applications,
+                    &mut **primitives,
                 )
             });
             self.run_instr(&mut mask, instr, bindings, instruction_trace);
@@ -666,7 +672,12 @@ impl ExecutionState<'_> {
         mask: &mut Mask,
         inst: &Instr,
         bindings: &mut Bindings,
-        trace: Option<(&[RuleMatchId], u32, &mut Vec<TableApplication>)>,
+        trace: Option<(
+            &[RuleMatchId],
+            u32,
+            &mut Vec<TableApplication>,
+            &mut Vec<PrimitiveApplication>,
+        )>,
     ) {
         fn assert_impl(
             bindings: &mut Bindings,
@@ -756,7 +767,7 @@ impl ExecutionState<'_> {
                     });
                     bindings.replace(out);
                 }
-                if let (Some((origins, instruction, applications)), Some(mut active_mask)) =
+                if let (Some((origins, instruction, applications, _)), Some(mut active_mask)) =
                     (trace, active_mask.take())
                 {
                     let results = &bindings[*dst_var];
@@ -839,7 +850,7 @@ impl ExecutionState<'_> {
                 *mask = lookup_result;
             }
             Instr::Insert { table, vals } => {
-                if let Some((origins, _, _)) = trace {
+                if let Some((origins, _, _, _)) = trace {
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.zip(origins).for_each(|(vals, origin)| {
                             self.stage_insert_with_origin(*table, vals.as_slice(), *origin);
@@ -917,6 +928,23 @@ impl ExecutionState<'_> {
                     args1,
                     *dst,
                 );
+                if let Some((origins, instruction, _, primitives)) = trace {
+                    let results = &bindings[*dst];
+                    let mut successful = f1_result.clone();
+                    for_each_binding_with_mask!(successful, args1.as_slice(), bindings, |iter| {
+                        iter.zip(results)
+                            .zip(origins)
+                            .for_each(|((args, result), origin)| {
+                                primitives.push(PrimitiveApplication {
+                                    origin: *origin,
+                                    instruction,
+                                    function: *f1,
+                                    args: args.as_slice().to_vec(),
+                                    result: *result,
+                                });
+                            })
+                    });
+                }
                 let mut to_call_f2 = f1_result.clone();
                 to_call_f2.symmetric_difference(mask);
                 if to_call_f2.is_empty() {

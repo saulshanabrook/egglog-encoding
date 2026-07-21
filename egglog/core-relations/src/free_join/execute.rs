@@ -40,8 +40,8 @@ use crate::{
 use super::{
     ActionId, AtomId, Database, GroundedRuleSetRun, GuardedRuleSetBatchRunOutcome,
     GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex, HashIndex,
-    RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError, TableApplication, TableInfo,
-    Variable, get_column_index_from_tableinfo,
+    PrimitiveApplication, RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError,
+    TableApplication, TableInfo, Variable, get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -2938,6 +2938,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
                         .as_deref()
                         .expect("traced action batches retain lane origins"),
                     &mut trace.output.applications,
+                    &mut trace.output.primitives,
                 )
             } else {
                 state.run_instrs(&action_info.instrs, &mut action_state.bindings)
@@ -2959,9 +2960,10 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             self.rule_set,
             self.match_counter,
             Some(&mut self.apply_time),
-            self.trace
-                .as_mut()
-                .map(|trace| &mut trace.output.applications),
+            self.trace.as_mut().map(|trace| {
+                let output = &mut trace.output;
+                (&mut output.applications, &mut output.primitives)
+            }),
         );
     }
 
@@ -3141,7 +3143,7 @@ fn flush_action_states(
     rule_set: &RuleSet,
     match_counter: &MatchCounter,
     mut apply_time: Option<&mut Duration>,
-    mut application_trace: Option<&mut Vec<TableApplication>>,
+    mut application_trace: Option<(&mut Vec<TableApplication>, &mut Vec<PrimitiveApplication>)>,
 ) {
     for (
         action,
@@ -3155,7 +3157,7 @@ fn flush_action_states(
     {
         if *len > 0 {
             let apply_timer = apply_time.is_some().then(Instant::now);
-            let succeeded = if let Some(applications) = application_trace.as_deref_mut() {
+            let succeeded = if let Some((applications, primitives)) = application_trace.as_mut() {
                 exec_state.run_instrs_traced(
                     &rule_set.actions[action].instrs,
                     bindings,
@@ -3163,6 +3165,7 @@ fn flush_action_states(
                         .as_deref()
                         .expect("traced action batches retain lane origins"),
                     applications,
+                    primitives,
                 )
             } else {
                 exec_state.run_instrs(&rule_set.actions[action].instrs, bindings)
