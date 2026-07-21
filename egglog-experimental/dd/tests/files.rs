@@ -66,14 +66,18 @@ const DEBUG_SUBSET: &[&str] = &[
 /// - container rebuild read primitives (registered through egglog's
 ///   `ActionRegistry`; DD has direct container storage but no registry
 ///   execution state for read primitives over its term-encoded mirror):
-///   `container-proofs`, `container-fail`, `datatypes`,
-///   `nested-container-dirty-propagation`, `hardboiled_conv1d_32`.
+///   `container-proofs`, `container-fail`, `container-reorder-proofs`,
+///   `datatypes`, `nested-container-dirty-propagation`, `hardboiled_conv1d_32`.
 /// - `input` from an external CSV whose path is relative to the corpus dir; the
 ///   DD harness runs from the `dd` crate root, so the file cannot be found:
 ///   `string_quotes`.
 const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[
     ("container-proofs.egg", "requires a backend action registry"),
     ("container-fail.egg", "requires a backend action registry"),
+    (
+        "container-reorder-proofs.egg",
+        "requires a backend action registry",
+    ),
     ("datatypes.egg", "requires a backend action registry"),
     (
         "nested-container-dirty-propagation.egg",
