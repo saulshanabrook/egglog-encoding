@@ -44,6 +44,20 @@ record. The current implementation additionally confirms:
   value, the slice retains the successful-union path from definition to use;
 - inert custom-function declarations are preserved, while any read, write,
   merge, or default use remains fail-closed without mutable-state provenance.
+- positive-check constructor rows are now captured on the native check query
+  itself with complete grounded inputs/output and the chosen match origin;
+  observation grounding uses that exact row plus successful-union edges rather
+  than parser-generated variable names or final-state inverse lookup;
+- immutable witness syntax identity is separated from endpoint-qualified
+  instances, so equal printed terms at different points in canonicalization do
+  not silently reuse a witness with different match-time children;
+- parser-generated wildcard variables are deterministically alpha-normalized
+  through the parsed representation before modeling and replay emission;
+- the unmodified Eggcc 2mm pass-1 proof fixture now completes traced slicing,
+  schedule-free guarded replay, and the unchanged strict proof checker;
+- six interleaved release rounds measured causal Eggcc proof at
+  0.528–0.532x full strict-proof wall time, while the complete pipeline remains
+  2.50–2.54x ordinary native wall time.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -133,6 +147,8 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | lookup hits and misses expose row/tombstone evidence | Falsified | vectorized lookup drops row identity and hit/miss provenance; there is no tombstone dependency |
 | successful union exposes raw endpoints, origin, and success | Confirmed for traced rule proposals | `UnionReceipt` records raw lhs/rhs, optional `RuleMatchId`, and applied/redundant outcome; originless rebuild/congruence unions remain unsupported |
 | successful raw-endpoint edges form a forest without epochs in one scope | Confirmed for direct and constructor-union canaries | applied edges join distinct components, redundant edges are omitted, and strict replay resolves the unique path |
+| a chosen positive check exposes its exact internal constructor rows without a second query | Confirmed | trace-only marker calls are attached to canonical constructor atoms in the same native check query and associated with the selected `RuleMatchId`; repeated and prefix-named constructors pass strict replay |
+| printed constructor syntax plus output endpoint uniquely determines match-time children | Falsified | the closed congruence canary has the same `Wrap(A 1)` syntax/output with pre- and post-union child endpoints; endpoint-qualified exact witness nodes are required |
 | equality IDs are globally stable without epochs | Falsified | push/pop can reuse the same raw `Value` for a different term; cross-scope support needs rollback-aligned arenas or a scope epoch |
 | match-time endpoints provide printable witnesses by themselves | Falsified generally | syntax-specific literal/application witnesses are required; one preferred endpoint witness fails for equal-syntax chained lookups |
 | scalar literals can be printed without per-match extraction | Confirmed | typed base-value reconstruction produces source literals and unsafe strings fail closed |
@@ -159,6 +175,7 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | guarded batch observes one shared prestate | Confirmed | lookup, enabling, delete/insert, subsume, atomic-failure, and proof canaries pass; all requests are captured before any head executes |
 | raw equality-sort binding IDs remain stable across replay waves | Falsified | later union/rebuild can displace a representative; packed matching canonicalizes expected and captured ID cells against the same batch prestate |
 | compact per-wave replay scales to exact math | Confirmed for completion, falsified for savings | exact wave 11 completes and passes strict replay, but its full Prefix is 3.03x slower and 2.46x higher RSS in one public-runner round |
+| causal slicing can reduce a real full-proof workload end to end | Confirmed for Eggcc, not a general claim | six interleaved rounds are 0.528–0.532x full strict-proof wall time and 0.629–0.642x RSS; versus native the complete process is still 2.50–2.54x time and 3.96–4.20x RSS |
 
 ## Important implementation correction: pending lifetime
 

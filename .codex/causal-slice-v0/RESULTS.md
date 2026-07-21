@@ -87,6 +87,46 @@ violate the no-inverse-guessing contract. The slicer therefore rejects this
 case when retained, while safely discarding the corresponding unretained load
 event in the pointer fixture.
 
+### Eggcc fixture result
+
+`egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg` now completes the
+entire integrated path: one ordinary traced execution, a schedule-free causal
+slice, replay with grounded guarded batches, and the unchanged strict proof
+checker. The checked proof concludes `FunctionHasType "main"` with the
+expected state tuple. No original computation schedule is used as a fallback.
+
+This extension required configured-EGraph preservation, consecutive schedule
+boundaries, effective constructor subsume side effects, deferred rejection of
+unreachable opaque/projected firings, exact observation-time constructor rows,
+and endpoint-qualified immutable syntax aliases. Observation constructor rows
+are captured by trace-only markers on the native check query itself, so this
+does not add a second body query or reconstruct a cause from final state.
+
+At commit `31ecaaae3ccd`, six fresh interleaved release rounds measured the
+complete causal treatment against unchanged strict `proof-testing`:
+
+| Metric | Original strict proof (95% CI) | Integrated causal strict proof (95% CI) | Candidate / baseline |
+|---|---:|---:|---:|
+| wall time | 5.31–5.34 s | 2.82–2.83 s | 0.528–0.532x |
+| peak RSS | 767.0–775.3 MiB | 486.1–494.0 MiB | 0.629–0.642x |
+
+A separate six-round interleaved report compared the same complete causal
+process with ordinary native execution:
+
+| Metric | Ordinary native (95% CI) | Integrated causal strict proof (95% CI) | Candidate / baseline |
+|---|---:|---:|---:|
+| wall time | 1.11–1.13 s | 2.82–2.82 s | 2.50–2.54x |
+| peak RSS | 117.9–124.5 MiB | 488.7–499.7 MiB | 3.96–4.20x |
+
+The reports are
+`/tmp/eggcc-strict-vs-causal-31ecaaa.jsonl` and
+`/tmp/eggcc-native-vs-causal-31ecaaa.jsonl`. These results establish a large
+improvement over full proof execution for this fixture, but not the proposed
+approximately-2x-native performance target. Current phase reporting describes
+only the final proof EGraph; the 2.81–2.82 s “outside recorded rulesets” cell
+still combines traced execution, elaboration, slicing, emission, validation,
+and replay setup.
+
 ### Math fixture result
 
 The exact checked-in `benchmarks/math-microbenchmark.egg` source transformation
@@ -293,7 +333,7 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | decomposed-join provenance | rejected | intermediate rows have no shadow `DepId` |
 | projected existential grounding | rejected | PR #23 partial bind changes match count; missing selector/witness interface |
 | direct equality/union slicing | implemented and tested | commit receipts retain origin and applied/redundant result; direct and constructor-union slices pass strict proofs |
-| congruence/rebuild equality | rejected when causally retained | originless rebuild unions and exact row-rekey support are absent |
+| congruence/rebuild equality | observation rekeys implemented narrowly; dynamic state still rejected | an exact constructor row from the chosen native check plus the successful child-equality path can root a slice; originless dynamic rebuild unions and relation-row rekeys remain absent |
 | extract observation | rejected | selected-term/equality dependency path not implemented; no optimality claim |
 | negative check/absence | rejected | no tombstone or exhaustiveness evidence |
 | delete/subsume | rejected | state provenance absent and sequential replay diverges |
@@ -571,9 +611,10 @@ so a new witness DAG format is not yet justified by this fixture.
 
 ## Current benchmark frontier
 
-All six default workloads now have an explicit capability frontier. Math and
-pointer analysis are admitted end to end; the remaining failures stay in the
-validation bucket rather than being timed as successful rows.
+All six default workloads now have an explicit capability frontier. Math,
+pointer analysis, and the real Eggcc proof fixture are admitted end to end;
+the remaining failures stay in the validation bucket rather than being timed
+as successful rows.
 
 | Workload | Current first boundary | Major subsequent requirements |
 |---|---|---|
@@ -582,15 +623,16 @@ validation bucket rather than being timed as successful rows.
 | `herbie.egg` | mutable `lo` read at line 80 | query `pow`/`log`/comparisons and unary/binary BigRat heads now pass their prior boundaries; exact function-row read provenance, custom merges, push/pop, and multiple schedules remain |
 | `luminal-llama.egg` | `subsume` in the line-66 constant-folding head | mutually recursive `datatype*` and query-side i64 `+` are admitted; visibility provenance for the mixed `union`/`subsume` head is next, followed by six schedule boundaries and broader mutable state |
 | `hardboiled_conv1d_32.egg` | `Call` body pattern with opaque `VecExpr` at line 234 | inert `UnstableFn` schemas are admitted; versioned container witnesses, functions, filters, broad joins, and subsume provenance remain |
-| `eggcc-2mm-pass1.egg` | source `(set (TypeList-length (TNil)) 0)` | `:unextractable` constructor witnesses and inert `Pair`/`Vec`/`Set` schemas are admitted; mutable function initialization, custom merges, temporal schedules, containers, delete/subsume, and stateful primitives remain |
+| `eggcc-2mm-pass1.egg` | implemented and benchmarked | ordinary trace, causal slice, guarded replay, and unchanged strict checker pass; integrated causal proof is 0.528–0.532x full strict-proof time but 2.50–2.54x native time; unsupported mutable/container paths not retained by this observation still fail closed when relevant |
 
 The declaration-only and query-primitive frontiers are now closed. Herbie has
 reached mutable function-row reads; Luminal has reached subsume visibility;
-Eggcc remains at mutable function initialization; and Hardboiled remains at
-versioned container values. Guarded post-filter shared-prestate replay, exact
-global snapshots, and narrow BigRat/i64 primitive evidence are implemented;
-mutable commit/read, delete/subsume, container-version, and opaque external
-provenance remain fail-closed.
+the selected Eggcc observation now slices around unsupported irrelevant state;
+and Hardboiled remains at versioned container values. Guarded post-filter
+shared-prestate replay, exact global snapshots, and narrow BigRat/i64 primitive
+evidence are implemented; mutable commit/read, delete, general subsume,
+container-version, and opaque external provenance remain fail-closed when
+causally retained.
 
 ## Validation status
 
@@ -695,6 +737,20 @@ Current post-filter/query continuation:
   tests, and doctests;
 - `git diff --check`: passed.
 
+Current Eggcc/congruence continuation at `31ecaaae3ccd`:
+
+- `cargo test -p egglog --test causal_slice`: 101 passed;
+- `cargo test -p egglog-experimental --test causal_slice`: 3 passed;
+- the release `egglog-experimental --causal-slice --proof-testing` Eggcc
+  fixture command passed and emitted a strict checked proof;
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- Clippy for `egglog` and `egglog-experimental` with warnings denied,
+  formatting, and `git diff --check` passed;
+- 12/12 fresh runs succeeded in each of the strict-versus-causal and
+  native-versus-causal six-round reports;
+- `make check` has not yet been rerun after the latest continuation; its last
+  complete run passed at the post-filter checkpoint above.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -722,6 +778,10 @@ Current post-filter/query continuation:
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
   is 3.03x slower and 2.46x higher RSS in one public-runner round because its
   sound Prefix retains every effective firing.
+- Empirical measurement: on Eggcc, integrated causal strict proof is
+  0.528–0.532x the wall time and 0.629–0.642x the RSS of unchanged full strict
+  proof mode across six interleaved rounds. It remains 2.50–2.54x native wall
+  time and 3.96–4.20x native RSS.
 - Plausible but untested: a streaming wave trace sink, generation-aware mutable
   sidecars, exact body-row transport through factorized joins, and sharing the
   836,160-fire tape across typecheck/proof/preparation AST transformations.
@@ -734,24 +794,28 @@ Current post-filter/query continuation:
 ## Recommended next patches
 
 The benchmark path, scalar inputs, immutable constructor/global witnesses,
-direct unions, guarded shared-prestate batches, and two real fixtures are
+direct unions, guarded shared-prestate batches, and three real fixtures are
 implemented. The next patches should be:
 
-1. add exact dynamic function-row read dependencies and commit receipts for a
+1. expose the existing causal generator stage timings and retained-event
+   counts in the benchmark timing summary, and measure trace, elaboration,
+   validation, and proof replay separately without changing the end-to-end
+   headline metric;
+2. stream or compact completed native waves so raw matches do not coexist with
+   the entire elaborated arena, then remeasure Eggcc RSS;
+3. add exact dynamic function-row read dependencies and commit receipts for a
    no-merge canary before attempting Herbie's custom `lo`/`hi` merges or
    Eggcc's mutable initialization;
-2. add subsume visibility receipts/current sidecars for Luminal only after a
+4. add subsume visibility receipts/current sidecars for Luminal only after a
    focused same-wave mixed union/subsume canary passes ordinary and strict
    replay;
-3. avoid reparsing the generated source solely for in-process validation after
+5. avoid reparsing the generated source solely for in-process validation after
    the already-validated parsed/source rule mapping is available;
-4. stream each native wave into a callback, or otherwise compact completed
-   waves, so raw matches do not coexist with the entire elaborated arena;
-5. carry exact match-time body atom/table/row-version evidence through
+6. carry exact match-time body atom/table/row-version evidence through
    factorized expansion so retained chained constructor lookups never require
    witness guessing;
-6. add dynamic-read/general row commit receipts before mutation support;
-7. add delete/subsume visibility, custom merges, containers, and opaque
+7. add dynamic-read/general row commit receipts before mutation support;
+8. add delete/subsume visibility, custom merges, containers, and opaque
    externals only after their focused canaries pass.
 
 ## Commit and diff summary
@@ -829,6 +893,17 @@ Local reviewable commits:
 44. `77411307`, `759fdab9`, `c14f22a8`, `0338f314` — replay deterministic
     i64/BigRat query groundings, unary BigRat heads, `log`, and BigRat query
     predicates through the unchanged strict checker.
+45. `d5544372`, `da596a34` — record the post-filter results and complete
+    validation ledger;
+46. `12808083`, `ead55b95` — replay retained constructor subsume side effects
+    and consecutive computation schedules;
+47. `d61458b6`, `8853cb8e`, `5e0482dd` — defer unreachable unsupported rule
+    models while preserving fail-closed opaque prefix/delete boundaries;
+48. `227f814b`, `dac5a82a`, `c9ef9853` — preserve configured EGraphs, opaque
+    presort schemas, and combined ruleset declarations;
+49. `c0ecdf33`, `076e9835`, `31ecaaae` — defer unreachable projected
+    groundings and add endpoint-qualified constructor/check provenance through
+    equality and congruence boundaries.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
