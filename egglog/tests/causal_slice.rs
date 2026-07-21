@@ -451,6 +451,57 @@ fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
 }
 
 #[test]
+fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
+    let source = r#"
+        (datatype Expr (A i64))
+        (relation Pair (Expr Expr))
+        (rule ((Pair x y)) ((union x y)) :name "unify")
+        (rule ((Pair x y)) ((union x x)) :name "redundant")
+        (Pair (A 1) (A 2))
+        (run 1)
+        (check (= (A 1) (A 2)))
+    "#;
+
+    let slice = causal_slice_program(Some("direct-union.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.equality_edges, 1);
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"unify\" :bind ((x (A 1)) (y (A 2))) :expect 1)")
+    );
+    assert!(!slice.source.contains("run-rule \"redundant\""));
+
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        for make_egraph in [EGraph::default, || {
+            EGraph::new_with_proofs().with_proof_testing()
+        }] {
+            make_egraph()
+                .parse_and_run_program(Some("direct-union-replay.egg".to_owned()), replay_source)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn equality_rekeyed_relation_rows_fail_closed_without_commit_provenance() {
+    let source = r#"
+        (datatype Expr (A i64))
+        (relation Pair (Expr Expr))
+        (rule ((Pair x y)) ((union x y)) :name "unify")
+        (Pair (A 1) (A 2))
+        (run 2)
+        (check (= (A 1) (A 2)))
+    "#;
+
+    let error = causal_slice_program(Some("relation-rekey.egg".to_owned()), source).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("equality-canonicalized premise"));
+    assert!(message.contains("relation-row rekey provenance"));
+    assert!(message.contains("relation-rekey.egg"));
+}
+
+#[test]
 fn anonymous_rule_names_are_source_based_and_stable() {
     let source = r#"
         (relation A (i64))

@@ -18,7 +18,9 @@ use crate::{
         Action, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
         RuleEvalMode, RunRuleConfig, Schedule, Span,
     },
-    core_relations::{RuleExecutionTrace, RuleMatch, TableApplication, TableId, Value},
+    core_relations::{
+        RuleExecutionTrace, RuleMatch, TableApplication, TableId, UnionOutcome, UnionReceipt, Value,
+    },
     literal_to_value,
     util::{HashMap, HashSet, IndexMap, IndexSet},
 };
@@ -135,9 +137,12 @@ enum AtomArg {
 
 #[derive(Clone, Debug)]
 struct RuleModel {
+    span: Span,
     body: Vec<AtomTemplate>,
+    body_equalities: Vec<EqualityTemplate>,
     head: Vec<AtomTemplate>,
     head_constructors: Vec<AtomArg>,
+    head_unions: Vec<EqualityTemplate>,
     var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
 }
@@ -145,7 +150,16 @@ struct RuleModel {
 #[derive(Clone, Debug)]
 struct CheckModel {
     atoms: Vec<AtomTemplate>,
+    equalities: Vec<EqualityTemplate>,
     var_sorts: IndexMap<String, String>,
+}
+
+#[derive(Clone, Debug)]
+struct EqualityTemplate {
+    span: Span,
+    left: AtomArg,
+    right: AtomArg,
+    sort: String,
 }
 
 #[derive(Clone, Debug)]
@@ -462,6 +476,88 @@ struct Elaboration {
     dependencies: DepArena,
     producers: IndexMap<RowKey, DepId>,
     source_events: usize,
+    equality_forest: EqualityForest,
+}
+
+#[derive(Clone, Debug)]
+struct EqualityEdge {
+    left: TypedEndpoint,
+    right: TypedEndpoint,
+    dependency: DepId,
+}
+
+#[derive(Clone, Debug, Default)]
+struct EqualityForest {
+    edges: Vec<EqualityEdge>,
+    adjacency: IndexMap<TypedEndpoint, Vec<(TypedEndpoint, DepId)>>,
+}
+
+impl EqualityForest {
+    fn add(
+        &mut self,
+        left: TypedEndpoint,
+        right: TypedEndpoint,
+        dependency: DepId,
+    ) -> Result<(), CausalSliceError> {
+        if left.sort != right.sort {
+            return Err(CausalSliceError::Invariant(format!(
+                "successful union crossed runtime sorts `{}` and `{}`",
+                left.sort, right.sort
+            )));
+        }
+        if self.explain(&left, &right).is_some() {
+            return Err(CausalSliceError::Invariant(
+                "a successful native union would create a cycle in the explanation forest"
+                    .to_owned(),
+            ));
+        }
+        self.adjacency
+            .entry(left.clone())
+            .or_default()
+            .push((right.clone(), dependency));
+        self.adjacency
+            .entry(right.clone())
+            .or_default()
+            .push((left.clone(), dependency));
+        self.edges.push(EqualityEdge {
+            left,
+            right,
+            dependency,
+        });
+        Ok(())
+    }
+
+    fn explain(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> Option<Vec<DepId>> {
+        if left == right {
+            return Some(Vec::new());
+        }
+        let mut visited = HashSet::default();
+        let mut work = vec![(left.clone(), Vec::new())];
+        while let Some((current, path)) = work.pop() {
+            if !visited.insert(current.clone()) {
+                continue;
+            }
+            for (next, dependency) in self.adjacency.get(&current).into_iter().flatten() {
+                let mut next_path = path.clone();
+                next_path.push(*dependency);
+                if next == right {
+                    return Some(next_path);
+                }
+                work.push((next.clone(), next_path));
+            }
+        }
+        None
+    }
+
+    fn edge_count(&self) -> usize {
+        debug_assert!(self.edges.iter().all(|edge| {
+            edge.left.sort == edge.right.sort
+                && self.adjacency.get(&edge.left).is_some_and(|neighbors| {
+                    neighbors.contains(&(edge.right.clone(), edge.dependency))
+                })
+        }));
+        self.edges.len()
+    }
 }
 
 struct ProgramModel {
@@ -495,6 +591,15 @@ struct ElaborationInput<'a> {
     source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
     batches: &'a [RuleExecutionTrace],
     trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
+}
+
+struct ObservationInput<'a> {
+    egraph: &'a EGraph,
+    checks: &'a [CheckModel],
+    relations: &'a IndexMap<String, RelationDecl>,
+    traces: &'a [Vec<RuleExecutionTrace>],
+    producers: &'a IndexMap<RowKey, DepId>,
+    equality_forest: &'a EqualityForest,
 }
 
 /// Trace one ordinary reference-backend execution and emit a guarded manual
@@ -601,6 +706,7 @@ pub fn causal_slice_program_with_fact_directory(
         mut dependencies,
         producers: final_producers,
         source_events,
+        equality_forest,
     } = elaborate_events(
         ElaborationInput {
             egraph: &egraph,
@@ -614,11 +720,14 @@ pub fn causal_slice_program_with_fact_directory(
         &mut witnesses,
     )?;
     let roots = observation_roots(
-        &egraph,
-        &checks,
-        &relations,
-        &check_batches,
-        &final_producers,
+        ObservationInput {
+            egraph: &egraph,
+            checks: &checks,
+            relations: &relations,
+            traces: &check_batches,
+            producers: &final_producers,
+            equality_forest: &equality_forest,
+        },
         &mut dependencies,
         &mut witnesses,
     )?;
@@ -704,7 +813,7 @@ pub fn causal_slice_program_with_fact_directory(
         source_events,
         dependency_nodes: dependencies.nodes.len(),
         witness_nodes: witnesses.nodes.len(),
-        equality_edges: 0,
+        equality_edges: equality_forest.edge_count(),
         prefix_fallbacks: 0,
         captured_bindings,
         observation_matches,
@@ -1259,60 +1368,86 @@ fn model_rule(
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
+    let body_equalities = Vec::new();
     for fact in &rule.body {
-        let GenericFact::Fact(expr) = fact else {
-            return unsupported(
-                &rule.span,
-                format!("equality or primitive filters in rule `{}`", rule.name),
-            );
-        };
-        let atom = model_atom(expr, relations, constructors, "rule body")?;
-        if atom.args.iter().any(atom_arg_contains_app) {
-            return unsupported(
-                &rule.span,
-                format!(
-                    "nested constructor matching in rule `{}`; v0 only binds constructed values through variables",
-                    rule.name
-                ),
-            );
+        match fact {
+            GenericFact::Fact(expr) => {
+                let atom = model_atom(expr, relations, constructors, "rule body")?;
+                if atom.args.iter().any(atom_arg_contains_app) {
+                    return unsupported(
+                        &rule.span,
+                        format!(
+                            "nested constructor matching in rule `{}`; v0 only binds constructed values through variables",
+                            rule.name
+                        ),
+                    );
+                }
+                register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
+                body.push(atom);
+            }
+            GenericFact::Eq(..) => {
+                return unsupported(
+                    &rule.span,
+                    format!(
+                        "equality or primitive filters in rule `{}`; constructor lookup provenance is not yet modeled",
+                        rule.name
+                    ),
+                );
+            }
         }
-        register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
-        body.push(atom);
     }
-
     let mut head = Vec::new();
     let mut head_constructors = Vec::new();
+    let mut head_unions = Vec::new();
     for action in &rule.head.0 {
-        let GenericAction::Expr(_, expr) = action else {
-            return unsupported_action(
-                action,
-                format!("a non-insert head action in rule `{}`", rule.name),
-            );
-        };
-        let GenericExpr::Call(span, function, _) = expr else {
-            return unsupported_action(
-                action,
-                format!("a non-call head action in rule `{}`", rule.name),
-            );
-        };
-        let args = if relations.contains_key(function) {
-            let atom = model_atom(expr, relations, constructors, "rule head")?;
-            let args = atom.args.clone();
-            head.push(atom);
-            args
-        } else if let Some(constructor) = constructors.get(function) {
-            let constructor = model_atom_arg(expr, &constructor.output, constructors, "rule head")?;
-            let args = vec![constructor.clone()];
-            head_constructors.push(constructor);
-            args
-        } else {
-            return unsupported(
-                span,
-                format!(
-                    "primitive or function call `{function}` in rule `{}` head",
-                    rule.name
-                ),
-            );
+        let args = match action {
+            GenericAction::Expr(_, expr) => {
+                let GenericExpr::Call(span, function, _) = expr else {
+                    return unsupported_action(
+                        action,
+                        format!("a non-call head action in rule `{}`", rule.name),
+                    );
+                };
+                if relations.contains_key(function) {
+                    let atom = model_atom(expr, relations, constructors, "rule head")?;
+                    let args = atom.args.clone();
+                    head.push(atom);
+                    args
+                } else if let Some(constructor) = constructors.get(function) {
+                    let constructor =
+                        model_atom_arg(expr, &constructor.output, constructors, "rule head")?;
+                    let args = vec![constructor.clone()];
+                    head_constructors.push(constructor);
+                    args
+                } else {
+                    return unsupported(
+                        span,
+                        format!(
+                            "primitive or function call `{function}` in rule `{}` head",
+                            rule.name
+                        ),
+                    );
+                }
+            }
+            GenericAction::Union(span, left, right) => {
+                let equality = model_equality(
+                    span,
+                    left,
+                    right,
+                    &var_sorts,
+                    constructors,
+                    &format!("rule `{}` union head", rule.name),
+                )?;
+                let args = vec![equality.left.clone(), equality.right.clone()];
+                head_unions.push(equality);
+                args
+            }
+            _ => {
+                return unsupported_action(
+                    action,
+                    format!("a non-insert/union head action in rule `{}`", rule.name),
+                );
+            }
         };
         for arg in &args {
             for (span, var) in atom_arg_vars(arg) {
@@ -1325,17 +1460,46 @@ fn model_rule(
             }
         }
     }
+    if !head_unions.is_empty() {
+        if rule.head.0.len() != 1 || head_unions.len() != 1 {
+            return unsupported(
+                &rule.span,
+                format!(
+                    "a union mixed with other head actions in rule `{}`; replaying a retained complete head requires redundant-union support",
+                    rule.name
+                ),
+            );
+        }
+        let union = &head_unions[0];
+        if !matches!(union.left, AtomArg::Var(..)) || !matches!(union.right, AtomArg::Var(..)) {
+            return unsupported(
+                &union.span,
+                format!(
+                    "a non-variable direct union in rule `{}`; constructor-set origin tracing is not yet modeled",
+                    rule.name
+                ),
+            );
+        }
+    }
 
     // Generic Join deliberately projects a variable that occurs in only one
     // body atom when the head does not use it. A later `run-rule :bind` query
     // specializes the plan and can enumerate several extensions of that
     // projected firing, so PR #23 cannot replay the ordinary physical match
     // with an exact guard. One-atom rules use MinCover and retain every column.
-    if body.len() > 1 {
-        let body_occurrences = variable_atom_occurrences(&body);
+    if rule.body.len() > 1 {
+        let body_occurrences = variable_fact_occurrences(&body, &body_equalities);
         let mut head_vars = atom_variables(&head);
         for constructor in &head_constructors {
             for (_, var) in atom_arg_vars(constructor) {
+                head_vars.insert(var.as_str());
+            }
+        }
+        for equality in &head_unions {
+            for (_, var) in atom_arg_vars(&equality.left)
+                .into_iter()
+                .chain(atom_arg_vars(&equality.right))
+            {
                 head_vars.insert(var.as_str());
             }
         }
@@ -1353,9 +1517,12 @@ fn model_rule(
     }
 
     Ok(RuleModel {
+        span: rule.span.clone(),
         body,
+        body_equalities,
         head,
         head_constructors,
+        head_unions,
         var_order,
         var_sorts,
     })
@@ -1378,18 +1545,32 @@ fn model_check(
         );
     }
     let mut atoms = Vec::new();
+    let mut equalities = Vec::new();
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     for fact in facts {
-        let GenericFact::Fact(expr) = fact else {
-            return unsupported(span, "equality or primitive facts in a check".to_owned());
-        };
-        let atom = model_atom(expr, relations, constructors, "positive check")?;
-        register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
-        atoms.push(atom);
+        match fact {
+            GenericFact::Fact(expr) => {
+                let atom = model_atom(expr, relations, constructors, "positive check")?;
+                register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
+                atoms.push(atom);
+            }
+            GenericFact::Eq(fact_span, left, right) => {
+                let equality = model_equality(
+                    fact_span,
+                    left,
+                    right,
+                    &var_sorts,
+                    constructors,
+                    "positive check",
+                )?;
+                register_equality_vars(&equality, &mut var_order, &mut var_sorts)?;
+                equalities.push(equality);
+            }
+        }
     }
-    if atoms.len() > 1 {
-        let occurrences = variable_atom_occurrences(&atoms);
+    if facts.len() > 1 {
+        let occurrences = variable_fact_occurrences(&atoms, &equalities);
         if let Some(var) = var_order
             .iter()
             .find(|var| occurrences.get(var.as_str()).copied() == Some(1))
@@ -1402,7 +1583,111 @@ fn model_check(
             );
         }
     }
-    Ok(CheckModel { atoms, var_sorts })
+    Ok(CheckModel {
+        atoms,
+        equalities,
+        var_sorts,
+    })
+}
+
+fn model_equality(
+    span: &Span,
+    left: &Expr,
+    right: &Expr,
+    known_var_sorts: &IndexMap<String, String>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    context: &str,
+) -> Result<EqualityTemplate, CausalSliceError> {
+    let left_sort = infer_equality_expr_sort(left, known_var_sorts, constructors, context)?;
+    let right_sort = infer_equality_expr_sort(right, known_var_sorts, constructors, context)?;
+    let sort = match (left_sort, right_sort) {
+        (Some(left), Some(right)) if left == right => left,
+        (Some(left), Some(right)) => {
+            return unsupported(
+                span,
+                format!("an equality between `{left}` and `{right}` in {context}"),
+            );
+        }
+        (Some(sort), None) | (None, Some(sort)) => sort,
+        (None, None) => {
+            return unsupported(
+                span,
+                format!("an equality whose variable sort cannot be inferred in {context}"),
+            );
+        }
+    };
+    if !constructors
+        .values()
+        .any(|constructor| constructor.output == sort)
+    {
+        return unsupported(
+            span,
+            format!("equality or primitive filters over non-equality sort `{sort}` in {context}"),
+        );
+    }
+    Ok(EqualityTemplate {
+        span: span.clone(),
+        left: model_atom_arg(left, &sort, constructors, context)?,
+        right: model_atom_arg(right, &sort, constructors, context)?,
+        sort,
+    })
+}
+
+fn infer_equality_expr_sort(
+    expr: &Expr,
+    known_var_sorts: &IndexMap<String, String>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    context: &str,
+) -> Result<Option<String>, CausalSliceError> {
+    match expr {
+        GenericExpr::Var(_, var) => Ok(known_var_sorts.get(var).cloned()),
+        GenericExpr::Lit(_, literal) => Ok(Some(
+            match literal {
+                Literal::Int(_) => "i64",
+                Literal::Float(_) => "f64",
+                Literal::String(_) => "String",
+                Literal::Bool(_) => "bool",
+                Literal::Unit => "Unit",
+            }
+            .to_owned(),
+        )),
+        GenericExpr::Call(span, function, _) => constructors
+            .get(function)
+            .map(|constructor| Some(constructor.output.clone()))
+            .ok_or_else(|| CausalSliceError::Unsupported {
+                location: span.to_string(),
+                reason: format!("equality or primitive function lookup `{function}` in {context}"),
+            }),
+    }
+}
+
+fn register_equality_vars(
+    equality: &EqualityTemplate,
+    order: &mut Vec<String>,
+    sorts: &mut IndexMap<String, String>,
+) -> Result<(), CausalSliceError> {
+    register_arg_vars(&equality.left, &equality.sort, order, sorts)?;
+    register_arg_vars(&equality.right, &equality.sort, order, sorts)
+}
+
+fn variable_fact_occurrences<'a>(
+    atoms: &'a [AtomTemplate],
+    equalities: &'a [EqualityTemplate],
+) -> HashMap<&'a str, usize> {
+    let mut occurrences = variable_atom_occurrences(atoms);
+    for equality in equalities {
+        let mut vars = HashSet::default();
+        for (_, var) in atom_arg_vars(&equality.left)
+            .into_iter()
+            .chain(atom_arg_vars(&equality.right))
+        {
+            vars.insert(var.as_str());
+        }
+        for var in vars {
+            *occurrences.entry(var).or_default() += 1;
+        }
+    }
+    occurrences
 }
 
 fn variable_atom_occurrences(atoms: &[AtomTemplate]) -> HashMap<&str, usize> {
@@ -1678,12 +1963,19 @@ fn elaborate_events(
     let mut dependencies = DepArena::default();
     let mut events = EventArena::default();
     let mut producers = IndexMap::default();
+    let mut equality_forest = EqualityForest::default();
     let mut source_events = 0;
     for fact in source_facts {
         let rows = if let Some(batches) = source_traces.get(&fact.command_index) {
             let mut observed = Vec::new();
             let mut new_rows = Vec::new();
             for batch in batches {
+                if !batch.unions.is_empty() {
+                    return Err(CausalSliceError::Unsupported {
+                        location: format!("source command {}", fact.command_index),
+                        reason: "a source constructor/merge that committed a union".to_owned(),
+                    });
+                }
                 for application in &batch.applications {
                     if application.origin.index() >= batch.matches.len() {
                         return Err(CausalSliceError::Invariant(format!(
@@ -1747,8 +2039,28 @@ fn elaborate_events(
             };
             applications.push(application);
         }
+        let mut unions_by_origin = vec![Vec::new(); batch.matches.len()];
+        for receipt in &batch.unions {
+            let origin = receipt
+                .origin
+                .ok_or_else(|| CausalSliceError::Unsupported {
+                    location: format!("traced wave {wave}"),
+                    reason:
+                        "a congruence, merge, or rebuild union without an originating rule match"
+                            .to_owned(),
+                })?;
+            let Some(unions) = unions_by_origin.get_mut(origin.index()) else {
+                return Err(CausalSliceError::Invariant(format!(
+                    "union origin {} exceeded {} matches",
+                    origin.index(),
+                    batch.matches.len()
+                )));
+            };
+            unions.push(receipt);
+        }
 
         let mut new_outputs = IndexMap::<RowKey, DepId>::default();
+        let mut new_equality_edges = Vec::new();
         for (ordinal, captured) in batch.matches.iter().enumerate() {
             let rule_name = captured.rule.as_ref();
             let model = rules.get(rule_name).ok_or_else(|| {
@@ -1778,12 +2090,40 @@ fn elaborate_events(
                         )));
                     }
                     None => {
+                        if equality_forest.edge_count() > 0 {
+                            return Err(CausalSliceError::Unsupported {
+                                location: model.span.to_string(),
+                                reason: format!(
+                                    "an equality-canonicalized premise of rule `{rule_name}` without commit-time relation-row rekey provenance"
+                                ),
+                            });
+                        }
                         return Err(CausalSliceError::Invariant(format!(
                             "rule `{rule_name}` matched without a known source row: {}",
                             display_row(row)
                         )));
                     }
                 }
+            }
+            for equality in &model.body_equalities {
+                let (left, right) = ground_equality(egraph, equality, &bindings, witnesses)?;
+                premise_dependencies.insert(endpoint_availability(
+                    &left,
+                    witnesses,
+                    &equality.span,
+                )?);
+                premise_dependencies.insert(endpoint_availability(
+                    &right,
+                    witnesses,
+                    &equality.span,
+                )?);
+                let explanation = equality_forest.explain(&left, &right).ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "rule `{rule_name}` matched equality `{}` without a recorded pre-wave cause",
+                        equality.span
+                    ))
+                })?;
+                premise_dependencies.extend(explanation);
             }
             let mut prerequisites = DepArena::EMPTY;
             for dependency in premise_dependencies {
@@ -1814,6 +2154,13 @@ fn elaborate_events(
                     "native applications for rule `{rule_name}` do not match its complete source head"
                 )));
             }
+            let expected_unions = model
+                .head_unions
+                .iter()
+                .map(|equality| ground_equality(egraph, equality, &bindings, witnesses))
+                .collect::<Result<Vec<_>, _>>()?;
+            let applied_unions =
+                match_union_receipts(rule_name, &expected_unions, &unions_by_origin[ordinal])?;
 
             let effective_outputs = effects
                 .new_rows
@@ -1830,7 +2177,10 @@ fn elaborate_events(
                 })?,
                 bindings,
             };
-            let promoted = if effective_outputs.is_empty() && effects.new_witnesses.is_empty() {
+            let promoted = if effective_outputs.is_empty()
+                && effects.new_witnesses.is_empty()
+                && applied_unions.is_empty()
+            {
                 None
             } else {
                 let event = events.push(ReplayEvent {
@@ -1845,6 +2195,9 @@ fn elaborate_events(
                 for witness in effects.new_witnesses {
                     witnesses.set_availability(witness, dependency);
                 }
+                for (left, right) in applied_unions {
+                    new_equality_edges.push((left, right, dependency));
+                }
                 Some(event)
             };
             pending_fires.push(PendingFire {
@@ -1858,6 +2211,9 @@ fn elaborate_events(
         for (row, dependency) in new_outputs {
             producers.insert(row, dependency);
         }
+        for (left, right, dependency) in new_equality_edges {
+            equality_forest.add(left, right, dependency)?;
+        }
     }
     Ok(Elaboration {
         pending_fires,
@@ -1865,18 +2221,23 @@ fn elaborate_events(
         dependencies,
         producers,
         source_events,
+        equality_forest,
     })
 }
 
 fn observation_roots(
-    egraph: &EGraph,
-    checks: &[CheckModel],
-    relations: &IndexMap<String, RelationDecl>,
-    traces: &[Vec<RuleExecutionTrace>],
-    producers: &IndexMap<RowKey, DepId>,
+    input: ObservationInput<'_>,
     dependencies: &mut DepArena,
     witnesses: &mut WitnessArena,
 ) -> Result<DepId, CausalSliceError> {
+    let ObservationInput {
+        egraph,
+        checks,
+        relations,
+        traces,
+        producers,
+        equality_forest,
+    } = input;
     if checks.len() != traces.len() {
         return Err(CausalSliceError::Invariant(format!(
             "captured {} check traces for {} observations",
@@ -1887,7 +2248,10 @@ fn observation_roots(
 
     let mut root = DepArena::EMPTY;
     for (check, batches) in checks.iter().zip(traces) {
-        if batches.iter().any(|batch| !batch.applications.is_empty()) {
+        if batches
+            .iter()
+            .any(|batch| !batch.applications.is_empty() || !batch.unions.is_empty())
+        {
             return Err(CausalSliceError::Unsupported {
                 location: "positive check trace".to_owned(),
                 reason: "an observation that stages constructor or relation applications"
@@ -1925,6 +2289,26 @@ fn observation_roots(
                         display_row(&row)
                     )));
                 }
+            }
+        }
+        for equality in &check.equalities {
+            let (left, right) = ground_equality(egraph, equality, &bindings, witnesses)?;
+            root = dependencies.and(
+                root,
+                endpoint_availability(&left, witnesses, &equality.span)?,
+            )?;
+            root = dependencies.and(
+                root,
+                endpoint_availability(&right, witnesses, &equality.span)?,
+            )?;
+            let explanation = equality_forest.explain(&left, &right).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "positive check matched equality `{}` without a recorded cause",
+                    equality.span
+                ))
+            })?;
+            for dependency in explanation {
+                root = dependencies.and(root, dependency)?;
             }
         }
     }
@@ -2009,6 +2393,80 @@ fn ground_atoms(
             })
         })
         .collect()
+}
+
+fn ground_equality(
+    egraph: &EGraph,
+    equality: &EqualityTemplate,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+) -> Result<(TypedEndpoint, TypedEndpoint), CausalSliceError> {
+    let left = ground_arg(egraph, &equality.left, &equality.sort, bindings, witnesses)?;
+    let right = ground_arg(egraph, &equality.right, &equality.sort, bindings, witnesses)?;
+    if left.sort != right.sort {
+        return Err(CausalSliceError::Invariant(format!(
+            "modeled equality `{}` grounded at two runtime sorts",
+            equality.span
+        )));
+    }
+    Ok((left, right))
+}
+
+fn endpoint_availability(
+    endpoint: &TypedEndpoint,
+    witnesses: &WitnessArena,
+    span: &Span,
+) -> Result<DepId, CausalSliceError> {
+    let witness = witnesses
+        .by_endpoint(&endpoint.sort, endpoint.value)
+        .ok_or_else(|| CausalSliceError::Unsupported {
+            location: span.to_string(),
+            reason: format!(
+                "an equality endpoint of sort `{}` without match-time replay syntax",
+                endpoint.sort
+            ),
+        })?;
+    Ok(witnesses.availability(witness))
+}
+
+fn match_union_receipts(
+    rule_name: &str,
+    expected: &[(TypedEndpoint, TypedEndpoint)],
+    receipts: &[&UnionReceipt],
+) -> Result<Vec<(TypedEndpoint, TypedEndpoint)>, CausalSliceError> {
+    if expected.len() != receipts.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` modeled {} union action(s) but native commit reported {} receipt(s)",
+            expected.len(),
+            receipts.len()
+        )));
+    }
+    let mut unmatched = receipts.to_vec();
+    let mut applied = Vec::new();
+    for (left, right) in expected {
+        let Some(index) = unmatched
+            .iter()
+            .position(|receipt| receipt.lhs == left.value && receipt.rhs == right.value)
+        else {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` committed a union whose typed raw endpoints do not match its source head"
+            )));
+        };
+        let receipt = unmatched.swap_remove(index);
+        match receipt.outcome {
+            UnionOutcome::Applied { parent, child } => {
+                if parent == child {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "rule `{rule_name}` reported a successful union with identical committed endpoints"
+                    )));
+                }
+                applied.push((left.clone(), right.clone()));
+            }
+            UnionOutcome::Redundant { .. } => {}
+        }
+    }
+    debug_assert!(unmatched.is_empty());
+    Ok(applied)
 }
 
 struct FireApplicationEffects {
