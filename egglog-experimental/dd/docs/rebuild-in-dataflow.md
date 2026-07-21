@@ -71,6 +71,28 @@ shared counter on first sight, returning the memoized id on any replay
 Termination guard: mints happen only behind an antijoin against the view
 (mint-on-MISS) — mint-per-match is the classic non-terminating chase.
 
+Decisions (July 2026): the compiler handles ANY schedule with a mint stage at
+every fresh-id site — there is NO "mint-free region" analysis; user rules and
+rebuild rules lower the same way. Prototyped mechanisms
+(`tests/schedule_regions.rs`): `(run N)` compiles to a `Variable` loop whose
+feedback is filtered to rounds `< N` (bounded hops inside one epoch, early
+convergence free), and `monotone::memoizing_mint` runs INSIDE saturation
+scopes at `Product` timestamps (derived lexicographic `Ord` refines the
+lattice order for frontier-complete times), assigning ids deterministically
+in round order.
+
+Planned encoding change that makes minting first-class: `get-fresh!` takes
+the hash-cons KEY as arguments (constructor/view plus canonical children)
+instead of being a nullary counter bump. Minting is then a keyed, declarative
+operation: the DD compiler recognizes the primitive (the same way it already
+recognizes `set-if-empty`/view-proof ops by `ExternalFunctionId`) and routes
+it to the mint stage keyed by the argument tuple — and that key makes the
+memo dictionary coincide with the FD view's `key -> eclass` map, so
+mint-on-miss IS the view's lookup-or-create rather than a second structure.
+It also makes a stateless hashed variant trivial later (hash the args; needs
+64-bit ids to dodge birthday collisions, hence not the default in this
+u32-lane backend).
+
 ### `(delete ...)` is data, not DD retraction
 
 egglog's rules are MONOTONE-FIRE: a match's consequences persist after the

@@ -39,6 +39,7 @@ use hashbrown::{HashMap, HashSet};
 mod compile;
 mod dd_native;
 mod interpret;
+pub mod monotone;
 
 use compile::{validate_merge, visit_merge_read_dependencies, ReadKey, Row};
 
