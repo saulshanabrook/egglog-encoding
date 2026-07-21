@@ -425,7 +425,7 @@ def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     collection.preflight_collection(collection.CollectionPlan(target, (cached, planned_run(required=1))), 120)
 
     fresh = planned_run(treatment="proof-extraction", required=1)
-    with pytest.raises(ValueError, match="preflight failed.*--proof-extraction"):
+    with pytest.raises(ValueError, match=r"preflight failed.*--proof-extraction"):
         collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
     assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
