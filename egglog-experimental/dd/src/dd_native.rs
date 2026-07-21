@@ -657,9 +657,11 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
                 inputs.insert(read, session);
                 rel_coll.insert(read, coll);
             }
-            // A collection-level join arranges both inputs at every call site.
-            // Share base-relation arrangements with the same key projection.
-            let mut arranged_right = HashMap::new();
+            // ONE shared arrangement per (relation view, key-column projection),
+            // used by EVERY join call site in the ruleset — the right side of
+            // every stage and BOTH sides of each rule's first join. Only
+            // intermediate results of 3+-atom rules still arrange privately.
+            let mut arranged = HashMap::new();
 
             for (rp, cap) in rule_plans.iter().zip(captures_in.iter()) {
                 // This rule's per-atom collection vector, from the SHARED relation
@@ -668,12 +670,71 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
                 let atom_slots = &rp.atoms;
                 let proj = &rp.projection;
                 let step_col = &proj.step_col;
-                let ops0 = AtomOps::bind_stage(&atom_slots[0], &step_col[0]);
-                let mut cur = rel_coll[&rp.atom_reads[0]]
-                    .clone()
-                    .flat_map(move |r: RowN<WIDTH>| ops0.apply(&RowN::default(), &r));
 
-                for i in 1..n_atoms {
+                // Positions of `shared` variables (first occurrence) in an atom.
+                let atom_key_cols = |slots: &[Slot], shared: &[u32]| -> Vec<usize> {
+                    shared
+                        .iter()
+                        .map(|v| {
+                            slots
+                                .iter()
+                                .position(|s| matches!(s, Slot::Var(x) if x == v))
+                                .expect(
+                                    "DD join invariant: a shared variable must occur in the atom",
+                                )
+                        })
+                        .collect()
+                };
+
+                let mut cur = if n_atoms == 1 {
+                    // Single-atom rule: no join, no arrangement — bind directly.
+                    let ops0 = AtomOps::bind_stage(&atom_slots[0], &step_col[0]);
+                    rel_coll[&rp.atom_reads[0]]
+                        .clone()
+                        .flat_map(move |r: RowN<WIDTH>| ops0.apply(&RowN::default(), &r))
+                } else {
+                    // First join: BOTH sides are shared raw-relation arrangements
+                    // keyed by the join columns. The bind/remap slot programs run
+                    // inside the join closure; rows the old pre-join bind would
+                    // have filtered (const/dup mismatches) are dropped there, and
+                    // bind is injective on surviving rows, so multiplicities are
+                    // unchanged.
+                    let slots1 = &atom_slots[1];
+                    let prev = &step_col[0];
+                    let next = &step_col[1];
+                    let shared: Vec<u32> = atom_vars(slots1)
+                        .into_iter()
+                        .filter(|v| prev.contains_key(v))
+                        .collect();
+                    let left_cols = atom_key_cols(&atom_slots[0], &shared);
+                    let right_cols = atom_key_cols(slots1, &shared);
+                    let left = arranged
+                        .entry((rp.atom_reads[0], left_cols.clone()))
+                        .or_insert_with(|| {
+                            rel_coll[&rp.atom_reads[0]]
+                                .clone()
+                                .map(move |r: RowN<WIDTH>| (pack_key128(&r, &left_cols), r))
+                                .arrange_by_key()
+                        })
+                        .clone();
+                    let right = arranged
+                        .entry((rp.atom_reads[1], right_cols.clone()))
+                        .or_insert_with(|| {
+                            rel_coll[&rp.atom_reads[1]]
+                                .clone()
+                                .map(move |r: RowN<WIDTH>| (pack_key128(&r, &right_cols), r))
+                                .arrange_by_key()
+                        })
+                        .clone();
+                    let ops0 = AtomOps::bind_stage(&atom_slots[0], prev);
+                    let ops1 = AtomOps::join_stage(slots1, prev, next);
+                    left.join_core(right, move |_key, r0: &RowN<WIDTH>, r1: &RowN<WIDTH>| {
+                        ops0.apply(&RowN::default(), r0)
+                            .and_then(|b| ops1.apply(&b, r1))
+                    })
+                };
+
+                for i in 2..n_atoms {
                     let slots = &atom_slots[i];
                     let prev = &step_col[i - 1];
                     let next = &step_col[i];
@@ -682,24 +743,13 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
                         .filter(|v| prev.contains_key(v))
                         .collect();
                     let shared_cols_left: Vec<usize> = shared.iter().map(|v| prev[v]).collect();
-                    let shared_atom_cols: Vec<usize> = shared
-                        .iter()
-                        .map(|v| {
-                            slots
-                                .iter()
-                                .position(|s| matches!(s, Slot::Var(x) if x == v))
-                                .expect(
-                                    "DD join invariant: a shared variable must occur in the joined atom",
-                                )
-                        })
-                        .collect();
+                    let shared_atom_cols = atom_key_cols(slots, &shared);
 
                     let left_cols = shared_cols_left.clone();
                     let left =
                         cur.map(move |b: RowN<WIDTH>| (pack_key128(&b, &left_cols), b));
-                    let arrangement_key = (rp.atom_reads[i], shared_atom_cols.clone());
-                    let right = arranged_right
-                        .entry(arrangement_key)
+                    let right = arranged
+                        .entry((rp.atom_reads[i], shared_atom_cols.clone()))
                         .or_insert_with(|| {
                             let right_cols = shared_atom_cols.clone();
                             rel_coll[&rp.atom_reads[i]]
@@ -739,12 +789,16 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
 
             if std::env::var("EGGLOG_DD_DUMP_PLANS").is_ok() {
                 let stages: usize = rule_plans.iter().map(|rp| rp.atoms.len() - 1).sum();
+                let private: usize = rule_plans
+                    .iter()
+                    .map(|rp| rp.atoms.len().saturating_sub(2))
+                    .sum();
                 eprintln!(
-                    "[dd-arrange] width={WIDTH} rules={} join_stages={} left_arrangements={} shared_right_arrangements={} input_relations={}",
+                    "[dd-arrange] width={WIDTH} rules={} join_stages={} shared_arrangements={} private_intermediate_arrangements={} input_relations={}",
                     rule_plans.len(),
                     stages,
-                    stages,
-                    arranged_right.len(),
+                    arranged.len(),
+                    private,
                     reads_in.len(),
                 );
             }
@@ -819,17 +873,26 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
         self.drive_to(next_epoch);
         self.epoch = next_epoch;
 
-        let mut accs: Vec<HashMap<Vec<u32>, isize>> =
+        // Net captured deltas keyed by the fixed-width row (`Copy`, no per-pair
+        // allocation); only surviving nonzero rows allocate an output vec.
+        // Captured rows are packed to the low `var_order` slots with zeros
+        // beyond, so whole-row equality is prefix equality.
+        let mut accs: Vec<HashMap<RowN<WIDTH>, isize>> =
             (0..self.rules.len()).map(|_| HashMap::new()).collect();
         for (rule, acc) in self.rules.iter().zip(accs.iter_mut()) {
             for (row, weight) in rule.captured.borrow_mut().drain(..) {
-                let key = (0..rule.var_order.len()).map(|i| row[i]).collect();
-                *acc.entry(key).or_insert(0) += weight;
+                *acc.entry(row).or_insert(0) += weight;
             }
         }
         Ok(accs
             .into_iter()
-            .map(|acc| acc.into_iter().filter(|(_, w)| *w != 0).collect())
+            .zip(&self.rules)
+            .map(|(acc, rule)| {
+                acc.into_iter()
+                    .filter(|(_, w)| *w != 0)
+                    .map(|(row, w)| ((0..rule.var_order.len()).map(|i| row[i]).collect(), w))
+                    .collect()
+            })
             .collect())
     }
 
