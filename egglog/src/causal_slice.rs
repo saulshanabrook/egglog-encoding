@@ -3597,7 +3597,11 @@ fn replay_primitive_head_context(context: &str) -> bool {
 }
 
 fn replay_safe_bigrat_primitive_arity(function: &str) -> Option<usize> {
-    matches!(function, "+" | "-" | "*" | "/").then_some(2)
+    match function {
+        "+" | "-" | "*" | "/" => Some(2),
+        "neg" | "abs" | "floor" | "ceil" | "round" => Some(1),
+        _ => None,
+    }
 }
 
 fn replay_safe_query_primitive(function: &str, input_sorts: &[String], output_sort: &str) -> bool {

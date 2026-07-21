@@ -875,6 +875,37 @@ fn retained_bigrat_binary_arithmetic_replays_strictly() {
 }
 
 #[test]
+fn retained_bigrat_unary_arithmetic_replays_strictly() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (Math))
+        (relation Done (Math))
+        (let $two (Num (bigrat (bigint 2) (bigint 1))))
+        (let $negative-two (Num (bigrat (bigint -2) (bigint 1))))
+        (Inputs $two)
+        (rule ((Inputs x) (= x (Num value)))
+              ((Done (Num (neg value))))
+              :name "fold-neg"
+              :no-decomp)
+        (run 1)
+        (check (Done $negative-two))
+    "#;
+    let slice = causal_slice_program(Some("bigrat-neg.egg".to_owned()), source).unwrap();
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "fold-neg")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-neg-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn pure_i64_query_primitive_replays_its_complete_grounding() {
     let source = r#"
         (datatype Math (Num i64))
