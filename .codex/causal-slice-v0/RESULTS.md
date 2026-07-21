@@ -554,7 +554,13 @@ Current rewrite/math continuation:
   and strict replay; these were diagnostic source substitutions, not committed
   benchmark variants;
 - the exact 11-wave debug generator probe was stopped cleanly at about 3.2 GiB
-  RSS after 2:27; no successful full-workload timing is claimed.
+  RSS after 2:27; no successful full-workload timing is claimed;
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed after
+  the rewrite/prefix changes;
+- `make check`: passed after the rewrite/prefix changes, including formatting,
+  Ruff, mypy, Clippy, 170 Python tests, the complete Rust workspace, all 43
+  causal tests, 764 file fixtures, doctests, and DD timing;
+- `git diff --check`: passed.
 
 ## Implemented fact, measurement, proposal, and falsification
 
