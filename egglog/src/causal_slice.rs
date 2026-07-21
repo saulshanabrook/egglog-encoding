@@ -6,6 +6,7 @@
 //! source program whose only schedule leaves are guarded manual rule batches.
 
 use std::{
+    cell::RefCell,
     path::Path,
     time::{Duration, Instant},
 };
@@ -51,6 +52,14 @@ pub struct CausalReplay {
     pub source: String,
     pub stats: CausalSliceStats,
     pub rule_mapping: Vec<SourceRuleMapping>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReplaySourceProjection {
+    /// Preserve the accepted source envelope for debugging and compatibility.
+    Legacy,
+    /// Keep only positive-check proof roots and their dynamic/static support.
+    PositiveChecks,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -325,9 +334,16 @@ struct FunctionSetTemplate {
 
 #[derive(Clone, Debug)]
 struct SourceFact {
+    id: SourceFactId,
     command_index: usize,
+    /// One input command expands to one independently sliceable source fact
+    /// per TSV row. Ordinary source actions use `None`.
+    expansion_index: Option<usize>,
     kind: SourceFactKind,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct SourceFactId(u32);
 
 #[derive(Clone, Debug)]
 enum SourceFactKind {
@@ -407,6 +423,13 @@ enum DepNode {
     Empty,
     Event(EventId),
     And(DepId, DepId),
+    /// Resolve the unique successful-union path only if backward slicing
+    /// reaches this equality. Ordinary elaboration needs only the cheap raw
+    /// connectivity check.
+    Eq {
+        left: TypedEndpoint,
+        right: TypedEndpoint,
+    },
     /// Conservatively retain every source/effective event through this
     /// commit boundary when the native trace exposes an exact equality edge
     /// but not the constructor/merge cause that produced it.
@@ -457,6 +480,18 @@ impl DepArena {
             self.push(DepNode::And(left, right))
         }
     }
+
+    fn equality(
+        &mut self,
+        left: TypedEndpoint,
+        right: TypedEndpoint,
+    ) -> Result<DepId, CausalSliceError> {
+        if left == right {
+            Ok(Self::EMPTY)
+        } else {
+            self.push(DepNode::Eq { left, right })
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -504,6 +539,7 @@ struct WitnessArena {
     app_instances: IndexMap<(String, String), Vec<WitnessId>>,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     endpoint_instances: IndexMap<TypedEndpoint, Vec<WitnessId>>,
+    endpoint_sorts: IndexMap<Value, Vec<String>>,
     /// Definition-time endpoints retained to explain later canonicalized uses.
     globals: IndexMap<String, TypedEndpoint>,
     global_witnesses: IndexMap<String, WitnessId>,
@@ -805,6 +841,10 @@ impl WitnessArena {
         if self.endpoint(id) != Some(endpoint) {
             return;
         }
+        let sorts = self.endpoint_sorts.entry(endpoint).or_default();
+        if !sorts.iter().any(|candidate| candidate == sort) {
+            sorts.push(sort.to_owned());
+        }
         let instances = self
             .endpoint_instances
             .entry(TypedEndpoint {
@@ -1045,8 +1085,7 @@ struct PendingFire {
 
 #[derive(Clone, Debug)]
 enum EventKind {
-    Source { row: RowKey },
-    SourceFunction { row: FunctionRowKey },
+    Source { fact: SourceFactId },
     Fire(GroundedFire),
     OpaqueFire,
 }
@@ -1208,8 +1247,9 @@ impl OriginIndex {
 
 #[derive(Clone, Debug)]
 struct EqualityEdge {
-    left: TypedEndpoint,
-    right: TypedEndpoint,
+    sort: String,
+    parent: Value,
+    child: Value,
     dependency: DepId,
 }
 
@@ -1219,17 +1259,64 @@ struct AppliedEquality {
     right: TypedEndpoint,
     parent: Value,
     child: Value,
+    commit_ordinal: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OrderedUnionReceipt<'a> {
+    commit_ordinal: usize,
+    receipt: &'a UnionReceipt,
 }
 
 #[derive(Clone, Debug, Default)]
 struct EqualityForest {
     edges: Vec<EqualityEdge>,
-    adjacency: IndexMap<TypedEndpoint, Vec<(TypedEndpoint, DepId)>>,
-    canonical_parents: IndexMap<TypedEndpoint, TypedEndpoint>,
+    /// Immutable native commit forest. Unlike the compressed lookup sidecar,
+    /// these edges retain the exact path on which causal labels live.
+    commit_parents: IndexMap<Value, Value>,
+    edge_causes: IndexMap<Value, (String, DepId)>,
+    /// Raw native union-find parent changes, including successful receipts
+    /// whose equality sort or replay cause is intentionally unavailable.
+    /// Constructor IDs come from the backend-global ID counter, so the raw
+    /// values are stable across equality sorts within one execution.
+    canonical_parents: RefCell<IndexMap<Value, Value>>,
 }
 
 impl EqualityForest {
-    fn add(
+    fn observe_receipt(&mut self, receipt: &UnionReceipt) -> Result<(), CausalSliceError> {
+        let UnionOutcome::Applied { parent, child } = receipt.outcome else {
+            return Ok(());
+        };
+        let left_root = self.canonical_value(receipt.lhs);
+        let right_root = self.canonical_value(receipt.rhs);
+        if parent == child
+            || !((left_root == parent && right_root == child)
+                || (left_root == child && right_root == parent))
+        {
+            return Err(CausalSliceError::Invariant(format!(
+                "successful raw union endpoints {:?} and {:?} had reported representatives parent={parent:?}, child={child:?} inconsistent with the commit-order roots {left_root:?} and {right_root:?}",
+                receipt.lhs, receipt.rhs
+            )));
+        }
+        if self
+            .canonical_parents
+            .borrow_mut()
+            .insert(child, parent)
+            .is_some()
+        {
+            return Err(CausalSliceError::Invariant(
+                "successful raw union reparented a non-representative equality endpoint".to_owned(),
+            ));
+        }
+        if self.commit_parents.insert(child, parent).is_some() {
+            return Err(CausalSliceError::Invariant(
+                "successful raw union duplicated one commit-forest child".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn add_explanation(
         &mut self,
         equality: AppliedEquality,
         dependency: DepId,
@@ -1239,6 +1326,7 @@ impl EqualityForest {
             right,
             parent,
             child,
+            commit_ordinal: _,
         } = equality;
         if left.sort != right.sort {
             return Err(CausalSliceError::Invariant(format!(
@@ -1246,94 +1334,112 @@ impl EqualityForest {
                 left.sort, right.sort
             )));
         }
-        if self.explain(&left, &right).is_some() {
-            return Err(CausalSliceError::Invariant(
-                "a successful native union would create a cycle in the explanation forest"
-                    .to_owned(),
-            ));
-        }
-        let left_root = self.canonical_endpoint(&left);
-        let right_root = self.canonical_endpoint(&right);
-        let parent_endpoint = TypedEndpoint {
-            sort: left.sort.clone(),
-            value: parent,
-        };
-        let child_endpoint = TypedEndpoint {
-            sort: left.sort.clone(),
-            value: child,
-        };
-        if parent_endpoint == child_endpoint
-            || !((left_root == parent_endpoint && right_root == child_endpoint)
-                || (left_root == child_endpoint && right_root == parent_endpoint))
+        if self.canonical_value(left.value) != parent || self.canonical_value(right.value) != parent
         {
             return Err(CausalSliceError::Invariant(format!(
-                "successful union endpoints {left:?} and {right:?} had reported representatives parent={parent_endpoint:?}, child={child_endpoint:?} inconsistent with the explanation forest roots {left_root:?} and {right_root:?}"
+                "typed equality endpoints {left:?} and {right:?} were not both canonicalized to the reported native parent {parent:?} after committing child {child:?}"
+            )));
+        }
+        if self.commit_parents.get(&child) != Some(&parent) {
+            return Err(CausalSliceError::Invariant(format!(
+                "typed equality cause for child {child:?} did not match its raw commit parent {parent:?}"
             )));
         }
         if self
-            .canonical_parents
-            .insert(child_endpoint, parent_endpoint)
+            .edge_causes
+            .insert(child, (left.sort.clone(), dependency))
             .is_some()
         {
             return Err(CausalSliceError::Invariant(
-                "successful union reparented a non-representative equality endpoint".to_owned(),
+                "one raw commit-forest edge received two typed causes".to_owned(),
             ));
         }
-        self.adjacency
-            .entry(left.clone())
-            .or_default()
-            .push((right.clone(), dependency));
-        self.adjacency
-            .entry(right.clone())
-            .or_default()
-            .push((left.clone(), dependency));
         self.edges.push(EqualityEdge {
-            left,
-            right,
+            sort: left.sort,
+            parent,
+            child,
             dependency,
         });
         Ok(())
     }
 
-    fn canonical_endpoint(&self, endpoint: &TypedEndpoint) -> TypedEndpoint {
-        let mut current = endpoint.clone();
-        let mut steps = 0usize;
-        while let Some(parent) = self.canonical_parents.get(&current) {
-            current = parent.clone();
-            steps += 1;
-            debug_assert!(steps <= self.canonical_parents.len());
+    fn canonical_value(&self, value: Value) -> Value {
+        let mut parents = self.canonical_parents.borrow_mut();
+        let mut current = value;
+        let mut path = Vec::new();
+        while let Some(parent) = parents.get(&current).copied() {
+            path.push(current);
+            current = parent;
+        }
+        for child in path {
+            parents.insert(child, current);
         }
         current
+    }
+
+    #[cfg(test)]
+    fn raw_parent_count(&self) -> usize {
+        self.canonical_parents.borrow().len()
+    }
+
+    fn canonical_endpoint(&self, endpoint: &TypedEndpoint) -> TypedEndpoint {
+        TypedEndpoint {
+            sort: endpoint.sort.clone(),
+            value: self.canonical_value(endpoint.value),
+        }
+    }
+
+    fn are_equal(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> bool {
+        left.sort == right.sort
+            && self.canonical_value(left.value) == self.canonical_value(right.value)
     }
 
     fn explain(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> Option<Vec<DepId>> {
         if left == right {
             return Some(Vec::new());
         }
-        let mut visited = HashSet::default();
-        let mut work = vec![(left.clone(), Vec::new())];
-        while let Some((current, path)) = work.pop() {
-            if !visited.insert(current.clone()) {
-                continue;
-            }
-            for (next, dependency) in self.adjacency.get(&current).into_iter().flatten() {
-                let mut next_path = path.clone();
-                next_path.push(*dependency);
-                if next == right {
-                    return Some(next_path);
-                }
-                work.push((next.clone(), next_path));
-            }
+        if left.sort != right.sort {
+            return None;
         }
-        None
+        let mut left_paths = IndexMap::default();
+        let mut current = left.value;
+        let mut path = Vec::new();
+        let mut complete = true;
+        left_paths.insert(current, Some(path.clone()));
+        while let Some(parent) = self.commit_parents.get(&current).copied() {
+            match self.edge_causes.get(&current) {
+                Some((sort, dependency)) if sort == &left.sort => path.push(*dependency),
+                _ => complete = false,
+            }
+            current = parent;
+            left_paths.insert(current, complete.then(|| path.clone()));
+        }
+
+        current = right.value;
+        path.clear();
+        complete = true;
+        loop {
+            if let Some(left_path) = left_paths.get(&current) {
+                let mut explanation = left_path.as_ref()?.clone();
+                if !complete {
+                    return None;
+                }
+                explanation.extend(path.iter().copied());
+                return Some(explanation);
+            }
+            let parent = self.commit_parents.get(&current).copied()?;
+            match self.edge_causes.get(&current) {
+                Some((sort, dependency)) if sort == &right.sort => path.push(*dependency),
+                _ => complete = false,
+            }
+            current = parent;
+        }
     }
 
     fn edge_count(&self) -> usize {
         debug_assert!(self.edges.iter().all(|edge| {
-            edge.left.sort == edge.right.sort
-                && self.adjacency.get(&edge.left).is_some_and(|neighbors| {
-                    neighbors.contains(&(edge.right.clone(), edge.dependency))
-                })
+            self.commit_parents.get(&edge.child) == Some(&edge.parent)
+                && self.edge_causes.get(&edge.child) == Some(&(edge.sort.clone(), edge.dependency))
         }));
         self.edges.len()
     }
@@ -1461,7 +1567,13 @@ pub fn causal_slice_program_with_egraph(
     input: &str,
     egraph: EGraph,
 ) -> Result<CausalSlice, CausalSliceError> {
-    let generated = generate_causal_slice(filename, input, egraph, true)?;
+    let generated = generate_causal_slice(
+        filename,
+        input,
+        egraph,
+        true,
+        ReplaySourceProjection::Legacy,
+    )?;
     Ok(CausalSlice {
         source: generated.source,
         full_transcript_source: generated
@@ -1495,7 +1607,56 @@ pub fn causal_slice_replay_program_with_egraph(
     input: &str,
     egraph: EGraph,
 ) -> Result<CausalReplay, CausalSliceError> {
-    let generated = generate_causal_slice(filename, input, egraph, false)?;
+    let generated = generate_causal_slice(
+        filename,
+        input,
+        egraph,
+        false,
+        ReplaySourceProjection::Legacy,
+    )?;
+    Ok(CausalReplay {
+        source: generated.source,
+        stats: generated.stats,
+        rule_mapping: generated.rule_mapping,
+    })
+}
+
+/// Trace one ordinary run and emit the source-minimized replay intended for
+/// strict proof testing. Positive checks are the only observation roots.
+pub fn causal_slice_proof_replay_program(
+    filename: Option<String>,
+    input: &str,
+) -> Result<CausalReplay, CausalSliceError> {
+    causal_slice_proof_replay_program_with_egraph(filename, input, EGraph::default())
+}
+
+/// Proof-oriented replay with scalar relation inputs resolved from a fact
+/// directory and embedded only when retained by the causal slice.
+pub fn causal_slice_proof_replay_program_with_fact_directory(
+    filename: Option<String>,
+    input: &str,
+    fact_directory: Option<&Path>,
+) -> Result<CausalReplay, CausalSliceError> {
+    let egraph = EGraph {
+        fact_directory: fact_directory.map(Path::to_path_buf),
+        ..EGraph::default()
+    };
+    causal_slice_proof_replay_program_with_egraph(filename, input, egraph)
+}
+
+/// Proof-oriented replay using a configured reference-backend template.
+pub fn causal_slice_proof_replay_program_with_egraph(
+    filename: Option<String>,
+    input: &str,
+    egraph: EGraph,
+) -> Result<CausalReplay, CausalSliceError> {
+    let generated = generate_causal_slice(
+        filename,
+        input,
+        egraph,
+        false,
+        ReplaySourceProjection::PositiveChecks,
+    )?;
     Ok(CausalReplay {
         source: generated.source,
         stats: generated.stats,
@@ -1529,6 +1690,7 @@ struct ScopedGenerationInput<'a> {
     rule_mapping: Vec<SourceRuleMapping>,
     preparation_time: Duration,
     include_full_transcript: bool,
+    source_projection: ReplaySourceProjection,
     total_start: Instant,
 }
 
@@ -1554,6 +1716,9 @@ struct RegionProjection {
     replay_commands: String,
     full_transcript_commands: Option<String>,
     stats: CausalSliceStats,
+    retained_source_facts: IndexSet<SourceFactId>,
+    retained_rule_names: IndexSet<String>,
+    retained_witness_callables: IndexSet<String>,
 }
 
 fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalSliceError> {
@@ -1674,7 +1839,21 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         &mut dependencies,
         &mut witnesses,
     )?;
-    let retained = backward_slice(&events, &dependencies, roots);
+    let retained = backward_slice(&events, &dependencies, &equality_forest, roots)?;
+    let retained_source_facts = retained
+        .iter()
+        .filter_map(|event| match events.events[event.index()].kind {
+            EventKind::Source { fact } => Some(fact),
+            EventKind::Fire(_) | EventKind::OpaqueFire => None,
+        })
+        .collect();
+    let retained_rule_names = retained
+        .iter()
+        .filter_map(|event| match &events.events[event.index()].kind {
+            EventKind::Fire(fire) => Some(fire.rule.clone()),
+            EventKind::Source { .. } | EventKind::OpaqueFire => None,
+        })
+        .collect();
     if let Some(error) = retained.iter().find_map(|event| {
         events.events[event.index()]
             .deferred_prerequisite_error
@@ -1702,19 +1881,18 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         )
         .0
     });
-    let (replay_commands, shared_replay_witnesses) = render_replay_commands(
-        commands,
-        &schedule_span,
-        rules,
-        retained
-            .iter()
-            .filter_map(|event| match &events.events[event.index()].kind {
-                EventKind::Source { .. } | EventKind::SourceFunction { .. } => None,
-                EventKind::Fire(fire) => Some(fire),
-                EventKind::OpaqueFire => None,
-            }),
-        &witnesses,
-    );
+    let replay_fires = retained
+        .iter()
+        .filter_map(|event| match &events.events[event.index()].kind {
+            EventKind::Source { .. } => None,
+            EventKind::Fire(fire) => Some(fire),
+            EventKind::OpaqueFire => None,
+        })
+        .collect::<Vec<_>>();
+    let retained_witness_callables =
+        replay_witness_callables(replay_fires.iter().copied(), rules, &witnesses);
+    let (replay_commands, shared_replay_witnesses) =
+        render_replay_commands(commands, &schedule_span, rules, replay_fires, &witnesses);
     let emission_time = emission_start.elapsed();
 
     let effective_applications =
@@ -1790,6 +1968,9 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         replay_commands,
         full_transcript_commands,
         stats,
+        retained_source_facts,
+        retained_rule_names,
+        retained_witness_callables,
     })
 }
 
@@ -1843,6 +2024,7 @@ fn generate_scoped_causal_slice(
         rule_mapping,
         preparation_time,
         include_full_transcript,
+        source_projection,
         total_start,
     } = input;
     let mut schedule_regions = HashMap::default();
@@ -1972,6 +2154,9 @@ fn generate_scoped_causal_slice(
         traced_run_time,
         ..CausalSliceStats::default()
     };
+    let mut retained_source_facts = IndexSet::default();
+    let mut retained_rule_names = IndexSet::default();
+    let mut retained_witness_callables = IndexSet::default();
     for (region, projection) in regions.iter().zip(projections) {
         let projection = projection.ok_or_else(|| {
             CausalSliceError::Invariant("scoped region was never elaborated".to_owned())
@@ -1983,16 +2168,33 @@ fn generate_scoped_causal_slice(
         if let Some(full) = projection.full_transcript_commands {
             full_by_schedule.insert(first_schedule, full);
         }
+        retained_source_facts.extend(projection.retained_source_facts);
+        retained_rule_names.extend(projection.retained_rule_names);
+        retained_witness_callables.extend(projection.retained_witness_callables);
         add_region_stats(&mut stats, &projection.stats);
     }
 
     let emission_start = Instant::now();
-    let source = emit_program_with_replay_regions(
-        &commands,
-        &schedule_indices,
-        &replay_by_schedule,
-        &source_expansions,
-    );
+    let source = match source_projection {
+        ReplaySourceProjection::Legacy => emit_program_with_replay_regions(
+            &commands,
+            &schedule_indices,
+            &replay_by_schedule,
+            &source_expansions,
+        ),
+        ReplaySourceProjection::PositiveChecks => emit_proof_program_with_replay_regions(
+            &commands,
+            &schedule_indices,
+            &replay_by_schedule,
+            &source_expansions,
+            RetainedProofSource {
+                facts: &source_facts,
+                fact_ids: &retained_source_facts,
+                rule_names: &retained_rule_names,
+                witness_callables: &retained_witness_callables,
+            },
+        )?,
+    };
     let full_transcript_source = include_full_transcript.then(|| {
         emit_program_with_replay_regions(
             &commands,
@@ -2011,14 +2213,18 @@ fn generate_scoped_causal_slice(
             full,
             &rules,
             &rule_mapping,
+            false,
         )?;
     }
+    let emitted_mapping =
+        filter_rule_mapping(&rule_mapping, source_projection, &retained_rule_names);
     validate_emitted_program(
         &validation_template,
         filename,
         &source,
         &rules,
-        &rule_mapping,
+        &emitted_mapping,
+        source_projection == ReplaySourceProjection::PositiveChecks,
     )?;
     stats.emitted_validation_time = validation_start.elapsed();
     stats.sliced_bytes = source.len();
@@ -2028,7 +2234,7 @@ fn generate_scoped_causal_slice(
         source,
         full_transcript_source,
         stats,
-        rule_mapping,
+        rule_mapping: emitted_mapping,
     })
 }
 
@@ -2037,6 +2243,7 @@ fn generate_causal_slice(
     input: &str,
     mut egraph: EGraph,
     include_full_transcript: bool,
+    source_projection: ReplaySourceProjection,
 ) -> Result<GeneratedCausalSlice, CausalSliceError> {
     let total_start = Instant::now();
     let preparation_start = Instant::now();
@@ -2081,6 +2288,12 @@ fn generate_causal_slice(
         source_name,
         fact_directory.as_deref(),
     )?;
+    if source_projection == ReplaySourceProjection::PositiveChecks && checks.is_empty() {
+        return Err(CausalSliceError::Unsupported {
+            location: source_name.to_owned(),
+            reason: "proof-oriented source projection without a positive check".to_owned(),
+        });
+    }
     let preparation_time = preparation_start.elapsed();
 
     if regions
@@ -2106,6 +2319,7 @@ fn generate_causal_slice(
             rule_mapping,
             preparation_time,
             include_full_transcript,
+            source_projection,
             total_start,
         });
     }
@@ -2262,6 +2476,7 @@ fn generate_causal_slice(
             &source,
             &rules,
             &rule_mapping,
+            false,
         )?;
         let emitted_validation_time = emitted_validation_start.elapsed();
         let total_time = total_start.elapsed();
@@ -2371,7 +2586,7 @@ fn generate_causal_slice(
         }
         retained
     } else {
-        backward_slice(&events, &dependencies, roots)
+        backward_slice(&events, &dependencies, &equality_forest, roots)?
     };
     if prefix_fallbacks == 0
         && let Some(error) = retained.iter().find_map(|event| {
@@ -2382,6 +2597,20 @@ fn generate_causal_slice(
     {
         return Err(error.into_error());
     }
+    let retained_source_facts = retained
+        .iter()
+        .filter_map(|event| match events.events[event.index()].kind {
+            EventKind::Source { fact } => Some(fact),
+            EventKind::Fire(_) | EventKind::OpaqueFire => None,
+        })
+        .collect::<IndexSet<_>>();
+    let retained_rule_names = retained
+        .iter()
+        .filter_map(|event| match &events.events[event.index()].kind {
+            EventKind::Fire(fire) => Some(fire.rule.clone()),
+            EventKind::Source { .. } | EventKind::OpaqueFire => None,
+        })
+        .collect::<IndexSet<_>>();
     if include_full_transcript && opaque_pending_firings > 0 {
         return Err(CausalSliceError::Unsupported {
             location: source_name.to_owned(),
@@ -2406,21 +2635,42 @@ fn generate_causal_slice(
         )
         .0
     });
-    let (source, shared_replay_witnesses) = emit_program(
-        &commands,
-        &schedule_indices,
-        &schedule_span,
-        &rules,
-        retained
-            .iter()
-            .filter_map(|event| match &events.events[event.index()].kind {
-                EventKind::Source { .. } | EventKind::SourceFunction { .. } => None,
-                EventKind::Fire(fire) => Some(fire),
-                EventKind::OpaqueFire => None,
-            }),
-        &witnesses,
-        &source_expansions,
-    );
+    let replay_fires = retained
+        .iter()
+        .filter_map(|event| match &events.events[event.index()].kind {
+            EventKind::Source { .. } => None,
+            EventKind::Fire(fire) => Some(fire),
+            EventKind::OpaqueFire => None,
+        })
+        .collect::<Vec<_>>();
+    let retained_witness_callables =
+        replay_witness_callables(replay_fires.iter().copied(), &rules, &witnesses);
+    let (replay_commands, shared_replay_witnesses) =
+        render_replay_commands(&commands, &schedule_span, &rules, replay_fires, &witnesses);
+    let source = match source_projection {
+        ReplaySourceProjection::Legacy => emit_program_with_replay_commands(
+            &commands,
+            &schedule_indices,
+            &replay_commands,
+            &source_expansions,
+        ),
+        ReplaySourceProjection::PositiveChecks => {
+            let mut replay_by_schedule = IndexMap::default();
+            replay_by_schedule.insert(schedule_index, replay_commands);
+            emit_proof_program_with_replay_regions(
+                &commands,
+                &schedule_indices,
+                &replay_by_schedule,
+                &source_expansions,
+                RetainedProofSource {
+                    facts: &source_facts,
+                    fact_ids: &retained_source_facts,
+                    rule_names: &retained_rule_names,
+                    witness_callables: &retained_witness_callables,
+                },
+            )?
+        }
+    };
     let emission_time = emission_start.elapsed();
 
     let emitted_validation_start = Instant::now();
@@ -2431,14 +2681,18 @@ fn generate_causal_slice(
             full_transcript_source,
             &rules,
             &rule_mapping,
+            false,
         )?;
     }
+    let emitted_mapping =
+        filter_rule_mapping(&rule_mapping, source_projection, &retained_rule_names);
     validate_emitted_program(
         &validation_template,
         filename,
         &source,
         &rules,
-        &rule_mapping,
+        &emitted_mapping,
+        source_projection == ReplaySourceProjection::PositiveChecks,
     )?;
     let emitted_validation_time = emitted_validation_start.elapsed();
 
@@ -2504,7 +2758,7 @@ fn generate_causal_slice(
         source,
         full_transcript_source,
         stats,
-        rule_mapping,
+        rule_mapping: emitted_mapping,
     })
 }
 
@@ -3708,6 +3962,11 @@ fn validate_and_model(
                 }
                 let visible_globals = active_source_globals.as_ref().unwrap_or(&source_globals);
                 let fact = model_source_fact(
+                    SourceFactId(u32::try_from(source_facts.len()).map_err(|_| {
+                        CausalSliceError::Invariant(
+                            "source fact count exceeded u32 capacity".to_owned(),
+                        )
+                    })?),
                     index,
                     action,
                     relations,
@@ -3776,12 +4035,18 @@ fn validate_and_model(
                 }
                 let rows = EGraph::read_input_rows(fact_directory, &relation.sorts, span, file)?;
                 let mut expansion = Vec::with_capacity(rows.len());
-                for args in rows {
+                for (expansion_index, args) in rows.into_iter().enumerate() {
                     for literal in &args {
                         validate_printable_literal(span, literal)?;
                     }
                     let fact = SourceFact {
+                        id: SourceFactId(u32::try_from(source_facts.len()).map_err(|_| {
+                            CausalSliceError::Invariant(
+                                "source fact count exceeded u32 capacity".to_owned(),
+                            )
+                        })?),
                         command_index: index,
+                        expansion_index: Some(expansion_index),
                         kind: SourceFactKind::Relation(AtomTemplate {
                             relation: name.clone(),
                             args: args.iter().cloned().map(AtomArg::Lit).collect(),
@@ -5154,6 +5419,7 @@ fn atom_variables(atoms: &[AtomTemplate]) -> HashSet<&str> {
 }
 
 fn model_source_fact(
+    id: SourceFactId,
     command_index: usize,
     action: &Action,
     relations: &IndexMap<String, RelationDecl>,
@@ -5176,7 +5442,9 @@ fn model_source_fact(
         }
         let sort = validate_closed_source_expr(expr, constructors, source_globals)?;
         return Ok(SourceFact {
+            id,
             command_index,
+            expansion_index: None,
             kind: SourceFactKind::GlobalConstructor {
                 name: name.clone(),
                 sort,
@@ -5239,7 +5507,9 @@ fn model_source_fact(
             }
         }
         return Ok(SourceFact {
+            id,
             command_index,
+            expansion_index: None,
             kind: SourceFactKind::FunctionSet(FunctionSetTemplate {
                 span: span.clone(),
                 function: function.clone(),
@@ -5298,7 +5568,9 @@ fn model_source_fact(
         }
     }
     Ok(SourceFact {
+        id,
         command_index,
+        expansion_index: None,
         kind,
     })
 }
@@ -6541,33 +6813,32 @@ fn elaborate_prefix_replay(
 fn type_unoriginated_equality(
     egraph: &EGraph,
     witnesses: &WitnessArena,
-    receipt: &UnionReceipt,
+    ordered_receipt: OrderedUnionReceipt<'_>,
     wave: usize,
 ) -> Result<AppliedEquality, DeferredUnsupported> {
+    let receipt = ordered_receipt.receipt;
     let UnionOutcome::Applied { parent, child } = receipt.outcome else {
         return Err(DeferredUnsupported {
             location: format!("traced wave {wave}"),
             reason: "a redundant unoriginated union reached successful-union typing".to_owned(),
         });
     };
+    let rhs_sorts = witnesses.endpoint_sorts.get(&receipt.rhs);
     let mut sorts = witnesses
-        .endpoints
-        .keys()
-        .filter(|endpoint| endpoint.value == receipt.lhs)
-        .filter_map(|left| {
-            witnesses
-                .endpoints
-                .contains_key(&TypedEndpoint {
-                    sort: left.sort.clone(),
-                    value: receipt.rhs,
-                })
-                .then_some(left.sort.clone())
-        })
+        .endpoint_sorts
+        .get(&receipt.lhs)
+        .into_iter()
+        .flatten()
         .filter(|sort| {
+            rhs_sorts
+                .is_some_and(|candidates| candidates.iter().any(|candidate| candidate == *sort))
+        })
+        .filter(|&sort| {
             egraph
                 .get_sort_by_name(sort)
                 .is_some_and(|runtime_sort| runtime_sort.is_eq_sort())
         })
+        .cloned()
         .collect::<Vec<_>>();
     sorts.sort();
     sorts.dedup();
@@ -6591,7 +6862,50 @@ fn type_unoriginated_equality(
         },
         parent,
         child,
+        commit_ordinal: ordered_receipt.commit_ordinal,
     })
+}
+
+fn source_witness_prerequisites<'a>(
+    witnesses: &WitnessArena,
+    witness_start: usize,
+    endpoints: impl IntoIterator<Item = &'a TypedEndpoint>,
+    dependencies: &mut DepArena,
+) -> Result<DepId, CausalSliceError> {
+    let mut prerequisites = IndexSet::default();
+    for endpoint in endpoints {
+        if let Some(witness) = witnesses.by_endpoint(&endpoint.sort, endpoint.value)
+            && witness.index() < witness_start
+        {
+            prerequisites.insert(witnesses.availability(witness));
+        }
+    }
+    for record in &witnesses.nodes[witness_start..] {
+        if let WitnessNode::App { children, .. } = &record.node {
+            for child in children {
+                if child.index() < witness_start {
+                    prerequisites.insert(witnesses.availability(*child));
+                }
+            }
+        }
+    }
+    let mut result = DepArena::EMPTY;
+    for prerequisite in prerequisites {
+        result = dependencies.and(result, prerequisite)?;
+    }
+    Ok(result)
+}
+
+fn mark_new_source_witnesses(
+    witnesses: &mut WitnessArena,
+    witness_start: usize,
+    dependency: DepId,
+) {
+    for index in witness_start..witnesses.nodes.len() {
+        if matches!(witnesses.nodes[index].node, WitnessNode::App { .. }) {
+            witnesses.set_availability(WitnessId(index as u32), dependency);
+        }
+    }
 }
 
 fn elaborate_events(
@@ -6617,6 +6931,7 @@ fn elaborate_events(
     let mut opaque_equality_error = None;
     let mut source_events = 0;
     for fact in source_facts {
+        let witness_start = witnesses.nodes.len();
         if matches!(fact.kind, SourceFactKind::FunctionSet(..)) {
             let (row, output) = elaborate_source_function_set(
                 egraph,
@@ -6631,13 +6946,20 @@ fn elaborate_events(
                     reason: "two source mutable insertions of the same logical key".to_owned(),
                 });
             }
+            let prerequisites = source_witness_prerequisites(
+                witnesses,
+                witness_start,
+                row.keys.iter().chain(std::iter::once(&output)),
+                &mut dependencies,
+            )?;
             let event = events.push(ReplayEvent {
-                kind: EventKind::SourceFunction { row: row.clone() },
-                prerequisites: DepArena::EMPTY,
+                kind: EventKind::Source { fact: fact.id },
+                prerequisites,
                 deferred_prerequisite_error: None,
                 effective_outputs: Vec::new(),
             })?;
             let dependency = dependencies.event(event)?;
+            mark_new_source_witnesses(witnesses, witness_start, dependency);
             function_rows.insert(
                 row,
                 FunctionRowState {
@@ -6658,20 +6980,34 @@ fn elaborate_events(
             witnesses,
             prefix_fallback,
         )?;
-        for row in rows {
-            if producers.contains_key(&row) {
-                continue;
-            }
-            let event = events.push(ReplayEvent {
-                kind: EventKind::Source { row: row.clone() },
-                prerequisites: DepArena::EMPTY,
-                deferred_prerequisite_error: None,
-                effective_outputs: vec![row.clone()],
-            })?;
-            let dependency = dependencies.event(event)?;
-            producers.insert(row, dependency);
-            source_events += 1;
+        let rows = rows
+            .into_iter()
+            .filter(|row| !producers.contains_key(row))
+            .collect::<Vec<_>>();
+        let created_replay_witness = witnesses.nodes[witness_start..]
+            .iter()
+            .any(|record| matches!(record.node, WitnessNode::App { .. }));
+        if rows.is_empty() && !created_replay_witness {
+            continue;
         }
+        let prerequisites = source_witness_prerequisites(
+            witnesses,
+            witness_start,
+            rows.iter().flat_map(|row| row.args.iter()),
+            &mut dependencies,
+        )?;
+        let event = events.push(ReplayEvent {
+            kind: EventKind::Source { fact: fact.id },
+            prerequisites,
+            deferred_prerequisite_error: None,
+            effective_outputs: rows.clone(),
+        })?;
+        let dependency = dependencies.event(event)?;
+        mark_new_source_witnesses(witnesses, witness_start, dependency);
+        for row in rows {
+            producers.insert(row, dependency);
+        }
+        source_events += 1;
     }
 
     let mut pending_fires = Vec::new();
@@ -6710,10 +7046,14 @@ fn elaborate_events(
         )?;
         let mut unions_by_origin = vec![Vec::new(); batch.matches.len()];
         let mut unoriginated_unions = Vec::new();
-        for receipt in &batch.unions {
+        for (commit_ordinal, receipt) in batch.unions.iter().enumerate() {
+            let ordered_receipt = OrderedUnionReceipt {
+                commit_ordinal,
+                receipt,
+            };
             let Some(origin) = receipt.origin else {
                 if !prefix_fallback && matches!(receipt.outcome, UnionOutcome::Applied { .. }) {
-                    unoriginated_unions.push(receipt);
+                    unoriginated_unions.push(ordered_receipt);
                 }
                 continue;
             };
@@ -6724,7 +7064,7 @@ fn elaborate_events(
                     batch.matches.len()
                 )));
             };
-            unions.push(receipt);
+            unions.push(ordered_receipt);
         }
         let force_wave_prefix = !unoriginated_unions.is_empty();
 
@@ -6869,9 +7209,9 @@ fn elaborate_events(
                 let applied_union = if deferred_grounding {
                     !deferred_grounding_equality_edges.is_empty()
                 } else {
-                    unions_by_origin[ordinal]
-                        .iter()
-                        .any(|receipt| matches!(receipt.outcome, UnionOutcome::Applied { .. }))
+                    unions_by_origin[ordinal].iter().any(|receipt| {
+                        matches!(receipt.receipt.outcome, UnionOutcome::Applied { .. })
+                    })
                 };
                 let has_effect = !effective_outputs.is_empty()
                     || !effects.new_witnesses.is_empty()
@@ -7305,12 +7645,10 @@ fn elaborate_events(
             });
         }
 
-        // A bounded ruleset iteration searches against one pre-state. Publish
-        // every successful union before interpreting the canonical rebuild
-        // receipts it caused, but only after every captured match is elaborated.
-        for (equality, dependency) in new_equality_edges {
-            equality_forest.add(equality, dependency)?;
-        }
+        // A bounded ruleset iteration searches against one pre-state. Every
+        // captured match must be elaborated before publishing its successful
+        // unions, but the equality forest must still observe the native UF
+        // commit order across rule-origin and rebuild receipts.
         if !unoriginated_unions.is_empty() {
             let last_event = events
                 .events
@@ -7321,7 +7659,7 @@ fn elaborate_events(
             for receipt in unoriginated_unions {
                 match type_unoriginated_equality(egraph, witnesses, receipt, wave) {
                     Ok(equality) => {
-                        equality_forest.add(equality, prefix)?;
+                        new_equality_edges.push((equality, prefix));
                         equality_prefix_fallbacks += 1;
                     }
                     Err(error) => {
@@ -7329,6 +7667,26 @@ fn elaborate_events(
                     }
                 }
             }
+        }
+        new_equality_edges.sort_by_key(|(equality, _)| equality.commit_ordinal);
+        let mut typed_edges = new_equality_edges.into_iter().peekable();
+        for (commit_ordinal, receipt) in batch.unions.iter().enumerate() {
+            equality_forest.observe_receipt(receipt)?;
+            if typed_edges
+                .peek()
+                .is_some_and(|(equality, _)| equality.commit_ordinal == commit_ordinal)
+            {
+                let (equality, dependency) = typed_edges
+                    .next()
+                    .expect("peeked typed equality edge disappeared");
+                equality_forest.add_explanation(equality, dependency)?;
+            }
+        }
+        if let Some((equality, _)) = typed_edges.next() {
+            return Err(CausalSliceError::Invariant(format!(
+                "typed equality edge retained unknown commit ordinal {} in traced wave {wave}",
+                equality.commit_ordinal
+            )));
         }
         apply_wave_mutation_receipts(
             wave,
@@ -9001,7 +9359,7 @@ fn apply_wave_mutation_receipts(
 fn match_union_receipts(
     rule_name: &str,
     expected: &[(TypedEndpoint, TypedEndpoint)],
-    receipts: &[&UnionReceipt],
+    receipts: &[OrderedUnionReceipt<'_>],
 ) -> Result<Vec<AppliedEquality>, CausalSliceError> {
     if expected.len() != receipts.len() {
         return Err(CausalSliceError::Invariant(format!(
@@ -9013,15 +9371,15 @@ fn match_union_receipts(
     let mut unmatched = receipts.to_vec();
     let mut applied = Vec::new();
     for (left, right) in expected {
-        let Some(index) = unmatched
-            .iter()
-            .position(|receipt| receipt.lhs == left.value && receipt.rhs == right.value)
-        else {
+        let Some(index) = unmatched.iter().position(|receipt| {
+            receipt.receipt.lhs == left.value && receipt.receipt.rhs == right.value
+        }) else {
             return Err(CausalSliceError::Invariant(format!(
                 "rule `{rule_name}` expected union endpoints ({left:?}, {right:?}) but native commit reported {unmatched:?}"
             )));
         };
-        let receipt = unmatched.swap_remove(index);
+        let ordered_receipt = unmatched.swap_remove(index);
+        let receipt = ordered_receipt.receipt;
         match receipt.outcome {
             UnionOutcome::Applied { parent, child } => {
                 if parent == child {
@@ -9034,6 +9392,7 @@ fn match_union_receipts(
                     right: right.clone(),
                     parent,
                     child,
+                    commit_ordinal: ordered_receipt.commit_ordinal,
                 });
             }
             UnionOutcome::Redundant { .. } => {}
@@ -9046,7 +9405,7 @@ fn match_union_receipts(
 fn classify_prefix_union_receipts(
     rule_name: &str,
     expected: &[EqualityTemplate],
-    receipts: &[&UnionReceipt],
+    receipts: &[OrderedUnionReceipt<'_>],
 ) -> Result<Vec<AppliedEquality>, CausalSliceError> {
     if expected.len() != receipts.len() {
         return Err(CausalSliceError::Invariant(format!(
@@ -9056,7 +9415,8 @@ fn classify_prefix_union_receipts(
         )));
     }
     let mut applied = Vec::new();
-    for (equality, receipt) in expected.iter().zip(receipts) {
+    for (equality, ordered_receipt) in expected.iter().zip(receipts) {
+        let receipt = ordered_receipt.receipt;
         if let UnionOutcome::Applied { parent, child } = receipt.outcome {
             if parent == child {
                 return Err(CausalSliceError::Invariant(format!(
@@ -9074,6 +9434,7 @@ fn classify_prefix_union_receipts(
                 },
                 parent,
                 child,
+                commit_ordinal: ordered_receipt.commit_ordinal,
             });
         }
     }
@@ -10006,38 +10367,36 @@ fn congruent_app_availability(
                 complete = false;
                 break;
             }
-            let Some(explanation) = equality_forest.explain(
-                &TypedEndpoint {
-                    sort: candidate_sort.clone(),
-                    value: candidate_endpoint,
-                },
-                &TypedEndpoint {
-                    sort: current_sort.clone(),
-                    value: current_endpoint,
-                },
-            ) else {
+            let left = TypedEndpoint {
+                sort: candidate_sort.clone(),
+                value: candidate_endpoint,
+            };
+            let right = TypedEndpoint {
+                sort: current_sort.clone(),
+                value: current_endpoint,
+            };
+            if !equality_forest.are_equal(&left, &right) {
                 complete = false;
                 break;
-            };
-            support.extend(explanation);
+            }
+            support.push(dependencies.equality(left, right)?);
         }
         if !complete {
             continue;
         }
         if candidate_output != output {
-            let Some(explanation) = equality_forest.explain(
-                &TypedEndpoint {
-                    sort: sort.clone(),
-                    value: candidate_output,
-                },
-                &TypedEndpoint {
-                    sort: sort.clone(),
-                    value: output,
-                },
-            ) else {
-                continue;
+            let left = TypedEndpoint {
+                sort: sort.clone(),
+                value: candidate_output,
             };
-            support.extend(explanation);
+            let right = TypedEndpoint {
+                sort: sort.clone(),
+                value: output,
+            };
+            if !equality_forest.are_equal(&left, &right) {
+                continue;
+            }
+            support.push(dependencies.equality(left, right)?);
         }
         let mut availability = DepArena::EMPTY;
         for dependency in support {
@@ -10412,7 +10771,12 @@ fn same_row_multiset(left: &[RowKey], right: &[RowKey]) -> bool {
     unmatched.is_empty()
 }
 
-fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> IndexSet<EventId> {
+fn backward_slice(
+    events: &EventArena,
+    dependencies: &DepArena,
+    equality_forest: &EqualityForest,
+    root: DepId,
+) -> Result<IndexSet<EventId>, CausalSliceError> {
     let mut retained = IndexSet::default();
     let mut visited_dependencies = HashSet::default();
     let mut work = vec![root];
@@ -10420,24 +10784,25 @@ fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> 
         if !visited_dependencies.insert(dependency) {
             continue;
         }
-        match dependencies.nodes[dependency.index()] {
+        match &dependencies.nodes[dependency.index()] {
             DepNode::Empty => {}
             DepNode::And(left, right) => {
-                work.push(right);
-                work.push(left);
+                work.push(*right);
+                work.push(*left);
+            }
+            DepNode::Eq { left, right } => {
+                let explanation = equality_forest.explain(left, right).ok_or_else(|| {
+                    CausalSliceError::Unsupported {
+                        location: format!("retained equality {left:?} = {right:?}"),
+                        reason: "a successful-union path containing an untyped or opaque edge"
+                            .to_owned(),
+                    }
+                })?;
+                work.extend(explanation);
             }
             DepNode::Event(event) => {
-                if retained.insert(event) {
+                if retained.insert(*event) {
                     let replay_event = &events.events[event.index()];
-                    match &replay_event.kind {
-                        EventKind::Source { row } => {
-                            let _retained_source_row = row;
-                        }
-                        EventKind::SourceFunction { row } => {
-                            let _retained_source_function_row = row;
-                        }
-                        EventKind::Fire(_) | EventKind::OpaqueFire => {}
-                    }
                     work.push(replay_event.prerequisites);
                 }
             }
@@ -10452,7 +10817,7 @@ fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> 
         }
     }
     retained.sort_unstable();
-    retained
+    Ok(retained)
 }
 
 const SHARED_REPLAY_WITNESS_PREFIX: &str = "$__csw";
@@ -10597,6 +10962,39 @@ fn render_replay_commands<'a>(
     emit_prefix_replay_commands(commands, schedule_span, rules, &compact, witnesses)
 }
 
+fn replay_witness_callables<'a>(
+    fires: impl IntoIterator<Item = &'a GroundedFire>,
+    rules: &IndexMap<String, RuleModel>,
+    witnesses: &WitnessArena,
+) -> IndexSet<String> {
+    let mut work = Vec::new();
+    for fire in fires {
+        let model = &rules[&fire.rule];
+        work.extend(
+            model
+                .replay_var_order
+                .iter()
+                .map(|variable| fire.bindings[variable].syntax),
+        );
+    }
+
+    let mut visited = HashSet::default();
+    let mut callables = IndexSet::default();
+    while let Some(witness) = work.pop() {
+        if !visited.insert(witness) {
+            continue;
+        }
+        if let WitnessNode::App {
+            function, children, ..
+        } = &witnesses.nodes[witness.index()].node
+        {
+            callables.insert(function.clone());
+            work.extend(children.iter().copied());
+        }
+    }
+    callables
+}
+
 fn emit_program_with_replay_commands(
     commands: &[Command],
     schedule_indices: &[usize],
@@ -10643,15 +11041,513 @@ fn emit_program_with_replay_regions(
     rendered
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum DefinitionRef {
+    Sort(String),
+    Callable(String),
+    Ruleset(String),
+    Rule(String),
+    Global(String),
+}
+
+struct SourceDefinitionIndex {
+    definitions: IndexMap<DefinitionRef, usize>,
+    dependencies: Vec<IndexSet<DefinitionRef>>,
+}
+
+fn define_source_symbol(
+    definitions: &mut IndexMap<DefinitionRef, usize>,
+    symbol: DefinitionRef,
+    command_index: usize,
+) -> Result<(), CausalSliceError> {
+    if let Some(previous) = definitions.insert(symbol.clone(), command_index)
+        && previous != command_index
+    {
+        return Err(CausalSliceError::Invariant(format!(
+            "source symbol {symbol:?} was defined by commands {previous} and {command_index}"
+        )));
+    }
+    Ok(())
+}
+
+fn command_definitions(
+    command: &Command,
+    command_index: usize,
+    definitions: &mut IndexMap<DefinitionRef, usize>,
+) -> Result<(), CausalSliceError> {
+    match command {
+        Command::Sort { name, .. } => define_source_symbol(
+            definitions,
+            DefinitionRef::Sort(name.clone()),
+            command_index,
+        )?,
+        Command::Datatype { name, variants, .. } => {
+            define_source_symbol(
+                definitions,
+                DefinitionRef::Sort(name.clone()),
+                command_index,
+            )?;
+            for variant in variants {
+                define_source_symbol(
+                    definitions,
+                    DefinitionRef::Callable(variant.name.clone()),
+                    command_index,
+                )?;
+            }
+        }
+        Command::Datatypes { datatypes, .. } => {
+            for (_, name, subdatatype) in datatypes {
+                define_source_symbol(
+                    definitions,
+                    DefinitionRef::Sort(name.clone()),
+                    command_index,
+                )?;
+                if let Subdatatypes::Variants(variants) = subdatatype {
+                    for variant in variants {
+                        define_source_symbol(
+                            definitions,
+                            DefinitionRef::Callable(variant.name.clone()),
+                            command_index,
+                        )?;
+                    }
+                }
+            }
+        }
+        Command::Constructor { name, .. }
+        | Command::Relation { name, .. }
+        | Command::Function { name, .. } => define_source_symbol(
+            definitions,
+            DefinitionRef::Callable(name.clone()),
+            command_index,
+        )?,
+        Command::AddRuleset(_, name) | Command::UnstableCombinedRuleset(_, name, _) => {
+            define_source_symbol(
+                definitions,
+                DefinitionRef::Ruleset(name.clone()),
+                command_index,
+            )?;
+        }
+        Command::Rule { rule } => define_source_symbol(
+            definitions,
+            DefinitionRef::Rule(rule.name.clone()),
+            command_index,
+        )?,
+        Command::Action(Action::Let(_, name, _)) => define_source_symbol(
+            definitions,
+            DefinitionRef::Global(name.clone()),
+            command_index,
+        )?,
+        Command::Rewrite(..)
+        | Command::BiRewrite(..)
+        | Command::Action(..)
+        | Command::Extract(..)
+        | Command::RunSchedule(..)
+        | Command::PrintOverallStatistics(..)
+        | Command::Check(..)
+        | Command::Prove(..)
+        | Command::ProveExists(..)
+        | Command::PrintFunction(..)
+        | Command::PrintSize(..)
+        | Command::Input { .. }
+        | Command::Output { .. }
+        | Command::Push(..)
+        | Command::Pop(..)
+        | Command::Fail(..)
+        | Command::Include(..)
+        | Command::UserDefined(..) => {}
+    }
+    Ok(())
+}
+
+fn collect_expr_dependencies(
+    expr: &Expr,
+    known_globals: &HashSet<String>,
+    dependencies: &mut IndexSet<DefinitionRef>,
+) {
+    match expr {
+        Expr::Var(_, name) => {
+            if known_globals.contains(name) {
+                dependencies.insert(DefinitionRef::Global(name.clone()));
+            }
+        }
+        Expr::Call(_, function, children) => {
+            dependencies.insert(DefinitionRef::Callable(function.clone()));
+            for child in children {
+                collect_expr_dependencies(child, known_globals, dependencies);
+            }
+        }
+        Expr::Lit(..) => {}
+    }
+}
+
+fn collect_sort_expr_dependencies(expr: &Expr, dependencies: &mut IndexSet<DefinitionRef>) {
+    match expr {
+        Expr::Var(_, sort) => {
+            dependencies.insert(DefinitionRef::Sort(sort.clone()));
+        }
+        Expr::Call(_, sort, children) => {
+            dependencies.insert(DefinitionRef::Sort(sort.clone()));
+            for child in children {
+                collect_sort_expr_dependencies(child, dependencies);
+            }
+        }
+        Expr::Lit(..) => {}
+    }
+}
+
+fn collect_fact_dependencies(
+    fact: &Fact,
+    known_globals: &HashSet<String>,
+    dependencies: &mut IndexSet<DefinitionRef>,
+) {
+    match fact {
+        Fact::Fact(expr) => collect_expr_dependencies(expr, known_globals, dependencies),
+        Fact::Eq(_, left, right) => {
+            collect_expr_dependencies(left, known_globals, dependencies);
+            collect_expr_dependencies(right, known_globals, dependencies);
+        }
+    }
+}
+
+fn collect_action_dependencies(
+    action: &Action,
+    known_globals: &HashSet<String>,
+    dependencies: &mut IndexSet<DefinitionRef>,
+) {
+    match action {
+        Action::Let(_, _, expression) | Action::Expr(_, expression) => {
+            collect_expr_dependencies(expression, known_globals, dependencies);
+        }
+        Action::Set(_, function, keys, value) => {
+            dependencies.insert(DefinitionRef::Callable(function.clone()));
+            for key in keys {
+                collect_expr_dependencies(key, known_globals, dependencies);
+            }
+            collect_expr_dependencies(value, known_globals, dependencies);
+        }
+        Action::Change(_, _, function, keys) => {
+            dependencies.insert(DefinitionRef::Callable(function.clone()));
+            for key in keys {
+                collect_expr_dependencies(key, known_globals, dependencies);
+            }
+        }
+        Action::Union(_, left, right) => {
+            collect_expr_dependencies(left, known_globals, dependencies);
+            collect_expr_dependencies(right, known_globals, dependencies);
+        }
+        Action::Panic(..) => {}
+    }
+}
+
+fn collect_schema_dependencies(
+    schema: &crate::ast::Schema,
+    dependencies: &mut IndexSet<DefinitionRef>,
+) {
+    dependencies.extend(
+        schema
+            .input
+            .iter()
+            .chain(&schema.outputs)
+            .cloned()
+            .map(DefinitionRef::Sort),
+    );
+}
+
+fn command_dependencies(
+    command: &Command,
+    known_globals: &HashSet<String>,
+) -> IndexSet<DefinitionRef> {
+    let mut dependencies = IndexSet::default();
+    match command {
+        Command::Sort {
+            presort_and_args, ..
+        } => {
+            if let Some((presort, args)) = presort_and_args {
+                dependencies.insert(DefinitionRef::Sort(presort.clone()));
+                for arg in args {
+                    collect_sort_expr_dependencies(arg, &mut dependencies);
+                }
+            }
+        }
+        Command::Datatype { variants, .. } => {
+            dependencies.extend(
+                variants
+                    .iter()
+                    .flat_map(|variant| &variant.types)
+                    .cloned()
+                    .map(DefinitionRef::Sort),
+            );
+        }
+        Command::Datatypes { datatypes, .. } => {
+            for (_, _, subdatatype) in datatypes {
+                match subdatatype {
+                    Subdatatypes::Variants(variants) => dependencies.extend(
+                        variants
+                            .iter()
+                            .flat_map(|variant| &variant.types)
+                            .cloned()
+                            .map(DefinitionRef::Sort),
+                    ),
+                    Subdatatypes::NewSort(presort, args) => {
+                        dependencies.insert(DefinitionRef::Sort(presort.clone()));
+                        for arg in args {
+                            collect_sort_expr_dependencies(arg, &mut dependencies);
+                        }
+                    }
+                }
+            }
+        }
+        Command::Constructor {
+            schema,
+            term_constructor,
+            ..
+        }
+        | Command::Function {
+            schema,
+            term_constructor,
+            ..
+        } => {
+            collect_schema_dependencies(schema, &mut dependencies);
+            if let Some(constructor) = term_constructor {
+                dependencies.insert(DefinitionRef::Callable(constructor.clone()));
+            }
+            if let Command::Function {
+                merge: Some(merge), ..
+            } = command
+            {
+                for action in &merge.actions.0 {
+                    collect_action_dependencies(action, known_globals, &mut dependencies);
+                }
+                collect_expr_dependencies(&merge.result, known_globals, &mut dependencies);
+            }
+        }
+        Command::Relation { inputs, .. } => {
+            dependencies.extend(inputs.iter().cloned().map(DefinitionRef::Sort))
+        }
+        Command::UnstableCombinedRuleset(_, _, members) => {
+            dependencies.extend(members.iter().cloned().map(DefinitionRef::Ruleset))
+        }
+        Command::Rule { rule } => {
+            if !rule.ruleset.is_empty() {
+                dependencies.insert(DefinitionRef::Ruleset(rule.ruleset.clone()));
+            }
+            for fact in &rule.body {
+                collect_fact_dependencies(fact, known_globals, &mut dependencies);
+            }
+            for action in &rule.head.0 {
+                collect_action_dependencies(action, known_globals, &mut dependencies);
+            }
+        }
+        Command::Rewrite(_, rewrite, _) | Command::BiRewrite(_, rewrite) => {
+            collect_expr_dependencies(&rewrite.lhs, known_globals, &mut dependencies);
+            collect_expr_dependencies(&rewrite.rhs, known_globals, &mut dependencies);
+            for fact in &rewrite.conditions {
+                collect_fact_dependencies(fact, known_globals, &mut dependencies);
+            }
+        }
+        Command::Action(action) => {
+            collect_action_dependencies(action, known_globals, &mut dependencies)
+        }
+        Command::Extract(_, expression, variants) => {
+            collect_expr_dependencies(expression, known_globals, &mut dependencies);
+            collect_expr_dependencies(variants, known_globals, &mut dependencies);
+        }
+        Command::Check(_, facts) | Command::Prove(_, facts) => {
+            for fact in facts {
+                collect_fact_dependencies(fact, known_globals, &mut dependencies);
+            }
+        }
+        Command::PrintFunction(_, function, ..) => {
+            dependencies.insert(DefinitionRef::Callable(function.clone()));
+        }
+        Command::Input { name, .. } => {
+            dependencies.insert(DefinitionRef::Callable(name.clone()));
+        }
+        Command::Output { exprs, .. } | Command::UserDefined(_, _, exprs) => {
+            for expr in exprs {
+                collect_expr_dependencies(expr, known_globals, &mut dependencies);
+            }
+        }
+        Command::Fail(_, inner) => dependencies.extend(command_dependencies(inner, known_globals)),
+        Command::AddRuleset(..)
+        | Command::RunSchedule(..)
+        | Command::PrintOverallStatistics(..)
+        | Command::ProveExists(..)
+        | Command::PrintSize(..)
+        | Command::Push(..)
+        | Command::Pop(..)
+        | Command::Include(..) => {}
+    }
+    dependencies
+}
+
+fn build_source_definition_index(
+    commands: &[Command],
+) -> Result<SourceDefinitionIndex, CausalSliceError> {
+    let mut definitions = IndexMap::default();
+    for (command_index, command) in commands.iter().enumerate() {
+        command_definitions(command, command_index, &mut definitions)?;
+    }
+    let known_globals = definitions
+        .keys()
+        .filter_map(|definition| match definition {
+            DefinitionRef::Global(name) => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let dependencies = commands
+        .iter()
+        .map(|command| command_dependencies(command, &known_globals))
+        .collect();
+    Ok(SourceDefinitionIndex {
+        definitions,
+        dependencies,
+    })
+}
+
+fn close_source_dependencies(
+    index: &SourceDefinitionIndex,
+    mut retained_commands: IndexSet<usize>,
+    seed_refs: impl IntoIterator<Item = DefinitionRef>,
+) -> IndexSet<usize> {
+    let mut work = retained_commands.iter().copied().collect::<Vec<_>>();
+    let mut pending_refs = seed_refs.into_iter().collect::<Vec<_>>();
+    loop {
+        while let Some(reference) = pending_refs.pop() {
+            if let Some(command_index) = index.definitions.get(&reference)
+                && retained_commands.insert(*command_index)
+            {
+                work.push(*command_index);
+            }
+        }
+        let Some(command_index) = work.pop() else {
+            break;
+        };
+        pending_refs.extend(index.dependencies[command_index].iter().cloned());
+    }
+    retained_commands.sort_unstable();
+    retained_commands
+}
+
+struct RetainedProofSource<'a> {
+    facts: &'a [SourceFact],
+    fact_ids: &'a IndexSet<SourceFactId>,
+    rule_names: &'a IndexSet<String>,
+    witness_callables: &'a IndexSet<String>,
+}
+
+fn emit_proof_program_with_replay_regions(
+    commands: &[Command],
+    schedule_indices: &[usize],
+    replay_by_schedule: &IndexMap<usize, String>,
+    source_expansions: &SourceCommandExpansions,
+    retained: RetainedProofSource<'_>,
+) -> Result<String, CausalSliceError> {
+    let index = build_source_definition_index(commands)?;
+    let mut retained_commands = IndexSet::default();
+    let mut seed_refs = retained
+        .rule_names
+        .iter()
+        .cloned()
+        .map(DefinitionRef::Rule)
+        .collect::<IndexSet<_>>();
+    seed_refs.extend(
+        retained
+            .witness_callables
+            .iter()
+            .cloned()
+            .map(DefinitionRef::Callable),
+    );
+    for (command_index, command) in commands.iter().enumerate() {
+        if matches!(
+            command,
+            Command::Check(..) | Command::Push(..) | Command::Pop(..)
+        ) {
+            retained_commands.insert(command_index);
+        }
+    }
+    for fact in retained.facts {
+        if !retained.fact_ids.contains(&fact.id) {
+            continue;
+        }
+        if fact.expansion_index.is_none() {
+            retained_commands.insert(fact.command_index);
+        } else if let SourceFactKind::Relation(atom) = &fact.kind {
+            seed_refs.insert(DefinitionRef::Callable(atom.relation.clone()));
+        }
+    }
+    let retained_commands = close_source_dependencies(&index, retained_commands, seed_refs);
+
+    let mut rendered = String::new();
+    for (command_index, command) in commands.iter().enumerate() {
+        if let Some(replay_commands) = replay_by_schedule.get(&command_index) {
+            rendered.push_str(replay_commands);
+            continue;
+        }
+        if schedule_indices.contains(&command_index) {
+            continue;
+        }
+        if let Some(expansion) = source_expansions.get(&command_index) {
+            for fact in retained.facts.iter().filter(|fact| {
+                fact.command_index == command_index && retained.fact_ids.contains(&fact.id)
+            }) {
+                let expansion_index = fact.expansion_index.ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "input source fact {:?} lost its expansion index",
+                        fact.id
+                    ))
+                })?;
+                let selected = expansion.get(expansion_index).ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "input source fact {:?} referenced missing expansion {expansion_index}",
+                        fact.id
+                    ))
+                })?;
+                rendered.push_str(&selected.to_string());
+                rendered.push('\n');
+            }
+            continue;
+        }
+        if !retained_commands.contains(&command_index) {
+            continue;
+        }
+        if matches!(
+            command,
+            Command::PrintSize(..) | Command::PrintOverallStatistics(..)
+        ) {
+            continue;
+        }
+        rendered.push_str(&command.to_string());
+        rendered.push('\n');
+    }
+    Ok(rendered)
+}
+
+fn filter_rule_mapping(
+    mapping: &[SourceRuleMapping],
+    source_projection: ReplaySourceProjection,
+    retained_rule_names: &IndexSet<String>,
+) -> Vec<SourceRuleMapping> {
+    mapping
+        .iter()
+        .filter(|entry| {
+            source_projection == ReplaySourceProjection::Legacy
+                || retained_rule_names.contains(&entry.registered_name)
+        })
+        .cloned()
+        .collect()
+}
+
 fn validate_emitted_program(
     template: &EGraph,
     filename: Option<String>,
     source: &str,
     rules: &IndexMap<String, RuleModel>,
     mapping: &[SourceRuleMapping],
+    typecheck: bool,
 ) -> Result<(), CausalSliceError> {
     let mut parser = template.clone();
-    let parsed = parser.parse_program(filename, source)?;
+    let parsed = parser.parse_program(filename.clone(), source)?;
     let mut emitted_rules = HashMap::default();
     let mut replay_globals = HashSet::default();
     for command in &parsed {
@@ -10690,9 +11586,14 @@ fn validate_emitted_program(
             )));
         }
     }
-    // Parsing is the source-of-truth validation here. The egglog pretty
-    // printer is not generally a fixed point, so requiring a second rendering
-    // to be byte-identical would reject valid emitted programs. Determinism is
+    if typecheck {
+        let mut resolver = template.clone();
+        resolver.resolve_program(filename, source)?;
+    }
+    // Proof-oriented projection additionally resolves and typechecks every
+    // retained declaration and replay witness. The egglog pretty printer is
+    // not generally a fixed point, so requiring a second rendering to be
+    // byte-identical would reject valid emitted programs. Determinism is
     // instead tested across independent slicer executions, while unstable
     // scalar literal spellings are rejected before emission.
     Ok(())
@@ -10994,6 +11895,154 @@ fn unsupported_command<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_witness_callables_include_nested_applications() {
+        let mut witnesses = WitnessArena::default();
+        let inner = witnesses
+            .intern_syntax_app("InnerSort", "Inner", Vec::new())
+            .unwrap();
+        let outer = witnesses
+            .intern_syntax_app("OuterSort", "Outer", vec![inner])
+            .unwrap();
+        let mut bindings = IndexMap::default();
+        bindings.insert(
+            "x".to_owned(),
+            BindingWitness {
+                syntax: outer,
+                endpoint: EGraph::default().base_to_value(1_i64),
+            },
+        );
+        let fire = GroundedFire {
+            rule: "nested".to_owned(),
+            wave: 0,
+            ordinal: 0,
+            bindings,
+        };
+        let mut rules = IndexMap::default();
+        rules.insert(
+            "nested".to_owned(),
+            RuleModel {
+                span: Span::Panic,
+                body: Vec::new(),
+                body_lookups: Vec::new(),
+                body_functions: Vec::new(),
+                body_primitives: Vec::new(),
+                head: Vec::new(),
+                head_constructors: Vec::new(),
+                head_sets: Vec::new(),
+                head_subsumes: Vec::new(),
+                head_primitives: Vec::new(),
+                head_unions: Vec::new(),
+                var_order: vec!["x".to_owned()],
+                replay_var_order: vec!["x".to_owned()],
+                var_sorts: IndexMap::default(),
+                global_uses: IndexMap::default(),
+                opaque: None,
+            },
+        );
+
+        assert_eq!(
+            replay_witness_callables([&fire], &rules, &witnesses)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            ["Outer", "Inner"]
+        );
+    }
+
+    #[test]
+    fn proof_projection_validation_rejects_unknown_closed_calls() {
+        let source = "(relation Goal ())\n(Missing 1)\n";
+        let rules = IndexMap::default();
+        assert!(
+            validate_emitted_program(&EGraph::default(), None, source, &rules, &[], false).is_ok()
+        );
+        assert!(
+            validate_emitted_program(&EGraph::default(), None, source, &rules, &[], true).is_err()
+        );
+    }
+
+    #[test]
+    fn untyped_committed_union_still_advances_raw_canonical_state() {
+        let egraph = EGraph::default();
+        let parent = egraph.base_to_value(101_i64);
+        let skipped_child = egraph.base_to_value(102_i64);
+        let typed_child = egraph.base_to_value(103_i64);
+        let skipped = UnionReceipt {
+            origin: None,
+            lhs: parent,
+            rhs: skipped_child,
+            outcome: UnionOutcome::Applied {
+                parent,
+                child: skipped_child,
+            },
+        };
+        let typed = UnionReceipt {
+            origin: None,
+            lhs: typed_child,
+            rhs: skipped_child,
+            outcome: UnionOutcome::Applied {
+                parent,
+                child: typed_child,
+            },
+        };
+
+        let mut forest = EqualityForest::default();
+        // The first receipt deliberately has no typed explanation edge. It
+        // must nevertheless update the commit-order union-find state.
+        forest.observe_receipt(&skipped).unwrap();
+        forest.observe_receipt(&typed).unwrap();
+        forest
+            .add_explanation(
+                AppliedEquality {
+                    left: TypedEndpoint {
+                        sort: "Expr".to_owned(),
+                        value: typed_child,
+                    },
+                    right: TypedEndpoint {
+                        sort: "Expr".to_owned(),
+                        value: skipped_child,
+                    },
+                    parent,
+                    child: typed_child,
+                    commit_ordinal: 1,
+                },
+                DepArena::EMPTY,
+            )
+            .unwrap();
+
+        assert_eq!(forest.canonical_value(skipped_child), parent);
+        assert_eq!(forest.canonical_value(typed_child), parent);
+        assert_eq!(forest.raw_parent_count(), 2);
+        assert_eq!(forest.edge_count(), 1);
+        assert_eq!(
+            forest.explain(
+                &TypedEndpoint {
+                    sort: "Expr".to_owned(),
+                    value: typed_child,
+                },
+                &TypedEndpoint {
+                    sort: "Expr".to_owned(),
+                    value: parent,
+                },
+            ),
+            Some(vec![DepArena::EMPTY])
+        );
+        assert_eq!(
+            forest.explain(
+                &TypedEndpoint {
+                    sort: "Expr".to_owned(),
+                    value: typed_child,
+                },
+                &TypedEndpoint {
+                    sort: "Expr".to_owned(),
+                    value: skipped_child,
+                },
+            ),
+            None,
+            "the untyped edge must remain an explicit fail-closed boundary"
+        );
+    }
 
     #[test]
     fn witness_snapshot_excludes_an_old_syntax_bound_after_wave_start() {

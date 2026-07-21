@@ -4,7 +4,9 @@ use egglog::{
     EGraph,
     ast::{Command, Schedule},
     causal_slice::{
-        causal_slice_program, causal_slice_program_with_fact_directory, causal_slice_replay_program,
+        causal_slice_program, causal_slice_program_with_fact_directory,
+        causal_slice_proof_replay_program, causal_slice_proof_replay_program_with_fact_directory,
+        causal_slice_replay_program,
     },
 };
 
@@ -116,6 +118,196 @@ const FULL_TRANSCRIPT: &str = r#"
       (run-rule "mid-to-goal" :bind ((x 2)) :expect 1))
     (check (Goal 2))
 "#;
+
+#[test]
+fn proof_projection_keeps_only_the_positive_check_source_envelope() {
+    let source = r#"
+        (datatype Live (L i64))
+        (datatype Dead (D i64))
+        (relation Seed (Live))
+        (relation Middle (Live))
+        (relation Goal (Live))
+        (relation DeadSeed (Dead))
+        (relation DeadGoal (Dead))
+        (function DeadTable (i64) i64 :merge new)
+        (ruleset live)
+        (ruleset dead)
+        (rule ((Seed x)) ((Middle x)) :ruleset live :name "seed-middle")
+        (rule ((Middle x)) ((Goal x)) :ruleset live :name "middle-goal")
+        (rule ((DeadSeed x)) ((DeadGoal x)) :ruleset dead :name "dead-rule")
+        (Seed (L 1))
+        (DeadSeed (D 9))
+        (run-schedule (saturate live) (run dead))
+        (check (Goal (L 1)))
+        (print-size DeadGoal)
+        (print-stats)
+    "#;
+
+    let replay =
+        causal_slice_proof_replay_program(Some("proof-projection.egg".to_owned()), source).unwrap();
+    let second =
+        causal_slice_proof_replay_program(Some("proof-projection.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.source, second.source);
+    assert_eq!(replay.rule_mapping, second.rule_mapping);
+    assert!(replay.source.contains("(datatype Live"));
+    assert!(replay.source.contains("(check (Goal (L 1)))"));
+    assert!(has_replay_firing(
+        &replay.source,
+        "seed-middle",
+        &[("x", "(L 1)")]
+    ));
+    assert!(has_replay_firing(
+        &replay.source,
+        "middle-goal",
+        &[("x", "(L 1)")]
+    ));
+    for absent in [
+        "(datatype Dead",
+        "DeadSeed",
+        "DeadGoal",
+        "DeadTable",
+        "(ruleset dead)",
+        "dead-rule",
+        "print-size",
+        "print-stats",
+        "saturate",
+    ] {
+        assert!(
+            !replay.source.contains(absent),
+            "retained `{absent}`\n{}",
+            replay.source
+        );
+    }
+    assert_eq!(
+        replay
+            .rule_mapping
+            .iter()
+            .map(|mapping| mapping.registered_name.as_str())
+            .collect::<Vec<_>>(),
+        ["seed-middle", "middle-goal"]
+    );
+
+    EGraph::default()
+        .parse_and_run_program(
+            Some("proof-projection-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("proof-projection-strict-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn proof_projection_slices_individual_input_rows() {
+    let directory = input_directory();
+    std::fs::write(directory.join("seed.tsv"), "1\n2\n").unwrap();
+    let source = r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (rule ((Seed x)) ((Goal x)) :name "goal")
+        (input Seed "seed.tsv")
+        (run 1)
+        (check (Goal 2))
+    "#;
+
+    let replay = causal_slice_proof_replay_program_with_fact_directory(
+        Some("proof-input.egg".to_owned()),
+        source,
+        Some(&directory),
+    )
+    .unwrap();
+    assert!(!replay.source.contains("(input"));
+    assert!(!replay.source.contains("(Seed 1)"));
+    assert!(replay.source.contains("(Seed 2)"));
+
+    std::fs::remove_dir_all(directory).unwrap();
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("proof-input-replay.egg".to_owned()), &replay.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn proof_projection_rejects_a_prefix_only_program() {
+    let source = r#"
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (Seed)
+        (run 1)
+        (print-size Goal)
+    "#;
+    let error =
+        causal_slice_proof_replay_program(Some("prefix-only.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error.to_string().contains("without a positive check"),
+        "{error}"
+    );
+    causal_slice_replay_program(Some("prefix-only.egg".to_owned()), source).unwrap();
+}
+
+#[test]
+fn proof_projection_retains_a_standalone_constructor_witness() {
+    let source = r#"
+        (datatype Expr (A))
+        (relation Goal ())
+        (rule ((= e (A))) ((Goal)) :name "observe-a")
+        (A)
+        (run 1)
+        (check (Goal))
+    "#;
+    let replay =
+        causal_slice_proof_replay_program(Some("standalone-constructor.egg".to_owned()), source)
+            .unwrap();
+    assert!(replay.source.contains("(A)"), "{}", replay.source);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("standalone-constructor-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn proof_projection_closes_atomic_datatypes_over_all_variant_sorts() {
+    let source = r#"
+        (datatype Aux (AuxValue))
+        (datatype Extra (ExtraValue))
+        (datatype Used (Use Aux) (UnusedVariant Extra))
+        (datatype Dead (DeadValue))
+        (relation Seed (Used))
+        (relation Goal ())
+        (rule ((Seed x)) ((Goal)) :name "goal")
+        (Seed (Use (AuxValue)))
+        (run 1)
+        (check (Goal))
+    "#;
+    let replay =
+        causal_slice_proof_replay_program(Some("datatype-closure.egg".to_owned()), source).unwrap();
+    for retained in ["(datatype Aux", "(datatype Extra", "(datatype Used"] {
+        assert!(replay.source.contains(retained), "{}", replay.source);
+    }
+    assert!(!replay.source.contains("(datatype Dead"));
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("datatype-closure-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
 
 #[test]
 fn retained_only_api_matches_the_validated_slice_without_a_transcript() {
@@ -3962,6 +4154,32 @@ fn conjunctive_and_multiple_checks_retain_complete_heads_and_both_chains() {
             .parse_and_run_program(Some("combined-roots-replay.egg".to_owned()), &slice.source)
             .unwrap();
     }
+
+    let proof_replay =
+        causal_slice_proof_replay_program(Some("combined-roots-proof.egg".to_owned()), source)
+            .unwrap();
+    assert_eq!(proof_replay.source.matches("(check").count(), 2);
+    for absent in ["Irrelevant", "irrelevant"] {
+        assert!(
+            !proof_replay.source.contains(absent),
+            "retained `{absent}`\n{}",
+            proof_replay.source
+        );
+    }
+    let outputs = EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("combined-roots-proof-replay.egg".to_owned()),
+            &proof_replay.source,
+        )
+        .unwrap();
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|output| matches!(output, egglog::CommandOutput::ProveExists { .. }))
+            .count(),
+        2
+    );
 }
 
 #[test]
@@ -4332,6 +4550,16 @@ fn independent_push_transactions_slice_and_replay_at_their_own_schedules() {
     EGraph::new_with_proofs()
         .with_proof_testing()
         .parse_and_run_program(Some("scoped-replay.egg".to_owned()), &replay.source)
+        .unwrap();
+
+    let proof =
+        causal_slice_proof_replay_program(Some("scoped-proof.egg".to_owned()), source).unwrap();
+    assert!(!proof.source.contains("Irrelevant"));
+    assert_eq!(proof.source.matches("(push 1)").count(), 2);
+    assert_eq!(proof.source.matches("(pop 1)").count(), 2);
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("scoped-proof-replay.egg".to_owned()), &proof.source)
         .unwrap();
 }
 

@@ -180,13 +180,24 @@ where
                 panic!("Failed to read file {arg}")
             });
             let program = if args.causal_slice {
-                match causal_slice::causal_slice_replay_program_with_egraph(
-                    Some(input.to_string_lossy().into_owned()),
-                    &original_program,
-                    causal_slice_egraph
-                        .take()
-                        .expect("causal slicing validated exactly one input"),
-                ) {
+                let filename = Some(input.to_string_lossy().into_owned());
+                let template = causal_slice_egraph
+                    .take()
+                    .expect("causal slicing validated exactly one input");
+                let replay = if args.proof_testing {
+                    causal_slice::causal_slice_proof_replay_program_with_egraph(
+                        filename,
+                        &original_program,
+                        template,
+                    )
+                } else {
+                    causal_slice::causal_slice_replay_program_with_egraph(
+                        filename,
+                        &original_program,
+                        template,
+                    )
+                };
+                match replay {
                     Ok(replay) => replay.source,
                     Err(error) => {
                         log::error!("{error}");

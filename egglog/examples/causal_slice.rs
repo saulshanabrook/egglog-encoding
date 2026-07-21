@@ -5,7 +5,9 @@ use std::{
 };
 
 use egglog::causal_slice::{
-    causal_slice_program_with_fact_directory, causal_slice_replay_program_with_fact_directory,
+    causal_slice_program_with_fact_directory,
+    causal_slice_proof_replay_program_with_fact_directory,
+    causal_slice_replay_program_with_fact_directory,
 };
 
 fn main() -> ExitCode {
@@ -16,19 +18,25 @@ fn main() -> ExitCode {
         .unwrap_or_else(|| "causal_slice".to_owned());
     let usage = || {
         report(format_args!(
-            "usage: {executable} [--full] [--fact-directory <dir>] <program.egg>"
+            "usage: {executable} [--full | --proof-projection] [--fact-directory <dir>] <program.egg>"
         ));
         ExitCode::from(2)
     };
     let mut full = false;
+    let mut proof_projection = false;
     let mut fact_directory = None;
     let mut path = None;
     while let Some(arg) = args.next() {
         if arg == "--full" {
-            if full {
+            if full || proof_projection {
                 return usage();
             }
             full = true;
+        } else if arg == "--proof-projection" {
+            if full || proof_projection {
+                return usage();
+            }
+            proof_projection = true;
         } else if arg == "--fact-directory" {
             if fact_directory.is_some() {
                 return usage();
@@ -59,6 +67,13 @@ fn main() -> ExitCode {
     let generated = if full {
         causal_slice_program_with_fact_directory(filename, &input, fact_directory.as_deref())
             .map(|slice| (slice.full_transcript_source, slice.stats))
+    } else if proof_projection {
+        causal_slice_proof_replay_program_with_fact_directory(
+            filename,
+            &input,
+            fact_directory.as_deref(),
+        )
+        .map(|replay| (replay.source, replay.stats))
     } else {
         causal_slice_replay_program_with_fact_directory(filename, &input, fact_directory.as_deref())
             .map(|replay| (replay.source, replay.stats))
