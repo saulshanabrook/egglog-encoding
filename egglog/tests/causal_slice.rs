@@ -935,6 +935,88 @@ fn equality_and_multiple_query_filters_feed_an_ordered_head_witness() {
 }
 
 #[test]
+fn multiple_ordered_head_primitives_feed_later_head_locals() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor N (i64) Expr)
+        (constructor WrapVec (VecExpr) Expr)
+        (relation Input (i64))
+        (relation Goal (Expr))
+        (rule ((Input n))
+              ((let doubled (* n 2))
+               (let shifted (+ doubled 1))
+               (let first (N shifted))
+               (let items (vec-of first (N n)))
+               (let result (WrapVec items))
+               (Goal result))
+              :name "multi-primitive-head")
+        (Input 4)
+        (run 1)
+        (check (Goal result))
+    "#;
+
+    let replay = causal_slice_proof_replay_program(
+        Some("multiple-ordered-head-primitives.egg".to_owned()),
+        source,
+    )
+    .unwrap();
+    assert!(has_replay_firing(
+        &replay.source,
+        "multi-primitive-head",
+        &[("n", "4")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("multiple-ordered-head-primitives-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn nested_body_primitive_feeds_a_constructor_lookup() {
+    let source = r#"
+        (datatype Expr (N i64) (Broadcast Expr i64))
+        (relation Input (Expr i64))
+        (relation Goal (Expr))
+        (Input (N 1) 3)
+        (Broadcast (N 1) 6)
+        (rule ((Input x n)
+               (= result (Broadcast x (* n 2))))
+              ((Goal result))
+              :name "nested-body-primitive")
+        (run 1)
+        (check (Goal (Broadcast (N 1) 6)))
+    "#;
+
+    let first = causal_slice_program(Some("nested-body-primitive.egg".to_owned()), source).unwrap();
+    let second =
+        causal_slice_program(Some("nested-body-primitive.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    let firing = replay_firings(&first.source)
+        .into_iter()
+        .find(|(rule, _)| rule == "nested-body-primitive")
+        .expect("the nested primitive grounding should be retained");
+    assert!(firing.1.contains(&("x".to_owned(), "(N 1)".to_owned())));
+    assert!(firing.1.contains(&("n".to_owned(), "3".to_owned())));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-body-primitive-replay.egg".to_owned()),
+                &first.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn rebuilt_container_witness_fails_closed_without_a_content_version() {
     let source = r#"
         (sort Expr)
@@ -3883,6 +3965,38 @@ fn anonymous_rewrite_lowers_to_one_stable_strictly_replayable_rule() {
     }] {
         make_egraph()
             .parse_and_run_program(Some("rewrite-replay.egg".to_owned()), &first.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn variable_lhs_rewrite_uses_its_registered_root_alias() {
+    let source = r#"
+        (datatype Expr (A i64) (Wrap Expr))
+        (relation IsExpr (Expr))
+        (IsExpr (A 1))
+        (rewrite x (Wrap x) :when ((IsExpr x)))
+        (run 1)
+        (check (= (A 1) (Wrap (A 1))))
+    "#;
+
+    let first = causal_slice_program(Some("variable-lhs-rewrite.egg".to_owned()), source).unwrap();
+    let second = causal_slice_program(Some("variable-lhs-rewrite.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    let firing = replay_firings(&first.source)
+        .into_iter()
+        .find(|(rule, _)| rule.starts_with("__causal_slice_v0_rw_b"))
+        .expect("the variable-LHS rewrite should be retained");
+    assert_eq!(firing.1, vec![("x".to_owned(), "(A 1)".to_owned())]);
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("variable-lhs-rewrite-replay.egg".to_owned()),
+                &first.source,
+            )
             .unwrap();
     }
 }

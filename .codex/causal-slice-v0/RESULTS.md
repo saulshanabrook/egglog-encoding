@@ -1,5 +1,68 @@
 # Causal Slice v0 Results
 
+## Hardboiled replay-frontier checkpoint: 2026-07-21
+
+This continuation started from `546a23a177fb1df65c22573fbf0770550ee76593`.
+It adds exact registered-alias validation for variable-LHS rewrite roots,
+supports multiple ordered replay-safe primitive calls in one head, and records
+typed replay-safe primitive occurrences nested inside body constructor
+lookups. Focused canaries replay each path in ordinary and unchanged strict
+proof-testing modes.
+
+The fresh Hardboiled run now passes the previously reported rewrite-root alias,
+multi-primitive head, nested body `(* r-lanes x-lanes)`, and captured
+`VecExpr` binding boundaries. It no longer panics by trying to reconstruct a
+container through scalar `reconstruct_termdag_base`.
+
+Its current exact failure is later and is not yet a container-rebuild result:
+
+```text
+positive check constructor `Call`
+causal slice v0 does not support an exact match-time row without prior
+constructor-row provenance
+```
+
+The observed command was:
+
+```bash
+target/release/egglog --mode no-messages -j 1 \
+  --causal-slice --proof-testing \
+  egglog/tests/hardboiled_conv1d_32.egg
+```
+
+Container status at this checkpoint:
+
+- fresh replay-safe `vec-of` syntax remains supported with exact captured
+  children and primitive receipts;
+- the native rebuild trace reports only the stable outer container IDs whose
+  contents changed, not pre/post contents, element remaps, versions, or the
+  equality causes of those remaps;
+- consequently, a witnessed dirty container still fails closed before final
+  backward reachability, so even an irrelevant dirty witnessed branch can
+  reject the program; and
+- Hardboiled has not yet demonstrated that this versioning boundary is on its
+  retained proof path. Its current stop is the positive-check `Call` row above.
+
+The smallest sound container extension remains a structured rebuild receipt
+plus a versioned `(sort, outer ID)` witness sidecar. A captured binding would
+snapshot the version; a new version would depend on the prior version and the
+exact child equalities or nested-container version changes. Runtime IDs would
+remain internal and emitted replay would continue to use source syntax.
+
+Validation for this checkpoint:
+
+- `cargo test -p egglog --test causal_slice`: 136 passed;
+- `make proof-tests`: 200 passed;
+- `make check`: passed, including formatting, warning-denying Clippy, Python
+  checks/tests, the complete Rust workspace suite, doctests, and the DD timing
+  summary gate;
+- the generated nested-body-primitive program is byte-stable and passes
+  ordinary plus strict replay; and
+- the fresh Hardboiled probe reaches the positive-check row-provenance error
+  above.
+
+No performance benchmark was run for this semantic continuation.
+
 ## Container witness checkpoint: 2026-07-21
 
 This checkpoint is based on `26c4fd64be4f164e35d94c59df253511c71be995`.

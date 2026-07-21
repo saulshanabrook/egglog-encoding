@@ -253,6 +253,10 @@ struct RuleModel {
     head_unions: Vec<EqualityTemplate>,
     var_order: Vec<String>,
     replay_var_order: Vec<String>,
+    /// Compiler-generated replay roots that source typing proves are direct
+    /// aliases of ordinary match variables. Registration must independently
+    /// confirm that both names canonicalize to the same core binding.
+    derived_replay_aliases: IndexMap<String, String>,
     var_sorts: IndexMap<String, String>,
     global_uses: IndexMap<String, String>,
     opaque: Option<OpaqueRulePolicy>,
@@ -342,7 +346,9 @@ struct ConstructorLookupTemplate {
 struct QueryPrimitiveTemplate {
     span: Span,
     application: AtomArg,
-    output: AtomArg,
+    /// `Some` for a logical equality/predicate output and `None` when the
+    /// primitive is an intermediate inside a typed body application.
+    output: Option<AtomArg>,
     sort: String,
     capability: PrimitiveReplayCapability,
 }
@@ -3118,6 +3124,97 @@ fn restore_projected_source_bindings(
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RegisteredAliasTarget {
+    Variable { name: String, sort: String },
+    Literal { literal: Literal, sort: String },
+}
+
+fn registered_alias_target(
+    rule_name: &str,
+    source_name: &str,
+    source_sort: &str,
+    substitutions: &[(ResolvedVar, crate::core::ResolvedAtomTerm)],
+) -> Result<RegisteredAliasTarget, CausalSliceError> {
+    let mut name = source_name.to_owned();
+    let mut sort = source_sort.to_owned();
+    let mut visited = HashSet::default();
+    for _ in 0..=substitutions.len() {
+        if !visited.insert((name.clone(), sort.clone())) {
+            return Err(CausalSliceError::Invariant(format!(
+                "registered substitutions for rule `{rule_name}` contain a cycle at `{name}`"
+            )));
+        }
+        let mut matching = substitutions
+            .iter()
+            .filter(|(candidate, _)| candidate.name == name && candidate.sort.name() == sort);
+        let Some((_, target)) = matching.next() else {
+            return Ok(RegisteredAliasTarget::Variable { name, sort });
+        };
+        if matching.next().is_some() {
+            return Err(CausalSliceError::Invariant(format!(
+                "registered substitutions for rule `{rule_name}` contain multiple targets for `{name}`"
+            )));
+        }
+        match target {
+            crate::core::GenericAtomTerm::Var(_, variable) => {
+                name = variable.name.clone();
+                sort = variable.sort.name().to_owned();
+            }
+            crate::core::GenericAtomTerm::Literal(_, literal) => {
+                return Ok(RegisteredAliasTarget::Literal {
+                    literal: literal.clone(),
+                    sort,
+                });
+            }
+            crate::core::GenericAtomTerm::Global(_, variable) => {
+                return Err(CausalSliceError::Unsupported {
+                    location: format!("registered rule `{rule_name}`"),
+                    reason: format!(
+                        "replay binding `{source_name}` resolves to unsupported global alias `{}`",
+                        variable.name
+                    ),
+                });
+            }
+        }
+    }
+    Err(CausalSliceError::Invariant(format!(
+        "registered substitutions for rule `{rule_name}` exceed their finite alias chain"
+    )))
+}
+
+fn validate_registered_replay_aliases(
+    rule_name: &str,
+    model: &RuleModel,
+    substitutions: &[(ResolvedVar, crate::core::ResolvedAtomTerm)],
+) -> Result<(), CausalSliceError> {
+    for (derived, expected) in &model.derived_replay_aliases {
+        let derived_sort = model.var_sorts.get(derived).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "typed source model lost sort for derived replay variable `{derived}` in rule `{rule_name}`"
+            ))
+        })?;
+        let expected_sort = model.var_sorts.get(expected).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "typed source model lost sort for replay alias `{expected}` in rule `{rule_name}`"
+            ))
+        })?;
+        if derived_sort != expected_sort {
+            return Err(CausalSliceError::Invariant(format!(
+                "typed replay alias `{derived}` -> `{expected}` changes sort in rule `{rule_name}`"
+            )));
+        }
+        let actual = registered_alias_target(rule_name, derived, derived_sort, substitutions)?;
+        let expected = registered_alias_target(rule_name, expected, expected_sort, substitutions)?;
+        if actual != expected {
+            return Err(CausalSliceError::Invariant(format!(
+                "typed replay alias `{derived}` does not match the registered substitution in rule `{rule_name}`: expected {expected:?}, found {actual:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn resolve_rule_primitives(
     egraph: &EGraph,
     rules: &IndexMap<String, RuleModel>,
@@ -3140,6 +3237,7 @@ fn resolve_rule_primitives(
                     "modeled rule `{rule_name}` was not registered by the traced program"
                 ))
             })?;
+        validate_registered_replay_aliases(rule_name, model, &registered.substitutions)?;
         let registered_body = registered
             .core
             .body
@@ -4601,6 +4699,7 @@ fn opaque_rule_model(
         head_unions: Vec::new(),
         var_order: Vec::new(),
         replay_var_order: Vec::new(),
+        derived_replay_aliases: IndexMap::default(),
         var_sorts: IndexMap::default(),
         global_uses: IndexMap::default(),
         opaque: Some(opaque),
@@ -4724,7 +4823,7 @@ fn model_rule(
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
-    let mut body_primitives = Vec::new();
+    let mut body_primitive_occurrences = vec![Vec::new(); rule.body.len()];
     for (fact_index, fact) in rule.body.iter().enumerate() {
         let resolved_fact = &resolved_rule.body[fact_index];
         match fact {
@@ -4736,13 +4835,18 @@ fn model_rule(
                     source_globals,
                     &format!("rule `{}` body", rule.name),
                 )? {
+                    collect_nested_query_primitives(
+                        &primitive.application,
+                        &primitive.span,
+                        &mut body_primitive_occurrences[fact_index],
+                    );
                     register_arg_vars(
                         &primitive.application,
                         &primitive.sort,
                         &mut var_order,
                         &mut var_sorts,
                     )?;
-                    body_primitives.push(primitive);
+                    body_primitive_occurrences[fact_index].push(primitive);
                     continue;
                 }
                 let ResolvedFact::Fact(resolved_expr) = resolved_fact else {
@@ -4759,13 +4863,11 @@ fn model_rule(
                     source_globals,
                     "rule body",
                 )?;
-                if atom.args.iter().any(atom_arg_contains_primitive) {
-                    return unsupported(
-                        &rule.span,
-                        format!(
-                            "a primitive nested inside a relation premise in rule `{}`; replay requires an explicit query-primitive occurrence",
-                            rule.name
-                        ),
+                for arg in &atom.args {
+                    collect_intermediate_query_primitives(
+                        &expr.span(),
+                        arg,
+                        &mut body_primitive_occurrences[fact_index],
                     );
                 }
                 register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
@@ -4792,19 +4894,21 @@ fn model_rule(
             source_globals,
             &format!("rule `{}` body", rule.name),
         )? {
+            collect_nested_query_primitives(
+                &primitive.application,
+                &primitive.span,
+                &mut body_primitive_occurrences[fact_index],
+            );
             register_arg_vars(
                 &primitive.application,
                 &primitive.sort,
                 &mut var_order,
                 &mut var_sorts,
             )?;
-            register_arg_vars(
-                &primitive.output,
-                &primitive.sort,
-                &mut var_order,
-                &mut var_sorts,
-            )?;
-            body_primitives.push(primitive);
+            if let Some(output) = &primitive.output {
+                register_arg_vars(output, &primitive.sort, &mut var_order, &mut var_sorts)?;
+            }
+            body_primitive_occurrences[fact_index].push(primitive);
             continue;
         }
         if let Some(lookup) = model_function_lookup(
@@ -4832,11 +4936,16 @@ fn model_rule(
             span,
             left,
             right,
-            &var_sorts,
+            resolved_fact,
             constructors,
             source_globals,
             &format!("rule `{}` body", rule.name),
         )? {
+            collect_intermediate_query_primitives(
+                span,
+                &lookup.application,
+                &mut body_primitive_occurrences[fact_index],
+            );
             register_arg_vars(
                 &lookup.application,
                 &lookup.sort,
@@ -4863,6 +4972,16 @@ fn model_rule(
             source_globals,
             &format!("rule `{}` body", rule.name),
         )?;
+        collect_intermediate_query_primitives(
+            span,
+            &equality.left,
+            &mut body_primitive_occurrences[fact_index],
+        );
+        collect_intermediate_query_primitives(
+            span,
+            &equality.right,
+            &mut body_primitive_occurrences[fact_index],
+        );
         register_arg_vars(
             &equality.left,
             &equality.sort,
@@ -4877,6 +4996,10 @@ fn model_rule(
         )?;
         body_equalities.push(equality);
     }
+    let body_primitives = body_primitive_occurrences
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     let mut head = Vec::new();
     let mut head_lets = Vec::new();
     let mut head_constructors = Vec::new();
@@ -5155,15 +5278,6 @@ fn model_rule(
     ) {
         collect_replay_primitives(arg, &mut head_primitives);
     }
-    if head_primitives.len() > 1 {
-        return unsupported(
-            &rule.span,
-            format!(
-                "more than one replay-safe primitive call in rule `{}` head",
-                rule.name
-            ),
-        );
-    }
     let semantic_head_actions = rule
         .head
         .0
@@ -5198,6 +5312,7 @@ fn model_rule(
         .iter()
         .map(String::as_str)
         .collect::<HashSet<_>>();
+    let mut derived_replay_aliases = IndexMap::default();
     for derived in &derived_replay_vars {
         let derivable = body_lookups.iter().any(|lookup| {
             matches!(&lookup.output, AtomArg::Var(_, output) if output.as_str() == *derived)
@@ -5206,10 +5321,23 @@ fn model_rule(
                     .all(|(_, input)| !derived_replay_vars.contains(input.as_str()))
         });
         if !derivable {
-            return Err(CausalSliceError::Invariant(format!(
-                "internal replay variable `{derived}` on rule `{}` is not functionally determined by a constructor lookup",
-                rule.name
-            )));
+            let direct_alias = body_equalities.iter().find_map(|equality| {
+                match (&equality.left, &equality.right) {
+                    (AtomArg::Var(_, left), AtomArg::Var(_, right))
+                        if left == derived && !derived_replay_vars.contains(right.as_str()) =>
+                    {
+                        Some(right.clone())
+                    }
+                    _ => None,
+                }
+            });
+            let Some(direct_alias) = direct_alias else {
+                return Err(CausalSliceError::Invariant(format!(
+                    "internal replay variable `{derived}` on rule `{}` is neither functionally determined by a constructor lookup nor a typed direct alias",
+                    rule.name
+                )));
+            };
+            derived_replay_aliases.insert((*derived).to_owned(), direct_alias);
         }
     }
     let replay_var_order = var_order
@@ -5234,6 +5362,7 @@ fn model_rule(
         head_unions,
         var_order,
         replay_var_order,
+        derived_replay_aliases,
         var_sorts,
         global_uses: IndexMap::default(),
         opaque: None,
@@ -5723,7 +5852,7 @@ fn model_query_primitive(
     Ok(Some(QueryPrimitiveTemplate {
         span: span.clone(),
         application,
-        output,
+        output: Some(output),
         sort: output_sort,
         capability,
     }))
@@ -5769,20 +5898,7 @@ impl PrimitiveReplayCapability {
     }
 
     fn matches(&self, actual: &SpecializedPrimitive) -> bool {
-        let expected = &self.specialization;
-        expected.name() == actual.name()
-            && expected.effect() == actual.effect()
-            && expected.output().name() == actual.output().name()
-            && expected.input().len() == actual.input().len()
-            && expected
-                .input()
-                .iter()
-                .zip(actual.input())
-                .all(|(expected, actual)| expected.name() == actual.name())
-            && expected.validator().is_some()
-            && actual.validator().is_some()
-            && expected.is_replay_safe()
-            && actual.is_replay_safe()
+        self.specialization == *actual
     }
 }
 
@@ -5827,14 +5943,17 @@ fn model_query_predicate(
             function: function.clone(),
             args: args
                 .iter()
+                .zip(resolved_args)
                 .zip(&input_sorts)
-                .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, source_globals, context))
+                .map(|((arg, resolved), sort)| {
+                    model_typed_atom_arg(arg, resolved, sort, constructors, source_globals, context)
+                })
                 .collect::<Result<Vec<_>, _>>()?,
             input_sorts,
             output_sort: "Unit".to_owned(),
             primitive: Some(capability.clone()),
         },
-        output: AtomArg::Lit(Literal::Unit),
+        output: Some(AtomArg::Lit(Literal::Unit)),
         sort: "Unit".to_owned(),
         capability,
     }))
@@ -5844,14 +5963,24 @@ fn model_constructor_lookup(
     span: &Span,
     left: &Expr,
     right: &Expr,
-    known_var_sorts: &IndexMap<String, String>,
+    resolved_fact: &ResolvedFact,
     constructors: &IndexMap<String, ConstructorDecl>,
     source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<Option<ConstructorLookupTemplate>, CausalSliceError> {
-    let (application_expr, output_expr) = match (left, right) {
-        (GenericExpr::Call(..), GenericExpr::Var(..)) => (left, right),
-        (GenericExpr::Var(..), GenericExpr::Call(..)) => (right, left),
+    let ResolvedFact::Eq(_, resolved_left, resolved_right) = resolved_fact else {
+        return Err(CausalSliceError::Invariant(format!(
+            "typed source model changed an equality in {context}"
+        )));
+    };
+    let (application_expr, output_expr, resolved_application, resolved_output) = match (left, right)
+    {
+        (GenericExpr::Call(..), GenericExpr::Var(..)) => {
+            (left, right, resolved_left, resolved_right)
+        }
+        (GenericExpr::Var(..), GenericExpr::Call(..)) => {
+            (right, left, resolved_right, resolved_left)
+        }
         _ => return Ok(None),
     };
     let GenericExpr::Call(call_span, function, args) = application_expr else {
@@ -5872,8 +6001,9 @@ fn model_constructor_lookup(
             "wildcard or parser-generated constructor lookup output variables",
         );
     };
-    let application = model_atom_arg(
+    let application = model_typed_atom_arg(
         application_expr,
+        resolved_application,
         &constructor.output,
         constructors,
         source_globals,
@@ -5892,25 +6022,14 @@ fn model_constructor_lookup(
             "constructor lookup source/model arity diverged".to_owned(),
         ));
     }
-    let output = model_atom_arg(
+    let output = model_typed_atom_arg(
         output_expr,
+        resolved_output,
         &constructor.output,
         constructors,
         source_globals,
         context,
     )?;
-    if let AtomArg::Var(_, output_var) = &output
-        && let Some(previous) = known_var_sorts.get(output_var)
-        && previous != &constructor.output
-    {
-        return unsupported(
-            output_span,
-            format!(
-                "constructor lookup output `{output_var}` has sort `{previous}` instead of `{}` in {context}",
-                constructor.output
-            ),
-        );
-    }
     Ok(Some(ConstructorLookupTemplate {
         span: span.clone(),
         application,
@@ -6633,12 +6752,46 @@ fn replay_safe_bigrat_primitive_arity(function: &str) -> Option<usize> {
     }
 }
 
-fn atom_arg_contains_primitive(arg: &AtomArg) -> bool {
-    match arg {
-        AtomArg::App {
-            args, primitive, ..
-        } => primitive.is_some() || args.iter().any(atom_arg_contains_primitive),
-        AtomArg::Var(..) | AtomArg::Global { .. } | AtomArg::Lit(..) => false,
+fn collect_nested_query_primitives(
+    application: &AtomArg,
+    span: &Span,
+    primitives: &mut Vec<QueryPrimitiveTemplate>,
+) {
+    let AtomArg::App { args, .. } = application else {
+        return;
+    };
+    for arg in args {
+        collect_intermediate_query_primitives(span, arg, primitives);
+    }
+}
+
+fn collect_intermediate_query_primitives(
+    span: &Span,
+    arg: &AtomArg,
+    primitives: &mut Vec<QueryPrimitiveTemplate>,
+) {
+    let AtomArg::App {
+        args,
+        output_sort,
+        primitive,
+        ..
+    } = arg
+    else {
+        return;
+    };
+    for child in args {
+        collect_intermediate_query_primitives(span, child, primitives);
+    }
+    if let Some(capability) = primitive
+        && resolved_auxiliary_scalar_primitive(&capability.specialization).is_none()
+    {
+        primitives.push(QueryPrimitiveTemplate {
+            span: span.clone(),
+            application: arg.clone(),
+            output: None,
+            sort: output_sort.clone(),
+            capability: capability.clone(),
+        });
     }
 }
 
@@ -6759,7 +6912,9 @@ fn rule_global_uses(rule: &RuleModel) -> IndexMap<&str, &str> {
     }
     for primitive in &rule.body_primitives {
         collect_atom_arg_globals(&primitive.application, &mut globals);
-        collect_atom_arg_globals(&primitive.output, &mut globals);
+        if let Some(output) = &primitive.output {
+            collect_atom_arg_globals(output, &mut globals);
+        }
     }
     for local in &rule.head_lets {
         collect_atom_arg_globals(&local.value, &mut globals);
@@ -7910,8 +8065,15 @@ fn elaborate_events(
                         || !model.head_primitives.is_empty()
                         || !model.head_subsumes.is_empty())
                 {
+                    let detail = match policy {
+                        OpaqueRulePolicy::ProjectedGrounding(error)
+                        | OpaqueRulePolicy::UnreplayableGrounding(error) => {
+                            format!(" at {}: {}", error.location, error.reason)
+                        }
+                        _ => String::new(),
+                    };
                     return Err(CausalSliceError::Invariant(format!(
-                        "unreplayable grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect"
+                        "unreplayable grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect{detail}"
                     )));
                 }
                 let effects = match elaborate_fire_applications(
@@ -9267,13 +9429,11 @@ fn reconstruct_bindings(
         let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
             CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
         })?;
-        let syntax = if sort.is_eq_sort() {
+        let syntax = if sort.is_eq_sort() || sort.is_container_sort() {
             witnesses.by_endpoint(sort_name, value).ok_or_else(|| {
                 CausalSliceError::Unsupported {
                     location: format!("captured binding `{var}`"),
-                    reason: format!(
-                        "a `{sort_name}` endpoint without a match-time constructor witness"
-                    ),
+                    reason: format!("a `{sort_name}` endpoint without a match-time replay witness"),
                 }
             })?
         } else {
@@ -9316,14 +9476,12 @@ fn reconstruct_rule_bindings(
         let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
             CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
         })?;
-        let syntax = if sort.is_eq_sort() {
+        let syntax = if sort.is_eq_sort() || sort.is_container_sort() {
             witnesses
                 .by_endpoint_at(sort_name, value, snapshot)
                 .ok_or_else(|| CausalSliceError::Unsupported {
                     location: format!("captured binding `{var}` in rule `{rule_name}`"),
-                    reason: format!(
-                        "a `{sort_name}` endpoint without a match-time constructor witness"
-                    ),
+                    reason: format!("a `{sort_name}` endpoint without a match-time replay witness"),
                 })?
         } else {
             scalar_witness(
@@ -9387,8 +9545,8 @@ fn reconstruct_rule_bindings(
     let query_outputs = model
         .body_primitives
         .iter()
-        .filter_map(|primitive| match &primitive.output {
-            AtomArg::Var(_, output) => Some(output.as_str()),
+        .filter_map(|primitive| match primitive.output.as_ref() {
+            Some(AtomArg::Var(_, output)) => Some(output.as_str()),
             _ => None,
         })
         .collect::<HashSet<_>>();
@@ -10723,21 +10881,32 @@ fn elaborate_logical_query_application(
     }
     let mut children = Vec::with_capacity(args.len());
     for ((arg, sort), captured) in args.iter().zip(input_sorts).zip(&application.args) {
-        let endpoint = ground_arg(egraph, arg, sort, bindings, witnesses)?;
+        intern_atom_arg_literals(egraph, arg, sort, witnesses)?;
+        let (endpoint, syntax) =
+            ground_arg_with_witness_at(egraph, arg, sort, bindings, witnesses, None)?;
         if endpoint.value != *captured {
             return Err(CausalSliceError::Invariant(format!(
                 "rule `{rule_name}` query primitive instruction {} captured arguments that diverge from its grounding",
                 application.instruction
             )));
         }
-        children.push(witnesses.by_endpoint(sort, endpoint.value).ok_or_else(|| {
-            CausalSliceError::Invariant(format!(
-                "rule `{rule_name}` query primitive argument lacked replay syntax"
-            ))
-        })?);
+        children.push(syntax);
     }
 
-    if let AtomArg::Var(_, output_variable) = &expected.output
+    let Some(expected_output) = expected.output.as_ref() else {
+        let syntax = witnesses.intern_app(
+            output_sort,
+            function,
+            children,
+            application.result,
+            DepArena::EMPTY,
+            true,
+        )?;
+        witnesses.prefer_endpoint_witness(output_sort, application.result, syntax)?;
+        return Ok(Some((DepArena::EMPTY, None)));
+    };
+
+    if let AtomArg::Var(_, output_variable) = expected_output
         && !bindings.contains_key(output_variable)
     {
         let result_endpoint = TypedEndpoint {
@@ -10815,7 +10984,7 @@ fn elaborate_logical_query_application(
         return Ok(Some((availability, deferred)));
     }
 
-    let output = ground_arg(egraph, &expected.output, output_sort, bindings, witnesses)?;
+    let output = ground_arg(egraph, expected_output, output_sort, bindings, witnesses)?;
     if output.value != application.result {
         return Ok(None);
     }
@@ -11242,7 +11411,7 @@ fn elaborate_resolved_head(
                                 application.instruction
                             )));
                         }
-                        let call_effects = elaborate_fire_applications(
+                        let mut call_effects = elaborate_fire_applications(
                             egraph,
                             std::iter::once(application),
                             trace_functions,
@@ -11254,7 +11423,6 @@ fn elaborate_resolved_head(
                                 app_index,
                             }),
                         )?;
-                        effects.absorb(call_effects);
                         let syntax = match meta.kind {
                             // Relation calls return an internal token with no
                             // source syntax. Its compiler temporary is left
@@ -11270,19 +11438,51 @@ fn elaborate_resolved_head(
                                         .map(|binding| binding.syntax)
                                         .collect(),
                                 };
-                                let witness = witnesses
+                                call_effects.read_dependencies.extend(
+                                    children
+                                        .iter()
+                                        .map(|child| witnesses.availability(child.syntax)),
+                                );
+                                let witness = if let Some(witness) = witnesses
                                     .instance_by_node_endpoint(
                                         &meta.output_sort,
                                         application.result,
                                         &node,
-                                    )
-                                    .ok_or_else(|| CausalSliceError::Unsupported {
+                                    ) {
+                                    witness
+                                } else if application.newly_staged {
+                                    let witness = witnesses.alias_app_endpoint(
+                                        node,
+                                        application.result,
+                                        DepArena::EMPTY,
+                                    )?;
+                                    call_effects.new_witnesses.push(witness);
+                                    witness
+                                } else if let Some(availability) = congruent_app_availability(
+                                    witnesses,
+                                    &node,
+                                    application.result,
+                                    equality_forest,
+                                    dependencies,
+                                    None,
+                                    app_index,
+                                )? {
+                                    let witness = witnesses.alias_app_endpoint(
+                                        node,
+                                        application.result,
+                                        availability,
+                                    )?;
+                                    call_effects.read_dependencies.push(availability);
+                                    witness
+                                } else {
+                                    return Err(CausalSliceError::Unsupported {
                                         location: span.to_string(),
                                         reason: format!(
-                                            "registered constructor `{}` completed without its exact match-time syntax witness",
+                                            "registered constructor `{}` completed without exact constructor-row and equality provenance for its core syntax",
                                             meta.name
                                         ),
-                                    })?;
+                                    });
+                                };
                                 witnesses.prefer_endpoint_witness(
                                     &meta.output_sort,
                                     application.result,
@@ -11300,6 +11500,7 @@ fn elaborate_resolved_head(
                                 );
                             }
                         };
+                        effects.absorb(call_effects);
                         syntax.map(|syntax| BindingWitness {
                             syntax,
                             endpoint: application.result,
@@ -11488,7 +11689,19 @@ fn elaborate_resolved_head(
             bindings,
             witnesses,
             None,
-        )?;
+        )
+        .map_err(|error| match error {
+            CausalSliceError::Unsupported { location, reason } => {
+                CausalSliceError::Unsupported {
+                    location: model.span.to_string(),
+                    reason: format!(
+                        "{reason} while validating source local `{}` from {location} in rule `{rule_name}`",
+                        local.name
+                    ),
+                }
+            }
+            error => error,
+        })?;
         if actual.endpoint != expected.value
             || witnesses.nodes[actual.syntax.index()].syntax
                 != witnesses.nodes[syntax.index()].syntax
@@ -12495,17 +12708,23 @@ fn ground_arg_with_witness_at(
     let (value, witness) = match arg {
         AtomArg::Lit(literal) => {
             let value = literal_to_value(egraph.backend.base_values(), literal);
-            let witness = witnesses
-                // Scalar literal syntax is available independently of the
-                // e-graph state. Auxiliary query constructors may intern the
-                // literal after the pre-wave witness snapshot while still
-                // using that same literal in the captured body pattern.
-                .by_endpoint(sort, value)
-                .ok_or_else(|| {
-                    CausalSliceError::Invariant(format!(
-                        "grounded `{sort}` literal lacked its captured witness"
-                    ))
-                })?;
+            // Literal syntax is immutable and available independently of the
+            // e-graph state. Select it by syntax identity: the same scalar
+            // endpoint may currently prefer a computed primitive witness.
+            let node = WitnessNode::Literal {
+                sort: sort.to_owned(),
+                value: literal.clone(),
+            };
+            let witness = witnesses.ids.get(&node).copied().ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "grounded `{sort}` literal lacked its exact syntax witness"
+                ))
+            })?;
+            if witnesses.endpoint(witness) != Some(value) {
+                return Err(CausalSliceError::Invariant(format!(
+                    "grounded `{sort}` literal syntax changed endpoints"
+                )));
+            }
             (value, witness)
         }
         AtomArg::Global {
@@ -12534,6 +12753,7 @@ fn ground_arg_with_witness_at(
             function,
             args,
             input_sorts,
+            primitive,
             ..
         } => {
             let grounded_children = args
@@ -12566,11 +12786,11 @@ fn ground_arg_with_witness_at(
                             witnesses.endpoint(*captured) == Some(current.value)
                         })
             };
-            let witness = if matches!(function.as_str(), "bigint" | "bigrat") {
-                // These are pure base-value constructors, not e-graph table
-                // rows. A query may materialize their closed syntax while
-                // matching the rule itself, so pre-wave table visibility does
-                // not constrain their replay availability.
+            let witness = if primitive.is_some() {
+                // Typed replay-safe primitives are not e-graph table rows.
+                // A query or ordered head may materialize their exact syntax
+                // during this firing, so constructor pre-wave visibility does
+                // not apply.
                 witnesses
                     .ids
                     .get(&node)
@@ -12618,6 +12838,30 @@ fn ground_arg_with_witness_at(
         },
         witness,
     ))
+}
+
+fn intern_atom_arg_literals(
+    egraph: &EGraph,
+    arg: &AtomArg,
+    sort: &str,
+    witnesses: &mut WitnessArena,
+) -> Result<(), CausalSliceError> {
+    match arg {
+        AtomArg::Lit(literal) => {
+            let witness = witnesses.intern_literal(sort, literal.clone())?;
+            let endpoint = literal_to_value(egraph.backend.base_values(), literal);
+            witnesses.bind_endpoint_alias(sort, endpoint, witness)?;
+        }
+        AtomArg::App {
+            args, input_sorts, ..
+        } => {
+            for (child, child_sort) in args.iter().zip(input_sorts) {
+                intern_atom_arg_literals(egraph, child, child_sort, witnesses)?;
+            }
+        }
+        AtomArg::Var(..) | AtomArg::Global { .. } => {}
+    }
+    Ok(())
 }
 
 fn same_row_multiset(left: &[RowKey], right: &[RowKey]) -> bool {
@@ -13836,6 +14080,7 @@ mod tests {
                 head_unions: Vec::new(),
                 var_order: vec!["x".to_owned()],
                 replay_var_order: vec!["x".to_owned()],
+                derived_replay_aliases: IndexMap::default(),
                 var_sorts: IndexMap::default(),
                 global_uses: IndexMap::default(),
                 opaque: None,
