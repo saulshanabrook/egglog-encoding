@@ -1,0 +1,6 @@
+(datatype Math
+  (Num i64))
+(rewrite (Num a) (Num (- 0 a)))
+(let $e (Num 1))
+(run 1)
+(check (= $e (Num -1)))

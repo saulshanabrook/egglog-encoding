@@ -410,12 +410,8 @@ pub fn file_supports_proofs_with_egraph(path: &Path, mut egraph: EGraph) -> bool
     };
 
     let filename = canonical.to_string_lossy().into_owned();
-    let desugared = match egraph.resolve_program(Some(filename.clone()), &contents) {
-        Ok(commands) => commands,
-        Err(_) => return false,
-    };
-
-    program_supports_proofs(&desugared, &egraph.type_info)
+    egraph = egraph.with_term_encoding_enabled();
+    egraph.resolve_program(Some(filename), &contents).is_ok()
 }
 
 /// Reasons why a command doesn't support proof encoding
