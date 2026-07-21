@@ -19,8 +19,10 @@ use crate::{
         GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire, Rewrite, Rule,
         RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span,
     },
+    core::{GenericCoreAction, ResolvedCall},
     core_relations::{
-        RuleExecutionTrace, RuleMatch, TableApplication, TableId, UnionOutcome, UnionReceipt, Value,
+        ExternalFunctionId, PrimitiveApplication, RuleExecutionTrace, RuleMatch, TableApplication,
+        TableId, UnionOutcome, UnionReceipt, Value,
     },
     literal_to_value,
     util::{HashMap, HashSet, IndexMap, IndexSet},
@@ -183,11 +185,17 @@ struct RuleModel {
     body_lookups: Vec<ConstructorLookupTemplate>,
     head: Vec<AtomTemplate>,
     head_constructors: Vec<AtomArg>,
+    head_primitives: Vec<AtomArg>,
     head_unions: Vec<EqualityTemplate>,
     var_order: Vec<String>,
     replay_var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
     global_uses: IndexMap<String, String>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct RulePrimitiveMeta {
+    function: ExternalFunctionId,
 }
 
 #[derive(Clone, Debug)]
@@ -495,6 +503,27 @@ impl WitnessArena {
                 value: endpoint,
             })
             .copied()
+    }
+
+    fn prefer_endpoint_witness(
+        &mut self,
+        sort: &str,
+        endpoint: Value,
+        witness: WitnessId,
+    ) -> Result<(), CausalSliceError> {
+        if self.endpoint(witness) != Some(endpoint) {
+            return Err(CausalSliceError::Invariant(format!(
+                "preferred `{sort}` witness does not denote its captured endpoint"
+            )));
+        }
+        self.endpoints.insert(
+            TypedEndpoint {
+                sort: sort.to_owned(),
+                value: endpoint,
+            },
+            witness,
+        );
+        Ok(())
     }
 
     fn bind_global(
@@ -892,6 +921,7 @@ struct TraceFunctionMeta {
 struct ElaborationInput<'a> {
     egraph: &'a EGraph,
     rules: &'a IndexMap<String, RuleModel>,
+    rule_primitives: &'a IndexMap<String, Vec<RulePrimitiveMeta>>,
     relations: &'a IndexMap<String, RelationDecl>,
     source_facts: &'a [SourceFact],
     source_traces: &'a IndexMap<usize, SourceExecutionTrace>,
@@ -903,6 +933,7 @@ struct ElaborationInput<'a> {
 struct PrefixElaborationInput<'a> {
     egraph: &'a EGraph,
     rules: &'a IndexMap<String, RuleModel>,
+    rule_primitives: &'a IndexMap<String, Vec<RulePrimitiveMeta>>,
     relations: &'a IndexMap<String, RelationDecl>,
     source_facts: &'a [SourceFact],
     source_traces: &'a IndexMap<usize, SourceExecutionTrace>,
@@ -1105,6 +1136,7 @@ fn generate_causal_slice(
         + raw_trace_bindings * std::mem::size_of::<(std::sync::Arc<str>, Value)>();
 
     let trace_functions = trace_function_metadata(&egraph, &relations, &constructors)?;
+    let rule_primitives = resolve_rule_primitives(&egraph, &rules)?;
     let mut witnesses = WitnessArena::default();
     let schedule_span = command_schedule_span(&commands[schedule_index])
         .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
@@ -1127,6 +1159,7 @@ fn generate_causal_slice(
             PrefixElaborationInput {
                 egraph: &egraph,
                 rules: &rules,
+                rule_primitives: &rule_primitives,
                 relations: &relations,
                 source_facts: &source_facts,
                 source_traces: &source_traces,
@@ -1210,6 +1243,7 @@ fn generate_causal_slice(
         ElaborationInput {
             egraph: &egraph,
             rules: &rules,
+            rule_primitives: &rule_primitives,
             relations: &relations,
             source_facts: &source_facts,
             source_traces: &source_traces,
@@ -1453,6 +1487,83 @@ fn restore_projected_source_bindings(
         }
     }
     Ok(())
+}
+
+fn resolve_rule_primitives(
+    egraph: &EGraph,
+    rules: &IndexMap<String, RuleModel>,
+) -> Result<IndexMap<String, Vec<RulePrimitiveMeta>>, CausalSliceError> {
+    let mut resolved = IndexMap::default();
+    for (rule_name, model) in rules {
+        let registered = egraph
+            .rulesets
+            .values()
+            .find_map(|ruleset| match ruleset {
+                Ruleset::Rules(registered) => registered.get(rule_name),
+                Ruleset::Combined(..) => None,
+            })
+            .ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "modeled rule `{rule_name}` was not registered by the traced program"
+                ))
+            })?;
+        if registered
+            .core
+            .body
+            .atoms
+            .iter()
+            .any(|atom| matches!(atom.head, ResolvedCall::Primitive(_)))
+        {
+            return unsupported(
+                &model.span,
+                format!("a query-side primitive in rule `{rule_name}`"),
+            );
+        }
+        let registered_primitives = registered
+            .core
+            .head
+            .0
+            .iter()
+            .filter_map(|action| match action {
+                GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _)
+                | GenericCoreAction::Set(_, ResolvedCall::Primitive(primitive), _, _)
+                | GenericCoreAction::Change(_, _, ResolvedCall::Primitive(primitive), _) => {
+                    Some(primitive)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if registered_primitives.len() != model.head_primitives.len() {
+            return unsupported(
+                &model.span,
+                format!(
+                    "rule `{rule_name}` lowered to {} primitive calls after modeling {} replay-safe calls",
+                    registered_primitives.len(),
+                    model.head_primitives.len()
+                ),
+            );
+        }
+        let mut metadata = Vec::with_capacity(registered_primitives.len());
+        for primitive in registered_primitives {
+            let exact_signature = primitive.name() == "+"
+                && primitive.input().len() == 2
+                && primitive.input().iter().all(|sort| sort.name() == "BigRat")
+                && primitive.output().name() == "BigRat";
+            if !exact_signature || primitive.validator().is_none() {
+                return unsupported(
+                    &model.span,
+                    format!(
+                        "rule `{rule_name}` primitive without the exact proof-validating `(BigRat BigRat) -> BigRat` `+` specialization"
+                    ),
+                );
+            }
+            metadata.push(RulePrimitiveMeta {
+                function: primitive.external_id(crate::Context::Write),
+            });
+        }
+        resolved.insert(rule_name.clone(), metadata);
+    }
+    Ok(resolved)
 }
 
 fn resolve_substitution_value(
@@ -2423,6 +2534,28 @@ fn model_rule(
             }
         }
     }
+    let mut head_primitives = Vec::new();
+    for arg in head
+        .iter()
+        .flat_map(|atom| atom.args.iter())
+        .chain(head_constructors.iter())
+        .chain(
+            head_unions
+                .iter()
+                .flat_map(|equality| [&equality.left, &equality.right]),
+        )
+    {
+        collect_replay_primitives(arg, &mut head_primitives);
+    }
+    if head_primitives.len() > 1 {
+        return unsupported(
+            &rule.span,
+            format!(
+                "more than one replay-safe primitive call in rule `{}` head",
+                rule.name
+            ),
+        );
+    }
     if !head_unions.is_empty() && (rule.head.0.len() != 1 || head_unions.len() != 1) {
         return unsupported(
             &rule.span,
@@ -2497,6 +2630,7 @@ fn model_rule(
         body_lookups,
         head,
         head_constructors,
+        head_primitives,
         head_unions,
         var_order,
         replay_var_order,
@@ -3119,13 +3253,37 @@ fn model_atom_arg(
             Ok(AtomArg::Lit(literal.clone()))
         }
         GenericExpr::Call(span, function, args) => {
-            let constructor =
-                constructors
-                    .get(function)
-                    .ok_or_else(|| CausalSliceError::Unsupported {
-                        location: span.to_string(),
-                        reason: format!("nested non-constructor call `{function}` in {context}"),
-                    })?;
+            let Some(constructor) = constructors.get(function) else {
+                if replay_primitive_head_context(context)
+                    && function == "+"
+                    && expected_sort == "BigRat"
+                {
+                    if args.len() != 2 {
+                        return unsupported(
+                            span,
+                            format!(
+                                "BigRat `+` with arity {} instead of 2 in {context}",
+                                args.len()
+                            ),
+                        );
+                    }
+                    return Ok(AtomArg::App {
+                        function: function.clone(),
+                        args: args
+                            .iter()
+                            .map(|arg| {
+                                model_atom_arg(arg, "BigRat", constructors, source_globals, context)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        input_sorts: vec!["BigRat".to_owned(), "BigRat".to_owned()],
+                        output_sort: "BigRat".to_owned(),
+                    });
+                }
+                return Err(CausalSliceError::Unsupported {
+                    location: span.to_string(),
+                    reason: format!("nested non-constructor call `{function}` in {context}"),
+                });
+            };
             if let Some(sort) = &constructor.opaque_sort {
                 return unsupported(
                     span,
@@ -3169,10 +3327,35 @@ fn model_atom_arg(
     }
 }
 
+fn replay_primitive_head_context(context: &str) -> bool {
+    context == "rule head" || (context.starts_with("rule `") && context.ends_with("` union head"))
+}
+
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
     match arg {
         AtomArg::App { .. } => true,
         AtomArg::Var(..) | AtomArg::Global { .. } | AtomArg::Lit(..) => false,
+    }
+}
+
+fn collect_replay_primitives(arg: &AtomArg, primitives: &mut Vec<AtomArg>) {
+    let AtomArg::App {
+        function,
+        args,
+        input_sorts,
+        output_sort,
+    } = arg
+    else {
+        return;
+    };
+    if function == "+"
+        && input_sorts == &["BigRat".to_owned(), "BigRat".to_owned()]
+        && output_sort == "BigRat"
+    {
+        primitives.push(arg.clone());
+    }
+    for arg in args {
+        collect_replay_primitives(arg, primitives);
     }
 }
 
@@ -3335,6 +3518,15 @@ fn elaborate_source_fact(
                     )));
                 }
             }
+            for application in &batch.primitives {
+                if application.origin.index() >= batch.matches.len() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source primitive origin {} exceeded {} matches",
+                        application.origin.index(),
+                        batch.matches.len()
+                    )));
+                }
+            }
             let effects = elaborate_fire_applications(
                 egraph,
                 batch.applications.iter(),
@@ -3430,6 +3622,29 @@ fn elaborate_source_fact(
     }
 }
 
+fn snapshot_primitive_result_witnesses(
+    batch: &RuleExecutionTrace,
+    witnesses: &WitnessArena,
+) -> IndexMap<TypedEndpoint, WitnessId> {
+    batch
+        .primitives
+        .iter()
+        .filter_map(|application| {
+            witnesses
+                .by_endpoint("BigRat", application.result)
+                .map(|witness| {
+                    (
+                        TypedEndpoint {
+                            sort: "BigRat".to_owned(),
+                            value: application.result,
+                        },
+                        witness,
+                    )
+                })
+        })
+        .collect()
+}
+
 fn elaborate_prefix_replay(
     input: PrefixElaborationInput<'_>,
     witnesses: &mut WitnessArena,
@@ -3437,6 +3652,7 @@ fn elaborate_prefix_replay(
     let PrefixElaborationInput {
         egraph,
         rules,
+        rule_primitives,
         relations,
         source_facts,
         source_traces,
@@ -3465,11 +3681,18 @@ fn elaborate_prefix_replay(
 
     for (wave, batch) in batches.into_iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
+        let prestate_witnesses = snapshot_primitive_result_witnesses(&batch, witnesses);
         let applications_by_origin = OriginIndex::build(
             batch.matches.len(),
             &batch.applications,
             |application| Some(application.origin.index()),
             "application",
+        )?;
+        let primitives_by_origin = OriginIndex::build(
+            batch.matches.len(),
+            &batch.primitives,
+            |application| Some(application.origin.index()),
+            "primitive",
         )?;
         let unions_by_origin = OriginIndex::build(
             batch.matches.len(),
@@ -3491,6 +3714,30 @@ fn elaborate_prefix_replay(
             // at the original match boundary.
             let bindings = reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
             captured_bindings += bindings.len();
+
+            let primitive_indices = primitives_by_origin.for_origin(ordinal);
+            let (_, primitive_error) = elaborate_fire_primitives(
+                FirePrimitiveInput {
+                    egraph,
+                    rule_name,
+                    model,
+                    metadata: rule_primitives.get(rule_name).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "rule `{rule_name}` has no resolved primitive metadata"
+                        ))
+                    })?,
+                    applications: primitive_indices
+                        .iter()
+                        .map(|index| &batch.primitives[*index as usize])
+                        .collect(),
+                    bindings: &bindings,
+                    prestate_witnesses: &prestate_witnesses,
+                },
+                witnesses,
+            )?;
+            if let Some(error) = primitive_error {
+                return Err(error.into_error());
+            }
 
             let application_indices = applications_by_origin.for_origin(ordinal);
             let effects = elaborate_fire_applications(
@@ -3586,6 +3833,7 @@ fn elaborate_events(
     let ElaborationInput {
         egraph,
         rules,
+        rule_primitives,
         relations,
         source_facts,
         source_traces,
@@ -3627,6 +3875,7 @@ fn elaborate_events(
     let mut pending_fires = Vec::new();
     for (wave, batch) in batches.iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
+        let prestate_witnesses = snapshot_primitive_result_witnesses(batch, witnesses);
         let mut applications_by_origin = vec![Vec::new(); batch.matches.len()];
         for application in &batch.applications {
             let origin = application.origin.index();
@@ -3638,6 +3887,12 @@ fn elaborate_events(
             };
             applications.push(application);
         }
+        let primitives_by_origin = OriginIndex::build(
+            batch.matches.len(),
+            &batch.primitives,
+            |application| Some(application.origin.index()),
+            "primitive",
+        )?;
         let mut unions_by_origin = vec![Vec::new(); batch.matches.len()];
         for receipt in &batch.unions {
             let Some(origin) = receipt.origin else {
@@ -3671,10 +3926,31 @@ fn elaborate_events(
                 ))
             })?;
             let bindings = reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
+            let primitive_indices = primitives_by_origin.for_origin(ordinal);
+            let (primitive_availability, primitive_error) = elaborate_fire_primitives(
+                FirePrimitiveInput {
+                    egraph,
+                    rule_name,
+                    model,
+                    metadata: rule_primitives.get(rule_name).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "rule `{rule_name}` has no resolved primitive metadata"
+                        ))
+                    })?,
+                    applications: primitive_indices
+                        .iter()
+                        .map(|index| &batch.primitives[*index as usize])
+                        .collect(),
+                    bindings: &bindings,
+                    prestate_witnesses: &prestate_witnesses,
+                },
+                witnesses,
+            )?;
             let prerequisite_result = (|| {
                 let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
 
                 let mut premise_dependencies = IndexSet::default();
+                premise_dependencies.insert(primitive_availability);
                 premise_dependencies.extend(global_use_dependencies(
                     &model.global_uses,
                     witnesses,
@@ -3744,7 +4020,7 @@ fn elaborate_events(
                 }
                 Ok(prerequisites)
             })();
-            let (prerequisites, deferred_prerequisite_error) = match prerequisite_result {
+            let (prerequisites, prerequisite_error) = match prerequisite_result {
                 Ok(prerequisites) => (prerequisites, None),
                 Err(CausalSliceError::Unsupported { location, reason }) => (
                     DepArena::EMPTY,
@@ -3752,6 +4028,7 @@ fn elaborate_events(
                 ),
                 Err(error) => return Err(error),
             };
+            let deferred_prerequisite_error = primitive_error.or(prerequisite_error);
 
             let effects = elaborate_fire_applications(
                 egraph,
@@ -4363,6 +4640,118 @@ struct FireApplicationEffects {
     new_witnesses: Vec<WitnessId>,
 }
 
+struct FirePrimitiveInput<'a> {
+    egraph: &'a EGraph,
+    rule_name: &'a str,
+    model: &'a RuleModel,
+    metadata: &'a [RulePrimitiveMeta],
+    applications: Vec<&'a PrimitiveApplication>,
+    bindings: &'a IndexMap<String, BindingWitness>,
+    prestate_witnesses: &'a IndexMap<TypedEndpoint, WitnessId>,
+}
+
+fn elaborate_fire_primitives(
+    input: FirePrimitiveInput<'_>,
+    witnesses: &mut WitnessArena,
+) -> Result<(DepId, Option<DeferredUnsupported>), CausalSliceError> {
+    let FirePrimitiveInput {
+        egraph,
+        rule_name,
+        model,
+        metadata,
+        applications,
+        bindings,
+        prestate_witnesses,
+    } = input;
+    if applications.len() != model.head_primitives.len() || metadata.len() != applications.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` captured {} primitive applications for {} modeled calls",
+            applications.len(),
+            model.head_primitives.len()
+        )));
+    }
+    let mut availability = DepArena::EMPTY;
+    let mut deferred = None;
+    for ((application, primitive), expected) in applications
+        .into_iter()
+        .zip(metadata)
+        .zip(&model.head_primitives)
+    {
+        if application.function != primitive.function {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` primitive instruction {} used an unexpected runtime specialization",
+                application.instruction
+            )));
+        }
+        let AtomArg::App {
+            function,
+            args,
+            input_sorts,
+            output_sort,
+        } = expected
+        else {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` primitive model stopped being an application"
+            )));
+        };
+        if function != "+"
+            || input_sorts.len() != 2
+            || input_sorts.iter().any(|sort| sort != "BigRat")
+            || output_sort != "BigRat"
+            || application.args.len() != args.len()
+        {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` primitive model diverged from admitted BigRat `+`"
+            )));
+        }
+        let mut children = Vec::with_capacity(args.len());
+        for ((arg, sort), captured) in args.iter().zip(input_sorts).zip(&application.args) {
+            let endpoint = ground_arg(egraph, arg, sort, bindings, witnesses)?;
+            if endpoint.value != *captured {
+                return Err(CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` primitive instruction {} captured arguments that diverge from its grounding",
+                    application.instruction
+                )));
+            }
+            children.push(witnesses.by_endpoint(sort, endpoint.value).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` primitive argument lacked replay syntax"
+                ))
+            })?);
+        }
+        let result_endpoint = TypedEndpoint {
+            sort: output_sort.clone(),
+            value: application.result,
+        };
+        let result_availability =
+            if let Some(preexisting) = prestate_witnesses.get(&result_endpoint) {
+                witnesses.availability(*preexisting)
+            } else {
+                deferred.get_or_insert_with(|| DeferredUnsupported {
+                location: model.span.to_string(),
+                reason: format!(
+                    "BigRat `+` result without a preexisting replay witness in rule `{rule_name}`"
+                ),
+            });
+                DepArena::EMPTY
+            };
+        let witness = witnesses.intern_app(
+            output_sort,
+            function,
+            children,
+            application.result,
+            result_availability,
+            true,
+        )?;
+        // Subsequent constructor applications in this complete source head
+        // must retain the primitive syntax rather than an equivalent literal
+        // witness for the same scalar endpoint.
+        witnesses.prefer_endpoint_witness(output_sort, application.result, witness)?;
+        availability = result_availability;
+    }
+    Ok((availability, deferred))
+}
+
 fn elaborate_fire_applications<'a>(
     egraph: &EGraph,
     applications: impl IntoIterator<Item = &'a TableApplication>,
@@ -4440,6 +4829,28 @@ fn elaborate_fire_applications<'a>(
                     match witnesses.by_endpoint(&meta.output_sort, application.result) {
                         Some(witness)
                             if witnesses.nodes[witness.index()].node != expected
+                                && !prefix_fallback
+                                && children.iter().any(|child| {
+                                    witness_contains_bigrat_add(witnesses, *child)
+                                }) =>
+                        {
+                            let availability = witnesses.availability(witness);
+                            let alias = witnesses.intern_app(
+                                &meta.output_sort,
+                                &meta.name,
+                                children,
+                                application.result,
+                                availability,
+                                true,
+                            )?;
+                            witnesses.prefer_endpoint_witness(
+                                &meta.output_sort,
+                                application.result,
+                                alias,
+                            )?;
+                        }
+                        Some(witness)
+                            if witnesses.nodes[witness.index()].node != expected
                                 && !prefix_fallback =>
                         {
                             return Err(CausalSliceError::Unsupported {
@@ -4490,6 +4901,22 @@ fn elaborate_fire_applications<'a>(
         new_rows,
         new_witnesses,
     })
+}
+
+fn witness_contains_bigrat_add(witnesses: &WitnessArena, witness: WitnessId) -> bool {
+    match &witnesses.nodes[witness.index()].node {
+        WitnessNode::App {
+            sort,
+            function,
+            children,
+        } => {
+            (sort == "BigRat" && function == "+")
+                || children
+                    .iter()
+                    .any(|child| witness_contains_bigrat_add(witnesses, *child))
+        }
+        WitnessNode::Literal { .. } => false,
+    }
 }
 
 fn endpoint_witness(

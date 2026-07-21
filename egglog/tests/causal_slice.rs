@@ -783,6 +783,149 @@ fn constructor_global_rejects_arbitrary_primitives() {
 }
 
 #[test]
+fn retained_bigrat_add_in_a_complete_head_replays_strictly() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (Math Math))
+        (relation Done (Math))
+        (let $one (Num (bigrat (bigint 1) (bigint 1))))
+        (let $two (Num (bigrat (bigint 2) (bigint 1))))
+        (let $three (Num (bigrat (bigint 3) (bigint 1))))
+        (Inputs $one $two)
+        (rule ((Inputs x y)
+               (= x (Num a))
+               (= y (Num b)))
+              ((Done (Num (+ a b))))
+              :name "fold-add"
+              :no-decomp)
+        (run 1)
+        (check (Done $three))
+    "#;
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-add-native.egg".to_owned()), source)
+            .unwrap();
+    }
+
+    let slice = causal_slice_program(Some("bigrat-add.egg".to_owned()), source).unwrap();
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "fold-add")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-add-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn retained_bigrat_add_in_a_union_head_replays_strictly() {
+    let source = r#"
+        (datatype Math (Num BigRat) (Alias BigRat))
+        (relation Inputs (Math Math Math))
+        (let $one (Num (bigrat (bigint 1) (bigint 1))))
+        (let $two (Num (bigrat (bigint 2) (bigint 1))))
+        (let $actual (Num (bigrat (bigint 3) (bigint 1))))
+        (let $expected (Alias (bigrat (bigint 3) (bigint 1))))
+        (Inputs $one $two $expected)
+        (rule ((Inputs x y target)
+               (= x (Num a))
+               (= y (Num b)))
+              ((union (Num (+ a b)) target))
+              :name "fold-add-union"
+              :no-decomp)
+        (run 1)
+        (check (= $actual $expected))
+    "#;
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-add-union-native.egg".to_owned()), source)
+            .unwrap();
+    }
+
+    let slice = causal_slice_program(Some("bigrat-add-union.egg".to_owned()), source).unwrap();
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "fold-add-union")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("bigrat-add-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn integer_add_in_a_rule_head_remains_unsupported() {
+    let source = r#"
+        (relation Input (i64 i64))
+        (relation Output (i64))
+        (Input 1 2)
+        (rule ((Input a b))
+              ((Output (+ a b)))
+              :name "integer-add")
+        (run 1)
+        (check (Output 3))
+    "#;
+
+    let error = causal_slice_program(Some("integer-add.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("nested non-constructor call `+` in rule head"),
+        "{error}"
+    );
+}
+
+#[test]
+fn bigrat_add_result_without_a_preexisting_term_fails_closed() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (Math Math))
+        (relation Done (Math))
+        (let $one (Num (bigrat (bigint 1) (bigint 1))))
+        (let $two (Num (bigrat (bigint 2) (bigint 1))))
+        (Inputs $one $two)
+        (rule ((Inputs x y)
+               (= x (Num a))
+               (= y (Num b)))
+              ((Done (Num (+ a b))))
+              :name "fold-add"
+              :no-decomp)
+        (run 1)
+        (check (Done result))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("bigrat-add-new-result-native.egg".to_owned()), source)
+        .unwrap();
+    let error =
+        causal_slice_program(Some("bigrat-add-new-result.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("BigRat `+` result without a preexisting replay witness"),
+        "{error}"
+    );
+}
+
+#[test]
 fn constructor_global_rejects_unprintable_bigints() {
     let source = r#"
         (datatype Math (Num BigRat))
