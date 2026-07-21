@@ -1134,9 +1134,12 @@ fn container_sort_is_allowed_in_inert_table_schemas() {
         (sort Values (Vec i64))
         (sort Entry (Pair String i64))
         (datatype Expr (Unused Values))
+        (sort Members (Set Expr))
         (constructor UnusedEntry (Entry) Expr)
-        (relation Opaque (Values Entry))
+        (constructor UnusedMembers (Members) Expr)
+        (relation Opaque (Values Entry Members))
         (function score (Values) Entry :merge old)
+        (function members (i64) Members :merge old)
         (relation Seed ())
         (Seed)
         (run 1)
@@ -1150,11 +1153,25 @@ fn container_sort_is_allowed_in_inert_table_schemas() {
             .source
             .contains("(constructor UnusedEntry (Entry) Expr)")
     );
-    assert!(slice.source.contains("(relation Opaque (Values Entry))"));
+    assert!(
+        slice
+            .source
+            .contains("(constructor UnusedMembers (Members) Expr)")
+    );
+    assert!(
+        slice
+            .source
+            .contains("(relation Opaque (Values Entry Members))")
+    );
     assert!(
         slice
             .source
             .contains("(function score (Values) Entry :merge old)")
+    );
+    assert!(
+        slice
+            .source
+            .contains("(function members (i64) Members :merge old)")
     );
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
@@ -1226,14 +1243,14 @@ fn container_values_remain_an_explicit_runtime_boundary() {
 #[test]
 fn unproven_container_presorts_remain_an_explicit_boundary() {
     let source = r#"
-        (sort Values (Set i64))
+        (sort Values (Map i64 i64))
         (relation Seed ())
         (Seed)
         (run 1)
         (check (Seed))
     "#;
 
-    let error = causal_slice_program(Some("set-presort.egg".to_owned()), source).unwrap_err();
+    let error = causal_slice_program(Some("map-presort.egg".to_owned()), source).unwrap_err();
     assert!(error.to_string().contains("custom sorts"), "{error}");
 }
 
