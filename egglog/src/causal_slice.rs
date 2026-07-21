@@ -175,6 +175,7 @@ struct RuleModel {
     head_constructors: Vec<AtomArg>,
     head_unions: Vec<EqualityTemplate>,
     var_order: Vec<String>,
+    replay_var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
 }
 
@@ -218,6 +219,7 @@ struct SourceRuleOrigin {
     source_command_index: usize,
     source_location: String,
     original_name: Option<String>,
+    derived_replay_vars: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -779,6 +781,7 @@ fn generate_causal_slice(
         &commands,
         &relations,
         &constructors,
+        &source_rule_origins,
         source_name,
         fact_directory,
     )?;
@@ -1447,7 +1450,7 @@ fn lower_rewrites(
                 }
                 let original_name = (!rewrite.name.is_empty()).then(|| rewrite.name.clone());
                 let source_location = rewrite.span.to_string();
-                let rule = lower_one_rewrite(
+                let (rule, derived_replay_var) = lower_one_rewrite(
                     ruleset,
                     rewrite,
                     source_command_index,
@@ -1463,6 +1466,7 @@ fn lower_rewrites(
                         source_command_index,
                         source_location,
                         original_name,
+                        derived_replay_vars: vec![derived_replay_var],
                     },
                 );
             }
@@ -1477,7 +1481,7 @@ fn lower_rewrites(
                     name: rewrite.name.clone(),
                 };
                 for (expansion_index, rewrite) in [rewrite, reverse].into_iter().enumerate() {
-                    let rule = lower_one_rewrite(
+                    let (rule, derived_replay_var) = lower_one_rewrite(
                         ruleset.clone(),
                         rewrite,
                         source_command_index,
@@ -1493,6 +1497,7 @@ fn lower_rewrites(
                             source_command_index,
                             source_location: source_location.clone(),
                             original_name: original_name.clone(),
+                            derived_replay_vars: vec![derived_replay_var],
                         },
                     );
                 }
@@ -1510,7 +1515,7 @@ fn lower_one_rewrite(
     expansion_index: usize,
     used_rule_names: &mut HashSet<String>,
     source_name: &str,
-) -> Result<Rule, CausalSliceError> {
+) -> Result<(Rule, String), CausalSliceError> {
     let (start, end) = match &rewrite.span {
         Span::Egglog(span) => (span.i, span.j),
         _ => {
@@ -1555,19 +1560,22 @@ fn lower_one_rewrite(
     .collect();
     let head = Actions::singleton(Action::Union(
         span.clone(),
-        Expr::Var(span.clone(), root),
+        Expr::Var(span.clone(), root.clone()),
         rewrite.rhs,
     ));
-    Ok(Rule {
-        span,
-        body,
-        head,
-        ruleset,
-        name,
-        eval_mode: RuleEvalMode::Seminaive,
-        no_decomp: false,
-        include_subsumed: false,
-    })
+    Ok((
+        Rule {
+            span,
+            body,
+            head,
+            ruleset,
+            name,
+            eval_mode: RuleEvalMode::Seminaive,
+            no_decomp: false,
+            include_subsumed: false,
+        },
+        root,
+    ))
 }
 
 fn collect_expr_vars(expr: &Expr, vars: &mut HashSet<String>) {
@@ -1598,6 +1606,7 @@ fn validate_and_model(
     commands: &[Command],
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_rule_origins: &IndexMap<usize, SourceRuleOrigin>,
     source_name: &str,
     fact_directory: Option<&Path>,
 ) -> Result<ProgramModel, CausalSliceError> {
@@ -1631,7 +1640,11 @@ fn validate_and_model(
                         "rule declaration after the computation schedule".to_owned(),
                     );
                 }
-                let model = model_rule(rule, relations, constructors)?;
+                let derived_replay_vars = source_rule_origins
+                    .get(&index)
+                    .map(|origin| origin.derived_replay_vars.as_slice())
+                    .unwrap_or_default();
+                let model = model_rule(rule, relations, constructors, derived_replay_vars)?;
                 if rules.insert(rule.name.clone(), model).is_some() {
                     return unsupported(
                         &rule.span,
@@ -1821,6 +1834,7 @@ fn model_rule(
     rule: &crate::ast::Rule,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    derived_replay_vars: &[String],
 ) -> Result<RuleModel, CausalSliceError> {
     if rule.body.is_empty() {
         return unsupported(&rule.span, format!("an empty body on rule `{}`", rule.name));
@@ -1980,6 +1994,30 @@ fn model_rule(
         }
     }
 
+    let derived_replay_vars = derived_replay_vars
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    for derived in &derived_replay_vars {
+        let derivable = body_lookups.iter().any(|lookup| {
+            matches!(&lookup.output, AtomArg::Var(_, output) if output.as_str() == *derived)
+                && atom_arg_vars(&lookup.application)
+                    .iter()
+                    .all(|(_, input)| !derived_replay_vars.contains(input.as_str()))
+        });
+        if !derivable {
+            return Err(CausalSliceError::Invariant(format!(
+                "internal replay variable `{derived}` on rule `{}` is not functionally determined by a constructor lookup",
+                rule.name
+            )));
+        }
+    }
+    let replay_var_order = var_order
+        .iter()
+        .filter(|var| !derived_replay_vars.contains(var.as_str()))
+        .cloned()
+        .collect();
+
     Ok(RuleModel {
         span: rule.span.clone(),
         body,
@@ -1988,6 +2026,7 @@ fn model_rule(
         head_constructors,
         head_unions,
         var_order,
+        replay_var_order,
         var_sorts,
     })
 }
@@ -3668,7 +3707,7 @@ fn emit_program<'a>(
                 previous_position = Some(position);
                 let model = &rules[&fire.rule];
                 let bindings = model
-                    .var_order
+                    .replay_var_order
                     .iter()
                     .map(|var| {
                         (
@@ -3771,7 +3810,7 @@ fn validate_replay_schedule(
                 .map(|(name, _)| name.as_str())
                 .collect::<Vec<_>>();
             let expected = model
-                .var_order
+                .replay_var_order
                 .iter()
                 .map(String::as_str)
                 .collect::<Vec<_>>();

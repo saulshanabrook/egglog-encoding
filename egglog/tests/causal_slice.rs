@@ -654,6 +654,12 @@ fn anonymous_rewrite_lowers_to_one_stable_strictly_replayable_rule() {
     );
     assert!(!first.source.contains("(rewrite"));
     assert!(first.source.contains(":expect 1"));
+    let replay_leaf = first
+        .source
+        .lines()
+        .find(|line| line.contains("(run-rule"))
+        .unwrap();
+    assert!(!replay_leaf.contains("__causal_slice_v0_root"));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
