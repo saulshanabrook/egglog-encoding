@@ -100,6 +100,34 @@ def test_pair_cli_accepts_strict_and_causal_proof_treatments() -> None:
         models.EndpointRequest(targets.parse_target("."), "dd", "causal-proof-testing")
 
 
+def test_pair_cli_accepts_named_default_workloads() -> None:
+    args = benchmark.parse_benchmark_args(
+        [
+            "--workload",
+            "eggcc",
+            "--workload",
+            "pointer",
+            "--workload",
+            "luminal",
+        ]
+    )
+
+    assert args.workloads == ["eggcc", "pointer", "luminal"]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ("--workload", "pointer", "file.egg"),
+        ("--workload", "pointer", "--fact-directory", "facts"),
+        ("--workload", "pointer", "--workload", "pointer"),
+    ],
+)
+def test_pair_cli_rejects_ambiguous_named_workload_requests(argv: tuple[str, ...]) -> None:
+    with pytest.raises(SystemExit):
+        benchmark.parse_benchmark_args(argv)
+
+
 @pytest.mark.parametrize("detail", ["summary", "files", "phases", "rulesets"])
 def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
     assert benchmark.parse_benchmark_args(["--detail", detail]).detail == detail
@@ -225,7 +253,7 @@ def test_main_reports_interactive_write_oserror(
     )
     target = make_target()
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
+    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args, **_kwargs: (FILE_SPEC,))
     monkeypatch.setattr(
         benchmark,
         "resolve_targets",
@@ -254,7 +282,7 @@ def test_main_preflights_both_fresh_targets_before_collecting(
         "new": make_target(target_label="new", binary_sha256="sha256:new", binary_path=tmp_path / "new-bin"),
     }
     monkeypatch.setattr(benchmark, "git_root_for_path", lambda _path: ROOT)
-    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args: (FILE_SPEC,))
+    monkeypatch.setattr(benchmark, "resolve_files", lambda *_args, **_kwargs: (FILE_SPEC,))
     monkeypatch.setattr(
         benchmark,
         "resolve_targets",

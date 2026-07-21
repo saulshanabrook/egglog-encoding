@@ -20,32 +20,47 @@ from .targets import sha256_directory, sha256_file
 class WorkloadConfig:
     """One repository-default workload and its optional fact directory."""
 
+    name: str
     file: str
     fact_directory: str | None = None
 
 
 DEFAULT_WORKLOADS = (
-    WorkloadConfig("egglog/tests/math-microbenchmark.egg"),
-    WorkloadConfig("egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg"),
+    WorkloadConfig("math", "egglog/tests/math-microbenchmark.egg"),
+    WorkloadConfig("eggcc", "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg"),
     WorkloadConfig(
+        "pointer",
         "benchmarks/pointer-analysis-small.egg",
         "benchmarks/data/pointer-analysis-small",
     ),
-    WorkloadConfig("egglog/tests/hardboiled_conv1d_32.egg"),
-    WorkloadConfig("benchmarks/luminal-llama.egg"),
-    WorkloadConfig("egglog/tests/web-demo/herbie.egg"),
+    WorkloadConfig("hardboiled", "egglog/tests/hardboiled_conv1d_32.egg"),
+    WorkloadConfig("luminal", "benchmarks/luminal-llama.egg"),
+    WorkloadConfig("herbie", "egglog/tests/web-demo/herbie.egg"),
 )
+DEFAULT_WORKLOAD_NAMES = tuple(workload.name for workload in DEFAULT_WORKLOADS)
+DEFAULT_WORKLOADS_BY_NAME = {workload.name: workload for workload in DEFAULT_WORKLOADS}
 
 
 def resolve_files(
     raw_files: Sequence[str],
     invocation_cwd: Path,
     fact_directory: str | None = None,
+    *,
+    workload_names: Sequence[str] = (),
 ) -> tuple[FileSpec, ...]:
     """Resolve selected or default workloads relative to the invocation directory."""
 
-    if raw_files:
-        chosen = tuple(WorkloadConfig(file, fact_directory) for file in raw_files)
+    if workload_names and (raw_files or fact_directory is not None):
+        raise ValueError("cannot combine named default workloads with explicit files or --fact-directory")
+    if len(set(workload_names)) != len(workload_names):
+        raise ValueError("a named default workload was selected more than once")
+    if workload_names:
+        try:
+            chosen = tuple(DEFAULT_WORKLOADS_BY_NAME[name] for name in workload_names)
+        except KeyError as error:
+            raise ValueError(f"unknown default workload: {error.args[0]}") from error
+    elif raw_files:
+        chosen = tuple(WorkloadConfig("explicit", file, fact_directory) for file in raw_files)
     else:
         if fact_directory is not None:
             raise ValueError("--fact-directory requires at least one explicit benchmark file")

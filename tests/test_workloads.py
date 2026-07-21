@@ -91,6 +91,47 @@ def test_default_workloads_are_the_six_research_cases() -> None:
     assert pointer.fact_directory_sha256.startswith("sha256:")
 
 
+def test_named_default_workloads_preserve_order_and_fact_directories() -> None:
+    files = workloads.resolve_files(
+        [],
+        ROOT,
+        workload_names=("eggcc", "pointer", "luminal"),
+    )
+
+    assert tuple(file.display_path for file in files) == (
+        "egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg",
+        "benchmarks/pointer-analysis-small.egg",
+        "benchmarks/luminal-llama.egg",
+    )
+    assert files[0].fact_directory is None
+    assert files[1].fact_directory == (ROOT / "benchmarks/data/pointer-analysis-small").resolve()
+    assert files[2].fact_directory is None
+
+
+@pytest.mark.parametrize(
+    ("raw_files", "fact_directory", "workload_names", "message"),
+    [
+        (["file.egg"], None, ("pointer",), "cannot combine"),
+        ([], "facts", ("pointer",), "cannot combine"),
+        ([], None, ("pointer", "pointer"), "selected more than once"),
+        ([], None, ("missing",), "unknown default workload"),
+    ],
+)
+def test_named_default_workloads_reject_ambiguous_requests(
+    raw_files: list[str],
+    fact_directory: str | None,
+    workload_names: tuple[str, ...],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        workloads.resolve_files(
+            raw_files,
+            ROOT,
+            fact_directory,
+            workload_names=workload_names,
+        )
+
+
 def test_explicit_fact_directory_is_resolved_and_hashed(tmp_path: Path) -> None:
     benchmark_file = tmp_path / "input.egg"
     benchmark_file.write_text('(input Edge "edge.tsv")\n', encoding="utf-8")

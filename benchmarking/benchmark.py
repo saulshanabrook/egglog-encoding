@@ -43,7 +43,7 @@ from .reports.presentation import build_report_catalog
 from .reports.render import render_markdown_report_document, render_rich_report_document
 from .reports.store import ReportStore
 from .targets import git_root_for_path, parse_target
-from .workloads import resolve_files
+from .workloads import DEFAULT_WORKLOAD_NAMES, resolve_files
 
 DEFAULT_REPORT = ".reports.jsonl"
 DEFAULT_ROUNDS = 6
@@ -55,6 +55,14 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="Collect or reuse one egglog benchmark comparison.")
     parser.add_argument("files", nargs="*", help="egglog files to benchmark")
+    parser.add_argument(
+        "--workload",
+        dest="workloads",
+        action="append",
+        choices=DEFAULT_WORKLOAD_NAMES,
+        default=[],
+        help="select one repository-default workload; repeat to build a subset",
+    )
     parser.add_argument(
         "--fact-directory",
         default=None,
@@ -134,6 +142,12 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
         help="write an interactive HTML snapshot next to the report cache and open it",
     )
     args = parser.parse_args(argv)
+    if args.workloads and args.files:
+        parser.error("--workload cannot be combined with explicit benchmark files")
+    if args.workloads and args.fact_directory is not None:
+        parser.error("--workload cannot be combined with --fact-directory")
+    if len(set(args.workloads)) != len(args.workloads):
+        parser.error("a named default workload may be selected only once")
     if args.report == "-":
         parser.error("--report requires a file path; '-' streaming is not supported")
     args.command = "benchmark"
@@ -230,7 +244,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ReportStore validates the complete existing artifact before target
         # materialization can build or run anything.
         store = ReportStore(report_path)
-        files = resolve_files(args.files, invocation_cwd, args.fact_directory)
+        files = resolve_files(
+            args.files,
+            invocation_cwd,
+            args.fact_directory,
+            workload_names=args.workloads,
+        )
         resolved_targets = resolve_targets(
             group_endpoint_requests(baseline_request, candidate_request),
             store,

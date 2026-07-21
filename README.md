@@ -174,6 +174,17 @@ selected workloads containing `(input ...)` commands:
 ./bench.py benchmarks/pointer.egg --fact-directory benchmarks/data/pointer
 ```
 
+Use repeatable `--workload` selectors to benchmark a subset of the built-in
+suite while preserving each workload's configured fact directory:
+
+```bash
+./bench.py --workload eggcc --workload pointer --workload luminal
+```
+
+The available names are `math`, `eggcc`, `pointer`, `hardboiled`, `luminal`,
+and `herbie`. Named workloads cannot be combined with positional paths or
+`--fact-directory`.
+
 Paths are resolved relative to the command invocation directory, not relative
 to either target. Both endpoints therefore run the exact same file and fact
 directory contents. Their SHA-256 hashes are part of the cache identity.
