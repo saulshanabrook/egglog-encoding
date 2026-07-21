@@ -1103,12 +1103,18 @@ fn generate_causal_slice(
     let preparation_start = Instant::now();
     let validation_template = egraph.clone();
     let fact_directory = egraph.fact_directory.clone();
+    let registered_presorts = egraph
+        .type_info()
+        .presort_names()
+        .map(str::to_owned)
+        .collect::<HashSet<_>>();
     egraph = egraph.with_union_to_set_optimization(false);
     let commands = egraph.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
     let (mut commands, source_rule_origins) = lower_rewrites(commands, source_name)?;
 
-    let (relations, constructors) = collect_declarations(&commands, source_name)?;
+    let (relations, constructors) =
+        collect_declarations(&commands, source_name, &registered_presorts)?;
     let rule_mapping = name_and_prepare_rules(&mut commands, source_name, &source_rule_origins)?;
     let ProgramModel {
         rules,
@@ -1123,6 +1129,7 @@ fn generate_causal_slice(
         &relations,
         &constructors,
         &source_rule_origins,
+        &registered_presorts,
         source_name,
         fact_directory.as_deref(),
     )?;
@@ -1866,13 +1873,14 @@ fn trace_function_metadata(
     Ok(result)
 }
 
-fn schema_only_container_presort(presort: &str) -> bool {
-    matches!(presort, "Pair" | "Set" | "UnstableFn" | "Vec")
+fn schema_only_registered_presort(presort: &str, registered_presorts: &HashSet<String>) -> bool {
+    registered_presorts.contains(presort)
 }
 
 fn collect_declarations(
     commands: &[Command],
     source_name: &str,
+    registered_presorts: &HashSet<String>,
 ) -> Result<
     (
         IndexMap<String, RelationDecl>,
@@ -1896,7 +1904,7 @@ fn collect_declarations(
                             datatype_sorts.insert(name.clone());
                         }
                         Subdatatypes::NewSort(presort, _)
-                            if schema_only_container_presort(presort) =>
+                            if schema_only_registered_presort(presort, registered_presorts) =>
                         {
                             opaque_sorts.insert(name.clone());
                         }
@@ -1908,7 +1916,7 @@ fn collect_declarations(
                 name,
                 presort_and_args: Some((presort, _)),
                 ..
-            } if schema_only_container_presort(presort) => {
+            } if schema_only_registered_presort(presort, registered_presorts) => {
                 opaque_sorts.insert(name.clone());
             }
             _ => {}
@@ -2021,7 +2029,7 @@ fn collect_declarations(
                             }
                         }
                         Subdatatypes::NewSort(presort, _)
-                            if schema_only_container_presort(presort) => {}
+                            if schema_only_registered_presort(presort, registered_presorts) => {}
                         Subdatatypes::NewSort(presort, _) => {
                             return unsupported(
                                 span,
@@ -2373,6 +2381,7 @@ fn validate_and_model(
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
     source_rule_origins: &IndexMap<usize, SourceRuleOrigin>,
+    registered_presorts: &HashSet<String>,
     source_name: &str,
     fact_directory: Option<&Path>,
 ) -> Result<ProgramModel, CausalSliceError> {
@@ -2410,9 +2419,9 @@ fn validate_and_model(
                 proof_constructors: None,
                 unionable: true,
                 ..
-            } if presort_and_args
-                .as_ref()
-                .is_none_or(|(presort, _)| schema_only_container_presort(presort)) =>
+            } if presort_and_args.as_ref().is_none_or(|(presort, _)| {
+                schema_only_registered_presort(presort, registered_presorts)
+            }) =>
             {
                 if !schedule_indices.is_empty() {
                     return unsupported_command(

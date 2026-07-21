@@ -52,6 +52,41 @@ fn configured_experimental_egraph_slices_and_strictly_replays() {
 }
 
 #[test]
+fn configured_container_presorts_are_preserved_as_opaque_schemas() {
+    let source = r#"
+        (sort IntOrBool (Either i64 bool))
+        (sort Bound (Maybe IntOrBool))
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (Seed 1)
+        (rule ((Seed x)) ((Goal x)) :name "copy")
+        (run 1)
+        (check (Goal 1))
+    "#;
+
+    let replay = causal_slice_replay_program_with_egraph(
+        Some("experimental-presorts.egg".to_owned()),
+        source,
+        new_experimental_egraph_for_proofs(),
+    )
+    .unwrap();
+    assert!(replay.source.contains("(sort IntOrBool (Either i64 bool))"));
+    assert!(replay.source.contains("(sort Bound (Maybe IntOrBool))"));
+
+    for mut egraph in [
+        new_experimental_egraph_for_proofs(),
+        new_experimental_egraph_with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                Some("experimental-presorts-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn experimental_cli_preserves_configuration_for_causal_slice() {
     let directory = temporary_directory();
     let program = directory.join("for.egg");

@@ -1819,16 +1819,16 @@ fn container_values_remain_an_explicit_runtime_boundary() {
 }
 
 #[test]
-fn unproven_container_presorts_remain_an_explicit_boundary() {
+fn unregistered_container_presorts_remain_an_explicit_boundary() {
     let source = r#"
-        (sort Values (Map i64 i64))
+        (sort Values (UnknownContainer i64 i64))
         (relation Seed ())
         (Seed)
         (run 1)
         (check (Seed))
     "#;
 
-    let error = causal_slice_program(Some("map-presort.egg".to_owned()), source).unwrap_err();
+    let error = causal_slice_program(Some("unknown-presort.egg".to_owned()), source).unwrap_err();
     assert!(error.to_string().contains("custom sorts"), "{error}");
 }
 
@@ -2073,22 +2073,23 @@ fn mutually_recursive_datatype_star_replays_ordinary_and_strictly() {
 }
 
 #[test]
-fn datatype_star_custom_presorts_remain_an_explicit_boundary() {
+fn datatype_star_unregistered_presorts_remain_an_explicit_boundary() {
     let source = r#"
         (datatype*
             (Node (Leaf i64))
-            (sort Mapping (Map i64 i64)))
+            (sort Mapping (UnknownContainer i64 i64)))
         (relation Seed ())
         (Seed)
         (run 1)
         (check (Seed))
     "#;
 
-    let error = causal_slice_program(Some("datatype-star-map.egg".to_owned()), source).unwrap_err();
+    let error =
+        causal_slice_program(Some("datatype-star-unknown.egg".to_owned()), source).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("datatype* sort `Mapping` with unsupported presort `Map`"),
+            .contains("datatype* sort `Mapping` with unsupported presort `UnknownContainer`"),
         "{error}"
     );
 }

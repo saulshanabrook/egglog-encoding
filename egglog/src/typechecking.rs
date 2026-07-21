@@ -750,6 +750,10 @@ impl EGraph {
 }
 
 impl TypeInfo {
+    pub(crate) fn presort_names(&self) -> impl Iterator<Item = &str> {
+        self.mksorts.keys().map(String::as_str)
+    }
+
     fn register_named_rule(&mut self, rule: &ResolvedRule) -> Result<(), TypeError> {
         if let Some(previous) = self.named_rules.get(&rule.name) {
             return Err(TypeError::DuplicateRuleName {
