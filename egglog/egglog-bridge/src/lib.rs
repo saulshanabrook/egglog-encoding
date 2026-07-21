@@ -826,8 +826,14 @@ impl EGraph {
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
         let rule_set_report = if self.rule_match_trace.is_some() {
-            let (report, trace) =
-                run_rules_impl_traced(&mut self.db, &mut self.rules, rules, ts, self.report_level)?;
+            let (report, trace) = run_rules_impl_traced(
+                &mut self.db,
+                self.uf_table,
+                &mut self.rules,
+                rules,
+                ts,
+                self.report_level,
+            )?;
             self.rule_match_trace
                 .as_mut()
                 .expect("trace presence was checked above")
@@ -2112,6 +2118,7 @@ fn run_rules_impl(
 
 fn run_rules_impl_traced(
     db: &mut Database,
+    uf_table: TableId,
     rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
     rules: &[RuleId],
     next_ts: Timestamp,
@@ -2122,8 +2129,25 @@ fn run_rules_impl_traced(
         .map(|rule| (*rule, rule_info[*rule].last_run_at))
         .collect::<Vec<_>>();
     let ruleset = build_rule_set(db, rule_info, rules, next_ts)?;
-    match db.run_rule_set_traced(&ruleset, report_level) {
-        Ok(result) => Ok(result),
+    let uf = db
+        .get_table(uf_table)
+        .as_any()
+        .downcast_ref::<core_relations::DisplacedTable>()
+        .expect("the configured union-find table must remain displaced-table backed");
+    anyhow::ensure!(uf.begin_union_trace(), "a union trace is already active");
+    let result = db.run_rule_set_traced(&ruleset, report_level);
+    let receipts = db
+        .get_table(uf_table)
+        .as_any()
+        .downcast_ref::<core_relations::DisplacedTable>()
+        .expect("the configured union-find table must remain displaced-table backed")
+        .take_union_trace()
+        .expect("the union trace was started immediately above");
+    match result {
+        Ok((report, mut trace)) => {
+            trace.unions = receipts;
+            Ok((report, trace))
+        }
         Err(error) => {
             // A trace-policy rejection happens before native execution. Keep
             // seminaive freshness unchanged so a caller may recover and run

@@ -199,6 +199,76 @@ fn traced_lookup_or_insert_keeps_exact_match_origins_for_hits_and_shared_predict
 }
 
 #[test]
+fn traced_unions_report_applied_and_redundant_commits_with_raw_endpoints() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "union-trace-source".into(),
+        can_subsume: false,
+    });
+    let terms = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "union-trace-terms".into(),
+        can_subsume: false,
+    });
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    egraph.add_term(source, &[zero]);
+    let left = egraph.add_term(terms, &[zero]);
+    let right = egraph.add_term(terms, &[one]);
+
+    let rule = {
+        let mut builder = egraph.new_rule("traced union", true);
+        let key = builder.new_var_named(ColumnTy::Base(int_base), "key");
+        let source_result = builder.new_var_named(ColumnTy::Id, "source-result");
+        builder
+            .query_table(source, &[key, source_result], Some(false))
+            .unwrap();
+        let left = QueryEntry::Const {
+            val: left,
+            ty: ColumnTy::Id,
+        };
+        let right = QueryEntry::Const {
+            val: right,
+            ty: ColumnTy::Id,
+        };
+        builder.union(left.clone(), right.clone());
+        builder.union(left, right);
+        builder.build()
+    };
+
+    egraph.begin_rule_match_trace().unwrap();
+    egraph.run_rules(&[rule]).unwrap();
+    let batches = egraph.take_rule_match_trace().unwrap();
+    assert_eq!(batches.len(), 1);
+    let trace = &batches[0];
+    assert_eq!(trace.matches.len(), 1);
+    assert_eq!(trace.unions.len(), 2);
+    assert!(trace.unions.iter().all(|receipt| {
+        receipt.origin.map(|origin| origin.index()) == Some(0)
+            && receipt.lhs == left
+            && receipt.rhs == right
+    }));
+    assert!(matches!(
+        trace.unions[0].outcome,
+        core_relations::UnionOutcome::Applied { .. }
+    ));
+    assert!(matches!(
+        trace.unions[1].outcome,
+        core_relations::UnionOutcome::Redundant { .. }
+    ));
+}
+
+#[test]
 fn dropped_rule_builder_releases_panics() {
     let mut egraph = EGraph::default();
     let unit_type = egraph.base_values_mut().register_type::<()>();

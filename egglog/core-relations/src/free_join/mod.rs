@@ -129,12 +129,29 @@ pub struct TableApplication {
     pub newly_staged: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnionOutcome {
+    Applied { parent: Value, child: Value },
+    Redundant { representative: Value },
+}
+
+/// Commit-time result for one staged union, retaining the raw endpoints and
+/// the rule-match lane that proposed it when one exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnionReceipt {
+    pub origin: Option<RuleMatchId>,
+    pub lhs: Value,
+    pub rhs: Value,
+    pub outcome: UnionOutcome,
+}
+
 /// Evidence captured by the same native join/action execution that applies a
 /// bounded ruleset iteration.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RuleExecutionTrace {
     pub matches: Vec<RuleMatch>,
     pub applications: Vec<TableApplication>,
+    pub unions: Vec<UnionReceipt>,
 }
 
 /// A traced run must use a single-bag plan because tree decomposition can lose

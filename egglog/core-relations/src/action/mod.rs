@@ -407,6 +407,11 @@ impl<'a> MutationBuffers<'a> {
         self.notify_list.notify(table_id);
     }
 
+    fn stage_insert_with_origin(&mut self, table_id: TableId, row: &[Value], origin: RuleMatchId) {
+        self.buffers[table_id].stage_insert_with_origin(row, origin);
+        self.notify_list.notify(table_id);
+    }
+
     fn stage_remove(&mut self, table_id: TableId, key: &[Value]) {
         self.buffers[table_id].stage_remove(key);
         self.notify_list.notify(table_id);
@@ -446,6 +451,13 @@ impl<'a> ExecutionState<'a> {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
         self.buffers.stage_insert(table, row);
+        self.changed = true;
+    }
+
+    fn stage_insert_with_origin(&mut self, table: TableId, row: &[Value], origin: RuleMatchId) {
+        self.buffers
+            .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+        self.buffers.stage_insert_with_origin(table, row, origin);
         self.changed = true;
     }
 
@@ -827,11 +839,19 @@ impl ExecutionState<'_> {
                 *mask = lookup_result;
             }
             Instr::Insert { table, vals } => {
-                for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                    iter.for_each(|vals| {
-                        self.stage_insert(*table, vals.as_slice());
-                    })
-                });
+                if let Some((origins, _, _)) = trace {
+                    for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                        iter.zip(origins).for_each(|(vals, origin)| {
+                            self.stage_insert_with_origin(*table, vals.as_slice(), *origin);
+                        })
+                    });
+                } else {
+                    for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                        iter.for_each(|vals| {
+                            self.stage_insert(*table, vals.as_slice());
+                        })
+                    });
+                }
             }
             Instr::InsertIfEq { table, l, r, vals } => match (l, r) {
                 (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {

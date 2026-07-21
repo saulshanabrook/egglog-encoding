@@ -3,14 +3,17 @@
 use std::{
     any::Any,
     mem::{self, ManuallyDrop},
-    sync::{Arc, Weak},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    TableChange, TaggedRowBuffer,
+    RuleMatchId, TableChange, TaggedRowBuffer, UnionOutcome, UnionReceipt,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
@@ -56,7 +59,37 @@ pub struct DisplacedTable {
     displaced: Vec<(Value, Value)>,
     changed: bool,
     lookup_table: HashMap<Value, RowId>,
-    buffered_writes: Arc<SegQueue<RowBuffer>>,
+    buffered_writes: Arc<SegQueue<(RowBuffer, Option<Vec<Option<RuleMatchId>>>)>>,
+    union_trace: Arc<UnionTraceSink>,
+}
+
+#[derive(Default)]
+struct UnionTraceSink {
+    active: AtomicBool,
+    receipts: Mutex<Vec<UnionReceipt>>,
+}
+
+impl UnionTraceSink {
+    fn begin(&self) -> bool {
+        if self.active.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        self.receipts.lock().unwrap().clear();
+        true
+    }
+
+    fn record(&self, receipt: UnionReceipt) {
+        if self.active.load(Ordering::Acquire) {
+            self.receipts.lock().unwrap().push(receipt);
+        }
+    }
+
+    fn take(&self) -> Option<Vec<UnionReceipt>> {
+        if !self.active.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+        Some(mem::take(&mut *self.receipts.lock().unwrap()))
+    }
 }
 
 struct Canonicalizer<'a> {
@@ -198,6 +231,7 @@ impl Default for DisplacedTable {
             changed: false,
             lookup_table: HashMap::default(),
             buffered_writes: Arc::new(SegQueue::new()),
+            union_trace: Arc::new(UnionTraceSink::default()),
         }
     }
 }
@@ -210,13 +244,15 @@ impl Clone for DisplacedTable {
             changed: self.changed,
             lookup_table: self.lookup_table.clone(),
             buffered_writes: Default::default(),
+            union_trace: Default::default(),
         }
     }
 }
 
 struct UfBuffer {
     to_insert: ManuallyDrop<RowBuffer>,
-    buffered_writes: Weak<SegQueue<RowBuffer>>,
+    origins: Option<Vec<Option<RuleMatchId>>>,
+    buffered_writes: Weak<SegQueue<(RowBuffer, Option<Vec<Option<RuleMatchId>>>)>>,
 }
 
 impl Drop for UfBuffer {
@@ -233,13 +269,23 @@ impl Drop for UfBuffer {
         // This avoids creating a fresh row buffer via `mem::take` or `mem::swap` and
         // dropping it immediately.
         let to_insert = unsafe { ManuallyDrop::take(&mut self.to_insert) };
-        buffered_writes.push(to_insert);
+        buffered_writes.push((to_insert, self.origins.take()));
     }
 }
 
 impl MutationBuffer for UfBuffer {
     fn stage_insert(&mut self, row: &[Value]) {
         self.to_insert.add_row(row);
+        if let Some(origins) = self.origins.as_mut() {
+            origins.push(None);
+        }
+    }
+    fn stage_insert_with_origin(&mut self, row: &[Value], origin: RuleMatchId) {
+        let previous_len = self.to_insert.len();
+        self.to_insert.add_row(row);
+        self.origins
+            .get_or_insert_with(|| vec![None; previous_len])
+            .push(Some(origin));
     }
     fn stage_remove(&mut self, _: &[Value]) {
         panic!("attempting to remove data from a DisplacedTable")
@@ -247,6 +293,7 @@ impl MutationBuffer for UfBuffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(self.to_insert.arity())),
+            origins: None,
             buffered_writes: self.buffered_writes.clone(),
         })
     }
@@ -434,14 +481,33 @@ impl Table for DisplacedTable {
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(3)),
+            origins: None,
             buffered_writes: Arc::downgrade(&self.buffered_writes),
         })
     }
 
     fn merge(&mut self, _: &mut ExecutionState) -> TableChange {
-        while let Some(rowbuf) = self.buffered_writes.pop() {
-            for row in rowbuf.iter() {
-                self.changed |= self.insert_impl(row).is_some();
+        while let Some((rowbuf, origins)) = self.buffered_writes.pop() {
+            for (index, row) in rowbuf.iter().enumerate() {
+                let outcome = match self.insert_impl(row) {
+                    Some((parent, child)) => {
+                        self.changed = true;
+                        UnionOutcome::Applied { parent, child }
+                    }
+                    None => UnionOutcome::Redundant {
+                        representative: self.uf.find_naive(row[0]),
+                    },
+                };
+                self.union_trace.record(UnionReceipt {
+                    origin: origins
+                        .as_ref()
+                        .and_then(|origins| origins.get(index))
+                        .copied()
+                        .flatten(),
+                    lhs: row[0],
+                    rhs: row[1],
+                    outcome,
+                });
             }
         }
         let changed = mem::take(&mut self.changed);
@@ -455,6 +521,14 @@ impl Table for DisplacedTable {
 }
 
 impl DisplacedTable {
+    pub fn begin_union_trace(&self) -> bool {
+        self.union_trace.begin()
+    }
+
+    pub fn take_union_trace(&self) -> Option<Vec<UnionReceipt>> {
+        self.union_trace.take()
+    }
+
     pub fn underlying_uf(&self) -> &UnionFind {
         &self.uf
     }

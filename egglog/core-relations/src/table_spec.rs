@@ -14,7 +14,7 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    QueryEntry, TableId, Variable,
+    QueryEntry, RuleMatchId, TableId, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -394,6 +394,13 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// table.
     fn stage_insert(&mut self, row: &[Value]);
 
+    /// Stage an insertion attributed to one traced rule-match lane. Tables
+    /// without commit-time provenance support preserve their ordinary
+    /// behavior and ignore the origin.
+    fn stage_insert_with_origin(&mut self, row: &[Value], _origin: RuleMatchId) {
+        self.stage_insert(row);
+    }
+
     /// Stage the keyed entries for removal. Changes may not be visible until
     /// this buffer is dropped, and after `merge` is called on the underlying
     /// table.
@@ -591,6 +598,10 @@ impl WrappedTable {
             inner: self.inner.dyn_clone(),
             wrapper: self.wrapper.dyn_clone(),
         }
+    }
+
+    pub fn as_any(&self) -> &dyn Any {
+        self.inner.as_any()
     }
 
     pub(crate) fn as_ref(&self) -> WrappedTableRef<'_> {
