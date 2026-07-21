@@ -69,6 +69,15 @@ record. The current implementation additionally confirms:
   passes strict replay, but six rounds are 0.975–1.01x full strict-proof wall
   time because the emitted program still retains 392,939 of 455,788 source
   bytes.
+- native rebuild appends exact successful-union receipts after rule-origin
+  receipts; originless rebuild edges use an explicitly counted Prefix through
+  the wave, and a child-union/parent-congruence canary passes strict replay;
+- independent push/pop computation regions use separate arenas and replay at
+  their original schedule boundaries, containing runtime-ID reuse without a
+  global epoch claim;
+- selected positive checks reconstruct pure BigInt/BigRat syntax from exact
+  `Context::Read` primitive applications. Herbie advances to an exact `Num`
+  row whose syntax has no prior availability evidence and fails closed there.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -134,10 +143,11 @@ lowering, closed immutable globals, inert custom-function declarations, and a
 print-only Prefix fallback. It also admits one exact deterministic query
 primitive from the tested i64/BigRat whitelist and narrow proof-validating
 BigRat head arithmetic. It also admits exact single-output `:merge new`
-function lookups and writes with successful commit/rebuild evidence. It still
-rejects custom merges, lookup misses, delete, general subsume, arbitrary
-external functions, containers, extracts, negative checks, push/pop, includes,
-output/opaque I/O, input `run-rule`, and DD.
+function lookups and writes with successful commit/rebuild evidence. It also
+supports independent transactional push/pop regions. It still rejects custom
+merge updates, lookup misses, delete, general subsume, arbitrary external
+functions, containers, extracts, negative checks, cross-region dependencies,
+includes, output/opaque I/O, input `run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -157,7 +167,7 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | action lanes and mutation proposals carry a pending-fire origin | Confirmed for traced head applications, union proposals, and watched sorted writes | traced `ActionState` lanes carry `RuleMatchId`; table applications, union receipts, and exact `:merge new` receipts preserve it; general row mutations remain incomplete |
 | commit reports which proposal was new, changed, redundant, or deleted | Confirmed for union outcome and watched exact sorted writes | union reports applied/redundant; watched sorted writes report `Inserted`, `Replaced`, or `NoOp` plus old/new complete rows. Delete and arbitrary custom-merge callback evidence remain absent |
 | lookup hits and misses expose row/tombstone evidence | Falsified | vectorized lookup drops row identity and hit/miss provenance; there is no tombstone dependency |
-| successful union exposes raw endpoints, origin, and success | Confirmed for traced rule proposals | `UnionReceipt` records raw lhs/rhs, optional `RuleMatchId`, and applied/redundant outcome; originless rebuild/congruence unions remain unsupported |
+| successful union exposes raw endpoints, origin, and success | Confirmed for traced rule proposals and rebuild | `UnionReceipt` records raw lhs/rhs, optional `RuleMatchId`, and applied/redundant outcome; rebuild receipts append after direct receipts with no origin, so the slicer uses a reported Prefix rather than guessing a producer |
 | successful raw-endpoint edges form a forest without epochs in one scope | Confirmed for direct and constructor-union canaries | applied edges join distinct components, redundant edges are omitted, and strict replay resolves the unique path |
 | a chosen positive check exposes its exact internal constructor rows without a second query | Confirmed | trace-only marker calls are attached to canonical constructor atoms in the same native check query and associated with the selected `RuleMatchId`; repeated and prefix-named constructors pass strict replay |
 | printed constructor syntax plus output endpoint uniquely determines match-time children | Falsified | the closed congruence canary has the same `Wrap(A 1)` syntax/output with pre- and post-union child endpoints; endpoint-qualified exact witness nodes are required |
@@ -170,7 +180,7 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | changed global endpoints need no causal dependency | Falsified | a reduced three-rule slice fails without the earlier union; retaining the definition-to-use forest path makes ordinary and strict replay pass |
 | one preferred witness identifies a constructor body row after equality | Falsified | retained chained-lookup canary requires exact native body-row/version evidence; witness inverse search is forbidden |
 | a container outer value identifies immutable contents | Falsified | the same outer ID can survive content rebuild; an immutable container-version witness is required |
-| all-no-op firings need persistent replay events | Falsified for Bronze | all matches remain available for the diagnostic transcript, but only first logical producers become persistent fire events |
+| all-no-op firings need persistent replay events | Falsified for ordinary Bronze, required under Prefix | ordinary slicing omits no-op events; an originless rebuild Prefix promotes and retains every replayable firing through its boundary, including no-ops |
 | one positive check can root one complete actual environment | Confirmed within the planner boundary | one-atom variable check and two-atom constant/repeated-variable checks pass; projected/decomposed checks fail closed |
 | sequential grounded leaves preserve the supported monotone fragment | Confirmed | fully grounded set atoms have at most one complete row; prerequisites pre-exist; insertions commute and duplicates are no-ops |
 | sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
@@ -268,10 +278,11 @@ applied/redundant outcome. Direct and nested constructor-union slices recover
 the unique successful-edge path and pass unchanged strict proof replay;
 redundant unions do not add edges or persistent union-only events.
 
-This does not establish general congruence/rebuild support. Originless rebuild
-unions and relation-row rekeys lack the required colliding-row and child-
-equality transition evidence and fail closed when the affected event is
-retained. Push/pop remains outside the no-epoch claim.
+This does not establish exact minimal congruence/rebuild causes. Originless
+rebuild unions now retain a conservative, reported event Prefix through their
+wave; relation-row rekeys still lack transition evidence and fail closed.
+Independent push/pop regions reset their arenas, while cross-scope support
+remains outside the no-epoch claim.
 
 ## Experiment ledger
 
@@ -286,7 +297,7 @@ retained. Push/pop remains outside the no-epoch claim.
 | E6 | Is sequential replay adequate for Bronze? | passed for fully grounded positive set relations |
 | E7 | Does sequential replay preserve mutation waves? | falsified by insert/delete, delete/read, subsume/read, and lookup canaries |
 | E8 | Does standalone `run-rule :expect` count after primitive filters? | falsified; generated packed replay now uses a separate complete post-filter guard path |
-| E9 | Is the equality forest available from current hooks? | passed for rule-originated direct unions; originless congruence/rebuild remains unsupported |
+| E9 | Is the equality forest available from current hooks? | passed for rule-originated direct unions; exact originless rebuild endpoints now use a reported conservative Prefix rather than a guessed producer |
 | E10 | Are source planner flags preserved? | passed; emission preserves absence/presence of `:no-decomp` and validates it in the semantic rule mapping |
 | E11 | Are duplicate complete head rows counted once while the full head replays? | passed |
 | E12 | Can the public runner measure trace + slice + unchanged strict replay as one treatment? | passed: one release Bronze observation for each strict treatment; timing is point-only |
@@ -314,6 +325,9 @@ retained. Push/pop remains outside the no-epoch claim.
 | E34 | Are failed query primitive candidates replayed as firings? | no: focused `pow(0,-1)`, `log(2)`, and false BigRat predicate candidates produce no retained replay fire, while successful peers replay strictly |
 | E35 | Are exact `:merge new` receipts sufficient for mutable row dependencies? | yes narrowly: five focused canaries cover new/replaced/no-op state, complete mixed heads, same-wave prestate, rebuild migration, and the strict-proof rekey boundary |
 | E36 | Does Luminal's one-fire dynamic slice save strict-proof time? | no: six rounds retain 1/11,698 effective events but measure 0.975–1.01x full proof wall; source preservation leaves 392,939 bytes to parse/typecheck/instrument |
+| E37 | Does native tracing expose rebuild congruence unions in causal order? | yes: the bridge trace contains the applied direct child union with origin, then the applied parent congruence union without origin; focused bridge and strict replay canaries pass |
+| E38 | Can independent push/pop regions avoid equality-ID epochs? | yes narrowly: each region is sliced with fresh arenas and replayed at its original schedule; no cross-region dependency is claimed |
+| E39 | Can a chosen check reconstruct BigInt/BigRat syntax without extraction? | yes: exact selected-match `Context::Read` applications identify deterministic `bigint`/`bigrat` results; Herbie then reaches the distinct `Num` row-availability boundary |
 
 ## Validation commands
 

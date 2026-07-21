@@ -28,6 +28,23 @@ reachability, so an unsupported but causally irrelevant firing does not poison
 a sound slice. The same unsupported construct still fails closed when its
 event is retained.
 
+The current checkpoint also captures successful unions created by native
+rebuild after rule heads commit. These receipts have exact raw endpoints but
+no rule origin. Rather than inventing one, the equality forest labels such an
+edge with a reported conservative Prefix dependency covering every replayable
+firing through that wave. A reduced child-union/parent-congruence example
+passes ordinary and unchanged strict proof replay, including an otherwise
+no-op firing retained by the Prefix. This is sound fallback infrastructure,
+not a small-slice claim.
+
+Independent `push`/`run`/positive-check/`pop` regions are now traced, sliced,
+and replayed at their original schedule positions with fresh per-region
+arenas. Pure `bigint`/`bigrat` constructors used by a chosen positive check are
+reconstructed from that selected match's exact native primitive applications.
+Full Herbie now advances through those cases and stops fail-closed at the next
+boundary: an exact match-time `Num` row for which no prior replayable syntax
+instance was captured.
+
 The current extension also covers visible single-output mutable functions whose
 merge expression is syntactically exact `:merge new`. The native sorted-write
 commit path reports the exact proposal origin and `Inserted`, `Replaced`, or
@@ -258,7 +275,8 @@ requires exactly one file plus `--proof-testing`.
 The debug trace currently retains every raw match and binding through the
 whole schedule. Literal witnesses and `PendingFire`s are elaborated post-run,
 so raw batches and pending data briefly coexist. Persistent `ReplayEvent`s
-exclude all-no-op firings, but temporary memory remains
+normally exclude all-no-op firings; a conservative Prefix deliberately
+promotes them through its boundary. Temporary memory remains
 `O(all matches + bindings)`. A production tracer needs a wave callback/sink;
 this spike does not claim the intended wave-local memory behavior.
 
@@ -371,7 +389,7 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | decomposed-join provenance | rejected | intermediate rows have no shadow `DepId` |
 | projected existential grounding | rejected | PR #23 partial bind changes match count; missing selector/witness interface |
 | direct equality/union slicing | implemented and tested | commit receipts retain origin and applied/redundant result; direct and constructor-union slices pass strict proofs |
-| congruence/rebuild equality | observation rekeys implemented narrowly; dynamic state still rejected | an exact constructor row from the chosen native check plus the successful child-equality path can root a slice; originless dynamic rebuild unions and relation-row rekeys remain absent |
+| congruence/rebuild equality | conservative Prefix implemented for exact successful rebuild unions | rebuild receipts append after rule-origin unions; an originless applied edge retains every replayable event through that wave and reports one Prefix fallback; exact minimal causes and relation-row rekeys remain absent |
 | extract observation | rejected | selected-term/equality dependency path not implemented; no optimality claim |
 | negative check/absence | rejected | no tombstone or exhaustiveness evidence |
 | delete/subsume | rejected | state provenance absent and sequential replay diverges |
@@ -387,7 +405,7 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | rewrite/birewrite replay | implemented and tested | deterministic parsed lowering, stable source mapping, projected binding aliases, ordinary and strict canaries |
 | print-only observations | conservative Prefix fallback | every effective preceding event is retained; each `print-size` root is reported; no size reduction is claimed |
 | containers | rejected | same outer ID can represent changed contents |
-| push/pop | rejected | runtime IDs can be reused after restore |
+| push/pop | implemented for independent transactional regions | each `push`/single computation region/positive checks/`pop` is sliced with fresh arenas and replayed at its original schedule; cross-region dependencies and more general nested scope programs remain rejected |
 | output effects, includes, opaque I/O | rejected | reproducibility/hidden schedules unproven; scalar relation input is the one admitted I/O normalization |
 | DD backend | rejected | reference backend only |
 | globally minimum slice | not attempted | one deterministic actual support only |
@@ -447,10 +465,12 @@ outcome. Every applied edge joins distinct components; direct and nested
 constructor-union canaries recover the unique earlier path and pass strict
 proof replay. A later redundant edge is not added.
 
-No epoch is needed for this tested one-scope forest. Congruence/rebuild unions
-without an originating firing and relation-row rekeys remain fail-closed when
-retained. The global no-epoch claim is still false: push/pop can reuse
-`Value(0)` for another term.
+No epoch is needed inside one tested scope. Native rebuild now appends exact
+successful union endpoints after rule-origin receipts; because it does not
+expose the colliding-row cause, a retained edge conservatively depends on the
+complete event Prefix through that wave. Relation-row rekeys remain
+fail-closed. The global no-epoch claim is still false, so supported independent
+push/pop regions reset their arenas at scope boundaries.
 
 ### Dynamic globals
 
@@ -661,14 +681,15 @@ timed as successful rows.
 |---|---|---|
 | `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | custom merged `lo`/`hi` state after line 80 | query `pow`/`log`/comparisons, unary/binary BigRat heads, and exact `:merge new` rows pass; custom merge result/read provenance, push/pop, and multiple schedules remain |
+| `herbie.egg` | chosen positive check has an exact `Num` row without a prior replayable syntax instance | scoped regions, fresh BigRat min/max source rows, mixed query/head `bigint`/`bigrat` tapes, rebuild-union Prefix support, and scalar check syntax now pass; exact observation-time constructor provenance or a reported observation Prefix is next |
 | `luminal-llama.egg` | implemented and benchmarked | 12,568 pending / 11,698 effective / 1 retained; ordinary and unchanged strict replay pass; 0.975–1.01x strict-proof wall despite a one-fire dynamic slice because 392,939 source bytes remain |
 | `hardboiled_conv1d_32.egg` | `Call` body pattern with opaque `VecExpr` at line 234 | inert `UnstableFn` schemas are admitted; versioned container witnesses, functions, filters, broad joins, and subsume provenance remain |
 | `eggcc-2mm-pass1.egg` | implemented and benchmarked | ordinary trace, causal slice, guarded replay, and unchanged strict checker pass; integrated causal proof is 0.528–0.532x full strict-proof time but 2.50–2.54x native time; unsupported mutable/container paths not retained by this observation still fail closed when relevant |
 
-The declaration-only, query-primitive, and exact `:merge new` frontiers are now
-closed. Herbie has reached custom merged function rows; the selected Luminal
-and Eggcc observations slice around causally irrelevant unsupported state; and
+The declaration-only, query-primitive, exact `:merge new`, scoped-region, and
+rebuild-union Prefix frontiers are now closed. Herbie has reached exact
+observation-time constructor provenance; the selected Luminal and Eggcc
+observations slice around causally irrelevant unsupported state; and
 Hardboiled remains at versioned container values. Guarded post-filter
 shared-prestate replay, exact global snapshots, narrow BigRat/i64 primitive
 evidence, and exact new-value state receipts are implemented. Custom merges,
@@ -806,6 +827,23 @@ Current mutable/Luminal continuation at `53230e7d9fcb`:
 - `make proof-tests` and `make check` have not yet been rerun after the mutable
   continuation; their last complete runs passed at the post-filter checkpoint.
 
+Current scoped/rebuild/observation continuation:
+
+- `cargo test -p egglog --test causal_slice`: 121 passed, including independent
+  scoped replay, mixed query/head auxiliary scalar tapes, exact positive-check
+  BigInt/BigRat applications, fresh custom-merge source insertion, and a
+  conservative rebuild-congruence Prefix in ordinary and strict proof modes;
+- `cargo test -p egglog-bridge`: 31 passed, including a direct rule union
+  followed chronologically by an originless rebuild congruence receipt;
+- `cargo check -p egglog`, focused Clippy with warnings denied, formatting, and
+  `git diff --check`: passed;
+- full Herbie advances beyond BigInt/BigRat observation syntax and fails closed
+  at the exact `Num` constructor-row provenance boundary described above;
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- `make check`: passed, including formatting, Ruff, mypy, workspace Clippy,
+  170 Python tests, the full Rust workspace, 764 reference file fixtures,
+  experimental/DD tests, and doctests.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -833,6 +871,9 @@ Current mutable/Luminal continuation at `53230e7d9fcb`:
   commit outcomes. Effective writes promote their firing, duplicate writes keep
   the prior support, and exact rebuild receipts migrate current state or fail
   closed. Luminal uses this path end to end.
+- Implemented/tested fact: exact originless rebuild unions conservatively retain
+  a reported event Prefix, scoped regions use independent arenas, and selected
+  check BigInt/BigRat syntax comes from exact match-time primitive receipts.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
@@ -870,9 +911,10 @@ four real fixtures are implemented. The next patches should be:
    benchmark timing summary without changing the end-to-end headline metric;
 3. stream or compact completed native waves so raw matches do not coexist with
    the entire elaborated arena, then remeasure Eggcc and Luminal RSS;
-4. extend exact state receipts to Herbie's custom `lo`/`hi` merges only after a
-   focused old/incoming/result dependency canary establishes the callback-read
-   contract;
+4. capture exact observation-time constructor syntax availability, or use an
+   explicitly counted Prefix rooted at the preceding schedule boundary, for
+   Herbie's selected `Num` row; do not assign empty availability or infer it
+   from final state;
 5. add versioned container witnesses and current-version dependencies for the
    first retained Hardboiled `VecExpr` use;
 6. avoid reparsing the generated source solely for in-process validation after
@@ -972,6 +1014,11 @@ Local reviewable commits:
 50. `ebb35a87`, `5a1989a1`, `53230e7d` — trace exact sorted-write commit
     outcomes, maintain exact `:merge new` row dependencies, and admit the real
     Luminal proof fixture.
+51. `d6edba34` — record the measured Luminal benchmark result and source-
+    retention bottleneck;
+52. `f06e07a` — replay independent scoped regions, trace rebuild-created
+    equality edges with a conservative Prefix, admit fresh BigRat min/max
+    source rows, and reconstruct exact auxiliary scalar rule/check syntax.
 
 The final diff is confined to reference native tracing/commit receipts,
 frontend causal treatment plumbing, the causal-slice module/example/tests, and
