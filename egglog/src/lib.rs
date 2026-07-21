@@ -99,6 +99,7 @@ use crate::proofs::proof_format::{ProofId, ProofStore};
 use crate::proofs::proof_normal_form::proof_form;
 
 pub const GLOBAL_NAME_PREFIX: &str = "$";
+pub(crate) const CAUSAL_CHECK_CONSTRUCTOR_MARKER: &str = "__egglog_causal_check_constructor_row_v0";
 
 pub type ArcSort = Arc<dyn Sort>;
 
@@ -337,6 +338,10 @@ pub struct EGraph {
     /// sets. Causal tracing disables this semantics-preserving optimization so
     /// the native action path retains both constructor and union causes.
     union_to_set_optimization: bool,
+    /// While one causally traced positive check is running, annotate each
+    /// constructor row used by the selected native match with a trace-only
+    /// external call. Ordinary execution leaves this disabled.
+    trace_check_constructor_rows: bool,
     type_info: TypeInfo,
     /// The run report unioned over all runs so far.
     overall_run_report: RunReport,
@@ -466,6 +471,7 @@ impl EGraph {
             seminaive: true,
             no_decomp: false,
             union_to_set_optimization: true,
+            trace_check_constructor_rows: false,
             overall_run_report: Default::default(),
             type_info: Default::default(),
             schedulers: Default::default(),
@@ -2407,6 +2413,35 @@ impl EGraph {
         )?;
         let query = core_rule.body;
 
+        let traced_constructor_rows = if self.trace_check_constructor_rows {
+            let marker = literal_to_rule_value(
+                self.backend.base_values(),
+                &Literal::String(CAUSAL_CHECK_CONSTRUCTOR_MARKER.to_owned()),
+            );
+            query
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.head {
+                    ResolvedCall::Func(function)
+                        if function.subtype == FunctionSubtype::Constructor =>
+                    {
+                        Some((
+                            atom.span.clone(),
+                            marker,
+                            literal_to_rule_value(
+                                self.backend.base_values(),
+                                &Literal::String(function.name.clone()),
+                            ),
+                            atom.args.clone(),
+                        ))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
         let ext_sc = egglog_bridge::SideChannel::default();
         let ext_sc_ref = ext_sc.clone();
         let ext_id = self
@@ -2425,6 +2460,20 @@ impl EGraph {
         );
         translator.rollback_external_funcs.push(ext_id);
         translator.query(&query, true)?;
+        for (row_span, marker, function, row) in traced_constructor_rows {
+            let mut arguments = vec![
+                core::GenericAtomTerm::Literal(row_span.clone(), marker),
+                core::GenericAtomTerm::Literal(row_span.clone(), function),
+            ];
+            arguments.extend(translator.args(&row)?);
+            translator.call_external_func(
+                row_span,
+                ext_id,
+                "causal_check_constructor_row",
+                arguments,
+                egglog_bridge::ColumnTy::Id,
+            );
+        }
         translator.call_external_func(
             span.clone(),
             ext_id,

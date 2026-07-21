@@ -2446,12 +2446,14 @@ fn constructor_table_hit_retains_the_equality_that_changed_its_endpoint() {
 }
 
 #[test]
-fn congruence_created_constructor_syntax_remains_an_explicit_boundary() {
-    let source = r#"
+fn congruence_created_constructor_syntax_can_only_be_sliced_away() {
+    let common = r#"
         (datatype Expr (A i64) (B i64) (Wrap Expr))
         (relation Seed ())
         (relation Trigger ())
         (relation Out (Expr))
+        (relation GoalSeed ())
+        (relation Goal ())
         (ruleset first)
         (ruleset second)
         (rule ((Seed))
@@ -2462,20 +2464,104 @@ fn congruence_created_constructor_syntax_remains_an_explicit_boundary() {
               ((Out (Wrap (B 1))))
               :ruleset second
               :name "hit-congruence")
+        (rule ((GoalSeed))
+              ((Goal))
+              :ruleset second
+              :name "goal")
         (Wrap (A 1))
         (Seed)
         (Trigger)
+        (GoalSeed)
         (run-schedule (run first) (run second))
-        (check (Out (Wrap (B 1))))
     "#;
 
-    let error =
-        causal_slice_replay_program(Some("constructor-congruence-hit.egg".to_owned()), source)
-            .unwrap_err();
+    let irrelevant = format!("{common}(check (Goal))\n");
+    let replay = causal_slice_replay_program(
+        Some("constructor-congruence-irrelevant.egg".to_owned()),
+        &irrelevant,
+    )
+    .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "hit-congruence")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("constructor-congruence-irrelevant-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+
+    let retained = format!("{common}(check (Out (Wrap (B 1))))\n");
+    let error = causal_slice_replay_program(
+        Some("constructor-congruence-retained.egg".to_owned()),
+        &retained,
+    )
+    .unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("table hit whose match-time syntax conflicts"),
+            .contains("congruence-created table hit without exact constructor-row provenance"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unoriginated_merge_union_can_only_be_sliced_away() {
+    let common = r#"
+        (datatype Expr (A i64) (B i64))
+        (function F (i64) Expr :merge ((union old new) old))
+        (relation Trigger ())
+        (relation GoalSeed ())
+        (relation Goal ())
+        (ruleset write)
+        (ruleset finish)
+        (rule ((Trigger))
+              ((set (F 0) (A 1)))
+              :ruleset write
+              :name "write-a")
+        (rule ((Trigger))
+              ((set (F 0) (B 1)))
+              :ruleset write
+              :name "write-b")
+        (rule ((GoalSeed))
+              ((Goal))
+              :ruleset finish
+              :name "goal")
+        (Trigger)
+        (GoalSeed)
+        (run-schedule (run write) (run finish))
+    "#;
+
+    let irrelevant = format!("{common}(check (Goal))\n");
+    let replay =
+        causal_slice_replay_program(Some("merge-union-irrelevant.egg".to_owned()), &irrelevant)
+            .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "write-a" || rule == "write-b")
+    );
+    // Merge action blocks are independently unsupported by proof mode. This
+    // canary isolates causal reachability and ordinary replay instead.
+    EGraph::default()
+        .parse_and_run_program(
+            Some("merge-union-irrelevant-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+
+    let retained = format!("{common}(check (= (A 1) (B 1)))\n");
+    let error = causal_slice_replay_program(Some("merge-union-retained.egg".to_owned()), &retained)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("congruence, merge, or rebuild union without an originating rule match"),
         "{error}"
     );
 }
@@ -3086,6 +3172,110 @@ fn positive_check_selects_one_actual_satisfying_grounding() {
 }
 
 #[test]
+fn closed_observation_uses_its_internal_constructor_bindings() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64) (Wrap Expr))
+        (relation Seed ())
+        (relation Trigger ())
+        (relation Seen (Expr))
+        (relation Result (Expr))
+        (ruleset first)
+        (ruleset second)
+        (rule ((Seed))
+              ((union (B 1) (A 1)))
+              :ruleset first
+              :name "unify")
+        (rule ((Trigger))
+              ((Seen (A 1)))
+              :ruleset second
+              :name "hit")
+        (B 1)
+        (Result (Wrap (A 1)))
+        (Seed)
+        (Trigger)
+        (run-schedule (run first) (run second))
+        (check (Result (Wrap (A 1))))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("observation-internal-witness.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "unify", &[]));
+    assert!(
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "hit")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("observation-internal-witness-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn repeated_and_prefix_named_check_constructors_use_exact_rows() {
+    let source = r#"
+        (datatype Expr (A i64) (A1 i64) (Wrap Expr) (Pair Expr Expr))
+        (relation Seed ())
+        (relation Result (Expr))
+        (ruleset derive)
+        (rule ((Seed))
+              ((Result (Pair (Wrap (A 11)) (Wrap (A1 1)))))
+              :ruleset derive
+              :name "produce")
+        (Seed)
+        (run-schedule (run derive))
+        (check (Result (Pair (Wrap (A 11)) (Wrap (A1 1)))))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("repeated-check-constructors.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "produce", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("repeated-check-constructors-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn observation_only_congruence_without_prior_syntax_fails_closed() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64) (Wrap Expr))
+        (relation Seed ())
+        (relation Result (Expr))
+        (ruleset derive)
+        (rule ((Seed))
+              ((union (A 1) (B 1)))
+              :ruleset derive
+              :name "unify")
+        (Result (Wrap (A 1)))
+        (Seed)
+        (run-schedule (run derive))
+        (check (Result (Wrap (B 1))))
+    "#;
+
+    let error = causal_slice_program(Some("missing-congruence-producer.egg".to_owned()), source)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("exact match-time row without prior constructor-row provenance"),
+        "{error}"
+    );
+}
+
+#[test]
 fn conjunctive_and_multiple_checks_retain_complete_heads_and_both_chains() {
     let source = r#"
         (relation A (i64))
@@ -3156,19 +3346,35 @@ fn unsupported_observations_and_filters_fail_closed() {
 }
 
 #[test]
-fn wildcard_bindings_fail_closed_instead_of_emitting_parser_variables() {
+fn wildcard_bindings_are_alpha_normalized_without_name_collisions() {
     let source = r#"
-        (relation A (i64))
+        (relation A (i64 i64 i64))
         (relation B ())
-        (rule ((A _)) ((B)) :name "wildcard")
-        (A 1)
+        (rule ((A __causal_slice_v0_wildcard_0 _ _))
+              ((B))
+              :name "wildcard")
+        (A 1 2 3)
         (run 1)
         (check (B))
     "#;
-    let error = causal_slice_program(Some("wildcard.egg".to_owned()), source).unwrap_err();
-    let message = error.to_string();
-    assert!(message.contains("wildcard or parser-generated variables"));
-    assert!(message.contains("wildcard.egg"));
+    let slice = causal_slice_program(Some("wildcard.egg".to_owned()), source).unwrap();
+    let firing = replay_firings(&slice.source)
+        .into_iter()
+        .find(|(rule, _)| rule == "wildcard")
+        .unwrap();
+    assert_eq!(
+        firing.1,
+        vec![
+            ("__causal_slice_v0_wildcard_0".to_owned(), "1".to_owned()),
+            ("__causal_slice_v0_wildcard_1".to_owned(), "2".to_owned()),
+            ("__causal_slice_v0_wildcard_2".to_owned(), "3".to_owned()),
+        ]
+    );
+    assert!(!slice.source.contains("@_"));
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("wildcard-replay.egg".to_owned()), &slice.source)
+        .unwrap();
 }
 
 #[test]
