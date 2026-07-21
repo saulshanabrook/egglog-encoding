@@ -138,7 +138,11 @@ fn proof_mode_rejects_fail_wrapped_input() {
         .unwrap_err();
 
     assert!(matches!(error, Error::UnsupportedProofCommand { .. }));
-    assert!(error.to_string().contains("`fail` wrapping an `input` command"));
+    assert!(
+        error
+            .to_string()
+            .contains("`fail` wrapping an `input` command")
+    );
 }
 
 #[test]
@@ -198,5 +202,34 @@ fn luminal_benchmark_passes_proof_checking() {
     EGraph::new_with_proofs()
         .with_proof_testing()
         .parse_and_run_program(None, &program)
+        .unwrap();
+}
+
+/// Known limitation: the rebuild PROOF for an unordered container whose element is
+/// reshaped (rewritten) and then collapses (unioned) is stale. The container value
+/// is correct (this program runs fine without proofs), but under proof-testing the
+/// rebuild proof — accumulated incrementally, anchored per intermediate container
+/// value — ends at the pre-collapse 3-element `(set-of (Id (N 1)) (N 1) (N 2))`
+/// instead of `{N1, N2}`, so the existence-proof side condition fails. A fix would
+/// recompute the container rebuild proof once at extraction against the fully
+/// saturated union-find. Remove `should_panic` once fixed.
+#[test]
+#[should_panic(expected = "Existence proof should be valid before simplification")]
+fn unordered_container_reshaped_element_collapse_proof_is_unsound() {
+    let program = "
+        (datatype Math (N i64) (Id Math))
+        (sort MSet (Set Math))
+        (relation Holds (MSet))
+        (relation Go ())
+        (Go)
+        (rewrite (Id x) x)
+        (rule ((Go)) ((Holds (set-of (Id (N 1)) (Id (N 2)) (N 3)))))
+        (rule ((Go)) ((union (N 1) (N 3))))
+        (run 8)
+        (check (Holds (set-of (N 1) (N 2))))
+    ";
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, program)
         .unwrap();
 }
