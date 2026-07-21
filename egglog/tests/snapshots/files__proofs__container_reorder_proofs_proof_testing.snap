@@ -100,7 +100,54 @@ expression: proof_snapshot
             (substitution (x (N 2)) (@rewrite_var__ (Id (N 2)))))
           1))
       0))
-  (substitution (@v703 (N 2)) (@v704 t3) (@v702 (N 1))))
+  (substitution (@v901 (N 2)) (@v900 (N 1)) (@v902 t3)))
+(let t0 (Add (Num 51) (Num 52)))
+(let t1 (Add (Num 52) (Num 51)))
+(let t2 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Sym
+        (= t0 t1)
+        (Rule
+          (= t1 t0)
+          (name
+            "(rule ((Go))
+        ((union (Add (Num 52) (Num 51)) (Add (Num 51) (Num 52))))
+           )")
+          t2
+          (substitution))))
+(let t3 (set-of t0))
+(let t4 (HoldsExpr t3))
+(let t5 (set-of t1))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    prf0
+    (Eval)
+    (Congr
+      (= t4 (HoldsExpr t5))
+      (Rule
+        (= t4 t4)
+        (name
+          "(rule ((Go))
+      ((HoldsExpr (set-of (Add (Num 51) (Num 52)))))
+         )")
+        t2
+        (substitution))
+      (Congr
+        (= t3 t5)
+        (Rule
+          (= t3 t3)
+          (name
+            "(rule ((Go))
+      ((HoldsExpr (set-of (Add (Num 51) (Num 52)))))
+         )")
+          t2
+          (substitution))
+        prf0
+        0)
+      0))
+  (substitution (@v949 t5) (@v948 t1)))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -138,8 +185,8 @@ expression: proof_snapshot
                 (substitution)))
             2))
 (Rule
-  (= (@ExistsConstructor1) (@ExistsConstructor1))
-  (name "@prove_exists_rule1")
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
   (premises
     prf0
     prf0
@@ -202,7 +249,7 @@ expression: proof_snapshot
             (substitution (x (N 12)) (@rewrite_var__ (Id (N 12)))))
           1))
       0))
-  (substitution (@v752 (N 12)) (@v750 (N 11)) (@v753 t3) (@v751 (N 11))))
+  (substitution (@v998 t3) (@v996 (N 11)) (@v997 (N 12)) (@v995 (N 11))))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -240,8 +287,8 @@ expression: proof_snapshot
                 (substitution)))
             1))
 (Rule
-  (= (@ExistsConstructor2) (@ExistsConstructor2))
-  (name "@prove_exists_rule2")
+  (= (@ExistsConstructor3) (@ExistsConstructor3))
+  (name "@prove_exists_rule3")
   (premises
     (Rule
       (= (N 21) (N 21))
@@ -297,11 +344,11 @@ expression: proof_snapshot
           0))
       0))
   (substitution
-    (@v808 (N 23))
-    (@v807 (N 22))
-    (@v805 (N 21))
-    (@v806 (N 23))
-    (@v809 t3)))
+    (@v1053 (N 23))
+    (@v1052 (N 22))
+    (@v1050 (N 21))
+    (@v1054 t3)
+    (@v1051 (N 23))))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -330,8 +377,8 @@ expression: proof_snapshot
                   (substitution)))
               (substitution (x (N 31)) (@rewrite_var__ (Id (N 31))))))
 (Rule
-  (= (@ExistsConstructor3) (@ExistsConstructor3))
-  (name "@prove_exists_rule3")
+  (= (@ExistsConstructor4) (@ExistsConstructor4))
+  (name "@prove_exists_rule4")
   (premises
     prf0
     prf0
@@ -371,7 +418,7 @@ expression: proof_snapshot
         prf1
         1)
       0))
-  (substitution (@v870 t3) (@v867 (N 31)) (@v868 (N 31)) (@v869 (N 32))))
+  (substitution (@v1112 (N 31)) (@v1113 (N 31)) (@v1114 (N 32)) (@v1115 t3)))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -422,8 +469,8 @@ expression: proof_snapshot
               0)
             0))
 (Rule
-  (= (@ExistsConstructor4) (@ExistsConstructor4))
-  (name "@prove_exists_rule4")
+  (= (@ExistsConstructor5) (@ExistsConstructor5))
+  (name "@prove_exists_rule5")
   (premises
     prf0
     (Rule
@@ -479,4 +526,4 @@ expression: proof_snapshot
           0)
         1)
       0))
-  (substitution (@v922 (N 41)) (@v925 t5) (@v923 (N 42)) (@v924 (N 41))))
+  (substitution (@v1169 (N 41)) (@v1168 (N 42)) (@v1170 t5) (@v1167 (N 41))))

@@ -526,15 +526,10 @@ impl EGraph {
                 // run_command also does) so the container rebuild registration
                 // below can recover them — including this container's own proof
                 // table, which has not run yet.
-                if let Some((uf_ctor, _uf_index, uf_aux)) = uf {
+                if let Some((uf_ctor, _uf_index)) = uf {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
-                    if let Some(uf_aux) = uf_aux {
-                        self.proof_state
-                            .uf_aux_parent
-                            .insert(name.clone(), uf_aux.clone());
-                    }
                 }
                 if let Some(pf) = proof_func {
                     self.proof_state

@@ -94,12 +94,10 @@ where
         span: Span,
         name: String,
         presort_and_args: Option<(String, Vec<GenericExpr<String, String>>)>,
-        /// The union-find table names for this sort:
-        /// `(constructor, optional function-index, optional aux)` — `UF_<E>`
-        /// (scanned by extraction's `find_canonical`), the optional `UF_<E>f`
-        /// index (single-key leader lookup), and the optional proof-mode
-        /// `UF_Aux_<E>` (`:internal-uf-aux`, read by container rebuild).
-        uf: Option<(String, Option<String>, Option<String>)>,
+        /// The union-find `(constructor, optional function-index)` table names
+        /// for this sort: `UF_<E>` (scanned by extraction's `find_canonical`)
+        /// and the optional `UF_<E>f` index (single-key leader lookup).
+        uf: Option<(String, Option<String>)>,
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
@@ -621,9 +619,9 @@ where
         span: Span,
         name: String,
         presort_and_args: Option<(String, Vec<Expr>)>,
-        /// The union-find `(constructor, optional function-index, optional aux)`
-        /// table names for this sort (see [`GenericNCommand::Sort`]).
-        uf: Option<(String, Option<String>, Option<String>)>,
+        /// The union-find `(constructor, optional function-index)` table names
+        /// for this sort (see [`GenericNCommand::Sort`]).
+        uf: Option<(String, Option<String>)>,
         /// The name of the proof function for this sort.
         /// Set by proof desugaring to record where proofs are stored for this sort.
         proof_func: Option<String>,
@@ -1051,13 +1049,10 @@ where
                 ..
             } => {
                 write!(f, "(sort {name}")?;
-                if let Some((uf_ctor, uf_index, uf_aux)) = uf {
+                if let Some((uf_ctor, uf_index)) = uf {
                     write!(f, " :internal-uf {uf_ctor}")?;
                     if let Some(uf_index) = uf_index {
                         write!(f, " {uf_index}")?;
-                    }
-                    if let Some(uf_aux) = uf_aux {
-                        write!(f, " :internal-uf-aux {uf_aux}")?;
                     }
                 }
                 if let Some(pf) = proof_func {
@@ -1861,9 +1856,7 @@ where
                 span,
                 name: fun(name),
                 presort_and_args,
-                uf: uf.map(|(ctor, index, aux)| {
-                    (fun(ctor), index.map(&mut *fun), aux.map(&mut *fun))
-                }),
+                uf: uf.map(|(ctor, index)| (fun(ctor), index.map(&mut *fun))),
                 proof_func: proof_func.map(&mut *fun),
                 container_rebuild,
                 proof_constructors,

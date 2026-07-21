@@ -102,8 +102,9 @@ the term relation is write-only after creation.
 With proofs enabled, the encoding first emits a header defining the proof format
 (corresponding to [`RawProof`](crate::proofs::RawProof); see
 `proof_encoding_helpers.rs`): the `Proof`, `Ast`, and `ProofList` sorts and the
-proof constructors `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `Merge…`,
-`ContainerNormalize`, `Eval`, plus `AstMath` (one `Ast<Sort>` per sort) and:
+proof constructors `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `CongrAll`,
+`Merge…`, `ContainerNormalize`, `Eval`, plus `AstMath` (one `Ast<Sort>` per
+sort) and:
 
 ```text
 (function MathProof (Math) Proof :merge old :unextractable :internal-hidden)
@@ -298,7 +299,9 @@ the union-find's `larger -> smaller` convention with `proof-of-max`/`proof-of-mi
 The discipline is the same at every level: build the natural term, `Congr` each
 child that moved to its representative, intern with `set-if-empty` to get the
 representative id, and hand a `natural = representative` connector up to the
-parent. Only representative ids ever reach the view and union-find.
+parent. Only representative ids reach the views; the union-find sees a natural
+only as the key of a `natural = representative` edge, written when a container
+captures the natural (see [Containers](#containers)).
 
 ## Delete and subsume
 
@@ -477,12 +480,21 @@ form orders children canonically (e.g. AST order for sets). `CongrAll` exists
 only in the raw e-graph proof; proof conversion desugars it into positional
 `Congr` steps computed against the actual term.
 
-For reordering/merging containers (`Set`, `Map`, `MultiSet`) the element-wise
-`Congr` term can be out of order or hold duplicates, so a `ContainerNormalize`
-step (see [`crate::proofs::proof_format`]) canonicalizes it — sort + dedup for
-sets, sort for multisets, sort + last-write-wins for maps. It is emitted on every
-rebuild and dropped by the proof simplifier wherever it is the identity (always
-for `Vec` / `Pair`). Maps use a flat `(map-of k0 v0 …)` form so this works like
-the other containers.
+For reordering/merging containers (`Set`, `Map`, `MultiSet`) the term after the
+congruence steps can be out of order or hold duplicates, so a
+`ContainerNormalize` step (see [`crate::proofs::proof_format`]) canonicalizes
+it — sort + dedup for sets, sort for multisets, sort + last-write-wins for
+maps. It is emitted on every rebuild and dropped by the proof simplifier
+wherever it is the identity (always for `Vec` / `Pair`). Maps use a flat
+`(map-of k0 v0 …)` form so this works like the other containers.
+
+**Natural element ids.** In proof mode a container is built over its elements'
+*natural* ids (see [nested terms](#building-nested-terms-with-proofs)), not
+their deduped e-classes: the deduped id can extract to a different syntactic
+shape (e.g. a birewrite partner interned first), which would break the
+rule-head check for the container's term-proof. Each element's
+`natural -> (deduped, connector)` edge is written to the element's ordinary
+`UF_<E>` at build time, so the standard rebuild (plus path compression)
+canonicalizes the natural like any stale term.
 
 See [`crate::proofs::proof_container_rebuild`] for the rebuild primitives.

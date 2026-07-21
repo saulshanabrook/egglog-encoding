@@ -42,20 +42,16 @@ pub(crate) fn register_container_rebuild_from_spec(
     let Some(container_sort) = eg.get_sort_by_name(sort_name).cloned() else {
         return;
     };
-    // Each element eq-sort's single UF (and, in proof mode, aux UF) table,
-    // recovered from proof_state (filled by the element sorts' `:internal-uf` /
-    // `:internal-uf-aux` on re-parse) rather than the spec.
+    // Each element eq-sort's single UF table, recovered from proof_state (filled
+    // by the element sorts' `:internal-uf` on re-parse) rather than the spec.
     let mut uf_names = HashMap::default();
     collect_element_uf_names(eg, &container_sort, &mut uf_names);
-    let mut aux_names = HashMap::default();
-    collect_element_aux_names(eg, &container_sort, &mut aux_names);
 
     eg.add_read_primitive(
         ContainerRebuild {
             name: spec.internal_rebuild_prim.clone(),
             container_sort: container_sort.clone(),
             uf_names: uf_names.clone(),
-            aux_names: aux_names.clone(),
             proof_mode: spec.internal_rebuild_proof_prim.is_some(),
         },
         None,
@@ -87,7 +83,6 @@ pub(crate) fn register_container_rebuild_from_spec(
                 container_sort,
                 proof_sort,
                 uf_names,
-                aux_names,
                 cproof_names,
                 congr_all_name,
                 trans_name,
@@ -110,21 +105,6 @@ fn collect_element_uf_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<Strin
             }
         } else if elem.is_eq_container_sort() {
             collect_element_uf_names(eg, &elem, out);
-        }
-    }
-}
-
-/// Each transitively-reachable eq-sort element's aux UF table, from
-/// `proof_state.uf_aux_parent` (filled by element sorts' `:internal-uf-aux`).
-/// Empty outside proof mode (no aux tables declared).
-fn collect_element_aux_names(eg: &EGraph, sort: &ArcSort, out: &mut HashMap<String, String>) {
-    for elem in sort.inner_sorts() {
-        if elem.is_eq_sort() {
-            if let Some(aux) = eg.proof_state.uf_aux_parent.get(elem.name()) {
-                out.insert(elem.name().to_string(), aux.clone());
-            }
-        } else if elem.is_eq_container_sort() {
-            collect_element_aux_names(eg, &elem, out);
         }
     }
 }
@@ -170,7 +150,6 @@ fn rebuild_container_value_rec(
     sort: &ArcSort,
     value: Value,
     uf_names: &HashMap<String, String>,
-    aux_names: &HashMap<String, String>,
     proof_mode: bool,
 ) -> Option<Value> {
     let elements = {
@@ -180,18 +159,11 @@ fn rebuild_container_value_rec(
     let mut leaders: HashMap<Value, Value> = HashMap::default();
     for (esort, eval) in &elements {
         let new = if esort.is_eq_sort() {
-            // Chain: a natural element resolves through `UF-Aux` to its canonical
-            // id, which then resolves through the main `UF` to its leader.
-            let mut cur = *eval;
-            if let Some((canonical, _)) = lookup_aux_row(state, aux_names, esort, cur) {
-                cur = canonical;
-            }
-            if let Some((leader, _)) = lookup_uf_row(state, uf_names, esort, cur, proof_mode) {
-                cur = leader;
-            }
-            cur
+            lookup_uf_row(state, uf_names, esort, *eval, proof_mode)
+                .map(|(leader, _)| leader)
+                .unwrap_or(*eval)
         } else if esort.is_eq_container_sort() {
-            rebuild_container_value_rec(state, esort, *eval, uf_names, aux_names, proof_mode)?
+            rebuild_container_value_rec(state, esort, *eval, uf_names, proof_mode)?
         } else {
             *eval
         };
@@ -223,28 +195,6 @@ where
     Some((values[0], proof_mode.then(|| values[1])))
 }
 
-/// Look up a natural element's `UF_Aux_<Sort>` row: `natural -> (canonical,
-/// connector)`, where `connector` proves `natural = canonical`. Containers are
-/// built over natural element ids (so their term-proof extracts the syntactic
-/// shape); this is how the rebuild recovers the canonical element. Returns
-/// `None` outside proof mode (no aux table for the sort) or when the element is
-/// not a recorded natural. The table name comes from `aux_names` (recovered from
-/// the element sort's `:internal-uf-aux` on re-parse).
-fn lookup_aux_row<'a, 'db: 'a, S>(
-    state: &S,
-    aux_names: &HashMap<String, String>,
-    esort: &ArcSort,
-    eval: Value,
-) -> Option<(Value, Value)>
-where
-    S: RegistrySealed<'a, 'db>,
-{
-    let aux_name = aux_names.get(esort.name())?;
-    let action = state.registry().lookup_table(aux_name)?;
-    let values = action.lookup_values(state.es(), &[eval])?;
-    Some((values[0], values[1]))
-}
-
 /// A term-encoding primitive that canonicalizes a container value's elements to
 /// their union-find leaders (recursing through nested containers). Registered
 /// per container sort by `ensure_container_rebuild` and
@@ -256,8 +206,6 @@ struct ContainerRebuild {
     container_sort: ArcSort,
     /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
     uf_names: HashMap<String, String>,
-    /// element-sort name -> `UF_Aux_<E>` table name (proof mode; empty otherwise)
-    aux_names: HashMap<String, String>,
     /// Whether the single UF row has a second proof value column.
     proof_mode: bool,
 }
@@ -284,7 +232,6 @@ impl ReadPrim for ContainerRebuild {
             &self.container_sort,
             args[0],
             &self.uf_names,
-            &self.aux_names,
             self.proof_mode,
         )
     }
@@ -303,8 +250,6 @@ struct ContainerRebuildProof {
     proof_sort: ArcSort,
     /// element-sort name -> single `UF_<E>` table name (all reachable eq-sorts)
     uf_names: HashMap<String, String>,
-    /// element-sort name -> `UF_Aux_<E>` table name (all reachable eq-sorts)
-    aux_names: HashMap<String, String>,
     /// container-sort name -> `<CSort>Proof` table name (all reachable containers)
     cproof_names: HashMap<String, String>,
     /// `CongrAll` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
@@ -373,35 +318,12 @@ fn rebuild_container_proof_rec(
             continue;
         }
         if esort.is_eq_sort() {
-            // Chain the two hops and compose their proofs: `natural --connector-->
-            // canonical --uf_proof--> leader`. Either hop may be absent.
-            let mut cur = *eval;
-            let mut proof: Option<Value> = None;
-            if let Some((canonical, connector)) = lookup_aux_row(state, &prim.aux_names, esort, cur)
+            if let Some((leader, Some(proof))) =
+                lookup_uf_row(state, &prim.uf_names, esort, *eval, true)
+                && leader != *eval
             {
-                cur = canonical;
-                proof = Some(connector);
-            }
-            if let Some((leader, Some(uf_proof))) =
-                lookup_uf_row(state, &prim.uf_names, esort, cur, true)
-            {
-                proof = Some(match proof {
-                    Some(connector) => {
-                        let trans_action = state.registry().lookup_table(&prim.trans_name)?.clone();
-                        mint_proof_row(
-                            state,
-                            &trans_action,
-                            prim.id_counter,
-                            &[connector, uf_proof],
-                        )
-                    }
-                    None => uf_proof,
-                });
-                cur = leader;
-            }
-            if cur != *eval {
-                leaders.insert(*eval, cur);
-                child_proofs.push(proof.expect("changed element must carry a proof"));
+                leaders.insert(*eval, leader);
+                child_proofs.push(proof);
             }
         } else if esort.is_eq_container_sort() {
             let (rebuilt_child, child_proof) =

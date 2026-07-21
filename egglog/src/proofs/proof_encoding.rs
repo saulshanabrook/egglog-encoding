@@ -29,10 +29,6 @@ enum ValueRebuild {
 #[derive(Clone)]
 pub(crate) struct EncodingState {
     pub uf_parent: HashMap<String, String>,
-    /// Maps eq-sort name -> its auxiliary union-find `UF_Aux_<Sort>` (natural
-    /// e-class id -> canonical dedup id + connector proof). Set from the
-    /// `:internal-uf-aux` annotation; read by container rebuild for elements.
-    pub uf_aux_parent: HashMap<String, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
     /// Maps container sort name -> the name of its registered container-rebuild
@@ -60,7 +56,6 @@ impl EncodingState {
     pub(crate) fn new(symbol_gen: &mut SymbolGen) -> Self {
         Self {
             uf_parent: HashMap::default(),
-            uf_aux_parent: HashMap::default(),
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
@@ -295,14 +290,9 @@ impl<'a> ProofInstrumentor<'a> {
         let proof_tables = if proofs {
             let term_proof_name = self.term_proof_name(sort_name);
             let add_to_ast_code = self.add_to_ast(sort_name);
-            // `UF_Aux_<Sort>`: natural -> (canonical, connector proof). Written
-            // only for container elements; the container rebuild reads it. `:merge
-            // old` keeps the first edge (each natural is minted once).
-            let aux_name = self.uf_aux_name(sort_name);
             format!(
                 "{add_to_ast_code}
-                 (function {term_proof_name} ({sort_name}) {proof_type} :merge old :internal-hidden)
-                 (function {aux_name} ({sort_name}) ({sort_name} {proof_type}) :merge (values old0 old1) :internal-hidden)"
+                 (function {term_proof_name} ({sort_name}) {proof_type} :merge old :internal-hidden)"
             )
         } else {
             String::new()
@@ -1857,34 +1847,21 @@ impl<'a> ProofInstrumentor<'a> {
                         let container_proof =
                             self.egraph.proof_state.proofs_enabled && out.is_eq_container_sort();
                         let csort = out.name().to_string();
-                        // The Rust container rebuild canonicalizes elements of any
-                        // container uniformly, but its *proof* is a positional
-                        // per-element `@Congr` fold — sound only when element order is
-                        // stable. So only an ordered container (`vec-of`) over a single
-                        // eq-sort threads element canonicalization here; unordered
-                        // containers (sets/maps) reorder and keep the deduped path
-                        // (making them generic needs an order-independent rebuild
-                        // proof — a follow-up).
-                        let elem_sort: Option<String> = if container_proof && prim_name == "vec-of"
-                        {
-                            match out.inner_sorts().as_slice() {
-                                [s] if s.is_eq_sort() => Some(s.name().to_string()),
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
-                        // Build over *natural* element ids where we have them and
-                        // record each `natural -> (canonical, connector)` edge in
-                        // `UF-Aux`, so the rebuild canonicalizes the element and threads
-                        // its connector (the container-general analog of the
-                        // constructor connector).
+                        // Build a container over *natural* element ids where we have
+                        // them (an eq-sort arg with a connector), recording each
+                        // `natural -> (deduped, connector)` edge in the element's
+                        // union-find. The container's term-proof then extracts the
+                        // syntactic shape the rule wrote, and the ordinary container
+                        // rebuild canonicalizes the element (see "Containers" in
+                        // proof_encoding.md).
                         let mut build_args = Vec::with_capacity(args.len());
-                        for a in &args {
-                            match (elem_sort.clone(), nat_conn.get(a).cloned()) {
-                                (Some(es), Some((nat, Some(conn)))) => {
-                                    let aux = self.uf_aux_name(&es);
-                                    res.push(format!("(set ({aux} {nat}) (values {a} {conn}))"));
+                        for (a, asort) in args.iter().zip(specialized_primitive.input()) {
+                            match nat_conn.get(a).cloned() {
+                                Some((nat, Some(conn)))
+                                    if container_proof && asort.is_eq_sort() =>
+                                {
+                                    let uf = self.uf_name(asort.name());
+                                    res.push(format!("(set ({uf} {nat}) (values {a} {conn}))"));
                                     build_args.push(nat);
                                 }
                                 _ => build_args.push(a.clone()),
@@ -2134,14 +2111,7 @@ impl<'a> ProofInstrumentor<'a> {
                 let uf_name = if is_container {
                     None
                 } else {
-                    // Proof mode also records the aux union-find (`:internal-uf-aux`)
-                    // so container rebuild recovers it on re-parse.
-                    let aux = if self.egraph.proof_state.proofs_enabled {
-                        Some(self.uf_aux_name(name))
-                    } else {
-                        None
-                    };
-                    Some((self.uf_name(name), None, aux))
+                    Some((self.uf_name(name), None))
                 };
                 // Every sort (containers included) records its `<Sort>Proof`
                 // table via `:internal-proof-func` so container rebuild can

@@ -41,9 +41,22 @@
 (rule ((Go)) ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43))))))
 (rule ((Go)) ((union (N 41) (N 43))))
 
+;; A set element whose deduped e-class extracts as its union partner's shape:
+;; (Add (N 52) (N 51)) is interned first and becomes the class leader, so a set
+;; built over the deduped id of (Add (N 51) (N 52)) would carry the partner's
+;; shape and break the rule-head check. Building over the natural id keeps the
+;; written shape; its union-find edge canonicalizes the element on rebuild.
+(datatype Expr (Num i64) (Add Expr Expr))
+(sort ESet (Set Expr))
+(relation HoldsExpr (ESet))
+(rule ((Go)) ((union (Add (Num 52) (Num 51)) (Add (Num 51) (Num 52)))))
+(run 1)
+(rule ((Go)) ((HoldsExpr (set-of (Add (Num 51) (Num 52))))))
+
 (run 8)
 
 (check (HoldsSet (set-of (N 1) (N 2))))
+(check (HoldsExpr (set-of (Add (Num 51) (Num 52)))))
 (check (HoldsBag (multiset-of (N 11) (N 11) (N 12))))
 (check (HoldsMap (map-of (N 21) (N 23) (N 22) (N 23))))
 (check (HoldsVec (vec-of (N 31) (N 31) (N 32))))
