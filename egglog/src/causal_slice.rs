@@ -4371,6 +4371,63 @@ fn elaborate_prefix_replay(
                     "native trace referenced unmodeled rule `{rule_name}`"
                 ))
             })?;
+            if let Some(policy) = &model.opaque {
+                match policy {
+                    OpaqueRulePolicy::Reject(error) => return Err(error.clone().into_error()),
+                    OpaqueRulePolicy::EmptyBodyInitializer => {
+                        let application_indices = applications_by_origin.for_origin(ordinal);
+                        if !primitives_by_origin.for_origin(ordinal).is_empty()
+                            || !unions_by_origin.for_origin(ordinal).is_empty()
+                            || application_indices.iter().any(|index| {
+                                !trace_functions
+                                    .contains_key(&batch.applications[*index as usize].table)
+                            })
+                        {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
+                            )));
+                        }
+                        let effects = elaborate_fire_applications(
+                            egraph,
+                            application_indices
+                                .iter()
+                                .map(|index| &batch.applications[*index as usize]),
+                            trace_functions,
+                            witnesses,
+                            true,
+                        )?;
+                        effective_output_rows += effects.new_rows.len();
+                        if effects.new_rows.is_empty() && effects.new_witnesses.is_empty() {
+                            continue;
+                        }
+                        let rule_index = rules.get_index_of(rule_name).ok_or_else(|| {
+                            CausalSliceError::Invariant(format!(
+                                "native trace referenced unindexed rule `{rule_name}`"
+                            ))
+                        })?;
+                        replay_fires.push(CompactReplayFire {
+                            rule_index: u32::try_from(rule_index).map_err(|_| {
+                                CausalSliceError::Invariant(
+                                    "rule index exceeded u32 capacity".to_owned(),
+                                )
+                            })?,
+                            wave: u32::try_from(wave).map_err(|_| {
+                                CausalSliceError::Invariant(
+                                    "wave index exceeded u32 capacity".to_owned(),
+                                )
+                            })?,
+                            ordinal: u32::try_from(ordinal).map_err(|_| {
+                                CausalSliceError::Invariant(
+                                    "wave ordinal exceeded u32 capacity".to_owned(),
+                                )
+                            })?,
+                            bindings: Box::new([]),
+                        });
+                        effective_applications += 1;
+                        continue;
+                    }
+                }
+            }
             // Capture bindings before the head applications below extend the
             // witness arena. Every emitted expression was therefore available
             // at the original match boundary.

@@ -483,6 +483,57 @@ fn print_only_program_uses_a_reported_effective_prefix() {
 }
 
 #[test]
+fn prefix_replay_rejects_an_opaque_state_effect() {
+    let source = r#"
+        (function F (i64) i64 :no-merge)
+        (relation Trigger ())
+        (rule ((Trigger))
+              ((set (F 0) 7))
+              :name "opaque-write")
+        (Trigger)
+        (run 1)
+        (print-size F)
+    "#;
+
+    let error =
+        causal_slice_replay_program(Some("opaque-prefix.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("non-insert/union head action in rule `opaque-write`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn prefix_replay_keeps_a_closed_zero_binding_initializer() {
+    let source = r#"
+        (datatype Expr (A i64))
+        (relation Goal (Expr))
+        (rule ()
+              ((let e (A 7))
+               (Goal e))
+              :name "initialize")
+        (run 1)
+        (print-size Goal)
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("initializer-prefix.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "initialize", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("initializer-prefix-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn one_wave_math_fixture_prefix_replays_ordinary_and_strictly() {
     let source = include_str!("math-microbenchmark.egg").replace("(run 11)", "(run 1)");
     let slice = causal_slice_program(Some("math-one-wave.egg".to_owned()), &source).unwrap();
