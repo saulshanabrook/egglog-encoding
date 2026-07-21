@@ -294,6 +294,235 @@ fn projected_generic_join_variable_is_an_explicit_replay_boundary() {
 }
 
 #[test]
+fn decomposable_rule_is_traced_without_changing_its_source_definition() {
+    let source = r#"
+        (relation A (i64))
+        (relation B (i64))
+        (relation C (i64))
+        (relation Goal (i64))
+        (rule ((A x) (B x) (C x)) ((Goal x)) :name "three-way")
+        (A 1)
+        (B 1)
+        (C 1)
+        (run 1)
+        (check (Goal 1))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("decomposable-rule-original.egg".to_owned()), source)
+        .unwrap();
+
+    let replay =
+        causal_slice_replay_program(Some("decomposable-rule.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &replay.source,
+        "three-way",
+        &[("x", "1")]
+    ));
+    assert!(!replay.source.contains(":no-decomp"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("decomposable-rule-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn projected_constructor_inputs_can_be_sliced_away_but_not_retained() {
+    let common = r#"
+        (datatype Expr (Int i64) (Const Expr i64 i64))
+        (relation HasType (Expr i64))
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (rule ((= lhs (Const (Int i) ty ctx)))
+              ((HasType lhs ty))
+              :name "projected-analysis")
+        (rule ((Seed x)) ((Goal x)) :name "goal")
+        (Const (Int 7) 2 3)
+        (Seed 1)
+        (run 1)
+    "#;
+    let irrelevant = format!("{common}(check (Goal 1))\n");
+    let replay = causal_slice_replay_program(
+        Some("projected-constructor-irrelevant.egg".to_owned()),
+        &irrelevant,
+    )
+    .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[("x", "1")]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-analysis")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("projected-constructor-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+
+    let error = causal_slice_program(
+        Some("projected-constructor-full-transcript.egg".to_owned()),
+        &irrelevant,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("diagnostic full transcript containing opaque rule groundings"),
+        "{error}"
+    );
+
+    let prefix = format!("{common}(print-size HasType)\n");
+    let error =
+        causal_slice_replay_program(Some("projected-constructor-prefix.egg".to_owned()), &prefix)
+            .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("rule `projected-analysis` was projected away"),
+        "{error}"
+    );
+
+    let retained = format!("{common}(check (HasType (Const (Int 7) 2 3) 2))\n");
+    let error = causal_slice_replay_program(
+        Some("projected-constructor-retained.egg".to_owned()),
+        &retained,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("rule `projected-analysis` was projected away"),
+        "{error}"
+    );
+}
+
+#[test]
+fn projected_union_is_sliced_away_but_rejected_when_equality_depends_on_it() {
+    let common = r#"
+        (datatype Expr (Int i64) (Const Expr i64 i64) (Alias Expr))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((= lhs (Const (Int i) ty ctx)))
+              ((union lhs (Alias lhs)))
+              :name "projected-union")
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (let $lhs (Const (Int 7) 2 3))
+        (Seed)
+        (run 1)
+    "#;
+
+    let irrelevant = format!("{common}(check (Goal))\n");
+    let replay = causal_slice_replay_program(
+        Some("projected-union-irrelevant.egg".to_owned()),
+        &irrelevant,
+    )
+    .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-union")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("projected-union-irrelevant-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+
+    let retained = format!("{common}(check (= $lhs (Alias $lhs)))\n");
+    let error =
+        causal_slice_replay_program(Some("projected-union-retained.egg".to_owned()), &retained)
+            .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("rule `projected-union` was projected away"),
+        "{error}"
+    );
+}
+
+#[test]
+fn collapsed_projected_extensions_are_never_emitted_as_a_partial_selector() {
+    let source = r#"
+        (relation R (i64 i64))
+        (relation S (i64))
+        (relation Out (i64))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((R x y) (S x)) ((Out x)) :name "projected-copy")
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (R 1 10)
+        (R 1 20)
+        (S 1)
+        (Seed)
+        (run 1)
+        (check (Goal))
+    "#;
+
+    let replay = causal_slice_replay_program(
+        Some("collapsed-projected-extensions.egg".to_owned()),
+        source,
+    )
+    .unwrap();
+    assert_eq!(replay.stats.matched_applications, 2);
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-copy")
+    );
+}
+
+#[test]
+fn decomposed_opaque_rule_can_be_traced_and_sliced_away() {
+    let source = r#"
+        (datatype Expr (Node i64) (Free Expr Expr))
+        (datatype Ty (Pointer i64) (State))
+        (relation HasType (Expr Ty))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((= lhs (Free e state))
+               (HasType e (Pointer pointee)))
+              ((HasType lhs (State)))
+              :name "decomposed-analysis")
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (let $e (Node 1))
+        (let $state (Node 2))
+        (HasType $e (Pointer 0))
+        (Free $e $state)
+        (Seed)
+        (run 1)
+        (check (Goal))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("decomposed-opaque.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "decomposed-analysis")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("decomposed-opaque-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
 fn positive_check_trace_retains_every_variable_in_one_environment() {
     let source = r#"
         (relation R (i64 i64))

@@ -209,6 +209,11 @@ enum OpaqueRulePolicy {
     /// an empty exact grounding even though the narrow structured model does
     /// not represent head-local variables.
     EmptyBodyInitializer,
+    /// This particular otherwise-modeled grounding projected a source
+    /// variable before the native action boundary. Its complete modeled head
+    /// may be observed for reachability, but replay must fail if retained
+    /// because exact premise rows are unavailable.
+    ProjectedGrounding(DeferredUnsupported),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -746,6 +751,26 @@ impl DeferredUnsupported {
     }
 }
 
+enum BindingReconstructionError {
+    Projected(DeferredUnsupported),
+    Other(CausalSliceError),
+}
+
+impl BindingReconstructionError {
+    fn into_error(self) -> CausalSliceError {
+        match self {
+            Self::Projected(error) => error.into_error(),
+            Self::Other(error) => error,
+        }
+    }
+}
+
+impl From<CausalSliceError> for BindingReconstructionError {
+    fn from(error: CausalSliceError) -> Self {
+        Self::Other(error)
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct EventArena {
     events: Vec<ReplayEvent>,
@@ -1108,6 +1133,10 @@ fn generate_causal_slice(
         .presort_names()
         .map(str::to_owned)
         .collect::<HashSet<_>>();
+    // The in-place native trace currently requires one factorized join bag.
+    // This changes only the physical plan used by the traced ordinary run;
+    // emitted rule definitions retain their original source flags.
+    egraph.no_decomp = true;
     egraph = egraph.with_union_to_set_optimization(false);
     let commands = egraph.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
@@ -4428,7 +4457,10 @@ fn elaborate_prefix_replay(
             })?;
             if let Some(policy) = &model.opaque {
                 match policy {
-                    OpaqueRulePolicy::Reject(error) => return Err(error.clone().into_error()),
+                    OpaqueRulePolicy::Reject(error)
+                    | OpaqueRulePolicy::ProjectedGrounding(error) => {
+                        return Err(error.clone().into_error());
+                    }
                     OpaqueRulePolicy::EmptyBodyInitializer => {
                         let application_indices = applications_by_origin.for_origin(ordinal);
                         if !primitives_by_origin.for_origin(ordinal).is_empty()
@@ -4487,7 +4519,8 @@ fn elaborate_prefix_replay(
             // witness arena. Every emitted expression was therefore available
             // at the original match boundary.
             let mut bindings =
-                reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
+                reconstruct_rule_bindings(egraph, rule_name, &captured.bindings, model, witnesses)
+                    .map_err(BindingReconstructionError::into_error)?;
 
             let primitive_indices = primitives_by_origin.for_origin(ordinal);
             let primitive_result = elaborate_fire_primitive_sequence(
@@ -4713,12 +4746,36 @@ fn elaborate_events(
                     "native trace referenced unmodeled rule `{rule_name}`"
                 ))
             })?;
-            if let Some(policy) = &model.opaque {
+            let mut reconstructed_bindings = None;
+            let dynamic_policy;
+            let policy = if let Some(policy) = model.opaque.as_ref() {
+                Some(policy)
+            } else {
+                match reconstruct_rule_bindings(
+                    egraph,
+                    rule_name,
+                    &captured.bindings,
+                    model,
+                    witnesses,
+                ) {
+                    Ok(bindings) => {
+                        reconstructed_bindings = Some(bindings);
+                        None
+                    }
+                    Err(BindingReconstructionError::Projected(error)) => {
+                        dynamic_policy = OpaqueRulePolicy::ProjectedGrounding(error);
+                        Some(&dynamic_policy)
+                    }
+                    Err(BindingReconstructionError::Other(error)) => return Err(error),
+                }
+            };
+            if let Some(policy) = policy {
                 let known_applications = applications_by_origin[ordinal]
                     .iter()
                     .copied()
                     .filter(|application| trace_functions.contains_key(&application.table))
                     .collect::<Vec<_>>();
+                let projected = matches!(policy, OpaqueRulePolicy::ProjectedGrounding(_));
                 if matches!(policy, OpaqueRulePolicy::EmptyBodyInitializer)
                     && (known_applications.len() != applications_by_origin[ordinal].len()
                         || !primitives_by_origin.for_origin(ordinal).is_empty()
@@ -4726,6 +4783,15 @@ fn elaborate_events(
                 {
                     return Err(CausalSliceError::Invariant(format!(
                         "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
+                    )));
+                }
+                if projected
+                    && (known_applications.len() != applications_by_origin[ordinal].len()
+                        || !model.head_primitives.is_empty()
+                        || !model.head_subsumes.is_empty())
+                {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "projected grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect"
                     )));
                 }
                 let effects = match elaborate_fire_applications(
@@ -4760,9 +4826,22 @@ fn elaborate_events(
                     .into_iter()
                     .filter(|row| !producers.contains_key(row) && !new_outputs.contains_key(row))
                     .collect::<Vec<_>>();
-                let applied_union = unions_by_origin[ordinal]
-                    .iter()
-                    .any(|receipt| matches!(receipt.outcome, UnionOutcome::Applied { .. }));
+                let projected_equality_edges = if projected {
+                    classify_prefix_union_receipts(
+                        rule_name,
+                        &model.head_unions,
+                        &unions_by_origin[ordinal],
+                    )?
+                } else {
+                    Vec::new()
+                };
+                let applied_union = if projected {
+                    !projected_equality_edges.is_empty()
+                } else {
+                    unions_by_origin[ordinal]
+                        .iter()
+                        .any(|receipt| matches!(receipt.outcome, UnionOutcome::Applied { .. }))
+                };
                 let has_effect = !effective_outputs.is_empty()
                     || !effects.new_witnesses.is_empty()
                     || applied_union;
@@ -4806,7 +4885,8 @@ fn elaborate_events(
                             promoted,
                         });
                     }
-                    OpaqueRulePolicy::Reject(error) => {
+                    OpaqueRulePolicy::Reject(error)
+                    | OpaqueRulePolicy::ProjectedGrounding(error) => {
                         opaque_pending_firings += 1;
                         if applied_union && opaque_equality_error.is_none() {
                             opaque_equality_error = Some(error.clone());
@@ -4825,14 +4905,20 @@ fn elaborate_events(
                             for witness in effects.new_witnesses {
                                 witnesses.set_availability(witness, dependency);
                             }
+                            for (left, right) in projected_equality_edges {
+                                new_equality_edges.push((left, right, dependency));
+                            }
                             opaque_promoted_events += 1;
                         }
                     }
                 }
                 continue;
             }
-            let mut bindings =
-                reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
+            let mut bindings = reconstructed_bindings.ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "traceable rule `{rule_name}` lost its reconstructed bindings"
+                ))
+            })?;
             let primitive_indices = primitives_by_origin.for_origin(ordinal);
             let primitive_result = elaborate_fire_primitive_sequence(
                 FirePrimitiveSequenceInput {
@@ -4886,18 +4972,20 @@ fn elaborate_events(
                             )));
                         }
                         None => {
-                            if equality_forest.edge_count() > 0 {
-                                return Err(CausalSliceError::Unsupported {
-                                    location: model.span.to_string(),
-                                    reason: format!(
-                                        "an equality-canonicalized premise of rule `{rule_name}` without commit-time relation-row rekey provenance"
-                                    ),
-                                });
-                            }
-                            return Err(CausalSliceError::Invariant(format!(
-                                "rule `{rule_name}` matched without a known source row: {}",
-                                display_row(row)
-                            )));
+                            let reason = if equality_forest.edge_count() > 0 {
+                                format!(
+                                    "an equality-canonicalized premise of rule `{rule_name}` without commit-time relation-row rekey provenance"
+                                )
+                            } else {
+                                format!(
+                                    "a premise row of rule `{rule_name}` without source or producer provenance: {}",
+                                    display_row(row)
+                                )
+                            };
+                            return Err(CausalSliceError::Unsupported {
+                                location: model.span.to_string(),
+                                reason,
+                            });
                         }
                     }
                 }
@@ -5215,10 +5303,11 @@ fn reconstruct_bindings(
 
 fn reconstruct_rule_bindings(
     egraph: &EGraph,
+    rule_name: &str,
     captured: &[(std::sync::Arc<str>, Value)],
     model: &RuleModel,
     witnesses: &mut WitnessArena,
-) -> Result<IndexMap<String, BindingWitness>, CausalSliceError> {
+) -> Result<IndexMap<String, BindingWitness>, BindingReconstructionError> {
     let captured_by_name = captured
         .iter()
         .map(|(name, value)| (name.as_ref(), *value))
@@ -5317,9 +5406,12 @@ fn reconstruct_rule_bindings(
             .copied()
             .collect::<Vec<_>>()
             .join(", ");
-        return Err(CausalSliceError::Invariant(format!(
-            "match-time binding for `{var}` was projected away and could not be derived from constructor inputs; available names: [{available}]"
-        )));
+        return Err(BindingReconstructionError::Projected(DeferredUnsupported {
+            location: model.span.to_string(),
+            reason: format!(
+                "match-time binding for `{var}` in rule `{rule_name}` was projected away and could not be derived from constructor inputs; available names: [{available}]"
+            ),
+        }));
     }
     Ok(result)
 }
