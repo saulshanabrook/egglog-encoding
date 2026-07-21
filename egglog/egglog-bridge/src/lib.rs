@@ -27,11 +27,11 @@ use egglog_core_relations as core_relations;
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
 use hashbrown::HashMap;
-use std::collections::BTreeMap;
 use indexmap::IndexSet;
 use log::info;
 use once_cell::sync::Lazy;
 use smallvec::SmallVec;
+use std::collections::BTreeMap;
 use web_time::{Duration, Instant};
 
 pub mod macros;
@@ -383,15 +383,16 @@ impl EGraph {
         // scanned all of `panic_funcs` on every call (see `panic_func_ids`).
         let mut free = true;
         if let Some(message) = self.panic_func_ids.get(&func).cloned()
-            && let Some(cached) = self.panic_funcs.get_mut(&message) {
-                if cached.references > 1 {
-                    cached.references -= 1;
-                    free = false;
-                } else {
-                    self.panic_funcs.remove(&message);
-                    self.panic_func_ids.remove(&func);
-                }
+            && let Some(cached) = self.panic_funcs.get_mut(&message)
+        {
+            if cached.references > 1 {
+                cached.references -= 1;
+                free = false;
+            } else {
+                self.panic_funcs.remove(&message);
+                self.panic_func_ids.remove(&func);
             }
+        }
         if free {
             self.db.free_external_function(func);
         }

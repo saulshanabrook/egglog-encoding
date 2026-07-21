@@ -652,8 +652,7 @@ impl Database {
                 let mut info = self.tables.unwrap_val(table_id);
                 // Maintain `total_size_estimate` incrementally (see `merge_all`'s
                 // reset loop, which no longer re-sums every table).
-                self.total_size_estimate =
-                    self.total_size_estimate.wrapping_sub(info.table.len());
+                self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
                 // Pre-seed the table's OWN buffer so a self-referential merge — one that stages a
                 // write back into its own table (e.g. the term encoder's `@UF` recursive
                 // parent-union) — can stage it. The table has been `unwrap_val`'d out of
@@ -665,8 +664,7 @@ impl Database {
                 bufs.insert(table_id, info.table.new_buffer());
                 let mut es = ExecutionState::new(self.read_only_view(), bufs);
                 changed |= info.table.merge(&mut es).added || es.changed;
-                self.total_size_estimate =
-                    self.total_size_estimate.wrapping_add(info.table.len());
+                self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
                 self.tables.insert(table_id, info);
             }
             to_merge = self.notification_list.reset();
