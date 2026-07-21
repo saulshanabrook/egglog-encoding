@@ -2481,7 +2481,7 @@ impl EGraph {
             Vec::new(),
             egglog_bridge::ColumnTy::Id,
         );
-        let id = translator.try_build("check_facts", false, false, span.clone())?;
+        let id = translator.try_build("check_facts", false, self.no_decomp, span.clone())?;
         let run_result = self.backend.run_rules(RuleSetRun {
             name: None,
             rules: &[id],

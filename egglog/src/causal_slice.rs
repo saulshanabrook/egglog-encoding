@@ -214,6 +214,11 @@ enum OpaqueRulePolicy {
     /// may be observed for reachability, but replay must fail if retained
     /// because exact premise rows are unavailable.
     ProjectedGrounding(DeferredUnsupported),
+    /// This particular otherwise-modeled grounding contains an equality-sort
+    /// endpoint for which the ordinary trace has no immutable replay syntax.
+    /// Its effects may still be classified for reachability, but retaining the
+    /// firing must surface the missing match-time witness.
+    UnreplayableGrounding(DeferredUnsupported),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -420,6 +425,7 @@ struct WitnessArena {
     syntax_nodes: Vec<WitnessSyntaxNode>,
     syntax_ids: IndexMap<WitnessSyntaxNode, SyntaxId>,
     syntax_instances: IndexMap<SyntaxId, Vec<WitnessId>>,
+    app_instances: IndexMap<(String, String), Vec<WitnessId>>,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     endpoint_instances: IndexMap<TypedEndpoint, Vec<WitnessId>>,
     /// Definition-time endpoints retained to explain later canonicalized uses.
@@ -430,7 +436,24 @@ struct WitnessArena {
     current_globals: IndexMap<String, TypedEndpoint>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct WitnessSnapshot {
+    endpoints: IndexMap<TypedEndpoint, WitnessId>,
+    app_instance_lengths: IndexMap<(String, String), usize>,
+}
+
 impl WitnessArena {
+    fn snapshot(&self) -> WitnessSnapshot {
+        WitnessSnapshot {
+            endpoints: self.endpoints.clone(),
+            app_instance_lengths: self
+                .app_instances
+                .iter()
+                .map(|(application, instances)| (application.clone(), instances.len()))
+                .collect(),
+        }
+    }
+
     fn intern_syntax(&mut self, node: &WitnessNode) -> Result<SyntaxId, CausalSliceError> {
         let syntax = match node {
             WitnessNode::Literal { sort, value } => WitnessSyntaxNode::Literal {
@@ -459,28 +482,6 @@ impl WitnessArena {
         self.syntax_nodes.push(syntax.clone());
         self.syntax_ids.insert(syntax, id);
         Ok(id)
-    }
-
-    fn syntax(&self, node: &WitnessNode) -> Option<SyntaxId> {
-        let syntax = match node {
-            WitnessNode::Literal { sort, value } => WitnessSyntaxNode::Literal {
-                sort: sort.clone(),
-                value: value.clone(),
-            },
-            WitnessNode::App {
-                sort,
-                function,
-                children,
-            } => WitnessSyntaxNode::App {
-                sort: sort.clone(),
-                function: function.clone(),
-                children: children
-                    .iter()
-                    .map(|child| self.nodes[child.index()].syntax)
-                    .collect(),
-            },
-        };
-        self.syntax_ids.get(&syntax).copied()
     }
 
     fn intern_literal(
@@ -644,6 +645,26 @@ impl WitnessArena {
             .copied()
     }
 
+    fn by_endpoint_at(
+        &self,
+        sort: &str,
+        endpoint: Value,
+        snapshot: Option<&WitnessSnapshot>,
+    ) -> Option<WitnessId> {
+        let Some(snapshot) = snapshot else {
+            return self.by_endpoint(sort, endpoint);
+        };
+        let key = TypedEndpoint {
+            sort: sort.to_owned(),
+            value: endpoint,
+        };
+        snapshot
+            .endpoints
+            .get(&key)
+            .copied()
+            .filter(|witness| self.endpoint(*witness) == Some(endpoint))
+    }
+
     fn prefer_endpoint_witness(
         &mut self,
         sort: &str,
@@ -722,6 +743,15 @@ impl WitnessArena {
         let syntax_instances = self.syntax_instances.entry(syntax).or_default();
         if !syntax_instances.contains(&id) {
             syntax_instances.push(id);
+        }
+        if let WitnessNode::App { sort, function, .. } = &self.nodes[id.index()].node {
+            let instances = self
+                .app_instances
+                .entry((sort.clone(), function.clone()))
+                .or_default();
+            if !instances.contains(&id) {
+                instances.push(id);
+            }
         }
     }
 
@@ -3580,12 +3610,12 @@ fn model_query_primitive(
 ) -> Result<Option<QueryPrimitiveTemplate>, CausalSliceError> {
     let (application_expr, output_expr) = match (left, right) {
         (GenericExpr::Call(_, function, _), GenericExpr::Var(..))
-            if matches!(function.as_str(), "+" | "pow" | "log") =>
+            if matches!(function.as_str(), "+" | "*" | "pow" | "log") =>
         {
             (left, right)
         }
         (GenericExpr::Var(..), GenericExpr::Call(_, function, _))
-            if matches!(function.as_str(), "+" | "pow" | "log") =>
+            if matches!(function.as_str(), "+" | "*" | "pow" | "log") =>
         {
             (right, left)
         }
@@ -3595,7 +3625,7 @@ fn model_query_primitive(
         unreachable!("query primitive orientation was checked above")
     };
     let (input_sorts, output_sort): (&[&str], &str) = match function.as_str() {
-        "+" => (&["i64", "i64"], "i64"),
+        "+" | "*" => (&["i64", "i64"], "i64"),
         "pow" => (&["BigRat", "BigRat"], "BigRat"),
         "log" => (&["BigRat"], "BigRat"),
         _ => unreachable!("query primitive name was checked above"),
@@ -4294,7 +4324,7 @@ fn replay_safe_bigrat_primitive_arity(function: &str) -> Option<usize> {
 }
 
 fn replay_safe_query_primitive(function: &str, input_sorts: &[String], output_sort: &str) -> bool {
-    (function == "+" && input_sorts == ["i64", "i64"] && output_sort == "i64")
+    (matches!(function, "+" | "*") && input_sorts == ["i64", "i64"] && output_sort == "i64")
         || (function == "pow" && input_sorts == ["BigRat", "BigRat"] && output_sort == "BigRat")
         || (function == "log" && input_sorts == ["BigRat"] && output_sort == "BigRat")
         || (matches!(function, ">" | "<")
@@ -4706,6 +4736,7 @@ fn elaborate_prefix_replay(
 
     for (wave, batch) in batches.into_iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
+        let prestate_witness_snapshot = witnesses.snapshot();
         let prestate_witnesses = snapshot_primitive_result_witnesses(&batch, witnesses);
         let applications_by_origin = OriginIndex::build(
             batch.matches.len(),
@@ -4737,7 +4768,8 @@ fn elaborate_prefix_replay(
             if let Some(policy) = &model.opaque {
                 match policy {
                     OpaqueRulePolicy::Reject(error)
-                    | OpaqueRulePolicy::ProjectedGrounding(error) => {
+                    | OpaqueRulePolicy::ProjectedGrounding(error)
+                    | OpaqueRulePolicy::UnreplayableGrounding(error) => {
                         return Err(error.clone().into_error());
                     }
                     OpaqueRulePolicy::EmptyBodyInitializer => {
@@ -4799,9 +4831,15 @@ fn elaborate_prefix_replay(
             // Capture bindings before the head applications below extend the
             // witness arena. Every emitted expression was therefore available
             // at the original match boundary.
-            let mut bindings =
-                reconstruct_rule_bindings(egraph, rule_name, &captured.bindings, model, witnesses)
-                    .map_err(BindingReconstructionError::into_error)?;
+            let mut bindings = reconstruct_rule_bindings(
+                egraph,
+                rule_name,
+                &captured.bindings,
+                model,
+                witnesses,
+                Some(&prestate_witness_snapshot),
+            )
+            .map_err(BindingReconstructionError::into_error)?;
 
             let primitive_indices = primitives_by_origin.for_origin(ordinal);
             let primitive_result = elaborate_fire_primitive_sequence(
@@ -4979,6 +5017,7 @@ fn elaborate_events(
     let mut opaque_promoted_events = 0usize;
     for (wave, batch) in batches.iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
+        let prestate_witness_snapshot = witnesses.snapshot();
         let prestate_witnesses = snapshot_primitive_result_witnesses(batch, witnesses);
         let mut applications_by_origin = vec![Vec::new(); batch.matches.len()];
         for application in &batch.applications {
@@ -5041,6 +5080,7 @@ fn elaborate_events(
                     &captured.bindings,
                     model,
                     witnesses,
+                    Some(&prestate_witness_snapshot),
                 ) {
                     Ok(bindings) => {
                         reconstructed_bindings = Some(bindings);
@@ -5048,6 +5088,17 @@ fn elaborate_events(
                     }
                     Err(BindingReconstructionError::Projected(error)) => {
                         dynamic_policy = OpaqueRulePolicy::ProjectedGrounding(error);
+                        Some(&dynamic_policy)
+                    }
+                    Err(BindingReconstructionError::Other(CausalSliceError::Unsupported {
+                        location,
+                        reason,
+                    })) => {
+                        dynamic_policy =
+                            OpaqueRulePolicy::UnreplayableGrounding(DeferredUnsupported {
+                                location,
+                                reason,
+                            });
                         Some(&dynamic_policy)
                     }
                     Err(BindingReconstructionError::Other(error)) => return Err(error),
@@ -5059,7 +5110,11 @@ fn elaborate_events(
                     .copied()
                     .filter(|application| trace_functions.contains_key(&application.table))
                     .collect::<Vec<_>>();
-                let projected = matches!(policy, OpaqueRulePolicy::ProjectedGrounding(_));
+                let deferred_grounding = matches!(
+                    policy,
+                    OpaqueRulePolicy::ProjectedGrounding(_)
+                        | OpaqueRulePolicy::UnreplayableGrounding(_)
+                );
                 if matches!(policy, OpaqueRulePolicy::EmptyBodyInitializer)
                     && (known_applications.len() != applications_by_origin[ordinal].len()
                         || !primitives_by_origin.for_origin(ordinal).is_empty()
@@ -5069,13 +5124,13 @@ fn elaborate_events(
                         "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
                     )));
                 }
-                if projected
+                if deferred_grounding
                     && (known_applications.len() != applications_by_origin[ordinal].len()
                         || !model.head_primitives.is_empty()
                         || !model.head_subsumes.is_empty())
                 {
                     return Err(CausalSliceError::Invariant(format!(
-                        "projected grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect"
+                        "unreplayable grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect"
                     )));
                 }
                 let effects = match elaborate_fire_applications(
@@ -5125,7 +5180,7 @@ fn elaborate_events(
                     .into_iter()
                     .filter(|row| !producers.contains_key(row) && !new_outputs.contains_key(row))
                     .collect::<Vec<_>>();
-                let projected_equality_edges = if projected {
+                let deferred_grounding_equality_edges = if deferred_grounding {
                     classify_prefix_union_receipts(
                         rule_name,
                         &model.head_unions,
@@ -5134,8 +5189,8 @@ fn elaborate_events(
                 } else {
                     Vec::new()
                 };
-                let applied_union = if projected {
-                    !projected_equality_edges.is_empty()
+                let applied_union = if deferred_grounding {
+                    !deferred_grounding_equality_edges.is_empty()
                 } else {
                     unions_by_origin[ordinal]
                         .iter()
@@ -5189,7 +5244,8 @@ fn elaborate_events(
                         });
                     }
                     OpaqueRulePolicy::Reject(error)
-                    | OpaqueRulePolicy::ProjectedGrounding(error) => {
+                    | OpaqueRulePolicy::ProjectedGrounding(error)
+                    | OpaqueRulePolicy::UnreplayableGrounding(error) => {
                         opaque_pending_firings += 1;
                         if applied_union && opaque_equality_error.is_none() {
                             opaque_equality_error = Some(error.clone());
@@ -5208,7 +5264,7 @@ fn elaborate_events(
                             for witness in effects.new_witnesses {
                                 witnesses.set_availability(witness, dependency);
                             }
-                            for (left, right) in projected_equality_edges {
+                            for (left, right) in deferred_grounding_equality_edges {
                                 new_equality_edges.push((left, right, dependency));
                             }
                             opaque_promoted_events += 1;
@@ -5293,30 +5349,28 @@ fn elaborate_events(
                     }
                 }
                 for lookup in &model.body_lookups {
-                    let (application, application_witness) = ground_application_witness(
-                        egraph,
-                        &lookup.application,
-                        &lookup.sort,
-                        &bindings,
-                        witnesses,
-                    )?;
                     let output =
                         ground_arg(egraph, &lookup.output, &lookup.sort, &bindings, witnesses)?;
-                    premise_dependencies.insert(witnesses.availability(application_witness));
-                    premise_dependencies.insert(endpoint_availability(
+                    let application_availability = ground_application_availability(
+                        GroundApplicationInput {
+                            egraph,
+                            application: &lookup.application,
+                            sort: &lookup.sort,
+                            bindings: &bindings,
+                            witnesses,
+                            output: &output,
+                            equality_forest: &equality_forest,
+                            snapshot: Some(&prestate_witness_snapshot),
+                        },
+                        &mut dependencies,
+                    )?;
+                    premise_dependencies.insert(application_availability);
+                    premise_dependencies.insert(endpoint_availability_at(
                         &output,
                         witnesses,
                         &lookup.span,
+                        Some(&prestate_witness_snapshot),
                     )?);
-                    let explanation = equality_forest.explain(&application, &output).ok_or_else(
-                        || CausalSliceError::Unsupported {
-                            location: lookup.span.to_string(),
-                            reason: format!(
-                                "constructor lookup in rule `{rule_name}` whose canonical output lacks a captured successful-union path"
-                            ),
-                        },
-                    )?;
-                    premise_dependencies.extend(explanation);
                 }
                 let mut prerequisites = DepArena::EMPTY;
                 for dependency in premise_dependencies {
@@ -5343,7 +5397,7 @@ fn elaborate_events(
             };
             let deferred_prerequisite_error = primitive_error.or(prerequisite_error);
 
-            let effects = elaborate_fire_applications(
+            let mut effects = elaborate_fire_applications(
                 egraph,
                 applications_by_origin[ordinal].iter().copied(),
                 trace_functions,
@@ -5351,6 +5405,19 @@ fn elaborate_events(
                 prefix_fallback,
                 Some(&equality_forest),
                 Some(&mut dependencies),
+            )?;
+            alias_captured_head_syntaxes(
+                AliasCapturedHeadInput {
+                    egraph,
+                    model,
+                    bindings: &bindings,
+                    applications: &applications_by_origin[ordinal],
+                    trace_functions,
+                    equality_forest: &equality_forest,
+                },
+                witnesses,
+                &mut dependencies,
+                &mut effects,
             )?;
             let mut opaque_error =
                 effects
@@ -6044,6 +6111,7 @@ fn reconstruct_rule_bindings(
     captured: &[(std::sync::Arc<str>, Value)],
     model: &RuleModel,
     witnesses: &mut WitnessArena,
+    snapshot: Option<&WitnessSnapshot>,
 ) -> Result<IndexMap<String, BindingWitness>, BindingReconstructionError> {
     let captured_by_name = captured
         .iter()
@@ -6059,14 +6127,14 @@ fn reconstruct_rule_bindings(
             CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
         })?;
         let syntax = if sort.is_eq_sort() {
-            witnesses.by_endpoint(sort_name, value).ok_or_else(|| {
-                CausalSliceError::Unsupported {
-                    location: format!("captured binding `{var}`"),
+            witnesses
+                .by_endpoint_at(sort_name, value, snapshot)
+                .ok_or_else(|| CausalSliceError::Unsupported {
+                    location: format!("captured binding `{var}` in rule `{rule_name}`"),
                     reason: format!(
                         "a `{sort_name}` endpoint without a match-time constructor witness"
                     ),
-                }
-            })?
+                })?
         } else {
             scalar_witness(
                 egraph,
@@ -6099,15 +6167,16 @@ fn reconstruct_rule_bindings(
             {
                 continue;
             }
-            let endpoint = ground_arg(
+            let endpoint = ground_arg_at(
                 egraph,
                 &lookup.application,
                 &lookup.sort,
                 &result,
                 witnesses,
+                snapshot,
             )?;
             let syntax = witnesses
-                .by_endpoint(&lookup.sort, endpoint.value)
+                .by_endpoint_at(&lookup.sort, endpoint.value, snapshot)
                 .ok_or_else(|| CausalSliceError::Unsupported {
                     location: lookup.span.to_string(),
                     reason: format!(
@@ -6212,19 +6281,73 @@ fn ground_equality(
     Ok((left, right))
 }
 
-fn ground_application_witness(
-    egraph: &EGraph,
-    application: &AtomArg,
-    sort: &str,
-    bindings: &IndexMap<String, BindingWitness>,
-    witnesses: &WitnessArena,
-) -> Result<(TypedEndpoint, WitnessId), CausalSliceError> {
-    if !matches!(application, AtomArg::App { .. }) {
+struct GroundApplicationInput<'a> {
+    egraph: &'a EGraph,
+    application: &'a AtomArg,
+    sort: &'a str,
+    bindings: &'a IndexMap<String, BindingWitness>,
+    witnesses: &'a WitnessArena,
+    output: &'a TypedEndpoint,
+    equality_forest: &'a EqualityForest,
+    snapshot: Option<&'a WitnessSnapshot>,
+}
+
+fn ground_application_availability(
+    input: GroundApplicationInput<'_>,
+    dependencies: &mut DepArena,
+) -> Result<DepId, CausalSliceError> {
+    let GroundApplicationInput {
+        egraph,
+        application,
+        sort,
+        bindings,
+        witnesses,
+        output,
+        equality_forest,
+        snapshot,
+    } = input;
+    let AtomArg::App {
+        function,
+        args,
+        input_sorts,
+        ..
+    } = application
+    else {
         return Err(CausalSliceError::Invariant(
             "constructor lookup grounding lost its application".to_owned(),
         ));
+    };
+    if output.sort != sort {
+        return Err(CausalSliceError::Invariant(format!(
+            "constructor lookup `{function}` produced `{}` after being modeled as `{sort}`",
+            output.sort
+        )));
     }
-    ground_arg_with_witness(egraph, application, sort, bindings, witnesses)
+    let children = args
+        .iter()
+        .zip(input_sorts)
+        .map(|(child, child_sort)| {
+            ground_arg_with_witness_at(egraph, child, child_sort, bindings, witnesses, snapshot)
+                .map(|(_, witness)| witness)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let expected = WitnessNode::App {
+        sort: sort.to_owned(),
+        function: function.clone(),
+        children,
+    };
+    congruent_app_availability(
+        witnesses,
+        &expected,
+        output.value,
+        equality_forest,
+        dependencies,
+        snapshot,
+    )?
+    .ok_or_else(|| CausalSliceError::Unsupported {
+        location: format!("grounded constructor `{function}`"),
+        reason: "exact match-time row without prior constructor-row provenance".to_owned(),
+    })
 }
 
 fn endpoint_availability(
@@ -6232,8 +6355,17 @@ fn endpoint_availability(
     witnesses: &WitnessArena,
     span: &Span,
 ) -> Result<DepId, CausalSliceError> {
+    endpoint_availability_at(endpoint, witnesses, span, None)
+}
+
+fn endpoint_availability_at(
+    endpoint: &TypedEndpoint,
+    witnesses: &WitnessArena,
+    span: &Span,
+    snapshot: Option<&WitnessSnapshot>,
+) -> Result<DepId, CausalSliceError> {
     let witness = witnesses
-        .by_endpoint(&endpoint.sort, endpoint.value)
+        .by_endpoint_at(&endpoint.sort, endpoint.value, snapshot)
         .ok_or_else(|| CausalSliceError::Unsupported {
             location: span.to_string(),
             reason: format!(
@@ -6567,7 +6699,9 @@ fn elaborate_query_primitive(
         sort: output_sort.clone(),
         value: application.result,
     };
-    let (syntax, availability, deferred) = if function == "+" && output_sort == "i64" {
+    let (syntax, availability, deferred) = if matches!(function.as_str(), "+" | "*")
+        && output_sort == "i64"
+    {
         (
             scalar_witness(
                 egraph,
@@ -6857,6 +6991,8 @@ fn elaborate_fire_applications<'a>(
                         endpoint_witness(egraph, sort, *value, witnesses, &meta.name)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
+                read_dependencies
+                    .extend(children.iter().map(|child| witnesses.availability(*child)));
                 let expected = WitnessNode::App {
                     sort: meta.output_sort.clone(),
                     function: meta.name.clone(),
@@ -6900,107 +7036,54 @@ fn elaborate_fire_applications<'a>(
                                 application.result,
                                 alias,
                             )?;
+                            read_dependencies.push(witnesses.availability(alias));
                         }
                         Some(witness)
                             if witnesses.nodes[witness.index()].node != expected
                                 && !prefix_fallback =>
                         {
-                            let exact = witnesses.ids.get(&expected).copied();
-                            let Some(exact) = exact else {
-                                if equality_forest.is_some() && dependencies.is_some() {
-                                    let alias = witnesses.alias_app_endpoint(
-                                        expected,
-                                        application.result,
-                                        DepArena::EMPTY,
-                                    )?;
-                                    new_witnesses.push(alias);
-                                    deferred_error.get_or_insert_with(|| DeferredUnsupported {
-                                        location: format!(
-                                            "constructor application `{}`",
-                                            meta.name
-                                        ),
-                                        reason: "a congruence-created table hit without exact constructor-row provenance"
-                                            .to_owned(),
-                                    });
-                                    continue;
-                                }
-                                return Err(CausalSliceError::Unsupported {
-                                    location: format!("constructor application `{}`", meta.name),
-                                    reason: "a table hit whose match-time syntax conflicts with its captured witness"
-                                        .to_owned(),
-                                });
-                            };
-                            let exact_endpoint = witnesses.endpoint(exact).ok_or_else(|| {
-                                CausalSliceError::Invariant(format!(
-                                    "constructor witness `{}` has no captured endpoint",
-                                    meta.name
-                                ))
-                            })?;
-                            if exact_endpoint == application.result {
-                                witnesses.prefer_endpoint_witness(
-                                    &meta.output_sort,
+                            if let (Some(equality_forest), Some(dependencies)) =
+                                (equality_forest, dependencies.as_deref_mut())
+                                && let Some(availability) = congruent_app_availability(
+                                    witnesses,
+                                    &expected,
                                     application.result,
-                                    exact,
+                                    equality_forest,
+                                    dependencies,
+                                    None,
+                                )?
+                            {
+                                witnesses.alias_app_endpoint(
+                                    expected,
+                                    application.result,
+                                    availability,
                                 )?;
-                                read_dependencies.push(witnesses.availability(exact));
+                                read_dependencies.push(availability);
                                 continue;
                             }
-                            let old = TypedEndpoint {
-                                sort: meta.output_sort.clone(),
-                                value: exact_endpoint,
-                            };
-                            let current = TypedEndpoint {
-                                sort: meta.output_sort.clone(),
-                                value: application.result,
-                            };
-                            let Some(explanation) =
-                                equality_forest.and_then(|forest| forest.explain(&old, &current))
-                            else {
-                                if dependencies.is_some() {
-                                    let alias = witnesses.alias_app_endpoint(
-                                        expected,
-                                        application.result,
-                                        DepArena::EMPTY,
-                                    )?;
-                                    new_witnesses.push(alias);
-                                    deferred_error.get_or_insert_with(|| DeferredUnsupported {
-                                        location: format!(
-                                            "constructor application `{}`",
-                                            meta.name
-                                        ),
-                                        reason: "a table hit whose exact syntax changed endpoints without captured equality provenance"
-                                            .to_owned(),
-                                    });
-                                    continue;
-                                }
-                                return Err(CausalSliceError::Unsupported {
-                                    location: format!(
-                                        "constructor application `{}`",
-                                        meta.name
-                                    ),
-                                    reason: "a table hit whose exact syntax changed endpoints without a captured successful-union path"
+                            if dependencies.is_some() {
+                                let alias = witnesses.alias_app_endpoint(
+                                    expected,
+                                    application.result,
+                                    DepArena::EMPTY,
+                                )?;
+                                new_witnesses.push(alias);
+                                deferred_error.get_or_insert_with(|| DeferredUnsupported {
+                                    location: format!("constructor application `{}`", meta.name),
+                                    reason: "a congruence-created table hit without exact constructor-row provenance"
                                         .to_owned(),
                                 });
-                            };
-                            let dependency_arena =
-                                dependencies.as_deref_mut().ok_or_else(|| {
-                                    CausalSliceError::Invariant(
-                                        "constructor endpoint alias lacked a dependency arena"
-                                            .to_owned(),
-                                    )
-                                })?;
-                            let mut availability = witnesses.availability(exact);
-                            for dependency in explanation {
-                                availability = dependency_arena.and(availability, dependency)?;
+                                continue;
                             }
-                            witnesses.alias_app_endpoint(
-                                expected,
-                                application.result,
-                                availability,
-                            )?;
-                            read_dependencies.push(availability);
+                            return Err(CausalSliceError::Unsupported {
+                                location: format!("constructor application `{}`", meta.name),
+                                reason: "a table hit whose match-time syntax conflicts with its captured witness"
+                                    .to_owned(),
+                            });
                         }
-                        Some(_) => {}
+                        Some(witness) => {
+                            read_dependencies.push(witnesses.availability(witness));
+                        }
                         None if prefix_fallback => {
                             // A congruence-created row may have no earlier
                             // syntax witness. This exact table hit proves the
@@ -7044,6 +7127,233 @@ fn elaborate_fire_applications<'a>(
         read_dependencies,
         deferred_error,
     })
+}
+
+struct AliasCapturedHeadInput<'a> {
+    egraph: &'a EGraph,
+    model: &'a RuleModel,
+    bindings: &'a IndexMap<String, BindingWitness>,
+    applications: &'a [&'a TableApplication],
+    trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
+    equality_forest: &'a EqualityForest,
+}
+
+fn alias_captured_head_syntaxes(
+    input: AliasCapturedHeadInput<'_>,
+    witnesses: &mut WitnessArena,
+    dependencies: &mut DepArena,
+    effects: &mut FireApplicationEffects,
+) -> Result<(), CausalSliceError> {
+    let AliasCapturedHeadInput {
+        egraph,
+        model,
+        bindings,
+        applications,
+        trace_functions,
+        equality_forest,
+    } = input;
+    let mut modeled_applications = Vec::new();
+    for atom in &model.head {
+        for arg in &atom.args {
+            collect_postorder_applications(arg, &mut modeled_applications);
+        }
+    }
+    for application in model.head_constructors.iter().chain(&model.head_subsumes) {
+        collect_postorder_applications(application, &mut modeled_applications);
+    }
+    for equality in &model.head_unions {
+        collect_postorder_applications(&equality.left, &mut modeled_applications);
+        collect_postorder_applications(&equality.right, &mut modeled_applications);
+    }
+
+    let mut used = vec![false; applications.len()];
+    for modeled in modeled_applications {
+        let AtomArg::App {
+            function,
+            args,
+            input_sorts,
+            output_sort,
+        } = modeled
+        else {
+            continue;
+        };
+        let grounded_children = args
+            .iter()
+            .zip(input_sorts)
+            .map(|(arg, sort)| {
+                ground_arg_with_witness_at(egraph, arg, sort, bindings, witnesses, None)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let captured_args = grounded_children
+            .iter()
+            .map(|(endpoint, _)| endpoint.value)
+            .collect::<Vec<_>>();
+        let Some((index, captured)) = applications.iter().enumerate().find(|(index, captured)| {
+            if used[*index] || captured.args != captured_args {
+                return false;
+            }
+            trace_functions.get(&captured.table).is_some_and(|meta| {
+                meta.kind == TraceFunctionKind::Constructor
+                    && meta.name == *function
+                    && meta.output_sort == *output_sort
+            })
+        }) else {
+            continue;
+        };
+        used[index] = true;
+        effects.read_dependencies.extend(
+            grounded_children
+                .iter()
+                .map(|(_, witness)| witnesses.availability(*witness)),
+        );
+        let expected = WitnessNode::App {
+            sort: output_sort.clone(),
+            function: function.clone(),
+            children: grounded_children
+                .iter()
+                .map(|(_, witness)| *witness)
+                .collect(),
+        };
+        if captured.newly_staged {
+            let alias = witnesses.alias_app_endpoint(expected, captured.result, DepArena::EMPTY)?;
+            effects.new_witnesses.push(alias);
+        } else if let Some(availability) = congruent_app_availability(
+            witnesses,
+            &expected,
+            captured.result,
+            equality_forest,
+            dependencies,
+            None,
+        )? {
+            witnesses.alias_app_endpoint(expected, captured.result, availability)?;
+            effects.read_dependencies.push(availability);
+        }
+    }
+    effects.new_witnesses.sort_unstable_by_key(|id| id.index());
+    effects.new_witnesses.dedup();
+    Ok(())
+}
+
+fn collect_postorder_applications<'a>(arg: &'a AtomArg, applications: &mut Vec<&'a AtomArg>) {
+    if let AtomArg::App { args, .. } = arg {
+        for child in args {
+            collect_postorder_applications(child, applications);
+        }
+        applications.push(arg);
+    }
+}
+
+fn congruent_app_availability(
+    witnesses: &WitnessArena,
+    expected: &WitnessNode,
+    output: Value,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+    snapshot: Option<&WitnessSnapshot>,
+) -> Result<Option<DepId>, CausalSliceError> {
+    let WitnessNode::App {
+        sort,
+        function,
+        children,
+    } = expected
+    else {
+        return Err(CausalSliceError::Invariant(
+            "congruence lookup received a literal witness".to_owned(),
+        ));
+    };
+    let key = (sort.clone(), function.clone());
+    let Some(candidates) = witnesses.app_instances.get(&key) else {
+        return Ok(None);
+    };
+    let visible = snapshot
+        .map(|snapshot| {
+            snapshot
+                .app_instance_lengths
+                .get(&key)
+                .copied()
+                .unwrap_or(0)
+        })
+        .unwrap_or(candidates.len())
+        .min(candidates.len());
+    for candidate in candidates[..visible].iter().rev().copied() {
+        let Some(candidate_output) = witnesses.endpoint(candidate) else {
+            continue;
+        };
+        let WitnessNode::App {
+            children: candidate_children,
+            ..
+        } = &witnesses.nodes[candidate.index()].node
+        else {
+            continue;
+        };
+        if candidate_children.len() != children.len() {
+            continue;
+        }
+        let mut support = vec![witnesses.availability(candidate)];
+        let mut complete = true;
+        for (candidate_child, current_child) in candidate_children.iter().zip(children) {
+            support.push(witnesses.availability(*current_child));
+            let Some(candidate_endpoint) = witnesses.endpoint(*candidate_child) else {
+                complete = false;
+                break;
+            };
+            let Some(current_endpoint) = witnesses.endpoint(*current_child) else {
+                complete = false;
+                break;
+            };
+            if candidate_endpoint == current_endpoint {
+                continue;
+            }
+            let candidate_sort = match &witnesses.nodes[candidate_child.index()].node {
+                WitnessNode::Literal { sort, .. } | WitnessNode::App { sort, .. } => sort,
+            };
+            let current_sort = match &witnesses.nodes[current_child.index()].node {
+                WitnessNode::Literal { sort, .. } | WitnessNode::App { sort, .. } => sort,
+            };
+            if candidate_sort != current_sort {
+                complete = false;
+                break;
+            }
+            let Some(explanation) = equality_forest.explain(
+                &TypedEndpoint {
+                    sort: candidate_sort.clone(),
+                    value: candidate_endpoint,
+                },
+                &TypedEndpoint {
+                    sort: current_sort.clone(),
+                    value: current_endpoint,
+                },
+            ) else {
+                complete = false;
+                break;
+            };
+            support.extend(explanation);
+        }
+        if !complete {
+            continue;
+        }
+        if candidate_output != output {
+            let Some(explanation) = equality_forest.explain(
+                &TypedEndpoint {
+                    sort: sort.clone(),
+                    value: candidate_output,
+                },
+                &TypedEndpoint {
+                    sort: sort.clone(),
+                    value: output,
+                },
+            ) else {
+                continue;
+            };
+            support.extend(explanation);
+        }
+        let mut availability = DepArena::EMPTY;
+        for dependency in support {
+            availability = dependencies.and(availability, dependency)?;
+        }
+        return Ok(Some(availability));
+    }
+    Ok(None)
 }
 
 fn witness_contains_bigrat_primitive(witnesses: &WitnessArena, witness: WitnessId) -> bool {
@@ -7217,6 +7527,17 @@ fn ground_arg(
     bindings: &IndexMap<String, BindingWitness>,
     witnesses: &WitnessArena,
 ) -> Result<TypedEndpoint, CausalSliceError> {
+    ground_arg_at(egraph, arg, sort, bindings, witnesses, None)
+}
+
+fn ground_arg_at(
+    egraph: &EGraph,
+    arg: &AtomArg,
+    sort: &str,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+    snapshot: Option<&WitnessSnapshot>,
+) -> Result<TypedEndpoint, CausalSliceError> {
     let value = match arg {
         AtomArg::Lit(literal) => literal_to_value(egraph.backend.base_values(), literal),
         AtomArg::Global {
@@ -7239,7 +7560,7 @@ fn ground_arg(
                 ))
             })?,
         AtomArg::App { .. } => {
-            return ground_arg_with_witness(egraph, arg, sort, bindings, witnesses)
+            return ground_arg_with_witness_at(egraph, arg, sort, bindings, witnesses, snapshot)
                 .map(|(endpoint, _)| endpoint);
         }
     };
@@ -7249,21 +7570,24 @@ fn ground_arg(
     })
 }
 
-fn ground_arg_with_witness(
+fn ground_arg_with_witness_at(
     egraph: &EGraph,
     arg: &AtomArg,
     sort: &str,
     bindings: &IndexMap<String, BindingWitness>,
     witnesses: &WitnessArena,
+    snapshot: Option<&WitnessSnapshot>,
 ) -> Result<(TypedEndpoint, WitnessId), CausalSliceError> {
     let (value, witness) = match arg {
         AtomArg::Lit(literal) => {
             let value = literal_to_value(egraph.backend.base_values(), literal);
-            let witness = witnesses.by_endpoint(sort, value).ok_or_else(|| {
-                CausalSliceError::Invariant(format!(
-                    "grounded `{sort}` literal lacked its captured witness"
-                ))
-            })?;
+            let witness = witnesses
+                .by_endpoint_at(sort, value, snapshot)
+                .ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "grounded `{sort}` literal lacked its captured witness"
+                    ))
+                })?;
             (value, witness)
         }
         AtomArg::Global {
@@ -7298,7 +7622,9 @@ fn ground_arg_with_witness(
                 .iter()
                 .zip(input_sorts)
                 .map(|(child, child_sort)| {
-                    ground_arg_with_witness(egraph, child, child_sort, bindings, witnesses)
+                    ground_arg_with_witness_at(
+                        egraph, child, child_sort, bindings, witnesses, snapshot,
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let node = WitnessNode::App {
@@ -7322,25 +7648,33 @@ fn ground_arg_with_witness(
                             witnesses.endpoint(*captured) == Some(current.value)
                         })
             };
-            let witness = witnesses
-                .ids
-                .get(&node)
-                .copied()
-                .filter(|witness| matches_inputs(*witness))
-                .or_else(|| {
-                    let syntax = witnesses.syntax(&node)?;
-                    witnesses
-                        .syntax_instances
-                        .get(&syntax)?
+            let witness = if let Some(snapshot) = snapshot {
+                let key = (sort.to_owned(), function.clone());
+                let instances = witnesses.app_instances.get(&key);
+                let visible = instances
+                    .and_then(|_| snapshot.app_instance_lengths.get(&key).copied())
+                    .unwrap_or(0);
+                instances.and_then(|instances| {
+                    instances[..visible.min(instances.len())]
                         .iter()
                         .rev()
                         .copied()
-                        .find(|witness| matches_inputs(*witness))
+                        .find(|witness| {
+                            witnesses.nodes[witness.index()].node == node
+                                && matches_inputs(*witness)
+                        })
                 })
-                .ok_or_else(|| CausalSliceError::Unsupported {
-                    location: format!("grounded constructor `{function}`"),
-                    reason: "syntax that was unavailable at the captured firing".to_owned(),
-                })?;
+            } else {
+                witnesses
+                    .ids
+                    .get(&node)
+                    .copied()
+                    .filter(|witness| matches_inputs(*witness))
+            }
+            .ok_or_else(|| CausalSliceError::Unsupported {
+                location: format!("grounded constructor `{function}`"),
+                reason: "syntax that was unavailable at the captured firing".to_owned(),
+            })?;
             let endpoint = witnesses.endpoint(witness).ok_or_else(|| {
                 CausalSliceError::Invariant(format!(
                     "constructor witness `{function}` has no runtime endpoint"
@@ -7907,4 +8241,76 @@ fn unsupported_command<T>(
         location,
         reason: reason.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn witness_snapshot_excludes_an_old_syntax_bound_after_wave_start() {
+        let mut witnesses = WitnessArena::default();
+        let syntax = witnesses
+            .intern_syntax_app("Expr", "A", Vec::new())
+            .unwrap();
+        let snapshot = witnesses.snapshot();
+        let endpoint = EGraph::default().base_to_value(7_i64);
+
+        witnesses.bind_endpoint("Expr", endpoint, syntax).unwrap();
+        assert_eq!(witnesses.by_endpoint("Expr", endpoint), Some(syntax));
+        assert_eq!(
+            witnesses.by_endpoint_at("Expr", endpoint, Some(&snapshot)),
+            None
+        );
+
+        let expected = witnesses.nodes[syntax.index()].node.clone();
+        let equality_forest = EqualityForest::default();
+        let mut dependencies = DepArena::default();
+        assert_eq!(
+            congruent_app_availability(
+                &witnesses,
+                &expected,
+                endpoint,
+                &equality_forest,
+                &mut dependencies,
+                Some(&snapshot),
+            )
+            .unwrap(),
+            None
+        );
+        assert_eq!(
+            congruent_app_availability(
+                &witnesses,
+                &expected,
+                endpoint,
+                &equality_forest,
+                &mut dependencies,
+                None,
+            )
+            .unwrap(),
+            Some(DepArena::EMPTY)
+        );
+    }
+
+    #[test]
+    fn witness_snapshot_preserves_the_prestate_preferred_endpoint_syntax() {
+        let mut witnesses = WitnessArena::default();
+        let endpoint = EGraph::default().base_to_value(11_i64);
+        let first = witnesses
+            .intern_app("Expr", "A", Vec::new(), endpoint, DepArena::EMPTY, true)
+            .unwrap();
+        let second = witnesses
+            .intern_app("Expr", "B", Vec::new(), endpoint, DepArena::EMPTY, true)
+            .unwrap();
+        assert_ne!(first, second);
+        witnesses
+            .prefer_endpoint_witness("Expr", endpoint, first)
+            .unwrap();
+
+        let snapshot = witnesses.snapshot();
+        assert_eq!(
+            witnesses.by_endpoint_at("Expr", endpoint, Some(&snapshot)),
+            Some(first)
+        );
+    }
 }

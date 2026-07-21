@@ -1304,6 +1304,50 @@ fn pure_i64_query_primitive_replays_its_complete_grounding() {
 }
 
 #[test]
+fn pure_i64_multiplication_query_replays_its_complete_grounding() {
+    let source = r#"
+        (datatype Math (Num i64))
+        (relation Inputs (Math Math))
+        (relation Done (Math))
+        (let $two (Num 2))
+        (let $three (Num 3))
+        (let $six (Num 6))
+        (Inputs $two $three)
+        (rule ((Inputs x y)
+               (= x (Num a))
+               (= y (Num b))
+               (= result (* a b)))
+              ((Done (Num result)))
+              :name "fold-multiply"
+              :no-decomp)
+        (run 1)
+        (check (Done $six))
+    "#;
+
+    let slice = causal_slice_program(Some("i64-query-multiply.egg".to_owned()), source).unwrap();
+    let firing = replay_firings(&slice.source)
+        .into_iter()
+        .find(|(rule, _)| rule == "fold-multiply")
+        .expect("retained multiplication firing");
+    assert!(
+        firing
+            .1
+            .iter()
+            .any(|(variable, witness)| variable == "result" && witness == "6")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("i64-query-multiply-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn pure_bigrat_query_replays_with_exact_postfilter_grounding() {
     let source = r#"
         (datatype Math (Num BigRat))
@@ -2446,7 +2490,310 @@ fn constructor_table_hit_retains_the_equality_that_changed_its_endpoint() {
 }
 
 #[test]
-fn congruence_created_constructor_syntax_can_only_be_sliced_away() {
+fn nested_constructor_row_alias_retains_the_child_equality() {
+    let source = r#"
+        (datatype Expr (A) (B) (F Expr) (G Expr))
+        (relation Seed ())
+        (relation AliasSeed ())
+        (relation UseSeed ())
+        (relation Seen (Expr))
+        (relation Alias (Expr))
+        (relation Out ())
+        (ruleset unify)
+        (ruleset alias)
+        (ruleset use)
+        (rule ((Seed))
+              ((union (A) (B)))
+              :ruleset unify
+              :name "unify-children")
+        (rule ((AliasSeed))
+              ((Alias (G (F (B)))))
+              :ruleset alias
+              :name "touch-nested-alias")
+        (rule ((UseSeed) (= nested (G (F (B)))) (Seen nested))
+              ((Out))
+              :ruleset use
+              :name "use-nested-alias")
+        (Seen (G (F (A))))
+        (Seed)
+        (AliasSeed)
+        (UseSeed)
+        (run-schedule (run unify) (run alias) (run use))
+        (check (Out))
+    "#;
+
+    let slice = causal_slice_program(Some("nested-row-alias.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "unify-children", &[]));
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "use-nested-alias")
+    );
+    assert!(!has_replay_firing(&slice.source, "touch-nested-alias", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-row-alias-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn nested_constructor_input_alias_retains_the_child_equality() {
+    let source = r#"
+        (datatype Expr (A) (B) (F Expr) (G Expr))
+        (relation Seed ())
+        (relation AliasSeed ())
+        (relation UseSeed ())
+        (relation Seen (Expr))
+        (relation Alias (Expr))
+        (relation Out ())
+        (ruleset unify)
+        (ruleset alias)
+        (ruleset use)
+        (rule ((Seed))
+              ((union (A) (B)))
+              :ruleset unify
+              :name "unify-children")
+        (rule ((AliasSeed))
+              ((Alias (F (B))))
+              :ruleset alias
+              :name "touch-child-alias")
+        (rule ((UseSeed) (= nested (G (F (B)))) (Seen nested))
+              ((Out))
+              :ruleset use
+              :name "use-nested-alias")
+        (Seen (G (F (A))))
+        (Seed)
+        (AliasSeed)
+        (UseSeed)
+        (run-schedule (run unify) (run alias) (run use))
+        (check (Out))
+    "#;
+
+    let slice = causal_slice_program(Some("nested-input-alias.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "unify-children", &[]));
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "use-nested-alias")
+    );
+    assert!(!has_replay_firing(&slice.source, "touch-child-alias", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-input-alias-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn exact_constructor_alias_hit_retains_its_availability() {
+    let source = r#"
+        (datatype Expr (A) (B) (T Expr))
+        (relation Seed ())
+        (relation TouchSeed ())
+        (relation FinishSeed ())
+        (relation Touch (Expr))
+        (relation Out (Expr))
+        (ruleset unify)
+        (ruleset touch)
+        (ruleset finish)
+        (rule ((Seed))
+              ((union (T (A)) (T (B))))
+              :ruleset unify
+              :name "unify-terms")
+        (rule ((TouchSeed))
+              ((Touch (T (B))))
+              :ruleset touch
+              :name "touch-alias")
+        (rule ((FinishSeed))
+              ((Out (T (B))))
+              :ruleset finish
+              :name "finish")
+        (T (A))
+        (T (B))
+        (Seed)
+        (TouchSeed)
+        (FinishSeed)
+        (run-schedule (run unify) (run touch) (run finish))
+        (check (Out (T (A))))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("exact-constructor-alias.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "unify-terms", &[]));
+    assert!(has_replay_firing(&slice.source, "finish", &[]));
+    assert!(!has_replay_firing(&slice.source, "touch-alias", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("exact-constructor-alias-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn constructor_alias_conjoins_every_child_equality() {
+    let source = r#"
+        (datatype Expr (A) (B) (C) (D) (Pair Expr Expr))
+        (relation LeftSeed ())
+        (relation RightSeed ())
+        (relation FinishSeed ())
+        (relation Out (Expr))
+        (ruleset left)
+        (ruleset right)
+        (ruleset finish)
+        (rule ((LeftSeed))
+              ((union (A) (B)))
+              :ruleset left
+              :name "unify-left")
+        (rule ((RightSeed))
+              ((union (C) (D)))
+              :ruleset right
+              :name "unify-right")
+        (rule ((FinishSeed))
+              ((Out (Pair (B) (D))))
+              :ruleset finish
+              :name "finish")
+        (Pair (A) (C))
+        (LeftSeed)
+        (RightSeed)
+        (FinishSeed)
+        (run-schedule (run left) (run right) (run finish))
+        (check (Out (Pair (A) (C))))
+    "#;
+
+    let slice = causal_slice_program(Some("two-child-alias.egg".to_owned()), source).unwrap();
+    for rule in ["unify-left", "unify-right", "finish"] {
+        assert!(has_replay_firing(&slice.source, rule, &[]));
+    }
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("two-child-alias-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn redundant_union_receipt_accepts_causally_canonicalized_endpoints() {
+    let source = r#"
+        (datatype Expr (A) (B) (C) (D) (Pair Expr Expr))
+        (relation LeftSeed ())
+        (relation RightSeed ())
+        (relation RedundantSeed ())
+        (relation GoalSeed ())
+        (relation Goal ())
+        (ruleset left)
+        (ruleset right)
+        (ruleset redundant)
+        (ruleset goal)
+        (rule ((LeftSeed))
+              ((union (A) (B)))
+              :ruleset left
+              :name "unify-left")
+        (rule ((RightSeed))
+              ((union (C) (D)))
+              :ruleset right
+              :name "unify-right")
+        (rule ((RedundantSeed) (= rw (Pair (A) (C))))
+              ((union rw (Pair (B) (D))))
+              :ruleset redundant
+              :name "redundant-parent-union")
+        (rule ((GoalSeed))
+              ((Goal))
+              :ruleset goal
+              :name "goal")
+        (Pair (A) (C))
+        (Pair (B) (D))
+        (LeftSeed)
+        (RightSeed)
+        (RedundantSeed)
+        (GoalSeed)
+        (run-schedule (run left) (run right) (run redundant) (run goal))
+        (check (Goal))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("canonical-redundant-union.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "goal", &[]));
+    for irrelevant in ["unify-left", "unify-right", "redundant-parent-union"] {
+        assert!(!has_replay_firing(&slice.source, irrelevant, &[]));
+    }
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("canonical-redundant-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn rule_created_reverse_term_replays_a_later_redundant_union() {
+    let source = r#"
+        (datatype Expr (A) (B) (MMul Expr Expr))
+        (relation AbsorbSeed ())
+        (relation GoalSeed ())
+        (relation Goal ())
+        (ruleset expr)
+        (ruleset absorb)
+        (ruleset finish)
+        (rule ((= rw (MMul a b)))
+              ((union rw (MMul b a)))
+              :ruleset expr
+              :name "mul-comm")
+        (rule ((AbsorbSeed))
+              ((union (MMul (A) (B)) (B)))
+              :ruleset absorb
+              :name "absorb-product")
+        (rule ((GoalSeed))
+              ((Goal))
+              :ruleset finish
+              :name "goal")
+        (MMul (A) (B))
+        (AbsorbSeed)
+        (GoalSeed)
+        (run-schedule (run expr) (run absorb) (run expr) (run finish))
+        (check (Goal))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("rule-created-redundant-union.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "goal", &[]));
+    assert!(!has_replay_firing(&slice.source, "mul-comm", &[]));
+    assert!(!has_replay_firing(&slice.source, "absorb-product", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("rule-created-redundant-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn congruence_created_constructor_syntax_retains_its_equality_support() {
     let common = r#"
         (datatype Expr (A i64) (B i64) (Wrap Expr))
         (relation Seed ())
@@ -2496,17 +2843,23 @@ fn congruence_created_constructor_syntax_can_only_be_sliced_away() {
         .unwrap();
 
     let retained = format!("{common}(check (Out (Wrap (B 1))))\n");
-    let error = causal_slice_replay_program(
+    let replay = causal_slice_replay_program(
         Some("constructor-congruence-retained.egg".to_owned()),
         &retained,
     )
-    .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("congruence-created table hit without exact constructor-row provenance"),
-        "{error}"
-    );
+    .unwrap();
+    assert!(has_replay_firing(&replay.source, "unify-children", &[]));
+    assert!(has_replay_firing(&replay.source, "hit-congruence", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("constructor-congruence-retained-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -2852,7 +3205,7 @@ fn constructor_lookup_body_retains_its_application_and_equality_causes() {
 }
 
 #[test]
-fn chained_constructor_lookup_requires_exact_match_row_provenance() {
+fn chained_constructor_lookup_replays_from_prior_rows_and_equalities() {
     let source = r#"
         (datatype Allocation (A String))
         (constructor expr_points_to (String) Allocation)
@@ -2882,16 +3235,30 @@ fn chained_constructor_lookup_requires_exact_match_row_provenance() {
         .parse_and_run_program(Some("chained-constructor-lookup.egg".to_owned()), source)
         .unwrap();
 
-    // The first lookup binds `alloc` using `(expr_points_to "expr")`, while
-    // the constructor row enabling the second lookup was created with
-    // `(A "alloc")`. Those terms are equal, but choosing a historical
-    // constructor witness by searching their e-class would guess the body
-    // producer rather than capture the exact row used by the native match.
-    let error = causal_slice_program(Some("chained-constructor-lookup.egg".to_owned()), source)
-        .unwrap_err();
-    let message = error.to_string();
-    assert!(message.contains("grounded constructor `ptr_points_to`"));
-    assert!(message.contains("syntax that was unavailable at the captured firing"));
+    // The second lookup is supported by one prior constructor row plus the
+    // exact successful-union paths from its captured child and output.
+    let slice =
+        causal_slice_program(Some("chained-constructor-lookup.egg".to_owned()), source).unwrap();
+    for rule in ["make-expr", "make-ptr", "load"] {
+        assert!(
+            replay_firings(&slice.source)
+                .iter()
+                .any(|(retained, _)| retained == rule),
+            "missing retained firing for {rule}"
+        );
+    }
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        for make_egraph in [EGraph::default, || {
+            EGraph::new_with_proofs().with_proof_testing()
+        }] {
+            make_egraph()
+                .parse_and_run_program(
+                    Some("chained-constructor-lookup-replay.egg".to_owned()),
+                    replay_source,
+                )
+                .unwrap();
+        }
+    }
 }
 
 #[test]
@@ -3246,6 +3613,43 @@ fn repeated_and_prefix_named_check_constructors_use_exact_rows() {
             )
             .unwrap();
     }
+}
+
+#[test]
+fn deeply_nested_single_fact_check_uses_the_traced_single_bag_plan() {
+    let source = r#"
+        (datatype Expr (Leaf i64) (Pair Expr Expr))
+        (relation Seed ())
+        (relation Goal (Expr))
+        (rule ((Seed))
+              ((Goal
+                (Pair
+                  (Pair
+                    (Pair (Leaf 0) (Leaf 1))
+                    (Pair (Leaf 2) (Leaf 3)))
+                  (Pair
+                    (Pair (Leaf 4) (Leaf 5))
+                    (Pair (Leaf 6) (Leaf 7))))))
+              :name "produce")
+        (Seed)
+        (run 1)
+        (check
+          (Goal
+            (Pair
+              (Pair
+                (Pair (Leaf 0) (Leaf 1))
+                (Pair (Leaf 2) (Leaf 3)))
+              (Pair
+                (Pair (Leaf 4) (Leaf 5))
+                (Pair (Leaf 6) (Leaf 7))))))
+    "#;
+
+    let slice = causal_slice_program(Some("deep-check.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "produce", &[]));
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("deep-check-replay.egg".to_owned()), &slice.source)
+        .unwrap();
 }
 
 #[test]
