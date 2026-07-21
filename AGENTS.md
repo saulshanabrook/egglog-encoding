@@ -40,9 +40,10 @@ make proof-tests
 
 `proofs/` runs explicit `(prove ...)` fixtures under `tests/proofs` and every
 proof-compatible file under proof-testing mode, snapshotting generated proofs.
-It is a name-filtered subset of `cargo test --workspace`, so do not run it after
-a full workspace test unless you want a focused proof rerun. The Make target
-owns the exact Cargo filter.
+Strict proof testing rewrites checks, extracts and verifies their proofs, and
+snapshots the results. It is a name-filtered subset of
+`cargo test --workspace`, so do not run it after a full workspace test unless
+you want a focused proof rerun. The Make target owns the exact Cargo filter.
 
 For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
 machine-readable report path so the run does not read or append to the default
@@ -95,8 +96,15 @@ or modify the JSONL.
 - The runner loads report JSONL once through the shared JSON codec into an
   indexed `ReportStore`; an interactive artifact embeds that complete snapshot
   and retargets only within it.
-- Benchmark inputs should not contain executable `(prove ...)` commands; use
-  `(check ...)` in benchmark fixtures and cover proof extraction in proof tests.
+- `proofs` is generation-only. The main-only `proof-extraction` treatment uses
+  `--proof-extraction` to rewrite checks and extract, materialize, clean, and
+  simplify proofs without verifying them. Treat its results as performance
+  evidence only; `--proof-testing` remains the strict correctness mode.
+- Bare `./bench.py` compares `proofs` with `off`. The main-only
+  `proof-extraction` treatment is explicit opt-in; the DD backend rejects it.
+- Benchmark inputs should not contain executable `(prove ...)` commands. Use
+  `(check ...)` so the selected treatment controls proof extraction, and cover
+  strict proof validity in proof tests.
 - Benchmark files are resolved relative to the command invocation directory,
   not relative to comparison targets.
 - Cache reuse is decided by binary SHA-256, file SHA-256, fact-directory

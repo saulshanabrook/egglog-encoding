@@ -633,6 +633,14 @@ impl EGraph {
         self
     }
 
+    /// Enable proof testing while skipping validation of the extracted proofs.
+    #[cfg(any(feature = "bin", test))]
+    pub(crate) fn with_proof_extraction(mut self) -> Self {
+        self = self.with_proofs_enabled().with_proof_testing();
+        self.proof_state.verify_proofs = false;
+        self
+    }
+
     /// Set the number of threads used for parallel operations.
     ///
     /// This is a helper that simply configures the global rayon thread pool. It can only be called

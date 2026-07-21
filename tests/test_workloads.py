@@ -37,7 +37,7 @@ def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="explicit prove command"):
+    with pytest.raises(ValueError, match="explicit prove command.*selected treatment controls proof extraction"):
         workloads.resolve_files([str(prove_file)], tmp_path)
 
 
@@ -129,6 +129,15 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "--backend",
         "dd",
         "--proofs",
+        str(file_spec.absolute_path),
+    ]
+    assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "proof-extraction") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--proof-extraction",
         str(file_spec.absolute_path),
     ]
 

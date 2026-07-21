@@ -168,11 +168,27 @@ def test_run_command_can_require_capability_output() -> None:
         120,
         required_output="--timing-summary",
     )
+    all_present = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH --proof-extraction')"],
+        ROOT,
+        120,
+        required_output=("--timing-summary", "--proof-extraction"),
+    )
+    extraction_missing = processes.run_command(
+        [sys.executable, "-c", "print('--timing-summary PATH')"],
+        ROOT,
+        120,
+        required_output=("--timing-summary", "--proof-extraction"),
+    )
 
     assert present.status == "success"
     assert missing.status == "failure"
     assert missing.error is not None
     assert "did not contain" in missing.error.message
+    assert all_present.status == "success"
+    assert extraction_missing.status == "failure"
+    assert extraction_missing.error is not None
+    assert "--proof-extraction" in extraction_missing.error.message
 
 
 def test_timing_from_usage_records_peak_rss() -> None:

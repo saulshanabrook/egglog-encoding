@@ -44,9 +44,10 @@ changes and downstream behavior in one reviewable unit.
 
 Proof-specific file tests use the `proofs/` filter: explicit `(prove ...)`
 fixtures under `tests/proofs` plus every proof-compatible file under
-proof-testing mode. Proof testing turns checks into proof queries and snapshots
-the generated proofs. Use `make proof-tests` for focused iteration and
-`make rust-check` or `make check` for the final compatibility gate.
+proof-testing mode. Strict proof testing turns checks into proof queries,
+extracts and verifies the generated proofs, and snapshots them. Use
+`make proof-tests` for focused iteration and `make rust-check` or `make check`
+for the final compatibility gate.
 
 ## Benchmarking
 
@@ -60,7 +61,7 @@ Every benchmark invocation compares exactly two endpoints over the same ordered
 files: a candidate and a baseline. An endpoint is one target, backend, and
 treatment. There are no implicit matrices or multi-way comparisons.
 
-The default command compares proof mode with ordinary mode in the current
+The default command compares proof generation with ordinary mode in the current
 checkout:
 
 ```bash
@@ -90,27 +91,37 @@ Treatments map directly to engine modes:
 | --- | --- |
 | `off` | no term or proof encoding |
 | `term` | `--term-encoding` |
-| `proofs` | `--proofs` |
+| `proofs` | `--proofs`; enable proof generation without rewriting checks or extracting proofs |
+| `proof-extraction` | `--proof-extraction`; rewrite checks, then extract, materialize, clean, and simplify proofs without verifying them |
 
-The `main` backend supports all three treatments; `dd` supports `term` and
-`proofs`. The engine's `--proof-testing` option is a correctness mode, not a
-benchmark treatment.
+The `main` backend supports all four treatments. The `dd` backend supports
+`term` and `proofs`; an explicit `proof-extraction` treatment is rejected. The
+engine's `--proof-testing` option is a strict correctness mode that rewrites
+checks, extracts proofs, and verifies them, not a benchmark treatment. Results
+from `proof-extraction` are performance evidence only, not proof-validity
+evidence.
 
 ### Common comparisons
 
-Proof overhead in the current checkout is the default:
+Proof-generation overhead in the current checkout remains the default:
 
 ```bash
 ./bench.py
 ```
 
-Compare the current proof implementation with proof mode on `origin/main`:
+Measure non-validating proof-extraction overhead explicitly:
+
+```bash
+./bench.py --treatment proof-extraction
+```
+
+Compare the current proof implementation with proof generation on `origin/main`:
 
 ```bash
 ./bench.py --compare-target @origin/main --compare-treatment proofs
 ```
 
-Compare the DD backend with main while holding proof mode fixed:
+Compare the DD backend with main while holding proof generation fixed:
 
 ```bash
 ./bench.py --backend dd --compare-treatment proofs
@@ -198,11 +209,13 @@ corpus:
 | Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
-| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks run through the proof checker |
+| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks exercise the selected treatment |
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads and test proof extraction separately, so
-printing or checking a proof does not become part of the timing boundary.
+`(check ...)` in timed workloads so the selected treatment controls whether
+proofs are extracted. This keeps explicit proof printing out of the timing
+boundary while allowing `proof-extraction` to measure extraction from those
+checks.
 
 Reports normally identify a selected file by filename. If names collide, they
 use the shortest distinguishing path suffix; persisted rows retain the invoked
@@ -588,8 +601,8 @@ CI runs on pull requests, manual dispatches, and pushes to `main`:
   `egglog/tests/integer_math.egg` through `make benchmark-smoke`.
 - `codspeed`: an in-process, proofs-only benchmark over a smaller workload set
   in simulation and memory modes. CodSpeed includes phase-clock execution but
-  does not persist phase reports; `./bench.py` remains the source for
-  off/proofs, commit, and backend comparisons with stored observations.
+  does not persist phase reports; `./bench.py` remains the source for treatment,
+  commit, and backend comparisons with stored observations.
 
 Ruff and Mypy discover all repository-owned Python files from project
 configuration, so new modules under `benchmarking/` or `tests/` require no

@@ -72,7 +72,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--treatment",
-        choices=("off", "term", "proofs"),
+        choices=("off", "term", "proofs", "proof-extraction"),
         default="proofs",
         help="candidate treatment (default: proofs)",
     )
@@ -89,7 +89,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--compare-treatment",
-        choices=("off", "term", "proofs"),
+        choices=("off", "term", "proofs", "proof-extraction"),
         default="off",
         help="baseline treatment (default: off)",
     )

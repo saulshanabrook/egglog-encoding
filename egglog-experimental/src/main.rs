@@ -12,12 +12,7 @@ fn main() {
         eprintln!("error: {err}");
         std::process::exit(2);
     });
-    let proof_mode = args.iter().any(|arg| {
-        matches!(
-            arg.to_str(),
-            Some("--proofs" | "--proof-testing" | "--term-encoding")
-        )
-    });
+    let proof_mode = has_proof_mode(&args);
     #[cfg(feature = "dd-backend")]
     let args = if matches!(backend, Backend::Dd) {
         strip_term_encoding_arg(args)
@@ -33,6 +28,15 @@ fn main() {
         ),
     };
     egglog::cli_with_args(egraph, args)
+}
+
+fn has_proof_mode(args: &[OsString]) -> bool {
+    args.iter().any(|arg| {
+        matches!(
+            arg.to_str(),
+            Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
+        )
+    })
 }
 
 fn extract_backend_arg<I>(args: I) -> Result<(Backend, Vec<OsString>), String>
@@ -101,6 +105,12 @@ mod tests {
     #[test]
     fn parses_main_backend() {
         assert_eq!(parse_backend(Some("main")), Ok(Backend::Main));
+    }
+
+    #[test]
+    fn proof_extraction_selects_the_proof_capable_wrapper() {
+        let args = ["egglog", "--proof-extraction", "prog.egg"].map(OsString::from);
+        assert!(has_proof_mode(&args));
     }
 
     #[cfg(not(feature = "dd-backend"))]

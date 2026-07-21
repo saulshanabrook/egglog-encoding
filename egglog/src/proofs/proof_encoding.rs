@@ -29,6 +29,10 @@ pub(crate) struct EncodingState {
     pub original_typechecking: Option<Box<EGraph>>,
     pub proofs_enabled: bool,
     pub proof_testing: bool,
+    /// Whether extracted proofs should be checked before and after simplification.
+    /// Proof extraction benchmarking disables this while retaining the rest of
+    /// the proof-testing pipeline.
+    pub verify_proofs: bool,
     pub proof_names: EncodingNames,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe
     /// whole-database baseline) instead of `:unsafe-seminaive`, so tests can
@@ -49,6 +53,7 @@ impl EncodingState {
             proofs_enabled: false,
             proof_names: EncodingNames::new(symbol_gen),
             proof_testing: false,
+            verify_proofs: true,
             force_proof_naive: false,
         }
     }

@@ -56,6 +56,13 @@ def test_compare_target_inherits_candidate_but_compare_backend_stays_main() -> N
     assert candidate.treatment == "proofs"
 
 
+def test_dd_rejects_explicit_proof_extraction_treatment() -> None:
+    args = benchmark.parse_benchmark_args(["--backend", "dd", "--treatment", "proof-extraction"])
+
+    with pytest.raises(ValueError, match="backend dd does not support treatment proof-extraction"):
+        benchmark.endpoint_requests(args)
+
+
 def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     args = benchmark.parse_benchmark_args(
         [
@@ -148,6 +155,16 @@ def test_comparison_permits_shared_binary_across_different_treatments() -> None:
     assert baseline.cache_identity == ("sha256:shared", "main", "off")
     assert candidate.cache_identity == ("sha256:shared", "main", "proofs")
     assert comparison.baseline.target is comparison.candidate.target
+
+
+def test_proof_extraction_has_a_distinct_cache_identity_from_proofs() -> None:
+    target = make_target(binary_sha256="sha256:shared")
+    proofs = models.BenchmarkEndpoint(target, "main", "proofs")
+    extraction = models.BenchmarkEndpoint(target, "main", "proof-extraction")
+
+    assert proofs.cache_identity == ("sha256:shared", "main", "proofs")
+    assert extraction.cache_identity == ("sha256:shared", "main", "proof-extraction")
+    assert proofs.cache_identity != extraction.cache_identity
 
 
 def test_comparison_rejects_identical_cache_endpoints() -> None:

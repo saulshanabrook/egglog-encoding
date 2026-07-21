@@ -91,6 +91,7 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert benchmark_args.files == ["file.egg"]
     assert benchmark_args.rounds == 1
     assert benchmark_args.format == "rich"
+    assert benchmark_args.treatment == "proofs"
     assert profile_args.command == "profile"
     assert profile_args.file == "file.egg"
     assert profile_args.backend == "main"
@@ -145,6 +146,17 @@ def test_resolve_profile_request_reuses_backend_treatment_validation(tmp_path: P
 
     with pytest.raises(ValueError, match="backend dd does not support treatment off"):
         profile_runner.resolve_profile_request(args, ROOT)
+
+
+def test_profile_accepts_explicit_main_proof_extraction(tmp_path: Path) -> None:
+    file_path = tmp_path / "file.egg"
+    file_path.write_text("(check (= 1 1))\n", encoding="utf-8")
+    args = profile_runner.parse_profile_args([str(file_path), "--treatment", "proof-extraction"])
+
+    request = profile_runner.resolve_profile_request(args, ROOT)
+
+    assert request.backend == "main"
+    assert request.treatment == "proof-extraction"
 
 
 def test_target_resolvers_share_materialization_and_select_build_profile(
