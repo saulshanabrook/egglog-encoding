@@ -802,6 +802,38 @@ fn emitted_rules_preserve_source_no_decomp_flags() {
 }
 
 #[test]
+fn pointer_fixture_slices_to_one_strictly_checked_firing() {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    let source_path = repository.join("benchmarks/pointer-analysis-small.egg");
+    let fact_directory = repository.join("benchmarks/data/pointer-analysis-small");
+    let source = std::fs::read_to_string(&source_path).unwrap();
+
+    let slice = causal_slice_program_with_fact_directory(
+        Some(source_path.to_string_lossy().into_owned()),
+        &source,
+        Some(&fact_directory),
+    )
+    .unwrap();
+    assert_eq!(slice.stats.pending_firings, 706);
+    assert_eq!(slice.stats.effective_applications, 600);
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(!slice.source.contains("(run 100000)"));
+    assert_eq!(slice.source.matches("(run-rule ").count(), 1);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("pointer-analysis-small-sliced.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn duplicate_anonymous_rules_get_distinct_names_and_no_ops_are_separated() {
     let source = r#"
         (relation A (i64))
