@@ -2006,6 +2006,7 @@ fn validate_and_model(
             Command::Relation { .. }
             | Command::Datatype { .. }
             | Command::Constructor { .. }
+            | Command::Function { .. }
             | Command::AddRuleset(..) => {
                 if schedule_index.is_some() {
                     return unsupported_command(
@@ -2170,7 +2171,7 @@ fn validate_and_model(
                     "rewrites, unions, or congruence",
                 );
             }
-            Command::Function { .. } | Command::Datatypes { .. } | Command::Sort { .. } => {
+            Command::Datatypes { .. } | Command::Sort { .. } => {
                 return unsupported_command(
                     command,
                     index,

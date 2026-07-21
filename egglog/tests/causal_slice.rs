@@ -1062,6 +1062,54 @@ fn container_presort_remains_an_explicit_boundary() {
 }
 
 #[test]
+fn inert_custom_function_declaration_is_preserved_without_state_provenance() {
+    let source = r#"
+        (function hi (i64) i64 :merge (min old new))
+        (relation Seed (i64))
+        (relation Done (i64))
+        (Seed 7)
+        (rule ((Seed n)) ((Done n)) :name "copy")
+        (run 1)
+        (check (Done 7))
+    "#;
+
+    let slice = causal_slice_program(Some("inert-function.egg".to_owned()), source).unwrap();
+    assert!(
+        slice
+            .source
+            .contains("(function hi (i64) i64 :merge (min old new))")
+    );
+    assert!(has_replay_firing(&slice.source, "copy", &[("n", "7")]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("inert-function-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn custom_function_state_use_remains_an_explicit_boundary() {
+    let source = r#"
+        (function hi (i64) i64 :merge (min old new))
+        (relation Seed (i64))
+        (Seed 7)
+        (rule ((Seed n)) ((set (hi 0) n)) :name "write-hi")
+        (run 1)
+        (check (= (hi 0) 7))
+    "#;
+
+    let error = causal_slice_program(Some("dynamic-function.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("non-insert/union head action in rule `write-hi`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
     let source = r#"
         (datatype Expr (A String))
