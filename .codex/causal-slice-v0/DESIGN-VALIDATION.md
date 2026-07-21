@@ -106,10 +106,12 @@ The initial validator rejected all equality, constructors, unions, and
 rewrites. The current extension above admits immutable constructors, direct
 unions, restricted constructor lookup binders, parsed rewrite/birewrite
 lowering, closed immutable globals, inert custom-function declarations, and a
-print-only Prefix fallback. It still rejects primitive filters and results,
-mutable functions, delete, subsume, custom merges, other RHS function
-lookups, external functions, containers, extracts, negative checks, push/pop,
-includes, output/opaque I/O, input `run-rule`, and DD.
+print-only Prefix fallback. It also admits one exact deterministic query
+primitive from the tested i64/BigRat whitelist and narrow proof-validating
+BigRat head arithmetic. It still rejects mutable functions, delete, subsume,
+custom merges, other RHS function lookups, arbitrary external functions,
+containers, extracts, negative checks, push/pop, includes, output/opaque I/O,
+input `run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -144,9 +146,10 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | one positive check can root one complete actual environment | Confirmed within the planner boundary | one-atom variable check and two-atom constant/repeated-variable checks pass; projected/decomposed checks fail closed |
 | sequential grounded leaves preserve the supported monotone fragment | Confirmed | fully grounded set atoms have at most one complete row; prerequisites pre-exist; insertions commute and duplicates are no-ops |
 | sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
-| `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
-| final `RuleMatch` bindings explain successful query primitives | Falsified | `query_prim` lowers to `Instr::External` after the match is recorded; Herbie's `pow` result and success/failure are absent from the current trace |
-| successful rule-head primitive lanes expose exact causal evidence | Confirmed narrowly | primary `ExternalWithFallback` success records origin, runtime function ID, arguments, and result; fallback and query-side instructions remain unsupported |
+| standalone `run-rule :expect` counts post-filter logical matches | Falsified | the original guard counts join candidates; generated packed replay instead runs the recorded residual-query prefix, keys the complete resulting binding, and validates every exact-one guard before heads |
+| final `RuleMatch` bindings alone explain successful query primitives | Falsified | the match is still pre-primitive; a separate successful-`Instr::External` trace now supplies exact origin, function, arguments, result, and instruction |
+| successful rule-head and query primitive lanes expose exact causal evidence | Confirmed narrowly | head primary/fallback and query `External` success carry exact lane evidence; the slicer admits only an explicit deterministic i64/BigRat whitelist and rejects arbitrary externals |
+| query/head splitting preserves atomic same-prestate replay | Confirmed for the guarded prefix whitelist | every candidate prefix runs against one prestate, complete guards validate before suffixes, suffixes run in ordinal order, and ordinary plus strict i64/BigRat canaries pass |
 | parsed `datatype*` must be rewritten into unrelated source commands | Falsified | v0 preserves the parsed declaration, mirrors its mutually recursive schemas for modeling, and reuses existing constructor table tracing; ordinary and strict replay pass |
 | declaration-only `UnstableFn` requires callback provenance | Falsified | the sort and inert schemas replay strictly as opaque declarations; any runtime value use still fails closed through existing opaque-sort checks |
 | scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
@@ -251,7 +254,7 @@ retained. Push/pop remains outside the no-epoch claim.
 | E5 | Does ordinary GJ expose all source variables? | falsified by the projected `y` canary; source rejected |
 | E6 | Is sequential replay adequate for Bronze? | passed for fully grounded positive set relations |
 | E7 | Does sequential replay preserve mutation waves? | falsified by insert/delete, delete/read, subsume/read, and lookup canaries |
-| E8 | Does `:expect` count after primitive filters? | falsified; source rejected before tracing |
+| E8 | Does standalone `run-rule :expect` count after primitive filters? | falsified; generated packed replay now uses a separate complete post-filter guard path |
 | E9 | Is the equality forest available from current hooks? | passed for rule-originated direct unions; originless congruence/rebuild remains unsupported |
 | E10 | Are source planner flags preserved? | passed; emission preserves absence/presence of `:no-decomp` and validates it in the semantic rule mapping |
 | E11 | Are duplicate complete head rows counted once while the full head replays? | passed |
@@ -273,9 +276,11 @@ retained. Push/pop remains outside the no-epoch claim.
 | E27 | Does backward reachability retain a global's endpoint-changing cause? | yes: an otherwise irrelevant union is retained solely for a later global-valued head; ordinary and strict replay pass |
 | E28 | Can inert custom-function declarations be admitted without merge provenance? | yes: declaration-only strict replay passes and the paired dynamic `set` canary remains rejected |
 | E29 | Can retained complete-head BigRat binary arithmetic replay strictly? | yes for one `+`, `-`, `*`, or `/` with exact traced operands/result and a pre-wave result witness |
-| E30 | Can Herbie's query-side `pow` use the current `RuleMatch` and `:expect 1` as an exact grounding? | no: the match and guard are pre-primitive, successful `Instr::External` evidence is absent, and the slicer fails closed |
+| E30 | Can Herbie's query-side `pow` use a traced post-filter grounding? | yes narrowly: successful and failed `pow` candidates are distinguished from one native run, the result is in the packed grounding, and ordinary/strict replay pass; `RuleMatch` alone remains insufficient |
 | E31 | Can mutually recursive `datatype*` declarations remain source-level replay syntax? | yes: two mutually recursive sorts and nested constructors replay in ordinary and unchanged strict proof modes; unsupported inline `Map` fails closed |
 | E32 | Can `UnstableFn` be admitted only as an inert opaque schema? | yes: declaration/schema-only replay passes ordinary and strict modes, while a rule body reading the value is rejected |
+| E33 | Does the query bridge advance real fixtures? | yes: Herbie advances from line-64 `pow` through unary heads, `log`, and comparisons to line-80 mutable `lo`; Luminal advances from line-66 i64 `+` to `subsume` in that head |
+| E34 | Are failed query primitive candidates replayed as firings? | no: focused `pow(0,-1)`, `log(2)`, and false BigRat predicate candidates produce no retained replay fire, while successful peers replay strictly |
 
 ## Validation commands
 
