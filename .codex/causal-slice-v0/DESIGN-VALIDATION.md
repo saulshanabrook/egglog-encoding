@@ -147,6 +147,8 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
 | final `RuleMatch` bindings explain successful query primitives | Falsified | `query_prim` lowers to `Instr::External` after the match is recorded; Herbie's `pow` result and success/failure are absent from the current trace |
 | successful rule-head primitive lanes expose exact causal evidence | Confirmed narrowly | primary `ExternalWithFallback` success records origin, runtime function ID, arguments, and result; fallback and query-side instructions remain unsupported |
+| parsed `datatype*` must be rewritten into unrelated source commands | Falsified | v0 preserves the parsed declaration, mirrors its mutually recursive schemas for modeling, and reuses existing constructor table tracing; ordinary and strict replay pass |
+| declaration-only `UnstableFn` requires callback provenance | Falsified | the sort and inert schemas replay strictly as opaque declarations; any runtime value use still fails closed through existing opaque-sort checks |
 | scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
 | anonymous rewrite registration is too opaque for stable replay names | Falsified | parsed rewrite/birewrite lowering assigns stable source-position names and preserves one-to-many source mapping; focused ordinary and strict canaries pass |
 | print-only observations provide a narrow causal root | Falsified | `print-size` observes aggregate state, so v0 reports a conservative Prefix and retains every effective prior event; no slicing reduction is claimed |
@@ -272,6 +274,8 @@ retained. Push/pop remains outside the no-epoch claim.
 | E28 | Can inert custom-function declarations be admitted without merge provenance? | yes: declaration-only strict replay passes and the paired dynamic `set` canary remains rejected |
 | E29 | Can retained complete-head BigRat binary arithmetic replay strictly? | yes for one `+`, `-`, `*`, or `/` with exact traced operands/result and a pre-wave result witness |
 | E30 | Can Herbie's query-side `pow` use the current `RuleMatch` and `:expect 1` as an exact grounding? | no: the match and guard are pre-primitive, successful `Instr::External` evidence is absent, and the slicer fails closed |
+| E31 | Can mutually recursive `datatype*` declarations remain source-level replay syntax? | yes: two mutually recursive sorts and nested constructors replay in ordinary and unchanged strict proof modes; unsupported inline `Map` fails closed |
+| E32 | Can `UnstableFn` be admitted only as an inert opaque schema? | yes: declaration/schema-only replay passes ordinary and strict modes, while a rule body reading the value is rejected |
 
 ## Validation commands
 

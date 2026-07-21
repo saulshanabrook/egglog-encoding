@@ -290,10 +290,11 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | constructor lookups | implemented for exact captured syntax | lookup availability plus output equality path are retained; equal-but-different body syntax needs exact native row evidence |
 | mutable functions, merges, other RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
 | constructor witnesses | implemented and tested | source, rule-created, standalone, nested, constructor-union, BigInt/BigRat, and closed-global canaries |
+| mutually recursive `datatype*` | implemented and tested | original parsed syntax is preserved; all mutually recursive sorts and constructors are modeled; nested constructor replay passes ordinary and strict proof modes; unsupported inline presorts fail closed |
 | rule-head BigRat arithmetic | implemented and tested narrowly | one replay-safe `+`, `-`, `*`, or `/` application per complete head; exact native function ID, operands, result, origin, and a pre-wave result witness are required; ordinary and unchanged strict replay pass |
 | query/body primitives | rejected | `RuleMatch` and `:expect` observe pre-primitive candidates; successful `Instr::External` lanes are not yet traced, so `pow` is a reduced fail-closed boundary |
 | dynamic source globals | implemented for closed immutable constructor globals | exact native pre-wave endpoints are captured once per wave; changed endpoints retain their successful-union path; local/global shadowing fails closed |
-| inert custom-function declarations | preserved | declarations may remain in source, while every read, write, merge, or default-value use remains rejected without state provenance |
+| inert custom-function and `UnstableFn` schemas | preserved | declarations and unused table schemas may remain in source, while every state read/write/merge and every runtime callback/container value remains rejected without provenance |
 | rewrite/birewrite replay | implemented and tested | deterministic parsed lowering, stable source mapping, projected binding aliases, ordinary and strict canaries |
 | print-only observations | conservative Prefix fallback | every effective preceding event is retained; each `print-size` root is reported; no size reduction is claimed |
 | containers | rejected | same outer ID can represent changed contents |
@@ -569,17 +570,17 @@ validation bucket rather than being timed as successful rows.
 | `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
 | `herbie.egg` | query-side `(pow a b)` at `64:56` | complete-head BigRat `+`, `-`, `*`, and `/` now trace and replay; successful query-primitive evidence/post-filter guarding, then `lo`/`hi` state reads, custom merges, push/pop, and multiple schedules remain |
-| `luminal-llama.egg` | `IList` declared through `datatype*` | recursive datatype lowering, six schedule boundaries, delete/subsume, functions, and mutable-state provenance |
-| `hardboiled_conv1d_32.egg` | inert `UnstableFn` sort declaration | after admitting declaration-only opaque sorts: container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
+| `luminal-llama.egg` | query-side i64 `(+ ?a ?b)` at line 66 | mutually recursive `datatype*` is admitted; successful query-primitive evidence/post-filter guarding is next, immediately followed by mixed `union`/`subsume`, then six schedule boundaries and mutable-state provenance |
+| `hardboiled_conv1d_32.egg` | `Call` body pattern with opaque `VecExpr` at line 234 | inert `UnstableFn` schemas are admitted; versioned container witnesses, functions, filters, broad joins, and subsume provenance remain |
 | `eggcc-2mm-pass1.egg` | source `(set (TypeList-length (TNil)) 0)` | `:unextractable` constructor witnesses and inert `Pair`/`Vec`/`Set` schemas are admitted; mutable function initialization, custom merges, temporal schedules, containers, delete/subsume, and stateful primitives remain |
 
-The exact query-primitive assumption needed for Herbie has been falsified and
-is preserved as a focused fail-closed canary. The next independent selection
-point is declaration-only `UnstableFn` support for Hardboiled versus
-`datatype*` source lowering for Luminal. Eggcc has reached actual mutable state
-initialization, which should wait for dynamic-read/general row commit evidence.
-Guarded shared-prestate batch replay, exact global snapshots, and narrow
-complete-head BigRat arithmetic are implemented; mutable commit,
+The declaration-only frontiers are now closed: parsed `datatype*` and inert
+`UnstableFn` schemas replay strictly without treating their runtime values as
+provenance-free scalars. Herbie and Luminal now converge on the same missing
+query-primitive evidence/post-filter guard interface. Eggcc has reached actual
+mutable state initialization, while Hardboiled has reached versioned container
+values. Guarded shared-prestate batch replay, exact global snapshots, and
+narrow complete-head BigRat arithmetic are implemented; mutable commit,
 delete/subsume, container-version, query-primitive, and opaque external
 provenance remain fail-closed.
 
@@ -655,6 +656,19 @@ Current primitive/schema continuation:
   `git diff --check` passed at the preceding primitive commit;
 - `make proof-tests` and `make check` remain pending after these commits.
 
+Current datatype/opaque-schema continuation:
+
+- parsed mutually recursive `datatype*` declarations are preserved and their
+  schemas modeled without changing source command positions or rule mappings;
+- declaration/schema-only `UnstableFn` sorts are preserved as opaque container
+  sorts, while dynamic use retains the existing fail-closed diagnostic;
+- `cargo test -p egglog --test causal_slice`: 76 passed;
+- `cargo clippy -p egglog --test causal_slice -- -D warnings`, formatting, and
+  `git diff --check`: passed;
+- the exact new fixture frontiers are Luminal line 66 query-side i64 `+` and
+  Hardboiled line 234 opaque `VecExpr` use;
+- `make proof-tests` and `make check` remain pending after these commits.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -672,6 +686,10 @@ Current primitive/schema continuation:
   are carried by the native trace, and one retained BigRat `+`, `-`, `*`, or
   `/` can be reconstructed and strictly replayed. This does not admit
   query/body primitives or arbitrary external functions.
+- Implemented/tested fact: mutually recursive datatype declarations and inert
+  `UnstableFn` schemas can be preserved without introducing replay events;
+  constructor applications still use native table evidence, and runtime
+  container/callback values still fail closed.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
@@ -692,11 +710,11 @@ The benchmark path, scalar inputs, immutable constructor/global witnesses,
 direct unions, guarded shared-prestate batches, and two real fixtures are
 implemented. The next patches should be:
 
-1. admit the next independent declaration/lowering frontier (`UnstableFn` or
-   `datatype*`) while retaining fail-closed dynamic use checks;
-2. if returning to Herbie, trace successful query-side `Instr::External`
-   origin/arguments/result and add post-filter-exact replay semantics before
-   claiming a logical grounding guard;
+1. trace successful query-side `Instr::External` origin/arguments/result and
+   add post-filter-exact replay semantics before claiming a logical grounding
+   guard; this is now shared by Herbie and Luminal;
+2. add unary complete-head BigRat `neg`/`abs` only after active witness
+   canaries, then re-evaluate Herbie's next mutable `lo`/`hi` boundary;
 3. avoid reparsing the generated source solely for in-process validation after
    the already-validated parsed/source rule mapping is available;
 4. stream each native wave into a callback, or otherwise compact completed
@@ -771,6 +789,12 @@ Local reviewable commits:
 38. `17799692` — replay effective empty-body initializer rules;
 39. `a9e67dd6`, `37f434ba`, `71933157` — trace successful rule-head
     primitives and replay retained BigRat `+`, `-`, `*`, and `/` applications.
+40. `eabdc894` — preserve the reduced query-primitive/post-filter guard
+    counterexample and update the real fixture frontiers;
+41. `13327d1d` — preserve and model mutually recursive `datatype*`
+    declarations without source lowering;
+42. `e8e1172d` — preserve declaration/schema-only `UnstableFn` sorts while
+    keeping runtime callback values opaque.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
