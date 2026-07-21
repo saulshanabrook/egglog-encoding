@@ -385,10 +385,15 @@ fn proof_testing_snapshot_disabled(path: &Path) -> bool {
 }
 
 fn skip_proof_testing(path: &Path, desugar: bool) -> bool {
+    // Math reuses a global name across push/pop scopes. Desugared proof replay
+    // flattens those scopes and checks an earlier Fiat against the later
+    // binding; PR #22 fixes this separate verifier bug.
+    let skip_math_desugar = desugar && path.ends_with("tests/web-demo/math.egg");
+
     EXPECTED_PROOF_TESTING_FAILURES
         .iter()
         .any(|file| path.ends_with(file))
-        || (desugar && path.ends_with("tests/web-demo/math.egg"))
+        || skip_math_desugar
 }
 
 fn generate_tests(glob: &str) -> Vec<Trial> {
