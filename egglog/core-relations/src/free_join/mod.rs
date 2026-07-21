@@ -83,11 +83,29 @@ pub enum GuardedRuleSetRunOutcome {
     },
 }
 
+/// Result of capturing several guarded rules against one shared pre-state,
+/// validating every guard, and only then applying their complete heads in the
+/// listed order.
+#[derive(Debug)]
+pub enum GuardedRuleSetBatchRunOutcome {
+    Applied {
+        observed_matches: Vec<usize>,
+        report: RuleSetReport,
+    },
+    MatchCountMismatch {
+        run_index: usize,
+        expected_matches: usize,
+        observed_matches: usize,
+    },
+}
+
 /// Invalid input to guarded single-rule execution.
 #[derive(Debug, Error)]
 pub enum GuardedRuleSetRunError {
     #[error("guarded rule execution requires at most one executable plan, got {plan_count}")]
     MultipleExecutablePlans { plan_count: usize },
+    #[error("guarded rule batch entries require exactly :expect 1")]
+    BatchRequiresExactlyOne,
 }
 
 /// One logical rule-body match captured immediately before its complete head

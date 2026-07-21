@@ -38,9 +38,10 @@ use crate::{
 };
 
 use super::{
-    ActionId, AtomId, Database, GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex,
-    HashIndex, RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError, TableApplication,
-    TableInfo, Variable, get_column_index_from_tableinfo,
+    ActionId, AtomId, Database, GuardedRuleSetBatchRunOutcome, GuardedRuleSetRunError,
+    GuardedRuleSetRunOutcome, HashColumnIndex, HashIndex, RuleExecutionTrace, RuleMatch,
+    RuleMatchId, RuleMatchTraceError, TableApplication, TableInfo, Variable,
+    get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -973,6 +974,178 @@ impl Database {
                 merge_time,
             },
         })
+    }
+
+    /// Capture every listed single-rule query against one shared pre-state,
+    /// validate all exact-one guards atomically, then execute the captured
+    /// complete heads in list order and merge once.
+    pub fn run_rule_sets_guarded_batch(
+        &mut self,
+        runs: &[(&RuleSet, Option<usize>)],
+        report_level: ReportLevel,
+    ) -> Result<GuardedRuleSetBatchRunOutcome, GuardedRuleSetRunError> {
+        if runs
+            .iter()
+            .any(|(_, expected_matches)| *expected_matches != Some(1))
+        {
+            return Err(GuardedRuleSetRunError::BatchRequiresExactlyOne);
+        }
+        for (rule_set, _) in runs {
+            if rule_set.plans.len() > 1 {
+                return Err(GuardedRuleSetRunError::MultipleExecutablePlans {
+                    plan_count: rule_set.plans.len(),
+                });
+            }
+        }
+
+        let pre_merge_timer = Instant::now();
+        let mut captured_runs = Vec::with_capacity(runs.len());
+        let mut search_times = Vec::with_capacity(runs.len());
+        let mut total_search_time = Duration::ZERO;
+        for (run_index, (rule_set, _)) in runs.iter().enumerate() {
+            let search_timer = Instant::now();
+            let captured = self.capture_rule_set_serial(rule_set);
+            let search_time = search_timer.elapsed();
+            total_search_time += search_time;
+            search_times.push(search_time);
+            if captured.len() != 1 {
+                return Ok(GuardedRuleSetBatchRunOutcome::MatchCountMismatch {
+                    run_index,
+                    expected_matches: 1,
+                    observed_matches: captured.len(),
+                });
+            }
+            captured_runs.push(captured);
+        }
+
+        let mut total_apply_time = Duration::ZERO;
+        let mut apply_times = Vec::with_capacity(runs.len());
+        let mut match_counters = Vec::with_capacity(runs.len());
+        let mut exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        for ((rule_set, _), captured) in runs.iter().zip(&captured_runs) {
+            let match_counter = MatchCounter::new(rule_set.actions.n_ids());
+            let mut action_buf = InPlaceActionBuffer {
+                rule_set,
+                match_counter: &match_counter,
+                batches: Default::default(),
+                apply_time: Duration::ZERO,
+                trace: None,
+            };
+            let binding = captured[0].to_map();
+            action_buf.push_bindings(captured[0].action, &binding, || exec_state.clone());
+            action_buf.flush(&mut exec_state);
+            total_apply_time += action_buf.apply_time;
+            apply_times.push(action_buf.apply_time);
+            match_counters.push(match_counter);
+        }
+        // Mutation-buffer handles publish their staged rows when dropped. Do
+        // that before merge_all observes the notification set.
+        drop(exec_state);
+
+        let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>> = HashMap::default();
+        for (index, ((rule_set, _), match_counter)) in runs.iter().zip(&match_counters).enumerate()
+        {
+            if let Some((plan, desc, symbol_map)) = rule_set.plans.values().next() {
+                let report_plan = match report_level {
+                    ReportLevel::TimeOnly => None,
+                    ReportLevel::WithPlan | ReportLevel::StageInfo => {
+                        Some(plan.to_report(symbol_map))
+                    }
+                };
+                rule_reports
+                    .entry(desc.clone())
+                    .or_default()
+                    .push(RuleReport {
+                        plan: report_plan,
+                        search_and_apply_time: search_times[index] + apply_times[index],
+                        num_matches: match_counter.read_matches(plan.actions()),
+                    });
+            }
+        }
+
+        let pre_merge_elapsed = pre_merge_timer.elapsed();
+        let unattributed = pre_merge_elapsed.saturating_sub(total_search_time + total_apply_time);
+        let merge_timer = Instant::now();
+        let changed = self.merge_all();
+        let merge_time = merge_timer.elapsed();
+        Ok(GuardedRuleSetBatchRunOutcome::Applied {
+            observed_matches: vec![1; runs.len()],
+            report: RuleSetReport {
+                changed,
+                rule_reports,
+                pre_merge: PreMergeTiming::Split {
+                    search: total_search_time,
+                    apply: total_apply_time,
+                    unattributed,
+                },
+                merge_time,
+            },
+        })
+    }
+
+    fn capture_rule_set_serial(&self, rule_set: &RuleSet) -> Vec<CapturedBinding> {
+        let Some((plan, _, _)) = rule_set.plans.values().next() else {
+            return Vec::new();
+        };
+        let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        let join_state = JoinState::new(self, exec_state);
+        let mut binding_info = initial_binding_info(&join_state, plan);
+        let mut action_buf = InPlaceCaptureBuffer::default();
+        if !intersect_plan_headers(&join_state, plan, &mut binding_info) {
+            return action_buf.captured;
+        }
+        match plan {
+            Plan::SinglePlan(plan) => join_state.run_join_stages(
+                &plan.stages,
+                &plan.atoms,
+                plan.actions,
+                &mut binding_info,
+                &mut action_buf,
+            ),
+            Plan::DecomposedPlan(plan) => {
+                let mut materializations = DenseIdMap::with_capacity(plan.stages.blocks.len());
+                for index in 0..plan.stages.blocks.len() {
+                    materializations.insert(MatId::from_usize(index), Default::default());
+                }
+                let mut materializer = InPlaceMaterializer {
+                    specs: &plan
+                        .stages
+                        .blocks
+                        .iter()
+                        .enumerate()
+                        .map(|(index, block)| (MatId::from_usize(index), block.1.clone()))
+                        .collect(),
+                    materializations,
+                    scratch_key: Default::default(),
+                    scratch_val: Default::default(),
+                };
+                for (mat_id, stage_block) in plan.stages.blocks.iter().enumerate() {
+                    let mat_id = MatId::from_usize(mat_id);
+                    join_state.run_join_stages(
+                        &stage_block.0,
+                        &plan.atoms,
+                        mat_id,
+                        &mut binding_info,
+                        &mut materializer,
+                    );
+                    if materializer.materializations[mat_id].is_empty() {
+                        return action_buf.captured;
+                    }
+                    binding_info.materializations.insert(
+                        mat_id,
+                        Arc::new(materializer.materializations.take(mat_id).unwrap()),
+                    );
+                }
+                join_state.run_join_stages(
+                    &plan.result_block,
+                    &plan.atoms,
+                    plan.actions,
+                    &mut binding_info,
+                    &mut action_buf,
+                );
+            }
+        }
+        action_buf.captured
     }
 }
 

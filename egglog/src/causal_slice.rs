@@ -771,6 +771,16 @@ struct ElaborationInput<'a> {
     prefix_fallback: bool,
 }
 
+struct PrefixElaborationInput<'a> {
+    egraph: &'a EGraph,
+    rules: &'a IndexMap<String, RuleModel>,
+    relations: &'a IndexMap<String, RelationDecl>,
+    source_facts: &'a [SourceFact],
+    source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
+    batches: Vec<RuleExecutionTrace>,
+    trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
+}
+
 struct ObservationInput<'a> {
     egraph: &'a EGraph,
     checks: &'a [CheckModel],
@@ -952,13 +962,15 @@ fn generate_causal_slice(
             witness_nodes,
             equality_edges,
         } = elaborate_prefix_replay(
-            &egraph,
-            &rules,
-            &relations,
-            &source_facts,
-            &source_traces,
-            schedule_batches,
-            &trace_functions,
+            PrefixElaborationInput {
+                egraph: &egraph,
+                rules: &rules,
+                relations: &relations,
+                source_facts: &source_facts,
+                source_traces: &source_traces,
+                batches: schedule_batches,
+                trace_functions: &trace_functions,
+            },
             &mut witnesses,
         )?;
         let elaboration_time = elaboration_start.elapsed();
@@ -2732,9 +2744,10 @@ fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> 
                 Ok(())
             }
         }
-        Schedule::RunRule(span, _) => {
-            unsupported(span, "manual `run-rule` in the input program".to_owned())
-        }
+        Schedule::RunRule(span, _) | Schedule::RunRuleBatch(span, _) => unsupported(
+            span,
+            "manual `run-rule` or `run-rule-batch` in the input program".to_owned(),
+        ),
         Schedule::Saturate(_, inner) | Schedule::Repeat(_, _, inner) => {
             validate_input_schedule(inner)
         }
@@ -2840,15 +2853,18 @@ fn elaborate_source_fact(
 }
 
 fn elaborate_prefix_replay(
-    egraph: &EGraph,
-    rules: &IndexMap<String, RuleModel>,
-    relations: &IndexMap<String, RelationDecl>,
-    source_facts: &[SourceFact],
-    source_traces: &IndexMap<usize, Vec<RuleExecutionTrace>>,
-    batches: Vec<RuleExecutionTrace>,
-    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    input: PrefixElaborationInput<'_>,
     witnesses: &mut WitnessArena,
 ) -> Result<PrefixElaboration, CausalSliceError> {
+    let PrefixElaborationInput {
+        egraph,
+        rules,
+        relations,
+        source_facts,
+        source_traces,
+        batches,
+        trace_functions,
+    } = input;
     let mut source_rows = IndexSet::default();
     for fact in source_facts {
         source_rows.extend(elaborate_source_fact(
@@ -4354,36 +4370,11 @@ fn validate_replay_schedule(
 ) -> Result<(), CausalSliceError> {
     match schedule {
         Schedule::RunRule(span, config) => {
-            if config.expect != Some(1) {
-                return unsupported(span, "a replay leaf without `:expect 1`".to_owned());
-            }
-            if !config.selectors.is_empty() {
-                return unsupported(span, "internal replay selectors".to_owned());
-            }
-            let model = rules.get(&config.rule).ok_or_else(|| {
-                CausalSliceError::Invariant(format!(
-                    "replay references unknown rule `{}`",
-                    config.rule
-                ))
-            })?;
-            let names = config
-                .bindings
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>();
-            let expected = model
-                .replay_var_order
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>();
-            if names != expected {
-                return Err(CausalSliceError::Invariant(format!(
-                    "replay binding list for `{}` is incomplete or out of order",
-                    config.rule
-                )));
-            }
-            for (_, expr) in &config.bindings {
-                validate_closed_replay_witness(expr, span, replay_globals)?;
+            validate_replay_run_rule(span, config, rules, replay_globals)
+        }
+        Schedule::RunRuleBatch(span, configs) => {
+            for config in configs {
+                validate_replay_run_rule(span, config, rules, replay_globals)?;
             }
             Ok(())
         }
@@ -4400,6 +4391,43 @@ fn validate_replay_schedule(
             )
         }
     }
+}
+
+fn validate_replay_run_rule(
+    span: &Span,
+    config: &RunRuleConfig,
+    rules: &IndexMap<String, RuleModel>,
+    replay_globals: &HashSet<String>,
+) -> Result<(), CausalSliceError> {
+    if config.expect != Some(1) {
+        return unsupported(span, "a replay leaf without `:expect 1`".to_owned());
+    }
+    if !config.selectors.is_empty() {
+        return unsupported(span, "internal replay selectors".to_owned());
+    }
+    let model = rules.get(&config.rule).ok_or_else(|| {
+        CausalSliceError::Invariant(format!("replay references unknown rule `{}`", config.rule))
+    })?;
+    let names = config
+        .bindings
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let expected = model
+        .replay_var_order
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if names != expected {
+        return Err(CausalSliceError::Invariant(format!(
+            "replay binding list for `{}` is incomplete or out of order",
+            config.rule
+        )));
+    }
+    for (_, expr) in &config.bindings {
+        validate_closed_replay_witness(expr, span, replay_globals)?;
+    }
+    Ok(())
 }
 
 fn validate_closed_replay_witness(
@@ -4450,6 +4478,7 @@ fn command_schedule_span(command: &Command) -> Option<Span> {
     Some(match schedule {
         Schedule::Run(span, _)
         | Schedule::RunRule(span, _)
+        | Schedule::RunRuleBatch(span, _)
         | Schedule::Repeat(span, _, _)
         | Schedule::Saturate(span, _)
         | Schedule::Sequence(span, _) => span.clone(),

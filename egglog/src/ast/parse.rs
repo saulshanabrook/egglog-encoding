@@ -1116,10 +1116,28 @@ impl Parser {
                     );
                 }
             },
+            "run-rule-batch" => {
+                if tail.is_empty() {
+                    return error!(span, "run-rule-batch requires at least one run-rule entry");
+                }
+                let mut configs = Vec::with_capacity(tail.len());
+                for entry in tail {
+                    match self.parse_schedule(entry)? {
+                        Schedule::RunRule(_, config) => configs.push(config),
+                        _ => {
+                            return error!(
+                                entry.span(),
+                                "run-rule-batch entries must be run-rule schedules"
+                            );
+                        }
+                    }
+                }
+                Schedule::RunRuleBatch(span, configs)
+            }
             _ => {
                 return error!(
                     span,
-                    "expected either saturate, seq, repeat, run, or run-rule"
+                    "expected either saturate, seq, repeat, run, run-rule, or run-rule-batch"
                 );
             }
         })

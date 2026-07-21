@@ -384,6 +384,7 @@ pub enum GenericSchedule<Head, Leaf> {
     Repeat(Span, usize, Box<GenericSchedule<Head, Leaf>>),
     Run(Span, GenericRunConfig<Head, Leaf>),
     RunRule(Span, GenericRunRuleConfig<Head, Leaf>),
+    RunRuleBatch(Span, Vec<GenericRunRuleConfig<Head, Leaf>>),
     Sequence(Span, Vec<GenericSchedule<Head, Leaf>>),
 }
 
@@ -415,6 +416,16 @@ where
                 config.selectors = f(config.selectors);
                 GenericSchedule::RunRule(span, config)
             }
+            GenericSchedule::RunRuleBatch(span, configs) => GenericSchedule::RunRuleBatch(
+                span,
+                configs
+                    .into_iter()
+                    .map(|mut config| {
+                        config.selectors = f(config.selectors);
+                        config
+                    })
+                    .collect(),
+            ),
             GenericSchedule::Sequence(span, generic_schedules) => GenericSchedule::Sequence(
                 span,
                 generic_schedules
@@ -438,6 +449,9 @@ where
             }
             GenericSchedule::Run(span, config) => GenericSchedule::Run(span, config),
             GenericSchedule::RunRule(span, config) => GenericSchedule::RunRule(span, config),
+            GenericSchedule::RunRuleBatch(span, configs) => {
+                GenericSchedule::RunRuleBatch(span, configs)
+            }
             GenericSchedule::Sequence(span, scheds) => {
                 let mut flattened = Vec::new();
                 for sched in scheds.into_iter().map(Self::flatten_sequences) {
@@ -471,6 +485,13 @@ where
             GenericSchedule::RunRule(span, config) => {
                 GenericSchedule::RunRule(span, config.visit_exprs(f))
             }
+            GenericSchedule::RunRuleBatch(span, configs) => GenericSchedule::RunRuleBatch(
+                span,
+                configs
+                    .into_iter()
+                    .map(|config| config.visit_exprs(f))
+                    .collect(),
+            ),
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds.into_iter().map(|s| s.visit_exprs(f)).collect(),
@@ -501,6 +522,13 @@ where
             GenericSchedule::RunRule(span, config) => {
                 GenericSchedule::RunRule(span, config.map_symbols(head, leaf))
             }
+            GenericSchedule::RunRuleBatch(span, configs) => GenericSchedule::RunRuleBatch(
+                span,
+                configs
+                    .into_iter()
+                    .map(|config| config.map_symbols(head, leaf))
+                    .collect(),
+            ),
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds
@@ -530,6 +558,13 @@ where
             GenericSchedule::RunRule(span, config) => {
                 GenericSchedule::RunRule(span, config.map_string_symbols(fun))
             }
+            GenericSchedule::RunRuleBatch(span, configs) => GenericSchedule::RunRuleBatch(
+                span,
+                configs
+                    .into_iter()
+                    .map(|config| config.map_string_symbols(fun))
+                    .collect(),
+            ),
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds
@@ -557,6 +592,9 @@ impl<Head: Display, Leaf: Display> Display for GenericSchedule<Head, Leaf> {
             GenericSchedule::Repeat(_ann, size, sched) => write!(f, "(repeat {size} {sched})"),
             GenericSchedule::Run(_ann, config) => write!(f, "{config}"),
             GenericSchedule::RunRule(_ann, config) => write!(f, "{config}"),
+            GenericSchedule::RunRuleBatch(_ann, configs) => {
+                write!(f, "(run-rule-batch {})", ListDisplay(configs, " "))
+            }
             GenericSchedule::Sequence(_ann, scheds) => {
                 write!(f, "(seq {})", ListDisplay(scheds, " "))
             }

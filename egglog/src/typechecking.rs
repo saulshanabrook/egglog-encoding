@@ -1112,85 +1112,105 @@ impl TypeInfo {
                     },
                 )
             }
-            Schedule::RunRule(span, config) => {
-                let rule_info = self
-                    .named_rules
-                    .get(&config.rule)
-                    .ok_or_else(|| TypeError::NoSuchRule(config.rule.clone(), span.clone()))?;
-
-                let mut seen_bindings = HashSet::default();
-                let mut bindings = Vec::with_capacity(config.bindings.len());
-                let mut selectors = Vec::with_capacity(config.bindings.len());
-                for (name, expr) in &config.bindings {
-                    if !seen_bindings.insert(name.clone()) {
-                        return Err(TypeError::DuplicateRunRuleBinding {
+            Schedule::RunRule(span, config) => ResolvedSchedule::RunRule(
+                span.clone(),
+                self.typecheck_run_rule_config(symbol_gen, span, config)?,
+            ),
+            Schedule::RunRuleBatch(span, configs) => {
+                let mut resolved = Vec::with_capacity(configs.len());
+                for config in configs {
+                    if config.expect != Some(1) {
+                        return Err(TypeError::RunRuleBatchRequiresExpectOne {
                             rule: config.rule.clone(),
-                            variable: name.clone(),
-                            span: expr.span(),
+                            span: span.clone(),
                         });
                     }
-                    let Some(target) = rule_info
-                        .input_vars
-                        .iter()
-                        .find(|input| input.var.name == *name)
-                        .map(|input| &input.var)
-                    else {
-                        return Err(TypeError::UnknownRunRuleBinding {
-                            rule: config.rule.clone(),
-                            variable: name.clone(),
-                            span: expr.span(),
-                        });
-                    };
-
-                    let mut non_closed = None;
-                    expr.visit_vars(&mut |var_span, var| {
-                        if non_closed.is_none() && !self.global_sorts.contains_key(var) {
-                            non_closed = Some((var.clone(), var_span.clone()));
-                        }
-                    });
-                    if let Some((variable, span)) = non_closed {
-                        return Err(TypeError::RunRuleBindingNotClosed {
-                            rule: config.rule.clone(),
-                            variable,
-                            span,
-                        });
-                    }
-
-                    let resolved_expr = self.typecheck_expr_with_output(
-                        symbol_gen,
-                        expr,
-                        &Default::default(),
-                        target.sort.clone(),
-                        Context::Read,
-                    )?;
-                    let target_expr = ResolvedExpr::Var(expr.span(), target.clone());
-                    selectors.push(ResolvedFact::Eq(
-                        expr.span(),
-                        target_expr,
-                        resolved_expr.clone(),
-                    ));
-                    bindings.push((target.clone(), resolved_expr));
+                    resolved.push(self.typecheck_run_rule_config(symbol_gen, span, config)?);
                 }
-
-                selectors.extend(self.typecheck_run_rule_selectors(
-                    symbol_gen,
-                    &config.selectors,
-                    &rule_info.input_vars,
-                )?);
-
-                ResolvedSchedule::RunRule(
-                    span.clone(),
-                    ResolvedRunRuleConfig {
-                        rule: config.rule.clone(),
-                        bindings,
-                        selectors,
-                        expect: config.expect,
-                    },
-                )
+                ResolvedSchedule::RunRuleBatch(span.clone(), resolved)
             }
         };
 
         Result::Ok(schedule)
+    }
+
+    fn typecheck_run_rule_config(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        span: &Span,
+        config: &RunRuleConfig,
+    ) -> Result<ResolvedRunRuleConfig, TypeError> {
+        let rule_info = self
+            .named_rules
+            .get(&config.rule)
+            .ok_or_else(|| TypeError::NoSuchRule(config.rule.clone(), span.clone()))?;
+
+        let mut seen_bindings = HashSet::default();
+        let mut bindings = Vec::with_capacity(config.bindings.len());
+        let mut selectors = Vec::with_capacity(config.bindings.len());
+        for (name, expr) in &config.bindings {
+            if !seen_bindings.insert(name.clone()) {
+                return Err(TypeError::DuplicateRunRuleBinding {
+                    rule: config.rule.clone(),
+                    variable: name.clone(),
+                    span: expr.span(),
+                });
+            }
+            let Some(target) = rule_info
+                .input_vars
+                .iter()
+                .find(|input| input.var.name == *name)
+                .map(|input| &input.var)
+            else {
+                return Err(TypeError::UnknownRunRuleBinding {
+                    rule: config.rule.clone(),
+                    variable: name.clone(),
+                    span: expr.span(),
+                });
+            };
+
+            let mut non_closed = None;
+            expr.visit_vars(&mut |var_span, var| {
+                if non_closed.is_none() && !self.global_sorts.contains_key(var) {
+                    non_closed = Some((var.clone(), var_span.clone()));
+                }
+            });
+            if let Some((variable, span)) = non_closed {
+                return Err(TypeError::RunRuleBindingNotClosed {
+                    rule: config.rule.clone(),
+                    variable,
+                    span,
+                });
+            }
+
+            let resolved_expr = self.typecheck_expr_with_output(
+                symbol_gen,
+                expr,
+                &Default::default(),
+                target.sort.clone(),
+                Context::Read,
+            )?;
+            let target_expr = ResolvedExpr::Var(expr.span(), target.clone());
+            selectors.push(ResolvedFact::Eq(
+                expr.span(),
+                target_expr,
+                resolved_expr.clone(),
+            ));
+            bindings.push((target.clone(), resolved_expr));
+        }
+
+        selectors.extend(self.typecheck_run_rule_selectors(
+            symbol_gen,
+            &config.selectors,
+            &rule_info.input_vars,
+        )?);
+
+        Ok(ResolvedRunRuleConfig {
+            rule: config.rule.clone(),
+            bindings,
+            selectors,
+            expect: config.expect,
+        })
     }
 
     fn typecheck_run_rule_selectors(
@@ -1563,6 +1583,10 @@ pub enum TypeError {
         variable: String,
         span: Span,
     },
+    #[error(
+        "{span}\nEvery run-rule entry in run-rule-batch must use :expect 1; rule {rule:?} does not"
+    )]
+    RunRuleBatchRequiresExpectOne { rule: String, span: Span },
     #[error(
         "{span}\nBinding expressions in run-rule {rule:?} must be closed; found local variable {variable}"
     )]

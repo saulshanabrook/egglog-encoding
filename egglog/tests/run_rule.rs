@@ -157,3 +157,196 @@ fn run_rule_selector_cannot_redefine_a_head_local() {
         Error::TypeError(TypeError::AlreadyDefined(variable, _)) if variable == "z"
     ));
 }
+
+#[test]
+fn run_rule_batch_queries_every_entry_before_any_head_effect() {
+    let program = r#"
+        (function F (i64) i64 :merge new)
+        (function G (i64) i64 :merge new)
+        (relation Trigger ())
+        (rule ((Trigger)) ((set (F 1) 1)) :name "write-f" :naive)
+        (rule ((Trigger)) ((set (G 1) (F 1))) :name "read-f" :naive)
+        (set (F 1) 0)
+        (Trigger)
+        (run-schedule
+          (run-rule-batch
+            (run-rule "write-f" :expect 1)
+            (run-rule "read-f" :expect 1)))
+        (check (= (F 1) 1))
+        (check (= (G 1) 0))
+    "#;
+    EGraph::default()
+        .parse_and_run_program(Some("run-rule-batch-prestate.egg".to_owned()), program)
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_guard_failure_is_atomic() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Left (i64))
+                (relation Right (i64))
+                (rule ((Seed x)) ((Left x)) :name "left")
+                (rule ((Seed x)) ((Right x)) :name "right")
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    (run-rule "left" :bind ((x 1)) :expect 1)
+                    (run-rule "right" :bind ((x 2)) :expect 1)))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "right"
+    ));
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (fail (check (Left 1)))
+                (fail (check (Right 1)))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_does_not_let_one_body_enable_another() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Mid (i64))
+                (relation Goal (i64))
+                (rule ((Seed x)) ((Mid x)) :name "seed-to-mid")
+                (rule ((Mid x)) ((Goal x)) :name "mid-to-goal")
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    (run-rule "seed-to-mid" :bind ((x 1)) :expect 1)
+                    (run-rule "mid-to-goal" :bind ((x 1)) :expect 1)))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "mid-to-goal"
+    ));
+    egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (fail (check (Mid 1)))
+                (fail (check (Goal 1)))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_uses_one_delete_insert_commit_boundary() {
+    EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+                (function F (i64) i64 :no-merge)
+                (relation Trigger ())
+                (rule ((Trigger)) ((delete (F 1))) :name "delete-f")
+                (rule ((Trigger)) ((set (F 1) 2)) :name "insert-f")
+                (set (F 1) 0)
+                (Trigger)
+                (run-schedule
+                  (run-rule-batch
+                    (run-rule "insert-f" :expect 1)
+                    (run-rule "delete-f" :expect 1)))
+                (check (= (F 1) 2))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_queries_live_rows_before_same_wave_subsume() {
+    EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation R (i64))
+                (relation Seen (i64))
+                (relation Trigger ())
+                (rule ((Trigger)) ((subsume (R 1))) :name "subsume-r")
+                (rule ((Trigger) (R x)) ((Seen x)) :name "read-r")
+                (R 1)
+                (Trigger)
+                (run-schedule
+                  (run-rule-batch
+                    (run-rule "subsume-r" :expect 1)
+                    (run-rule "read-r" :bind ((x 1)) :expect 1)))
+                (check (Seen 1))
+                (run-schedule
+                  (run-rule "read-r" :bind ((x 1)) :expect 0))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_preserves_source_rule_proofs() {
+    let program = r#"
+        (relation Seed (i64))
+        (relation Left (i64))
+        (relation Right (i64))
+        (rule ((Seed x)) ((Left x)) :name "left")
+        (rule ((Seed x)) ((Right x)) :name "right")
+        (Seed 1)
+        (run-schedule
+          (run-rule-batch
+            (run-rule "left" :bind ((x 1)) :expect 1)
+            (run-rule "right" :bind ((x 1)) :expect 1)))
+        (check (Left 1))
+        (check (Right 1))
+    "#;
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("run-rule-batch-proofs.egg".to_owned()), program)
+        .unwrap();
+}
+
+#[test]
+fn run_rule_batch_requires_an_exact_guard_per_entry() {
+    let error = EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (run-schedule
+                  (run-rule-batch
+                    (run-rule "copy")))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::TypeError(TypeError::RunRuleBatchRequiresExpectOne { rule, .. })
+            if rule == "copy"
+    ));
+}

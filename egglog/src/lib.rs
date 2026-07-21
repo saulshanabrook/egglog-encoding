@@ -43,8 +43,8 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar,
+    GuardedRuleBatchEntry, GuardedRuleBatchOutcome, GuardedRuleRun, GuardedRuleRunOutcome,
+    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -577,6 +577,7 @@ enum PreparedSchedule {
     Repeat(Span, usize, Box<PreparedSchedule>),
     Run(Span, ResolvedRunConfig),
     RunRule(PreparedRunRule),
+    RunRuleBatch(Span, Vec<PreparedRunRule>),
     Sequence(Span, Vec<PreparedSchedule>),
 }
 
@@ -597,6 +598,17 @@ impl Display for PreparedSchedule {
             }
             PreparedSchedule::Run(_, config) => write!(f, "{config}"),
             PreparedSchedule::RunRule(prepared) => write!(f, "{}", prepared.config),
+            PreparedSchedule::RunRuleBatch(_, prepared) => write!(
+                f,
+                "(run-rule-batch {})",
+                ListDisplay(
+                    &prepared
+                        .iter()
+                        .map(|entry| &entry.config)
+                        .collect::<Vec<_>>(),
+                    " "
+                )
+            ),
             PreparedSchedule::Sequence(_, schedules) => {
                 write!(f, "(seq {})", ListDisplay(schedules, " "))
             }
@@ -1297,6 +1309,15 @@ impl EGraph {
                 temporary_rules.push(prepared.rule_id);
                 Ok(PreparedSchedule::RunRule(prepared))
             }
+            ResolvedSchedule::RunRuleBatch(span, configs) => {
+                let mut prepared = Vec::with_capacity(configs.len());
+                for config in configs {
+                    let entry = self.prepare_run_rule(span, config)?;
+                    temporary_rules.push(entry.rule_id);
+                    prepared.push(entry);
+                }
+                Ok(PreparedSchedule::RunRuleBatch(span.clone(), prepared))
+            }
             ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
                 span.clone(),
                 *limit,
@@ -1320,6 +1341,9 @@ impl EGraph {
         match sched {
             PreparedSchedule::Run(span, config) => self.run_rules(span, config),
             PreparedSchedule::RunRule(prepared) => self.run_prepared_rule(prepared),
+            PreparedSchedule::RunRuleBatch(span, prepared) => {
+                self.run_prepared_rule_batch(span, prepared)
+            }
             PreparedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();
                 for _i in 0..*limit {
@@ -1436,6 +1460,51 @@ impl EGraph {
                 observed: observed_matches,
                 span: prepared.span.clone(),
             }),
+        }
+    }
+
+    fn run_prepared_rule_batch(
+        &mut self,
+        span: &Span,
+        prepared: &[PreparedRunRule],
+    ) -> Result<RunReport, Error> {
+        let runs = prepared
+            .iter()
+            .map(|entry| GuardedRuleBatchEntry {
+                rule: entry.rule_id,
+                expected_matches: entry.config.expect,
+            })
+            .collect::<Vec<_>>();
+        let outcome = self
+            .backend
+            .run_rule_batch_guarded(&runs)
+            .map_err(|error| Error::BackendError(error.to_string()))?;
+        match outcome {
+            GuardedRuleBatchOutcome::Applied { report, .. } => {
+                let ruleset = prepared
+                    .first()
+                    .map(|first| first.ruleset.as_str())
+                    .filter(|ruleset| prepared.iter().all(|entry| entry.ruleset == *ruleset))
+                    .unwrap_or("<run-rule-batch>");
+                Ok(RunReport::singleton(ruleset, report))
+            }
+            GuardedRuleBatchOutcome::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            } => {
+                let failed = prepared.get(run_index).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "run-rule-batch returned invalid failed entry index {run_index}"
+                    ))
+                })?;
+                Err(Error::RunRuleMatchCountMismatch {
+                    rule: failed.config.rule.clone(),
+                    expected: expected_matches,
+                    observed: observed_matches,
+                    span: span.clone(),
+                })
+            }
         }
     }
 

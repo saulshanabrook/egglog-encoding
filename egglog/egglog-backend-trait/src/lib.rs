@@ -219,6 +219,26 @@ pub enum GuardedRuleRunOutcome {
     },
 }
 
+/// One guarded rule in a same-prestate batch.
+#[derive(Clone, Copy, Debug)]
+pub struct GuardedRuleBatchEntry {
+    pub rule: RuleId,
+    pub expected_matches: Option<usize>,
+}
+
+#[derive(Debug)]
+pub enum GuardedRuleBatchOutcome {
+    Applied {
+        observed_matches: Vec<usize>,
+        report: IterationReport,
+    },
+    MatchCountMismatch {
+        run_index: usize,
+        expected_matches: usize,
+        observed_matches: usize,
+    },
+}
+
 /// Backend-selected policy for reconciling two ids that rebuild to the same
 /// container value. The container type is supplied separately to
 /// [`Backend::container_merge_fn`], so a backend may choose a different policy
@@ -343,6 +363,18 @@ pub trait Backend: Send + Sync {
     /// A mismatch therefore has no rule-head effects. A successful invocation
     /// must not re-run the body search before applying the captured bindings.
     fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome>;
+
+    /// Guard several specialized rules atomically against one shared
+    /// pre-state. This optional primitive is currently implemented only by the
+    /// reference backend.
+    fn run_rule_batch_guarded(
+        &mut self,
+        _runs: &[GuardedRuleBatchEntry],
+    ) -> Result<GuardedRuleBatchOutcome> {
+        Err(anyhow::anyhow!(
+            "guarded rule batches are not supported by this backend"
+        ))
+    }
 
     /// Drain staged inserts and rebuild if the union-find changed. Returns
     /// whether the database changed.

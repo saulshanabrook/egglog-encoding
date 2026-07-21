@@ -1509,6 +1509,30 @@ impl<'a> ProofInstrumentor<'a> {
                 );
                 Schedule::Sequence(span.clone(), vec![new_run, self.rebuild()])
             }
+            ResolvedSchedule::RunRuleBatch(span, configs) => {
+                let configs = configs
+                    .iter()
+                    .map(|config| {
+                        // As for one run-rule leaf, batch bindings are physical
+                        // selectors rather than logical source-rule premises.
+                        let (instrumented, _lookups, _proof) =
+                            self.instrument_facts(&config.selectors);
+                        RunRuleConfig {
+                            rule: config.rule.clone(),
+                            bindings: vec![],
+                            selectors: self.parse_facts(&instrumented),
+                            expect: config.expect,
+                        }
+                    })
+                    .collect();
+                Schedule::Sequence(
+                    span.clone(),
+                    vec![
+                        Schedule::RunRuleBatch(span.clone(), configs),
+                        self.rebuild(),
+                    ],
+                )
+            }
             ResolvedSchedule::Sequence(span, schedules) => Schedule::Sequence(
                 span.clone(),
                 schedules

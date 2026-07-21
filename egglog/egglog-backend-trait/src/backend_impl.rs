@@ -10,15 +10,18 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
-use egglog_bridge::{ActionRegistry, EGraph, GuardedRuleRunResult, QueryEntry, RuleBuilder};
+use egglog_bridge::{
+    ActionRegistry, EGraph, GuardedRuleBatchRunResult, GuardedRuleRunResult, QueryEntry,
+    RuleBuilder,
+};
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, GuardedRuleRun, GuardedRuleRunOutcome,
-    IterationReport, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-    RuleValue, RuleVar, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, GuardedRuleBatchEntry, GuardedRuleBatchOutcome,
+    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -227,6 +230,34 @@ impl Backend for EGraph {
                 },
             },
         )
+    }
+
+    fn run_rule_batch_guarded(
+        &mut self,
+        runs: &[GuardedRuleBatchEntry],
+    ) -> Result<GuardedRuleBatchOutcome> {
+        let runs = runs
+            .iter()
+            .map(|run| (run.rule, run.expected_matches))
+            .collect::<Vec<_>>();
+        Ok(match EGraph::run_rule_batch_guarded(self, &runs)? {
+            GuardedRuleBatchRunResult::Applied {
+                observed_matches,
+                report,
+            } => GuardedRuleBatchOutcome::Applied {
+                observed_matches,
+                report,
+            },
+            GuardedRuleBatchRunResult::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            } => GuardedRuleBatchOutcome::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            },
+        })
     }
 
     fn flush_updates(&mut self) -> bool {
