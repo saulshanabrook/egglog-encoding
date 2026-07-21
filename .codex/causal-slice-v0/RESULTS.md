@@ -8,13 +8,14 @@ One sound end-to-end Bronze slice is implemented:
 one traced reference-backend execution using the ordinary query plan
   -> post-run pending-fire and compact dependency/witness/event elaboration
   -> one positive-check-rooted backward slice
-  -> deterministic source with guarded run-rule leaves
+  -> deterministic source with one guarded packed rule batch per retained wave
   -> unchanged full-proof mode and strict checker
 ```
 
 PR #23 is sufficient as the replay/elaboration leaf for the declared monotone
 fragment. It is not sufficient by itself: this branch adds the native trace,
-dependency model, observation root, source transformation, and diagnostics.
+dependency model, observation root, source transformation, diagnostics, and a
+guarded same-prestate batch required outside the sequential Bronze fragment.
 PR #23 cannot replay a projected ordinary Generic Join firing from partial
 bindings; that is the smallest replay counterexample and is now an explicit
 fail-closed boundary.
@@ -73,18 +74,26 @@ The exact checked-in `benchmarks/math-microbenchmark.egg` source transformation
 is implemented: all 24 anonymous rewrites receive stable names, its seven bare
 constructor initializers are retained, the original schedule is removed, and
 its three `print-size` observations conservatively root the complete effective
-prefix. Exact bounded variants through eight waves pass both ordinary replay
-and the unchanged strict proof checker.
+prefix. Exact bounded variants through eight waves established semantics before
+the compact representation; the exact 11-wave fixture now also passes ordinary
+replay and the unchanged strict proof checker.
 
-The checked-in 11-wave workload is not yet benchmark-ready. A debug generator
-probe was stopped after 2 minutes 27 seconds at approximately 3.2 GiB RSS; it
-had not completed. This is a volume result, not a replay-semantic
-counterexample. At eight waves the trace contained 8,546 pending firings and
-5,683 promoted events, emitted 2.69 MB of replay source, and strict replay took
-23.56 seconds. Since a print-only prefix retains every effective event, this
-fixture cannot demonstrate causal slicing savings until it gains a narrower
-semantic observation or the proof replay representation becomes substantially
-more compact.
+The checked-in 11-wave workload is now benchmarkable. Packed replay groups
+each rule once per wave, shares each closed witness expression through a
+per-wave dictionary, resolves all requested groundings against one prestate,
+and then applies the captured environments in traced ordinal order. At wave 8
+this reduced emitted source from 2.69 MB to 354,913 bytes, generator time from
+314 ms to 59.3 ms, and strict replay from 23.56 s to a point sample of 0.12 s.
+
+The exact 11-wave run completes and passes ordinary plus unchanged strict proof
+replay. It contains 944,432 pending firings, 836,160 promoted/retained events,
+and 1,390,280 witness nodes; it emits 35,945,249 bytes. A serialized release
+sample measured 2.82 s generator time and 15.43 s strict replay. The public
+benchmark harness measured 20.629 s and 9.254 GB RSS for integrated
+`causal-proof-testing`, versus 6.807 s and 3.758 GB for original
+`proof-testing`: 3.03x time and 2.46x RSS, point only. Since `print-size`
+soundly retains the complete prefix, this is an admission/scale result rather
+than evidence of slicing savings.
 
 ## Repository state
 
@@ -469,11 +478,12 @@ ordinary run and the currently redundant full-transcript/slice validation;
 the backward walk is already negligible. The tiny slice works, but the current
 complete pipeline does not yet save total time on this fixture.
 
-### Bounded math growth probes
+### Math growth and packed replay measurements
 
 These diagnostic probes changed only the checked-in fixture's `(run 11)`
 bound. Every completed variant passed ordinary replay and the unchanged strict
-proof checker. They were serialized and are not production benchmark rows.
+proof checker. The first table records the pre-packed representation and is
+retained as the comparison baseline.
 
 | Waves | Pending firings | Effective/retained events | Emitted replay | Generator total | Strict end-to-end test |
 |---:|---:|---:|---:|---:|---:|
@@ -490,28 +500,50 @@ source was 2.69 MB. Backward traversal remains negligible; the prefix has no
 events to discard and strict proof replay dominates the completed high-wave
 measurements.
 
+After compact grounded batches and one packed batch per wave:
+
+| Workload | Pending | Effective/retained | Source | Generator | Ordinary replay | Strict replay | Peak RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| wave 8 | 8,546 | 5,683 | 354,913 B | 59.3 ms | 0.36 s | 0.12 s | 91.2 MB strict |
+| exact wave 11 | 944,432 | 836,160 | 35,945,249 B | 2.82 s | 3.98 s | 15.43 s | 3.51 GB generator / 7.70 GB strict |
+
+These are serialized point samples from the local release build. The exact
+wave-11 public-runner row is stronger for comparison: 20.629 s / 9.254 GB
+integrated causal treatment versus 6.807 s / 3.758 GB original strict proof
+testing, a 3.03x wall and 2.46x RSS regression. The packed representation
+removes the prior completion blocker, but a full Prefix is the wrong workload
+shape for demonstrating savings.
+
+Code audit, not yet an A/B measurement, identifies two avoidable peaks before
+inventing another witness syntax: generation reparses the entire 35.9 MB source
+while traced state and arenas remain live, and the 836,160-fire vector is
+deep-cloned during typechecking, proof instrumentation, and schedule
+preparation. The emitted file averages only about 43 bytes per retained fire,
+so a new witness DAG format is not yet justified by this fixture.
+
 ## Current benchmark frontier
 
-All six default workloads now have an explicit capability frontier. Pointer
-analysis is admitted end to end; the remaining failures stay in the validation
-bucket rather than being timed as successful rows.
+All six default workloads now have an explicit capability frontier. Math and
+pointer analysis are admitted end to end; the remaining failures stay in the
+validation bucket rather than being timed as successful rows.
 
 | Workload | Current first boundary | Major subsequent requirements |
 |---|---|---|
-| `math-microbenchmark.egg` | full 11-wave trace/replay volume | semantics pass through exact bounded wave 8; the print-only Prefix retains all effective events, and a debug wave-11 probe reached about 3.2 GiB at 2:27 before being stopped |
+| `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | `BigRat` constructor input sort | application witnesses, rewrites, custom merges, primitive filters, and multiple temporal boundaries |
-| `luminal-llama.egg` | `IList` presort relation | datatype-encoded lists, multiple schedules, delete/subsume, functions, and mutable-state batching |
-| `hardboiled_conv1d_32.egg` | `Variable` standalone-constructor sort | containers, functions, rewrites, filters, broad joins, subsume, and batch replay |
-| `eggcc-2mm-pass1.egg` | `TypeList` constructor input sort | constructors, functions/merges, broad joins, multiple schedules, globals, delete/subsume, containers, and stateful primitives |
+| `herbie.egg` | immutable `BigRat` constructor input sort | canonical BigInt/BigRat witnesses, global lets, custom merges, primitive filters, and multiple temporal boundaries |
+| `luminal-llama.egg` | `IList` declared through `datatype*` | recursive datatype lowering, six schedule boundaries, delete/subsume, functions, and mutable-state provenance |
+| `hardboiled_conv1d_32.egg` | bare EqSort `Variable` | container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
+| `eggcc-2mm-pass1.egg` | bare EqSort `TypeList` | custom merges, unextractable functions, multiple temporal schedules, containers, delete/subsume, and stateful primitives |
 
-The next implementation order selected from these results is: avoid producing
-and validating an unused full transcript in the integrated treatment; stream
-or compact wave traces so all raw matches do not remain live; re-run exact
-math to determine whether strict source-level replay itself remains the
-limiting cost; preserve exact body-row evidence for retained chained lookups;
-then add immutable functions, shared-prestate batch plus mutable state,
-containers, and opaque/stateful primitives.
+The next implementation order selected from these results is: admit bare
+union-find sort declarations (but not presorts), which advances both
+Hardboiled and eggcc; admit canonical immutable BigInt/BigRat witnesses for
+Herbie; share the packed fire tape across AST transformations and avoid the
+redundant full-source validation parse; then preserve exact body-row evidence
+for retained chained lookups. Guarded shared-prestate batch replay is
+implemented; mutable commit, delete/subsume, container-version, and opaque
+external provenance remain fail-closed.
 
 ## Validation status
 
@@ -545,38 +577,37 @@ Prior constructor/equality/pointer checkpoint:
   tests, the full Rust workspace, 764 file fixtures, doctests, and DD timing;
 - `git diff --check`: passed after the final ledger update.
 
-Current rewrite/math continuation:
+Current packed replay continuation:
 
-- `cargo test -p egglog --test causal_slice`: 43 passed, including parsed
-  rewrite/birewrite lowering, print-prefix replay, and the exact math fixture
-  reduced to one wave in ordinary and unchanged strict proof modes;
-- temporary exact math probes at 2, 3, 5, 7, and 8 waves also passed ordinary
-  and strict replay; these were diagnostic source substitutions, not committed
-  benchmark variants;
-- the exact 11-wave debug generator probe was stopped cleanly at about 3.2 GiB
-  RSS after 2:27; no successful full-workload timing is claimed;
-- `make proof-tests`: 192 reference plus 8 experimental fixtures passed after
-  the rewrite/prefix changes;
-- `make check`: passed after the rewrite/prefix changes, including formatting,
-  Ruff, mypy, Clippy, 170 Python tests, the complete Rust workspace, all 43
-  causal tests, 764 file fixtures, doctests, and DD timing;
-- `git diff --check`: passed.
+- `cargo test -p egglog --test run_rule`: 15 passed;
+- `cargo test -p egglog --test causal_slice`: 45 passed, including packed
+  emission, one-wave math, pointer, ordinary replay, and unchanged strict proof
+  replay;
+- exact wave-11 math generation, ordinary replay, strict replay, and the public
+  benchmark treatment all succeeded;
+- the public-runner report is
+  `/tmp/causal-slice-packed-math-20260720.jsonl` and contains one fresh row per
+  treatment;
+- `cargo fmt --all` and `git diff --check`: passed;
+- `make proof-tests` and `make check` have not yet been rerun after the packed
+  batch commits; their last complete runs passed before this continuation.
 
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
-  sliced from positive observations, replayed only through guarded manual
-  leaves, and accepted by the unchanged strict checker. Direct successful
-  unions, immutable constructor witnesses, deterministic rewrite lowering,
-  and conservative print-prefix replay are included. Bounded exact math
-  variants through wave 8 also pass the unchanged checker.
+  sliced from positive observations, replayed through guarded packed
+  same-prestate batches, and accepted by the unchanged strict checker. Direct
+  successful unions, immutable constructor witnesses, deterministic rewrite
+  lowering, and conservative print-prefix replay are included. Exact wave-11
+  math now passes the unchanged checker and the public benchmark runner.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
-  1.04–1.05x higher RSS than strict proof-testing of the original. The full
-  math wave-11 debug probe reached about 3.2 GiB at 2:27 without completing.
+  1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
+  is 3.03x slower and 2.46x higher RSS in one public-runner round because its
+  sound Prefix retains every effective firing.
 - Plausible but untested: a streaming wave trace sink, generation-aware mutable
-  sidecars, exact body-row transport through factorized joins, and a native
-  shared-pre-state batch.
+  sidecars, exact body-row transport through factorized joins, and sharing the
+  836,160-fire tape across typecheck/proof/preparation AST transformations.
 - Falsified: general complete match bindings, partial-bind replay of projected
   firings, naked `RowId` stability, one preferred syntax as constructor-body
   provenance, globally epoch-free equality endpoints, post-filter `:expect`,
@@ -585,20 +616,23 @@ Current rewrite/math continuation:
 ## Recommended next patches
 
 The benchmark path, scalar inputs, immutable constructor witnesses, direct
-unions, and the first real fixture are implemented. The next patches should be:
+unions, guarded shared-prestate batches, and two real fixtures are implemented.
+The next patches should be:
 
-1. make full-transcript generation/validation opt-in so the integrated
-   treatment constructs only the retained replay it executes;
-2. stream each native wave into a callback, or otherwise compact completed
+1. admit bare EqSort declarations while continuing to reject all container
+   presorts, then add canonical immutable BigInt/BigRat witnesses;
+2. store the packed fire tape in shared immutable storage so typechecking,
+   proof instrumentation, and schedule preparation do not deep-clone 836,160
+   fires;
+3. avoid reparsing the generated source solely for in-process validation after
+   the already-validated parsed/source rule mapping is available;
+4. stream each native wave into a callback, or otherwise compact completed
    waves, so raw matches do not coexist with the entire elaborated arena;
-3. rerun the exact 11-wave math fixture under release with bounded RSS/time to
-   separate generator memory from source-level strict replay growth;
-4. carry exact match-time body atom/table/row-version evidence through
+5. carry exact match-time body atom/table/row-version evidence through
    factorized expansion so retained chained constructor lookups never require
    witness guessing;
-5. add dynamic reads, general row commit receipts, and guarded shared-prestate
-   batch replay before mutation support;
-6. add delete/subsume visibility, custom merges, containers, and opaque
+6. add dynamic-read/general row commit receipts before mutation support;
+7. add delete/subsume visibility, custom merges, containers, and opaque
    externals only after their focused canaries pass.
 
 ## Commit and diff summary
@@ -641,6 +675,14 @@ Local reviewable commits:
 23. `935e18e` — trace bare immutable constructor source terms;
 24. `9c4f6cf` — add reported print-prefix replay and exact rewrite binding
     aliases.
+25. `a38b245b`, `23d10756` — record the bounded math frontier and rewrite
+    validation gates;
+26. `397e358c` — skip unused full replay transcripts in the integrated path;
+27. `0f3454f3`, `1040154f`, `cc147f8b` — stream prefix emission and share
+    replay witnesses;
+28. `df849e39` — add guarded same-prestate rule batches;
+29. `fd3d8b0e` — add compact grounded batch syntax and execution;
+30. `b7be8efd` — emit one compact replay batch per retained wave.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker

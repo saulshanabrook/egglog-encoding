@@ -31,9 +31,13 @@ record. The current implementation additionally confirms:
   registered rules, including compiler-substitution aliases needed to recover
   their exact captured source bindings;
 - print-only programs use an explicit reported Prefix fallback retaining every
-  effective preceding firing; the exact math fixture passes ordinary and strict
-  replay through eight bounded waves, while its full 11-wave volume remains a
-  measured scale blocker.
+  effective preceding firing;
+- guarded packed replay resolves all requested groundings against one shared
+  prestate, validates every request before any head, applies captured complete
+  environments in original ordinal order, and commits once per wave;
+- the exact 11-wave math fixture now passes ordinary and unchanged strict proof
+  replay and produces a public benchmark row. Its full Prefix remains a
+  measured performance loss rather than a semantic or completion blocker.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -134,7 +138,10 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
 | anonymous rewrite registration is too opaque for stable replay names | Falsified | parsed rewrite/birewrite lowering assigns stable source-position names and preserves one-to-many source mapping; focused ordinary and strict canaries pass |
 | print-only observations provide a narrow causal root | Falsified | `print-size` observes aggregate state, so v0 reports a conservative Prefix and retains every effective prior event; no slicing reduction is claimed |
-| bounded sequential rewrite replay preserves the math fixture result | Confirmed empirically through wave 8 | exact bounded variants pass ordinary and unchanged strict proof replay; this is not a general same-wave proof |
+| bounded sequential rewrite replay preserves the math fixture result | Confirmed empirically through wave 8 | historical sequential variants pass ordinary and unchanged strict replay; general same-wave replay is now provided by the guarded batch rather than inferred from this result |
+| guarded batch observes one shared prestate | Confirmed | lookup, enabling, delete/insert, subsume, atomic-failure, and proof canaries pass; all requests are captured before any head executes |
+| raw equality-sort binding IDs remain stable across replay waves | Falsified | later union/rebuild can displace a representative; packed matching canonicalizes expected and captured ID cells against the same batch prestate |
+| compact per-wave replay scales to exact math | Confirmed for completion, falsified for savings | exact wave 11 completes and passes strict replay, but its full Prefix is 3.03x slower and 2.46x higher RSS in one public-runner round |
 
 ## Important implementation correction: pending lifetime
 
@@ -243,8 +250,10 @@ retained. Push/pop remains outside the no-epoch claim.
 | E18 | Does the first real integrated treatment save time? | no on pointer: 1.06–1.12x wall time and 1.04–1.05x RSS over six rounds |
 | E19 | What accounts for the pointer wall regression? | five warm generator runs took 31.2–33.1 ms, dominated by 18.6–19.3 ms ordinary tracing and 6.1–7.0 ms emitted-program validation; slicing itself took 24–27 µs |
 | E20 | Can parsed anonymous rewrites and bare constructor terms replay without extraction? | passed: rewrite/birewrite naming, projected binding aliases, and bare source constructors pass focused ordinary and strict canaries |
-| E21 | Can the checked-in math fixture use a sound print-only root? | passed semantically through exact bounded wave 8 using a reported full effective Prefix; no reduction is possible for that observation |
-| E22 | Is the exact 11-wave math workload benchmark-ready with the current representation? | no: a debug generator probe was stopped at about 3.2 GiB RSS after 2:27; the smallest completed wave-8 replay emitted 2.69 MB and strict replay took 23.56 s |
+| E21 | Can the checked-in math fixture use a sound print-only root? | passed through exact wave 11 using a reported full effective Prefix; no reduction is possible for that observation |
+| E22 | Is the exact 11-wave math workload benchmark-ready with compact packed replay? | yes: generation, ordinary replay, unchanged strict replay, and one fresh public-runner comparison all succeed |
+| E23 | Does exact math save time with the current observation? | no: one public-runner round measured 20.629 s / 9.254 GB causal versus 6.807 s / 3.758 GB original, or 3.03x wall and 2.46x RSS |
+| E24 | Are sequential `run-rule` leaves the general replay primitive? | no: reduced mutation/lookup canaries require guarded same-prestate batching; the packed batch implementation passes 15 focused replay tests |
 
 ## Validation commands
 
@@ -264,6 +273,13 @@ uv run --locked ./bench.py \
   --format markdown --detail phases \
   --fact-directory benchmarks/data/pointer-analysis-small \
   benchmarks/pointer-analysis-small.egg
+uv run --locked ./bench.py \
+  --target . --compare-target . \
+  --compare-treatment proof-testing \
+  --treatment causal-proof-testing \
+  --rounds 1 --timeout-sec 120 --force-run \
+  --report /tmp/causal-slice-packed-math-20260720.jsonl \
+  --format markdown egglog/tests/math-microbenchmark.egg
 cargo run -p egglog --example causal_slice -- \
   .codex/causal-slice-v0/bronze.egg
 target/debug/egglog /tmp/causal-slice-v0-full.new.egg
