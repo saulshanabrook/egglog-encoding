@@ -29,6 +29,69 @@
 
 use anyhow::{anyhow, Result};
 use egglog_ast::core::{GenericAtom, GenericAtomTerm, GenericCoreAction, GenericCoreActions};
+
+/// Env-gated (`EGGLOG_DD_TIMING=1`) per-iteration phase timing, printed to
+/// stderr as one line per `run_iteration`. Diagnostic-only.
+pub(crate) mod phase_timing {
+    use std::cell::RefCell;
+    use std::time::{Duration, Instant};
+    thread_local! {
+        static PHASES: RefCell<Vec<(&'static str, Duration)>> = const { RefCell::new(Vec::new()) };
+        static NOTES: RefCell<Vec<(&'static str, usize)>> = const { RefCell::new(Vec::new()) };
+    }
+    pub fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("EGGLOG_DD_TIMING").is_ok())
+    }
+    pub fn time<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
+        if !enabled() {
+            return f();
+        }
+        let t = Instant::now();
+        let r = f();
+        let d = t.elapsed();
+        PHASES.with(|p| p.borrow_mut().push((name, d)));
+        r
+    }
+    pub fn note(name: &'static str, value: usize) {
+        if enabled() {
+            NOTES.with(|n| n.borrow_mut().push((name, value)));
+        }
+    }
+    pub fn flush() {
+        if !enabled() {
+            return;
+        }
+        let mut parts: Vec<String> = Vec::new();
+        PHASES.with(|p| {
+            let mut merged: Vec<(&'static str, Duration)> = Vec::new();
+            for (n, d) in p.borrow_mut().drain(..) {
+                if let Some(e) = merged.iter_mut().find(|(m, _)| *m == n) {
+                    e.1 += d;
+                } else {
+                    merged.push((n, d));
+                }
+            }
+            for (n, d) in merged {
+                parts.push(format!("{n}={:.1}ms", d.as_secs_f64() * 1e3));
+            }
+        });
+        NOTES.with(|no| {
+            let mut merged: Vec<(&'static str, usize)> = Vec::new();
+            for (n, v) in no.borrow_mut().drain(..) {
+                if let Some(e) = merged.iter_mut().find(|(m, _)| *m == n) {
+                    e.1 += v;
+                } else {
+                    merged.push((n, v));
+                }
+            }
+            for (n, v) in merged {
+                parts.push(format!("{n}={v}"));
+            }
+        });
+        eprintln!("[dd-timing] {}", parts.join(" "));
+    }
+}
 use egglog_ast::generic_ast::Change;
 use egglog_backend_trait::{
     FunctionId, ReadMode, RuleActionCall, RuleBodyCall, RuleSpec, RuleValue, RuleVar, Value,
@@ -137,17 +200,20 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
     // stay host-side (fire once); they are computed inline below.
     let envs_by_rule = fused_bindings(eg, rules)?;
 
-    for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
-        for mut env in envs {
-            apply_head(
-                eg,
-                &rule.core.head,
-                &mut env,
-                &mut writes,
-                &mut lookup_index,
-            )?;
+    phase_timing::time("apply_head", || -> Result<()> {
+        for ((_, rule), envs) in rules.iter().zip(envs_by_rule.into_iter()) {
+            for mut env in envs {
+                apply_head(
+                    eg,
+                    &rule.core.head,
+                    &mut env,
+                    &mut writes,
+                    &mut lookup_index,
+                )?;
+            }
         }
-    }
+        Ok(())
+    })?;
 
     // Apply collected writes to the mirror.
     //
@@ -178,20 +244,25 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<boo
             Write::Subsume(f, prefix) => subsumes.push((f, prefix)),
         }
     }
-    for (f, (keylen, keys)) in removes_by_func {
-        // A `delete`/rebuild retraction clears the row from BOTH the live mirror
-        // and the subsumed side-set (a rebuilt-away subsumed row must not linger).
-        changed |= eg.remove_matching_keys(f, keylen, &keys);
-    }
-    // The backend transaction retains head-emission order within a table,
-    // orders tables by merge-read dependencies, and processes merge-generated
-    // writes in subsequent waves until reaching a fixed point.
-    changed |= eg.apply_sets(sets)?;
-    // Subsumes last: a row `set` this iteration can then be subsumed, and the
-    // move reads the just-updated live mirror.
-    for (f, prefix) in subsumes {
-        changed |= eg.subsume_rows(f, &prefix);
-    }
+    phase_timing::note("n_sets", sets.len());
+    phase_timing::time("apply_writes", || -> Result<()> {
+        for (f, (keylen, keys)) in removes_by_func {
+            // A `delete`/rebuild retraction clears the row from BOTH the live mirror
+            // and the subsumed side-set (a rebuilt-away subsumed row must not linger).
+            changed |= eg.remove_matching_keys(f, keylen, &keys);
+        }
+        // The backend transaction retains head-emission order within a table,
+        // orders tables by merge-read dependencies, and processes merge-generated
+        // writes in subsequent waves until reaching a fixed point.
+        changed |= eg.apply_sets(sets)?;
+        // Subsumes last: a row `set` this iteration can then be subsumed, and the
+        // move reads the just-updated live mirror.
+        for (f, prefix) in subsumes {
+            changed |= eg.subsume_rows(f, &prefix);
+        }
+        Ok(())
+    })?;
+    phase_timing::flush();
 
     Ok(changed)
 }
@@ -268,7 +339,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
             })?;
             plans.push((idx, plan));
         }
-        let fused = dd_native::FusedDdJoin::build(&plans)?;
+        let fused = phase_timing::time("dd_build", || dd_native::FusedDdJoin::build(&plans))?;
         eg.dd_fused.insert(key.clone(), fused);
     }
 
@@ -297,7 +368,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     // without replaying transient rows that are no longer visible.
     let mut removals_batch: DdDeltaRows = HashMap::new();
     let mut insertions_batch: DdDeltaRows = HashMap::new();
-    {
+    phase_timing::time("diff", || {
         let fed = eg.dd_fused_fed_versions.entry(key.clone()).or_default();
         for &read in &all_reads {
             let cur = match read.mode {
@@ -329,6 +400,7 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
                     Some(_) => {}
                 }
             }
+            phase_timing::note("diff_rows_scanned", prev.len() + cur.len());
             if !removals.is_empty() {
                 removals_batch.insert(read, removals);
             }
@@ -337,7 +409,15 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
             }
             *prev = cur.clone();
         }
-    }
+    });
+    phase_timing::note(
+        "delta_removals",
+        removals_batch.values().map(|r| r.len()).sum::<usize>(),
+    );
+    phase_timing::note(
+        "delta_insertions",
+        insertions_batch.values().map(|r| r.len()).sum::<usize>(),
+    );
     let mut delta_batches: Vec<DdDeltaRows> = Vec::new();
     if !removals_batch.is_empty() {
         delta_batches.push(removals_batch);
@@ -355,7 +435,12 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
             .get_mut(&key)
             .expect("DD cache invariant: fused join was inserted for this ruleset key");
         for delta in &delta_batches {
-            let stepped = fused.step(delta)?;
+            phase_timing::note("epochs", 1);
+            phase_timing::note(
+                "delta_rows_fed",
+                delta.values().map(|rows| rows.len()).sum::<usize>(),
+            );
+            let stepped = phase_timing::time("dd_step", || fused.step(delta))?;
             for (acc, rows) in per_rule_bindings.iter_mut().zip(stepped) {
                 acc.extend(rows);
             }
@@ -365,29 +450,36 @@ fn fused_bindings(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Vec<Ve
     // Turn each rule's positive binding deltas into envs; re-run its body prims
     // host-side. Negative weights are integral bookkeeping (a body row retracted)
     // — egglog heads are monotone-fire, so we do NOT re-fire on disappearance.
-    for (fpos, bindings) in per_rule_bindings.into_iter().enumerate() {
-        let caller_pos = fused_positions[fpos];
-        let rule = &rules[caller_pos].1;
-        let var_order = &var_orders[fpos];
-        let mut envs: Vec<Env> = Vec::new();
-        for (bind, w) in &bindings {
-            if *w <= 0 {
-                continue;
-            }
-            let mut env: Env = Env::new();
-            for (i, &v) in var_order.iter().enumerate() {
-                env.insert(v, bind[i]);
-            }
-            let mut es: Vec<Env> = vec![env];
-            for atom in &rule.core.body.atoms {
-                if matches!(atom.head, RuleBodyCall::Primitive { .. }) {
-                    es = step_prim(eg, atom, es)?;
+    phase_timing::note(
+        "bindings_out",
+        per_rule_bindings.iter().map(|b| b.len()).sum::<usize>(),
+    );
+    phase_timing::time("envs_prims", || -> Result<()> {
+        for (fpos, bindings) in per_rule_bindings.into_iter().enumerate() {
+            let caller_pos = fused_positions[fpos];
+            let rule = &rules[caller_pos].1;
+            let var_order = &var_orders[fpos];
+            let mut envs: Vec<Env> = Vec::new();
+            for (bind, w) in &bindings {
+                if *w <= 0 {
+                    continue;
                 }
+                let mut env: Env = Env::new();
+                for (i, &v) in var_order.iter().enumerate() {
+                    env.insert(v, bind[i]);
+                }
+                let mut es: Vec<Env> = vec![env];
+                for atom in &rule.core.body.atoms {
+                    if matches!(atom.head, RuleBodyCall::Primitive { .. }) {
+                        es = step_prim(eg, atom, es)?;
+                    }
+                }
+                envs.extend(es);
             }
-            envs.extend(es);
+            out[caller_pos] = envs;
         }
-        out[caller_pos] = envs;
-    }
+        Ok(())
+    })?;
 
     Ok(out)
 }

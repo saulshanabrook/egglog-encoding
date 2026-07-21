@@ -75,7 +75,20 @@ type CaptureBuf = Rc<RefCell<Vec<(Row, isize)>>>;
 /// body vars in a wide congruence-closure rebuild. A larger live frontier is
 /// reported as a row-width-cap wall. Raising `W` extends coverage at a cost of
 /// `W * 4` bytes per relation or binding row.
-pub const W: usize = 48;
+pub const W: usize = match option_env!("EGGLOG_DD_W") {
+    // Compile-time override for width experiments: EGGLOG_DD_W=12 cargo build …
+    Some(s) => {
+        let b = s.as_bytes();
+        let mut v = 0usize;
+        let mut i = 0;
+        while i < b.len() {
+            v = v * 10 + (b[i] - b'0') as usize;
+            i += 1;
+        }
+        v
+    }
+    None => 48,
+};
 
 /// A fixed-width relation or binding row flowing through the DD dataflow. Input
 /// rows store relation columns in the low slots. Intermediate binding columns
@@ -211,6 +224,34 @@ pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
 
     if atoms.is_empty() {
         return Err("no body table atoms (atom-less rule)".to_string());
+    }
+    // Diagnostic: dump the emitted (naive, body-order) join sequence, flagging
+    // any stage that joins with no shared variable (a cartesian product).
+    if std::env::var("EGGLOG_DD_DUMP_PLANS").is_ok() {
+        let mut bound: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
+        let mut desc: Vec<String> = Vec::new();
+        for (i, atom) in atoms.iter().enumerate() {
+            let vars = atom_vars(&atom.slots);
+            let shared = vars.iter().filter(|v| bound.contains(*v)).count();
+            let tag = if i > 0 && shared == 0 {
+                " CARTESIAN"
+            } else {
+                ""
+            };
+            desc.push(format!(
+                "{:?}/{}(arity {}, shared {}{tag})",
+                atom.read_key.func,
+                match atom.read_key.mode {
+                    egglog_backend_trait::ReadMode::Live => "live",
+                    egglog_backend_trait::ReadMode::Subsumed => "sub",
+                    egglog_backend_trait::ReadMode::All => "all",
+                },
+                atom.slots.len(),
+                shared,
+            ));
+            bound.extend(vars);
+        }
+        eprintln!("[dd-plan] rule {:?}: {}", rule.name, desc.join(" ⋈ "));
     }
     let projection = build_projection(&atoms, &rule.core.head.0, &rule.core.body.atoms)
         .ok_or_else(|| {
@@ -582,6 +623,17 @@ impl FusedDdJoin {
                     .probe_with(&probe_in);
             }
 
+            if std::env::var("EGGLOG_DD_DUMP_PLANS").is_ok() {
+                let stages: usize = rule_plans.iter().map(|rp| rp.atoms.len() - 1).sum();
+                eprintln!(
+                    "[dd-arrange] rules={} join_stages={} left_arrangements={} shared_right_arrangements={} input_relations={}",
+                    rule_plans.len(),
+                    stages,
+                    stages,
+                    arranged_right.len(),
+                    reads_in.len(),
+                );
+            }
             inputs
         });
 
