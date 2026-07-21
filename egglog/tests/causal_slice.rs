@@ -679,6 +679,46 @@ fn source_constructor_witness_is_available_to_manual_replay() {
 }
 
 #[test]
+fn bare_eq_sort_constructor_witness_replays_ordinary_and_strictly() {
+    let source = r#"
+        (sort Variable)
+        (constructor V (String) Variable)
+        (relation Seed (String))
+        (relation Done (Variable))
+        (Seed "x")
+        (rule ((Seed x)) ((Done (V x))) :name "build")
+        (run 1)
+        (check (Done (V "x")))
+    "#;
+
+    let slice = causal_slice_program(Some("bare-eq-sort.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(sort Variable)"));
+    assert!(has_replay_firing(&slice.source, "build", &[("x", "\"x\"")]));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bare-eq-sort-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn container_presort_remains_an_explicit_boundary() {
+    let source = r#"
+        (sort Values (Vec i64))
+        (relation Seed ())
+        (Seed)
+        (run 1)
+        (check (Seed))
+    "#;
+
+    let error = causal_slice_program(Some("container-presort.egg".to_owned()), source).unwrap_err();
+    assert!(error.to_string().contains("custom sorts"));
+}
+
+#[test]
 fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
     let source = r#"
         (datatype Expr (A String))

@@ -1406,8 +1406,26 @@ fn collect_declarations(
             _ => None,
         })
         .collect::<HashSet<_>>();
+    let eq_sorts = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Sort {
+                name,
+                presort_and_args: None,
+                uf: None,
+                proof_func: None,
+                container_rebuild: None,
+                proof_constructors: None,
+                unionable: true,
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let supported_sort = |sort: &str| {
-        matches!(sort, "i64" | "String" | "bool" | "f64" | "Unit") || datatype_sorts.contains(sort)
+        matches!(sort, "i64" | "String" | "bool" | "f64" | "Unit")
+            || datatype_sorts.contains(sort)
+            || eq_sorts.contains(sort)
     };
     for (index, command) in commands.iter().enumerate() {
         match command {
@@ -1812,6 +1830,24 @@ fn validate_and_model(
                         index,
                         source_name,
                         "declaration after the computation schedule",
+                    );
+                }
+            }
+            Command::Sort {
+                presort_and_args: None,
+                uf: None,
+                proof_func: None,
+                container_rebuild: None,
+                proof_constructors: None,
+                unionable: true,
+                ..
+            } => {
+                if schedule_index.is_some() {
+                    return unsupported_command(
+                        command,
+                        index,
+                        source_name,
+                        "sort declaration after the computation schedule",
                     );
                 }
             }
