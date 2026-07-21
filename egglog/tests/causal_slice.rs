@@ -375,6 +375,9 @@ fn print_only_program_uses_a_reported_effective_prefix() {
         .parse_and_run_program(Some("print-prefix-original.egg".to_owned()), source)
         .unwrap();
     let slice = causal_slice_program(Some("print-prefix.egg".to_owned()), source).unwrap();
+    let replay = causal_slice_replay_program(Some("print-prefix.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.source, slice.source);
+    assert_eq!(replay.stats.dependency_nodes, 0);
     assert_eq!(slice.stats.prefix_fallbacks, 2);
     assert!(slice.source.contains("run-rule"));
     assert!(!slice.source.contains("(run 2)"));

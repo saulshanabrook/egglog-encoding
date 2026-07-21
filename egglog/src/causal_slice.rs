@@ -567,6 +567,80 @@ struct Elaboration {
     equality_forest: EqualityForest,
 }
 
+struct PrefixElaboration {
+    replay_commands: String,
+    rendering_time: Duration,
+    pending_firings: usize,
+    captured_bindings: usize,
+    effective_applications: usize,
+    effective_output_rows: usize,
+    source_events: usize,
+    witness_nodes: usize,
+    equality_edges: usize,
+}
+
+/// A compact stable grouping from one match origin to indices in a trace
+/// payload. This avoids allocating one `Vec` per match in very large waves.
+struct OriginIndex {
+    offsets: Vec<u32>,
+    item_indices: Vec<u32>,
+}
+
+impl OriginIndex {
+    fn build<T>(
+        origin_count: usize,
+        items: &[T],
+        mut origin: impl FnMut(&T) -> Option<usize>,
+        context: &str,
+    ) -> Result<Self, CausalSliceError> {
+        let mut offsets = vec![0u32; origin_count + 1];
+        for item in items {
+            let Some(item_origin) = origin(item) else {
+                continue;
+            };
+            let Some(count) = offsets.get_mut(item_origin + 1) else {
+                return Err(CausalSliceError::Invariant(format!(
+                    "{context} origin {item_origin} exceeded {origin_count} matches"
+                )));
+            };
+            *count = count.checked_add(1).ok_or_else(|| {
+                CausalSliceError::Invariant(format!("{context} grouping exceeded u32 capacity"))
+            })?;
+        }
+        for index in 1..offsets.len() {
+            offsets[index] = offsets[index]
+                .checked_add(offsets[index - 1])
+                .ok_or_else(|| {
+                    CausalSliceError::Invariant(format!("{context} grouping exceeded u32 capacity"))
+                })?;
+        }
+
+        let total = offsets.last().copied().unwrap_or(0) as usize;
+        let mut item_indices = vec![0u32; total];
+        let mut cursors = offsets[..origin_count].to_vec();
+        for (item_index, item) in items.iter().enumerate() {
+            let Some(item_origin) = origin(item) else {
+                continue;
+            };
+            let position = cursors[item_origin] as usize;
+            item_indices[position] = u32::try_from(item_index).map_err(|_| {
+                CausalSliceError::Invariant(format!("{context} index exceeded u32 capacity"))
+            })?;
+            cursors[item_origin] += 1;
+        }
+        Ok(Self {
+            offsets,
+            item_indices,
+        })
+    }
+
+    fn for_origin(&self, origin: usize) -> &[u32] {
+        let start = self.offsets[origin] as usize;
+        let end = self.offsets[origin + 1] as usize;
+        &self.item_indices[start..end]
+    }
+}
+
 #[derive(Clone, Debug)]
 struct EqualityEdge {
     left: TypedEndpoint,
@@ -846,6 +920,91 @@ fn generate_causal_slice(
 
     let trace_functions = trace_function_metadata(&egraph, &relations, &constructors)?;
     let mut witnesses = WitnessArena::default();
+    let schedule_span = command_schedule_span(&commands[schedule_index])
+        .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
+    if prefix_fallbacks > 0 && !include_full_transcript {
+        if !checks.is_empty() || !check_batches.is_empty() {
+            return Err(CausalSliceError::Invariant(
+                "a Prefix-only replay unexpectedly retained positive-check traces".to_owned(),
+            ));
+        }
+        let PrefixElaboration {
+            replay_commands,
+            rendering_time,
+            pending_firings,
+            captured_bindings,
+            effective_applications,
+            effective_output_rows,
+            source_events,
+            witness_nodes,
+            equality_edges,
+        } = elaborate_prefix_replay(
+            &egraph,
+            &rules,
+            &relations,
+            &source_facts,
+            &source_traces,
+            schedule_batches,
+            &trace_functions,
+            &schedule_span,
+            &mut witnesses,
+        )?;
+        let elaboration_time = elaboration_start.elapsed().saturating_sub(rendering_time);
+        let slicing_time = Duration::ZERO;
+
+        let emission_start = Instant::now();
+        let source = emit_program_with_replay_commands(
+            &commands,
+            schedule_index,
+            &replay_commands,
+            &source_expansions,
+        );
+        let emission_time = rendering_time + emission_start.elapsed();
+
+        let emitted_validation_start = Instant::now();
+        validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
+        let emitted_validation_time = emitted_validation_start.elapsed();
+        let total_time = total_start.elapsed();
+        let stats = CausalSliceStats {
+            original_bytes: input.len(),
+            source_facts: source_facts.len(),
+            observation_count: 0,
+            waves,
+            pending_firings,
+            matched_applications: pending_firings,
+            effective_applications,
+            effective_output_rows,
+            no_op_applications: pending_firings - effective_applications,
+            promoted_events: effective_applications,
+            retained_applications: effective_applications,
+            source_events,
+            dependency_nodes: 0,
+            witness_nodes,
+            equality_edges,
+            prefix_fallbacks,
+            captured_bindings,
+            observation_matches,
+            observation_bindings: 0,
+            max_batch_matches,
+            raw_trace_bindings,
+            raw_trace_lower_bound_bytes,
+            preparation_time,
+            traced_run_time,
+            elaboration_time,
+            slicing_time,
+            emission_time,
+            emitted_validation_time,
+            total_time,
+            full_transcript_bytes: 0,
+            sliced_bytes: source.len(),
+        };
+        return Ok(GeneratedCausalSlice {
+            source,
+            full_transcript_source: None,
+            stats,
+            rule_mapping,
+        });
+    }
     let Elaboration {
         pending_fires,
         events,
@@ -920,8 +1079,6 @@ fn generate_causal_slice(
     let slicing_time = slicing_start.elapsed();
 
     let emission_start = Instant::now();
-    let schedule_span = command_schedule_span(&commands[schedule_index])
-        .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
     let full_transcript_source = include_full_transcript.then(|| {
         emit_program(
             &commands,
@@ -2569,6 +2726,230 @@ fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> 
     }
 }
 
+fn elaborate_source_fact(
+    egraph: &EGraph,
+    fact: &SourceFact,
+    source_traces: &IndexMap<usize, Vec<RuleExecutionTrace>>,
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    relations: &IndexMap<String, RelationDecl>,
+    witnesses: &mut WitnessArena,
+    prefix_fallback: bool,
+) -> Result<Vec<RowKey>, CausalSliceError> {
+    if let Some(batches) = source_traces.get(&fact.command_index) {
+        let mut observed = Vec::new();
+        let mut new_rows = Vec::new();
+        for batch in batches {
+            if !batch.unions.is_empty() {
+                return Err(CausalSliceError::Unsupported {
+                    location: format!("source command {}", fact.command_index),
+                    reason: "a source constructor/merge that committed a union".to_owned(),
+                });
+            }
+            for application in &batch.applications {
+                if application.origin.index() >= batch.matches.len() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source application origin {} exceeded {} matches",
+                        application.origin.index(),
+                        batch.matches.len()
+                    )));
+                }
+            }
+            let effects = elaborate_fire_applications(
+                egraph,
+                batch.applications.iter(),
+                trace_functions,
+                witnesses,
+                prefix_fallback,
+            )?;
+            observed.extend(effects.observed_rows);
+            new_rows.extend(effects.new_rows);
+            // Source commands are preserved in full, so their constructor
+            // syntax is available before every replay leaf without a retained
+            // dynamic firing dependency.
+        }
+        match &fact.kind {
+            SourceFactKind::Relation(atom) => {
+                let expected = ground_atoms(
+                    egraph,
+                    std::slice::from_ref(atom),
+                    &IndexMap::default(),
+                    witnesses,
+                    relations,
+                )?;
+                if !same_row_multiset(&expected, &observed) {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "native source applications for command {} do not match its source relation fact",
+                        fact.command_index
+                    )));
+                }
+            }
+            SourceFactKind::Constructor(application) => {
+                if !observed.is_empty() || !new_rows.is_empty() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source constructor command {} unexpectedly produced relation rows",
+                        fact.command_index
+                    )));
+                }
+                let AtomArg::App { output_sort, .. } = application else {
+                    return Err(CausalSliceError::Invariant(
+                        "source constructor initialization stopped being an application".to_owned(),
+                    ));
+                };
+                let _endpoint = ground_arg(
+                    egraph,
+                    application,
+                    output_sort,
+                    &IndexMap::default(),
+                    witnesses,
+                )?;
+            }
+        }
+        Ok(new_rows)
+    } else {
+        match &fact.kind {
+            SourceFactKind::Relation(..) => {
+                Ok(vec![source_row(egraph, relations, fact, witnesses)?])
+            }
+            SourceFactKind::Constructor(..) => Err(CausalSliceError::Invariant(format!(
+                "source constructor command {} had no native trace",
+                fact.command_index
+            ))),
+        }
+    }
+}
+
+fn elaborate_prefix_replay(
+    egraph: &EGraph,
+    rules: &IndexMap<String, RuleModel>,
+    relations: &IndexMap<String, RelationDecl>,
+    source_facts: &[SourceFact],
+    source_traces: &IndexMap<usize, Vec<RuleExecutionTrace>>,
+    batches: Vec<RuleExecutionTrace>,
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    schedule_span: &Span,
+    witnesses: &mut WitnessArena,
+) -> Result<PrefixElaboration, CausalSliceError> {
+    let mut source_rows = IndexSet::default();
+    for fact in source_facts {
+        source_rows.extend(elaborate_source_fact(
+            egraph,
+            fact,
+            source_traces,
+            trace_functions,
+            relations,
+            witnesses,
+            true,
+        )?);
+    }
+
+    let mut replay_commands = String::new();
+    let mut rendering_time = Duration::ZERO;
+    let mut pending_firings = 0usize;
+    let mut captured_bindings = 0usize;
+    let mut effective_applications = 0usize;
+    let mut effective_output_rows = 0usize;
+    let mut equality_edges = 0usize;
+
+    for (wave, batch) in batches.into_iter().enumerate() {
+        let applications_by_origin = OriginIndex::build(
+            batch.matches.len(),
+            &batch.applications,
+            |application| Some(application.origin.index()),
+            "application",
+        )?;
+        let unions_by_origin = OriginIndex::build(
+            batch.matches.len(),
+            &batch.unions,
+            |receipt| receipt.origin.map(|origin| origin.index()),
+            "union",
+        )?;
+
+        for (ordinal, captured) in batch.matches.iter().enumerate() {
+            pending_firings += 1;
+            let rule_name = captured.rule.as_ref();
+            let model = rules.get(rule_name).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "native trace referenced unmodeled rule `{rule_name}`"
+                ))
+            })?;
+            // Capture bindings before the head applications below extend the
+            // witness arena. Every emitted expression was therefore available
+            // at the original match boundary.
+            let bindings = reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
+            captured_bindings += bindings.len();
+
+            let application_indices = applications_by_origin.for_origin(ordinal);
+            let effects = elaborate_fire_applications(
+                egraph,
+                application_indices
+                    .iter()
+                    .map(|index| &batch.applications[*index as usize]),
+                trace_functions,
+                witnesses,
+                true,
+            )?;
+            for constructor in &model.head_constructors {
+                let AtomArg::App { output_sort, .. } = constructor else {
+                    return Err(CausalSliceError::Invariant(
+                        "modeled constructor head lost its application node".to_owned(),
+                    ));
+                };
+                ground_arg(egraph, constructor, output_sort, &bindings, witnesses)?;
+            }
+            let expected_head = ground_atoms(egraph, &model.head, &bindings, witnesses, relations)?;
+            if !same_row_multiset(&expected_head, &effects.observed_rows) {
+                return Err(CausalSliceError::Invariant(format!(
+                    "native applications for rule `{rule_name}` do not match its complete source head"
+                )));
+            }
+
+            let union_indices = unions_by_origin.for_origin(ordinal);
+            let applied_unions = count_prefix_applied_unions(
+                rule_name,
+                &model.head_unions,
+                union_indices
+                    .iter()
+                    .map(|index| &batch.unions[*index as usize]),
+            )?;
+            effective_output_rows += effects.new_rows.len();
+            equality_edges += applied_unions;
+            if effects.new_rows.is_empty()
+                && effects.new_witnesses.is_empty()
+                && applied_unions == 0
+            {
+                continue;
+            }
+
+            let fire = GroundedFire {
+                rule: rule_name.to_owned(),
+                wave: u32::try_from(wave).map_err(|_| {
+                    CausalSliceError::Invariant("wave index exceeded u32 capacity".to_owned())
+                })?,
+                ordinal: u32::try_from(ordinal).map_err(|_| {
+                    CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
+                })?,
+                bindings,
+            };
+            let rendering_start = Instant::now();
+            append_replay_command(&mut replay_commands, &fire, schedule_span, rules, witnesses);
+            rendering_time += rendering_start.elapsed();
+            effective_applications += 1;
+        }
+    }
+
+    Ok(PrefixElaboration {
+        replay_commands,
+        rendering_time,
+        pending_firings,
+        captured_bindings,
+        effective_applications,
+        effective_output_rows,
+        source_events: source_rows.len(),
+        witness_nodes: witnesses.nodes.len(),
+        equality_edges,
+    })
+}
+
 fn elaborate_events(
     input: ElaborationInput<'_>,
     witnesses: &mut WitnessArena,
@@ -2589,91 +2970,15 @@ fn elaborate_events(
     let mut equality_forest = EqualityForest::default();
     let mut source_events = 0;
     for fact in source_facts {
-        let rows = if let Some(batches) = source_traces.get(&fact.command_index) {
-            let mut observed = Vec::new();
-            let mut new_rows = Vec::new();
-            for batch in batches {
-                if !batch.unions.is_empty() {
-                    return Err(CausalSliceError::Unsupported {
-                        location: format!("source command {}", fact.command_index),
-                        reason: "a source constructor/merge that committed a union".to_owned(),
-                    });
-                }
-                for application in &batch.applications {
-                    if application.origin.index() >= batch.matches.len() {
-                        return Err(CausalSliceError::Invariant(format!(
-                            "source application origin {} exceeded {} matches",
-                            application.origin.index(),
-                            batch.matches.len()
-                        )));
-                    }
-                }
-                let applications = batch.applications.iter().collect::<Vec<_>>();
-                let effects = elaborate_fire_applications(
-                    egraph,
-                    &applications,
-                    trace_functions,
-                    witnesses,
-                    prefix_fallback,
-                )?;
-                observed.extend(effects.observed_rows);
-                new_rows.extend(effects.new_rows);
-                // Source commands are preserved in full, so their constructor
-                // syntax is available before every replay leaf without a
-                // retained dynamic firing dependency.
-            }
-            match &fact.kind {
-                SourceFactKind::Relation(atom) => {
-                    let expected = ground_atoms(
-                        egraph,
-                        std::slice::from_ref(atom),
-                        &IndexMap::default(),
-                        witnesses,
-                        relations,
-                    )?;
-                    if !same_row_multiset(&expected, &observed) {
-                        return Err(CausalSliceError::Invariant(format!(
-                            "native source applications for command {} do not match its source relation fact",
-                            fact.command_index
-                        )));
-                    }
-                }
-                SourceFactKind::Constructor(application) => {
-                    if !observed.is_empty() || !new_rows.is_empty() {
-                        return Err(CausalSliceError::Invariant(format!(
-                            "source constructor command {} unexpectedly produced relation rows",
-                            fact.command_index
-                        )));
-                    }
-                    let AtomArg::App { output_sort, .. } = application else {
-                        return Err(CausalSliceError::Invariant(
-                            "source constructor initialization stopped being an application"
-                                .to_owned(),
-                        ));
-                    };
-                    let _endpoint = ground_arg(
-                        egraph,
-                        application,
-                        output_sort,
-                        &IndexMap::default(),
-                        witnesses,
-                    )?;
-                }
-            }
-            new_rows
-        } else {
-            match &fact.kind {
-                SourceFactKind::Relation(..) => {
-                    vec![source_row(egraph, relations, fact, witnesses)?]
-                }
-                SourceFactKind::Constructor(..) => {
-                    return Err(CausalSliceError::Invariant(format!(
-                        "source constructor command {} had no native trace",
-                        fact.command_index
-                    )));
-                }
-            }
-        };
+        let rows = elaborate_source_fact(
+            egraph,
+            fact,
+            source_traces,
+            trace_functions,
+            relations,
+            witnesses,
+            prefix_fallback,
+        )?;
         for row in rows {
             if producers.contains_key(&row) {
                 continue;
@@ -2814,7 +3119,7 @@ fn elaborate_events(
 
             let effects = elaborate_fire_applications(
                 egraph,
-                &applications_by_origin[ordinal],
+                applications_by_origin[ordinal].iter().copied(),
                 trace_functions,
                 witnesses,
                 prefix_fallback,
@@ -3351,15 +3656,41 @@ fn classify_prefix_union_receipts(
     Ok(applied)
 }
 
+fn count_prefix_applied_unions<'a>(
+    rule_name: &str,
+    expected: &[EqualityTemplate],
+    receipts: impl ExactSizeIterator<Item = &'a UnionReceipt>,
+) -> Result<usize, CausalSliceError> {
+    if expected.len() != receipts.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` modeled {} union action(s) but native commit reported {} receipt(s)",
+            expected.len(),
+            receipts.len()
+        )));
+    }
+    let mut applied = 0usize;
+    for (_equality, receipt) in expected.iter().zip(receipts) {
+        if let UnionOutcome::Applied { parent, child } = receipt.outcome {
+            if parent == child {
+                return Err(CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` reported a successful union with identical committed endpoints"
+                )));
+            }
+            applied += 1;
+        }
+    }
+    Ok(applied)
+}
+
 struct FireApplicationEffects {
     observed_rows: Vec<RowKey>,
     new_rows: Vec<RowKey>,
     new_witnesses: Vec<WitnessId>,
 }
 
-fn elaborate_fire_applications(
+fn elaborate_fire_applications<'a>(
     egraph: &EGraph,
-    applications: &[&TableApplication],
+    applications: impl IntoIterator<Item = &'a TableApplication>,
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
     witnesses: &mut WitnessArena,
     prefix_fallback: bool,
@@ -3695,39 +4026,64 @@ fn emit_program<'a>(
     source_expansions: &SourceCommandExpansions,
 ) -> String {
     let mut previous_position = None;
-    let mut fires = fires.into_iter();
+    let mut replay_commands = String::new();
+    for fire in fires {
+        let position = (fire.wave, fire.ordinal);
+        if let Some(previous) = previous_position {
+            debug_assert!(previous < position);
+        }
+        previous_position = Some(position);
+        append_replay_command(&mut replay_commands, fire, schedule_span, rules, witnesses);
+    }
+    emit_program_with_replay_commands(
+        commands,
+        schedule_index,
+        &replay_commands,
+        source_expansions,
+    )
+}
+
+fn append_replay_command(
+    rendered: &mut String,
+    fire: &GroundedFire,
+    schedule_span: &Span,
+    rules: &IndexMap<String, RuleModel>,
+    witnesses: &WitnessArena,
+) {
+    let model = &rules[&fire.rule];
+    let bindings = model
+        .replay_var_order
+        .iter()
+        .map(|var| {
+            (
+                var.clone(),
+                fire.bindings[var].expr(witnesses, schedule_span),
+            )
+        })
+        .collect();
+    let replay = Command::RunSchedule(Schedule::RunRule(
+        schedule_span.clone(),
+        RunRuleConfig {
+            rule: fire.rule.clone(),
+            bindings,
+            selectors: Vec::new(),
+            expect: Some(1),
+        },
+    ));
+    rendered.push_str(&replay.to_string());
+    rendered.push('\n');
+}
+
+fn emit_program_with_replay_commands(
+    commands: &[Command],
+    schedule_index: usize,
+    replay_commands: &str,
+    source_expansions: &SourceCommandExpansions,
+) -> String {
     let mut rendered = String::new();
     for (index, command) in commands.iter().enumerate() {
         if index == schedule_index {
-            for fire in fires.by_ref() {
-                let position = (fire.wave, fire.ordinal);
-                if let Some(previous) = previous_position {
-                    debug_assert!(previous < position);
-                }
-                previous_position = Some(position);
-                let model = &rules[&fire.rule];
-                let bindings = model
-                    .replay_var_order
-                    .iter()
-                    .map(|var| {
-                        (
-                            var.clone(),
-                            fire.bindings[var].expr(witnesses, schedule_span),
-                        )
-                    })
-                    .collect();
-                let replay = Command::RunSchedule(Schedule::RunRule(
-                    schedule_span.clone(),
-                    RunRuleConfig {
-                        rule: fire.rule.clone(),
-                        bindings,
-                        selectors: Vec::new(),
-                        expect: Some(1),
-                    },
-                ));
-                rendered.push_str(&replay.to_string());
-                rendered.push('\n');
-            }
+            rendered.push_str(replay_commands);
         } else if let Some(expansion) = source_expansions.get(&index) {
             for command in expansion {
                 rendered.push_str(&command.to_string());
