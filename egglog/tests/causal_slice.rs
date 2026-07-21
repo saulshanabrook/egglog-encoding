@@ -362,6 +362,13 @@ fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays
     assert_eq!(slice.stats.max_batch_matches, 4);
     assert!(slice.stats.raw_trace_bindings >= slice.stats.captured_bindings);
     assert!(slice.stats.raw_trace_lower_bound_bytes > 0);
+    let accounted_time = slice.stats.preparation_time
+        + slice.stats.traced_run_time
+        + slice.stats.elaboration_time
+        + slice.stats.slicing_time
+        + slice.stats.emission_time
+        + slice.stats.emitted_validation_time;
+    assert!(slice.stats.total_time >= accounted_time);
     assert!(!slice.source.contains("(saturate"));
     assert!(!slice.source.contains("(run derive"));
     assert!(

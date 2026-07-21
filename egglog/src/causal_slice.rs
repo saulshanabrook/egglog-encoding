@@ -79,7 +79,24 @@ pub struct CausalSliceStats {
     /// A lower bound covering `RuleMatch` headers and binding tuples only; it
     /// excludes Vec capacities and shared string allocations.
     pub raw_trace_lower_bound_bytes: usize,
+    /// Parse, declaration collection, deterministic naming, and static model
+    /// validation before the native execution begins.
+    pub preparation_time: Duration,
     pub traced_run_time: Duration,
+    /// Trace summarization, witness metadata collection, and event-arena
+    /// elaboration after the native run.
+    pub elaboration_time: Duration,
+    /// Observation-root construction, backward reachability, and retained
+    /// unsupported-prerequisite validation.
+    pub slicing_time: Duration,
+    /// Source rendering for both the full transcript and retained slice.
+    pub emission_time: Duration,
+    /// Parse-and-mapping validation of both emitted programs.
+    pub emitted_validation_time: Duration,
+    /// End-to-end generator time through emitted-source validation and final
+    /// counter calculation. The small difference from the named stages is
+    /// bookkeeping between stage boundaries.
+    pub total_time: Duration,
     pub full_transcript_bytes: usize,
     pub sliced_bytes: usize,
 }
@@ -645,6 +662,8 @@ pub fn causal_slice_program_with_fact_directory(
     input: &str,
     fact_directory: Option<&Path>,
 ) -> Result<CausalSlice, CausalSliceError> {
+    let total_start = Instant::now();
+    let preparation_start = Instant::now();
     let mut parser = EGraph::default();
     let mut commands = parser.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
@@ -665,6 +684,7 @@ pub fn causal_slice_program_with_fact_directory(
         source_name,
         fact_directory,
     )?;
+    let preparation_time = preparation_start.elapsed();
 
     let mut egraph = EGraph::default().with_union_to_set_optimization(false);
     let trace_start = Instant::now();
@@ -687,6 +707,7 @@ pub fn causal_slice_program_with_fact_directory(
         }
     }
     let traced_run_time = trace_start.elapsed();
+    let elaboration_start = Instant::now();
     let schedule_batches = schedule_batches.ok_or_else(|| {
         CausalSliceError::Invariant("validated schedule was not executed".to_owned())
     })?;
@@ -743,6 +764,8 @@ pub fn causal_slice_program_with_fact_directory(
         },
         &mut witnesses,
     )?;
+    let elaboration_time = elaboration_start.elapsed();
+    let slicing_start = Instant::now();
     let roots = observation_roots(
         ObservationInput {
             egraph: &egraph,
@@ -780,7 +803,9 @@ pub fn causal_slice_program_with_fact_directory(
     }
     drop(schedule_batches);
     drop(check_batches);
+    let slicing_time = slicing_start.elapsed();
 
+    let emission_start = Instant::now();
     let schedule_span = command_schedule_span(&commands[schedule_index])
         .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
     let full_transcript_source = emit_program(
@@ -806,7 +831,9 @@ pub fn causal_slice_program_with_fact_directory(
         &witnesses,
         &source_expansions,
     );
+    let emission_time = emission_start.elapsed();
 
+    let emitted_validation_start = Instant::now();
     validate_emitted_program(
         filename.clone(),
         &full_transcript_source,
@@ -814,6 +841,7 @@ pub fn causal_slice_program_with_fact_directory(
         &rule_mapping,
     )?;
     validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
+    let emitted_validation_time = emitted_validation_start.elapsed();
 
     let effective_applications = pending_fires
         .iter()
@@ -829,6 +857,7 @@ pub fn causal_slice_program_with_fact_directory(
         .filter(|event| matches!(event.kind, EventKind::Fire(_)))
         .map(|event| event.effective_outputs.len())
         .sum::<usize>();
+    let total_time = total_start.elapsed();
     let stats = CausalSliceStats {
         original_bytes: input.len(),
         source_facts: source_facts.len(),
@@ -852,7 +881,13 @@ pub fn causal_slice_program_with_fact_directory(
         max_batch_matches,
         raw_trace_bindings,
         raw_trace_lower_bound_bytes,
+        preparation_time,
         traced_run_time,
+        elaboration_time,
+        slicing_time,
+        emission_time,
+        emitted_validation_time,
+        total_time,
         full_transcript_bytes: full_transcript_source.len(),
         sliced_bytes: source.len(),
     };
