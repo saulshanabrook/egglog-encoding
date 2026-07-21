@@ -350,3 +350,107 @@ fn run_rule_batch_requires_an_exact_guard_per_entry() {
             if rule == "copy"
     ));
 }
+
+#[test]
+fn packed_run_rule_batch_replays_multiple_groundings_of_one_rule() {
+    EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (Seed 1)
+                (Seed 2)
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (1 2)
+                    :groups (("copy" (x)))
+                    :fires ((0 0) (0 1))))
+                (check (Out 1))
+                (check (Out 2))
+            "#,
+        )
+        .unwrap();
+}
+
+#[test]
+fn packed_run_rule_batch_guard_failure_is_atomic() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (1 2)
+                    :groups (("copy" (x)))
+                    :fires ((0 0) (0 1))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "copy"
+    ));
+    egraph
+        .parse_and_run_program(None, "(fail (check (Out 1)))")
+        .unwrap();
+}
+
+#[test]
+fn packed_run_rule_batch_follows_projected_variable_aliases() {
+    for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                    (relation Pair (i64 i64))
+                    (relation Out (i64))
+                    (rule ((Pair x y) (= x y)) ((Out y)) :name "equal-pair")
+                    (Pair 1 1)
+                    (Pair 2 2)
+                    (run-schedule
+                      (run-rule-batch
+                        :witnesses (1)
+                        :groups (("equal-pair" (x y)))
+                        :fires ((0 0 0))))
+                    (check (Out 1))
+                    (fail (check (Out 2)))
+                "#,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_run_rule_batch_uses_constructor_views_in_strict_proof_mode() {
+    let program = r#"
+        (datatype Expr (A) (B))
+        (relation Seed (Expr))
+        (relation Out (Expr))
+        (rule ((Seed x)) ((Out x)) :name "copy")
+        (Seed (A))
+        (union (A) (B))
+        (run-schedule
+          (run-rule-batch
+            :witnesses ((B))
+            :groups (("copy" (x)))
+            :fires ((0 0))))
+        (check (Out (A)))
+        (check (Out (B)))
+    "#;
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("packed-run-rule-proof-view.egg".to_owned()), program)
+        .unwrap();
+}

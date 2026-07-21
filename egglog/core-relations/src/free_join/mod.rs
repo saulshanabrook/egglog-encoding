@@ -99,6 +99,25 @@ pub enum GuardedRuleSetBatchRunOutcome {
     },
 }
 
+/// One value in a source-level grounding used to select a captured native
+/// rule match. `canonicalize` is true for equality-sort ids and false for base
+/// values.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedBinding {
+    pub name: Arc<str>,
+    pub value: Value,
+    pub canonicalize: bool,
+}
+
+/// One expected grounding within a same-prestate batch. `run_index` preserves
+/// the original cross-rule firing order after each distinct rule has been
+/// queried once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleSetRun {
+    pub run_index: usize,
+    pub bindings: Box<[GroundedBinding]>,
+}
+
 /// Invalid input to guarded single-rule execution.
 #[derive(Debug, Error)]
 pub enum GuardedRuleSetRunError {
@@ -106,6 +125,19 @@ pub enum GuardedRuleSetRunError {
     MultipleExecutablePlans { plan_count: usize },
     #[error("guarded rule batch entries require exactly :expect 1")]
     BatchRequiresExactlyOne,
+    #[error(
+        "grounded rule batch runs {first_run_index} and {duplicate_run_index} select the same canonical grounding"
+    )]
+    DuplicateGrounding {
+        first_run_index: usize,
+        duplicate_run_index: usize,
+    },
+    #[error("grounded rule batch entries for one rule use inconsistent binding columns")]
+    InconsistentGroundingColumns,
+    #[error("grounded rule batch references unknown captured variable {name:?}")]
+    UnknownGroundingVariable { name: Arc<str> },
+    #[error("grounded rule batch run indices must be unique and contiguous from zero")]
+    InvalidGroundedRunOrder,
 }
 
 /// One logical rule-body match captured immediately before its complete head

@@ -11,17 +11,19 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
 use egglog_bridge::{
-    ActionRegistry, EGraph, GuardedRuleBatchRunResult, GuardedRuleRunResult, QueryEntry,
-    RuleBuilder,
+    ActionRegistry, EGraph, GroundedRuleBatchEntry as BridgeGroundedRuleBatchEntry,
+    GroundedRuleBinding as BridgeGroundedRuleBinding, GuardedRuleBatchRunResult,
+    GuardedRuleRunResult, QueryEntry, RuleBuilder,
 };
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, GuardedRuleBatchEntry, GuardedRuleBatchOutcome,
-    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, GroundedRuleBatchEntry, GuardedRuleBatchEntry,
+    GuardedRuleBatchOutcome, GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReportLevel,
+    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
+    Value,
 };
 
 fn rule_entry(
@@ -241,6 +243,46 @@ impl Backend for EGraph {
             .map(|run| (run.rule, run.expected_matches))
             .collect::<Vec<_>>();
         Ok(match EGraph::run_rule_batch_guarded(self, &runs)? {
+            GuardedRuleBatchRunResult::Applied {
+                observed_matches,
+                report,
+            } => GuardedRuleBatchOutcome::Applied {
+                observed_matches,
+                report,
+            },
+            GuardedRuleBatchRunResult::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            } => GuardedRuleBatchOutcome::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            },
+        })
+    }
+
+    fn run_grounded_rule_batch(
+        &mut self,
+        runs: &[GroundedRuleBatchEntry],
+    ) -> Result<GuardedRuleBatchOutcome> {
+        let runs = runs
+            .iter()
+            .map(|run| BridgeGroundedRuleBatchEntry {
+                rule: run.rule,
+                bindings: run
+                    .bindings
+                    .iter()
+                    .map(|binding| BridgeGroundedRuleBinding {
+                        variable: binding.variable.clone(),
+                        value: binding.value,
+                        canonicalize: matches!(binding.ty, ColumnTy::Id),
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            })
+            .collect::<Vec<_>>();
+        Ok(match EGraph::run_grounded_rule_batch(self, &runs)? {
             GuardedRuleBatchRunResult::Applied {
                 observed_matches,
                 report,

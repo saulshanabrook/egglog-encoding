@@ -239,6 +239,24 @@ pub enum GuardedRuleBatchOutcome {
     },
 }
 
+/// One typed cell in a complete source-level grounding. Equality-sort cells
+/// are canonicalized by the backend against the batch pre-state; base cells
+/// compare directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleBinding {
+    pub variable: Arc<str>,
+    pub value: Value,
+    pub ty: ColumnTy,
+}
+
+/// One guarded firing in a compact same-prestate batch. Backends may group
+/// entries by `rule`, but must apply selected complete heads in list order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleBatchEntry {
+    pub rule: RuleId,
+    pub bindings: Box<[GroundedRuleBinding]>,
+}
+
 /// Backend-selected policy for reconciling two ids that rebuild to the same
 /// container value. The container type is supplied separately to
 /// [`Backend::container_merge_fn`], so a backend may choose a different policy
@@ -373,6 +391,19 @@ pub trait Backend: Send + Sync {
     ) -> Result<GuardedRuleBatchOutcome> {
         Err(anyhow::anyhow!(
             "guarded rule batches are not supported by this backend"
+        ))
+    }
+
+    /// Query each distinct original rule once, select every listed complete
+    /// grounding with an implicit exact-one guard, then apply the selected
+    /// heads in list order. This optional primitive is currently implemented
+    /// only by the reference backend.
+    fn run_grounded_rule_batch(
+        &mut self,
+        _runs: &[GroundedRuleBatchEntry],
+    ) -> Result<GuardedRuleBatchOutcome> {
+        Err(anyhow::anyhow!(
+            "grounded rule batches are not supported by this backend"
         ))
     }
 

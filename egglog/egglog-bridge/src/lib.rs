@@ -134,6 +134,22 @@ pub enum GuardedRuleBatchRunResult {
     },
 }
 
+/// One source-variable value in a compact grounded batch. Equality-sort
+/// values set `canonicalize`; base values compare directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleBinding {
+    pub variable: Arc<str>,
+    pub value: Value,
+    pub canonicalize: bool,
+}
+
+/// One complete source-level grounding, with an implicit exact-one guard.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleBatchEntry {
+    pub rule: RuleId,
+    pub bindings: Box<[GroundedRuleBinding]>,
+}
+
 impl Timestamp {
     fn to_value(self) -> Value {
         Value::new(self.rep())
@@ -851,6 +867,68 @@ impl EGraph {
             &mut self.rules,
             runs,
             ts,
+            self.report_level,
+        )?;
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+
+        let (observed_matches, rule_set_report) = match outcome {
+            core_relations::GuardedRuleSetBatchRunOutcome::Applied {
+                observed_matches,
+                report,
+            } => (observed_matches, report),
+            core_relations::GuardedRuleSetBatchRunOutcome::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            } => {
+                return Ok(GuardedRuleBatchRunResult::MatchCountMismatch {
+                    run_index,
+                    expected_matches,
+                    observed_matches,
+                });
+            }
+        };
+
+        let mut report = IterationReport {
+            rule_set_report,
+            rebuild_time: Duration::ZERO,
+        };
+        let uf_size_after = self.db.get_table(self.uf_table).len();
+        if uf_size_before == uf_size_after {
+            self.inc_ts();
+            return Ok(GuardedRuleBatchRunResult::Applied {
+                observed_matches,
+                report,
+            });
+        }
+
+        let rebuild_timer = Instant::now();
+        self.rebuild()?;
+        report.rebuild_time = rebuild_timer.elapsed();
+        if let Some(message) = self.panic_message.lock().unwrap().take() {
+            return Err(PanicError(message).into());
+        }
+        Ok(GuardedRuleBatchRunResult::Applied {
+            observed_matches,
+            report,
+        })
+    }
+
+    /// Query every distinct original rule once against one shared pre-state,
+    /// validate each complete grounded row with an implicit exact-one guard,
+    /// then apply heads in source order and rebuild once.
+    pub fn run_grounded_rule_batch(
+        &mut self,
+        runs: &[GroundedRuleBatchEntry],
+    ) -> Result<GuardedRuleBatchRunResult> {
+        let uf_size_before = self.db.get_table(self.uf_table).len();
+        let outcome = run_grounded_rule_batch_impl(
+            &mut self.db,
+            &mut self.rules,
+            runs,
+            self.uf_table,
             self.report_level,
         )?;
         if let Some(message) = self.panic_message.lock().unwrap().take() {
@@ -2319,6 +2397,61 @@ fn run_rule_batch_guarded_impl(
             rule_info[*rule].last_run_at = next_ts;
         }
     }
+    Ok(outcome)
+}
+
+fn run_grounded_rule_batch_impl(
+    db: &mut Database,
+    rule_info: &mut DenseIdMapWithReuse<RuleId, RuleInfo>,
+    runs: &[GroundedRuleBatchEntry],
+    union_find: TableId,
+    report_level: ReportLevel,
+) -> Result<core_relations::GuardedRuleSetBatchRunOutcome> {
+    let mut group_indices: HashMap<RuleId, usize> = HashMap::default();
+    let mut grouped = Vec::<(RuleId, Vec<core_relations::GroundedRuleSetRun>)>::new();
+    for (run_index, run) in runs.iter().enumerate() {
+        let group_index = if let Some(group_index) = group_indices.get(&run.rule).copied() {
+            group_index
+        } else {
+            let group_index = grouped.len();
+            grouped.push((run.rule, Vec::new()));
+            group_indices.insert(run.rule, group_index);
+            group_index
+        };
+        grouped[group_index]
+            .1
+            .push(core_relations::GroundedRuleSetRun {
+                run_index,
+                bindings: run
+                    .bindings
+                    .iter()
+                    .map(|binding| core_relations::GroundedBinding {
+                        name: binding.variable.clone(),
+                        value: binding.value,
+                        canonicalize: binding.canonicalize,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            });
+    }
+
+    let mut rule_sets = Vec::with_capacity(grouped.len());
+    for (rule, _) in &grouped {
+        let info = &mut rule_info[*rule];
+        if info.cached_plan.is_none() {
+            info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
+        }
+        let cached_plan = info.cached_plan.as_ref().unwrap().plan.clone();
+        let mut builder = db.new_rule_set();
+        let _ = builder.add_rule_from_cached_plan(&cached_plan, &[]);
+        rule_sets.push(builder.build());
+    }
+    let borrowed = rule_sets
+        .iter()
+        .zip(&grouped)
+        .map(|(rule_set, (_, runs))| (rule_set, runs.as_slice()))
+        .collect::<Vec<_>>();
+    let outcome = db.run_rule_sets_grounded_batch(&borrowed, union_find, report_level)?;
     Ok(outcome)
 }
 

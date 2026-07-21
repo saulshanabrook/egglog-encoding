@@ -43,8 +43,9 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    GuardedRuleBatchEntry, GuardedRuleBatchOutcome, GuardedRuleRun, GuardedRuleRunOutcome,
-    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    GroundedRuleBatchEntry, GroundedRuleBinding, GuardedRuleBatchEntry, GuardedRuleBatchOutcome,
+    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
+    RuleSpec, RuleValue, RuleVar,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -578,6 +579,7 @@ enum PreparedSchedule {
     Run(Span, ResolvedRunConfig),
     RunRule(PreparedRunRule),
     RunRuleBatch(Span, Vec<PreparedRunRule>),
+    RunRuleBatchPacked(Span, ResolvedPackedRunRuleBatch),
     Sequence(Span, Vec<PreparedSchedule>),
 }
 
@@ -587,6 +589,11 @@ struct PreparedRunRule {
     config: ResolvedRunRuleConfig,
     rule_id: egglog_bridge::RuleId,
     ruleset: String,
+}
+
+enum GroundedBindingTarget {
+    Variable(ResolvedVar),
+    Literal(Literal, ArcSort),
 }
 
 impl Display for PreparedSchedule {
@@ -609,6 +616,7 @@ impl Display for PreparedSchedule {
                     " "
                 )
             ),
+            PreparedSchedule::RunRuleBatchPacked(_, batch) => write!(f, "{batch}"),
             PreparedSchedule::Sequence(_, schedules) => {
                 write!(f, "(seq {})", ListDisplay(schedules, " "))
             }
@@ -1318,6 +1326,9 @@ impl EGraph {
                 }
                 Ok(PreparedSchedule::RunRuleBatch(span.clone(), prepared))
             }
+            ResolvedSchedule::RunRuleBatchPacked(span, batch) => Ok(
+                PreparedSchedule::RunRuleBatchPacked(span.clone(), batch.clone()),
+            ),
             ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
                 span.clone(),
                 *limit,
@@ -1343,6 +1354,9 @@ impl EGraph {
             PreparedSchedule::RunRule(prepared) => self.run_prepared_rule(prepared),
             PreparedSchedule::RunRuleBatch(span, prepared) => {
                 self.run_prepared_rule_batch(span, prepared)
+            }
+            PreparedSchedule::RunRuleBatchPacked(span, batch) => {
+                self.run_prepared_packed_rule_batch(span, batch)
             }
             PreparedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();
@@ -1505,6 +1519,200 @@ impl EGraph {
                     span: span.clone(),
                 })
             }
+        }
+    }
+
+    fn run_prepared_packed_rule_batch(
+        &mut self,
+        span: &Span,
+        batch: &ResolvedPackedRunRuleBatch,
+    ) -> Result<RunReport, Error> {
+        // Resolve every closed witness through read-only table lookups before
+        // querying any body or applying any head. A missing witness therefore
+        // fails the whole batch without creating the term it was meant to
+        // guard.
+        let witness_values = batch
+            .witnesses
+            .iter()
+            .map(|witness| self.eval_replay_witness(witness))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let groups = batch
+            .groups
+            .iter()
+            .map(|group| {
+                self.rulesets
+                    .iter()
+                    .find_map(|(ruleset_name, ruleset)| match ruleset {
+                        Ruleset::Rules(rules) => rules.get(&group.rule).map(|registered| {
+                            (
+                                ruleset_name.clone(),
+                                registered.backend_id,
+                                registered.substitutions.clone(),
+                            )
+                        }),
+                        Ruleset::Combined(_) => None,
+                    })
+                    .ok_or_else(|| Error::NoSuchRule(group.rule.clone(), group.span.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut runs = Vec::with_capacity(batch.fires.len());
+        for fire in &batch.fires {
+            let group_index = fire.group as usize;
+            let group = &batch.groups[group_index];
+            let (_, rule_id, substitutions) = &groups[group_index];
+            let mut bindings: IndexMap<String, GroundedRuleBinding> = IndexMap::default();
+            for (variable, witness) in group.variables.iter().zip(fire.witnesses.iter()) {
+                let value = witness_values[*witness as usize];
+                match grounded_binding_target(variable, substitutions)? {
+                    GroundedBindingTarget::Variable(target) => {
+                        let ty = target.sort.column_ty(self.backend.base_values());
+                        let candidate = GroundedRuleBinding {
+                            variable: Arc::from(target.name.as_str()),
+                            value,
+                            ty,
+                        };
+                        match bindings.entry(target.name.clone()) {
+                            indexmap::map::Entry::Vacant(entry) => {
+                                entry.insert(candidate);
+                            }
+                            indexmap::map::Entry::Occupied(entry) => {
+                                let previous = entry.get();
+                                let previous =
+                                    self.backend.get_canon_repr(previous.value, previous.ty);
+                                let candidate = self.backend.get_canon_repr(value, ty);
+                                if previous != candidate {
+                                    return Err(Error::BackendError(format!(
+                                        "packed run-rule {:?} binds canonical alias {} to conflicting values",
+                                        group.rule, target.name
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    GroundedBindingTarget::Literal(literal, sort) => {
+                        let ty = sort.column_ty(self.backend.base_values());
+                        let expected = literal_to_value(self.backend.base_values(), &literal);
+                        if self.backend.get_canon_repr(value, ty)
+                            != self.backend.get_canon_repr(expected, ty)
+                        {
+                            return Err(Error::RunRuleMatchCountMismatch {
+                                rule: group.rule.clone(),
+                                expected: 1,
+                                observed: 0,
+                                span: fire.span.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            runs.push(GroundedRuleBatchEntry {
+                rule: *rule_id,
+                bindings: bindings
+                    .into_values()
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            });
+        }
+
+        let outcome = self
+            .backend
+            .run_grounded_rule_batch(&runs)
+            .map_err(|error| Error::BackendError(error.to_string()))?;
+        match outcome {
+            GuardedRuleBatchOutcome::Applied { report, .. } => {
+                let ruleset = groups
+                    .first()
+                    .map(|(ruleset, _, _)| ruleset.as_str())
+                    .filter(|ruleset| {
+                        groups
+                            .iter()
+                            .all(|(candidate, _, _)| candidate.as_str() == *ruleset)
+                    })
+                    .unwrap_or("<run-rule-batch>");
+                Ok(RunReport::singleton(ruleset, report))
+            }
+            GuardedRuleBatchOutcome::MatchCountMismatch {
+                run_index,
+                expected_matches,
+                observed_matches,
+            } => {
+                let fire = batch.fires.get(run_index).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "packed run-rule-batch returned invalid failed entry index {run_index}"
+                    ))
+                })?;
+                let group = &batch.groups[fire.group as usize];
+                Err(Error::RunRuleMatchCountMismatch {
+                    rule: group.rule.clone(),
+                    expected: expected_matches,
+                    observed: observed_matches,
+                    span: span.clone(),
+                })
+            }
+        }
+    }
+
+    fn eval_replay_witness(&self, expr: &ResolvedExpr) -> Result<Value, Error> {
+        match expr {
+            ResolvedExpr::Lit(_, literal) => {
+                Ok(literal_to_value(self.backend.base_values(), literal))
+            }
+            ResolvedExpr::Var(span, variable) => Err(Error::BackendError(format!(
+                "{span}\npacked replay witness contains unresolved variable {}",
+                variable.name
+            ))),
+            ResolvedExpr::Call(span, ResolvedCall::Func(function), children) => {
+                if function.subtype != FunctionSubtype::Constructor
+                    && !(children.is_empty() && self.type_info.is_global(&function.name))
+                {
+                    return Err(Error::BackendError(format!(
+                        "{span}\npacked replay witnesses support only constructors and globals; found {}",
+                        function.name
+                    )));
+                }
+                let key = children
+                    .iter()
+                    .map(|child| self.eval_replay_witness(child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                // Term/proof encoding retains the original constructor as a
+                // syntax table, while rules match the canonical eclass stored
+                // in its generated view. Use that view when present; ordinary
+                // execution has no mapping and reads the constructor directly.
+                let lookup_name = self
+                    .proof_state
+                    .proof_names
+                    .view_name
+                    .get(&function.name)
+                    .map(String::as_str)
+                    .unwrap_or(function.name.as_str());
+                let function_id = self
+                    .functions
+                    .get(lookup_name)
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "{span}\npacked replay witness references unknown function {}",
+                            lookup_name
+                        ))
+                    })?
+                    .backend_id;
+                self.backend.lookup_id(function_id, &key).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{span}\npacked replay witness {} is unavailable at this batch boundary",
+                        expr
+                    ))
+                })
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), _) => {
+                Err(Error::BackendError(format!(
+                    "{span}\npacked replay witnesses do not support primitive {}",
+                    primitive.name()
+                )))
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::BackendError(
+                format!("{span}\npacked replay witnesses do not support tuple expressions"),
+            )),
         }
     }
 
@@ -3780,6 +3988,40 @@ fn literal_to_value(base_values: &BaseValues, l: &Literal) -> Value {
         Literal::Bool(x) => base_values.get::<bool>(*x),
         Literal::Unit => base_values.get::<()>(()),
     }
+}
+
+fn grounded_binding_target(
+    source: &ResolvedVar,
+    substitutions: &[(ResolvedVar, ResolvedAtomTerm)],
+) -> Result<GroundedBindingTarget, Error> {
+    let mut current = source.clone();
+    for _ in 0..=substitutions.len() {
+        let Some((_, target)) = substitutions
+            .iter()
+            .find(|(candidate, _)| *candidate == current)
+        else {
+            return Ok(GroundedBindingTarget::Variable(current));
+        };
+        match target {
+            core::GenericAtomTerm::Var(_, variable) => current = variable.clone(),
+            core::GenericAtomTerm::Literal(_, literal) => {
+                return Ok(GroundedBindingTarget::Literal(
+                    literal.clone(),
+                    source.sort.clone(),
+                ));
+            }
+            core::GenericAtomTerm::Global(_, variable) => {
+                return Err(Error::BackendError(format!(
+                    "packed run-rule binding {} resolves to unsupported global alias {}",
+                    source.name, variable.name
+                )));
+            }
+        }
+    }
+    Err(Error::BackendError(format!(
+        "packed run-rule binding {} has a cyclic canonicalization alias",
+        source.name
+    )))
 }
 
 #[derive(Debug, Error)]

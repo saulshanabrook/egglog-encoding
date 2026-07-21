@@ -2744,7 +2744,9 @@ fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> 
                 Ok(())
             }
         }
-        Schedule::RunRule(span, _) | Schedule::RunRuleBatch(span, _) => unsupported(
+        Schedule::RunRule(span, _)
+        | Schedule::RunRuleBatch(span, _)
+        | Schedule::RunRuleBatchPacked(span, _) => unsupported(
             span,
             "manual `run-rule` or `run-rule-batch` in the input program".to_owned(),
         ),
@@ -4378,6 +4380,9 @@ fn validate_replay_schedule(
             }
             Ok(())
         }
+        Schedule::RunRuleBatchPacked(span, batch) => {
+            validate_replay_packed_batch(span, batch, rules, replay_globals)
+        }
         Schedule::Sequence(_, schedules) => {
             for schedule in schedules {
                 validate_replay_schedule(schedule, rules, replay_globals)?;
@@ -4426,6 +4431,60 @@ fn validate_replay_run_rule(
     }
     for (_, expr) in &config.bindings {
         validate_closed_replay_witness(expr, span, replay_globals)?;
+    }
+    Ok(())
+}
+
+fn validate_replay_packed_batch(
+    span: &Span,
+    batch: &crate::ast::PackedRunRuleBatch,
+    rules: &IndexMap<String, RuleModel>,
+    replay_globals: &HashSet<String>,
+) -> Result<(), CausalSliceError> {
+    for witness in &batch.witnesses {
+        validate_closed_replay_witness(witness, span, replay_globals)?;
+    }
+    for group in &batch.groups {
+        let model = rules.get(&group.rule).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "packed replay references unknown rule `{}`",
+                group.rule
+            ))
+        })?;
+        let actual = group
+            .variables
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        let expected = model
+            .replay_var_order
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        if actual != expected {
+            return Err(CausalSliceError::Invariant(format!(
+                "packed replay variables for `{}` were {actual:?}, expected {expected:?}",
+                group.rule
+            )));
+        }
+    }
+    for fire in &batch.fires {
+        let Some(group) = batch.groups.get(fire.group as usize) else {
+            return Err(CausalSliceError::Invariant(format!(
+                "packed replay references unknown group {}",
+                fire.group
+            )));
+        };
+        if fire.witnesses.len() != group.variables.len()
+            || fire
+                .witnesses
+                .iter()
+                .any(|witness| *witness as usize >= batch.witnesses.len())
+        {
+            return Err(CausalSliceError::Invariant(
+                "packed replay fire has invalid witness indices".to_owned(),
+            ));
+        }
     }
     Ok(())
 }
@@ -4479,6 +4538,7 @@ fn command_schedule_span(command: &Command) -> Option<Span> {
         Schedule::Run(span, _)
         | Schedule::RunRule(span, _)
         | Schedule::RunRuleBatch(span, _)
+        | Schedule::RunRuleBatchPacked(span, _)
         | Schedule::Repeat(span, _, _)
         | Schedule::Saturate(span, _)
         | Schedule::Sequence(span, _) => span.clone(),

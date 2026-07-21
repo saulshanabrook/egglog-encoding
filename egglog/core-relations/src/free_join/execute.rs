@@ -38,10 +38,10 @@ use crate::{
 };
 
 use super::{
-    ActionId, AtomId, Database, GuardedRuleSetBatchRunOutcome, GuardedRuleSetRunError,
-    GuardedRuleSetRunOutcome, HashColumnIndex, HashIndex, RuleExecutionTrace, RuleMatch,
-    RuleMatchId, RuleMatchTraceError, TableApplication, TableInfo, Variable,
-    get_column_index_from_tableinfo,
+    ActionId, AtomId, Database, GroundedRuleSetRun, GuardedRuleSetBatchRunOutcome,
+    GuardedRuleSetRunError, GuardedRuleSetRunOutcome, HashColumnIndex, HashIndex,
+    RuleExecutionTrace, RuleMatch, RuleMatchId, RuleMatchTraceError, TableApplication, TableInfo,
+    Variable, get_column_index_from_tableinfo,
     plan::{JoinHeader, JoinStage, Plan},
     with_pool_set,
 };
@@ -1083,16 +1083,241 @@ impl Database {
         })
     }
 
+    /// Query every distinct rule once against one shared pre-state, select one
+    /// native match for each complete grounded row, then apply the selected
+    /// complete heads in `run_index` order and merge once.
+    pub fn run_rule_sets_grounded_batch(
+        &mut self,
+        groups: &[(&RuleSet, &[GroundedRuleSetRun])],
+        union_find: super::TableId,
+        report_level: ReportLevel,
+    ) -> Result<GuardedRuleSetBatchRunOutcome, GuardedRuleSetRunError> {
+        for (rule_set, _) in groups {
+            if rule_set.plans.len() > 1 {
+                return Err(GuardedRuleSetRunError::MultipleExecutablePlans {
+                    plan_count: rule_set.plans.len(),
+                });
+            }
+        }
+
+        let run_count = groups.iter().map(|(_, runs)| runs.len()).sum::<usize>();
+        let mut run_indices = vec![false; run_count];
+        for (_, runs) in groups {
+            for run in *runs {
+                let Some(seen) = run_indices.get_mut(run.run_index) else {
+                    return Err(GuardedRuleSetRunError::InvalidGroundedRunOrder);
+                };
+                if mem::replace(seen, true) {
+                    return Err(GuardedRuleSetRunError::InvalidGroundedRunOrder);
+                }
+            }
+        }
+        if run_indices.iter().any(|seen| !seen) {
+            return Err(GuardedRuleSetRunError::InvalidGroundedRunOrder);
+        }
+
+        let pre_merge_timer = Instant::now();
+        let mut selected = vec![None; run_count];
+        let mut search_times = vec![Duration::ZERO; groups.len()];
+        let mut total_search_time = Duration::ZERO;
+        for (group_index, (rule_set, runs)) in groups.iter().enumerate() {
+            if runs.is_empty() {
+                continue;
+            }
+            let Some((_, _, symbol_map)) = rule_set.plans.values().next() else {
+                let first = runs
+                    .iter()
+                    .map(|run| run.run_index)
+                    .min()
+                    .expect("a nonempty grounded group has a first run");
+                return Ok(GuardedRuleSetBatchRunOutcome::MatchCountMismatch {
+                    run_index: first,
+                    expected_matches: 1,
+                    observed_matches: 0,
+                });
+            };
+            let first_columns = runs[0]
+                .bindings
+                .iter()
+                .map(|binding| (binding.name.clone(), binding.canonicalize))
+                .collect::<Vec<_>>();
+            let mut columns = Vec::with_capacity(first_columns.len());
+            for (name, canonicalize) in &first_columns {
+                let variable = symbol_map
+                    .vars
+                    .iter()
+                    .find_map(|(variable, candidate)| {
+                        (candidate.as_ref() == name.as_ref()).then_some(*variable)
+                    })
+                    .ok_or_else(|| GuardedRuleSetRunError::UnknownGroundingVariable {
+                        name: name.clone(),
+                    })?;
+                columns.push((variable, *canonicalize, name.clone()));
+            }
+
+            let union_find_table = self.get_table(union_find);
+            let mut expected = HashMap::default();
+            for run in *runs {
+                let run_columns = run
+                    .bindings
+                    .iter()
+                    .map(|binding| (binding.name.clone(), binding.canonicalize))
+                    .collect::<Vec<_>>();
+                if run_columns != first_columns {
+                    return Err(GuardedRuleSetRunError::InconsistentGroundingColumns);
+                }
+                let key = run
+                    .bindings
+                    .iter()
+                    .map(|binding| {
+                        canonicalize_grounded_value(
+                            union_find_table,
+                            binding.value,
+                            binding.canonicalize,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                let slot = GroundedCaptureSlot {
+                    run_index: run.run_index,
+                    observed_matches: 0,
+                    captured: None,
+                };
+                if let Some(previous) = expected.insert(key, slot) {
+                    return Err(GuardedRuleSetRunError::DuplicateGrounding {
+                        first_run_index: previous.run_index,
+                        duplicate_run_index: run.run_index,
+                    });
+                }
+            }
+
+            let search_timer = Instant::now();
+            let mut action_buf = InPlaceGroundedCaptureBuffer {
+                columns: columns.into_boxed_slice(),
+                expected,
+                union_find: union_find_table,
+                missing_variable: None,
+            };
+            self.query_rule_set_serial(rule_set, &mut action_buf);
+            let search_time = search_timer.elapsed();
+            search_times[group_index] = search_time;
+            total_search_time += search_time;
+
+            if let Some(name) = action_buf.missing_variable.take() {
+                return Err(GuardedRuleSetRunError::UnknownGroundingVariable { name });
+            }
+
+            let mismatch = action_buf
+                .expected
+                .values()
+                .filter(|slot| slot.observed_matches != 1)
+                .min_by_key(|slot| slot.run_index);
+            if let Some(slot) = mismatch {
+                return Ok(GuardedRuleSetBatchRunOutcome::MatchCountMismatch {
+                    run_index: slot.run_index,
+                    expected_matches: 1,
+                    observed_matches: slot.observed_matches,
+                });
+            }
+            for (_, slot) in action_buf.expected {
+                selected[slot.run_index] = Some((
+                    group_index,
+                    slot.captured
+                        .expect("one observed grounded match must have a captured binding"),
+                ));
+            }
+        }
+
+        if selected.iter().any(Option::is_none) {
+            return Err(GuardedRuleSetRunError::InvalidGroundedRunOrder);
+        }
+
+        let match_counters = groups
+            .iter()
+            .map(|(rule_set, _)| MatchCounter::new(rule_set.actions.n_ids()))
+            .collect::<Vec<_>>();
+        let mut apply_times = vec![Duration::ZERO; groups.len()];
+        let mut total_apply_time = Duration::ZERO;
+        let mut exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        for selected in selected {
+            let (group_index, captured) =
+                selected.expect("grounded run order was checked immediately above");
+            let rule_set = groups[group_index].0;
+            let mut action_buf = InPlaceActionBuffer {
+                rule_set,
+                match_counter: &match_counters[group_index],
+                batches: Default::default(),
+                apply_time: Duration::ZERO,
+                trace: None,
+            };
+            let binding = captured.to_map();
+            action_buf.push_bindings(captured.action, &binding, || exec_state.clone());
+            action_buf.flush(&mut exec_state);
+            total_apply_time += action_buf.apply_time;
+            apply_times[group_index] += action_buf.apply_time;
+        }
+        // Mutation-buffer handles publish their staged rows when dropped. Do
+        // that before merge_all observes the notification set.
+        drop(exec_state);
+
+        let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>> = HashMap::default();
+        for (group_index, (rule_set, _)) in groups.iter().enumerate() {
+            if let Some((plan, desc, symbol_map)) = rule_set.plans.values().next() {
+                let report_plan = match report_level {
+                    ReportLevel::TimeOnly => None,
+                    ReportLevel::WithPlan | ReportLevel::StageInfo => {
+                        Some(plan.to_report(symbol_map))
+                    }
+                };
+                rule_reports
+                    .entry(desc.clone())
+                    .or_default()
+                    .push(RuleReport {
+                        plan: report_plan,
+                        search_and_apply_time: search_times[group_index] + apply_times[group_index],
+                        num_matches: match_counters[group_index].read_matches(plan.actions()),
+                    });
+            }
+        }
+
+        let pre_merge_elapsed = pre_merge_timer.elapsed();
+        let unattributed = pre_merge_elapsed.saturating_sub(total_search_time + total_apply_time);
+        let merge_timer = Instant::now();
+        let changed = self.merge_all();
+        let merge_time = merge_timer.elapsed();
+        Ok(GuardedRuleSetBatchRunOutcome::Applied {
+            observed_matches: vec![1; run_count],
+            report: RuleSetReport {
+                changed,
+                rule_reports,
+                pre_merge: PreMergeTiming::Split {
+                    search: total_search_time,
+                    apply: total_apply_time,
+                    unattributed,
+                },
+                merge_time,
+            },
+        })
+    }
+
     fn capture_rule_set_serial(&self, rule_set: &RuleSet) -> Vec<CapturedBinding> {
+        let mut action_buf = InPlaceCaptureBuffer::default();
+        self.query_rule_set_serial(rule_set, &mut action_buf);
+        action_buf.captured
+    }
+
+    fn query_rule_set_serial<'state, B>(&'state self, rule_set: &'state RuleSet, action_buf: &mut B)
+    where
+        B: ActionBuffer<'state, ActionId>,
+    {
         let Some((plan, _, _)) = rule_set.plans.values().next() else {
-            return Vec::new();
+            return;
         };
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         let join_state = JoinState::new(self, exec_state);
         let mut binding_info = initial_binding_info(&join_state, plan);
-        let mut action_buf = InPlaceCaptureBuffer::default();
         if !intersect_plan_headers(&join_state, plan, &mut binding_info) {
-            return action_buf.captured;
+            return;
         }
         match plan {
             Plan::SinglePlan(plan) => join_state.run_join_stages(
@@ -1100,7 +1325,7 @@ impl Database {
                 &plan.atoms,
                 plan.actions,
                 &mut binding_info,
-                &mut action_buf,
+                action_buf,
             ),
             Plan::DecomposedPlan(plan) => {
                 let mut materializations = DenseIdMap::with_capacity(plan.stages.blocks.len());
@@ -1129,7 +1354,7 @@ impl Database {
                         &mut materializer,
                     );
                     if materializer.materializations[mat_id].is_empty() {
-                        return action_buf.captured;
+                        return;
                     }
                     binding_info.materializations.insert(
                         mat_id,
@@ -1141,11 +1366,10 @@ impl Database {
                     &plan.atoms,
                     plan.actions,
                     &mut binding_info,
-                    &mut action_buf,
+                    action_buf,
                 );
             }
         }
-        action_buf.captured
     }
 }
 
@@ -2352,13 +2576,46 @@ impl<'a> JoinState<'a> {
 
 const VAR_BATCH_SIZE: usize = 128;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct CapturedBinding {
     action: ActionId,
     /// Keep the complete query binding, rather than only RHS-used variables.
     /// Besides making replay independent of query internals, this preserves
     /// match multiplicity for heads that do not reference any body variables.
     values: SmallVec<[(Variable, Value); 4]>,
+}
+
+struct GroundedCaptureSlot {
+    run_index: usize,
+    observed_matches: usize,
+    captured: Option<CapturedBinding>,
+}
+
+fn canonicalize_grounded_value(
+    union_find: &crate::table_spec::WrappedTable,
+    value: Value,
+    canonicalize: bool,
+) -> Value {
+    if !canonicalize {
+        return value;
+    }
+    union_find
+        .get_row(&[value])
+        .map(|row| row.vals[1])
+        .unwrap_or(value)
+}
+
+struct InPlaceGroundedCaptureBuffer<'state> {
+    columns: Box<[(Variable, bool, Arc<str>)]>,
+    expected: HashMap<Box<[Value]>, GroundedCaptureSlot>,
+    union_find: &'state crate::table_spec::WrappedTable,
+    missing_variable: Option<Arc<str>>,
+}
+
+impl InPlaceGroundedCaptureBuffer<'_> {
+    fn canonicalize(&self, value: Value, canonicalize: bool) -> Value {
+        canonicalize_grounded_value(self.union_find, value, canonicalize)
+    }
 }
 
 impl CapturedBinding {
@@ -2466,6 +2723,50 @@ impl<'state> ActionBuffer<'state, ActionId> for InPlaceCaptureBuffer {
         _to_exec_state: impl FnMut() -> ExecutionState<'state>,
     ) {
         self.captured.push(CapturedBinding::new(action, bindings));
+    }
+
+    fn flush(&mut self, _exec_state: &mut ExecutionState) {}
+
+    fn recur<'local>(
+        &mut self,
+        local: BorrowedLocalState<'local>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'state> + Send + 'state,
+        work: impl for<'a> FnOnce(BorrowedLocalState<'a>, &mut Self) + Send + 'state,
+    ) {
+        work(local, self);
+    }
+
+    fn supports_parallel_drain(&self) -> bool {
+        false
+    }
+}
+
+impl<'state> ActionBuffer<'state, ActionId> for InPlaceGroundedCaptureBuffer<'state> {
+    type AsLocal<'a>
+        = Self
+    where
+        'state: 'a;
+
+    fn push_bindings(
+        &mut self,
+        action: ActionId,
+        bindings: &DenseIdMap<Variable, Value>,
+        _to_exec_state: impl FnMut() -> ExecutionState<'state>,
+    ) {
+        let mut key = Vec::with_capacity(self.columns.len());
+        for (variable, canonicalize, name) in &self.columns {
+            let Some(value) = bindings.get(*variable).copied() else {
+                self.missing_variable.get_or_insert_with(|| name.clone());
+                return;
+            };
+            key.push(self.canonicalize(value, *canonicalize));
+        }
+        if let Some(slot) = self.expected.get_mut(key.as_slice()) {
+            slot.observed_matches += 1;
+            if slot.captured.is_none() {
+                slot.captured = Some(CapturedBinding::new(action, bindings));
+            }
+        }
     }
 
     fn flush(&mut self, _exec_state: &mut ExecutionState) {}

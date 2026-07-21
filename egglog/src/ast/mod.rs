@@ -385,6 +385,7 @@ pub enum GenericSchedule<Head, Leaf> {
     Run(Span, GenericRunConfig<Head, Leaf>),
     RunRule(Span, GenericRunRuleConfig<Head, Leaf>),
     RunRuleBatch(Span, Vec<GenericRunRuleConfig<Head, Leaf>>),
+    RunRuleBatchPacked(Span, GenericPackedRunRuleBatch<Head, Leaf>),
     Sequence(Span, Vec<GenericSchedule<Head, Leaf>>),
 }
 
@@ -426,6 +427,9 @@ where
                     })
                     .collect(),
             ),
+            GenericSchedule::RunRuleBatchPacked(span, batch) => {
+                GenericSchedule::RunRuleBatchPacked(span, batch)
+            }
             GenericSchedule::Sequence(span, generic_schedules) => GenericSchedule::Sequence(
                 span,
                 generic_schedules
@@ -451,6 +455,9 @@ where
             GenericSchedule::RunRule(span, config) => GenericSchedule::RunRule(span, config),
             GenericSchedule::RunRuleBatch(span, configs) => {
                 GenericSchedule::RunRuleBatch(span, configs)
+            }
+            GenericSchedule::RunRuleBatchPacked(span, batch) => {
+                GenericSchedule::RunRuleBatchPacked(span, batch)
             }
             GenericSchedule::Sequence(span, scheds) => {
                 let mut flattened = Vec::new();
@@ -492,6 +499,9 @@ where
                     .map(|config| config.visit_exprs(f))
                     .collect(),
             ),
+            GenericSchedule::RunRuleBatchPacked(span, batch) => {
+                GenericSchedule::RunRuleBatchPacked(span, batch.visit_exprs(f))
+            }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds.into_iter().map(|s| s.visit_exprs(f)).collect(),
@@ -529,6 +539,9 @@ where
                     .map(|config| config.map_symbols(head, leaf))
                     .collect(),
             ),
+            GenericSchedule::RunRuleBatchPacked(span, batch) => {
+                GenericSchedule::RunRuleBatchPacked(span, batch.map_symbols(head, leaf))
+            }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds
@@ -565,6 +578,9 @@ where
                     .map(|config| config.map_string_symbols(fun))
                     .collect(),
             ),
+            GenericSchedule::RunRuleBatchPacked(span, batch) => {
+                GenericSchedule::RunRuleBatchPacked(span, batch.map_string_symbols(fun))
+            }
             GenericSchedule::Sequence(span, scheds) => GenericSchedule::Sequence(
                 span,
                 scheds
@@ -595,6 +611,7 @@ impl<Head: Display, Leaf: Display> Display for GenericSchedule<Head, Leaf> {
             GenericSchedule::RunRuleBatch(_ann, configs) => {
                 write!(f, "(run-rule-batch {})", ListDisplay(configs, " "))
             }
+            GenericSchedule::RunRuleBatchPacked(_ann, batch) => write!(f, "{batch}"),
             GenericSchedule::Sequence(_ann, scheds) => {
                 write!(f, "(seq {})", ListDisplay(scheds, " "))
             }
@@ -1296,6 +1313,130 @@ pub(crate) type ResolvedRunConfig = GenericRunConfig<ResolvedCall, ResolvedVar>;
 
 pub type RunRuleConfig = GenericRunRuleConfig<String, String>;
 pub(crate) type ResolvedRunRuleConfig = GenericRunRuleConfig<ResolvedCall, ResolvedVar>;
+
+pub type PackedRunRuleBatch = GenericPackedRunRuleBatch<String, String>;
+pub(crate) type ResolvedPackedRunRuleBatch = GenericPackedRunRuleBatch<ResolvedCall, ResolvedVar>;
+
+/// A rule dictionary entry in the compact same-prestate replay form.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GenericPackedRuleGroup<Leaf> {
+    pub span: Span,
+    pub rule: String,
+    pub variables: Box<[Leaf]>,
+}
+
+/// One chronologically ordered firing. The first index selects a rule group;
+/// the remaining indices select closed expressions from the witness dictionary.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PackedRuleFire {
+    pub span: Span,
+    pub group: u32,
+    pub witnesses: Box<[u32]>,
+}
+
+/// A compact batch stores closed witness syntax and rule variable columns once,
+/// while retaining an ordered stream of exact-one guarded firings.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct GenericPackedRunRuleBatch<Head, Leaf> {
+    pub witnesses: Vec<GenericExpr<Head, Leaf>>,
+    pub groups: Vec<GenericPackedRuleGroup<Leaf>>,
+    pub fires: Vec<PackedRuleFire>,
+}
+
+impl<Head, Leaf> GenericPackedRunRuleBatch<Head, Leaf>
+where
+    Head: Clone + Display,
+    Leaf: Clone + PartialEq + Eq + Display + Hash,
+{
+    fn visit_exprs(
+        self,
+        f: &mut impl FnMut(GenericExpr<Head, Leaf>) -> GenericExpr<Head, Leaf>,
+    ) -> Self {
+        Self {
+            witnesses: self
+                .witnesses
+                .into_iter()
+                .map(|expr| expr.visit_exprs(f))
+                .collect(),
+            groups: self.groups,
+            fires: self.fires,
+        }
+    }
+
+    fn map_symbols<Head2, Leaf2>(
+        self,
+        head: &mut impl FnMut(Head) -> Head2,
+        leaf: &mut impl FnMut(Leaf) -> Leaf2,
+    ) -> GenericPackedRunRuleBatch<Head2, Leaf2>
+    where
+        Head2: Clone + Display,
+        Leaf2: Clone + PartialEq + Eq + Display + Hash,
+    {
+        GenericPackedRunRuleBatch {
+            witnesses: self
+                .witnesses
+                .into_iter()
+                .map(|expr| expr.map_symbols(head, leaf))
+                .collect(),
+            groups: self
+                .groups
+                .into_iter()
+                .map(|group| GenericPackedRuleGroup {
+                    span: group.span,
+                    rule: group.rule,
+                    variables: group
+                        .variables
+                        .into_vec()
+                        .into_iter()
+                        .map(&mut *leaf)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                })
+                .collect(),
+            fires: self.fires,
+        }
+    }
+
+    fn map_string_symbols(mut self, fun: &mut impl FnMut(String) -> String) -> Self {
+        for group in &mut self.groups {
+            group.rule = fun(std::mem::take(&mut group.rule));
+        }
+        self
+    }
+}
+
+impl<Head: Display, Leaf: Display> Display for GenericPackedRunRuleBatch<Head, Leaf> {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "(run-rule-batch :witnesses ({}) :groups (",
+            ListDisplay(&self.witnesses, " ")
+        )?;
+        for (index, group) in self.groups.iter().enumerate() {
+            if index > 0 {
+                write!(f, " ")?;
+            }
+            write!(
+                f,
+                "({} ({}))",
+                Literal::String(group.rule.clone()),
+                ListDisplay(&group.variables, " ")
+            )?;
+        }
+        write!(f, ") :fires (")?;
+        for (index, fire) in self.fires.iter().enumerate() {
+            if index > 0 {
+                write!(f, " ")?;
+            }
+            write!(f, "({}", fire.group)?;
+            for witness in &fire.witnesses {
+                write!(f, " {witness}")?;
+            }
+            write!(f, ")")?;
+        }
+        write!(f, "))")
+    }
+}
 
 /// One explicit, full-database invocation of a named rule, optionally restricted
 /// by closed bindings. `selectors` is the normalized query form produced by

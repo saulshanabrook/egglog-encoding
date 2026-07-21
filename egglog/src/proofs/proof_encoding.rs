@@ -1533,6 +1533,20 @@ impl<'a> ProofInstrumentor<'a> {
                     ],
                 )
             }
+            ResolvedSchedule::RunRuleBatchPacked(span, batch) => {
+                let unresolved = ResolvedSchedule::RunRuleBatchPacked(span.clone(), batch.clone())
+                    .make_unresolved();
+                let Schedule::RunRuleBatchPacked(_, batch) = unresolved else {
+                    unreachable!("packed schedule conversion must preserve its variant")
+                };
+                Schedule::Sequence(
+                    span.clone(),
+                    vec![
+                        Schedule::RunRuleBatchPacked(span.clone(), batch),
+                        self.rebuild(),
+                    ],
+                )
+            }
             ResolvedSchedule::Sequence(span, schedules) => Schedule::Sequence(
                 span.clone(),
                 schedules

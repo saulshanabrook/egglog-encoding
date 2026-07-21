@@ -1120,6 +1120,101 @@ impl Parser {
                 if tail.is_empty() {
                     return error!(span, "run-rule-batch requires at least one run-rule entry");
                 }
+                if matches!(tail.first(), Some(Sexp::Atom(option, _)) if option.starts_with(':')) {
+                    let mut witnesses = None;
+                    let mut groups = None;
+                    let mut fires = None;
+                    for (option, args) in self.parse_options(tail)? {
+                        match (option, args) {
+                            (":witnesses", [entries]) if witnesses.is_none() => {
+                                witnesses = Some(map_fallible(
+                                    entries.expect_list("packed run-rule witness list")?,
+                                    self,
+                                    Self::parse_expr,
+                                )?);
+                            }
+                            (":groups", [entries]) if groups.is_none() => {
+                                let mut parsed = Vec::new();
+                                for entry in entries.expect_list("packed run-rule groups")? {
+                                    let [rule, variables] =
+                                        entry.expect_list("packed run-rule group")?
+                                    else {
+                                        return error!(
+                                            entry.span(),
+                                            "packed run-rule group must be (<rule name string> (<variable>*))"
+                                        );
+                                    };
+                                    let variables = variables
+                                        .expect_list("packed run-rule group variables")?
+                                        .iter()
+                                        .map(|variable| {
+                                            variable.expect_atom("packed run-rule variable")
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?
+                                        .into_boxed_slice();
+                                    parsed.push(GenericPackedRuleGroup {
+                                        span: entry.span(),
+                                        rule: rule.expect_string("packed run-rule name")?,
+                                        variables,
+                                    });
+                                }
+                                groups = Some(parsed);
+                            }
+                            (":fires", [entries]) if fires.is_none() => {
+                                let mut parsed = Vec::new();
+                                for entry in entries.expect_list("packed run-rule fires")? {
+                                    let [group, witnesses @ ..] =
+                                        entry.expect_list("packed run-rule fire")?
+                                    else {
+                                        return error!(
+                                            entry.span(),
+                                            "packed run-rule fire requires a group index"
+                                        );
+                                    };
+                                    parsed.push(PackedRuleFire {
+                                        span: entry.span(),
+                                        group: group.expect_uint("packed run-rule group index")?,
+                                        witnesses: witnesses
+                                            .iter()
+                                            .map(|witness| {
+                                                witness.expect_uint("packed run-rule witness index")
+                                            })
+                                            .collect::<Result<Vec<_>, _>>()?
+                                            .into_boxed_slice(),
+                                    });
+                                }
+                                fires = Some(parsed);
+                            }
+                            _ => {
+                                return error!(
+                                    span,
+                                    "packed run-rule-batch requires one each of :witnesses, :groups, and :fires"
+                                );
+                            }
+                        }
+                    }
+                    let (Some(witnesses), Some(groups), Some(fires)) = (witnesses, groups, fires)
+                    else {
+                        return error!(
+                            span,
+                            "packed run-rule-batch requires one each of :witnesses, :groups, and :fires"
+                        );
+                    };
+                    if groups.is_empty() || fires.is_empty() {
+                        return error!(
+                            span,
+                            "packed run-rule-batch requires at least one group and one fire"
+                        );
+                    }
+                    return Ok(Schedule::RunRuleBatchPacked(
+                        span,
+                        GenericPackedRunRuleBatch {
+                            witnesses,
+                            groups,
+                            fires,
+                        },
+                    ));
+                }
                 let mut configs = Vec::with_capacity(tail.len());
                 for entry in tail {
                     match self.parse_schedule(entry)? {

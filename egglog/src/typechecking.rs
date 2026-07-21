@@ -1129,9 +1129,142 @@ impl TypeInfo {
                 }
                 ResolvedSchedule::RunRuleBatch(span.clone(), resolved)
             }
+            Schedule::RunRuleBatchPacked(span, batch) => ResolvedSchedule::RunRuleBatchPacked(
+                span.clone(),
+                self.typecheck_packed_run_rule_batch(symbol_gen, span, batch)?,
+            ),
         };
 
         Result::Ok(schedule)
+    }
+
+    fn typecheck_packed_run_rule_batch(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        _span: &Span,
+        batch: &GenericPackedRunRuleBatch<String, String>,
+    ) -> Result<ResolvedPackedRunRuleBatch, TypeError> {
+        let invalid =
+            |span: Span, reason: String| TypeError::InvalidPackedRunRuleBatch { span, reason };
+        let mut seen_rules = HashSet::default();
+        let mut groups = Vec::with_capacity(batch.groups.len());
+        for group in &batch.groups {
+            if !seen_rules.insert(group.rule.clone()) {
+                return Err(invalid(
+                    group.span.clone(),
+                    format!("rule {:?} appears in more than one group", group.rule),
+                ));
+            }
+            let rule_info = self
+                .named_rules
+                .get(&group.rule)
+                .ok_or_else(|| TypeError::NoSuchRule(group.rule.clone(), group.span.clone()))?;
+            let mut seen_variables = HashSet::default();
+            let mut variables = Vec::with_capacity(group.variables.len());
+            for variable in &group.variables {
+                if !seen_variables.insert(variable.clone()) {
+                    return Err(TypeError::DuplicateRunRuleBinding {
+                        rule: group.rule.clone(),
+                        variable: variable.clone(),
+                        span: group.span.clone(),
+                    });
+                }
+                let target = rule_info
+                    .input_vars
+                    .iter()
+                    .find(|input| input.var.name == *variable)
+                    .map(|input| input.var.clone())
+                    .ok_or_else(|| TypeError::UnknownRunRuleBinding {
+                        rule: group.rule.clone(),
+                        variable: variable.clone(),
+                        span: group.span.clone(),
+                    })?;
+                variables.push(target);
+            }
+            groups.push(GenericPackedRuleGroup {
+                span: group.span.clone(),
+                rule: group.rule.clone(),
+                variables: variables.into_boxed_slice(),
+            });
+        }
+
+        let mut witness_sorts: Vec<Option<ArcSort>> = vec![None; batch.witnesses.len()];
+        for fire in &batch.fires {
+            let group = groups.get(fire.group as usize).ok_or_else(|| {
+                invalid(
+                    fire.span.clone(),
+                    format!("group index {} is out of range", fire.group),
+                )
+            })?;
+            if fire.witnesses.len() != group.variables.len() {
+                return Err(invalid(
+                    fire.span.clone(),
+                    format!(
+                        "group {} requires {} witnesses but the fire supplies {}",
+                        fire.group,
+                        group.variables.len(),
+                        fire.witnesses.len()
+                    ),
+                ));
+            }
+            for (witness, variable) in fire.witnesses.iter().zip(group.variables.iter()) {
+                let slot = witness_sorts.get_mut(*witness as usize).ok_or_else(|| {
+                    invalid(
+                        fire.span.clone(),
+                        format!("witness index {witness} is out of range"),
+                    )
+                })?;
+                if let Some(previous) = slot
+                    && previous.name() != variable.sort.name()
+                {
+                    return Err(invalid(
+                        fire.span.clone(),
+                        format!(
+                            "witness {witness} is used as both {} and {}",
+                            previous.name(),
+                            variable.sort.name()
+                        ),
+                    ));
+                }
+                *slot = Some(variable.sort.clone());
+            }
+        }
+
+        let mut witnesses = Vec::with_capacity(batch.witnesses.len());
+        for (index, (expr, sort)) in batch.witnesses.iter().zip(witness_sorts).enumerate() {
+            let sort = sort.ok_or_else(|| {
+                invalid(
+                    expr.span(),
+                    format!("witness {index} is never referenced by a fire"),
+                )
+            })?;
+            let mut non_closed = None;
+            expr.visit_vars(&mut |var_span, variable: &String| {
+                if non_closed.is_none() && !self.global_sorts.contains_key(variable) {
+                    non_closed = Some((variable.clone(), var_span.clone()));
+                }
+            });
+            if let Some((variable, span)) = non_closed {
+                return Err(TypeError::RunRuleBindingNotClosed {
+                    rule: "<packed-batch>".to_owned(),
+                    variable,
+                    span,
+                });
+            }
+            witnesses.push(self.typecheck_expr_with_output(
+                symbol_gen,
+                expr,
+                &Default::default(),
+                sort,
+                Context::Read,
+            )?);
+        }
+
+        Ok(GenericPackedRunRuleBatch {
+            witnesses,
+            groups,
+            fires: batch.fires.clone(),
+        })
     }
 
     fn typecheck_run_rule_config(
@@ -1587,6 +1720,8 @@ pub enum TypeError {
         "{span}\nEvery run-rule entry in run-rule-batch must use :expect 1; rule {rule:?} does not"
     )]
     RunRuleBatchRequiresExpectOne { rule: String, span: Span },
+    #[error("{span}\nInvalid packed run-rule-batch: {reason}")]
+    InvalidPackedRunRuleBatch { span: Span, reason: String },
     #[error(
         "{span}\nBinding expressions in run-rule {rule:?} must be closed; found local variable {variable}"
     )]
