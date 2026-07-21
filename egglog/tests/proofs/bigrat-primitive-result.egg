@@ -1,0 +1,6 @@
+(datatype Math
+  (Num BigRat))
+(rewrite (Num a) (Num (neg a)))
+(let $e (Num (bigrat (bigint 1) (bigint 1))))
+(run 1)
+(check (= $e (Num (bigrat (bigint -1) (bigint 1)))))

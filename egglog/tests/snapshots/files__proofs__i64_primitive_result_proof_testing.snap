@@ -1,0 +1,11 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(Sym
+  (= (Num 1) (Num -1))
+  (Rule
+    (= (Num -1) (Num 1))
+    (name "(rewrite (Num a) (Num (- 0 a)))")
+    (premises (Fiat (= (Num 1) (Num 1))))
+    (substitution (a 1) (@rewrite_var__ (Num 1)))))

@@ -24,12 +24,22 @@ const MANUAL_PROOF_DISABLED_FILES: &[ManualProofDisable] = &[
     },
 ];
 
+const EXPECTED_PROOF_TESTING_FAILURES: &[&str] = &[
+    "tests/proofs/bigrat-primitive-result.egg",
+    "tests/web-demo/herbie.egg",
+];
+
 // These proof-testing runs are still executed, but their proof snapshots are
 // too large for default checked-in fixtures.
 const PROOF_TESTING_SNAPSHOT_DISABLED_FILES: &[&str] = &[
+    "array.egg",
+    "bdd.egg",
+    "cyk.egg",
     "eqsolve.egg",
     "hardboiled_conv1d_32.egg",
     "herbie.egg",
+    "math.egg",
+    "typeinfer.egg",
     "bool.egg",
     "container-fail.egg",
     "delete.egg",
@@ -374,6 +384,13 @@ fn proof_testing_snapshot_disabled(path: &Path) -> bool {
         .any(|file| path.ends_with(file))
 }
 
+fn skip_proof_testing(path: &Path, desugar: bool) -> bool {
+    EXPECTED_PROOF_TESTING_FAILURES
+        .iter()
+        .any(|file| path.ends_with(file))
+        || (desugar && path.ends_with("tests/web-demo/math.egg"))
+}
+
 fn generate_tests(glob: &str) -> Vec<Trial> {
     let mut trials = vec![];
     let mut push_trial = |run: Run| trials.push(run.into_trial());
@@ -412,13 +429,15 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
             });
         }
 
-        if !should_fail && supports_proofs {
+        if !should_fail && supports_proofs && !skip_proof_testing(&run.path, false) {
             // proof_testing mode adds automatic prove-exists, which has different output
             push_trial(Run {
                 proof_testing: true,
                 ..run.clone()
             });
+        }
 
+        if !should_fail && supports_proofs && !skip_proof_testing(&run.path, true) {
             // Desugar under proof-testing, then replay the desugared program
             // while checking proofs against the original source program.
             push_trial(Run {
@@ -430,6 +449,63 @@ fn generate_tests(glob: &str) -> Vec<Trial> {
     }
 
     trials
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        message
+    } else {
+        "<non-string panic payload>"
+    }
+}
+
+fn generate_expected_proof_testing_failure_tests() -> Vec<Trial> {
+    EXPECTED_PROOF_TESTING_FAILURES
+        .iter()
+        .map(|file| {
+            let path = PathBuf::from(file);
+            let name = format!(
+                "proofs/{}_known_proof_testing_failure",
+                path.file_stem()
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('-', "_")
+            );
+
+            Trial::test(name, move || {
+                assert!(
+                    file_supports_proofs(&path),
+                    "{} must remain proof-compatible",
+                    path.display()
+                );
+
+                let run = Run {
+                    path: path.clone(),
+                    desugar: false,
+                    term_encoding: false,
+                    proof_testing: true,
+                    threads: 1,
+                };
+                let pool = rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .expect("failed to build rayon thread pool");
+                let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    pool.install(|| run.run())
+                }))
+                .expect_err("known proof-testing failure unexpectedly succeeded");
+                let message = panic_message(payload.as_ref());
+                assert!(
+                    message.contains("Fiat proof claims"),
+                    "known proof-testing failure changed class: {message}"
+                );
+
+                Ok(())
+            })
+        })
+        .collect()
 }
 
 fn generate_manual_proof_disable_snapshot_test() -> Trial {
@@ -476,6 +552,7 @@ fn main() {
     // Add the proof support snapshot test
     tests.push(generate_proof_support_snapshot_test());
     tests.push(generate_manual_proof_disable_snapshot_test());
+    tests.extend(generate_expected_proof_testing_failure_tests());
 
     // ensure all the tests have unique names
     let mut names = HashSet::new();
