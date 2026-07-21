@@ -1544,16 +1544,24 @@ fn resolve_rule_primitives(
             );
         }
         let mut metadata = Vec::with_capacity(registered_primitives.len());
-        for primitive in registered_primitives {
-            let exact_signature = primitive.name() == "+"
-                && primitive.input().len() == 2
+        for (primitive, expected) in registered_primitives
+            .into_iter()
+            .zip(&model.head_primitives)
+        {
+            let AtomArg::App { function, .. } = expected else {
+                return Err(CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` primitive model stopped being an application"
+                )));
+            };
+            let exact_signature = primitive.name() == function
+                && replay_safe_bigrat_primitive_arity(function) == Some(primitive.input().len())
                 && primitive.input().iter().all(|sort| sort.name() == "BigRat")
                 && primitive.output().name() == "BigRat";
             if !exact_signature || primitive.validator().is_none() {
                 return unsupported(
                     &model.span,
                     format!(
-                        "rule `{rule_name}` primitive without the exact proof-validating `(BigRat BigRat) -> BigRat` `+` specialization"
+                        "rule `{rule_name}` primitive without the exact proof-validating BigRat `{function}` specialization"
                     ),
                 );
             }
@@ -3255,15 +3263,15 @@ fn model_atom_arg(
         GenericExpr::Call(span, function, args) => {
             let Some(constructor) = constructors.get(function) else {
                 if replay_primitive_head_context(context)
-                    && function == "+"
                     && expected_sort == "BigRat"
+                    && let Some(arity) = replay_safe_bigrat_primitive_arity(function)
                 {
-                    if args.len() != 2 {
+                    if args.len() != arity {
                         return unsupported(
                             span,
                             format!(
-                                "BigRat `+` with arity {} instead of 2 in {context}",
-                                args.len()
+                                "BigRat `{function}` with arity {} instead of {arity} in {context}",
+                                args.len(),
                             ),
                         );
                     }
@@ -3275,7 +3283,7 @@ fn model_atom_arg(
                                 model_atom_arg(arg, "BigRat", constructors, source_globals, context)
                             })
                             .collect::<Result<Vec<_>, _>>()?,
-                        input_sorts: vec!["BigRat".to_owned(), "BigRat".to_owned()],
+                        input_sorts: vec!["BigRat".to_owned(); arity],
                         output_sort: "BigRat".to_owned(),
                     });
                 }
@@ -3331,6 +3339,10 @@ fn replay_primitive_head_context(context: &str) -> bool {
     context == "rule head" || (context.starts_with("rule `") && context.ends_with("` union head"))
 }
 
+fn replay_safe_bigrat_primitive_arity(function: &str) -> Option<usize> {
+    matches!(function, "+" | "-" | "*" | "/").then_some(2)
+}
+
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
     match arg {
         AtomArg::App { .. } => true,
@@ -3348,8 +3360,8 @@ fn collect_replay_primitives(arg: &AtomArg, primitives: &mut Vec<AtomArg>) {
     else {
         return;
     };
-    if function == "+"
-        && input_sorts == &["BigRat".to_owned(), "BigRat".to_owned()]
+    if replay_safe_bigrat_primitive_arity(function) == Some(input_sorts.len())
+        && input_sorts.iter().all(|sort| sort == "BigRat")
         && output_sort == "BigRat"
     {
         primitives.push(arg.clone());
@@ -4694,14 +4706,13 @@ fn elaborate_fire_primitives(
                 "rule `{rule_name}` primitive model stopped being an application"
             )));
         };
-        if function != "+"
-            || input_sorts.len() != 2
+        if replay_safe_bigrat_primitive_arity(function) != Some(input_sorts.len())
             || input_sorts.iter().any(|sort| sort != "BigRat")
             || output_sort != "BigRat"
             || application.args.len() != args.len()
         {
             return Err(CausalSliceError::Invariant(format!(
-                "rule `{rule_name}` primitive model diverged from admitted BigRat `+`"
+                "rule `{rule_name}` primitive model diverged from admitted BigRat `{function}`"
             )));
         }
         let mut children = Vec::with_capacity(args.len());
@@ -4723,18 +4734,19 @@ fn elaborate_fire_primitives(
             sort: output_sort.clone(),
             value: application.result,
         };
-        let result_availability =
-            if let Some(preexisting) = prestate_witnesses.get(&result_endpoint) {
-                witnesses.availability(*preexisting)
-            } else {
-                deferred.get_or_insert_with(|| DeferredUnsupported {
+        let result_availability = if let Some(preexisting) =
+            prestate_witnesses.get(&result_endpoint)
+        {
+            witnesses.availability(*preexisting)
+        } else {
+            deferred.get_or_insert_with(|| DeferredUnsupported {
                 location: model.span.to_string(),
                 reason: format!(
-                    "BigRat `+` result without a preexisting replay witness in rule `{rule_name}`"
+                    "BigRat `{function}` result without a preexisting replay witness in rule `{rule_name}`"
                 ),
             });
-                DepArena::EMPTY
-            };
+            DepArena::EMPTY
+        };
         let witness = witnesses.intern_app(
             output_sort,
             function,
@@ -4831,7 +4843,7 @@ fn elaborate_fire_applications<'a>(
                             if witnesses.nodes[witness.index()].node != expected
                                 && !prefix_fallback
                                 && children.iter().any(|child| {
-                                    witness_contains_bigrat_add(witnesses, *child)
+                                    witness_contains_bigrat_primitive(witnesses, *child)
                                 }) =>
                         {
                             let availability = witnesses.availability(witness);
@@ -4903,17 +4915,17 @@ fn elaborate_fire_applications<'a>(
     })
 }
 
-fn witness_contains_bigrat_add(witnesses: &WitnessArena, witness: WitnessId) -> bool {
+fn witness_contains_bigrat_primitive(witnesses: &WitnessArena, witness: WitnessId) -> bool {
     match &witnesses.nodes[witness.index()].node {
         WitnessNode::App {
             sort,
             function,
             children,
         } => {
-            (sort == "BigRat" && function == "+")
+            (sort == "BigRat" && replay_safe_bigrat_primitive_arity(function).is_some())
                 || children
                     .iter()
-                    .any(|child| witness_contains_bigrat_add(witnesses, *child))
+                    .any(|child| witness_contains_bigrat_primitive(witnesses, *child))
         }
         WitnessNode::Literal { .. } => false,
     }

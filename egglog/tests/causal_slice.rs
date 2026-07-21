@@ -826,6 +826,55 @@ fn retained_bigrat_add_in_a_complete_head_replays_strictly() {
 }
 
 #[test]
+fn retained_bigrat_binary_arithmetic_replays_strictly() {
+    for (operator, lhs, rhs, result_numerator, result_denominator) in
+        [("-", 3, 1, 2, 1), ("*", 2, 3, 6, 1), ("/", 3, 2, 3, 2)]
+    {
+        let source = format!(
+            r#"
+                (datatype Math (Num BigRat))
+                (relation Inputs (Math Math))
+                (relation Done (Math))
+                (let $lhs (Num (bigrat (bigint {lhs}) (bigint 1))))
+                (let $rhs (Num (bigrat (bigint {rhs}) (bigint 1))))
+                (let $result
+                  (Num (bigrat (bigint {result_numerator}) (bigint {result_denominator}))))
+                (Inputs $lhs $rhs)
+                (rule ((Inputs x y)
+                       (= x (Num a))
+                       (= y (Num b)))
+                      ((Done (Num ({operator} a b))))
+                      :name "fold-binary"
+                      :no-decomp)
+                (run 1)
+                (check (Done $result))
+            "#
+        );
+        for make_egraph in [EGraph::default, || {
+            EGraph::new_with_proofs().with_proof_testing()
+        }] {
+            make_egraph()
+                .parse_and_run_program(Some(format!("bigrat-{operator}-native.egg")), &source)
+                .unwrap();
+        }
+
+        let slice = causal_slice_program(Some(format!("bigrat-{operator}.egg")), &source).unwrap();
+        assert!(
+            replay_firings(&slice.source)
+                .iter()
+                .any(|(rule, _)| rule == "fold-binary")
+        );
+        for make_egraph in [EGraph::default, || {
+            EGraph::new_with_proofs().with_proof_testing()
+        }] {
+            make_egraph()
+                .parse_and_run_program(Some(format!("bigrat-{operator}-replay.egg")), &slice.source)
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn retained_bigrat_add_in_a_union_head_replays_strictly() {
     let source = r#"
         (datatype Math (Num BigRat) (Alias BigRat))
