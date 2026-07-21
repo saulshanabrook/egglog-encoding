@@ -36,6 +36,7 @@ use csv::Writer;
 pub use egglog_add_primitive::add_literal_prim;
 pub use egglog_add_primitive::add_primitive;
 pub use egglog_add_primitive::add_primitive_with_validator;
+pub use egglog_add_primitive::add_replayable_primitive_with_validator;
 use egglog_ast::generic_ast::{Change, GenericExpr, Literal};
 use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
@@ -82,9 +83,9 @@ use std::sync::Arc;
 pub use termdag::{OrdTerm, Term, TermDag, TermId};
 use thiserror::Error;
 use typechecking::FuncType;
-pub use typechecking::PrimitiveValidator;
 pub use typechecking::TypeError;
 pub use typechecking::TypeInfo;
+pub use typechecking::{PrimitiveEffect, PrimitiveValidator};
 use util::*;
 
 use crate::ast::desugar::desugar_command;
@@ -567,6 +568,9 @@ impl EGraph {
 
 struct ResolvedNCommands {
     desugared: Vec<ResolvedNCommand>,
+    /// The typechecked source command stream before globals are removed or
+    /// proof instrumentation rewrites it.
+    typed_source: Option<Vec<ResolvedNCommand>>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     desugared_before_proofs: Vec<ResolvedNCommand>,
 }
@@ -574,6 +578,9 @@ struct ResolvedNCommands {
 struct ResolvedNCommandsWithOutput {
     outputs: Vec<CommandOutput>,
     resolved: Vec<ResolvedNCommand>,
+    /// The typechecked source command stream before globals are removed or
+    /// proof instrumentation rewrites it.
+    resolved_source: Option<Vec<ResolvedNCommand>>,
     /// In proof mode, populated with the desugared program before instrumented with proofs
     resolved_before_proofs: Vec<ResolvedNCommand>,
 }
@@ -1233,7 +1240,7 @@ impl EGraph {
         if proof_testing {
             proof_check_eg = proof_check_eg.with_proof_testing();
         }
-        let resolved = proof_check_eg.process_program_internal(prog, false)?;
+        let resolved = proof_check_eg.process_program_internal(prog, false, false)?;
 
         self.proof_check_program = resolved.resolved_before_proofs;
         Ok(())
@@ -1533,10 +1540,12 @@ impl EGraph {
         span: &Span,
         batch: &ResolvedPackedRunRuleBatch,
     ) -> Result<RunReport, Error> {
-        // Resolve every closed witness through read-only table lookups before
-        // querying any body or applying any head. A missing witness therefore
-        // fails the whole batch without creating the term it was meant to
-        // guard.
+        // Resolve every closed witness before querying any body or applying
+        // any head. Constructor lookups are read-only; explicitly replay-safe
+        // primitives may perform only deterministic, idempotent base/container
+        // interning. A missing witness therefore fails before table/head
+        // effects, while the registration contract excludes other observable
+        // effects ahead of the exact guards.
         let witness_values = batch
             .witnesses
             .iter()
@@ -1711,35 +1720,32 @@ impl EGraph {
                 })
             }
             ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), children) => {
+                if primitive.effect() != PrimitiveEffect::Pure
+                    || primitive.validator().is_none()
+                    || !primitive.is_replay_safe()
+                {
+                    return Err(Error::BackendError(format!(
+                        "{span}\npacked replay witness primitive {} lacks the Pure, proof-validating, deterministic replay capability",
+                        primitive.name()
+                    )));
+                }
                 let values = children
                     .iter()
                     .map(|child| self.eval_replay_witness(child))
                     .collect::<Result<Vec<_>, _>>()?;
-                let base_values = self.backend.base_values();
-                match (
-                    primitive.name(),
-                    primitive.output().name(),
-                    values.as_slice(),
-                ) {
-                    ("bigint", "BigInt", [value]) => {
-                        let value = base_values.unwrap::<i64>(*value);
-                        Ok(base_values.get(Z::new(value.into())))
-                    }
-                    ("bigrat", "BigRat", [numerator, denominator]) => {
-                        let numerator = base_values.unwrap::<Z>(*numerator).0.clone();
-                        let denominator = base_values.unwrap::<Z>(*denominator).0.clone();
-                        if denominator == num::BigInt::from(0) {
-                            return Err(Error::BackendError(format!(
-                                "{span}\npacked replay BigRat witness has a zero denominator"
-                            )));
-                        }
-                        Ok(base_values.get(Q::new(num::BigRational::new(numerator, denominator))))
-                    }
-                    _ => Err(Error::BackendError(format!(
-                        "{span}\npacked replay witnesses do not support primitive {}",
-                        primitive.name()
-                    ))),
-                }
+                self.backend
+                    .with_execution_state(|state| {
+                        state.call_external_func(
+                            primitive.external_id(Context::Pure),
+                            values.as_slice(),
+                        )
+                    })
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "{span}\npacked replay witness primitive {} was undefined for its captured operands",
+                            primitive.name()
+                        ))
+                    })
             }
             ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::BackendError(
                 format!("{span}\npacked replay witnesses do not support tuple expressions"),
@@ -2132,7 +2138,7 @@ impl EGraph {
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<(ArcSort, Value), Error> {
         let span = expr.span();
         let command = Command::Action(Action::Expr(span.clone(), expr.clone()));
-        let resolved = self.resolve_command(command)?;
+        let resolved = self.resolve_command(command, false)?;
         if self.are_proofs_enabled() {
             self.proof_check_program
                 .extend(resolved.desugared_before_proofs);
@@ -2913,7 +2919,8 @@ impl EGraph {
     fn resolve_command_before_proofs(
         &mut self,
         command: Command,
-    ) -> Result<Vec<ResolvedNCommand>, Error> {
+        capture_source_model: bool,
+    ) -> Result<(Option<Vec<ResolvedNCommand>>, Vec<ResolvedNCommand>), Error> {
         let desugared = desugar_command(command, &mut self.parser, self.proof_state.proof_testing)?;
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Typecheck using the original egraph
@@ -2933,28 +2940,39 @@ impl EGraph {
                 }
             }
 
-            Ok(proof_form(typechecked, &mut self.parser.symbol_gen))
+            let typed_source = capture_source_model.then(|| typechecked.clone());
+            Ok((
+                typed_source,
+                proof_form(typechecked, &mut self.parser.symbol_gen),
+            ))
         } else {
             let mut typechecked = self.typecheck_program(&desugared)?;
+            let typed_source = capture_source_model.then(|| typechecked.clone());
 
             typechecked = remove_globals::remove_globals(typechecked, &mut self.parser.symbol_gen);
             for command in &typechecked {
                 self.names.check_shadowing(command)?;
             }
-            Ok(typechecked)
+            Ok((typed_source, typechecked))
         }
     }
 
     /// Desugars, typechecks, and removes globals from a single [`Command`].
     /// Leverages previous type information in the [`EGraph`] to do so, adding new type information.
     /// When will_run is true, adds to `desugared_commands_run_so_far`, which is used for proof checking.
-    fn resolve_command(&mut self, command: Command) -> Result<ResolvedNCommands, Error> {
-        let resolved_before_proofs = self.resolve_command_before_proofs(command)?;
+    fn resolve_command(
+        &mut self,
+        command: Command,
+        capture_source_model: bool,
+    ) -> Result<ResolvedNCommands, Error> {
+        let (typed_source, resolved_before_proofs) =
+            self.resolve_command_before_proofs(command, capture_source_model)?;
 
         // Add term encoding when it is enabled
         if self.proof_state.original_typechecking.is_none() {
             Ok(ResolvedNCommands {
                 desugared: resolved_before_proofs,
+                typed_source,
                 desugared_before_proofs: vec![],
             })
         } else {
@@ -2993,6 +3011,7 @@ impl EGraph {
             }
             Ok(ResolvedNCommands {
                 desugared: new_typechecked,
+                typed_source,
                 desugared_before_proofs: resolved_before_proofs,
             })
         }
@@ -3004,8 +3023,10 @@ impl EGraph {
         &mut self,
         program: Vec<Command>,
         run_commands: bool,
+        capture_source_model: bool,
     ) -> Result<ResolvedNCommandsWithOutput, Error> {
         let mut outputs = Vec::new();
+        let mut typed_source = capture_source_model.then(Vec::new);
         let mut desugared_before_proofs = Vec::new();
         let mut desugared = Vec::new();
 
@@ -3033,17 +3054,36 @@ impl EGraph {
                         .parser
                         .get_program_from_string(Some(file.clone()), &s)?;
                     // run program internal on these include commands
-                    let resolved = self.process_program_internal(included_program, run_commands)?;
+                    let resolved = self.process_program_internal(
+                        included_program,
+                        run_commands,
+                        capture_source_model,
+                    )?;
                     outputs.extend(resolved.outputs);
+                    if let Some(target) = typed_source.as_mut() {
+                        target.extend(resolved.resolved_source.ok_or_else(|| {
+                            Error::BackendError(
+                                "source-model capture disappeared while resolving an include"
+                                    .into(),
+                            )
+                        })?);
+                    }
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
-                    let resolved = self.resolve_command(command)?;
+                    let resolved = self.resolve_command(command, capture_source_model)?;
                     if run_commands && self.are_proofs_enabled() {
                         self.proof_check_program
                             .extend(resolved.desugared_before_proofs.clone());
                     }
 
+                    if let Some(target) = typed_source.as_mut() {
+                        target.extend(resolved.typed_source.ok_or_else(|| {
+                            Error::BackendError(
+                                "source-model capture disappeared while resolving a command".into(),
+                            )
+                        })?);
+                    }
                     desugared_before_proofs.extend(resolved.desugared_before_proofs);
                     desugared.extend(resolved.desugared.clone());
 
@@ -3065,6 +3105,7 @@ impl EGraph {
 
         Ok(ResolvedNCommandsWithOutput {
             outputs,
+            resolved_source: typed_source,
             resolved_before_proofs: desugared_before_proofs,
             resolved: desugared,
         })
@@ -3077,7 +3118,7 @@ impl EGraph {
         {
             return Err(Error::BackendRequiresTermEncoding);
         }
-        let res = self.process_program_internal(program, true)?;
+        let res = self.process_program_internal(program, true, false)?;
         Ok(res.outputs)
     }
 
@@ -3090,8 +3131,20 @@ impl EGraph {
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
         let parsed = self.parser.get_program_from_string(filename, input)?;
-        let res = self.process_program_internal(parsed, false)?;
+        let res = self.process_program_internal(parsed, false, false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
+    }
+
+    /// Resolve an already parsed command stream while retaining typed call
+    /// identities. Causal replay uses this read-only model pass to pair exact
+    /// source primitive occurrences with their resolved specializations.
+    pub(crate) fn resolve_commands_for_modeling(
+        &mut self,
+        program: Vec<Command>,
+    ) -> Result<Vec<ResolvedNCommand>, Error> {
+        self.process_program_internal(program, false, true)?
+            .resolved_source
+            .ok_or_else(|| Error::BackendError("source-model capture was not produced".into()))
     }
 
     /// Takes a source program `input` and parses it into a list of [`Command`]s.
@@ -4642,6 +4695,40 @@ mod tests {
             TypeError::UnboundFunction(name, _) => assert_eq!(name, "full-only"),
             other => panic!("expected unbound function, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolved_primitives_retain_registration_effect() {
+        let effect = |resolved: ResolvedExpr| match resolved {
+            GenericExpr::Call(_, ResolvedCall::Primitive(primitive), _) => primitive.effect(),
+            other => panic!("expected a resolved primitive call, got {other:?}"),
+        };
+
+        let mut pure = EGraph::default();
+        let mut parser = crate::ast::Parser::default();
+        let expression = parser.get_expr_from_string(None, "(+ 1 2)").unwrap();
+        let resolved = pure
+            .typecheck_expr_with_bindings_and_output(
+                &expression,
+                &[],
+                I64Sort.to_arcsort(),
+                Context::Pure,
+            )
+            .unwrap();
+        assert_eq!(effect(resolved), PrimitiveEffect::Pure);
+
+        let mut full = EGraph::default();
+        full.add_full_primitive(FullOnly, None);
+        let expression = parser.get_expr_from_string(None, "(full-only)").unwrap();
+        let resolved = full
+            .typecheck_expr_with_bindings_and_output(
+                &expression,
+                &[],
+                I64Sort.to_arcsort(),
+                Context::Full,
+            )
+            .unwrap();
+        assert_eq!(effect(resolved), PrimitiveEffect::Full);
     }
 
     #[test]

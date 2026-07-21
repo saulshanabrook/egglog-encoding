@@ -22,7 +22,7 @@ pub use egglog_ast::core::{
 };
 use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
-use typechecking::{FuncType, PrimitiveValidator, PrimitiveWithId, TypeError};
+use typechecking::{FuncType, PrimitiveEffect, PrimitiveValidator, PrimitiveWithId, TypeError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeadOrEq<Head> {
@@ -84,6 +84,17 @@ impl SpecializedPrimitive {
     pub fn validator(&self) -> Option<&PrimitiveValidator> {
         self.prim_with_id.validator.as_ref()
     }
+
+    /// Return the strongest runtime-state capability available to this
+    /// primitive registration.
+    pub fn effect(&self) -> PrimitiveEffect {
+        self.prim_with_id.effect
+    }
+
+    /// Whether registration explicitly guarantees deterministic causal replay.
+    pub fn is_replay_safe(&self) -> bool {
+        self.prim_with_id.replay_safe
+    }
 }
 
 impl PartialEq for SpecializedPrimitive {
@@ -94,7 +105,9 @@ impl PartialEq for SpecializedPrimitive {
         // specialization of generic primitives. The primitive name and
         // validator are registration metadata, so they are intentionally not
         // separate key fields.
-        self.prim_with_id.context_ids == other.prim_with_id.context_ids
+        self.prim_with_id.effect == other.prim_with_id.effect
+            && self.prim_with_id.replay_safe == other.prim_with_id.replay_safe
+            && self.prim_with_id.context_ids == other.prim_with_id.context_ids
             && self.output.name() == other.output.name()
             && self.input.len() == other.input.len()
             && self
@@ -109,6 +122,8 @@ impl Eq for SpecializedPrimitive {}
 
 impl Hash for SpecializedPrimitive {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.prim_with_id.effect.hash(state);
+        self.prim_with_id.replay_safe.hash(state);
         self.prim_with_id.context_ids.hash(state);
         self.output.name().hash(state);
         self.input.len().hash(state);

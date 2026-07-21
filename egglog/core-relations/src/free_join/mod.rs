@@ -231,6 +231,10 @@ pub struct RuleExecutionTrace {
     pub primitives: Vec<PrimitiveApplication>,
     pub unions: Vec<UnionReceipt>,
     pub mutations: Vec<TableMutationReceipt>,
+    /// Outer container IDs whose semantic contents changed during the rebuild
+    /// following this bounded iteration. The ID alone is not a replayable
+    /// historical version; causal consumers must version it or fail closed.
+    pub rebuilt_containers: Vec<Value>,
 }
 
 /// A traced run must use a single-bag plan because tree decomposition can lose

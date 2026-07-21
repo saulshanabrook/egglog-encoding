@@ -8,6 +8,41 @@ generalized.
 
 Date: 2026-07-21.
 
+## Container/witness correction at the current working checkpoint
+
+The generic boundary is the registered primitive capability, not the result
+sort's name. A captured application is replayable as syntax when the exact
+specialization is `Pure`, has a proof validator, every argument has an
+available witness, explicitly opts into the deterministic replay contract, and
+is evaluated at the same guarded replay point. A proof validator by itself is
+not a determinism/effect certificate; a focused custom-primitive canary proves
+that the unmarked case rejects. The capability works even when the result sort
+is a container presort. The reduced `vec-of` producer-chain canary passes
+ordinary and unchanged strict proof replay, and Hardboiled crosses its former
+c326-to-c315 `VecExpr` witness failure.
+
+This does **not** validate mutable container identity. If rebuild or a stateful
+primitive preserves an outer container `Value` while changing its contents,
+the endpoint alone is insufficient. The smallest sound extension remains a
+versioned container receipt/sidecar that records the exact producing operation,
+operand witnesses, content version, and commit/rebuild dependency. The native
+trace now carries exact dirty outer IDs from each rebuild, and v0 rejects if one
+has a captured container witness. No historical version is inferred from the
+final registry.
+
+| Invariant | Current status | Evidence/correction |
+|---|---|---|
+| a container-valued primitive always requires special-case slicing code | Falsified | fresh `vec-of` replays through the same explicit deterministic + Pure + validator capability path as scalar primitives |
+| a fresh immutable container result requires an extraction or raw Value serialization | Falsified | exact child witness syntax and the captured registered specialization are sufficient |
+| a proof validator implies deterministic primitive replay | Falsified | unmarked custom Pure + validator specialization rejects; registration must assert the stronger contract |
+| one outer container Value identifies historical contents across rebuild | Falsified | traced dirty IDs prove same-ID semantic change; v0 rejects rather than reusing current contents |
+| Hardboiled is currently blocked by `VecExpr` | Falsified | its next failure is rewrite c145's compiler-generated root alias being rejected before exact substitution seeding |
+
+The next narrowly scoped semantic patch should distinguish compiler-generated
+aliases that are exactly recoverable from registered substitutions/captured
+source bindings from genuinely head-only variables. It should preserve the
+constructor-lookup criterion for variables that lack that exact mapping.
+
 ## Current checkpoint at `0d229525`
 
 The proof-oriented API now retains one causal/static closure instead of the

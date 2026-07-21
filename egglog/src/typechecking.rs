@@ -183,10 +183,20 @@ impl Hash for FuncType {
 /// or None if it is invalid.
 pub type PrimitiveValidator = Arc<dyn Fn(&mut TermDag, &[TermId]) -> Option<TermId> + Send + Sync>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PrimitiveEffect {
+    Pure,
+    Read,
+    Write,
+    Full,
+}
+
 #[derive(Clone)]
 pub struct PrimitiveWithId {
     pub(crate) primitive: Arc<dyn Primitive>,
     pub(crate) validator: Option<PrimitiveValidator>,
+    pub(crate) effect: PrimitiveEffect,
+    pub(crate) replay_safe: bool,
     /// Runtime entrypoints for the contexts this primitive is valid in.
     /// The primitive definition is stored once, while each context keeps
     /// its own backend id so higher-order dispatch can still recover the
@@ -355,6 +365,32 @@ impl EGraph {
         self.register_per_context(
             x,
             validator,
+            PrimitiveEffect::Pure,
+            false,
+            PureState::valid_contexts(),
+            |backend, x, ctx| {
+                backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
+            },
+        );
+    }
+
+    /// Register a deterministic Pure primitive whose runtime result may be
+    /// reconstructed while replaying a guarded causal slice.
+    ///
+    /// This is a semantic opt-in beyond [`PurePrim`]: for identical argument
+    /// values, the implementation must return the same value and may not
+    /// observe or mutate interior/external state, request early termination,
+    /// or perform effects other than idempotent base/container interning.
+    /// Supplying a proof validator alone does not establish this contract.
+    pub fn add_replayable_pure_primitive<T>(&mut self, x: T, validator: Option<PrimitiveValidator>)
+    where
+        T: PurePrim + Clone,
+    {
+        self.register_per_context(
+            x,
+            validator,
+            PrimitiveEffect::Pure,
+            true,
             PureState::valid_contexts(),
             |backend, x, ctx| {
                 backend.register_external_func(Box::new(PurePrimWrapper { prim: x, ctx }))
@@ -371,6 +407,8 @@ impl EGraph {
         self.register_registry_primitive::<T, WrapWrite>(
             x,
             validator,
+            PrimitiveEffect::Write,
+            false,
             WriteState::valid_contexts(),
         );
     }
@@ -381,7 +419,13 @@ impl EGraph {
     where
         T: ReadPrim + Clone,
     {
-        self.register_registry_primitive::<T, WrapRead>(x, validator, ReadState::valid_contexts());
+        self.register_registry_primitive::<T, WrapRead>(
+            x,
+            validator,
+            PrimitiveEffect::Read,
+            false,
+            ReadState::valid_contexts(),
+        );
     }
 
     /// Register a [`FullPrim`]. Pass `None` for the validator if not
@@ -390,33 +434,48 @@ impl EGraph {
     where
         T: FullPrim + Clone,
     {
-        self.register_registry_primitive::<T, WrapFull>(x, validator, FullState::valid_contexts());
+        self.register_registry_primitive::<T, WrapFull>(
+            x,
+            validator,
+            PrimitiveEffect::Full,
+            false,
+            FullState::valid_contexts(),
+        );
     }
 
     fn register_registry_primitive<T, S>(
         &mut self,
         x: T,
         validator: Option<PrimitiveValidator>,
+        effect: PrimitiveEffect,
+        replay_safe: bool,
         valid_ctxs: &[Context],
     ) where
         T: Primitive + Clone,
         S: RegistryWrap<T> + 'static,
     {
-        self.register_per_context(x, validator, valid_ctxs, |backend, x, ctx| {
-            if let Some(registry) = backend.action_registry().cloned() {
-                backend.register_external_func(Box::new(RegistryPrimWrapper::<T, S> {
-                    prim: x,
-                    registry,
-                    ctx,
-                    _wrap: std::marker::PhantomData,
-                }))
-            } else {
-                let name = x.name().to_owned();
-                backend.new_panic(format!(
-                    "primitive {name} in {ctx:?} context requires a backend action registry"
-                ))
-            }
-        });
+        self.register_per_context(
+            x,
+            validator,
+            effect,
+            replay_safe,
+            valid_ctxs,
+            |backend, x, ctx| {
+                if let Some(registry) = backend.action_registry().cloned() {
+                    backend.register_external_func(Box::new(RegistryPrimWrapper::<T, S> {
+                        prim: x,
+                        registry,
+                        ctx,
+                        _wrap: std::marker::PhantomData,
+                    }))
+                } else {
+                    let name = x.name().to_owned();
+                    backend.new_panic(format!(
+                        "primitive {name} in {ctx:?} context requires a backend action registry"
+                    ))
+                }
+            },
+        );
     }
 
     /// Shared registration engine. Stores one primitive definition, plus
@@ -432,6 +491,8 @@ impl EGraph {
         &mut self,
         x: T,
         validator: Option<PrimitiveValidator>,
+        effect: PrimitiveEffect,
+        replay_safe: bool,
         valid_ctxs: &[Context],
         mut build_wrapper: F,
     ) where
@@ -462,6 +523,8 @@ impl EGraph {
                 .push(PrimitiveWithId {
                     primitive,
                     validator: validator.clone(),
+                    effect,
+                    replay_safe,
                     context_ids,
                 });
             match eg.proof_state.original_typechecking.as_deref_mut() {

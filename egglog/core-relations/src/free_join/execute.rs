@@ -1629,7 +1629,11 @@ impl FrameUpdates {
     }
 }
 
-type BindingSet = Vec<(SmallVec<[Variable; 4]>, Arc<TaggedRowBuffer<SmallValueVec>>)>;
+type BindingSet = Vec<(
+    Option<AtomId>,
+    SmallVec<[Variable; 4]>,
+    Arc<TaggedRowBuffer<SmallValueVec>>,
+)>;
 
 #[derive(Default, Clone)]
 struct BindingInfo {
@@ -1834,6 +1838,9 @@ impl<'a> JoinState<'a> {
                 action,
                 &mut binding_info.bindings,
                 &binding_info.binding_sets,
+                atoms,
+                &binding_info.subsets,
+                self.db,
                 &self.exec_state,
             );
             return;
@@ -1878,6 +1885,9 @@ impl<'a> JoinState<'a> {
                                     action,
                                     &mut binding_info.bindings,
                                     &binding_info.binding_sets,
+                                    atoms,
+                                    &binding_info.subsets,
+                                    self.db,
                                     &self.exec_state,
                                 );
                             } else {
@@ -2275,7 +2285,9 @@ impl<'a> JoinState<'a> {
                         return;
                     }
 
-                    binding_info.binding_sets.push((vars, Arc::new(buf)));
+                    binding_info
+                        .binding_sets
+                        .push((Some(cover_atom), vars, Arc::new(buf)));
                     let mut updates = FrameUpdates::with_capacity(1);
                     updates.finish_frame();
                     drain_updates!(updates);
@@ -2505,7 +2517,7 @@ impl<'a> JoinState<'a> {
                 if buf.is_empty() {
                     return;
                 }
-                binding_info.binding_sets.push((vars, Arc::new(buf)));
+                binding_info.binding_sets.push((None, vars, Arc::new(buf)));
                 let mut updates = FrameUpdates::with_capacity(1);
                 updates.finish_frame();
                 drain_updates!(updates);
@@ -2735,14 +2747,39 @@ trait ActionBuffer<'state, A: NumericId>: Send {
 
     /// Expand the binding sets to individual bindings and
     /// call push_bindings
+    #[allow(clippy::too_many_arguments)]
     fn push_bindings_factorized(
         &mut self,
         action: A,
         bindings: &mut DenseIdMap<Variable, Value>,
         binding_sets: &BindingSet,
+        atoms: &DenseIdMap<AtomId, Atom>,
+        subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+        db: &Database,
         exec_state: &ExecutionState<'state>,
     ) {
-        expand_binding_sets(self, action, bindings, binding_sets, 0, exec_state);
+        if self.complete_projected_bindings() {
+            expand_binding_sets_complete(
+                self,
+                action,
+                bindings,
+                binding_sets,
+                0,
+                &mut SmallVec::new(),
+                atoms,
+                subsets,
+                db,
+                exec_state,
+            );
+        } else {
+            expand_binding_sets(self, action, bindings, binding_sets, 0, exec_state);
+        }
+    }
+
+    /// Whether a trace consumer needs one complete logical extension of a
+    /// physically projected match. Ordinary execution never pays this cost.
+    fn complete_projected_bindings(&self) -> bool {
+        false
     }
 
     /// Push the given bindings to be executed for the specified action. If this
@@ -2814,6 +2851,10 @@ impl<'state> ActionBuffer<'state, ActionId> for InPlaceCaptureBuffer {
         _to_exec_state: impl FnMut() -> ExecutionState<'state>,
     ) {
         self.captured.push(CapturedBinding::new(action, bindings));
+    }
+
+    fn complete_projected_bindings(&self) -> bool {
+        true
     }
 
     fn flush(&mut self, _exec_state: &mut ExecutionState) {}
@@ -3000,6 +3041,10 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         }
     }
 
+    fn complete_projected_bindings(&self) -> bool {
+        self.trace.is_some()
+    }
+
     fn flush(&mut self, exec_state: &mut ExecutionState) {
         flush_action_states(
             exec_state,
@@ -3156,7 +3201,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
         return;
     }
     if idx + 1 == binding_sets.len() {
-        let (vars, buf) = &binding_sets[idx];
+        let (_, vars, buf) = &binding_sets[idx];
         for (_, row) in buf.iter() {
             if exec_state.should_stop() {
                 return;
@@ -3168,7 +3213,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
         }
         return;
     }
-    let (vars, buf) = &binding_sets[idx];
+    let (_, vars, buf) = &binding_sets[idx];
     for (_, row) in buf.iter() {
         for (var, val) in vars.iter().zip(row.iter()) {
             bindings.insert(*var, *val);
@@ -3181,6 +3226,118 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
             idx + 1,
             exec_state,
         );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn expand_binding_sets_complete<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Sized>(
+    action_buf: &mut BUF,
+    action: A,
+    bindings: &mut DenseIdMap<Variable, Value>,
+    binding_sets: &BindingSet,
+    idx: usize,
+    selected_rows: &mut SmallVec<[(AtomId, RowId); 4]>,
+    atoms: &DenseIdMap<AtomId, Atom>,
+    subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+    db: &Database,
+    exec_state: &ExecutionState<'state>,
+) {
+    if exec_state.should_stop() {
+        return;
+    }
+    if idx >= binding_sets.len() {
+        let mut complete = bindings.clone();
+        complete_projected_match_bindings(db, atoms, subsets, selected_rows, &mut complete);
+        action_buf.push_bindings(action, &complete, || exec_state.clone());
+        return;
+    }
+
+    let (atom, vars, buf) = &binding_sets[idx];
+    for (row_id, row) in buf.iter() {
+        if exec_state.should_stop() {
+            return;
+        }
+        for (var, val) in vars.iter().zip(row.iter()) {
+            bindings.insert(*var, *val);
+        }
+        if let Some(atom) = atom {
+            selected_rows.push((*atom, row_id));
+        }
+        expand_binding_sets_complete(
+            action_buf,
+            action,
+            bindings,
+            binding_sets,
+            idx + 1,
+            selected_rows,
+            atoms,
+            subsets,
+            db,
+            exec_state,
+        );
+        if atom.is_some() {
+            selected_rows.pop();
+        }
+    }
+}
+
+/// Complete a physically projected match with one deterministic supporting
+/// row from each exact live atom subset. This runs at the final native join
+/// leaf, before rule heads or merge/rebuild, so it neither issues a second
+/// body query nor guesses from final state. The completed values are used only
+/// by the opt-in trace; ordinary action execution still consumes its original
+/// projected binding set.
+fn complete_projected_match_bindings(
+    db: &Database,
+    atoms: &DenseIdMap<AtomId, Atom>,
+    subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+    selected_rows: &[(AtomId, RowId)],
+    bindings: &mut DenseIdMap<Variable, Value>,
+) {
+    for (atom_id, atom) in atoms.iter() {
+        if atom.table.is_dummy() {
+            continue;
+        }
+        let missing = atom
+            .var_columns
+            .iter()
+            .filter(|(_, variable)| !bindings.contains_key(*variable))
+            .collect::<SmallVec<[(ColumnId, Variable); 4]>>();
+        if missing.is_empty() {
+            continue;
+        }
+
+        let selected = selected_rows
+            .iter()
+            .rev()
+            .find_map(|(candidate, row)| (*candidate == atom_id).then_some(*row));
+        let subset = selected.map_or_else(
+            || subsets[atom_id].subset.as_ref(),
+            |row| SubsetRef::Dense(OffsetRange::new(row, row.inc())),
+        );
+        let projection = missing
+            .iter()
+            .map(|(column, _)| *column)
+            .collect::<SmallVec<[ColumnId; 4]>>();
+        let table = db.tables[atom.table].table.as_ref();
+        let mut representative = TaggedRowBuffer::new_inline(projection.len());
+        table.scan_project(
+            subset,
+            &projection,
+            Offset::new(0),
+            1,
+            &[],
+            &mut representative,
+        );
+        let Some((_, values)) = representative.iter().next() else {
+            // The caller will retain a partial binding and the frontend will
+            // reject it. Never synthesize a value when the live subset cannot
+            // supply a representative row.
+            continue;
+        };
+        for ((_, variable), value) in missing.iter().zip(values) {
+            bindings.insert(*variable, *value);
+        }
     }
 }
 

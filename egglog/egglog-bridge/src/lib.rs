@@ -183,6 +183,9 @@ pub struct EGraph {
     /// native ruleset iteration and is populated by the same join that applies
     /// the rule heads.
     rule_match_trace: Option<RuleMatchTraceState>,
+    /// Container IDs whose contents changed in the most recent rebuild call.
+    /// This is copied into a traced iteration before the next rebuild starts.
+    last_rebuilt_containers: IndexSet<Value>,
 }
 
 #[derive(Clone)]
@@ -254,6 +257,7 @@ impl Default for EGraph {
             report_level: Default::default(),
             action_registry,
             rule_match_trace: None,
+            last_rebuilt_containers: IndexSet::new(),
         }
     }
 }
@@ -1173,6 +1177,9 @@ impl EGraph {
         if let (Some(trace), Some(receipts)) = (captured_trace.as_mut(), rebuild_unions) {
             trace.unions.extend(receipts);
         }
+        if let Some(trace) = captured_trace.as_mut() {
+            trace.rebuilt_containers = self.last_rebuilt_containers.iter().copied().collect();
+        }
         iteration_report.rebuild_time = rebuild_timer.elapsed();
 
         if let Some(message) = self.panic_message.lock().unwrap().take() {
@@ -1186,6 +1193,7 @@ impl EGraph {
     }
 
     fn rebuild(&mut self) -> Result<()> {
+        self.last_rebuilt_containers.clear();
         let do_parallel = rayon::current_num_threads() > 1;
         if self.db.get_table(self.uf_table).rebuilder(&[]).is_some() {
             // The UF implementation supports "native"  rebuilding.
@@ -1226,6 +1234,8 @@ impl EGraph {
                 // Rebuilding containers first will find that v3 and v2 are equal, and the rest of
                 // the rules can proceed.
                 let container_rebuild = self.db.rebuild_containers(self.uf_table);
+                self.last_rebuilt_containers
+                    .extend(container_rebuild.dirty_ids().iter().copied());
                 let next_ts = self.next_ts().to_value();
                 let table_rebuild = self.db.apply_rebuild(self.uf_table, &tables, next_ts);
                 // Container rebuild can make a parent row newly matchable without

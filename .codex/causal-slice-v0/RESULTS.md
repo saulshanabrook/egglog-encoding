@@ -1,5 +1,87 @@
 # Causal Slice v0 Results
 
+## Container witness checkpoint: 2026-07-21
+
+This checkpoint is based on `26c4fd64be4f164e35d94c59df253511c71be995`.
+It replaces the earlier conclusion that Hardboiled's first `VecExpr` value is
+necessarily a mutable-container provenance problem.
+
+Implemented and tested:
+
+- replay witnesses may now invoke an exact registered primitive specialization
+  only when it is `Pure`, provides a proof validator, and explicitly opts into
+  the deterministic replay contract; packed replay evaluates that
+  specialization through the ordinary runtime registry instead of a
+  primitive-name allowlist;
+- ordered registered heads preserve primitive, constructor, local-binding, and
+  table-action order, including query filters followed by container-valued
+  primitive results;
+- a reduced ordinary/strict canary uses two query filters, creates a fresh
+  `VecExpr` with `vec-of`, wraps it, creates a variable, and consumes that
+  variable in a later retained rule;
+- scalar equality filters, projected constructor variables, projected unions,
+  fresh i64 arithmetic results, and fresh BigRat arithmetic results now have
+  positive ordinary and unchanged strict-proof replay coverage; and
+- an ordinary custom `Pure` primitive with a validator but without that replay
+  capability is rejected; and
+- the complete `egglog/tests/causal_slice.rs` binary passes all 133 tests.
+
+The real Hardboiled fixture now advances past the original `vec-of` witness
+failure in rules c326 and c315. Its next exact failure is unrelated to
+containers:
+
+```text
+internal replay variable
+`__causal_slice_v0_root_b15585_e15699_c145_r0` on rule
+`__causal_slice_v0_rw_b15585_e15699_c145_r0` is not functionally determined
+by a constructor lookup
+```
+
+That rule is the source rewrite at bytes 15585..15699:
+
+```lisp
+(rewrite x (Ramp x (Broadcast (IntImm b 0) l) 1)
+  :when ((IsExpr x)
+         (has-type x (Int b l))))
+```
+
+The current validator classifies the rewrite-lowering root alias as an
+internal derived replay variable and applies the constructor-lookup-only
+criterion before the later exact substitution/captured-binding seeding path
+can resolve it. This is the next Hardboiled blocker.
+
+Container contract at this checkpoint:
+
+| Case | Status | Reason |
+|---|---|---|
+| Fresh immutable `vec-of` result in a captured head | Supported until a traced rebuild changes that container | exact child witnesses plus the explicitly replay-safe, Pure, proof-validating specialization reconstruct the result at the replay point |
+| Other fresh explicitly replay-safe, Pure, proof-validating container constructors | Mechanism implemented; not fixture-complete | the generic registry path has no primitive-name allowlist, but each concrete registration asserts the replay contract and still needs focused semantic coverage |
+| Stateful or opaque container primitive | Rejected | replay cannot treat an external state read as a pure syntax witness |
+| Same outer container `Value` whose contents change during rebuild | Detected and rejected | the native trace carries exact dirty container IDs; without a historical version, the whole slice fails closed rather than reusing current contents |
+| Versioned replay across a container rebuild | Unsupported | the outer runtime ID does not identify historical contents; support needs a versioned commit/rebuild receipt and dependency |
+
+No performance benchmark was run for this semantic checkpoint. It establishes
+admission progress, not a timing improvement. The previously recorded
+strict-versus-causal measurements below therefore remain the latest
+performance evidence.
+
+Validation completed before the checkpoint commit:
+
+- `cargo test -p egglog --test causal_slice`: 133 passed;
+- reduced `equality_and_multiple_query_filters_feed_an_ordered_head_witness`
+  canary: passed;
+- adjacent ordered/nested/query primitive canaries: passed;
+- explicit replay-capability rejection and dirty-container-rebuild canaries:
+  passed;
+- Hardboiled causal proof probe: advanced past `VecExpr`, then failed at the
+  rewrite-root alias above;
+- `make check`: passed, including Python format/lint/type/test gates, Rust
+  formatting and warning-denying Clippy gates, the complete workspace test and
+  doctest suite, and the DD timing-summary gate; and
+- `git diff --check`: passed.
+
+The exact pushed commit is recorded in the final handoff for this checkpoint.
+
 ## Active goal baseline: validator generality, Hardboiled, and Eggcc cost
 
 The continuation goal started from clean commit

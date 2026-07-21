@@ -21,7 +21,18 @@ use syn::{Expr, Ident, LitStr, Token, braced, bracketed, parenthesized, parse_ma
 #[proc_macro]
 pub fn add_primitive_with_validator(input: TokenStream) -> TokenStream {
     let parsed = parse_macro_input!(input as AddPrimitiveWithValidator);
-    build_add_primitive_impl(parsed.primitive, Some(parsed.validator))
+    build_add_primitive_impl(parsed.primitive, Some(parsed.validator), false)
+}
+
+/// Declare a custom deterministic primitive with an explicit proof validator
+/// and opt it into guarded causal replay.
+///
+/// The primitive body must satisfy the semantic contract documented on
+/// `EGraph::add_replayable_pure_primitive`; the validator alone is not enough.
+#[proc_macro]
+pub fn add_replayable_primitive_with_validator(input: TokenStream) -> TokenStream {
+    let parsed = parse_macro_input!(input as AddPrimitiveWithValidator);
+    build_add_primitive_impl(parsed.primitive, Some(parsed.validator), true)
 }
 
 /// Parses an `AddPrimitive` followed by a comma and a validator expression.
@@ -71,10 +82,14 @@ impl Parse for AddPrimitiveWithValidator {
 ///   `T` must be `Clone` and `'static`.
 #[proc_macro]
 pub fn add_primitive(input: TokenStream) -> TokenStream {
-    build_add_primitive_impl(parse_macro_input!(input), None)
+    build_add_primitive_impl(parse_macro_input!(input), None, false)
 }
 
-fn build_add_primitive_impl(parsed: AddPrimitive, validator: Option<Expr>) -> TokenStream {
+fn build_add_primitive_impl(
+    parsed: AddPrimitive,
+    validator: Option<Expr>,
+    replay_safe: bool,
+) -> TokenStream {
     // If you're trying to read this code, you should read the big
     // `quote!` block at the bottom of this function first. Trying
     // to parse all the intermediate gobbledygook is going to be
@@ -244,9 +259,13 @@ fn build_add_primitive_impl(parsed: AddPrimitive, validator: Option<Expr>) -> To
     // containers, which are all safe everywhere per the `Core` trait.
     // If a future extension of the macro introduces a non-pure
     // emission path, the declared kind would need to narrow accordingly.
-    let add_call = match validator {
-        None => quote!(eg.add_pure_primitive(#prim_use, None);),
-        Some(validator_expr) => quote!(eg.add_pure_primitive(
+    let add_call = match (validator, replay_safe) {
+        (None, _) => quote!(eg.add_pure_primitive(#prim_use, None);),
+        (Some(validator_expr), false) => quote!(eg.add_pure_primitive(
+            #prim_use,
+            Some(::std::sync::Arc::new(#validator_expr))
+        );),
+        (Some(validator_expr), true) => quote!(eg.add_replayable_pure_primitive(
             #prim_use,
             Some(::std::sync::Arc::new(#validator_expr))
         );),
@@ -532,7 +551,11 @@ pub fn add_literal_prim(input: TokenStream) -> TokenStream {
     .unwrap();
 
     // Use the shared implementation with the validator
-    build_add_primitive_impl(parsed, Some(validator_expr))
+    // The generated validator executes the same literal-only body. Using this
+    // macro therefore asserts that the body is deterministic; stateful custom
+    // primitives must use `add_primitive_with_validator!` and remain opaque to
+    // causal replay unless they explicitly choose the replayable macro.
+    build_add_primitive_impl(parsed, Some(validator_expr), true)
 }
 
 // Helper function to generate literal validator that computes results

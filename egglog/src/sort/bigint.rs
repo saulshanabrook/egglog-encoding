@@ -68,12 +68,12 @@ impl BaseSort for BigIntSort {
         let lt_validator = |dag: &mut TermDag, args: &[TermId]| bigint_compare_validator(dag, args, |a, b| a < b);
         let gt_validator = |dag: &mut TermDag, args: &[TermId]| bigint_compare_validator(dag, args, |a, b| a > b);
 
-        add_primitive_with_validator!(eg, "bigint" = |a: i64| -> Z { Z::new(a.into()) }, bigint_validator);
+        add_replayable_primitive_with_validator!(eg, "bigint" = |a: i64| -> Z { Z::new(a.into()) }, bigint_validator);
 
-        add_primitive_with_validator!(eg, "+" = |a: Z, b: Z| -> Z { a + b }, add_validator);
-        add_primitive_with_validator!(eg, "-" = |a: Z, b: Z| -> Z { a - b }, sub_validator);
-        add_primitive_with_validator!(eg, "*" = |a: Z, b: Z| -> Z { a * b }, mul_validator);
-        add_primitive_with_validator!(eg, "/" = |a: Z, b: Z| -?> Z { (*b != BigInt::ZERO).then(|| a / b) }, div_validator);
+        add_replayable_primitive_with_validator!(eg, "+" = |a: Z, b: Z| -> Z { a + b }, add_validator);
+        add_replayable_primitive_with_validator!(eg, "-" = |a: Z, b: Z| -> Z { a - b }, sub_validator);
+        add_replayable_primitive_with_validator!(eg, "*" = |a: Z, b: Z| -> Z { a * b }, mul_validator);
+        add_replayable_primitive_with_validator!(eg, "/" = |a: Z, b: Z| -?> Z { (*b != BigInt::ZERO).then(|| a / b) }, div_validator);
         add_primitive!(eg, "%" = |a: Z, b: Z| -?> Z { (*b != BigInt::ZERO).then(|| a % b) });
 
         add_primitive!(eg, "&" = |a: Z, b: Z| -> Z { a & b });
@@ -85,8 +85,8 @@ impl BaseSort for BigIntSort {
 
         add_primitive!(eg, "bits" = |a: Z| -> Z { Z::new(a.bits().into()) });
 
-        add_primitive_with_validator!(eg, "<" = |a: Z, b: Z| -?> () { (a < b).then_some(()) }, lt_validator);
-        add_primitive_with_validator!(eg, ">" = |a: Z, b: Z| -?> () { (a > b).then_some(()) }, gt_validator);
+        add_replayable_primitive_with_validator!(eg, "<" = |a: Z, b: Z| -?> () { (a < b).then_some(()) }, lt_validator);
+        add_replayable_primitive_with_validator!(eg, ">" = |a: Z, b: Z| -?> () { (a > b).then_some(()) }, gt_validator);
         add_primitive!(eg, "<=" = |a: Z, b: Z| -?> () { (a <= b).then_some(()) });
         add_primitive!(eg, ">=" = |a: Z, b: Z| -?> () { (a >= b).then_some(()) });
 
@@ -96,8 +96,8 @@ impl BaseSort for BigIntSort {
         add_primitive!(eg, "bool-<=" = |a: Z, b: Z| -> bool { a <= b });
         add_primitive!(eg, "bool->=" = |a: Z, b: Z| -> bool { a >= b });
 
-        add_primitive_with_validator!(eg, "min" = |a: Z, b: Z| -> Z { a.min(b) }, min_validator);
-        add_primitive_with_validator!(eg, "max" = |a: Z, b: Z| -> Z { a.max(b) }, max_validator);
+        add_replayable_primitive_with_validator!(eg, "min" = |a: Z, b: Z| -> Z { a.min(b) }, min_validator);
+        add_replayable_primitive_with_validator!(eg, "max" = |a: Z, b: Z| -> Z { a.max(b) }, max_validator);
 
         add_primitive!(eg, "to-string" = |a: Z| -> S { S::new(a.to_string()) });
         add_primitive!(eg, "from-string" = |a: S| -?> Z {

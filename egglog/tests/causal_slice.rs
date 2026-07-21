@@ -1,12 +1,13 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use egglog::{
-    EGraph,
-    ast::{Command, Schedule},
+    EGraph, Term, TermDag, TermId, add_primitive_with_validator,
+    add_replayable_primitive_with_validator,
+    ast::{Command, Literal, Schedule},
     causal_slice::{
         causal_slice_program, causal_slice_program_with_fact_directory,
-        causal_slice_proof_replay_program, causal_slice_proof_replay_program_with_fact_directory,
-        causal_slice_replay_program,
+        causal_slice_proof_replay_program, causal_slice_proof_replay_program_with_egraph,
+        causal_slice_proof_replay_program_with_fact_directory, causal_slice_replay_program,
     },
 };
 
@@ -118,6 +119,101 @@ const FULL_TRANSCRIPT: &str = r#"
       (run-rule "mid-to-goal" :bind ((x 2)) :expect 1))
     (check (Goal 2))
 "#;
+
+fn triple_primitive_egraph(proofs: bool) -> EGraph {
+    let mut egraph = if proofs {
+        EGraph::new_with_proofs().with_proof_testing()
+    } else {
+        EGraph::default()
+    };
+    let validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [argument] = args else { return None };
+        let Term::Lit(Literal::Int(value)) = termdag.get(*argument) else {
+            return None;
+        };
+        Some(termdag.lit(Literal::Int(value * 3)))
+    };
+    add_replayable_primitive_with_validator!(
+        &mut egraph,
+        "triple-value" = |value: i64| -> i64 { value * 3 },
+        validator
+    );
+    egraph
+}
+
+fn unmarked_triple_primitive_egraph() -> EGraph {
+    let mut egraph = EGraph::default();
+    let validator = |termdag: &mut TermDag, args: &[TermId]| -> Option<TermId> {
+        let [argument] = args else { return None };
+        let Term::Lit(Literal::Int(value)) = termdag.get(*argument) else {
+            return None;
+        };
+        Some(termdag.lit(Literal::Int(value * 3)))
+    };
+    add_primitive_with_validator!(
+        &mut egraph,
+        "unmarked-triple-value" = |value: i64| -> i64 { value * 3 },
+        validator
+    );
+    egraph
+}
+
+#[test]
+fn proof_validator_alone_does_not_make_a_custom_primitive_replay_safe() {
+    let source = r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (rule ((Seed x) (= (unmarked-triple-value x) y))
+              ((Goal y))
+              :name "derive")
+        (Seed 2)
+        (run 1)
+        (check (Goal 6))
+    "#;
+
+    let error = causal_slice_proof_replay_program_with_egraph(
+        Some("unmarked-pure-query.egg".to_owned()),
+        source,
+        unmarked_triple_primitive_egraph(),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("without an explicit deterministic replay capability"),
+        "{error}"
+    );
+}
+
+#[test]
+fn arbitrary_named_pure_query_primitive_replays_strictly() {
+    let source = r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (rule ((Seed x) (= (triple-value x) y))
+              ((Goal y))
+              :name "derive")
+        (Seed 2)
+        (run 1)
+        (check (Goal 6))
+    "#;
+
+    let replay = causal_slice_proof_replay_program_with_egraph(
+        Some("arbitrary-pure-query.egg".to_owned()),
+        source,
+        triple_primitive_egraph(false),
+    )
+    .unwrap();
+    assert!(replay.source.contains("triple-value"));
+    for proofs in [false, true] {
+        triple_primitive_egraph(proofs)
+            .parse_and_run_program(
+                Some("arbitrary-pure-query-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
 
 #[test]
 fn proof_projection_keeps_only_the_positive_check_source_envelope() {
@@ -454,9 +550,10 @@ fn projected_generic_join_variable_is_an_explicit_replay_boundary() {
         .unwrap();
 
     // Binding x specializes the query, exposes both y extensions, and makes
-    // PR #23's atomic exact-count guard fail. Fully binding y succeeds, but no
-    // match-time evidence tells us which extension represents the projected
-    // ordinary firing.
+    // PR #23's atomic exact-count guard fail. Fully binding either y succeeds,
+    // demonstrating why a manual selector alone cannot recover the original
+    // projected execution; causal tracing now expands the physical match into
+    // its complete logical extensions before choosing retained support.
     let partial = source.replace(
         "(run 1)",
         "(run-schedule (run-rule \"copy\" :bind ((x 1)) :expect 1))",
@@ -476,13 +573,48 @@ fn projected_generic_join_variable_is_an_explicit_replay_boundary() {
     EGraph::default()
         .parse_and_run_program(Some("private-gj-bound.egg".to_owned()), &fully_bound)
         .unwrap();
+    let other_fully_bound = source.replace(
+        "(run 1)",
+        "(run-schedule (run-rule \"copy\" :bind ((x 1) (y 20)) :expect 1))",
+    );
+    EGraph::default()
+        .parse_and_run_program(
+            Some("private-gj-other-bound.egg".to_owned()),
+            &other_fully_bound,
+        )
+        .unwrap();
 
-    let error =
-        causal_slice_program(Some("private-gj-variable.egg".to_owned()), source).unwrap_err();
-    let message = error.to_string();
-    assert!(message.contains("Generic Join may project"));
-    assert!(message.contains("projection-preserving match selector"));
-    assert!(message.contains("private-gj-variable.egg"));
+    // The native match trace chooses one deterministic premise row from the
+    // exact live subset that justified the projected firing. This supplies a
+    // complete replay grounding without a second query or final-state search.
+    let slice = causal_slice_program(Some("private-gj-variable.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.matched_applications, 1);
+    assert!(has_replay_firing(
+        &slice.full_transcript_source,
+        "copy",
+        &[("x", "1"), ("y", "10")]
+    ));
+    assert!(!has_replay_firing(
+        &slice.full_transcript_source,
+        "copy",
+        &[("x", "1"), ("y", "20")]
+    ));
+
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        EGraph::default()
+            .parse_and_run_program(
+                Some("private-gj-variable-replay.egg".to_owned()),
+                replay_source,
+            )
+            .unwrap();
+        EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(
+                Some("private-gj-variable-replay.egg".to_owned()),
+                replay_source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -525,7 +657,7 @@ fn decomposable_rule_is_traced_without_changing_its_source_definition() {
 }
 
 #[test]
-fn projected_constructor_inputs_can_be_sliced_away_but_not_retained() {
+fn projected_constructor_inputs_can_be_sliced_or_retained() {
     let common = r#"
         (datatype Expr (Int i64) (Const Expr i64 i64))
         (relation HasType (Expr i64))
@@ -559,45 +691,290 @@ fn projected_constructor_inputs_can_be_sliced_away_but_not_retained() {
         )
         .unwrap();
 
-    let error = causal_slice_program(
+    let proof_replay = causal_slice_program(
         Some("projected-constructor-full-transcript.egg".to_owned()),
         &irrelevant,
     )
-    .unwrap_err();
+    .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("diagnostic full transcript containing opaque rule groundings"),
-        "{error}"
+        replay_firings(&proof_replay.full_transcript_source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-analysis")
     );
 
     let prefix = format!("{common}(print-size HasType)\n");
-    let error =
+    let prefix_replay =
         causal_slice_replay_program(Some("projected-constructor-prefix.egg".to_owned()), &prefix)
-            .unwrap_err();
+            .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("rule `projected-analysis` was projected away"),
-        "{error}"
+        replay_firings(&prefix_replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-analysis")
     );
 
     let retained = format!("{common}(check (HasType (Const (Int 7) 2 3) 2))\n");
-    let error = causal_slice_replay_program(
+    let retained_replay = causal_slice_replay_program(
         Some("projected-constructor-retained.egg".to_owned()),
         &retained,
     )
-    .unwrap_err();
+    .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("rule `projected-analysis` was projected away"),
+        replay_firings(&retained_replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-analysis")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("projected-constructor-retained-replay.egg".to_owned()),
+            &retained_replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn irrelevant_unreplayable_constructor_grounding_is_deferred_past_slicing() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor N (i64) Expr)
+        (constructor WrapVec (VecExpr) Expr)
+        (constructor Produced (Expr) Expr)
+        (constructor Swap (Expr) Expr)
+        (relation Trigger (Expr))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((Trigger x) (= x x))
+              ((let xs (vec-of x))
+               (let blocked (WrapVec xs))
+               (Produced blocked))
+              :name "opaque-producer")
+        (rule ((= produced (Produced child)))
+              ((Swap child))
+              :name "irrelevant-use")
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (Trigger (N 1))
+        (Seed)
+        (run 2)
+        (check (Goal))
+    "#;
+
+    let replay = causal_slice_replay_program(
+        Some("irrelevant-unreplayable-constructor.egg".to_owned()),
+        source,
+    )
+    .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    for irrelevant in ["opaque-producer", "irrelevant-use"] {
+        assert!(
+            !replay_firings(&replay.source)
+                .iter()
+                .any(|(rule, _)| rule == irrelevant)
+        );
+    }
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("irrelevant-unreplayable-constructor-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn retained_nested_constructor_body_uses_exact_pre_wave_witness() {
+    let source = r#"
+        (datatype Expr (N i64) (Wrap Expr))
+        (relation Seed (i64))
+        (relation Seen (Expr))
+        (relation Goal (Expr))
+        (ruleset build)
+        (ruleset use)
+        (rule ((Seed n))
+              ((Seen (Wrap (N n))))
+              :ruleset build
+              :name "build")
+        (rule ((Seen (Wrap child)))
+              ((Goal child))
+              :ruleset use
+              :name "use")
+        (Seed 1)
+        (Seed 2)
+        (run-schedule (run build) (run use))
+        (check (Goal (N 2)))
+    "#;
+
+    let replay =
+        causal_slice_proof_replay_program(Some("nested-constructor-body.egg".to_owned()), source)
+            .unwrap();
+    assert_eq!(replay.stats.retained_applications, 2);
+    assert!(has_replay_firing(&replay.source, "build", &[("n", "2")]));
+    assert!(has_replay_firing(
+        &replay.source,
+        "use",
+        &[("child", "(N 2)")]
+    ));
+    assert!(!has_replay_firing(&replay.source, "build", &[("n", "1")]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-constructor-body-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn mixed_constructor_and_pure_primitive_head_replays_in_instruction_order() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor N (i64) Expr)
+        (constructor WrapVec (VecExpr) Expr)
+        (relation Trigger (i64))
+        (relation Goal (Expr))
+        (rule ((Trigger n))
+              ((let child (N n))
+               (let xs (vec-of child))
+               (Goal (WrapVec xs)))
+              :name "mixed-head")
+        (Trigger 1)
+        (run 1)
+        (check (Goal result))
+    "#;
+
+    let replay = causal_slice_proof_replay_program(
+        Some("mixed-constructor-primitive-head.egg".to_owned()),
+        source,
+    )
+    .unwrap();
+    assert!(has_replay_firing(
+        &replay.source,
+        "mixed-head",
+        &[("n", "1")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("mixed-constructor-primitive-head-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn equality_and_multiple_query_filters_feed_an_ordered_head_witness() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (sort Variable)
+        (constructor N (i64) Expr)
+        (constructor WrapVec (VecExpr) Expr)
+        (constructor MakeVar (Expr) Variable)
+        (constructor UseVar (Variable) Expr)
+        (relation Inputs (Expr Expr i64))
+        (relation Middle (Variable))
+        (relation Goal ())
+        (ruleset produce)
+        (ruleset consume)
+        (rule ((Inputs left right n)
+               (= left right)
+               (= 0 (% n 2))
+               (= half (/ n 2)))
+              ((let xs (vec-of left))
+               (let wrapped (WrapVec xs))
+               (let variable (MakeVar wrapped))
+               (Middle variable))
+              :ruleset produce
+              :name "produce-variable")
+        (rule ((Middle variable))
+              ((UseVar variable)
+               (Goal))
+              :ruleset consume
+              :name "consume-variable")
+        (Inputs (N 1) (N 1) 4)
+        (Inputs (N 2) (N 2) 3)
+        (run-schedule (run produce) (run consume))
+        (check (Goal))
+    "#;
+
+    let replay = causal_slice_proof_replay_program(
+        Some("ordered-filtered-head-witness.egg".to_owned()),
+        source,
+    )
+    .unwrap();
+    assert_eq!(
+        replay_firings(&replay.source)
+            .iter()
+            .filter(|(rule, _)| rule == "produce-variable")
+            .count(),
+        1,
+        "the failed remainder filter must not become a replay firing"
+    );
+    assert!(
+        replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "consume-variable")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("ordered-filtered-head-witness-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn rebuilt_container_witness_fails_closed_without_a_content_version() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor N (i64) Expr)
+        (constructor Wrap (VecExpr) Expr)
+        (relation Seed (Expr))
+        (relation Merge (Expr Expr))
+        (relation Goal (Expr))
+        (let $a (N 1))
+        (let $b (N 2))
+        (Seed $b)
+        (Merge $a $b)
+        (rule ((Seed x))
+              ((let xs (vec-of x))
+               (let wrapped (Wrap xs))
+               (Goal wrapped))
+              :name "make-container")
+        (rule ((Merge x y))
+              ((union x y))
+              :name "merge-elements")
+        (run 1)
+        (check (Goal result))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("rebuilt-container-native.egg".to_owned()), source)
+        .unwrap();
+    let error =
+        causal_slice_program(Some("rebuilt-container-causal.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error.to_string().contains(
+            "container witness of sort `VecExpr` whose semantic contents changed during rebuild"
+        ),
         "{error}"
     );
 }
 
 #[test]
-fn projected_union_is_sliced_away_but_rejected_when_equality_depends_on_it() {
+fn projected_union_is_sliced_away_or_retained_by_equality_support() {
     let common = r#"
         (datatype Expr (Int i64) (Const Expr i64 i64) (Alias Expr))
         (relation Seed ())
@@ -632,15 +1009,21 @@ fn projected_union_is_sliced_away_but_rejected_when_equality_depends_on_it() {
         .unwrap();
 
     let retained = format!("{common}(check (= $lhs (Alias $lhs)))\n");
-    let error =
+    let retained_replay =
         causal_slice_replay_program(Some("projected-union-retained.egg".to_owned()), &retained)
-            .unwrap_err();
+            .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("rule `projected-union` was projected away"),
-        "{error}"
+        replay_firings(&retained_replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "projected-union")
     );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("projected-union-retained-replay.egg".to_owned()),
+            &retained_replay.source,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -1722,7 +2105,7 @@ fn retained_bigrat_add_in_a_union_head_replays_strictly() {
 }
 
 #[test]
-fn integer_add_in_a_rule_head_remains_unsupported() {
+fn integer_add_in_a_rule_head_replays_strictly() {
     let source = r#"
         (relation Input (i64 i64))
         (relation Output (i64))
@@ -1734,17 +2117,18 @@ fn integer_add_in_a_rule_head_remains_unsupported() {
         (check (Output 3))
     "#;
 
-    let error = causal_slice_program(Some("integer-add.egg".to_owned()), source).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("nested non-constructor call `+` in rule head"),
-        "{error}"
-    );
+    let slice = causal_slice_program(Some("integer-add.egg".to_owned()), source).unwrap();
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("integer-add-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
 }
 
 #[test]
-fn bigrat_add_result_without_a_preexisting_term_fails_closed() {
+fn bigrat_add_result_without_a_preexisting_term_replays_strictly() {
     let source = r#"
         (datatype Math (Num BigRat))
         (relation Inputs (Math Math))
@@ -1765,14 +2149,17 @@ fn bigrat_add_result_without_a_preexisting_term_fails_closed() {
     EGraph::default()
         .parse_and_run_program(Some("bigrat-add-new-result-native.egg".to_owned()), source)
         .unwrap();
-    let error =
-        causal_slice_program(Some("bigrat-add-new-result.egg".to_owned()), source).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("BigRat `+` result without a preexisting replay witness"),
-        "{error}"
-    );
+    let slice = causal_slice_program(Some("bigrat-add-new-result.egg".to_owned()), source).unwrap();
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("bigrat-add-new-result-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -1792,7 +2179,7 @@ fn constructor_global_rejects_unprintable_bigints() {
     assert!(
         error
             .to_string()
-            .contains("a BigInt witness outside the replayable i64 range"),
+            .contains("nested non-constructor call `from-string` in source global"),
         "{error}"
     );
 }
@@ -4183,7 +4570,7 @@ fn conjunctive_and_multiple_checks_retain_complete_heads_and_both_chains() {
 }
 
 #[test]
-fn unsupported_observations_and_filters_fail_closed() {
+fn unsupported_negative_observations_fail_closed_but_scalar_filters_replay() {
     let negative = r#"
         (relation A (i64))
         (A 1)
@@ -4206,8 +4593,14 @@ fn unsupported_observations_and_filters_fail_closed() {
         (run 1)
         (check (B 1))
     "#;
-    let error = causal_slice_program(Some("filter.egg".to_owned()), equality).unwrap_err();
-    assert!(error.to_string().contains("equality or primitive filters"));
+    let slice = causal_slice_program(Some("filter.egg".to_owned()), equality).unwrap();
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("filter-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
 }
 
 #[test]

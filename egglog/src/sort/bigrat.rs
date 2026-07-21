@@ -119,20 +119,20 @@ impl BaseSort for BigRatSort {
         let lt_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_compare_validator(dag, args, |a, b| a < b);
         let gt_validator = |dag: &mut TermDag, args: &[TermId]| bigrat_compare_validator(dag, args, |a, b| a > b);
 
-        add_primitive_with_validator!(eg, "+" = |a: Q, b: Q| -?> Q { a.checked_add(&b).map(Q::new) }, add_validator);
-        add_primitive_with_validator!(eg, "-" = |a: Q, b: Q| -?> Q { a.checked_sub(&b).map(Q::new) }, sub_validator);
-        add_primitive_with_validator!(eg, "*" = |a: Q, b: Q| -?> Q { a.checked_mul(&b).map(Q::new) }, mul_validator);
-        add_primitive_with_validator!(eg, "/" = |a: Q, b: Q| -?> Q { a.checked_div(&b).map(Q::new) }, div_validator);
+        add_replayable_primitive_with_validator!(eg, "+" = |a: Q, b: Q| -?> Q { a.checked_add(&b).map(Q::new) }, add_validator);
+        add_replayable_primitive_with_validator!(eg, "-" = |a: Q, b: Q| -?> Q { a.checked_sub(&b).map(Q::new) }, sub_validator);
+        add_replayable_primitive_with_validator!(eg, "*" = |a: Q, b: Q| -?> Q { a.checked_mul(&b).map(Q::new) }, mul_validator);
+        add_replayable_primitive_with_validator!(eg, "/" = |a: Q, b: Q| -?> Q { a.checked_div(&b).map(Q::new) }, div_validator);
 
-        add_primitive_with_validator!(eg, "min" = |a: Q, b: Q| -> Q { a.min(b) }, min_validator);
-        add_primitive_with_validator!(eg, "max" = |a: Q, b: Q| -> Q { a.max(b) }, max_validator);
-        add_primitive_with_validator!(eg, "neg" = |a: Q| -> Q { Q::new(-a.0) }, neg_validator);
-        add_primitive_with_validator!(eg, "abs" = |a: Q| -> Q { Q::new(a.0.abs()) }, abs_validator);
-        add_primitive_with_validator!(eg, "floor" = |a: Q| -> Q { Q::new(a.0.floor()) }, floor_validator);
-        add_primitive_with_validator!(eg, "ceil" = |a: Q| -> Q { Q::new(a.0.ceil()) }, ceil_validator);
-        add_primitive_with_validator!(eg, "round" = |a: Q| -> Q { Q::new(a.round()) }, round_validator);
+        add_replayable_primitive_with_validator!(eg, "min" = |a: Q, b: Q| -> Q { a.min(b) }, min_validator);
+        add_replayable_primitive_with_validator!(eg, "max" = |a: Q, b: Q| -> Q { a.max(b) }, max_validator);
+        add_replayable_primitive_with_validator!(eg, "neg" = |a: Q| -> Q { Q::new(-a.0) }, neg_validator);
+        add_replayable_primitive_with_validator!(eg, "abs" = |a: Q| -> Q { Q::new(a.0.abs()) }, abs_validator);
+        add_replayable_primitive_with_validator!(eg, "floor" = |a: Q| -> Q { Q::new(a.0.floor()) }, floor_validator);
+        add_replayable_primitive_with_validator!(eg, "ceil" = |a: Q| -> Q { Q::new(a.0.ceil()) }, ceil_validator);
+        add_replayable_primitive_with_validator!(eg, "round" = |a: Q| -> Q { Q::new(a.round()) }, round_validator);
 
-        add_primitive_with_validator!(eg, "bigrat" = |a: Z, b: Z| -?> Q {
+        add_replayable_primitive_with_validator!(eg, "bigrat" = |a: Z, b: Z| -?> Q {
             if b.0.is_zero() {
                 None
             } else {
@@ -144,8 +144,8 @@ impl BaseSort for BigRatSort {
         add_primitive!(eg, "to-f64" = |a: Q| -> F { F::new(OrderedFloat(a.to_f64().unwrap())) });
         add_primitive!(eg, "to-i64" = |a: Q| -?> i64 { a.is_integer().then(|| a.to_integer()).and_then(|a| a.to_i64()) });
 
-        add_primitive_with_validator!(eg, "pow" = |a: Q, b: Q| -?> Q { checked_bigrat_pow(a, b) }, pow_validator);
-        add_primitive_with_validator!(eg, "log" = |a: Q| -?> Q { checked_bigrat_log(a) }, log_validator);
+        add_replayable_primitive_with_validator!(eg, "pow" = |a: Q, b: Q| -?> Q { checked_bigrat_pow(a, b) }, pow_validator);
+        add_replayable_primitive_with_validator!(eg, "log" = |a: Q| -?> Q { checked_bigrat_log(a) }, log_validator);
         add_primitive!(eg, "sqrt" = |a: Q| -?> Q {
             if a.numer().is_positive() && a.denom().is_positive() {
                 let s1 = a.numer().sqrt();
@@ -168,8 +168,8 @@ impl BaseSort for BigRatSort {
             }
         });
 
-        add_primitive_with_validator!(eg, "<" = |a: Q, b: Q| -?> () { if a < b {Some(())} else {None} }, lt_validator);
-        add_primitive_with_validator!(eg, ">" = |a: Q, b: Q| -?> () { if a > b {Some(())} else {None} }, gt_validator);
+        add_replayable_primitive_with_validator!(eg, "<" = |a: Q, b: Q| -?> () { if a < b {Some(())} else {None} }, lt_validator);
+        add_replayable_primitive_with_validator!(eg, ">" = |a: Q, b: Q| -?> () { if a > b {Some(())} else {None} }, gt_validator);
         add_primitive!(eg, "<=" = |a: Q, b: Q| -?> () { if a <= b {Some(())} else {None} });
         add_primitive!(eg, ">=" = |a: Q, b: Q| -?> () { if a >= b {Some(())} else {None} });
     }
