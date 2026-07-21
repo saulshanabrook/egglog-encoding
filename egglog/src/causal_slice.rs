@@ -17,7 +17,7 @@ use crate::{
     ast::{
         Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact,
         GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire, Rewrite, Rule,
-        RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span,
+        RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span, Subdatatypes,
     },
     core::{GenericCoreAction, ResolvedCall},
     core_relations::{
@@ -1704,13 +1704,38 @@ fn collect_declarations(
 > {
     let mut relations = IndexMap::default();
     let mut constructors = IndexMap::default();
-    let datatype_sorts = commands
-        .iter()
-        .filter_map(|command| match command {
-            Command::Datatype { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect::<HashSet<_>>();
+    let mut datatype_sorts = HashSet::default();
+    let mut opaque_sorts = HashSet::default();
+    for command in commands {
+        match command {
+            Command::Datatype { name, .. } => {
+                datatype_sorts.insert(name.clone());
+            }
+            Command::Datatypes { datatypes, .. } => {
+                for (_, name, definition) in datatypes {
+                    match definition {
+                        Subdatatypes::Variants(_) => {
+                            datatype_sorts.insert(name.clone());
+                        }
+                        Subdatatypes::NewSort(presort, _)
+                            if schema_only_container_presort(presort) =>
+                        {
+                            opaque_sorts.insert(name.clone());
+                        }
+                        Subdatatypes::NewSort(_, _) => {}
+                    }
+                }
+            }
+            Command::Sort {
+                name,
+                presort_and_args: Some((presort, _)),
+                ..
+            } if schema_only_container_presort(presort) => {
+                opaque_sorts.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
     let eq_sorts = commands
         .iter()
         .filter_map(|command| match command {
@@ -1724,17 +1749,6 @@ fn collect_declarations(
                 unionable: true,
                 ..
             } => Some(name.clone()),
-            _ => None,
-        })
-        .collect::<HashSet<_>>();
-    let opaque_sorts = commands
-        .iter()
-        .filter_map(|command| match command {
-            Command::Sort {
-                name,
-                presort_and_args: Some((presort, _)),
-                ..
-            } if schema_only_container_presort(presort) => Some(name.clone()),
             _ => None,
         })
         .collect::<HashSet<_>>();
@@ -1784,6 +1798,60 @@ fn collect_declarations(
                             span,
                             format!("duplicate constructor declaration `{}`", variant.name),
                         );
+                    }
+                }
+            }
+            Command::Datatypes { span, datatypes } => {
+                for (datatype_span, name, definition) in datatypes {
+                    match definition {
+                        Subdatatypes::Variants(variants) => {
+                            for variant in variants {
+                                for sort in &variant.types {
+                                    if !supported_sort(sort) {
+                                        return unsupported(
+                                            &variant.span,
+                                            format!(
+                                                "datatype* constructor `{}` with unsupported input sort `{sort}`",
+                                                variant.name
+                                            ),
+                                        );
+                                    }
+                                }
+                                if constructors
+                                    .insert(
+                                        variant.name.clone(),
+                                        ConstructorDecl {
+                                            inputs: variant.types.clone(),
+                                            output: name.clone(),
+                                            opaque_sort: variant
+                                                .types
+                                                .iter()
+                                                .find(|sort| opaque_sorts.contains(*sort))
+                                                .cloned(),
+                                        },
+                                    )
+                                    .is_some()
+                                {
+                                    return unsupported(
+                                        datatype_span,
+                                        format!(
+                                            "duplicate constructor declaration `{}`",
+                                            variant.name
+                                        ),
+                                    );
+                                }
+                            }
+                        }
+                        Subdatatypes::NewSort(presort, _)
+                            if schema_only_container_presort(presort) => {}
+                        Subdatatypes::NewSort(presort, _) => {
+                            return unsupported(
+                                span,
+                                format!(
+                                    "datatype* sort `{name}` with unsupported presort `{presort}`"
+                                ),
+                            );
+                        }
                     }
                 }
             }
@@ -2156,6 +2224,7 @@ fn validate_and_model(
         match command {
             Command::Relation { .. }
             | Command::Datatype { .. }
+            | Command::Datatypes { .. }
             | Command::Constructor { .. }
             | Command::Function { .. }
             | Command::AddRuleset(..) => {
@@ -2325,7 +2394,7 @@ fn validate_and_model(
                     "rewrites, unions, or congruence",
                 );
             }
-            Command::Datatypes { .. } | Command::Sort { .. } => {
+            Command::Sort { .. } => {
                 return unsupported_command(
                     command,
                     index,

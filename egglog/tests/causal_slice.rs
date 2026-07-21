@@ -1596,6 +1596,57 @@ fn unextractable_constructor_witness_replays_without_extraction() {
 }
 
 #[test]
+fn mutually_recursive_datatype_star_replays_ordinary_and_strictly() {
+    let source = r#"
+        (datatype*
+            (Tree (Leaf i64) (Children Forest))
+            (Forest (Nil) (Cons Tree Forest)))
+        (relation Seed (Tree))
+        (relation Done (Tree))
+        (Seed (Children (Cons (Leaf 1) (Nil))))
+        (rule ((Seed tree)) ((Done tree)) :name "copy-tree")
+        (run 1)
+        (check (Done (Children (Cons (Leaf 1) (Nil)))))
+    "#;
+
+    let slice = causal_slice_program(Some("datatype-star.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(datatype*"));
+    assert!(has_replay_firing(
+        &slice.source,
+        "copy-tree",
+        &[("tree", "(Children (Cons (Leaf 1) (Nil)))")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("datatype-star-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn datatype_star_custom_presorts_remain_an_explicit_boundary() {
+    let source = r#"
+        (datatype*
+            (Node (Leaf i64))
+            (sort Mapping (Map i64 i64)))
+        (relation Seed ())
+        (Seed)
+        (run 1)
+        (check (Seed))
+    "#;
+
+    let error = causal_slice_program(Some("datatype-star-map.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("datatype* sort `Mapping` with unsupported presort `Map`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
     let source = r#"
         (datatype Expr (A i64))
