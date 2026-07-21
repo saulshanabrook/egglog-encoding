@@ -161,7 +161,10 @@ struct AtomTemplate {
 #[derive(Clone, Debug)]
 enum AtomArg {
     Var(Span, String),
-    Global(String),
+    Global {
+        name: String,
+        sort: String,
+    },
     Lit(Literal),
     App {
         function: String,
@@ -182,6 +185,7 @@ struct RuleModel {
     var_order: Vec<String>,
     replay_var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
+    global_uses: IndexMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -189,6 +193,7 @@ struct CheckModel {
     atoms: Vec<AtomTemplate>,
     equalities: Vec<EqualityTemplate>,
     var_sorts: IndexMap<String, String>,
+    global_uses: IndexMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
@@ -340,7 +345,11 @@ struct WitnessArena {
     nodes: Vec<WitnessRecord>,
     ids: IndexMap<WitnessNode, WitnessId>,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
+    /// Definition-time endpoints retained to explain later canonicalized uses.
     globals: IndexMap<String, TypedEndpoint>,
+    /// Exact values read from the native pre-state for the batch currently
+    /// being elaborated.
+    current_globals: IndexMap<String, TypedEndpoint>,
 }
 
 impl WitnessArena {
@@ -496,20 +505,60 @@ impl WitnessArena {
             sort: sort.to_owned(),
             value: endpoint,
         };
-        if let Some(previous) = self.globals.insert(name.to_owned(), value.clone())
-            && previous != value
-        {
+        if let Some(previous) = self.globals.get(name) {
+            if previous != &value {
+                return Err(CausalSliceError::Invariant(format!(
+                    "source global `{name}` was rebound while elaborating the trace"
+                )));
+            }
+        } else {
+            self.globals.insert(name.to_owned(), value.clone());
+        }
+        self.current_globals.insert(name.to_owned(), value);
+        Ok(())
+    }
+
+    fn load_current_globals(
+        &mut self,
+        globals: &[(std::sync::Arc<str>, Value)],
+    ) -> Result<(), CausalSliceError> {
+        if globals.len() != self.globals.len() {
             return Err(CausalSliceError::Invariant(format!(
-                "source global `{name}` was rebound while elaborating the trace"
+                "native trace captured {} globals after {} source definitions",
+                globals.len(),
+                self.globals.len()
             )));
+        }
+        self.current_globals.clear();
+        for (name, value) in globals {
+            let definition = self.globals.get(name.as_ref()).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "native trace captured unknown source global `{name}`"
+                ))
+            })?;
+            if self
+                .current_globals
+                .insert(
+                    name.to_string(),
+                    TypedEndpoint {
+                        sort: definition.sort.clone(),
+                        value: *value,
+                    },
+                )
+                .is_some()
+            {
+                return Err(CausalSliceError::Invariant(format!(
+                    "native trace captured duplicate source global `{name}`"
+                )));
+            }
         }
         Ok(())
     }
 
     fn global(&self, name: &str, sort: &str) -> Result<Value, CausalSliceError> {
-        let endpoint = self.globals.get(name).ok_or_else(|| {
+        let endpoint = self.current_globals.get(name).ok_or_else(|| {
             CausalSliceError::Invariant(format!(
-                "source global `{name}` was used before its definition-time endpoint was captured"
+                "source global `{name}` was used without a native pre-state snapshot"
             ))
         })?;
         if endpoint.sort != sort {
@@ -519,6 +568,29 @@ impl WitnessArena {
             )));
         }
         Ok(endpoint.value)
+    }
+
+    fn global_endpoints(
+        &self,
+        name: &str,
+        sort: &str,
+    ) -> Result<(&TypedEndpoint, &TypedEndpoint), CausalSliceError> {
+        let definition = self.globals.get(name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "source global `{name}` has no definition-time endpoint"
+            ))
+        })?;
+        let current = self.current_globals.get(name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "source global `{name}` has no native pre-state snapshot"
+            ))
+        })?;
+        if definition.sort != sort || current.sort != sort {
+            return Err(CausalSliceError::Invariant(format!(
+                "source global `{name}` endpoint sort diverged from modeled sort `{sort}`"
+            )));
+        }
+        Ok((definition, current))
     }
 
     fn set_availability(&mut self, id: WitnessId, availability: DepId) {
@@ -1301,6 +1373,17 @@ fn run_one_traced_command(
     egraph: &mut EGraph,
     command: Command,
 ) -> Result<Vec<RuleExecutionTrace>, CausalSliceError> {
+    let globals = egraph
+        .functions
+        .iter()
+        .filter(|(_, function)| function.is_let_binding())
+        .map(|(name, function)| {
+            (
+                std::sync::Arc::<str>::from(name.as_str()),
+                function.backend_id,
+            )
+        })
+        .collect();
     let native = egraph
         .backend
         .as_any_mut()
@@ -1311,7 +1394,7 @@ fn run_one_traced_command(
             )
         })?;
     native
-        .begin_rule_match_trace()
+        .begin_rule_match_trace_with_globals(globals)
         .map_err(|error| CausalSliceError::Invariant(error.to_string()))?;
 
     let result = egraph.run_program(vec![command]);
@@ -1985,13 +2068,21 @@ fn validate_and_model(
                 }
                 let fact =
                     model_source_fact(index, action, relations, constructors, &source_globals)?;
-                if let SourceFactKind::GlobalConstructor { name, sort } = &fact.kind
-                    && source_globals.insert(name.clone(), sort.clone()).is_some()
-                {
-                    return unsupported_action(
-                        action,
-                        format!("a duplicate source global `{name}`"),
-                    );
+                if let SourceFactKind::GlobalConstructor { name, sort } = &fact.kind {
+                    if rules.values().any(|rule| rule.var_sorts.contains_key(name)) {
+                        return unsupported_action(
+                            action,
+                            format!(
+                                "source global `{name}` shadowing an earlier local rule variable; the strict proof checker resolves the replayed name as the global"
+                            ),
+                        );
+                    }
+                    if source_globals.insert(name.clone(), sort.clone()).is_some() {
+                        return unsupported_action(
+                            action,
+                            format!("a duplicate source global `{name}`"),
+                        );
+                    }
                 }
                 source_facts.push(fact);
             }
@@ -2367,7 +2458,7 @@ fn model_rule(
         .cloned()
         .collect();
 
-    Ok(RuleModel {
+    let mut model = RuleModel {
         span: rule.span.clone(),
         body,
         body_lookups,
@@ -2377,7 +2468,13 @@ fn model_rule(
         var_order,
         replay_var_order,
         var_sorts,
-    })
+        global_uses: IndexMap::default(),
+    };
+    model.global_uses = rule_global_uses(&model)
+        .into_iter()
+        .map(|(name, sort)| (name.to_owned(), sort.to_owned()))
+        .collect();
+    Ok(model)
 }
 
 fn model_check(
@@ -2443,11 +2540,17 @@ fn model_check(
             );
         }
     }
-    Ok(CheckModel {
+    let mut model = CheckModel {
         atoms,
         equalities,
         var_sorts,
-    })
+        global_uses: IndexMap::default(),
+    };
+    model.global_uses = check_global_uses(&model)
+        .into_iter()
+        .map(|(name, sort)| (name.to_owned(), sort.to_owned()))
+        .collect();
+    Ok(model)
 }
 
 fn model_equality(
@@ -2531,10 +2634,10 @@ fn model_constructor_lookup(
             location: call_span.to_string(),
             reason: format!("function/primitive lookup `{function}` in {context}"),
         })?;
-    let GenericExpr::Var(output_span, output_var) = output_expr else {
+    let GenericExpr::Var(output_span, output_name) = output_expr else {
         unreachable!("constructor output orientation was checked above")
     };
-    if output_var == "_" || output_var.starts_with('@') {
+    if output_name == "_" || output_name.starts_with('@') {
         return unsupported(
             output_span,
             "wildcard or parser-generated constructor lookup output variables",
@@ -2560,7 +2663,15 @@ fn model_constructor_lookup(
             "constructor lookup source/model arity diverged".to_owned(),
         ));
     }
-    if let Some(previous) = known_var_sorts.get(output_var)
+    let output = model_atom_arg(
+        output_expr,
+        &constructor.output,
+        constructors,
+        source_globals,
+        context,
+    )?;
+    if let AtomArg::Var(_, output_var) = &output
+        && let Some(previous) = known_var_sorts.get(output_var)
         && previous != &constructor.output
     {
         return unsupported(
@@ -2574,7 +2685,7 @@ fn model_constructor_lookup(
     Ok(ConstructorLookupTemplate {
         span: span.clone(),
         application,
-        output: AtomArg::Var(output_span.clone(), output_var.clone()),
+        output,
         sort: constructor.output.clone(),
     })
 }
@@ -2760,7 +2871,7 @@ fn model_source_fact(
         if let Some((span, var)) = atom_arg_vars(arg).into_iter().next() {
             return unsupported(
                 span,
-                format!("non-ground source initialization variable `{var}"),
+                format!("non-ground source initialization variable `{var}`"),
             );
         }
     }
@@ -2890,7 +3001,7 @@ fn source_fact_command(span: &Span, fact: &SourceFact) -> Command {
 fn source_atom_arg_expr(span: &Span, arg: &AtomArg) -> Expr {
     match arg {
         AtomArg::Lit(literal) => Expr::Lit(span.clone(), literal.clone()),
-        AtomArg::Global(name) => Expr::Var(span.clone(), name.clone()),
+        AtomArg::Global { name, .. } => Expr::Var(span.clone(), name.clone()),
         AtomArg::App { function, args, .. } => Expr::Call(
             span.clone(),
             function.clone(),
@@ -2953,16 +3064,7 @@ fn model_atom_arg(
                     span,
                     "wildcard or parser-generated variables (they have no stable source binding)",
                 )
-            } else if var.starts_with('$') {
-                let actual_sort =
-                    source_globals
-                        .get(var)
-                        .ok_or_else(|| CausalSliceError::Unsupported {
-                            location: span.to_string(),
-                            reason: format!(
-                                "unknown or not-yet-defined source global `{var}` in {context}"
-                            ),
-                        })?;
+            } else if let Some(actual_sort) = source_globals.get(var) {
                 if actual_sort != expected_sort {
                     return unsupported(
                         span,
@@ -2971,7 +3073,10 @@ fn model_atom_arg(
                         ),
                     );
                 }
-                Ok(AtomArg::Global(var.clone()))
+                Ok(AtomArg::Global {
+                    name: var.clone(),
+                    sort: expected_sort.to_owned(),
+                })
             } else {
                 Ok(AtomArg::Var(span.clone(), var.clone()))
             }
@@ -3026,16 +3131,67 @@ fn model_atom_arg(
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
     match arg {
         AtomArg::App { .. } => true,
-        AtomArg::Var(..) | AtomArg::Global(..) | AtomArg::Lit(..) => false,
+        AtomArg::Var(..) | AtomArg::Global { .. } | AtomArg::Lit(..) => false,
     }
 }
 
 fn atom_arg_vars(arg: &AtomArg) -> Vec<(&Span, &String)> {
     match arg {
         AtomArg::Var(span, var) => vec![(span, var)],
-        AtomArg::Global(..) | AtomArg::Lit(_) => Vec::new(),
+        AtomArg::Global { .. } | AtomArg::Lit(_) => Vec::new(),
         AtomArg::App { args, .. } => args.iter().flat_map(atom_arg_vars).collect(),
     }
+}
+
+fn collect_atom_arg_globals<'a>(arg: &'a AtomArg, globals: &mut IndexMap<&'a str, &'a str>) {
+    match arg {
+        AtomArg::Global { name, sort } => {
+            if let Some(previous) = globals.insert(name, sort) {
+                debug_assert_eq!(previous, sort);
+            }
+        }
+        AtomArg::App { args, .. } => {
+            for arg in args {
+                collect_atom_arg_globals(arg, globals);
+            }
+        }
+        AtomArg::Var(..) | AtomArg::Lit(..) => {}
+    }
+}
+
+fn rule_global_uses(rule: &RuleModel) -> IndexMap<&str, &str> {
+    let mut globals = IndexMap::default();
+    for atom in rule.body.iter().chain(&rule.head) {
+        for arg in &atom.args {
+            collect_atom_arg_globals(arg, &mut globals);
+        }
+    }
+    for lookup in &rule.body_lookups {
+        collect_atom_arg_globals(&lookup.application, &mut globals);
+        collect_atom_arg_globals(&lookup.output, &mut globals);
+    }
+    for constructor in &rule.head_constructors {
+        collect_atom_arg_globals(constructor, &mut globals);
+    }
+    for equality in &rule.head_unions {
+        collect_atom_arg_globals(&equality.left, &mut globals);
+        collect_atom_arg_globals(&equality.right, &mut globals);
+    }
+    globals
+}
+
+fn check_global_uses(check: &CheckModel) -> IndexMap<&str, &str> {
+    let mut globals = IndexMap::default();
+    for atom in &check.atoms {
+        for arg in &atom.args {
+            collect_atom_arg_globals(arg, &mut globals);
+        }
+    }
+    for equality in &check.equalities {
+        collect_atom_arg_globals(&equality.left, &mut globals);
+        collect_atom_arg_globals(&equality.right, &mut globals);
+    }
+    globals
 }
 
 fn register_atom_vars(
@@ -3070,7 +3226,7 @@ fn register_arg_vars(
                 Ok(())
             }
         },
-        AtomArg::Global(..) | AtomArg::Lit(_) => Ok(()),
+        AtomArg::Global { .. } | AtomArg::Lit(_) => Ok(()),
         AtomArg::App {
             args, input_sorts, ..
         } => {
@@ -3122,6 +3278,7 @@ fn elaborate_source_fact(
         let mut observed = Vec::new();
         let mut new_rows = Vec::new();
         for batch in &trace.batches {
+            witnesses.load_current_globals(&batch.globals)?;
             if !batch.unions.is_empty() {
                 return Err(CausalSliceError::Unsupported {
                     location: format!("source command {}", fact.command_index),
@@ -3266,6 +3423,7 @@ fn elaborate_prefix_replay(
     let mut equality_edges = 0usize;
 
     for (wave, batch) in batches.into_iter().enumerate() {
+        witnesses.load_current_globals(&batch.globals)?;
         let applications_by_origin = OriginIndex::build(
             batch.matches.len(),
             &batch.applications,
@@ -3427,6 +3585,7 @@ fn elaborate_events(
 
     let mut pending_fires = Vec::new();
     for (wave, batch) in batches.iter().enumerate() {
+        witnesses.load_current_globals(&batch.globals)?;
         let mut applications_by_origin = vec![Vec::new(); batch.matches.len()];
         for application in &batch.applications {
             let origin = application.origin.index();
@@ -3475,6 +3634,12 @@ fn elaborate_events(
                 let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
 
                 let mut premise_dependencies = IndexSet::default();
+                premise_dependencies.extend(global_use_dependencies(
+                    &model.global_uses,
+                    witnesses,
+                    &equality_forest,
+                    &model.span.to_string(),
+                )?);
                 for row in &body {
                     match producers.get(row) {
                         Some(dependency) => {
@@ -3680,15 +3845,23 @@ fn observation_roots(
                     .to_owned(),
             });
         }
-        let captured = batches
+        let (batch, captured) = batches
             .iter()
-            .flat_map(|batch| batch.matches.iter())
-            .next()
+            .find_map(|batch| batch.matches.first().map(|captured| (batch, captured)))
             .ok_or_else(|| {
                 CausalSliceError::Invariant(
                     "a successful positive check had no captured satisfying match".to_owned(),
                 )
             })?;
+        witnesses.load_current_globals(&batch.globals)?;
+        for dependency in global_use_dependencies(
+            &check.global_uses,
+            witnesses,
+            equality_forest,
+            "positive check",
+        )? {
+            root = dependencies.and(root, dependency)?;
+        }
         let var_order = check.var_sorts.keys().cloned().collect::<Vec<_>>();
         let bindings = reconstruct_bindings(
             egraph,
@@ -3843,9 +4016,7 @@ fn reconstruct_rule_bindings(
         changed = false;
         for lookup in &model.body_lookups {
             let AtomArg::Var(_, output_var) = &lookup.output else {
-                return Err(CausalSliceError::Invariant(
-                    "modeled constructor lookup output stopped being a variable".to_owned(),
-                ));
+                continue;
             };
             if result.contains_key(output_var)
                 || atom_arg_vars(&lookup.application)
@@ -4009,6 +4180,39 @@ fn endpoint_availability(
             ),
         })?;
     Ok(witnesses.availability(witness))
+}
+
+fn global_use_dependencies(
+    uses: &IndexMap<String, String>,
+    witnesses: &WitnessArena,
+    equality_forest: &EqualityForest,
+    location: &str,
+) -> Result<IndexSet<DepId>, CausalSliceError> {
+    let mut dependencies = IndexSet::default();
+    for (name, sort) in uses {
+        let (definition, current) = witnesses.global_endpoints(name, sort)?;
+        for endpoint in [definition, current] {
+            let witness = witnesses
+                .by_endpoint(&endpoint.sort, endpoint.value)
+                .ok_or_else(|| CausalSliceError::Unsupported {
+                    location: location.to_owned(),
+                    reason: format!(
+                        "source global `{name}` endpoint without match-time replay syntax"
+                    ),
+                })?;
+            dependencies.insert(witnesses.availability(witness));
+        }
+        let explanation = equality_forest
+            .explain(definition, current)
+            .ok_or_else(|| CausalSliceError::Unsupported {
+                location: location.to_owned(),
+                reason: format!(
+                    "source global `{name}` changed runtime endpoint without a captured successful-union path"
+                ),
+            })?;
+        dependencies.extend(explanation);
+    }
+    Ok(dependencies)
 }
 
 fn match_union_receipts(
@@ -4416,7 +4620,17 @@ fn ground_arg(
 ) -> Result<TypedEndpoint, CausalSliceError> {
     let value = match arg {
         AtomArg::Lit(literal) => literal_to_value(egraph.backend.base_values(), literal),
-        AtomArg::Global(name) => witnesses.global(name, sort)?,
+        AtomArg::Global {
+            name,
+            sort: modeled_sort,
+        } => {
+            if modeled_sort != sort {
+                return Err(CausalSliceError::Invariant(format!(
+                    "source global `{name}` was grounded as `{sort}` after being modeled as `{modeled_sort}`"
+                )));
+            }
+            witnesses.global(name, sort)?
+        }
         AtomArg::Var(_, var) => bindings
             .get(var)
             .map(|binding| binding.endpoint)

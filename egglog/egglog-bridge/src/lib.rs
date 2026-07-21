@@ -182,7 +182,13 @@ pub struct EGraph {
     /// Opt-in batches of match-time bindings. Each inner vector is one bounded
     /// native ruleset iteration and is populated by the same join that applies
     /// the rule heads.
-    rule_match_trace: Option<Vec<core_relations::RuleExecutionTrace>>,
+    rule_match_trace: Option<RuleMatchTraceState>,
+}
+
+#[derive(Clone)]
+struct RuleMatchTraceState {
+    batches: Vec<core_relations::RuleExecutionTrace>,
+    globals: Vec<(Arc<str>, FunctionId)>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -287,17 +293,29 @@ impl EGraph {
     /// single-bag plan whose final binding contains every required source
     /// variable.
     pub fn begin_rule_match_trace(&mut self) -> Result<()> {
+        self.begin_rule_match_trace_with_globals(Vec::new())
+    }
+
+    /// Start an opt-in native match trace and snapshot the supplied zero-key
+    /// globals immediately before every bounded ruleset iteration.
+    pub fn begin_rule_match_trace_with_globals(
+        &mut self,
+        globals: Vec<(Arc<str>, FunctionId)>,
+    ) -> Result<()> {
         anyhow::ensure!(
             self.rule_match_trace.is_none(),
             "a rule match trace is already active"
         );
-        self.rule_match_trace = Some(Vec::new());
+        self.rule_match_trace = Some(RuleMatchTraceState {
+            batches: Vec::new(),
+            globals,
+        });
         Ok(())
     }
 
     /// Finish the active trace and return its per-iteration match batches.
     pub fn take_rule_match_trace(&mut self) -> Option<Vec<core_relations::RuleExecutionTrace>> {
-        self.rule_match_trace.take()
+        self.rule_match_trace.take().map(|trace| trace.batches)
     }
 
     fn next_ts(&self) -> Timestamp {
@@ -981,9 +999,29 @@ impl EGraph {
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         let ts = self.next_ts();
 
+        let global_values = self
+            .rule_match_trace
+            .as_ref()
+            .map(|trace| {
+                trace
+                    .globals
+                    .iter()
+                    .map(|(name, function)| {
+                        self.lookup_id(*function, &[])
+                            .map(|value| (name.clone(), value))
+                            .ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "traced source global `{name}` has no pre-state value"
+                                )
+                            })
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?;
+
         let uf_size_before = self.db.get_table(self.uf_table).len();
         let rule_set_report = if self.rule_match_trace.is_some() {
-            let (report, trace) = run_rules_impl_traced(
+            let (report, mut trace) = run_rules_impl_traced(
                 &mut self.db,
                 self.uf_table,
                 &mut self.rules,
@@ -991,9 +1029,11 @@ impl EGraph {
                 ts,
                 self.report_level,
             )?;
+            trace.globals = global_values.unwrap_or_default();
             self.rule_match_trace
                 .as_mut()
                 .expect("trace presence was checked above")
+                .batches
                 .push(trace);
             report
         } else {

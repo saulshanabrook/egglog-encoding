@@ -887,7 +887,7 @@ fn dynamic_global_references_fail_closed_on_unknown_or_wrong_sort() {
     assert!(
         error
             .to_string()
-            .contains("unknown or not-yet-defined source global `$missing`"),
+            .contains("non-ground source initialization variable `$missing`"),
         "{error}"
     );
 
@@ -907,6 +907,144 @@ fn dynamic_global_references_fail_closed_on_unknown_or_wrong_sort() {
             .contains("source global `$zero` has sort `Math` instead of `i64`"),
         "{error}"
     );
+}
+
+#[test]
+fn dollar_prefixed_local_shadowed_by_a_later_global_fails_closed() {
+    let source = r#"
+        (datatype Math (Num i64))
+        (relation Seed (i64))
+        (relation Done (i64))
+        (rule ((Seed $a)) ((Done $a)) :name "copy")
+        (Seed 7)
+        (let $a (Num 0))
+        (run 1)
+        (check (Done 7))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("local-before-global-native.egg".to_owned()), source)
+        .unwrap();
+    let error =
+        causal_slice_program(Some("local-before-global.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("source global `$a` shadowing an earlier local rule variable"),
+        "{error}"
+    );
+}
+
+#[test]
+fn dynamic_global_can_be_a_constructor_lookup_output() {
+    let source = r#"
+        (datatype Expr (A))
+        (relation Seed (i64))
+        (relation Done (i64))
+        (let $a (A))
+        (Seed 7)
+        (rule ((Seed n) (= (A) $a))
+              ((Done n))
+              :name "read-global"
+              :no-decomp)
+        (run 1)
+        (check (Done 7))
+    "#;
+
+    let slice = causal_slice_program(Some("global-lookup-output.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "read-global",
+        &[("n", "7")]
+    ));
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("global-lookup-output-replay.egg".to_owned()),
+            &slice.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn dynamic_global_uses_the_match_time_endpoint_after_an_earlier_union() {
+    let source = r#"
+        (datatype Expr (A) (B))
+        (relation Tick (i64))
+        (B)
+        (let $a (A))
+        (Tick 0)
+        (rule ((Tick n))
+              ((union (B) $a))
+              :name "merge-global"
+              :no-decomp)
+        (run 2)
+        (check (= (A) (B)))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("global-after-union-native.egg".to_owned()), source)
+        .unwrap();
+    let slice = causal_slice_program(Some("global-after-union.egg".to_owned()), source).unwrap();
+    assert_eq!(
+        replay_firings(&slice.source)
+            .iter()
+            .filter(|(rule, _)| rule == "merge-global")
+            .count(),
+        1,
+        "the redundant second-wave union must not be retained"
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("global-after-union-replay.egg".to_owned()),
+            &slice.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn dynamic_global_endpoint_change_retains_its_equality_cause() {
+    let source = r#"
+        (datatype Expr (A) (B))
+        (relation Seed (i64))
+        (relation Ready (i64))
+        (relation Done (Expr))
+        (B)
+        (let $a (A))
+        (Seed 0)
+        (rule ((Seed n)) ((union (B) $a)) :name "merge-global")
+        (rule ((Seed n)) ((Ready n)) :name "ready")
+        (rule ((Ready n)) ((Done $a)) :name "use-global")
+        (run 2)
+        (check (Done (B)))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("global-equality-dependency.egg".to_owned()), source).unwrap();
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "merge-global"),
+        "the earlier union is required to reproduce the later global endpoint"
+    );
+    assert!(has_replay_firing(&slice.source, "ready", &[("n", "0")]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "use-global",
+        &[("n", "0")]
+    ));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("global-equality-dependency-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]

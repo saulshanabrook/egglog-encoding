@@ -199,6 +199,10 @@ pub struct UnionReceipt {
 /// bounded ruleset iteration.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RuleExecutionTrace {
+    /// Source-global values read from the same pre-state queried by this
+    /// bounded iteration. The frontend supplies the source names and backing
+    /// zero-arity function IDs when tracing starts.
+    pub globals: Vec<(Arc<str>, Value)>,
     pub matches: Vec<RuleMatch>,
     pub applications: Vec<TableApplication>,
     pub unions: Vec<UnionReceipt>,
