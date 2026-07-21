@@ -29,11 +29,9 @@ def treatment_flags(treatment: Treatment) -> list[str]:
         return []
     if treatment == "term":
         return ["--term-encoding"]
-    if treatment == "proofs":
-        return ["--proofs"]
     if treatment == "proof-extraction":
         return ["--proof-extraction"]
-    raise ValueError(f"unknown treatment: {treatment}")
+    return ["--proofs"]
 
 
 def backend_flags(backend: Backend) -> list[str]:

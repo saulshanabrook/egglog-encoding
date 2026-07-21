@@ -334,7 +334,10 @@ mod tests {
             .unwrap();
     }
 
-    fn egraph_with_rejecting_container_primitive(mut egraph: EGraph) -> EGraph {
+    #[test]
+    #[should_panic(expected = "Primitive 'proof-container-reject' validation failed")]
+    fn proof_checker_validates_container_primitive_facts() {
+        let mut egraph = EGraph::new_with_proofs();
         egraph
             .parse_and_run_program(
                 None,
@@ -358,42 +361,69 @@ mod tests {
         );
 
         egraph
-    }
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation SeedContainer (EqContainer))
+                (relation Done ())
 
-    const INVALID_CONTAINER_PROOF_PROGRAM: &str = r#"
-        (relation SeedContainer (EqContainer))
-        (relation Done ())
+                (SeedContainer (vec-of (Mk)))
 
-        (SeedContainer (vec-of (Mk)))
+                (rule ((SeedContainer ys)
+                       (proof-container-reject ys))
+                      ((Done))
+                      :name "reject-invalid-container-fact")
 
-        (rule ((SeedContainer ys)
-               (proof-container-reject ys))
-              ((Done))
-              :name "reject-invalid-container-fact")
-
-        (run 1)
-        (check (Done))
-    "#;
-
-    #[test]
-    #[should_panic(expected = "Primitive 'proof-container-reject' validation failed")]
-    fn proof_testing_validates_container_primitive_facts() {
-        let mut egraph = egraph_with_rejecting_container_primitive(
-            EGraph::new_with_proofs().with_proof_testing(),
-        );
-
-        egraph
-            .parse_and_run_program(None, INVALID_CONTAINER_PROOF_PROGRAM)
+                (run 1)
+                (prove (Done))
+                "#,
+            )
             .unwrap();
     }
 
     #[test]
     fn proof_extraction_skips_container_primitive_validation() {
-        let mut egraph =
-            egraph_with_rejecting_container_primitive(EGraph::default().with_proof_extraction());
+        let mut egraph = EGraph::default().with_proof_extraction();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (Mk))
+                (sort EqContainer (Vec E))
+                "#,
+            )
+            .unwrap();
+
+        let eq_container_sort = egraph
+            .type_info
+            .get_sort_by_name("EqContainer")
+            .expect("EqContainer sort")
+            .clone();
+        let validator = |_: &mut TermDag, _: &[TermId]| -> Option<TermId> { None };
+        add_primitive_with_validator!(
+            &mut egraph,
+            "proof-container-reject" = |x: # (eq_container_sort)| -> # (eq_container_sort) { x },
+            validator
+        );
 
         let outputs = egraph
-            .parse_and_run_program(None, INVALID_CONTAINER_PROOF_PROGRAM)
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation SeedContainer (EqContainer))
+                (relation Done ())
+
+                (SeedContainer (vec-of (Mk)))
+
+                (rule ((SeedContainer ys)
+                       (proof-container-reject ys))
+                      ((Done))
+                      :name "reject-invalid-container-fact")
+
+                (run 1)
+                (check (Done))
+                "#,
+            )
             .unwrap();
         assert!(
             outputs

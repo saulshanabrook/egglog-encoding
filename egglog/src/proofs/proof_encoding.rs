@@ -29,9 +29,7 @@ pub(crate) struct EncodingState {
     pub original_typechecking: Option<Box<EGraph>>,
     pub proofs_enabled: bool,
     pub proof_testing: bool,
-    /// Whether extracted proofs should be checked before and after simplification.
-    /// Proof extraction benchmarking disables this while retaining the rest of
-    /// the proof-testing pipeline.
+    /// Whether extracted proofs are verified.
     pub verify_proofs: bool,
     pub proof_names: EncodingNames,
     /// Test-only knob: annotate RHS-reading rules `:naive` (the safe

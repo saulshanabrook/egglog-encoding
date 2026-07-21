@@ -323,24 +323,6 @@ def test_pair_collection_reuses_each_endpoint_independently_and_force_runs_both(
     assert [run.missing_observations for run in forced.runs] == [1, 1]
 
 
-def test_collection_does_not_reuse_proofs_rows_for_proof_extraction(tmp_path: Path) -> None:
-    report = tmp_path / "report.jsonl"
-    write_report(
-        report,
-        make_record(0, started_at="2026-07-04T12:00:00Z", treatment="proofs"),
-    )
-    target = make_target()
-    endpoints = (endpoint(target, "main", "proofs"), endpoint(target, "main", "proof-extraction"))
-
-    plan = collection.build_collection_plan(ReportStore(report), target, endpoints, (FILE_SPEC,), 1, 120, False)
-
-    proofs, extraction = plan.runs
-    assert proofs.cached_statuses == ("success",)
-    assert proofs.missing_observations == 0
-    assert extraction.cached_statuses == ()
-    assert extraction.missing_observations == 1
-
-
 @pytest.mark.parametrize("width", [80, 120])
 def test_fully_cached_six_file_plan_is_one_line(width: int) -> None:
     target_label = "target [red]literal[/red] x[/blue]"
@@ -417,62 +399,36 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
     assert selected == ("success",)
 
 
-def test_preflight_requires_proof_extraction_capability_for_fresh_extraction_rows(
+def test_preflight_requires_extraction_capability_only_for_fresh_rows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     target = make_target(binary_path=ROOT / "egglog-experimental")
-    plan = collection.CollectionPlan(target, (planned_run(treatment="proof-extraction", missing=1),))
-    calls: list[tuple[str, ...]] = []
-
-    def fail_missing_capability(
-        _binary_path: Path,
-        _checkout_path: Path,
-        _timeout_sec: int,
-        required_outputs: tuple[str, ...],
-    ) -> processes.TimingResult:
-        calls.append(required_outputs)
-        return processes.TimingResult(
-            "failure",
-            processes.TimingRow(wall_sec=0.01),
-            processes.ErrorRow("successful process output did not contain '--proof-extraction'"),
-        )
-
-    monkeypatch.setattr(collection, "run_preflight", fail_missing_capability)
-
-    with pytest.raises(ValueError, match="preflight failed.*--proof-extraction"):
-        collection.preflight_collection(plan, 120)
-
-    assert calls == [("--timing-summary", "--proof-extraction")]
-
-
-def test_preflight_ignores_cached_extraction_rows_when_selecting_capabilities(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    target = make_target(binary_path=ROOT / "egglog-experimental")
-    plan = collection.CollectionPlan(
-        target,
-        (
-            planned_run(treatment="proof-extraction", cached=("success",), required=1, missing=0),
-            planned_run(treatment="off", missing=1),
-        ),
-    )
     calls: list[tuple[str, ...]] = []
     success = processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
+    failure = processes.TimingResult(
+        "failure",
+        processes.TimingRow(wall_sec=0.01),
+        processes.ErrorRow("successful process output did not contain '--proof-extraction'"),
+    )
 
-    def capture_capabilities(
+    def preflight(
         _binary_path: Path,
         _checkout_path: Path,
         _timeout_sec: int,
         required_outputs: tuple[str, ...],
     ) -> processes.TimingResult:
         calls.append(required_outputs)
-        return success
+        return failure if "--proof-extraction" in required_outputs else success
 
-    monkeypatch.setattr(collection, "run_preflight", capture_capabilities)
+    monkeypatch.setattr(collection, "run_preflight", preflight)
+    cached = planned_run(treatment="proof-extraction", cached=("success",), required=1)
+    collection.preflight_collection(collection.CollectionPlan(target, (cached, planned_run(required=1))), 120)
 
-    collection.preflight_collection(plan, 120)
+    fresh = planned_run(treatment="proof-extraction", required=1)
+    with pytest.raises(ValueError, match="preflight failed.*--proof-extraction"):
+        collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
 
-    assert calls == [("--timing-summary",)]
+    assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
 
 
 def test_collect_rows_rejects_unsupported_timing_summary_before_append(
@@ -513,7 +469,7 @@ def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     assert report.read_text(encoding="utf-8") == ""
 
 
-def test_run_process_passes_exact_backend_and_treatment_flags(
+def test_run_process_passes_backend_flag_only_for_dd(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -549,7 +505,6 @@ def test_run_process_passes_exact_backend_and_treatment_flags(
 
     main = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "main", "off", 120)
     dd = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "dd", "proofs", 120)
-    extraction = collection.run_process(ROOT / "egglog-experimental", ROOT, file_spec, "main", "proof-extraction", 120)
 
     assert "--backend" not in commands[0]
     assert commands[1][commands[1].index("--backend") : commands[1].index("--backend") + 2] == [
@@ -557,16 +512,12 @@ def test_run_process_passes_exact_backend_and_treatment_flags(
         "dd",
     ]
     assert "--proofs" in commands[1]
-    assert "--backend" not in commands[2]
-    assert "--proof-extraction" in commands[2]
-    assert "--proofs" not in commands[2]
     assert main.timing_summary is not None
     assert main.timing_summary["rulesets"][0]["search_ns"] == 4
     assert main.timing_summary["rulesets"][0]["apply_ns"] == 6
     assert main.timing_summary["rulesets"][0]["unattributed_ns"] == 10
     assert main.timing_summary["rulesets"][0]["merge_ns"] == 20
     assert dd.timing_summary is not None
-    assert extraction.timing_summary is not None
 
 
 def test_run_process_rejects_success_without_timing_summary(

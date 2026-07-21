@@ -40,10 +40,9 @@ make proof-tests
 
 `proofs/` runs explicit `(prove ...)` fixtures under `tests/proofs` and every
 proof-compatible file under proof-testing mode, snapshotting generated proofs.
-Strict proof testing rewrites checks, extracts and verifies their proofs, and
-snapshots the results. It is a name-filtered subset of
-`cargo test --workspace`, so do not run it after a full workspace test unless
-you want a focused proof rerun. The Make target owns the exact Cargo filter.
+It is a name-filtered subset of `cargo test --workspace`, so do not run it after
+a full workspace test unless you want a focused proof rerun. The Make target
+owns the exact Cargo filter.
 
 For benchmark-runner changes, smoke the public CLI entrypoint with a temporary,
 machine-readable report path so the run does not read or append to the default

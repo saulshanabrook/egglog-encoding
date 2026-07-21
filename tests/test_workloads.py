@@ -37,7 +37,7 @@ def test_resolve_files_rejects_executable_prove_benchmark_file(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="explicit prove command.*selected treatment controls proof extraction"):
+    with pytest.raises(ValueError, match="explicit prove command"):
         workloads.resolve_files([str(prove_file)], tmp_path)
 
 

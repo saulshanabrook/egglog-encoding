@@ -90,10 +90,14 @@ def run_command(
         timing = timing_from_usage(usage, wall_sec)
         stdout = read_tempfile(stdout_file)
         stderr = read_tempfile(stderr_file)
-    if return_code == 0 and required_output is not None:
-        required_outputs = (required_output,) if isinstance(required_output, str) else tuple(required_output)
-        combined_output = stdout + stderr
-        missing_output = next((value for value in required_outputs if value not in combined_output), None)
+    if return_code == 0 and isinstance(required_output, str) and required_output not in stdout + stderr:
+        return TimingResult(
+            status="failure",
+            timing=timing,
+            error=ErrorRow(message=f"successful process output did not contain {required_output!r}"),
+        )
+    if return_code == 0 and required_output is not None and not isinstance(required_output, str):
+        missing_output = next((value for value in required_output if value not in stdout + stderr), None)
         if missing_output is not None:
             return TimingResult(
                 status="failure",

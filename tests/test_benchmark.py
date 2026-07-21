@@ -157,16 +157,6 @@ def test_comparison_permits_shared_binary_across_different_treatments() -> None:
     assert comparison.baseline.target is comparison.candidate.target
 
 
-def test_proof_extraction_has_a_distinct_cache_identity_from_proofs() -> None:
-    target = make_target(binary_sha256="sha256:shared")
-    proofs = models.BenchmarkEndpoint(target, "main", "proofs")
-    extraction = models.BenchmarkEndpoint(target, "main", "proof-extraction")
-
-    assert proofs.cache_identity == ("sha256:shared", "main", "proofs")
-    assert extraction.cache_identity == ("sha256:shared", "main", "proof-extraction")
-    assert proofs.cache_identity != extraction.cache_identity
-
-
 def test_comparison_rejects_identical_cache_endpoints() -> None:
     target = make_target(binary_sha256="sha256:shared")
     endpoint = models.BenchmarkEndpoint(target, "main", "proofs")

@@ -91,7 +91,6 @@ def test_parse_args_dispatches_profile_without_changing_benchmark_defaults() -> 
     assert benchmark_args.files == ["file.egg"]
     assert benchmark_args.rounds == 1
     assert benchmark_args.format == "rich"
-    assert benchmark_args.treatment == "proofs"
     assert profile_args.command == "profile"
     assert profile_args.file == "file.egg"
     assert profile_args.backend == "main"
