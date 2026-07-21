@@ -15,9 +15,9 @@ use thiserror::Error;
 use crate::{
     EGraph, Error as EgglogError, TermDag,
     ast::{
-        Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact,
-        GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire, Rewrite, Rule,
-        RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span, Subdatatypes,
+        Action, Actions, Command, Expr, Fact, FunctionSubtype, GenericAction, GenericExpr,
+        GenericFact, GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire,
+        Rewrite, Rule, RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span, Subdatatypes,
     },
     core::{GenericCoreAction, ResolvedCall},
     core_relations::{
@@ -1869,6 +1869,17 @@ fn run_one_traced_command(
             )
         })
         .collect();
+    let mutation_functions = egraph
+        .functions
+        .values()
+        .filter(|function| {
+            function.subtype() == FunctionSubtype::Custom
+                && !function.is_let_binding()
+                && !function.is_hidden()
+                && function.term_constructor().is_none()
+        })
+        .map(|function| function.backend_id)
+        .collect();
     let native = egraph
         .backend
         .as_any_mut()
@@ -1879,7 +1890,7 @@ fn run_one_traced_command(
             )
         })?;
     native
-        .begin_rule_match_trace_with_globals(globals)
+        .begin_rule_match_trace_with_globals_and_mutations(globals, mutation_functions)
         .map_err(|error| CausalSliceError::Invariant(error.to_string()))?;
 
     egraph.trace_check_constructor_rows = trace_check_constructor_rows;

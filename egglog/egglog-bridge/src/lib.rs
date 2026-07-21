@@ -189,6 +189,7 @@ pub struct EGraph {
 struct RuleMatchTraceState {
     batches: Vec<core_relations::RuleExecutionTrace>,
     globals: Vec<(Arc<str>, FunctionId)>,
+    mutation_tables: Vec<TableId>,
 }
 
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
@@ -302,13 +303,28 @@ impl EGraph {
         &mut self,
         globals: Vec<(Arc<str>, FunctionId)>,
     ) -> Result<()> {
+        self.begin_rule_match_trace_with_globals_and_mutations(globals, Vec::new())
+    }
+
+    /// Start a native match trace that also retains exact commit/rebuild
+    /// receipts for the selected source-visible functions.
+    pub fn begin_rule_match_trace_with_globals_and_mutations(
+        &mut self,
+        globals: Vec<(Arc<str>, FunctionId)>,
+        mutation_functions: Vec<FunctionId>,
+    ) -> Result<()> {
         anyhow::ensure!(
             self.rule_match_trace.is_none(),
             "a rule match trace is already active"
         );
+        let mutation_tables = mutation_functions
+            .into_iter()
+            .map(|function| self.funcs[function].table)
+            .collect();
         self.rule_match_trace = Some(RuleMatchTraceState {
             batches: Vec::new(),
             globals,
+            mutation_tables,
         });
         Ok(())
     }
@@ -316,6 +332,62 @@ impl EGraph {
     /// Finish the active trace and return its per-iteration match batches.
     pub fn take_rule_match_trace(&mut self) -> Option<Vec<core_relations::RuleExecutionTrace>> {
         self.rule_match_trace.take().map(|trace| trace.batches)
+    }
+
+    fn begin_mutation_traces(&self, tables: &[TableId]) -> Result<()> {
+        for table in tables {
+            let sorted = self
+                .db
+                .get_table(*table)
+                .as_any()
+                .downcast_ref::<SortedWritesTable>()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("traced mutation table {table:?} is not sorted-write backed")
+                })?;
+            anyhow::ensure!(
+                sorted.begin_mutation_trace(),
+                "a mutation trace is already active for table {table:?}"
+            );
+        }
+        Ok(())
+    }
+
+    fn take_mutation_traces(
+        &self,
+        tables: &[TableId],
+    ) -> Result<Vec<core_relations::TableMutationReceipt>> {
+        let mut receipts = Vec::new();
+        for table in tables {
+            let sorted = self
+                .db
+                .get_table(*table)
+                .as_any()
+                .downcast_ref::<SortedWritesTable>()
+                .ok_or_else(|| {
+                    anyhow::anyhow!("traced mutation table {table:?} is not sorted-write backed")
+                })?;
+            receipts.extend(sorted.take_mutation_trace(*table).ok_or_else(|| {
+                anyhow::anyhow!("no mutation trace is active for table {table:?}")
+            })?);
+        }
+        Ok(receipts)
+    }
+
+    fn finish_traced_batch(
+        &mut self,
+        trace: Option<core_relations::RuleExecutionTrace>,
+        mutation_tables: &[TableId],
+    ) -> Result<()> {
+        let Some(mut trace) = trace else {
+            return Ok(());
+        };
+        trace.mutations = self.take_mutation_traces(mutation_tables)?;
+        self.rule_match_trace
+            .as_mut()
+            .expect("a traced batch requires an active outer trace")
+            .batches
+            .push(trace);
+        Ok(())
     }
 
     fn next_ts(&self) -> Timestamp {
@@ -998,6 +1070,11 @@ impl EGraph {
 
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         let ts = self.next_ts();
+        let mutation_tables = self
+            .rule_match_trace
+            .as_ref()
+            .map(|trace| trace.mutation_tables.clone())
+            .unwrap_or_default();
 
         let global_values = self
             .rule_match_trace
@@ -1020,26 +1097,32 @@ impl EGraph {
             .transpose()?;
 
         let uf_size_before = self.db.get_table(self.uf_table).len();
+        let mut captured_trace = None;
         let rule_set_report = if self.rule_match_trace.is_some() {
-            let (report, mut trace) = run_rules_impl_traced(
+            self.begin_mutation_traces(&mutation_tables)?;
+            let result = run_rules_impl_traced(
                 &mut self.db,
                 self.uf_table,
                 &mut self.rules,
                 rules,
                 ts,
                 self.report_level,
-            )?;
+            );
+            let (report, mut trace) = match result {
+                Ok(result) => result,
+                Err(error) => {
+                    let _ = self.take_mutation_traces(&mutation_tables);
+                    return Err(error);
+                }
+            };
             trace.globals = global_values.unwrap_or_default();
-            self.rule_match_trace
-                .as_mut()
-                .expect("trace presence was checked above")
-                .batches
-                .push(trace);
+            captured_trace = Some(trace);
             report
         } else {
             run_rules_impl(&mut self.db, &mut self.rules, rules, ts, self.report_level)?
         };
         if let Some(message) = self.panic_message.lock().unwrap().take() {
+            let _ = self.take_mutation_traces(&mutation_tables);
             return Err(PanicError(message).into());
         }
 
@@ -1054,16 +1137,23 @@ impl EGraph {
             // Rebuilding is only necessary when new unions have been made because ids may need to be updated.
             // Adding terms doesn't necessarily touch the union-find, only doing a union between existing ids does.
             self.inc_ts();
+            self.finish_traced_batch(captured_trace, &mutation_tables)?;
             return Ok(iteration_report);
         }
 
         let rebuild_timer = Instant::now();
-        self.rebuild()?;
+        if let Err(error) = self.rebuild() {
+            let _ = self.take_mutation_traces(&mutation_tables);
+            return Err(error);
+        }
         iteration_report.rebuild_time = rebuild_timer.elapsed();
 
         if let Some(message) = self.panic_message.lock().unwrap().take() {
+            let _ = self.take_mutation_traces(&mutation_tables);
             return Err(PanicError(message).into());
         }
+
+        self.finish_traced_batch(captured_trace, &mutation_tables)?;
 
         Ok(iteration_report)
     }

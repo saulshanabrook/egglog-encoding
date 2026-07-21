@@ -19,14 +19,15 @@ use super::SortedWritesTable;
 
 // Helper macro used for adjusting sort before inserting to a mutation buffer.
 macro_rules! insert_row {
-    ($this: expr, $mutation_buf: expr, $row:expr, $next_ts:expr) => {{
+    ($this: expr, $mutation_buf: expr, $previous:expr, $row:expr, $next_ts:expr) => {{
+        let previous = $previous;
         let row = $row;
         let this = &*$this;
         let next_ts = $next_ts;
         if let Some(sort_by) = this.sort_by {
             row[sort_by.index()] = next_ts;
         }
-        $mutation_buf.stage_insert(row);
+        $mutation_buf.stage_rebuild_insert(previous, row);
     }};
 }
 
@@ -111,6 +112,9 @@ impl SortedWritesTable {
             if let Some(sort_by) = self.sort_by {
                 refreshed_row[sort_by.index()] = next_ts;
             }
+            // Same-id container refresh changes semantics without changing the
+            // stored cells. It is deliberately unattributed until container
+            // version provenance exists; do not mislabel it as equality rekey.
             mutation_buf.stage_insert(&refreshed_row);
             changed = true;
         }
@@ -160,7 +164,11 @@ impl SortedWritesTable {
                                     mutation_buf.stage_remove(key);
                                 }
                                 changed = true;
-                                insert_row!(self, mutation_buf, row, next_ts);
+                                let previous = self
+                                    .data
+                                    .get_row(row_id)
+                                    .expect("rebuild row must remain available until commit");
+                                insert_row!(self, mutation_buf, previous, row, next_ts);
                             }
                             (mutation_buf, exec_state, changed)
                         },
@@ -187,7 +195,11 @@ impl SortedWritesTable {
                     if let Some(to_remove) = self.data.get_row(row_id).map(|x| &x[0..self.n_keys]) {
                         write_buf.stage_remove(to_remove);
                     }
-                    insert_row!(self, write_buf, row, next_ts);
+                    let previous = self
+                        .data
+                        .get_row(row_id)
+                        .expect("rebuild row must remain available until commit");
+                    insert_row!(self, write_buf, previous, row, next_ts);
                 }
             }
             changed
@@ -231,7 +243,11 @@ impl SortedWritesTable {
                             if let Some(key) = to_remove {
                                 mutation_buf.stage_remove(key);
                             }
-                            insert_row!(self, mutation_buf, row, next_ts);
+                            let previous = self
+                                .data
+                                .get_row(row_id)
+                                .expect("rebuild row must remain available until commit");
+                            insert_row!(self, mutation_buf, previous, row, next_ts);
                         }
                         buf.clear();
                         (mutation_buf, buf, exec_state, changed)
@@ -260,7 +276,11 @@ impl SortedWritesTable {
                     if let Some(to_remove) = self.data.get_row(row_id).map(|x| &x[0..self.n_keys]) {
                         write_buf.stage_remove(to_remove);
                     }
-                    insert_row!(self, write_buf, row, next_ts);
+                    let previous = self
+                        .data
+                        .get_row(row_id)
+                        .expect("rebuild row must remain available until commit");
+                    insert_row!(self, write_buf, previous, row, next_ts);
                     changed = true;
                 }
             }

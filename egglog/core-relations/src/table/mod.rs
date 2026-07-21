@@ -10,8 +10,8 @@ use std::{
     hash::Hasher,
     mem,
     sync::{
-        Arc, Weak,
-        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex, Weak,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -23,7 +23,8 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    Pooled, TableChange, TableId,
+    Pooled, RuleMatchId, TableChange, TableId, TableMutationCause, TableMutationOutcome,
+    TableMutationReceipt,
     action::ExecutionState,
     common::{HashMap, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
@@ -149,6 +150,45 @@ pub struct SortedWritesTable {
     rebuild_index: Index<ColumnIndex>,
     // Used to manage incremental rebuilds.
     subset_tracker: SubsetTracker,
+    mutation_trace: Arc<TableMutationTraceSink>,
+}
+
+#[derive(Clone)]
+struct PendingInsertCause {
+    cause: TableMutationCause,
+}
+
+#[derive(Default)]
+struct TableMutationTraceSink {
+    active: AtomicBool,
+    receipts: Mutex<Vec<TableMutationReceipt>>,
+}
+
+impl TableMutationTraceSink {
+    fn begin(&self) -> bool {
+        if self.active.swap(true, Ordering::AcqRel) {
+            return false;
+        }
+        self.receipts.lock().unwrap().clear();
+        true
+    }
+
+    fn is_active(&self) -> bool {
+        self.active.load(Ordering::Acquire)
+    }
+
+    fn record(&self, receipt: TableMutationReceipt) {
+        if self.is_active() {
+            self.receipts.lock().unwrap().push(receipt);
+        }
+    }
+
+    fn take(&self) -> Option<Vec<TableMutationReceipt>> {
+        if !self.active.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+        Some(mem::take(&mut *self.receipts.lock().unwrap()))
+    }
 }
 
 impl Clone for SortedWritesTable {
@@ -166,6 +206,7 @@ impl Clone for SortedWritesTable {
             to_rebuild: self.to_rebuild.clone(),
             rebuild_index: Index::new(self.to_rebuild.clone(), ColumnIndex::new()),
             subset_tracker: Default::default(),
+            mutation_trace: Arc::new(TableMutationTraceSink::default()),
         }
     }
 }
@@ -226,6 +267,7 @@ impl ArbitraryRowBuffer {
 
 struct Buffer {
     pending_rows: DenseIdMap<ShardId, RowBuffer>,
+    pending_causes: DenseIdMap<ShardId, Vec<Option<PendingInsertCause>>>,
     pending_removals: DenseIdMap<ShardId, ArbitraryRowBuffer>,
     state: Weak<PendingState>,
     n_cols: u32,
@@ -233,12 +275,49 @@ struct Buffer {
     shard_data: ShardData,
 }
 
+impl Buffer {
+    fn stage_insert_with_cause(&mut self, row: &[Value], cause: TableMutationCause) {
+        let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
+        let rows = self
+            .pending_rows
+            .get_or_insert(shard, || RowBuffer::new(self.n_cols as _));
+        let previous_len = rows.len();
+        rows.add_row(row);
+        self.pending_causes
+            .get_or_insert(shard, || vec![None; previous_len])
+            .push(Some(PendingInsertCause { cause }));
+    }
+}
+
 impl MutationBuffer for Buffer {
     fn stage_insert(&mut self, row: &[Value]) {
         let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
-        self.pending_rows
-            .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
-            .add_row(row);
+        let rows = self
+            .pending_rows
+            .get_or_insert(shard, || RowBuffer::new(self.n_cols as _));
+        let previous_len = rows.len();
+        rows.add_row(row);
+        if let Some(causes) = self.pending_causes.get_mut(shard) {
+            debug_assert_eq!(causes.len(), previous_len);
+            causes.push(None);
+        }
+    }
+    fn stage_insert_with_trace(&mut self, row: &[Value], origin: RuleMatchId, instruction: u32) {
+        self.stage_insert_with_cause(
+            row,
+            TableMutationCause::Rule {
+                origin,
+                instruction,
+            },
+        );
+    }
+    fn stage_rebuild_insert(&mut self, previous: &[Value], row: &[Value]) {
+        self.stage_insert_with_cause(
+            row,
+            TableMutationCause::Rebuild {
+                previous: previous.to_vec(),
+            },
+        );
     }
     fn stage_remove(&mut self, key: &[Value]) {
         let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
@@ -249,6 +328,7 @@ impl MutationBuffer for Buffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(Buffer {
             pending_rows: Default::default(),
+            pending_causes: Default::default(),
             pending_removals: Default::default(),
             state: self.state.clone(),
             n_cols: self.n_cols,
@@ -268,7 +348,11 @@ impl Drop for Buffer {
                     continue;
                 };
                 rows += buf.len();
-                state.pending_rows[shard].push(buf);
+                let causes = self.pending_causes.take(shard);
+                if let Some(causes) = &causes {
+                    debug_assert_eq!(causes.len(), buf.len());
+                }
+                state.pending_rows[shard].push((buf, causes));
             }
             state.total_rows.fetch_add(rows, Ordering::Relaxed);
 
@@ -519,6 +603,7 @@ impl Table for SortedWritesTable {
         let n_shards = self.hash.shard_data().n_shards();
         Box::new(Buffer {
             pending_rows: DenseIdMap::with_capacity(n_shards),
+            pending_causes: DenseIdMap::with_capacity(n_shards),
             pending_removals: DenseIdMap::with_capacity(n_shards),
             state: Arc::downgrade(&self.pending_state),
             n_keys: u32::try_from(self.n_keys).expect("n_keys should fit in u32"),
@@ -552,6 +637,22 @@ impl Table for SortedWritesTable {
 }
 
 impl SortedWritesTable {
+    /// Start an opt-in trace of exact insert/merge outcomes for this table.
+    pub fn begin_mutation_trace(&self) -> bool {
+        self.mutation_trace.begin()
+    }
+
+    /// Finish the active mutation trace and attach this table's database id to
+    /// every receipt.
+    pub fn take_mutation_trace(&self, table: TableId) -> Option<Vec<TableMutationReceipt>> {
+        self.mutation_trace.take().map(|mut receipts| {
+            for receipt in &mut receipts {
+                receipt.table = table;
+            }
+            receipts
+        })
+    }
+
     /// Create a new [`SortedWritesTable`] with the given number of keys,
     /// columns, and an optional sort column.
     ///
@@ -586,6 +687,7 @@ impl SortedWritesTable {
             to_rebuild,
             rebuild_index,
             subset_tracker: Default::default(),
+            mutation_trace: Arc::new(TableMutationTraceSink::default()),
         }
     }
 
@@ -678,7 +780,10 @@ impl SortedWritesTable {
     fn do_insert(&mut self, exec_state: &mut ExecutionState) -> bool {
         let total = self.pending_state.total_rows.swap(0, Ordering::Relaxed);
         self.data.data.reserve(total);
-        if parallelize_table_op(total) {
+        // Commit receipts must preserve the exact proposal order and winner.
+        // Tracing is already an opt-in serial execution path, so do not erase
+        // origins by coalescing proposals in `StagedOutputs`.
+        if !self.mutation_trace.is_active() && parallelize_table_op(total) {
             if let Some(col) = self.sort_by {
                 self.parallel_insert(
                     exec_state,
@@ -702,8 +807,17 @@ impl SortedWritesTable {
         let mut scratch = with_pool_set(|ps| ps.get::<Vec<Value>>());
         for (_outer_shard, queue) in self.pending_state.pending_rows.iter() {
             if let Some(sort_by) = self.sort_by {
-                while let Some(buf) = queue.pop() {
-                    for query in buf.non_stale() {
+                while let Some((buf, causes)) = queue.pop() {
+                    for (index, query) in buf.iter().enumerate() {
+                        if query.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let cause = causes
+                            .as_ref()
+                            .and_then(|causes| causes.get(index))
+                            .and_then(Option::as_ref)
+                            .map(|cause| cause.cause.clone())
+                            .unwrap_or(TableMutationCause::Unattributed);
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
                             let Some(row) = self.data.get_row(row) else {
@@ -720,7 +834,9 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
+                            let previous = cur.to_vec();
                             if (self.merge)(exec_state, cur, query, &mut scratch) {
+                                let committed = scratch.clone();
                                 let sort_val = query[sort_by.index()];
                                 let new = self.data.add_row(&scratch);
                                 if let Some(largest) = self.offsets.last().map(|(v, _)| *v) {
@@ -737,6 +853,23 @@ impl SortedWritesTable {
                                 self.data.set_stale(*row);
                                 *row = new;
                                 changed = true;
+                                self.mutation_trace.record(TableMutationReceipt {
+                                    table: TableId::dummy(),
+                                    cause,
+                                    incoming: query.to_vec(),
+                                    previous: Some(previous),
+                                    committed,
+                                    outcome: TableMutationOutcome::Replaced,
+                                });
+                            } else {
+                                self.mutation_trace.record(TableMutationReceipt {
+                                    table: TableId::dummy(),
+                                    cause,
+                                    incoming: query.to_vec(),
+                                    previous: Some(previous.clone()),
+                                    committed: previous,
+                                    outcome: TableMutationOutcome::NoOp,
+                                });
                             }
                             scratch.clear();
                         } else {
@@ -765,13 +898,30 @@ impl SortedWritesTable {
                                 TableEntry::hashcode,
                             );
                             changed = true;
+                            self.mutation_trace.record(TableMutationReceipt {
+                                table: TableId::dummy(),
+                                cause,
+                                incoming: query.to_vec(),
+                                previous: None,
+                                committed: query.to_vec(),
+                                outcome: TableMutationOutcome::Inserted,
+                            });
                         }
                     }
                 }
             } else {
                 // Simplified variant without the sorting constraint.
-                while let Some(buf) = queue.pop() {
-                    for query in buf.non_stale() {
+                while let Some((buf, causes)) = queue.pop() {
+                    for (index, query) in buf.iter().enumerate() {
+                        if query.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let cause = causes
+                            .as_ref()
+                            .and_then(|causes| causes.get(index))
+                            .and_then(Option::as_ref)
+                            .map(|cause| cause.cause.clone())
+                            .unwrap_or(TableMutationCause::Unattributed);
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
                             let Some(row) = self.data.get_row(row) else {
@@ -785,11 +935,30 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
+                            let previous = cur.to_vec();
                             if (self.merge)(exec_state, cur, query, &mut scratch) {
+                                let committed = scratch.clone();
                                 let new = self.data.add_row(&scratch);
                                 self.data.set_stale(*row);
                                 *row = new;
                                 changed = true;
+                                self.mutation_trace.record(TableMutationReceipt {
+                                    table: TableId::dummy(),
+                                    cause,
+                                    incoming: query.to_vec(),
+                                    previous: Some(previous),
+                                    committed,
+                                    outcome: TableMutationOutcome::Replaced,
+                                });
+                            } else {
+                                self.mutation_trace.record(TableMutationReceipt {
+                                    table: TableId::dummy(),
+                                    cause,
+                                    incoming: query.to_vec(),
+                                    previous: Some(previous.clone()),
+                                    committed: previous,
+                                    outcome: TableMutationOutcome::NoOp,
+                                });
                             }
                             scratch.clear();
                         } else {
@@ -806,6 +975,14 @@ impl SortedWritesTable {
                                 TableEntry::hashcode,
                             );
                             changed = true;
+                            self.mutation_trace.record(TableMutationReceipt {
+                                table: TableId::dummy(),
+                                cause,
+                                incoming: query.to_vec(),
+                                previous: None,
+                                committed: query.to_vec(),
+                                outcome: TableMutationOutcome::Inserted,
+                            });
                         }
                     }
                 }
@@ -934,7 +1111,7 @@ impl SortedWritesTable {
                 // * Add new values to `staged`
                 // * Removing entries in `shard` and mark them as stale in
                 // `data` if they will be overwritten.
-                while let Some(buf) = queue.pop() {
+                while let Some((buf, _causes)) = queue.pop() {
                     // We create a read_handle once per batch to avoid blocking
                     // too many threads if someone needs to resize the row
                     // writer.
@@ -1287,7 +1464,8 @@ fn hash_code(shard_data: ShardData, row: &[Value], n_keys: usize) -> (ShardId, u
 
 /// A simple struct for packaging up pending mutations to a `SortedWritesTable`.
 struct PendingState {
-    pending_rows: DenseIdMap<ShardId, SegQueue<RowBuffer>>,
+    pending_rows:
+        DenseIdMap<ShardId, SegQueue<(RowBuffer, Option<Vec<Option<PendingInsertCause>>>)>>,
     pending_removals: DenseIdMap<ShardId, SegQueue<ArbitraryRowBuffer>>,
     total_removals: AtomicUsize,
     total_rows: AtomicUsize,

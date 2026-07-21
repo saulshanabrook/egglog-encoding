@@ -31,7 +31,8 @@ use crate::{
     pool::{Pool, Pooled, with_pool_set},
     query::{Query, RuleSetBuilder},
     table_spec::{
-        ColumnId, Constraint, MutationBuffer, Table, TableSpec, WrappedTable, WrappedTableRef,
+        ColumnId, Constraint, MutationBuffer, Table, TableMutationReceipt, TableSpec, WrappedTable,
+        WrappedTableRef,
     },
 };
 
@@ -229,6 +230,7 @@ pub struct RuleExecutionTrace {
     pub applications: Vec<TableApplication>,
     pub primitives: Vec<PrimitiveApplication>,
     pub unions: Vec<UnionReceipt>,
+    pub mutations: Vec<TableMutationReceipt>,
 }
 
 /// A traced run must use a single-bag plan because tree decomposition can lose

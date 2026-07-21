@@ -269,6 +269,153 @@ fn traced_unions_report_applied_and_redundant_commits_with_raw_endpoints() {
 }
 
 #[test]
+fn traced_function_writes_report_insert_replace_and_no_op_receipts() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let function = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Base(int_base)],
+        default: DefaultVal::Fail,
+        merge: MergeFn::New,
+        name: "mutation-trace-function".into(),
+        can_subsume: false,
+    });
+    let key = egraph.base_value_constant(0i64);
+    let one = egraph.base_value_constant(1i64);
+    let two = egraph.base_value_constant(2i64);
+    let rule = {
+        let mut builder = egraph.new_rule("traced writes", true);
+        builder.set(function, &[key.clone(), one]);
+        builder.set(function, &[key.clone(), two.clone()]);
+        builder.set(function, &[key, two]);
+        builder.build()
+    };
+
+    egraph
+        .begin_rule_match_trace_with_globals_and_mutations(Vec::new(), vec![function])
+        .unwrap();
+    egraph.run_rules(&[rule]).unwrap();
+    let batches = egraph.take_rule_match_trace().unwrap();
+    assert_eq!(batches.len(), 1);
+    let trace = &batches[0];
+    assert_eq!(trace.matches.len(), 1);
+    assert_eq!(trace.mutations.len(), 3);
+    assert_eq!(
+        trace
+            .mutations
+            .iter()
+            .map(|receipt| receipt.outcome)
+            .collect::<Vec<_>>(),
+        vec![
+            core_relations::TableMutationOutcome::Inserted,
+            core_relations::TableMutationOutcome::Replaced,
+            core_relations::TableMutationOutcome::NoOp,
+        ]
+    );
+    for (instruction, receipt) in trace.mutations.iter().enumerate() {
+        let core_relations::TableMutationCause::Rule {
+            origin,
+            instruction: actual_instruction,
+        } = receipt.cause
+        else {
+            panic!("expected a traced rule cause, got {:?}", receipt.cause);
+        };
+        assert_eq!(origin.index(), 0);
+        // Instruction zero initializes the shared timestamp used by all
+        // following table writes in this head.
+        assert_eq!(actual_instruction as usize, instruction + 1);
+        assert_eq!(receipt.table, egraph.funcs[function].table);
+        assert_eq!(receipt.incoming[0], receipt.committed[0]);
+    }
+    assert!(trace.mutations[0].previous.is_none());
+    assert!(trace.mutations[1].previous.is_some());
+    assert_eq!(
+        trace.mutations[2].previous,
+        Some(trace.mutations[2].committed.clone())
+    );
+}
+
+#[test]
+fn traced_function_rekey_stays_in_the_originating_union_batch() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let terms = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "rekey-terms".into(),
+        can_subsume: false,
+    });
+    let function = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Id, ColumnTy::Base(int_base)],
+        default: DefaultVal::Fail,
+        merge: MergeFn::New,
+        name: "rekey-function".into(),
+        can_subsume: false,
+    });
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    let left = egraph.add_term(terms, &[zero]);
+    let right = egraph.add_term(terms, &[one]);
+    let seven = egraph.base_value_constant(7i64);
+    let seed = {
+        let mut builder = egraph.new_rule("seed function", true);
+        builder.set(
+            function,
+            &[
+                QueryEntry::Const {
+                    val: right,
+                    ty: ColumnTy::Id,
+                },
+                seven,
+            ],
+        );
+        builder.build()
+    };
+    egraph.run_rules(&[seed]).unwrap();
+
+    let unify = {
+        let mut builder = egraph.new_rule("unify keys", true);
+        builder.union(
+            QueryEntry::Const {
+                val: left,
+                ty: ColumnTy::Id,
+            },
+            QueryEntry::Const {
+                val: right,
+                ty: ColumnTy::Id,
+            },
+        );
+        builder.build()
+    };
+    egraph
+        .begin_rule_match_trace_with_globals_and_mutations(Vec::new(), vec![function])
+        .unwrap();
+    egraph.run_rules(&[unify]).unwrap();
+    let batches = egraph.take_rule_match_trace().unwrap();
+    assert_eq!(batches.len(), 1);
+    let trace = &batches[0];
+    assert_eq!(trace.unions.len(), 1);
+    assert_eq!(trace.mutations.len(), 1);
+    let receipt = &trace.mutations[0];
+    let core_relations::TableMutationCause::Rebuild { previous } = &receipt.cause else {
+        panic!("expected a rebuild cause, got {:?}", receipt.cause);
+    };
+    assert_eq!(previous[0], right);
+    assert_ne!(receipt.incoming[0], right);
+    assert_eq!(receipt.committed, receipt.incoming);
+    assert_eq!(
+        receipt.outcome,
+        core_relations::TableMutationOutcome::Inserted
+    );
+}
+
+#[test]
 fn dropped_rule_builder_releases_panics() {
     let mut egraph = EGraph::default();
     let unit_type = egraph.base_values_mut().register_type::<()>();

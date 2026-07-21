@@ -89,6 +89,47 @@ pub struct TableChange {
     pub removed: bool,
 }
 
+/// The native operation that staged one row later observed at table commit.
+///
+/// Rule origins identify the exact action lane and instruction that proposed
+/// the row. Rebuild origins retain the complete prior row because rebuilding
+/// may change a functional key before the old row is removed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TableMutationCause {
+    Rule {
+        origin: RuleMatchId,
+        instruction: u32,
+    },
+    Rebuild {
+        previous: Vec<Value>,
+    },
+    Unattributed,
+}
+
+/// What one staged insertion did at the commit boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TableMutationOutcome {
+    Inserted,
+    Replaced,
+    NoOp,
+}
+
+/// Exact commit-time evidence for one staged row proposal.
+///
+/// `previous` is the row visible at the proposal's key immediately before the
+/// merge, if any. `committed` is the row selected by the table after applying
+/// its merge function. These are runtime values for in-process provenance;
+/// callers must never serialize them directly.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableMutationReceipt {
+    pub table: TableId,
+    pub cause: TableMutationCause,
+    pub incoming: Vec<Value>,
+    pub previous: Option<Vec<Value>>,
+    pub committed: Vec<Value>,
+    pub outcome: TableMutationOutcome,
+}
+
 /// A constraint on the values within a row.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Constraint {
@@ -398,6 +439,20 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// without commit-time provenance support preserve their ordinary
     /// behavior and ignore the origin.
     fn stage_insert_with_origin(&mut self, row: &[Value], _origin: RuleMatchId) {
+        self.stage_insert(row);
+    }
+
+    /// Stage an insertion with its exact traced rule-head instruction.
+    /// Implementations that only need match-level attribution may inherit the
+    /// default and retain the origin through `stage_insert_with_origin`.
+    fn stage_insert_with_trace(&mut self, row: &[Value], origin: RuleMatchId, _instruction: u32) {
+        self.stage_insert_with_origin(row, origin);
+    }
+
+    /// Stage a row produced by rebuilding `previous` into its current values.
+    /// Tables without rebuild provenance support retain ordinary behavior.
+    fn stage_rebuild_insert(&mut self, previous: &[Value], row: &[Value]) {
+        let _ = previous;
         self.stage_insert(row);
     }
 

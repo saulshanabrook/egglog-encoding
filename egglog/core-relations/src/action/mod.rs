@@ -407,8 +407,14 @@ impl<'a> MutationBuffers<'a> {
         self.notify_list.notify(table_id);
     }
 
-    fn stage_insert_with_origin(&mut self, table_id: TableId, row: &[Value], origin: RuleMatchId) {
-        self.buffers[table_id].stage_insert_with_origin(row, origin);
+    fn stage_insert_with_trace(
+        &mut self,
+        table_id: TableId,
+        row: &[Value],
+        origin: RuleMatchId,
+        instruction: u32,
+    ) {
+        self.buffers[table_id].stage_insert_with_trace(row, origin, instruction);
         self.notify_list.notify(table_id);
     }
 
@@ -454,10 +460,17 @@ impl<'a> ExecutionState<'a> {
         self.changed = true;
     }
 
-    fn stage_insert_with_origin(&mut self, table: TableId, row: &[Value], origin: RuleMatchId) {
+    fn stage_insert_with_trace(
+        &mut self,
+        table: TableId,
+        row: &[Value],
+        origin: RuleMatchId,
+        instruction: u32,
+    ) {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        self.buffers.stage_insert_with_origin(table, row, origin);
+        self.buffers
+            .stage_insert_with_trace(table, row, origin, instruction);
         self.changed = true;
     }
 
@@ -850,10 +863,15 @@ impl ExecutionState<'_> {
                 *mask = lookup_result;
             }
             Instr::Insert { table, vals } => {
-                if let Some((origins, _, _, _)) = trace {
+                if let Some((origins, instruction, _, _)) = trace {
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.zip(origins).for_each(|(vals, origin)| {
-                            self.stage_insert_with_origin(*table, vals.as_slice(), *origin);
+                            self.stage_insert_with_trace(
+                                *table,
+                                vals.as_slice(),
+                                *origin,
+                                instruction,
+                            );
                         })
                     });
                 } else {
