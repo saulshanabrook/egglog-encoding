@@ -22,7 +22,8 @@ use crate::{
     core::{GenericCoreAction, ResolvedCall},
     core_relations::{
         ExternalFunctionId, PrimitiveApplication, RuleExecutionTrace, RuleMatch, TableApplication,
-        TableId, UnionOutcome, UnionReceipt, Value,
+        TableId, TableMutationCause, TableMutationOutcome, TableMutationReceipt, UnionOutcome,
+        UnionReceipt, Value,
     },
     literal_to_value,
     util::{HashMap, HashSet, IndexMap, IndexSet},
@@ -157,6 +158,25 @@ struct ConstructorDecl {
 }
 
 #[derive(Clone, Debug)]
+struct MutableFunctionDecl {
+    inputs: Vec<String>,
+    output: String,
+    opaque_sort: Option<String>,
+}
+
+type CollectedDeclarations = (
+    IndexMap<String, RelationDecl>,
+    IndexMap<String, ConstructorDecl>,
+    IndexMap<String, MutableFunctionDecl>,
+);
+
+struct ModelDeclarations<'a> {
+    relations: &'a IndexMap<String, RelationDecl>,
+    constructors: &'a IndexMap<String, ConstructorDecl>,
+    mutable_functions: &'a IndexMap<String, MutableFunctionDecl>,
+}
+
+#[derive(Clone, Debug)]
 struct AtomTemplate {
     relation: String,
     args: Vec<AtomArg>,
@@ -183,9 +203,11 @@ struct RuleModel {
     span: Span,
     body: Vec<AtomTemplate>,
     body_lookups: Vec<ConstructorLookupTemplate>,
+    body_functions: Vec<FunctionLookupTemplate>,
     body_primitives: Vec<QueryPrimitiveTemplate>,
     head: Vec<AtomTemplate>,
     head_constructors: Vec<AtomArg>,
+    head_sets: Vec<FunctionSetTemplate>,
     /// Constructor applications hidden as a complete-head side effect. V0
     /// admits these only when each target exactly aliases a live constructor
     /// lookup in the same body and one independent union promotes the fire.
@@ -273,6 +295,26 @@ struct QueryPrimitiveTemplate {
 }
 
 #[derive(Clone, Debug)]
+struct FunctionLookupTemplate {
+    span: Span,
+    function: String,
+    keys: Vec<AtomArg>,
+    output: AtomArg,
+    input_sorts: Vec<String>,
+    output_sort: String,
+}
+
+#[derive(Clone, Debug)]
+struct FunctionSetTemplate {
+    span: Span,
+    function: String,
+    keys: Vec<AtomArg>,
+    value: AtomArg,
+    input_sorts: Vec<String>,
+    output_sort: String,
+}
+
+#[derive(Clone, Debug)]
 struct SourceFact {
     command_index: usize,
     kind: SourceFactKind,
@@ -303,6 +345,19 @@ struct TypedEndpoint {
 struct RowKey {
     relation: String,
     args: Vec<TypedEndpoint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct FunctionRowKey {
+    function: String,
+    keys: Vec<TypedEndpoint>,
+}
+
+#[derive(Clone, Debug)]
+struct FunctionRowState {
+    output: TypedEndpoint,
+    dependency: DepId,
+    deferred_error: Option<DeferredUnsupported>,
 }
 
 type SourceCommandExpansions = IndexMap<usize, Vec<Command>>;
@@ -1135,19 +1190,33 @@ struct EqualityEdge {
     dependency: DepId,
 }
 
+#[derive(Clone, Debug)]
+struct AppliedEquality {
+    left: TypedEndpoint,
+    right: TypedEndpoint,
+    parent: Value,
+    child: Value,
+}
+
 #[derive(Clone, Debug, Default)]
 struct EqualityForest {
     edges: Vec<EqualityEdge>,
     adjacency: IndexMap<TypedEndpoint, Vec<(TypedEndpoint, DepId)>>,
+    canonical_parents: IndexMap<TypedEndpoint, TypedEndpoint>,
 }
 
 impl EqualityForest {
     fn add(
         &mut self,
-        left: TypedEndpoint,
-        right: TypedEndpoint,
+        equality: AppliedEquality,
         dependency: DepId,
     ) -> Result<(), CausalSliceError> {
+        let AppliedEquality {
+            left,
+            right,
+            parent,
+            child,
+        } = equality;
         if left.sort != right.sort {
             return Err(CausalSliceError::Invariant(format!(
                 "successful union crossed runtime sorts `{}` and `{}`",
@@ -1158,6 +1227,33 @@ impl EqualityForest {
             return Err(CausalSliceError::Invariant(
                 "a successful native union would create a cycle in the explanation forest"
                     .to_owned(),
+            ));
+        }
+        let left_root = self.canonical_endpoint(&left);
+        let right_root = self.canonical_endpoint(&right);
+        let parent_endpoint = TypedEndpoint {
+            sort: left.sort.clone(),
+            value: parent,
+        };
+        let child_endpoint = TypedEndpoint {
+            sort: left.sort.clone(),
+            value: child,
+        };
+        if parent_endpoint == child_endpoint
+            || !((left_root == parent_endpoint && right_root == child_endpoint)
+                || (left_root == child_endpoint && right_root == parent_endpoint))
+        {
+            return Err(CausalSliceError::Invariant(format!(
+                "successful union endpoints {left:?} and {right:?} had reported representatives parent={parent_endpoint:?}, child={child_endpoint:?} inconsistent with the explanation forest roots {left_root:?} and {right_root:?}"
+            )));
+        }
+        if self
+            .canonical_parents
+            .insert(child_endpoint, parent_endpoint)
+            .is_some()
+        {
+            return Err(CausalSliceError::Invariant(
+                "successful union reparented a non-representative equality endpoint".to_owned(),
             ));
         }
         self.adjacency
@@ -1174,6 +1270,17 @@ impl EqualityForest {
             dependency,
         });
         Ok(())
+    }
+
+    fn canonical_endpoint(&self, endpoint: &TypedEndpoint) -> TypedEndpoint {
+        let mut current = endpoint.clone();
+        let mut steps = 0usize;
+        while let Some(parent) = self.canonical_parents.get(&current) {
+            current = parent.clone();
+            steps += 1;
+            debug_assert!(steps <= self.canonical_parents.len());
+        }
+        current
     }
 
     fn explain(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> Option<Vec<DepId>> {
@@ -1214,6 +1321,7 @@ struct ProgramModel {
     checks: Vec<CheckModel>,
     source_facts: Vec<SourceFact>,
     constructors: IndexMap<String, ConstructorDecl>,
+    mutable_functions: IndexMap<String, MutableFunctionDecl>,
     source_expansions: SourceCommandExpansions,
     schedule_indices: Vec<usize>,
     prefix_fallbacks: usize,
@@ -1223,6 +1331,7 @@ struct ProgramModel {
 enum TraceFunctionKind {
     Relation,
     Constructor,
+    Mutable,
 }
 
 #[derive(Clone, Debug)]
@@ -1389,7 +1498,7 @@ fn generate_causal_slice(
     let source_name = filename.as_deref().unwrap_or("<input>");
     let (mut commands, source_rule_origins) = lower_rewrites(commands, source_name)?;
 
-    let (relations, constructors) =
+    let (relations, constructors, mutable_functions) =
         collect_declarations(&commands, source_name, &registered_presorts)?;
     let rule_mapping = name_and_prepare_rules(&mut commands, source_name, &source_rule_origins)?;
     let ProgramModel {
@@ -1397,13 +1506,17 @@ fn generate_causal_slice(
         checks,
         source_facts,
         constructors,
+        mutable_functions,
         source_expansions,
         schedule_indices,
         prefix_fallbacks,
     } = validate_and_model(
         &commands,
-        &relations,
-        &constructors,
+        ModelDeclarations {
+            relations: &relations,
+            constructors: &constructors,
+            mutable_functions: &mutable_functions,
+        },
         &source_rule_origins,
         &registered_presorts,
         source_name,
@@ -1418,10 +1531,14 @@ fn generate_causal_slice(
 
     for (command_index, command) in commands.iter().cloned().enumerate() {
         if schedule_indices.contains(&command_index) {
-            let batches = run_one_traced_command(&mut egraph, command)?;
+            let batches = run_one_traced_command(&mut egraph, command, &mutable_functions)?;
             schedule_batches.extend(batches);
         } else if matches!(command, Command::Check(..)) {
-            check_batches.push(run_one_traced_command(&mut egraph, command)?);
+            check_batches.push(run_one_traced_command(
+                &mut egraph,
+                command,
+                &mutable_functions,
+            )?);
         } else if let Some(expansion) = source_expansions.get(&command_index) {
             egraph.run_program(expansion.clone())?;
         } else if matches!(command, Command::Action(..)) {
@@ -1429,7 +1546,7 @@ fn generate_causal_slice(
                 Command::Action(Action::Let(_, name, _)) => Some(name.clone()),
                 _ => None,
             };
-            let batches = run_one_traced_command(&mut egraph, command)?;
+            let batches = run_one_traced_command(&mut egraph, command, &mutable_functions)?;
             let global_endpoint = global_name
                 .map(|name| {
                     let function = egraph.functions.get(&name).ok_or_else(|| {
@@ -1495,7 +1612,8 @@ fn generate_causal_slice(
     let raw_trace_lower_bound_bytes = total_raw_matches * std::mem::size_of::<RuleMatch>()
         + raw_trace_bindings * std::mem::size_of::<(std::sync::Arc<str>, Value)>();
 
-    let trace_functions = trace_function_metadata(&egraph, &relations, &constructors)?;
+    let trace_functions =
+        trace_function_metadata(&egraph, &relations, &constructors, &mutable_functions)?;
     let rule_primitives = resolve_rule_primitives(&egraph, &rules)?;
     let mut witnesses = WitnessArena::default();
     let schedule_span = command_schedule_span(&commands[schedule_index])
@@ -1856,6 +1974,7 @@ fn normalize_parser_wildcards(commands: Vec<Command>) -> Vec<Command> {
 fn run_one_traced_command(
     egraph: &mut EGraph,
     command: Command,
+    mutable_functions: &IndexMap<String, MutableFunctionDecl>,
 ) -> Result<Vec<RuleExecutionTrace>, CausalSliceError> {
     let trace_check_constructor_rows = matches!(&command, Command::Check(..));
     let globals = egraph
@@ -1871,14 +1990,15 @@ fn run_one_traced_command(
         .collect();
     let mutation_functions = egraph
         .functions
-        .values()
-        .filter(|function| {
-            function.subtype() == FunctionSubtype::Custom
+        .iter()
+        .filter(|(name, function)| {
+            mutable_functions.contains_key(*name)
+                && function.subtype() == FunctionSubtype::Custom
                 && !function.is_let_binding()
                 && !function.is_hidden()
                 && function.term_constructor().is_none()
         })
-        .map(|function| function.backend_id)
+        .map(|(_, function)| function.backend_id)
         .collect();
     let native = egraph
         .backend
@@ -2140,6 +2260,7 @@ fn trace_function_metadata(
     egraph: &EGraph,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    mutable_functions: &IndexMap<String, MutableFunctionDecl>,
 ) -> Result<IndexMap<TableId, TraceFunctionMeta>, CausalSliceError> {
     let native = egraph
         .backend
@@ -2156,6 +2277,8 @@ fn trace_function_metadata(
             TraceFunctionKind::Relation
         } else if constructors.contains_key(name) {
             TraceFunctionKind::Constructor
+        } else if mutable_functions.contains_key(name) {
+            TraceFunctionKind::Mutable
         } else {
             continue;
         };
@@ -2198,6 +2321,14 @@ fn trace_function_metadata(
                     )));
                 }
             }
+            TraceFunctionKind::Mutable => {
+                let expected = &mutable_functions[name];
+                if input_sorts != expected.inputs || output_sort != expected.output {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "runtime schema for mutable function `{name}` differs from its parsed declaration"
+                    )));
+                }
+            }
         }
         let table = native.function_table_id(function.backend_id);
         if result
@@ -2228,15 +2359,10 @@ fn collect_declarations(
     commands: &[Command],
     source_name: &str,
     registered_presorts: &HashSet<String>,
-) -> Result<
-    (
-        IndexMap<String, RelationDecl>,
-        IndexMap<String, ConstructorDecl>,
-    ),
-    CausalSliceError,
-> {
+) -> Result<CollectedDeclarations, CausalSliceError> {
     let mut relations = IndexMap::default();
     let mut constructors = IndexMap::default();
+    let mut mutable_functions = IndexMap::default();
     let mut datatype_sorts = HashSet::default();
     let mut opaque_sorts = HashSet::default();
     for command in commands {
@@ -2471,10 +2597,62 @@ fn collect_declarations(
                     );
                 }
             }
+            Command::Function {
+                span,
+                name,
+                schema,
+                merge: Some(merge),
+                hidden,
+                let_binding,
+                term_constructor,
+                identity_vals,
+                ..
+            } if !hidden
+                && !let_binding
+                && term_constructor.is_none()
+                && identity_vals.is_none()
+                && merge.actions.0.is_empty()
+                && matches!(&merge.result, GenericExpr::Var(_, variable) if variable == "new") =>
+            {
+                let [output] = schema.outputs.as_slice() else {
+                    continue;
+                };
+                for sort in schema.input.iter().chain(std::iter::once(output)) {
+                    if !supported_sort(sort) {
+                        return unsupported(
+                            span,
+                            format!(
+                                "`:merge new` function `{name}` with unsupported sort `{sort}`"
+                            ),
+                        );
+                    }
+                }
+                if mutable_functions
+                    .insert(
+                        name.clone(),
+                        MutableFunctionDecl {
+                            inputs: schema.input.clone(),
+                            output: output.clone(),
+                            opaque_sort: schema
+                                .input
+                                .iter()
+                                .chain(std::iter::once(output))
+                                .find(|sort| opaque_sorts.contains(*sort))
+                                .cloned(),
+                        },
+                    )
+                    .is_some()
+                {
+                    return unsupported(
+                        span,
+                        format!("duplicate mutable function declaration `{name}`"),
+                    );
+                }
+            }
             _ => {}
         }
     }
-    Ok((relations, constructors))
+    Ok((relations, constructors, mutable_functions))
 }
 
 fn name_and_prepare_rules(
@@ -2725,13 +2903,17 @@ fn collect_fact_vars(fact: &Fact, vars: &mut HashSet<String>) {
 
 fn validate_and_model(
     commands: &[Command],
-    relations: &IndexMap<String, RelationDecl>,
-    constructors: &IndexMap<String, ConstructorDecl>,
+    declarations: ModelDeclarations<'_>,
     source_rule_origins: &IndexMap<usize, SourceRuleOrigin>,
     registered_presorts: &HashSet<String>,
     source_name: &str,
     fact_directory: Option<&Path>,
 ) -> Result<ProgramModel, CausalSliceError> {
+    let ModelDeclarations {
+        relations,
+        constructors,
+        mutable_functions,
+    } = declarations;
     let mut rules = IndexMap::default();
     let mut checks = Vec::new();
     let mut source_facts = Vec::new();
@@ -2795,6 +2977,7 @@ fn validate_and_model(
                     rule,
                     relations,
                     constructors,
+                    mutable_functions,
                     &source_globals,
                     derived_replay_vars,
                 ) {
@@ -3006,6 +3189,7 @@ fn validate_and_model(
         checks,
         source_facts,
         constructors: constructors.clone(),
+        mutable_functions: mutable_functions.clone(),
         source_expansions,
         schedule_indices,
         prefix_fallbacks,
@@ -3029,9 +3213,11 @@ fn opaque_rule_model(
         span: rule.span.clone(),
         body: Vec::new(),
         body_lookups: Vec::new(),
+        body_functions: Vec::new(),
         body_primitives: Vec::new(),
         head: Vec::new(),
         head_constructors: Vec::new(),
+        head_sets: Vec::new(),
         head_subsumes: Vec::new(),
         head_primitives: Vec::new(),
         head_unions: Vec::new(),
@@ -3124,6 +3310,7 @@ fn model_rule(
     rule: &crate::ast::Rule,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    mutable_functions: &IndexMap<String, MutableFunctionDecl>,
     source_globals: &IndexMap<String, String>,
     derived_replay_vars: &[String],
 ) -> Result<RuleModel, CausalSliceError> {
@@ -3181,6 +3368,7 @@ fn model_rule(
         }
     }
     let mut body_lookups = Vec::new();
+    let mut body_functions = Vec::new();
     for fact in &rule.body {
         let GenericFact::Eq(span, left, right) = fact else {
             continue;
@@ -3207,6 +3395,27 @@ fn model_rule(
                 &mut var_sorts,
             )?;
             body_primitives.push(primitive);
+            continue;
+        }
+        if let Some(lookup) = model_function_lookup(
+            span,
+            left,
+            right,
+            mutable_functions,
+            constructors,
+            source_globals,
+            &format!("rule `{}` body", rule.name),
+        )? {
+            for (key, sort) in lookup.keys.iter().zip(&lookup.input_sorts) {
+                register_arg_vars(key, sort, &mut var_order, &mut var_sorts)?;
+            }
+            register_arg_vars(
+                &lookup.output,
+                &lookup.output_sort,
+                &mut var_order,
+                &mut var_sorts,
+            )?;
+            body_functions.push(lookup);
             continue;
         }
         let lookup = model_constructor_lookup(
@@ -3238,6 +3447,7 @@ fn model_rule(
     }
     let mut head = Vec::new();
     let mut head_constructors = Vec::new();
+    let mut head_sets = Vec::new();
     let mut head_subsumes = Vec::new();
     let mut head_unions = Vec::new();
     for action in &rule.head.0 {
@@ -3288,6 +3498,62 @@ fn model_rule(
                 )?;
                 let args = vec![equality.left.clone(), equality.right.clone()];
                 head_unions.push(equality);
+                args
+            }
+            GenericAction::Set(span, function, keys, value) => {
+                let Some(declaration) = mutable_functions.get(function) else {
+                    return unsupported_action(
+                        action,
+                        format!(
+                            "a non-insert/union head action in rule `{}`: set of function `{function}` without an exact single-output `:merge new` declaration",
+                            rule.name,
+                        ),
+                    );
+                };
+                if let Some(sort) = &declaration.opaque_sort {
+                    return unsupported(
+                        span,
+                        format!(
+                            "set of function `{function}` with opaque container sort `{sort}` in rule `{}`",
+                            rule.name
+                        ),
+                    );
+                }
+                if keys.len() != declaration.inputs.len() {
+                    return unsupported(
+                        span,
+                        format!(
+                            "set of function `{function}` with {} keys instead of {} in rule `{}`",
+                            keys.len(),
+                            declaration.inputs.len(),
+                            rule.name
+                        ),
+                    );
+                }
+                let modeled_keys = keys
+                    .iter()
+                    .zip(&declaration.inputs)
+                    .map(|(key, sort)| {
+                        model_atom_arg(key, sort, constructors, source_globals, "rule head set")
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let modeled_value = model_atom_arg(
+                    value,
+                    &declaration.output,
+                    constructors,
+                    source_globals,
+                    "rule head set",
+                )?;
+                let mut args = modeled_keys.clone();
+                args.push(modeled_value.clone());
+                head_sets.push(FunctionSetTemplate {
+                    span: span.clone(),
+                    function: function.clone(),
+                    keys: modeled_keys,
+                    value: modeled_value,
+                    input_sorts: declaration.inputs.clone(),
+                    output_sort: declaration.output.clone(),
+                });
                 args
             }
             GenericAction::Change(span, crate::ast::Change::Subsume, function, args) => {
@@ -3345,6 +3611,11 @@ fn model_rule(
         .iter()
         .flat_map(|atom| atom.args.iter())
         .chain(head_constructors.iter())
+        .chain(
+            head_sets
+                .iter()
+                .flat_map(|set| set.keys.iter().chain(std::iter::once(&set.value))),
+        )
         .chain(head_subsumes.iter())
         .chain(
             head_unions
@@ -3385,12 +3656,12 @@ fn model_rule(
     }
     if !head_unions.is_empty()
         && head_subsumes.is_empty()
-        && (rule.head.0.len() != 1 || head_unions.len() != 1)
+        && (rule.head.0.len() != 1 + head_sets.len() || head_unions.len() != 1)
     {
         return unsupported(
             &rule.span,
             format!(
-                "a union mixed with other head actions in rule `{}`; replaying a retained complete head requires redundant-union support",
+                "a union mixed with head actions other than exact `:merge new` sets in rule `{}`",
                 rule.name
             ),
         );
@@ -3403,11 +3674,18 @@ fn model_rule(
     // with an exact guard. One-atom rules use MinCover and retain every column.
     if rule.body.len() > 1 {
         let body_occurrences =
-            variable_rule_fact_occurrences(&body, &body_lookups, &body_primitives);
+            variable_rule_fact_occurrences(&body, &body_lookups, &body_functions, &body_primitives);
         let mut head_vars = atom_variables(&head);
         for constructor in &head_constructors {
             for (_, var) in atom_arg_vars(constructor) {
                 head_vars.insert(var.as_str());
+            }
+        }
+        for set in &head_sets {
+            for arg in set.keys.iter().chain(std::iter::once(&set.value)) {
+                for (_, var) in atom_arg_vars(arg) {
+                    head_vars.insert(var.as_str());
+                }
             }
         }
         for subsume in &head_subsumes {
@@ -3464,9 +3742,11 @@ fn model_rule(
         span: rule.span.clone(),
         body,
         body_lookups,
+        body_functions,
         body_primitives,
         head,
         head_constructors,
+        head_sets,
         head_subsumes,
         head_primitives,
         head_unions,
@@ -3809,6 +4089,77 @@ fn model_constructor_lookup(
     })
 }
 
+fn model_function_lookup(
+    span: &Span,
+    left: &Expr,
+    right: &Expr,
+    mutable_functions: &IndexMap<String, MutableFunctionDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+    context: &str,
+) -> Result<Option<FunctionLookupTemplate>, CausalSliceError> {
+    let left_function = match left {
+        GenericExpr::Call(_, function, args) if mutable_functions.contains_key(function) => {
+            Some((function, args))
+        }
+        _ => None,
+    };
+    let right_function = match right {
+        GenericExpr::Call(_, function, args) if mutable_functions.contains_key(function) => {
+            Some((function, args))
+        }
+        _ => None,
+    };
+    let ((function, keys), output) = match (left_function, right_function) {
+        (Some(call), None) => (call, right),
+        (None, Some(call)) => (call, left),
+        (None, None) => return Ok(None),
+        (Some(_), Some(_)) => {
+            return unsupported(
+                span,
+                format!("two mutable function calls in one equality in {context}"),
+            );
+        }
+    };
+    let declaration = &mutable_functions[function];
+    if let Some(sort) = &declaration.opaque_sort {
+        return unsupported(
+            span,
+            format!(
+                "lookup of function `{function}` with opaque container sort `{sort}` in {context}"
+            ),
+        );
+    }
+    if keys.len() != declaration.inputs.len() {
+        return unsupported(
+            span,
+            format!(
+                "lookup of function `{function}` with {} keys instead of {} in {context}",
+                keys.len(),
+                declaration.inputs.len()
+            ),
+        );
+    }
+    Ok(Some(FunctionLookupTemplate {
+        span: span.clone(),
+        function: function.clone(),
+        keys: keys
+            .iter()
+            .zip(&declaration.inputs)
+            .map(|(key, sort)| model_atom_arg(key, sort, constructors, source_globals, context))
+            .collect::<Result<Vec<_>, _>>()?,
+        output: model_atom_arg(
+            output,
+            &declaration.output,
+            constructors,
+            source_globals,
+            context,
+        )?,
+        input_sorts: declaration.inputs.clone(),
+        output_sort: declaration.output.clone(),
+    }))
+}
+
 fn infer_equality_expr_sort(
     expr: &Expr,
     known_var_sorts: &IndexMap<String, String>,
@@ -3853,6 +4204,7 @@ fn register_equality_vars(
 fn variable_rule_fact_occurrences<'a>(
     atoms: &'a [AtomTemplate],
     lookups: &'a [ConstructorLookupTemplate],
+    functions: &'a [FunctionLookupTemplate],
     primitives: &'a [QueryPrimitiveTemplate],
 ) -> HashMap<&'a str, usize> {
     let mut occurrences = variable_atom_occurrences(atoms);
@@ -3860,6 +4212,20 @@ fn variable_rule_fact_occurrences<'a>(
         let mut vars = HashSet::default();
         for (_, var) in atom_arg_vars(&lookup.application)
             .into_iter()
+            .chain(atom_arg_vars(&lookup.output))
+        {
+            vars.insert(var.as_str());
+        }
+        for var in vars {
+            *occurrences.entry(var).or_default() += 1;
+        }
+    }
+    for lookup in functions {
+        let mut vars = HashSet::default();
+        for (_, var) in lookup
+            .keys
+            .iter()
+            .flat_map(atom_arg_vars)
             .chain(atom_arg_vars(&lookup.output))
         {
             vars.insert(var.as_str());
@@ -4451,12 +4817,24 @@ fn rule_global_uses(rule: &RuleModel) -> IndexMap<&str, &str> {
         collect_atom_arg_globals(&lookup.application, &mut globals);
         collect_atom_arg_globals(&lookup.output, &mut globals);
     }
+    for lookup in &rule.body_functions {
+        for key in &lookup.keys {
+            collect_atom_arg_globals(key, &mut globals);
+        }
+        collect_atom_arg_globals(&lookup.output, &mut globals);
+    }
     for primitive in &rule.body_primitives {
         collect_atom_arg_globals(&primitive.application, &mut globals);
         collect_atom_arg_globals(&primitive.output, &mut globals);
     }
     for constructor in &rule.head_constructors {
         collect_atom_arg_globals(constructor, &mut globals);
+    }
+    for set in &rule.head_sets {
+        for key in &set.keys {
+            collect_atom_arg_globals(key, &mut globals);
+        }
+        collect_atom_arg_globals(&set.value, &mut globals);
     }
     for subsume in &rule.head_subsumes {
         collect_atom_arg_globals(subsume, &mut globals);
@@ -4747,6 +5125,12 @@ fn elaborate_prefix_replay(
 
     for (wave, batch) in batches.into_iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
+        if !batch.mutations.is_empty() {
+            return Err(CausalSliceError::Unsupported {
+                location: format!("traced Prefix wave {wave}"),
+                reason: "mutable-state commit receipts in conservative Prefix replay".to_owned(),
+            });
+        }
         let prestate_witness_snapshot = witnesses.snapshot();
         let prestate_witnesses = snapshot_primitive_result_witnesses(&batch, witnesses);
         let applications_by_origin = OriginIndex::build(
@@ -4994,6 +5378,7 @@ fn elaborate_events(
     let mut dependencies = DepArena::default();
     let mut events = EventArena::default();
     let mut producers = IndexMap::default();
+    let mut function_rows = IndexMap::default();
     let mut equality_forest = EqualityForest::default();
     let mut opaque_equality_error = None;
     let mut source_events = 0;
@@ -5047,6 +5432,15 @@ fn elaborate_events(
             |application| Some(application.origin.index()),
             "primitive",
         )?;
+        let mutations_by_origin = OriginIndex::build(
+            batch.matches.len(),
+            &batch.mutations,
+            |receipt| match &receipt.cause {
+                TableMutationCause::Rule { origin, .. } => Some(origin.index()),
+                TableMutationCause::Rebuild { .. } | TableMutationCause::Unattributed => None,
+            },
+            "mutable mutation",
+        )?;
         let mut unions_by_origin = vec![Vec::new(); batch.matches.len()];
         for receipt in &batch.unions {
             let Some(origin) = receipt.origin else {
@@ -5073,6 +5467,7 @@ fn elaborate_events(
 
         let mut new_outputs = IndexMap::<RowKey, DepId>::default();
         let mut new_equality_edges = Vec::new();
+        let mut origin_event_dependencies = vec![None; batch.matches.len()];
         for (ordinal, captured) in batch.matches.iter().enumerate() {
             let rule_name = captured.rule.as_ref();
             let model = rules.get(rule_name).ok_or_else(|| {
@@ -5116,6 +5511,13 @@ fn elaborate_events(
                 }
             };
             if let Some(policy) = policy {
+                let mutation_indices = mutations_by_origin.for_origin(ordinal);
+                let effective_mutation = mutation_indices.iter().any(|index| {
+                    matches!(
+                        batch.mutations[*index as usize].outcome,
+                        TableMutationOutcome::Inserted | TableMutationOutcome::Replaced
+                    )
+                });
                 let known_applications = applications_by_origin[ordinal]
                     .iter()
                     .copied()
@@ -5129,7 +5531,8 @@ fn elaborate_events(
                 if matches!(policy, OpaqueRulePolicy::EmptyBodyInitializer)
                     && (known_applications.len() != applications_by_origin[ordinal].len()
                         || !primitives_by_origin.for_origin(ordinal).is_empty()
-                        || !unions_by_origin[ordinal].is_empty())
+                        || !unions_by_origin[ordinal].is_empty()
+                        || !mutation_indices.is_empty())
                 {
                     return Err(CausalSliceError::Invariant(format!(
                         "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
@@ -5209,7 +5612,8 @@ fn elaborate_events(
                 };
                 let has_effect = !effective_outputs.is_empty()
                     || !effects.new_witnesses.is_empty()
-                    || applied_union;
+                    || applied_union
+                    || effective_mutation;
                 let mut effect_prerequisites = DepArena::EMPTY;
                 for dependency in effects.read_dependencies.iter().copied() {
                     effect_prerequisites = dependencies.and(effect_prerequisites, dependency)?;
@@ -5239,6 +5643,7 @@ fn elaborate_events(
                                 effective_outputs: effective_outputs.clone(),
                             })?;
                             let dependency = dependencies.event(event)?;
+                            origin_event_dependencies[ordinal] = Some(dependency);
                             for row in effective_outputs {
                                 new_outputs.insert(row, dependency);
                             }
@@ -5269,14 +5674,15 @@ fn elaborate_events(
                                 effective_outputs: effective_outputs.clone(),
                             })?;
                             let dependency = dependencies.event(event)?;
+                            origin_event_dependencies[ordinal] = Some(dependency);
                             for row in effective_outputs {
                                 new_outputs.insert(row, dependency);
                             }
                             for witness in effects.new_witnesses {
                                 witnesses.set_availability(witness, dependency);
                             }
-                            for (left, right) in deferred_grounding_equality_edges {
-                                new_equality_edges.push((left, right, dependency));
+                            for equality in deferred_grounding_equality_edges {
+                                new_equality_edges.push((equality, dependency));
                             }
                             opaque_promoted_events += 1;
                         }
@@ -5312,6 +5718,7 @@ fn elaborate_events(
             let Some((primitive_availability, primitive_error)) = primitive_result else {
                 if !applications_by_origin[ordinal].is_empty()
                     || !unions_by_origin[ordinal].is_empty()
+                    || !mutations_by_origin.for_origin(ordinal).is_empty()
                 {
                     return Err(CausalSliceError::Invariant(format!(
                         "query-filtered rule `{rule_name}` still produced head effects"
@@ -5383,6 +5790,18 @@ fn elaborate_events(
                         Some(&prestate_witness_snapshot),
                     )?);
                 }
+                for lookup in &model.body_functions {
+                    let (_row_dependency, lookup_dependencies) = function_lookup_dependencies(
+                        egraph,
+                        lookup,
+                        &bindings,
+                        witnesses,
+                        &prestate_witness_snapshot,
+                        &function_rows,
+                        &equality_forest,
+                    )?;
+                    premise_dependencies.extend(lookup_dependencies);
+                }
                 let mut prerequisites = DepArena::EMPTY;
                 for dependency in premise_dependencies {
                     prerequisites = dependencies.and(prerequisites, dependency)?;
@@ -5438,6 +5857,42 @@ fn elaborate_events(
                         location: model.span.to_string(),
                         reason: format!("{} in rule `{rule_name}`", error.reason),
                     });
+            let mutation_indices = mutations_by_origin.for_origin(ordinal);
+            let mutation_receipts = mutation_indices
+                .iter()
+                .map(|index| &batch.mutations[*index as usize])
+                .collect::<Vec<_>>();
+            let raw_effective_mutation = mutation_receipts.iter().any(|receipt| {
+                matches!(
+                    receipt.outcome,
+                    TableMutationOutcome::Inserted | TableMutationOutcome::Replaced
+                )
+            });
+            let effective_mutation = if opaque_error.is_some() {
+                raw_effective_mutation
+            } else {
+                match validate_rule_mutation_receipts(
+                    egraph,
+                    rule_name,
+                    model,
+                    &bindings,
+                    &mutation_receipts,
+                    trace_functions,
+                    witnesses,
+                ) {
+                    Ok(effective) => effective,
+                    Err(CausalSliceError::Unsupported { location, reason }) => {
+                        opaque_error = Some(DeferredUnsupported {
+                            location: model.span.to_string(),
+                            reason: format!(
+                                "{reason} while grounding {location} in the complete head of rule `{rule_name}`"
+                            ),
+                        });
+                        raw_effective_mutation
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
             for dependency in effects.read_dependencies.iter().copied() {
                 prerequisites = dependencies.and(prerequisites, dependency)?;
             }
@@ -5512,6 +5967,7 @@ fn elaborate_events(
                 if applied_unions.is_empty()
                     && effective_outputs.is_empty()
                     && effects.new_witnesses.is_empty()
+                    && !effective_mutation
                 {
                     continue;
                 }
@@ -5522,14 +5978,15 @@ fn elaborate_events(
                     effective_outputs: effective_outputs.clone(),
                 })?;
                 let dependency = dependencies.event(event)?;
+                origin_event_dependencies[ordinal] = Some(dependency);
                 for row in effective_outputs {
                     new_outputs.insert(row, dependency);
                 }
                 for witness in effects.new_witnesses {
                     witnesses.set_availability(witness, dependency);
                 }
-                for (left, right) in applied_unions {
-                    new_equality_edges.push((left, right, dependency));
+                for equality in applied_unions {
+                    new_equality_edges.push((equality, dependency));
                     if opaque_equality_error.is_none() {
                         opaque_equality_error = Some(error.clone());
                     }
@@ -5550,6 +6007,7 @@ fn elaborate_events(
             let promoted = if effective_outputs.is_empty()
                 && effects.new_witnesses.is_empty()
                 && applied_unions.is_empty()
+                && !effective_mutation
             {
                 None
             } else {
@@ -5560,14 +6018,15 @@ fn elaborate_events(
                     effective_outputs: effective_outputs.clone(),
                 })?;
                 let dependency = dependencies.event(event)?;
+                origin_event_dependencies[ordinal] = Some(dependency);
                 for row in effective_outputs {
                     new_outputs.insert(row, dependency);
                 }
                 for witness in effects.new_witnesses {
                     witnesses.set_availability(witness, dependency);
                 }
-                for (left, right) in applied_unions {
-                    new_equality_edges.push((left, right, dependency));
+                for equality in applied_unions {
+                    new_equality_edges.push((equality, dependency));
                 }
                 Some(event)
             };
@@ -5578,12 +6037,22 @@ fn elaborate_events(
         }
 
         // A bounded ruleset iteration searches against one pre-state. Publish
-        // all newly produced rows only after every captured match is elaborated.
+        // every successful union before interpreting the canonical rebuild
+        // receipts it caused, but only after every captured match is elaborated.
+        for (equality, dependency) in new_equality_edges {
+            equality_forest.add(equality, dependency)?;
+        }
+        apply_wave_mutation_receipts(
+            wave,
+            &batch.mutations,
+            trace_functions,
+            &origin_event_dependencies,
+            &mut function_rows,
+            &equality_forest,
+            &mut dependencies,
+        )?;
         for (row, dependency) in new_outputs {
             producers.insert(row, dependency);
-        }
-        for (left, right, dependency) in new_equality_edges {
-            equality_forest.add(left, right, dependency)?;
         }
     }
     Ok(Elaboration {
@@ -6420,11 +6889,632 @@ fn global_use_dependencies(
     Ok(dependencies)
 }
 
+fn logical_function_row(
+    table: TableId,
+    row: &[Value],
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    location: &str,
+) -> Result<(FunctionRowKey, TypedEndpoint), CausalSliceError> {
+    let meta = trace_functions.get(&table).ok_or_else(|| {
+        CausalSliceError::Invariant(format!(
+            "{location} referenced unmodeled mutation table {table:?}"
+        ))
+    })?;
+    if meta.kind != TraceFunctionKind::Mutable {
+        return Err(CausalSliceError::Invariant(format!(
+            "{location} reported a mutation for non-mutable traced function `{}`",
+            meta.name
+        )));
+    }
+    let logical_arity = meta.input_sorts.len() + 1;
+    if row.len() < logical_arity {
+        return Err(CausalSliceError::Invariant(format!(
+            "{location} captured {} columns for mutable function `{}` with logical arity {logical_arity}",
+            row.len(),
+            meta.name
+        )));
+    }
+    let keys = meta
+        .input_sorts
+        .iter()
+        .zip(&row[..meta.input_sorts.len()])
+        .map(|(sort, value)| TypedEndpoint {
+            sort: sort.clone(),
+            value: *value,
+        })
+        .collect();
+    let output = TypedEndpoint {
+        sort: meta.output_sort.clone(),
+        value: row[meta.input_sorts.len()],
+    };
+    Ok((
+        FunctionRowKey {
+            function: meta.name.clone(),
+            keys,
+        },
+        output,
+    ))
+}
+
+fn ground_function_set(
+    egraph: &EGraph,
+    set: &FunctionSetTemplate,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+) -> Result<(FunctionRowKey, TypedEndpoint), CausalSliceError> {
+    let keys = set
+        .keys
+        .iter()
+        .zip(&set.input_sorts)
+        .map(|(key, sort)| ground_arg(egraph, key, sort, bindings, witnesses))
+        .collect::<Result<Vec<_>, _>>()?;
+    let output = ground_arg(egraph, &set.value, &set.output_sort, bindings, witnesses)?;
+    Ok((
+        FunctionRowKey {
+            function: set.function.clone(),
+            keys,
+        },
+        output,
+    ))
+}
+
+fn validate_rule_mutation_receipts(
+    egraph: &EGraph,
+    rule_name: &str,
+    model: &RuleModel,
+    bindings: &IndexMap<String, BindingWitness>,
+    receipts: &[&TableMutationReceipt],
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    witnesses: &WitnessArena,
+) -> Result<bool, CausalSliceError> {
+    if model.head_sets.len() != receipts.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` modeled {} exact `:merge new` set action(s) but native commit reported {} rule-attributed mutation receipt(s)",
+            model.head_sets.len(),
+            receipts.len()
+        )));
+    }
+    let expected = model
+        .head_sets
+        .iter()
+        .map(|set| ground_function_set(egraph, set, bindings, witnesses))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut used = vec![false; expected.len()];
+    let mut instructions = HashSet::default();
+    let mut effective = false;
+    for receipt in receipts {
+        let TableMutationCause::Rule { instruction, .. } = receipt.cause else {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` was grouped with a non-rule mutation receipt"
+            )));
+        };
+        if !instructions.insert(instruction) {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` reported more than one mutation for traced head instruction {instruction}"
+            )));
+        }
+        let location = format!("mutation from rule `{rule_name}` instruction {instruction}");
+        let incoming =
+            logical_function_row(receipt.table, &receipt.incoming, trace_functions, &location)?;
+        let Some(expected_index) = expected
+            .iter()
+            .enumerate()
+            .position(|(index, row)| !used[index] && row == &incoming)
+        else {
+            let expected_locations = model
+                .head_sets
+                .iter()
+                .map(|set| set.span.to_string())
+                .collect::<Vec<_>>();
+            return Err(CausalSliceError::Invariant(format!(
+                "{location} committed logical row {incoming:?}, which does not match any remaining complete-head set {expected:?} at {expected_locations:?}"
+            )));
+        };
+        used[expected_index] = true;
+
+        let committed = logical_function_row(
+            receipt.table,
+            &receipt.committed,
+            trace_functions,
+            &location,
+        )?;
+        if committed != incoming {
+            return Err(CausalSliceError::Invariant(format!(
+                "{location} selected {committed:?} instead of its incoming row {incoming:?} for exact `:merge new`"
+            )));
+        }
+        let previous = receipt
+            .previous
+            .as_deref()
+            .map(|row| logical_function_row(receipt.table, row, trace_functions, &location))
+            .transpose()?;
+        match receipt.outcome {
+            TableMutationOutcome::Inserted => {
+                if previous.is_some() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} reported Inserted with a previous row"
+                    )));
+                }
+                effective = true;
+            }
+            TableMutationOutcome::Replaced => {
+                let Some((previous_key, _)) = previous else {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} reported Replaced without a previous row"
+                    )));
+                };
+                if previous_key != incoming.0 {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} replaced a row at a different logical key"
+                    )));
+                }
+                effective = true;
+            }
+            TableMutationOutcome::NoOp => {
+                let Some(previous) = previous else {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} reported NoOp without a previous row"
+                    )));
+                };
+                if previous != committed {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} reported an exact `:merge new` no-op whose selected row differs from the previous row"
+                    )));
+                }
+            }
+        }
+    }
+    debug_assert!(used.into_iter().all(|matched| matched));
+    Ok(effective)
+}
+
+fn function_lookup_dependencies(
+    egraph: &EGraph,
+    lookup: &FunctionLookupTemplate,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+    snapshot: &WitnessSnapshot,
+    function_rows: &IndexMap<FunctionRowKey, FunctionRowState>,
+    equality_forest: &EqualityForest,
+) -> Result<(DepId, Vec<DepId>), CausalSliceError> {
+    let mut syntax_dependencies = Vec::new();
+    let mut keys = lookup
+        .keys
+        .iter()
+        .zip(&lookup.input_sorts)
+        .map(|(key, sort)| {
+            let endpoint = ground_arg_at(egraph, key, sort, bindings, witnesses, Some(snapshot))?;
+            match key {
+                AtomArg::Lit(_) => {}
+                AtomArg::Var(_, variable) => {
+                    let binding = bindings.get(variable).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "mutable lookup grounding omitted source variable `{variable}`"
+                        ))
+                    })?;
+                    syntax_dependencies.push(witnesses.availability(binding.syntax));
+                }
+                AtomArg::Global { name, sort } => {
+                    syntax_dependencies
+                        .push(witnesses.availability(witnesses.global_witness(name, sort)?));
+                }
+                AtomArg::App { .. } => {
+                    syntax_dependencies.push(endpoint_availability_at(
+                        &endpoint,
+                        witnesses,
+                        &lookup.span,
+                        Some(snapshot),
+                    )?);
+                }
+            }
+            Ok(endpoint)
+        })
+        .collect::<Result<Vec<_>, CausalSliceError>>()?;
+    for endpoint in &mut keys {
+        let canonical = equality_forest.canonical_endpoint(endpoint);
+        if canonical != *endpoint {
+            return Err(CausalSliceError::Unsupported {
+                location: lookup.span.to_string(),
+                reason: format!(
+                    "an equality-rekeyed key lookup of mutable function `{}`; the unchanged strict proof extractor rejects the corresponding non-reflexive function fact",
+                    lookup.function
+                ),
+            });
+        }
+    }
+    let expected_output = ground_arg_at(
+        egraph,
+        &lookup.output,
+        &lookup.output_sort,
+        bindings,
+        witnesses,
+        Some(snapshot),
+    )?;
+    match &lookup.output {
+        AtomArg::Lit(_) => {}
+        AtomArg::Var(_, variable) => {
+            let binding = bindings.get(variable).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "mutable lookup grounding omitted source variable `{variable}`"
+                ))
+            })?;
+            syntax_dependencies.push(witnesses.availability(binding.syntax));
+        }
+        AtomArg::Global { name, sort } => {
+            syntax_dependencies.push(witnesses.availability(witnesses.global_witness(name, sort)?));
+        }
+        AtomArg::App { .. } => {
+            syntax_dependencies.push(endpoint_availability_at(
+                &expected_output,
+                witnesses,
+                &lookup.span,
+                Some(snapshot),
+            )?);
+        }
+    }
+    let canonical_output = equality_forest.canonical_endpoint(&expected_output);
+    if canonical_output != expected_output {
+        return Err(CausalSliceError::Unsupported {
+            location: lookup.span.to_string(),
+            reason: format!(
+                "an equality-rekeyed output lookup of mutable function `{}`; the unchanged strict proof extractor rejects the corresponding non-reflexive function fact",
+                lookup.function
+            ),
+        });
+    }
+    let key = FunctionRowKey {
+        function: lookup.function.clone(),
+        keys,
+    };
+    let state = function_rows.get(&key).ok_or_else(|| {
+        CausalSliceError::Unsupported {
+            location: lookup.span.to_string(),
+            reason: format!(
+                "mutable function row `{}` used by a native match without source or commit-time provenance",
+                lookup.function
+            ),
+        }
+    })?;
+    if let Some(error) = &state.deferred_error {
+        return Err(error.clone().into_error());
+    }
+    syntax_dependencies.push(state.dependency);
+    if state.output != expected_output {
+        if state.output.sort != expected_output.sort {
+            return Err(CausalSliceError::Invariant(format!(
+                "mutable function `{}` row output changed runtime sort",
+                lookup.function
+            )));
+        }
+        let explanation = equality_forest
+            .explain(&state.output, &expected_output)
+            .ok_or_else(|| CausalSliceError::Invariant(format!(
+                "native lookup of mutable function `{}` captured output {expected_output:?}, but the current causal sidecar contains {:?}",
+                lookup.function, state.output
+            )))?;
+        syntax_dependencies.extend(explanation);
+    }
+    Ok((state.dependency, syntax_dependencies))
+}
+
+fn poisoned_function_row(
+    output: TypedEndpoint,
+    location: String,
+    reason: String,
+) -> FunctionRowState {
+    FunctionRowState {
+        output,
+        dependency: DepArena::EMPTY,
+        deferred_error: Some(DeferredUnsupported { location, reason }),
+    }
+}
+
+struct RekeyFunctionRowInput<'a> {
+    previous_key: &'a FunctionRowKey,
+    previous_output: &'a TypedEndpoint,
+    incoming_key: &'a FunctionRowKey,
+    incoming_output: &'a TypedEndpoint,
+    equality_forest: &'a EqualityForest,
+    location: &'a str,
+}
+
+fn rekey_function_row_dependency(
+    input: RekeyFunctionRowInput<'_>,
+    previous_dependency: DepId,
+    dependencies: &mut DepArena,
+) -> Result<DepId, DeferredUnsupported> {
+    let RekeyFunctionRowInput {
+        previous_key,
+        previous_output,
+        incoming_key,
+        incoming_output,
+        equality_forest,
+        location,
+    } = input;
+    if previous_key.function != incoming_key.function
+        || previous_key.keys.len() != incoming_key.keys.len()
+        || previous_output.sort != incoming_output.sort
+    {
+        return Err(DeferredUnsupported {
+            location: location.to_owned(),
+            reason: "a mutable function rebuild changed its logical schema".to_owned(),
+        });
+    }
+    let mut support = previous_dependency;
+    for (previous, incoming) in previous_key
+        .keys
+        .iter()
+        .zip(&incoming_key.keys)
+        .chain(std::iter::once((previous_output, incoming_output)))
+    {
+        if previous == incoming {
+            continue;
+        }
+        if previous.sort != incoming.sort {
+            return Err(DeferredUnsupported {
+                location: location.to_owned(),
+                reason: "a mutable function rebuild changed a cell's runtime sort".to_owned(),
+            });
+        }
+        let Some(explanation) = equality_forest.explain(previous, incoming) else {
+            return Err(DeferredUnsupported {
+                location: location.to_owned(),
+                reason: format!(
+                    "mutable function `{}` rekeyed a `{}` cell without a captured successful-union path",
+                    previous_key.function, previous.sort
+                ),
+            });
+        };
+        for dependency in explanation {
+            support =
+                dependencies
+                    .and(support, dependency)
+                    .map_err(|error| DeferredUnsupported {
+                        location: location.to_owned(),
+                        reason: error.to_string(),
+                    })?;
+        }
+    }
+    Ok(support)
+}
+
+fn apply_wave_mutation_receipts(
+    wave: usize,
+    receipts: &[TableMutationReceipt],
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+    origin_dependencies: &[Option<DepId>],
+    function_rows: &mut IndexMap<FunctionRowKey, FunctionRowState>,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+) -> Result<(), CausalSliceError> {
+    for receipt in receipts {
+        match &receipt.cause {
+            TableMutationCause::Rule {
+                origin,
+                instruction,
+            } => {
+                let location =
+                    format!("traced wave {wave} rule mutation instruction {instruction}");
+                let (incoming_key, incoming_output) = logical_function_row(
+                    receipt.table,
+                    &receipt.incoming,
+                    trace_functions,
+                    &location,
+                )?;
+                let (committed_key, committed_output) = logical_function_row(
+                    receipt.table,
+                    &receipt.committed,
+                    trace_functions,
+                    &location,
+                )?;
+                if committed_key != incoming_key || committed_output != incoming_output {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "{location} did not select its incoming logical row under exact `:merge new`"
+                    )));
+                }
+                match receipt.outcome {
+                    TableMutationOutcome::Inserted | TableMutationOutcome::Replaced => {
+                        let dependency = origin_dependencies
+                            .get(origin.index())
+                            .copied()
+                            .flatten()
+                            .ok_or_else(|| {
+                                CausalSliceError::Invariant(format!(
+                                    "{location} changed mutable state without a promoted originating event"
+                                ))
+                            })?;
+                        function_rows.insert(
+                            incoming_key,
+                            FunctionRowState {
+                                output: incoming_output,
+                                dependency,
+                                deferred_error: None,
+                            },
+                        );
+                    }
+                    TableMutationOutcome::NoOp => {
+                        if let Some(state) = function_rows.get(&incoming_key) {
+                            if state.output != committed_output {
+                                return Err(CausalSliceError::Invariant(format!(
+                                    "{location} selected a no-op output different from the causal sidecar"
+                                )));
+                            }
+                        } else {
+                            function_rows.insert(
+                                incoming_key,
+                                poisoned_function_row(
+                                    committed_output,
+                                    location,
+                                    "an exact `:merge new` no-op selected a prior row without source or commit-time provenance"
+                                        .to_owned(),
+                                ),
+                            );
+                        }
+                    }
+                }
+            }
+            TableMutationCause::Rebuild { previous } => {
+                let location = format!("traced wave {wave} mutable function rebuild");
+                let (previous_key, previous_output) =
+                    logical_function_row(receipt.table, previous, trace_functions, &location)?;
+                let (incoming_key, incoming_output) = logical_function_row(
+                    receipt.table,
+                    &receipt.incoming,
+                    trace_functions,
+                    &location,
+                )?;
+                let (committed_key, committed_output) = logical_function_row(
+                    receipt.table,
+                    &receipt.committed,
+                    trace_functions,
+                    &location,
+                )?;
+                let source_state = function_rows.shift_remove(&previous_key);
+                let target_state = if incoming_key == previous_key {
+                    None
+                } else {
+                    function_rows.get(&incoming_key).cloned()
+                };
+                let previous_at_target = receipt
+                    .previous
+                    .as_deref()
+                    .map(|row| logical_function_row(receipt.table, row, trace_functions, &location))
+                    .transpose()?;
+
+                match receipt.outcome {
+                    TableMutationOutcome::NoOp => {
+                        let Some((target_key, target_output)) = previous_at_target else {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "{location} reported NoOp without a previous target row"
+                            )));
+                        };
+                        if (committed_key.clone(), committed_output.clone())
+                            != (target_key, target_output)
+                        {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "{location} no-op did not preserve its previous target row"
+                            )));
+                        }
+                        if let Some(target) = target_state {
+                            if target.output != committed_output {
+                                return Err(CausalSliceError::Invariant(format!(
+                                    "{location} target output differs from the causal sidecar"
+                                )));
+                            }
+                        } else {
+                            function_rows.insert(
+                                committed_key,
+                                poisoned_function_row(
+                                    committed_output,
+                                    location,
+                                    "a mutable function rekey collision selected an untracked prior target row"
+                                        .to_owned(),
+                                ),
+                            );
+                        }
+                    }
+                    TableMutationOutcome::Inserted => {
+                        if previous_at_target.is_some() {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "{location} reported Inserted with a previous target row"
+                            )));
+                        }
+                        if committed_key != incoming_key || committed_output != incoming_output {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "{location} inserted a logical row different from the rebuilt proposal"
+                            )));
+                        }
+                        let state = match source_state {
+                            Some(source) if source.output == previous_output => {
+                                match rekey_function_row_dependency(
+                                    RekeyFunctionRowInput {
+                                        previous_key: &previous_key,
+                                        previous_output: &previous_output,
+                                        incoming_key: &incoming_key,
+                                        incoming_output: &incoming_output,
+                                        equality_forest,
+                                        location: &location,
+                                    },
+                                    source.dependency,
+                                    dependencies,
+                                ) {
+                                    Ok(dependency) => FunctionRowState {
+                                        output: incoming_output,
+                                        dependency,
+                                        deferred_error: source.deferred_error,
+                                    },
+                                    Err(error) => poisoned_function_row(
+                                        incoming_output,
+                                        error.location,
+                                        error.reason,
+                                    ),
+                                }
+                            }
+                            Some(source) => poisoned_function_row(
+                                incoming_output,
+                                location,
+                                format!(
+                                    "mutable function rebuild source output {:?} differs from its recorded previous row {previous_output:?}",
+                                    source.output
+                                ),
+                            ),
+                            None => poisoned_function_row(
+                                incoming_output,
+                                location,
+                                "a mutable function rebuild source row lacked causal provenance"
+                                    .to_owned(),
+                            ),
+                        };
+                        function_rows.insert(incoming_key, state);
+                    }
+                    TableMutationOutcome::Replaced => {
+                        let differing_output = previous_at_target
+                            .as_ref()
+                            .is_none_or(|(_, output)| output != &incoming_output);
+                        let reason = if differing_output {
+                            "a mutable function rekey collision selected between differing outputs; sequential replay does not preserve rebuild proposal ordering"
+                        } else {
+                            "a mutable function rebuild replacement did not match exact `:merge new` no-op semantics"
+                        };
+                        function_rows.insert(
+                            committed_key,
+                            poisoned_function_row(committed_output, location, reason.to_owned()),
+                        );
+                    }
+                }
+            }
+            TableMutationCause::Unattributed => {
+                let location = format!("traced wave {wave} unattributed mutable mutation");
+                let (committed_key, committed_output) = logical_function_row(
+                    receipt.table,
+                    &receipt.committed,
+                    trace_functions,
+                    &location,
+                )?;
+                if receipt.outcome != TableMutationOutcome::NoOp
+                    || !function_rows.contains_key(&committed_key)
+                {
+                    function_rows.insert(
+                        committed_key,
+                        poisoned_function_row(
+                            committed_output,
+                            location,
+                            "an unattributed mutable-state change (for example container refresh)"
+                                .to_owned(),
+                        ),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 fn match_union_receipts(
     rule_name: &str,
     expected: &[(TypedEndpoint, TypedEndpoint)],
     receipts: &[&UnionReceipt],
-) -> Result<Vec<(TypedEndpoint, TypedEndpoint)>, CausalSliceError> {
+) -> Result<Vec<AppliedEquality>, CausalSliceError> {
     if expected.len() != receipts.len() {
         return Err(CausalSliceError::Invariant(format!(
             "rule `{rule_name}` modeled {} union action(s) but native commit reported {} receipt(s)",
@@ -6451,7 +7541,12 @@ fn match_union_receipts(
                         "rule `{rule_name}` reported a successful union with identical committed endpoints"
                     )));
                 }
-                applied.push((left.clone(), right.clone()));
+                applied.push(AppliedEquality {
+                    left: left.clone(),
+                    right: right.clone(),
+                    parent,
+                    child,
+                });
             }
             UnionOutcome::Redundant { .. } => {}
         }
@@ -6464,7 +7559,7 @@ fn classify_prefix_union_receipts(
     rule_name: &str,
     expected: &[EqualityTemplate],
     receipts: &[&UnionReceipt],
-) -> Result<Vec<(TypedEndpoint, TypedEndpoint)>, CausalSliceError> {
+) -> Result<Vec<AppliedEquality>, CausalSliceError> {
     if expected.len() != receipts.len() {
         return Err(CausalSliceError::Invariant(format!(
             "rule `{rule_name}` modeled {} union action(s) but native commit reported {} receipt(s)",
@@ -6480,16 +7575,18 @@ fn classify_prefix_union_receipts(
                     "rule `{rule_name}` reported a successful union with identical committed endpoints"
                 )));
             }
-            applied.push((
-                TypedEndpoint {
+            applied.push(AppliedEquality {
+                left: TypedEndpoint {
                     sort: equality.sort.clone(),
                     value: receipt.lhs,
                 },
-                TypedEndpoint {
+                right: TypedEndpoint {
                     sort: equality.sort.clone(),
                     value: receipt.rhs,
                 },
-            ));
+                parent,
+                child,
+            });
         }
     }
     Ok(applied)
@@ -7120,6 +8217,13 @@ fn elaborate_fire_applications<'a>(
                     }
                 }
             }
+            TraceFunctionKind::Mutable => {
+                return Err(CausalSliceError::Unsupported {
+                    location: format!("mutable function application `{}`", meta.name),
+                    reason: "an action-time lookup-or-insert on mutable state; exact `:merge new` sets are traced at commit instead"
+                        .to_owned(),
+                });
+            }
         }
     }
     new_rows.sort_by_key(|row| {
@@ -7175,6 +8279,12 @@ fn alias_captured_head_syntaxes(
     for equality in &model.head_unions {
         collect_postorder_applications(&equality.left, &mut modeled_applications);
         collect_postorder_applications(&equality.right, &mut modeled_applications);
+    }
+    for set in &model.head_sets {
+        for key in &set.keys {
+            collect_postorder_applications(key, &mut modeled_applications);
+        }
+        collect_postorder_applications(&set.value, &mut modeled_applications);
     }
 
     let mut used = vec![false; applications.len()];

@@ -2201,6 +2201,207 @@ fn custom_function_state_use_remains_an_explicit_boundary() {
 }
 
 #[test]
+fn merge_new_unique_write_and_later_read_replay_end_to_end() {
+    let source = r#"
+        (function F (i64) i64 :merge new)
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (rule ((Seed n))
+              ((set (F n) n))
+              :name "write-f")
+        (rule ((Seed n)
+               (= value (F n)))
+              ((Goal value))
+              :name "read-f")
+        (Seed 7)
+        (run 2)
+        (check (Goal 7))
+    "#;
+
+    let slice = causal_slice_program(Some("merge-new-unique.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "write-f", &[("n", "7")]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "read-f",
+        &[("n", "7"), ("value", "7")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("merge-new-unique-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn merge_new_slice_drops_an_irrelevant_key_write() {
+    let source = r#"
+        (function F (i64) i64 :merge new)
+        (relation Seed (i64))
+        (relation Need (i64))
+        (relation Goal (i64))
+        (rule ((Seed n))
+              ((set (F n) n))
+              :name "write-f")
+        (rule ((Need n)
+               (= value (F n)))
+              ((Goal value))
+              :name "read-f")
+        (Seed 1)
+        (Seed 2)
+        (Need 1)
+        (run 2)
+        (check (Goal 1))
+    "#;
+
+    let slice = causal_slice_program(Some("merge-new-irrelevant.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "write-f", &[("n", "1")]));
+    assert!(!has_replay_firing(&slice.source, "write-f", &[("n", "2")]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "read-f",
+        &[("n", "1"), ("value", "1")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("merge-new-irrelevant-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn merge_new_mixed_union_and_set_replays_the_complete_head() {
+    let source = r#"
+        (datatype IR (Iota i64) (KernelIota i64))
+        (datatype DType (Int))
+        (function dtype (IR) DType :merge new)
+        (relation Seed (i64))
+        (rule ((Seed n))
+              ((union (Iota n) (KernelIota n))
+               (set (dtype (KernelIota n)) (Int)))
+              :name "lower-iota")
+        (Seed 7)
+        (run 1)
+        (check (= (Iota 7) (KernelIota 7)))
+    "#;
+
+    let slice = causal_slice_program(Some("merge-new-mixed-head.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "lower-iota",
+        &[("n", "7")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("merge-new-mixed-head-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn merge_new_union_rekeyed_lookup_fails_closed_at_strict_proof_boundary() {
+    let source = r#"
+        (datatype Key (A) (B))
+        (function F (Key) i64 :merge new)
+        (relation Trigger ())
+        (relation Goal (i64))
+        (rule ((Trigger))
+              ((set (F (B)) 7))
+              :name "write-b")
+        (rule ((Trigger))
+              ((union (A) (B)))
+              :name "unify-keys")
+        (rule ((= value (F (A))))
+              ((Goal value))
+              :name "read-a")
+        (Trigger)
+        (run 2)
+        (check (Goal 7))
+    "#;
+
+    let error = causal_slice_program(Some("merge-new-rekey.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unchanged strict proof extractor rejects"),
+        "{error}"
+    );
+}
+
+#[test]
+fn merge_new_same_wave_read_replays_in_one_guarded_batch() {
+    let source = r#"
+        (function F (i64) i64 :merge new)
+        (relation Init ())
+        (relation Trigger ())
+        (relation Seen (i64))
+        (relation Final (i64))
+        (ruleset initialize)
+        (ruleset mutate)
+        (ruleset observe)
+        (rule ((Init))
+              ((set (F 0) 1))
+              :ruleset initialize
+              :name "initialize-f")
+        (rule ((Trigger))
+              ((set (F 0) 2))
+              :ruleset mutate
+              :name "write-f")
+        (rule ((Trigger)
+               (= old (F 0)))
+              ((Seen old))
+              :ruleset mutate
+              :name "read-old")
+        (rule ((= new (F 0)))
+              ((Final new))
+              :ruleset observe
+              :name "read-new")
+        (Init)
+        (Trigger)
+        (run initialize 1)
+        (run mutate 1)
+        (run observe 1)
+        (check (Seen 1))
+        (check (Final 2))
+    "#;
+
+    let slice = causal_slice_program(Some("merge-new-same-wave.egg".to_owned()), source).unwrap();
+    for rule in ["initialize-f", "write-f", "read-old", "read-new"] {
+        assert!(
+            replay_firings(&slice.source)
+                .iter()
+                .any(|(retained, _)| retained == rule),
+            "missing retained firing for {rule}"
+        );
+    }
+    assert!(slice.source.contains("(run-rule-batch :witnesses"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("merge-new-same-wave-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn irrelevant_unsupported_rule_is_deferred_past_backward_slicing() {
     let source = r#"
         (function F (i64) i64 :no-merge)
