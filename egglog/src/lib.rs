@@ -332,6 +332,10 @@ pub struct EGraph {
     pub fact_directory: Option<PathBuf>,
     pub seminaive: bool,
     pub no_decomp: bool,
+    /// Whether constructor-variable unions may be lowered to constructor-table
+    /// sets. Causal tracing disables this semantics-preserving optimization so
+    /// the native action path retains both constructor and union causes.
+    union_to_set_optimization: bool,
     type_info: TypeInfo,
     /// The run report unioned over all runs so far.
     overall_run_report: RunReport,
@@ -460,6 +464,7 @@ impl EGraph {
             fact_directory: None,
             seminaive: true,
             no_decomp: false,
+            union_to_set_optimization: true,
             overall_run_report: Default::default(),
             type_info: Default::default(),
             schedulers: Default::default(),
@@ -604,6 +609,15 @@ impl Display for PreparedSchedule {
 pub struct NotFoundError(String);
 
 impl EGraph {
+    pub(crate) fn with_union_to_set_optimization(mut self, enabled: bool) -> Self {
+        self.union_to_set_optimization = enabled;
+        self
+    }
+
+    fn use_union_to_set_optimization(&self) -> bool {
+        self.union_to_set_optimization && self.proof_state.original_typechecking.is_none()
+    }
+
     /// Create a new e-graph with the term-encoding pipeline enabled.
     ///
     /// In term-encoding mode the e-graph eagerly instruments every constructor
@@ -1558,7 +1572,7 @@ impl EGraph {
 
         // Disable union_to_set optimization in proof or term encoding mode, since
         // it expects only `union` on constructors (not set).
-        let union_to_set = self.proof_state.original_typechecking.is_none();
+        let union_to_set = self.use_union_to_set_optimization();
 
         match self.rulesets.get(&rule.ruleset) {
             Some(Ruleset::Rules(_)) => {}
@@ -1615,12 +1629,13 @@ impl EGraph {
     }
 
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
+        let union_to_set = self.use_union_to_set_optimization();
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
             &mut binding,
             &mut self.parser.symbol_gen,
-            self.proof_state.original_typechecking.is_none(),
+            union_to_set,
         );
         let (actions, _) = actions.to_core_actions(&mut ctx)?;
 
@@ -1989,6 +2004,7 @@ impl EGraph {
     }
 
     fn eval_resolved_expr(&mut self, span: Span, expr: &ResolvedExpr) -> Result<Value, Error> {
+        let union_to_set = self.use_union_to_set_optimization();
         let unit_id = self.backend.base_values().get_ty::<()>();
         let unit_val = self.backend.base_values().get(());
 
@@ -2026,7 +2042,7 @@ impl EGraph {
             &self.type_info,
             &mut binding,
             &mut self.parser.symbol_gen,
-            self.proof_state.original_typechecking.is_none(),
+            union_to_set,
         );
         let actions = actions.to_core_actions(&mut ctx)?.0;
         translator.actions(&actions)?;
@@ -2069,6 +2085,7 @@ impl EGraph {
     }
 
     fn check_facts(&mut self, span: &Span, facts: &[ResolvedFact]) -> Result<(), Error> {
+        let union_to_set = self.use_union_to_set_optimization();
         let fresh_name = self.parser.symbol_gen.fresh("check_facts");
         let fresh_ruleset = self.parser.symbol_gen.fresh("check_facts_ruleset");
         let rule = ast::ResolvedRule {
@@ -2084,7 +2101,7 @@ impl EGraph {
         let core_rule = rule.to_canonicalized_core_rule(
             &self.type_info,
             &mut self.parser.symbol_gen,
-            self.proof_state.original_typechecking.is_none(),
+            union_to_set,
         )?;
         let query = core_rule.body;
 

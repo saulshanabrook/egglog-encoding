@@ -642,7 +642,7 @@ pub fn causal_slice_program_with_fact_directory(
         fact_directory,
     )?;
 
-    let mut egraph = EGraph::default();
+    let mut egraph = EGraph::default().with_union_to_set_optimization(false);
     let trace_start = Instant::now();
     let mut schedule_batches = None;
     let mut check_batches = Vec::new();
@@ -1460,26 +1460,14 @@ fn model_rule(
             }
         }
     }
-    if !head_unions.is_empty() {
-        if rule.head.0.len() != 1 || head_unions.len() != 1 {
-            return unsupported(
-                &rule.span,
-                format!(
-                    "a union mixed with other head actions in rule `{}`; replaying a retained complete head requires redundant-union support",
-                    rule.name
-                ),
-            );
-        }
-        let union = &head_unions[0];
-        if !matches!(union.left, AtomArg::Var(..)) || !matches!(union.right, AtomArg::Var(..)) {
-            return unsupported(
-                &union.span,
-                format!(
-                    "a non-variable direct union in rule `{}`; constructor-set origin tracing is not yet modeled",
-                    rule.name
-                ),
-            );
-        }
+    if !head_unions.is_empty() && (rule.head.0.len() != 1 || head_unions.len() != 1) {
+        return unsupported(
+            &rule.span,
+            format!(
+                "a union mixed with other head actions in rule `{}`; replaying a retained complete head requires redundant-union support",
+                rule.name
+            ),
+        );
     }
 
     // Generic Join deliberately projects a variable that occurs in only one
