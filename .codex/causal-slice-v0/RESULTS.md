@@ -290,6 +290,8 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | constructor lookups | implemented for exact captured syntax | lookup availability plus output equality path are retained; equal-but-different body syntax needs exact native row evidence |
 | mutable functions, merges, other RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
 | constructor witnesses | implemented and tested | source, rule-created, standalone, nested, constructor-union, BigInt/BigRat, and closed-global canaries |
+| rule-head BigRat arithmetic | implemented and tested narrowly | one replay-safe `+`, `-`, `*`, or `/` application per complete head; exact native function ID, operands, result, origin, and a pre-wave result witness are required; ordinary and unchanged strict replay pass |
+| query/body primitives | rejected | `RuleMatch` and `:expect` observe pre-primitive candidates; successful `Instr::External` lanes are not yet traced, so `pow` is a reduced fail-closed boundary |
 | dynamic source globals | implemented for closed immutable constructor globals | exact native pre-wave endpoints are captured once per wave; changed endpoints retain their successful-union path; local/global shadowing fails closed |
 | inert custom-function declarations | preserved | declarations may remain in source, while every read, write, merge, or default-value use remains rejected without state provenance |
 | rewrite/birewrite replay | implemented and tested | deterministic parsed lowering, stable source mapping, projected binding aliases, ordinary and strict canaries |
@@ -396,7 +398,15 @@ mutation state, commit once in native order, and rebuild once.
 
 PR #23 counts captured join candidates before primitive/equality action
 filters. A false filter can pass `:expect 1` and execute no head. Bronze rejects
-all filters; a future batch must guard post-filter logical matches.
+all filters. The real Herbie frontier reduces this to `result = pow(a, b)`:
+the ordinary and strict native runs succeed, but the slicer rejects the query
+primitive because `RuleMatch` is recorded before `Instr::External` and the
+successful primitive result is not traced. A candidate-count guard alone is
+insufficient: a failing primitive can still satisfy `:expect 1`, and a body
+that also constrains the result can expose multiple pre-filter candidates for
+one logical success. The smallest missing evidence is exact successful
+`Instr::External` origin/arguments/result; a general replay primitive also
+needs a post-filter exact guard or selector.
 
 ## Measurements
 
@@ -558,19 +568,20 @@ validation bucket rather than being timed as successful rows.
 |---|---|---|
 | `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | pure `(+ a b)` nested in a lowered rewrite head | BigInt/BigRat globals, exact dynamic global endpoints, and inert `hi`/`lo` declarations are admitted; pure primitive result provenance, dynamic custom functions, push/pop, and multiple schedules remain |
+| `herbie.egg` | query-side `(pow a b)` at `64:56` | complete-head BigRat `+`, `-`, `*`, and `/` now trace and replay; successful query-primitive evidence/post-filter guarding, then `lo`/`hi` state reads, custom merges, push/pop, and multiple schedules remain |
 | `luminal-llama.egg` | `IList` declared through `datatype*` | recursive datatype lowering, six schedule boundaries, delete/subsume, functions, and mutable-state provenance |
-| `hardboiled_conv1d_32.egg` | constructor `Call` consumes container sort `VecExpr` | container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
-| `eggcc-2mm-pass1.egg` | standalone constructor `TLConcat` is `:unextractable` | custom merges, unextractable constructor witnesses, multiple temporal schedules, containers, delete/subsume, and stateful primitives |
+| `hardboiled_conv1d_32.egg` | inert `UnstableFn` sort declaration | after admitting declaration-only opaque sorts: container witnesses/versioning, functions, filters, broad joins, and subsume provenance |
+| `eggcc-2mm-pass1.egg` | source `(set (TypeList-length (TNil)) 0)` | `:unextractable` constructor witnesses and inert `Pair`/`Vec`/`Set` schemas are admitted; mutable function initialization, custom merges, temporal schedules, containers, delete/subsume, and stateful primitives remain |
 
-The current selection point is between two executable hooks: capture/validate
-pure primitive results for Herbie's lowered rewrite heads, or prove that
-`:unextractable` affects extraction only and admit exact syntax witnesses for
-eggcc. Hardboiled and Luminal require versioned container provenance before
-their current declarations can be used soundly. Guarded shared-prestate batch
-replay and exact global snapshots are implemented; mutable commit,
-delete/subsume, container-version, and opaque external provenance remain
-fail-closed.
+The exact query-primitive assumption needed for Herbie has been falsified and
+is preserved as a focused fail-closed canary. The next independent selection
+point is declaration-only `UnstableFn` support for Hardboiled versus
+`datatype*` source lowering for Luminal. Eggcc has reached actual mutable state
+initialization, which should wait for dynamic-read/general row commit evidence.
+Guarded shared-prestate batch replay, exact global snapshots, and narrow
+complete-head BigRat arithmetic are implemented; mutable commit,
+delete/subsume, container-version, query-primitive, and opaque external
+provenance remain fail-closed.
 
 ## Validation status
 
@@ -631,6 +642,19 @@ Current global/declaration continuation:
   first boundaries are recorded above;
 - `make proof-tests` and `make check` remain pending after the newest commits.
 
+Current primitive/schema continuation:
+
+- successful primary rule-head primitive lanes now trace their exact origin,
+  runtime function identity, arguments, and result; query-side
+  `Instr::External` remains intentionally untraced;
+- one complete-head BigRat `+`, `-`, `*`, or `/` replays in ordinary and
+  unchanged strict proof mode when the retained result has a pre-wave witness;
+- `cargo test -p egglog --test causal_slice` passed 72 tests before adding the
+  focused Herbie `pow` boundary; the new boundary test passes in isolation;
+- core/bridge unit tests, Clippy for the touched Rust crates, formatting, and
+  `git diff --check` passed at the preceding primitive commit;
+- `make proof-tests` and `make check` remain pending after these commits.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -644,6 +668,10 @@ Current global/declaration continuation:
   and positive checks. Their native pre-wave values and equality causes are
   exact; inert custom-function declarations are preserved without admitting
   mutable table behavior.
+- Implemented/tested fact: exact successful rule-head primitive applications
+  are carried by the native trace, and one retained BigRat `+`, `-`, `*`, or
+  `/` can be reconstructed and strictly replayed. This does not admit
+  query/body primitives or arbitrary external functions.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
@@ -655,6 +683,7 @@ Current global/declaration continuation:
 - Falsified: general complete match bindings, partial-bind replay of projected
   firings, naked `RowId` stability, one preferred syntax as constructor-body
   provenance, globally epoch-free equality endpoints, post-filter `:expect`,
+  deriving a successful query-primitive result from the current `RuleMatch`,
   and general sequential-wave equivalence.
 
 ## Recommended next patches
@@ -663,10 +692,11 @@ The benchmark path, scalar inputs, immutable constructor/global witnesses,
 direct unions, guarded shared-prestate batches, and two real fixtures are
 implemented. The next patches should be:
 
-1. trace or otherwise exactly validate a narrow whitelist of pure primitive
-   results used by retained complete heads, starting with Herbie's BigRat `+`;
-2. audit and, if sound, admit `:unextractable` constructors when replay syntax
-   comes from the native match/action trace rather than extraction;
+1. admit the next independent declaration/lowering frontier (`UnstableFn` or
+   `datatype*`) while retaining fail-closed dynamic use checks;
+2. if returning to Herbie, trace successful query-side `Instr::External`
+   origin/arguments/result and add post-filter-exact replay semantics before
+   claiming a logical grounding guard;
 3. avoid reparsing the generated source solely for in-process validation after
    the already-validated parsed/source rule mapping is available;
 4. stream each native wave into a callback, or otherwise compact completed
@@ -735,6 +765,12 @@ Local reviewable commits:
     endpoints, and retain endpoint-changing equality causes;
 36. `e15058be` — preserve inert custom-function declarations while keeping all
     mutable uses fail-closed.
+37. `327b4a81`, `14a76218`, `19a09862`, `375f8302` — replay
+    `:unextractable` constructors and preserve inert `Pair`, `Vec`, `Set`, and
+    legacy global schemas;
+38. `17799692` — replay effective empty-body initializer rules;
+39. `a9e67dd6`, `37f434ba`, `71933157` — trace successful rule-head
+    primitives and replay retained BigRat `+`, `-`, `*`, and `/` applications.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker

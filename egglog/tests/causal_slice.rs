@@ -875,6 +875,44 @@ fn retained_bigrat_binary_arithmetic_replays_strictly() {
 }
 
 #[test]
+fn pure_bigrat_query_requires_exact_postfilter_grounding() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (Math Math))
+        (relation Done (Math))
+        (let $two (Num (bigrat (bigint 2) (bigint 1))))
+        (let $three (Num (bigrat (bigint 3) (bigint 1))))
+        (let $eight (Num (bigrat (bigint 8) (bigint 1))))
+        (Inputs $two $three)
+        (rule ((Inputs x y)
+               (= x (Num a))
+               (= y (Num b))
+               (= result (pow a b)))
+              ((Done (Num result)))
+              :name "fold-pow"
+              :no-decomp)
+        (run 1)
+        (check (Done $eight))
+    "#;
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-pow-native.egg".to_owned()), source)
+            .unwrap();
+    }
+
+    let error = causal_slice_program(Some("bigrat-pow.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("function/primitive lookup `pow`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn retained_bigrat_add_in_a_union_head_replays_strictly() {
     let source = r#"
         (datatype Math (Num BigRat) (Alias BigRat))

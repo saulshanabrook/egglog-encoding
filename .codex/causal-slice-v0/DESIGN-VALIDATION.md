@@ -145,6 +145,8 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | sequential grounded leaves preserve the supported monotone fragment | Confirmed | fully grounded set atoms have at most one complete row; prerequisites pre-exist; insertions commute and duplicates are no-ops |
 | sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
 | `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
+| final `RuleMatch` bindings explain successful query primitives | Falsified | `query_prim` lowers to `Instr::External` after the match is recorded; Herbie's `pow` result and success/failure are absent from the current trace |
+| successful rule-head primitive lanes expose exact causal evidence | Confirmed narrowly | primary `ExternalWithFallback` success records origin, runtime function ID, arguments, and result; fallback and query-side instructions remain unsupported |
 | scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
 | anonymous rewrite registration is too opaque for stable replay names | Falsified | parsed rewrite/birewrite lowering assigns stable source-position names and preserves one-to-many source mapping; focused ordinary and strict canaries pass |
 | print-only observations provide a narrow causal root | Falsified | `print-size` observes aggregate state, so v0 reports a conservative Prefix and retains every effective prior event; no slicing reduction is claimed |
@@ -268,6 +270,8 @@ retained. Push/pop remains outside the no-epoch claim.
 | E26 | Can exact global values be captured without a second body query? | yes: the native bridge snapshots zero-key global tables once immediately before each bounded query |
 | E27 | Does backward reachability retain a global's endpoint-changing cause? | yes: an otherwise irrelevant union is retained solely for a later global-valued head; ordinary and strict replay pass |
 | E28 | Can inert custom-function declarations be admitted without merge provenance? | yes: declaration-only strict replay passes and the paired dynamic `set` canary remains rejected |
+| E29 | Can retained complete-head BigRat binary arithmetic replay strictly? | yes for one `+`, `-`, `*`, or `/` with exact traced operands/result and a pre-wave result witness |
+| E30 | Can Herbie's query-side `pow` use the current `RuleMatch` and `:expect 1` as an exact grounding? | no: the match and guard are pre-primitive, successful `Instr::External` evidence is absent, and the slicer fails closed |
 
 ## Validation commands
 
