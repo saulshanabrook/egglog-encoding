@@ -1043,6 +1043,46 @@ fn pure_bigrat_log_query_replays_only_the_successful_grounding() {
 }
 
 #[test]
+fn pure_bigrat_predicate_replays_only_the_successful_grounding() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (Math))
+        (relation Done (Math))
+        (let $zero (Num (bigrat (bigint 0) (bigint 1))))
+        (let $one (Num (bigrat (bigint 1) (bigint 1))))
+        (let $negative-one (Num (bigrat (bigint -1) (bigint 1))))
+        (Inputs $one)
+        (Inputs $negative-one)
+        (rule ((Inputs x)
+               (= x (Num value))
+               (> value (bigrat (bigint 0) (bigint 1))))
+              ((Done x))
+              :name "keep-positive"
+              :no-decomp)
+        (run 1)
+        (check (Done $one))
+    "#;
+    let slice = causal_slice_program(Some("bigrat-predicate.egg".to_owned()), source).unwrap();
+    assert_eq!(
+        replay_firings(&slice.source)
+            .iter()
+            .filter(|(rule, _)| rule == "keep-positive")
+            .count(),
+        1
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("bigrat-predicate-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn retained_bigrat_add_in_a_union_head_replays_strictly() {
     let source = r#"
         (datatype Math (Num BigRat) (Alias BigRat))

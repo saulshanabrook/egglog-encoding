@@ -197,6 +197,14 @@ struct RuleModel {
 #[derive(Clone, Copy, Debug)]
 struct RulePrimitiveMeta {
     function: ExternalFunctionId,
+    logical_query: bool,
+    query_auxiliary: Option<QueryAuxiliaryPrimitive>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum QueryAuxiliaryPrimitive {
+    BigInt,
+    BigRat,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1532,49 +1540,73 @@ fn resolve_rule_primitives(
                 _ => None,
             })
             .collect::<Vec<_>>();
-        if registered_body.len() != model.body_primitives.len() {
+        if model.body_primitives.is_empty() && !registered_body.is_empty() {
             return unsupported(
                 &model.span,
                 format!(
-                    "rule `{rule_name}` lowered to {} query primitive calls after modeling {} replay-safe calls",
-                    registered_body.len(),
-                    model.body_primitives.len()
+                    "rule `{rule_name}` lowered to {} unmodeled query primitive calls",
+                    registered_body.len()
                 ),
             );
         }
         let mut body = Vec::with_capacity(registered_body.len());
-        for (primitive, expected) in registered_body.into_iter().zip(&model.body_primitives) {
-            let AtomArg::App {
-                function,
-                input_sorts,
-                output_sort,
-                ..
-            } = &expected.application
-            else {
-                return Err(CausalSliceError::Invariant(format!(
-                    "rule `{rule_name}` query primitive model stopped being an application"
-                )));
+        let expected = model.body_primitives.first();
+        let mut logical_queries = 0usize;
+        for primitive in registered_body {
+            let exact_logical = expected.is_some_and(|expected| {
+                let AtomArg::App {
+                    function,
+                    input_sorts,
+                    output_sort,
+                    ..
+                } = &expected.application
+                else {
+                    return false;
+                };
+                primitive.name() == function
+                    && primitive.input().len() == input_sorts.len()
+                    && primitive
+                        .input()
+                        .iter()
+                        .zip(input_sorts)
+                        .all(|(actual, expected)| actual.name() == expected)
+                    && primitive.output().name() == output_sort
+                    && replay_safe_query_primitive(function, input_sorts, output_sort)
+            });
+            let query_auxiliary = match primitive.name() {
+                "bigint" => (primitive.input().len() == 1
+                    && primitive.input()[0].name() == "i64"
+                    && primitive.output().name() == "BigInt")
+                    .then_some(QueryAuxiliaryPrimitive::BigInt),
+                "bigrat" => (primitive.input().len() == 2
+                    && primitive.input().iter().all(|sort| sort.name() == "BigInt")
+                    && primitive.output().name() == "BigRat")
+                    .then_some(QueryAuxiliaryPrimitive::BigRat),
+                _ => None,
             };
-            let exact_signature = primitive.name() == function
-                && primitive.input().len() == input_sorts.len()
-                && primitive
-                    .input()
-                    .iter()
-                    .zip(input_sorts)
-                    .all(|(actual, expected)| actual.name() == expected)
-                && primitive.output().name() == output_sort
-                && replay_safe_query_primitive(function, input_sorts, output_sort);
-            if !exact_signature || primitive.validator().is_none() {
+            if (!exact_logical && query_auxiliary.is_none()) || primitive.validator().is_none() {
                 return unsupported(
                     &model.span,
                     format!(
-                        "rule `{rule_name}` query primitive without an exact deterministic proof-validating `{function}` specialization"
+                        "rule `{rule_name}` query primitive without an exact deterministic proof-validating specialization"
                     ),
                 );
             }
+            logical_queries += usize::from(exact_logical);
             body.push(RulePrimitiveMeta {
                 function: primitive.external_id(crate::Context::Pure),
+                logical_query: exact_logical,
+                query_auxiliary,
             });
+        }
+        if logical_queries != model.body_primitives.len() {
+            return unsupported(
+                &model.span,
+                format!(
+                    "rule `{rule_name}` resolved {logical_queries} logical query primitives after modeling {}",
+                    model.body_primitives.len()
+                ),
+            );
         }
 
         let registered_head = registered
@@ -1622,6 +1654,8 @@ fn resolve_rule_primitives(
             }
             head.push(RulePrimitiveMeta {
                 function: primitive.external_id(crate::Context::Write),
+                logical_query: false,
+                query_auxiliary: None,
             });
         }
         resolved.insert(rule_name.clone(), ResolvedRulePrimitives { body, head });
@@ -2553,9 +2587,25 @@ fn model_rule(
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
+    let mut body_primitives = Vec::new();
     for fact in &rule.body {
         match fact {
             GenericFact::Fact(expr) => {
+                if let Some(primitive) = model_query_predicate(
+                    expr,
+                    constructors,
+                    source_globals,
+                    &format!("rule `{}` body", rule.name),
+                )? {
+                    register_arg_vars(
+                        &primitive.application,
+                        &primitive.sort,
+                        &mut var_order,
+                        &mut var_sorts,
+                    )?;
+                    body_primitives.push(primitive);
+                    continue;
+                }
                 let atom = model_atom(expr, relations, constructors, source_globals, "rule body")?;
                 if atom.args.iter().any(atom_arg_contains_app) {
                     return unsupported(
@@ -2573,7 +2623,6 @@ fn model_rule(
         }
     }
     let mut body_lookups = Vec::new();
-    let mut body_primitives = Vec::new();
     for fact in &rule.body {
         let GenericFact::Eq(span, left, right) = fact else {
             continue;
@@ -3021,6 +3070,43 @@ fn model_query_primitive(
         },
         output: AtomArg::Var(output_span.clone(), output_name.clone()),
         sort: output_sort.to_owned(),
+    }))
+}
+
+fn model_query_predicate(
+    expr: &Expr,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+    context: &str,
+) -> Result<Option<QueryPrimitiveTemplate>, CausalSliceError> {
+    let GenericExpr::Call(span, function, args) = expr else {
+        return Ok(None);
+    };
+    if !matches!(function.as_str(), ">" | "<") {
+        return Ok(None);
+    }
+    if args.len() != 2 {
+        return unsupported(
+            span,
+            format!(
+                "query predicate `{function}` with arity {} instead of 2 in {context}",
+                args.len()
+            ),
+        );
+    }
+    Ok(Some(QueryPrimitiveTemplate {
+        span: span.clone(),
+        application: AtomArg::App {
+            function: function.clone(),
+            args: args
+                .iter()
+                .map(|arg| model_atom_arg(arg, "BigRat", constructors, source_globals, context))
+                .collect::<Result<Vec<_>, _>>()?,
+            input_sorts: vec!["BigRat".to_owned(), "BigRat".to_owned()],
+            output_sort: "Unit".to_owned(),
+        },
+        output: AtomArg::Lit(Literal::Unit),
+        sort: "Unit".to_owned(),
     }))
 }
 
@@ -3520,6 +3606,36 @@ fn model_atom_arg(
         }
         GenericExpr::Call(span, function, args) => {
             let Some(constructor) = constructors.get(function) else {
+                let scalar_constructor_inputs: Option<&[&str]> =
+                    match (expected_sort, function.as_str()) {
+                        ("BigInt", "bigint") => Some(&["i64"]),
+                        ("BigRat", "bigrat") => Some(&["BigInt", "BigInt"]),
+                        _ => None,
+                    };
+                if let Some(input_sorts) = scalar_constructor_inputs {
+                    if args.len() != input_sorts.len() {
+                        return unsupported(
+                            span,
+                            format!(
+                                "scalar constructor `{function}` with arity {} instead of {} in {context}",
+                                args.len(),
+                                input_sorts.len()
+                            ),
+                        );
+                    }
+                    return Ok(AtomArg::App {
+                        function: function.clone(),
+                        args: args
+                            .iter()
+                            .zip(input_sorts)
+                            .map(|(arg, sort)| {
+                                model_atom_arg(arg, sort, constructors, source_globals, context)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                        input_sorts: input_sorts.iter().map(|sort| (*sort).to_owned()).collect(),
+                        output_sort: expected_sort.to_owned(),
+                    });
+                }
                 if replay_primitive_head_context(context)
                     && expected_sort == "BigRat"
                     && let Some(arity) = replay_safe_bigrat_primitive_arity(function)
@@ -3609,6 +3725,9 @@ fn replay_safe_query_primitive(function: &str, input_sorts: &[String], output_so
     (function == "+" && input_sorts == ["i64", "i64"] && output_sort == "i64")
         || (function == "pow" && input_sorts == ["BigRat", "BigRat"] && output_sort == "BigRat")
         || (function == "log" && input_sorts == ["BigRat"] && output_sort == "BigRat")
+        || (matches!(function, ">" | "<")
+            && input_sorts == ["BigRat", "BigRat"]
+            && output_sort == "Unit")
 }
 
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
@@ -5018,17 +5137,79 @@ fn elaborate_query_primitive(
             "rule `{rule_name}` exceeded the one-query-primitive model"
         )));
     };
-    let [primitive] = metadata else {
+    let logical_indices = metadata
+        .iter()
+        .enumerate()
+        .filter_map(|(index, primitive)| primitive.logical_query.then_some(index))
+        .collect::<Vec<_>>();
+    let [logical_index] = logical_indices.as_slice() else {
         return Err(CausalSliceError::Invariant(format!(
             "rule `{rule_name}` lost its resolved query primitive metadata"
         )));
     };
-    let Some(application) = applications.first().copied() else {
+    if *logical_index + 1 != metadata.len() || applications.len() > metadata.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` query primitive tape has an invalid logical boundary"
+        )));
+    }
+    for (application, primitive) in applications.iter().zip(metadata) {
+        if application.function != primitive.function {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` query primitive trace diverged from its resolved specialization"
+            )));
+        }
+        match primitive.query_auxiliary {
+            Some(QueryAuxiliaryPrimitive::BigInt) => {
+                let [value] = application.args.as_slice() else {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "rule `{rule_name}` traced a malformed `bigint` query constructor"
+                    )));
+                };
+                let child =
+                    scalar_witness(egraph, "i64", *value, witnesses, "query `bigint` argument")?;
+                witnesses.intern_app(
+                    "BigInt",
+                    "bigint",
+                    vec![child],
+                    application.result,
+                    DepArena::EMPTY,
+                    true,
+                )?;
+            }
+            Some(QueryAuxiliaryPrimitive::BigRat) => {
+                let [numerator, denominator] = application.args.as_slice() else {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "rule `{rule_name}` traced a malformed `bigrat` query constructor"
+                    )));
+                };
+                let children = [numerator, denominator]
+                    .into_iter()
+                    .map(|value| {
+                        witnesses.by_endpoint("BigInt", *value).ok_or_else(|| {
+                            CausalSliceError::Invariant(format!(
+                                "rule `{rule_name}` query `bigrat` argument lacked syntax"
+                            ))
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                witnesses.intern_app(
+                    "BigRat",
+                    "bigrat",
+                    children,
+                    application.result,
+                    DepArena::EMPTY,
+                    true,
+                )?;
+            }
+            None => {}
+        }
+    }
+    let Some(application) = applications.get(*logical_index).copied() else {
         return Ok(QueryPrimitiveOutcome::Filtered);
     };
-    if applications.len() != 1 || application.function != primitive.function {
+    if applications.len() != metadata.len() {
         return Err(CausalSliceError::Invariant(format!(
-            "rule `{rule_name}` query primitive trace diverged from its resolved specialization"
+            "rule `{rule_name}` query primitive trace stopped after its logical result"
         )));
     }
     let AtomArg::App {
@@ -5064,9 +5245,21 @@ fn elaborate_query_primitive(
             ))
         })?);
     }
+    if matches!(&expected.output, AtomArg::Lit(Literal::Unit)) {
+        let unit = literal_to_value(egraph.backend.base_values(), &Literal::Unit);
+        if output_sort != "Unit" || application.result != unit {
+            return Err(CausalSliceError::Invariant(format!(
+                "rule `{rule_name}` query predicate `{function}` returned a non-Unit value"
+            )));
+        }
+        return Ok(QueryPrimitiveOutcome::Matched {
+            availability: DepArena::EMPTY,
+            deferred: None,
+        });
+    }
     let AtomArg::Var(_, output_variable) = &expected.output else {
         return Err(CausalSliceError::Invariant(format!(
-            "rule `{rule_name}` query primitive output stopped being a variable"
+            "rule `{rule_name}` query primitive output stopped being a variable or Unit predicate"
         )));
     };
     if bindings.contains_key(output_variable) {
