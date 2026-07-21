@@ -1107,3 +1107,24 @@ pub(crate) enum Instr {
         dst: Variable,
     },
 }
+
+impl Instr {
+    /// Whether this instruction is safe to evaluate while validating every
+    /// grounded batch guard before any rule head runs.
+    ///
+    /// `External` is admitted because source query primitives are registered
+    /// under egglog's read-only query contract. Callers that construct core
+    /// rules directly must uphold the same contract for prefix externals.
+    pub(crate) fn is_grounded_query_filter(&self) -> bool {
+        matches!(
+            self,
+            Instr::LookupWithDefault { .. }
+                | Instr::Lookup { .. }
+                | Instr::External { .. }
+                | Instr::AssertEq(..)
+                | Instr::AssertNe(..)
+                | Instr::AssertAnyNe { .. }
+                | Instr::ReadCounter { .. }
+        )
+    }
+}

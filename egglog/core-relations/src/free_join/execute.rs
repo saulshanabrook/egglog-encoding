@@ -1201,6 +1201,13 @@ impl Database {
             if action_info.head_start > action_info.instrs.len() {
                 return Err(GuardedRuleSetRunError::InvalidQueryHeadBoundary);
             }
+            let query_prefix = &action_info.instrs[..action_info.head_start];
+            if query_prefix
+                .iter()
+                .any(|instruction| !instruction.is_grounded_query_filter())
+            {
+                return Err(GuardedRuleSetRunError::UnsupportedQueryPrefix);
+            }
 
             // Only evaluate residual query instructions for captured rows
             // whose already-bound columns match at least one requested
@@ -1260,10 +1267,12 @@ impl Database {
                 unsafe {
                     bindings.push(&captured_map, &action_info.used_vars);
                 }
-                let survived = filter_state
-                    .run_instrs(&action_info.instrs[..action_info.head_start], &mut bindings);
+                let survived = filter_state.run_instrs(query_prefix, &mut bindings);
                 if filter_state.changed {
                     return Err(GuardedRuleSetRunError::QueryPrefixMutated);
+                }
+                if filter_state.should_stop() {
+                    return Err(GuardedRuleSetRunError::QueryPrefixStopped);
                 }
                 if survived == 0 {
                     continue;

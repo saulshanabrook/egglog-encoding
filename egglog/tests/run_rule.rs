@@ -486,11 +486,41 @@ fn packed_run_rule_batch_guards_query_primitive_results() {
             :fires ((0 0 1 2))))
         (check (Out 5))
     "#;
-    for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
         egraph
             .parse_and_run_program(Some("packed-query-result.egg".to_owned()), program)
             .unwrap();
     }
+}
+
+#[test]
+fn packed_run_rule_batch_guards_bigrat_query_primitive_results_strictly() {
+    let program = r#"
+        (relation Inputs (BigRat BigRat))
+        (relation Expected (BigRat))
+        (relation Out (BigRat))
+        (rule ((Inputs base exponent) (= result (pow base exponent)))
+              ((Out result))
+              :name "fold-pow")
+        (Inputs (bigrat (bigint 2) (bigint 1))
+                (bigrat (bigint 3) (bigint 1)))
+        (Expected (bigrat (bigint 8) (bigint 1)))
+        (run-schedule
+          (run-rule-batch
+            :witnesses ((bigrat (bigint 2) (bigint 1))
+                        (bigrat (bigint 3) (bigint 1))
+                        (bigrat (bigint 8) (bigint 1)))
+            :groups (("fold-pow" (base exponent result)))
+            :fires ((0 0 1 2))))
+        (check (Out (bigrat (bigint 8) (bigint 1))))
+    "#;
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("packed-query-pow.egg".to_owned()), program)
+        .unwrap();
 }
 
 #[test]

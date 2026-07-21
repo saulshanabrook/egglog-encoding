@@ -140,8 +140,12 @@ pub enum GuardedRuleSetRunError {
     InvalidGroundedRunOrder,
     #[error("grounded rule batch encountered an invalid residual-query/head boundary")]
     InvalidQueryHeadBoundary,
+    #[error("grounded rule batch encountered an unsupported residual-query instruction")]
+    UnsupportedQueryPrefix,
     #[error("grounded rule batch residual query instructions attempted to mutate state")]
     QueryPrefixMutated,
+    #[error("grounded rule batch residual query requested early termination")]
+    QueryPrefixStopped,
 }
 
 /// One logical rule-body match captured immediately before its complete head

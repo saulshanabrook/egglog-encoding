@@ -17,12 +17,35 @@ use crate::{
     common::Value,
     free_join::{CounterId, Database, TableId},
     make_external_func,
-    query::RuleSetBuilder,
+    query::{QueryError, RuleSetBuilder},
     table::SortedWritesTable,
     table_shortcuts::v,
     table_spec::{ColumnId, Constraint},
     uf::DisplacedTable,
 };
+
+#[test]
+fn external_into_rejects_an_already_bound_destination() {
+    let mut db = Database::default();
+    let input = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let identity = db.add_external_function(Box::new(make_external_func(|_, args| {
+        let [value] = args else { panic!() };
+        Some(*value)
+    })));
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let bound = query.new_var_named("bound");
+    query.add_atom(input, &[bound.into()], &[]).unwrap();
+    let mut rule = query.build();
+    assert!(matches!(
+        rule.call_external_into(identity, &[bound.into()], bound),
+        Err(QueryError::ExternalDestinationAlreadyBound { variable }) if variable == bound
+    ));
+}
 
 /// On MacOs the system allocator is vulenrable to contention, causing tests to execute quite
 /// slowly without mimalloc.

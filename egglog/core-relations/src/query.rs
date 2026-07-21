@@ -495,6 +495,9 @@ pub enum QueryError {
     #[error("attempt to compare two groups of values, one of length {l}, another of length {r}")]
     MultiComparisonMismatch { l: usize, r: usize },
 
+    #[error("external result destination {variable:?} was already bound or used")]
+    ExternalDestinationAlreadyBound { variable: Variable },
+
     #[error("table {table:?} expected {expected:?} columns but got {got:?}")]
     BadArity {
         table: TableId,
@@ -741,13 +744,18 @@ impl RuleBuilder<'_, '_> {
         Ok(res)
     }
 
-    /// Apply an external function and bind its result to an existing variable.
+    /// Apply an external function and bind its result to an existing fresh
+    /// variable. This preserves a source-level name for query-derived values.
     pub fn call_external_into(
         &mut self,
         func: ExternalFunctionId,
         args: &[QueryEntry],
         res: Variable,
     ) -> Result<(), QueryError> {
+        let info = &self.qb.query.var_info[res];
+        if !info.occurrences.is_empty() || info.used_in_rhs || info.defined_in_rhs {
+            return Err(QueryError::ExternalDestinationAlreadyBound { variable: res });
+        }
         self.qb.instrs.push(Instr::External {
             func,
             args: args.to_vec(),
