@@ -1142,9 +1142,36 @@ impl EGraph {
         }
 
         let rebuild_timer = Instant::now();
-        if let Err(error) = self.rebuild() {
+        let trace_rebuild_unions = captured_trace.is_some();
+        if trace_rebuild_unions {
+            let started = self
+                .db
+                .get_table(self.uf_table)
+                .as_any()
+                .downcast_ref::<core_relations::DisplacedTable>()
+                .expect("the configured union-find table must remain displaced-table backed")
+                .begin_union_trace();
+            if !started {
+                let _ = self.take_mutation_traces(&mutation_tables);
+                anyhow::bail!("a rebuild union trace is already active");
+            }
+        }
+        let rebuild_result = self.rebuild();
+        let rebuild_unions = trace_rebuild_unions.then(|| {
+            self.db
+                .get_table(self.uf_table)
+                .as_any()
+                .downcast_ref::<core_relations::DisplacedTable>()
+                .expect("the configured union-find table must remain displaced-table backed")
+                .take_union_trace()
+                .expect("the rebuild union trace was started immediately above")
+        });
+        if let Err(error) = rebuild_result {
             let _ = self.take_mutation_traces(&mutation_tables);
             return Err(error);
+        }
+        if let (Some(trace), Some(receipts)) = (captured_trace.as_mut(), rebuild_unions) {
+            trace.unions.extend(receipts);
         }
         iteration_report.rebuild_time = rebuild_timer.elapsed();
 

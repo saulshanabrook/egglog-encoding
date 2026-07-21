@@ -3064,7 +3064,7 @@ fn congruence_created_constructor_syntax_retains_its_equality_support() {
 }
 
 #[test]
-fn unoriginated_merge_union_can_only_be_sliced_away() {
+fn unsupported_custom_merge_union_fails_before_guessing_a_cause() {
     let common = r#"
         (datatype Expr (A i64) (B i64))
         (function F (i64) Expr :merge ((union old new) old))
@@ -3115,9 +3115,51 @@ fn unoriginated_merge_union_can_only_be_sliced_away() {
     assert!(
         error
             .to_string()
-            .contains("congruence, merge, or rebuild union without an originating rule match"),
+            .contains("without an exact single-output `:merge new` declaration"),
         "{error}"
     );
+}
+
+#[test]
+fn rebuild_congruence_uses_a_reported_prefix_and_strictly_replays() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (relation Seed ())
+        (relation Irrelevant ())
+        (relation Existing ())
+        (rule ((Seed))
+              ((union (A 1) (A 2)))
+              :name "unify-children")
+        (rule ((Seed))
+              ((Irrelevant))
+              :name "irrelevant")
+        (rule ((Seed))
+              ((Existing))
+              :name "no-op")
+        (let $f1 (F (A 1)))
+        (let $f2 (F (A 2)))
+        (Seed)
+        (Existing)
+        (run 1)
+        (check (= $f1 $f2))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("rebuild-prefix.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.prefix_fallbacks, 1);
+    assert_eq!(replay.stats.effective_applications, 2);
+    assert_eq!(replay.stats.promoted_events, 3);
+    assert_eq!(replay.stats.retained_applications, 3);
+    assert!(has_replay_firing(&replay.source, "unify-children", &[]));
+    assert!(has_replay_firing(&replay.source, "irrelevant", &[]));
+    assert!(has_replay_firing(&replay.source, "no-op", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("rebuild-prefix-replay.egg".to_owned()), &replay.source)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -4229,6 +4271,244 @@ fn native_direct_redundant_and_congruence_equalities_pass_strict_proofs() {
             .to_string()
             .contains("a non-insert initialization action")
     );
+}
+
+#[test]
+fn independent_push_transactions_slice_and_replay_at_their_own_schedules() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64))
+        (relation Trigger (i64))
+        (relation Irrelevant (i64))
+        (rule ((Trigger x)) ((union (A x) (B x))) :name "step")
+        (rule ((Trigger x)) ((Irrelevant x)) :name "irrelevant")
+        (push)
+        (Trigger 1)
+        (run 1)
+        (check (= (A 1) (B 1)))
+        (pop)
+        (push)
+        (Trigger 2)
+        (run 1)
+        (check (= (A 2) (B 2)))
+        (pop)
+    "#;
+
+    let replay = causal_slice_replay_program(Some("scoped.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.observation_count, 2);
+    assert_eq!(replay.stats.retained_applications, 2);
+    assert_eq!(
+        replay_firings(&replay.source)
+            .iter()
+            .filter(|(rule, _)| rule == "step")
+            .count(),
+        2
+    );
+    assert!(!replay.source.contains("(run 1)"));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
+    );
+
+    let mut depth = 0usize;
+    let mut replay_depths = Vec::new();
+    for command in EGraph::default()
+        .parse_program(Some("scoped-replay.egg".to_owned()), &replay.source)
+        .unwrap()
+    {
+        match command {
+            Command::Push(1) => depth += 1,
+            Command::Pop(_, 1) => depth -= 1,
+            Command::RunSchedule(_) => replay_depths.push(depth),
+            _ => {}
+        }
+    }
+    assert_eq!(replay_depths, vec![1, 1]);
+    assert_eq!(depth, 0);
+
+    EGraph::default()
+        .parse_and_run_program(Some("scoped-replay.egg".to_owned()), &replay.source)
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("scoped-replay.egg".to_owned()), &replay.source)
+        .unwrap();
+}
+
+#[test]
+fn auxiliary_only_bigrat_query_tape_is_not_an_eager_replay_boundary() {
+    let source = r#"
+        (datatype Math
+          (Num BigRat)
+          (Var String)
+          (Pow Math Math)
+          (Sqrt Math))
+        (rewrite
+          (Pow a (Num (bigrat (bigint 1) (bigint 2))))
+          (Sqrt a))
+        (let $x (Var "x"))
+        (let $e (Pow $x (Num (bigrat (bigint 1) (bigint 2)))))
+        (run 1)
+        (check (= $e (Sqrt $x)))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("auxiliary-query.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.retained_applications, 1);
+    EGraph::default()
+        .parse_and_run_program(
+            Some("auxiliary-query-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("auxiliary-query-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn auxiliary_bigrat_constructors_can_span_query_and_head_phases() {
+    let source = r#"
+        (datatype Math
+          (Num BigRat)
+          (Wrap Math))
+        (rewrite
+          (Wrap (Num (bigrat (bigint 1) (bigint 6))))
+          (Num (bigrat (bigint 1) (bigint 2))))
+        (let $target (Num (bigrat (bigint 1) (bigint 2))))
+        (let $e (Wrap (Num (bigrat (bigint 1) (bigint 6)))))
+        (run 1)
+        (check (= $e $target))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("mixed-auxiliary.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.retained_applications, 1);
+    EGraph::default()
+        .parse_and_run_program(
+            Some("mixed-auxiliary-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("mixed-auxiliary-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn post_query_assertion_can_filter_before_an_auxiliary_head_tape() {
+    let source = r#"
+        (datatype Math (F BigRat) (G BigRat))
+        (rewrite
+          (F (bigrat (bigint 1) (bigint 2)))
+          (G (bigrat (bigint 1) (bigint 4))))
+        (let $good (F (bigrat (bigint 1) (bigint 2))))
+        (let $bad (F (bigrat (bigint 1) (bigint 3))))
+        (let $expected (G (bigrat (bigint 1) (bigint 4))))
+        (run 1)
+        (check (= $good $expected))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("post-query-filter.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.retained_applications, 1);
+    assert!(replay.stats.matched_applications > replay.stats.pending_firings);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("post-query-filter-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn positive_check_reconstructs_exact_auxiliary_scalar_applications() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Inputs (i64))
+        (relation Out (Math))
+        (let $target (Num (bigrat (bigint -1) (bigint 1))))
+        (rule ((Inputs x)) ((Out $target)) :name "copy")
+        (Inputs 1)
+        (run 1)
+        (check (Out (Num (bigrat (bigint -1) (bigint 1)))))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("observation-scalars.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "copy", &[("x", "1")]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("observation-scalars-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn fresh_custom_merge_source_set_supports_a_later_scoped_lookup() {
+    let source = r#"
+        (datatype Math (Var String))
+        (function lo (Math) BigRat :merge (max old new))
+        (relation Goal (Math))
+        (rule ((= value (lo x)))
+              ((Goal x))
+              :name "read-lo")
+        (let $x (Var "x"))
+        (push)
+        (set (lo $x) (bigrat (bigint 1) (bigint 1)))
+        (run 1)
+        (check (Goal $x))
+        (pop)
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("custom-source-set.egg".to_owned()), source).unwrap();
+    assert_eq!(replay.stats.retained_applications, 1);
+    let firings = replay_firings(&replay.source);
+    assert!(
+        has_replay_firing(
+            &replay.source,
+            "read-lo",
+            &[
+                ("x", "(Var \"x\")"),
+                ("value", "(bigrat (bigint 1) (bigint 1))")
+            ]
+        ),
+        "{firings:?}"
+    );
+    assert!(
+        replay
+            .source
+            .contains("(set (lo $x) (bigrat (bigint 1) (bigint 1)))")
+    );
+    assert!(!replay.source.contains("(run 1)"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("custom-source-set-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]

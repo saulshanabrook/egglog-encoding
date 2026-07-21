@@ -269,6 +269,65 @@ fn traced_unions_report_applied_and_redundant_commits_with_raw_endpoints() {
 }
 
 #[test]
+fn traced_unions_append_rebuild_congruence_after_rule_union() {
+    let mut egraph = EGraph::default();
+    let parent = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "trace-parent".into(),
+        can_subsume: false,
+    });
+    let left = egraph.fresh_id();
+    let right = egraph.fresh_id();
+    let left_parent = egraph.add_term(parent, &[left]);
+    let right_parent = egraph.add_term(parent, &[right]);
+    let rule = {
+        let mut builder = egraph.new_rule("unify children", true);
+        builder.union(
+            QueryEntry::Const {
+                val: left,
+                ty: ColumnTy::Id,
+            },
+            QueryEntry::Const {
+                val: right,
+                ty: ColumnTy::Id,
+            },
+        );
+        builder.build()
+    };
+
+    egraph.begin_rule_match_trace().unwrap();
+    egraph.run_rules(&[rule]).unwrap();
+    let batches = egraph.take_rule_match_trace().unwrap();
+    assert_eq!(batches.len(), 1);
+    let trace = &batches[0];
+    assert_eq!(trace.matches.len(), 1);
+    assert_eq!(trace.unions.len(), 2);
+
+    let direct = &trace.unions[0];
+    assert_eq!(direct.origin.map(|origin| origin.index()), Some(0));
+    assert_eq!((direct.lhs, direct.rhs), (left, right));
+    assert!(matches!(
+        direct.outcome,
+        core_relations::UnionOutcome::Applied { .. }
+    ));
+
+    let congruence = &trace.unions[1];
+    assert_eq!(congruence.origin, None);
+    assert!(
+        (congruence.lhs == left_parent && congruence.rhs == right_parent)
+            || (congruence.lhs == right_parent && congruence.rhs == left_parent)
+    );
+    assert!(matches!(
+        congruence.outcome,
+        core_relations::UnionOutcome::Applied { .. }
+    ));
+}
+
+#[test]
 fn traced_function_writes_report_insert_replace_and_no_op_receipts() {
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();
