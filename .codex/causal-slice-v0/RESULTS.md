@@ -462,9 +462,10 @@ Current constructor/equality/pointer continuation:
 - `make rust-nits`: passed after the lazy-prerequisite patch;
 - release pointer correctness command: passed;
 - benchmark collection: 12/12 fresh runs succeeded (6 per treatment);
-- `make check` and `make proof-tests` have not yet been rerun after the latest
-  constructor/equality/pointer commits; their last full results are the Bronze
-  results above.
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- `make check`: passed, including formatting, Ruff, mypy, Clippy, 170 Python
+  tests, the full Rust workspace, 764 file fixtures, doctests, and DD timing;
+- `git diff --check`: passed after the final ledger update.
 
 ## Implemented fact, measurement, proposal, and falsification
 
@@ -530,7 +531,10 @@ Local reviewable commits:
 15. `eb688223` — defer unsupported prerequisites until backward slicing while
     preserving fail-closed retained events;
 16. `b674b003` — lock the unmodified pointer fixture into ordinary and strict
-    sliced replay coverage.
+    sliced replay coverage;
+17. `c47b9a3` — record the first integrated pointer benchmark result;
+18. `bcd79c9` — format the causal benchmark tests for the final full gate;
+19. the final local HEAD commit records the completed validation ledger.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
