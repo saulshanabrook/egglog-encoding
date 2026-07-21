@@ -805,23 +805,106 @@ fn constructor_global_rejects_unprintable_bigints() {
 }
 
 #[test]
-fn dynamic_global_references_remain_an_explicit_boundary() {
+fn dynamic_global_references_replay_without_becoming_rule_bindings() {
     let source = r#"
-        (datatype Math (Num BigRat))
-        (relation Trigger ())
-        (relation Done (Math))
+        (datatype Math (Num BigRat) (Neg Math))
+        (relation Seed (Math i64))
+        (relation Done (Math i64))
         (let $zero (Num (bigrat (bigint 0) (bigint 1))))
-        (Trigger)
-        (rule ((Trigger)) ((Done $zero)) :name "use-global")
+        (let $neg-zero (Neg $zero))
+        (Seed $zero 7)
+        (rule ((Seed $zero n))
+              ((Done $neg-zero n))
+              :name "use-globals"
+              :no-decomp)
         (run 1)
-        (check (Done $zero))
+        (check (Done $neg-zero 7))
     "#;
 
-    let error = causal_slice_program(Some("dynamic-global.egg".to_owned()), source).unwrap_err();
+    EGraph::default()
+        .parse_and_run_program(Some("dynamic-global-native.egg".to_owned()), source)
+        .unwrap();
+
+    let slice = causal_slice_program(Some("dynamic-global.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "use-globals",
+        &[("n", "7")]
+    ));
+    assert!(!slice.source.contains("(($zero "));
+    assert!(!slice.source.contains("(($neg-zero "));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("dynamic-global-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn dynamic_global_references_replay_through_rewrite_lookup_and_union() {
+    let source = r#"
+        (datatype Math (Num BigRat) (Neg Math))
+        (let $zero (Num (bigrat (bigint 0) (bigint 1))))
+        (Neg $zero)
+        (rewrite (Neg $zero) $zero :name "fold-neg-zero")
+        (run 1)
+        (check (= (Neg $zero) $zero))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("dynamic-global-rewrite.egg".to_owned()), source).unwrap();
+    let firing = replay_firings(&slice.source)
+        .into_iter()
+        .find(|(rule, _)| rule.starts_with("__causal_slice_v0_rw_b"))
+        .expect("the global rewrite should be retained");
+    assert!(firing.1.is_empty(), "globals must not become bindings");
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("dynamic-global-rewrite-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn dynamic_global_references_fail_closed_on_unknown_or_wrong_sort() {
+    let unknown = r#"
+        (datatype Math (Num i64))
+        (relation Seed (Math))
+        (Seed $missing)
+        (run 1)
+        (check (Seed x))
+    "#;
+    let error = causal_slice_program(Some("unknown-global.egg".to_owned()), unknown).unwrap_err();
     assert!(
         error
             .to_string()
-            .contains("head-only variable `$zero` in rule `use-global`"),
+            .contains("unknown or not-yet-defined source global `$missing`"),
+        "{error}"
+    );
+
+    let wrong_sort = r#"
+        (datatype Math (Num i64))
+        (relation Seed (i64))
+        (let $zero (Num 0))
+        (Seed $zero)
+        (run 1)
+        (check (Seed 0))
+    "#;
+    let error =
+        causal_slice_program(Some("wrong-sort-global.egg".to_owned()), wrong_sort).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("source global `$zero` has sort `Math` instead of `i64`"),
         "{error}"
     );
 }

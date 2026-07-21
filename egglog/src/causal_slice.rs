@@ -161,6 +161,7 @@ struct AtomTemplate {
 #[derive(Clone, Debug)]
 enum AtomArg {
     Var(Span, String),
+    Global(String),
     Lit(Literal),
     App {
         function: String,
@@ -339,6 +340,7 @@ struct WitnessArena {
     nodes: Vec<WitnessRecord>,
     ids: IndexMap<WitnessNode, WitnessId>,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
+    globals: IndexMap<String, TypedEndpoint>,
 }
 
 impl WitnessArena {
@@ -482,6 +484,41 @@ impl WitnessArena {
                 value: endpoint,
             })
             .copied()
+    }
+
+    fn bind_global(
+        &mut self,
+        name: &str,
+        sort: &str,
+        endpoint: Value,
+    ) -> Result<(), CausalSliceError> {
+        let value = TypedEndpoint {
+            sort: sort.to_owned(),
+            value: endpoint,
+        };
+        if let Some(previous) = self.globals.insert(name.to_owned(), value.clone())
+            && previous != value
+        {
+            return Err(CausalSliceError::Invariant(format!(
+                "source global `{name}` was rebound while elaborating the trace"
+            )));
+        }
+        Ok(())
+    }
+
+    fn global(&self, name: &str, sort: &str) -> Result<Value, CausalSliceError> {
+        let endpoint = self.globals.get(name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "source global `{name}` was used before its definition-time endpoint was captured"
+            ))
+        })?;
+        if endpoint.sort != sort {
+            return Err(CausalSliceError::Invariant(format!(
+                "source global `{name}` was modeled as `{sort}` but captured as `{}`",
+                endpoint.sort
+            )));
+        }
+        Ok(endpoint.value)
     }
 
     fn set_availability(&mut self, id: WitnessId, availability: DepId) {
@@ -1925,7 +1962,13 @@ fn validate_and_model(
                     .get(&index)
                     .map(|origin| origin.derived_replay_vars.as_slice())
                     .unwrap_or_default();
-                let model = model_rule(rule, relations, constructors, derived_replay_vars)?;
+                let model = model_rule(
+                    rule,
+                    relations,
+                    constructors,
+                    &source_globals,
+                    derived_replay_vars,
+                )?;
                 if rules.insert(rule.name.clone(), model).is_some() {
                     return unsupported(
                         &rule.span,
@@ -2017,7 +2060,13 @@ fn validate_and_model(
                     return unsupported(span, "a positive check before the schedule".to_owned());
                 }
                 observations_started = true;
-                checks.push(model_check(span, facts, relations, constructors)?);
+                checks.push(model_check(
+                    span,
+                    facts,
+                    relations,
+                    constructors,
+                    &source_globals,
+                )?);
             }
             Command::Fail(span, command) if matches!(command.as_ref(), Command::Check(..)) => {
                 return unsupported(span, "negative checks / proof of absence".to_owned());
@@ -2125,6 +2174,7 @@ fn model_rule(
     rule: &crate::ast::Rule,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     derived_replay_vars: &[String],
 ) -> Result<RuleModel, CausalSliceError> {
     if rule.body.is_empty() {
@@ -2139,7 +2189,7 @@ fn model_rule(
     for fact in &rule.body {
         match fact {
             GenericFact::Fact(expr) => {
-                let atom = model_atom(expr, relations, constructors, "rule body")?;
+                let atom = model_atom(expr, relations, constructors, source_globals, "rule body")?;
                 if atom.args.iter().any(atom_arg_contains_app) {
                     return unsupported(
                         &rule.span,
@@ -2166,6 +2216,7 @@ fn model_rule(
             right,
             &var_sorts,
             constructors,
+            source_globals,
             &format!("rule `{}` body", rule.name),
         )?;
         register_arg_vars(
@@ -2190,13 +2241,19 @@ fn model_rule(
                     );
                 };
                 if relations.contains_key(function) {
-                    let atom = model_atom(expr, relations, constructors, "rule head")?;
+                    let atom =
+                        model_atom(expr, relations, constructors, source_globals, "rule head")?;
                     let args = atom.args.clone();
                     head.push(atom);
                     args
                 } else if let Some(constructor) = constructors.get(function) {
-                    let constructor =
-                        model_atom_arg(expr, &constructor.output, constructors, "rule head")?;
+                    let constructor = model_atom_arg(
+                        expr,
+                        &constructor.output,
+                        constructors,
+                        source_globals,
+                        "rule head",
+                    )?;
                     let args = vec![constructor.clone()];
                     head_constructors.push(constructor);
                     args
@@ -2217,6 +2274,7 @@ fn model_rule(
                     right,
                     &var_sorts,
                     constructors,
+                    source_globals,
                     &format!("rule `{}` union head", rule.name),
                 )?;
                 let args = vec![equality.left.clone(), equality.right.clone()];
@@ -2327,6 +2385,7 @@ fn model_check(
     facts: &[Fact],
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
 ) -> Result<CheckModel, CausalSliceError> {
     if facts.is_empty() {
         return unsupported(span, "an empty positive check".to_owned());
@@ -2345,7 +2404,13 @@ fn model_check(
     for fact in facts {
         match fact {
             GenericFact::Fact(expr) => {
-                let atom = model_atom(expr, relations, constructors, "positive check")?;
+                let atom = model_atom(
+                    expr,
+                    relations,
+                    constructors,
+                    source_globals,
+                    "positive check",
+                )?;
                 register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
                 atoms.push(atom);
             }
@@ -2356,6 +2421,7 @@ fn model_check(
                     right,
                     &var_sorts,
                     constructors,
+                    source_globals,
                     "positive check",
                 )?;
                 register_equality_vars(&equality, &mut var_order, &mut var_sorts)?;
@@ -2390,10 +2456,18 @@ fn model_equality(
     right: &Expr,
     known_var_sorts: &IndexMap<String, String>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<EqualityTemplate, CausalSliceError> {
-    let left_sort = infer_equality_expr_sort(left, known_var_sorts, constructors, context)?;
-    let right_sort = infer_equality_expr_sort(right, known_var_sorts, constructors, context)?;
+    let left_sort =
+        infer_equality_expr_sort(left, known_var_sorts, constructors, source_globals, context)?;
+    let right_sort = infer_equality_expr_sort(
+        right,
+        known_var_sorts,
+        constructors,
+        source_globals,
+        context,
+    )?;
     let sort = match (left_sort, right_sort) {
         (Some(left), Some(right)) if left == right => left,
         (Some(left), Some(right)) => {
@@ -2421,8 +2495,8 @@ fn model_equality(
     }
     Ok(EqualityTemplate {
         span: span.clone(),
-        left: model_atom_arg(left, &sort, constructors, context)?,
-        right: model_atom_arg(right, &sort, constructors, context)?,
+        left: model_atom_arg(left, &sort, constructors, source_globals, context)?,
+        right: model_atom_arg(right, &sort, constructors, source_globals, context)?,
         sort,
     })
 }
@@ -2433,6 +2507,7 @@ fn model_constructor_lookup(
     right: &Expr,
     known_var_sorts: &IndexMap<String, String>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<ConstructorLookupTemplate, CausalSliceError> {
     let (application_expr, output_expr) = match (left, right) {
@@ -2465,7 +2540,13 @@ fn model_constructor_lookup(
             "wildcard or parser-generated constructor lookup output variables",
         );
     };
-    let application = model_atom_arg(application_expr, &constructor.output, constructors, context)?;
+    let application = model_atom_arg(
+        application_expr,
+        &constructor.output,
+        constructors,
+        source_globals,
+        context,
+    )?;
     let AtomArg::App {
         args: modeled_args, ..
     } = &application
@@ -2502,10 +2583,14 @@ fn infer_equality_expr_sort(
     expr: &Expr,
     known_var_sorts: &IndexMap<String, String>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<Option<String>, CausalSliceError> {
     match expr {
-        GenericExpr::Var(_, var) => Ok(known_var_sorts.get(var).cloned()),
+        GenericExpr::Var(_, var) => Ok(source_globals
+            .get(var)
+            .or_else(|| known_var_sorts.get(var))
+            .cloned()),
         GenericExpr::Lit(_, literal) => Ok(Some(
             match literal {
                 Literal::Int(_) => "i64",
@@ -2647,6 +2732,7 @@ fn model_source_fact(
             expr,
             relations,
             constructors,
+            source_globals,
             "source initialization",
         )?)
     } else if let Some(constructor) = constructors.get(function) {
@@ -2654,6 +2740,7 @@ fn model_source_fact(
             expr,
             &constructor.output,
             constructors,
+            source_globals,
             "source initialization",
         )?)
     } else {
@@ -2803,6 +2890,7 @@ fn source_fact_command(span: &Span, fact: &SourceFact) -> Command {
 fn source_atom_arg_expr(span: &Span, arg: &AtomArg) -> Expr {
     match arg {
         AtomArg::Lit(literal) => Expr::Lit(span.clone(), literal.clone()),
+        AtomArg::Global(name) => Expr::Var(span.clone(), name.clone()),
         AtomArg::App { function, args, .. } => Expr::Call(
             span.clone(),
             function.clone(),
@@ -2818,6 +2906,7 @@ fn model_atom(
     expr: &Expr,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<AtomTemplate, CausalSliceError> {
     let GenericExpr::Call(span, relation, args) = expr else {
@@ -2842,7 +2931,7 @@ fn model_atom(
     let args = args
         .iter()
         .zip(&declaration.sorts)
-        .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, context))
+        .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, source_globals, context))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(AtomTemplate {
         relation: relation.clone(),
@@ -2854,6 +2943,7 @@ fn model_atom_arg(
     expr: &Expr,
     expected_sort: &str,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
     context: &str,
 ) -> Result<AtomArg, CausalSliceError> {
     match expr {
@@ -2863,6 +2953,25 @@ fn model_atom_arg(
                     span,
                     "wildcard or parser-generated variables (they have no stable source binding)",
                 )
+            } else if var.starts_with('$') {
+                let actual_sort =
+                    source_globals
+                        .get(var)
+                        .ok_or_else(|| CausalSliceError::Unsupported {
+                            location: span.to_string(),
+                            reason: format!(
+                                "unknown or not-yet-defined source global `{var}` in {context}"
+                            ),
+                        })?;
+                if actual_sort != expected_sort {
+                    return unsupported(
+                        span,
+                        format!(
+                            "source global `{var}` has sort `{actual_sort}` instead of `{expected_sort}` in {context}"
+                        ),
+                    );
+                }
+                Ok(AtomArg::Global(var.clone()))
             } else {
                 Ok(AtomArg::Var(span.clone(), var.clone()))
             }
@@ -2903,7 +3012,9 @@ fn model_atom_arg(
                 args: args
                     .iter()
                     .zip(&constructor.inputs)
-                    .map(|(arg, sort)| model_atom_arg(arg, sort, constructors, context))
+                    .map(|(arg, sort)| {
+                        model_atom_arg(arg, sort, constructors, source_globals, context)
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
                 input_sorts: constructor.inputs.clone(),
                 output_sort: constructor.output.clone(),
@@ -2915,14 +3026,14 @@ fn model_atom_arg(
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
     match arg {
         AtomArg::App { .. } => true,
-        AtomArg::Var(..) | AtomArg::Lit(..) => false,
+        AtomArg::Var(..) | AtomArg::Global(..) | AtomArg::Lit(..) => false,
     }
 }
 
 fn atom_arg_vars(arg: &AtomArg) -> Vec<(&Span, &String)> {
     match arg {
         AtomArg::Var(span, var) => vec![(span, var)],
-        AtomArg::Lit(_) => Vec::new(),
+        AtomArg::Global(..) | AtomArg::Lit(_) => Vec::new(),
         AtomArg::App { args, .. } => args.iter().flat_map(atom_arg_vars).collect(),
     }
 }
@@ -2959,7 +3070,7 @@ fn register_arg_vars(
                 Ok(())
             }
         },
-        AtomArg::Lit(_) => Ok(()),
+        AtomArg::Global(..) | AtomArg::Lit(_) => Ok(()),
         AtomArg::App {
             args, input_sorts, ..
         } => {
@@ -3100,6 +3211,7 @@ fn elaborate_source_fact(
                             .to_owned(),
                     });
                 }
+                witnesses.bind_global(name, sort, endpoint)?;
             }
         }
         Ok(new_rows)
@@ -4304,6 +4416,7 @@ fn ground_arg(
 ) -> Result<TypedEndpoint, CausalSliceError> {
     let value = match arg {
         AtomArg::Lit(literal) => literal_to_value(egraph.backend.base_values(), literal),
+        AtomArg::Global(name) => witnesses.global(name, sort)?,
         AtomArg::Var(_, var) => bindings
             .get(var)
             .map(|binding| binding.endpoint)
