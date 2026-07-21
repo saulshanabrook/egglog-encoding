@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use egglog_reports::ReportLevel;
+use egglog_reports::{PreMergeTiming, ReportLevel};
 
 use crate::numeric_id::NumericId;
 
@@ -135,6 +135,132 @@ fn basic_query_inner() {
     );
     res.sort();
     assert_eq!(res, Vec::from_iter((0..10).chain([13, 17].into_iter())));
+}
+
+#[test]
+fn timing_split_separates_inline_batches_and_final_flush() {
+    let mut db = Database::default();
+    let new_relation = || {
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "merge not supported");
+                false
+            }),
+        )
+    };
+    let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+    let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+    {
+        let mut input_buffer = db.new_buffer(input);
+        // One full 128-binding batch runs inline; the remaining 127 bindings
+        // run in the final flush. Both sides are deliberately substantial so
+        // the duration inequalities remain robust on coarse platform clocks.
+        for value in 0..255 {
+            input_buffer.stage_insert(&[Value::new(value)]);
+        }
+    }
+    db.merge_all();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    query.add_atom(input, &[value.into()], &[]).unwrap();
+    let mut action = query.build();
+    action.insert(output, &[value.into()]).unwrap();
+    action.build_with_description("copy");
+    let rule_set = rules.build();
+
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    let legacy_plan_time = report.rule_search_and_apply_time("copy");
+    let PreMergeTiming::Split {
+        search,
+        apply,
+        unattributed,
+    } = report.pre_merge
+    else {
+        panic!("serial execution must report split timing");
+    };
+
+    assert!(search > std::time::Duration::ZERO);
+    assert!(apply > std::time::Duration::ZERO);
+    assert!(
+        search < legacy_plan_time,
+        "the inline action batch must be subtracted from search"
+    );
+    assert!(
+        search + apply > legacy_plan_time,
+        "the final action flush must be included in apply"
+    );
+    assert_eq!(report.pre_merge.total(), search + apply + unattributed);
+}
+
+#[test]
+fn phase_timing_is_available_for_an_empty_ruleset() {
+    let mut db = Database::default();
+    let rule_set = RuleSetBuilder::new(&mut db).build();
+
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+
+    assert_eq!(
+        report.pre_merge,
+        PreMergeTiming::Split {
+            search: std::time::Duration::ZERO,
+            apply: std::time::Duration::ZERO,
+            unattributed: std::time::Duration::ZERO,
+        }
+    );
+}
+
+#[test]
+fn parallel_execution_keeps_split_phase_timing_unavailable() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap()
+        .install(|| {
+            let mut db = Database::default();
+            let new_relation = || {
+                SortedWritesTable::new(
+                    1,
+                    1,
+                    None,
+                    vec![],
+                    Box::new(|_, left, right, _| {
+                        assert_eq!(left, right, "merge not supported");
+                        false
+                    }),
+                )
+            };
+            let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+            let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+            {
+                let mut input_buffer = db.new_buffer(input);
+                for value in 0..10_001 {
+                    input_buffer.stage_insert(&[Value::new(value)]);
+                }
+            }
+            db.merge_all();
+
+            let mut rules = RuleSetBuilder::new(&mut db);
+            let mut query = rules.new_rule();
+            let value = query.new_var_named("value");
+            query.add_atom(input, &[value.into()], &[]).unwrap();
+            let mut action = query.build();
+            action.insert(output, &[value.into()]).unwrap();
+            action.build_with_description("copy");
+            let rule_set = rules.build();
+
+            let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+
+            let PreMergeTiming::Combined { elapsed } = report.pre_merge else {
+                panic!("parallel execution must report combined timing");
+            };
+            assert!(elapsed > std::time::Duration::ZERO);
+        });
 }
 
 #[test]

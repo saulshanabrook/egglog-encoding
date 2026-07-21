@@ -103,7 +103,7 @@ pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
     ExternalFunction, ExternalFunctionId, Value,
 };
-pub use egglog_reports::{IterationReport, ReportLevel};
+pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
 /// Which subsumption view a table atom reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

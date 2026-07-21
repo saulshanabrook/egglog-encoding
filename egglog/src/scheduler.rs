@@ -674,14 +674,7 @@ mod test {
                     .all(|k| k.starts_with("test-rule"))
             );
             assert_eq!(
-                report.merge_time_per_ruleset.keys().collect::<Vec<_>>(),
-                [&"test".into()]
-            );
-            assert_eq!(
-                report
-                    .search_and_apply_time_per_ruleset
-                    .keys()
-                    .collect::<Vec<_>>(),
+                report.ruleset_timings.keys().collect::<Vec<_>>(),
                 [&"test".into()]
             );
 
