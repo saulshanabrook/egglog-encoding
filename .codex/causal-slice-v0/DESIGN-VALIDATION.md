@@ -6,6 +6,36 @@ actively falsified rather than silently generalized.
 
 Date: 2026-07-20.
 
+## Current validated extension beyond Bronze
+
+The initial scalar-only audit below is preserved as the baseline experiment
+record. The current implementation additionally confirms:
+
+- native head applications carry exact rule-match lane origins;
+- successful union commit exposes raw endpoints, origin, and an
+  applied/redundant outcome;
+- applied union edges form a working one-scope explanation forest for direct
+  and constructor-union slices without epochs;
+- immutable literal/application witnesses retain syntax, endpoint, and
+  availability separately;
+- restricted constructor body lookups retain the exact captured application
+  witness and output equality path;
+- broad queries are admitted when the native tracer actually selects one bag;
+  actual decomposed plans still reject;
+- unsupported prerequisite evidence is deferred until reachability: an
+  unretained unsupported event is omitted, while a retained one returns the
+  same fail-closed diagnostic;
+- the unmodified pointer fixture produces 706 pending, 600 effective, and 1
+  retained firing and passes ordinary plus unchanged strict proof replay.
+
+The strongest newly falsified assumption is that one preferred syntax per
+runtime endpoint identifies constructor body provenance. After a union and
+rebuild, a lookup may match `ptr_points_to(expr_points_to(u))` using a row
+created as `ptr_points_to(A("alloc"))`. The terms are equal, but the trace lacks
+the exact body row. Searching the witness arena for a plausible predecessor is
+explicitly rejected. The missing native datum is source atom identity plus
+table, generation-safe row/version identity, and raw match-time row values.
+
 ## Steering frame
 
 - Mission: establish or falsify the smallest sound instance of one traced
@@ -25,7 +55,7 @@ Date: 2026-07-20.
   lacks match-time or commit-time evidence. Never substitute a final-state
   scan or inverse endpoint search.
 
-## Exact implemented contract
+## Initial Bronze contract
 
 The accepted fragment is intentionally narrow:
 
@@ -55,11 +85,12 @@ single plan; larger queries can be decomposed unless `:no-decomp` was already
 present in the source. The slicer preserves the original plan and planner
 flags; it does not normalize tracing to another planner.
 
-The validator rejects unsupported constructs before the traced run, including
-equality or primitive filters, functions, constructors, unions, rewrites,
-delete, subsume, merges, RHS function lookups, external functions, containers,
-extracts, negative checks, push/pop, includes, output/opaque I/O, input
-`run-rule`, and DD.
+The initial validator rejected all equality, constructors, and unions. The
+current extension above admits immutable constructors, direct unions, and
+restricted constructor lookup binders. It still rejects primitive filters,
+mutable functions, rewrites, delete, subsume, custom merges, other RHS
+function lookups, external functions, containers, extracts, negative checks,
+push/pop, includes, output/opaque I/O, input `run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -76,14 +107,16 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | exact source `RowId`s survive factorized final expansion | Falsified | `TaggedRowBuffer` carries a tag, but expansion discards it before `ActionBuffer::push_bindings` and has no source-atom identity |
 | decomposed materializations already carry a shadow dependency | Falsified on the current path | materialized rows have no `DepId`; v0 rejects potentially decomposed rules/checks |
 | naked `RowId` is a stable sidecar key | Falsified | generation changes, replacement, rebuild/rekey, deletion, compaction, and slot reuse invalidate or recycle IDs |
-| action lanes and mutation proposals carry a pending-fire origin | Falsified | `ActionState`, mutation buffers, and staged rows carry values but no `PendingFireId` |
-| commit reports which proposal was new, changed, redundant, or deleted | Falsified | current `TableChange` is aggregate and parallel staging may coalesce same-key proposals |
+| action lanes and mutation proposals carry a pending-fire origin | Confirmed for traced head applications and union proposals | traced `ActionState` lanes carry `RuleMatchId`; table applications and union receipts preserve it; general row mutations remain incomplete |
+| commit reports which proposal was new, changed, redundant, or deleted | Confirmed only for union applied/redundant outcome | general row `TableChange` remains aggregate and parallel staging may coalesce same-key proposals |
 | lookup hits and misses expose row/tombstone evidence | Falsified | vectorized lookup drops row identity and hit/miss provenance; there is no tombstone dependency |
-| successful union exposes raw endpoints, origin, and success | Falsified at the public hook | internal insert distinguishes redundant/successful union, but the result and proposal origin are discarded |
-| successful raw-endpoint edges form a forest without epochs in one scope | Reasoned only | every successful edge joins two components, so later edges cannot alter an earlier unique path; no end-to-end edge capture exists yet |
+| successful union exposes raw endpoints, origin, and success | Confirmed for traced rule proposals | `UnionReceipt` records raw lhs/rhs, optional `RuleMatchId`, and applied/redundant outcome; originless rebuild/congruence unions remain unsupported |
+| successful raw-endpoint edges form a forest without epochs in one scope | Confirmed for direct and constructor-union canaries | applied edges join distinct components, redundant edges are omitted, and strict replay resolves the unique path |
 | equality IDs are globally stable without epochs | Falsified | push/pop can reuse the same raw `Value` for a different term; cross-scope support needs rollback-aligned arenas or a scope epoch |
-| match-time endpoints provide printable witnesses by themselves | Falsified generally | only raw scalar endpoints are captured at the action leaf; literal `WitnessId`s are reconstructed post-run from append-only typed base values |
-| scalar literals can be printed without per-match extraction | Confirmed for the exercised `i64` path | typed base-value reconstruction produces source literals; unsafe strings fail closed; application/container witnesses remain unsupported |
+| match-time endpoints provide printable witnesses by themselves | Falsified generally | syntax-specific literal/application witnesses are required; one preferred endpoint witness fails for equal-syntax chained lookups |
+| scalar literals can be printed without per-match extraction | Confirmed | typed base-value reconstruction produces source literals and unsafe strings fail closed |
+| immutable constructor syntax can be captured from native applications | Confirmed | source, rule-created, nested, standalone, and constructor-union canaries pass ordinary and strict replay |
+| one preferred witness identifies a constructor body row after equality | Falsified | retained chained-lookup canary requires exact native body-row/version evidence; witness inverse search is forbidden |
 | a container outer value identifies immutable contents | Falsified | the same outer ID can survive content rebuild; an immutable container-version witness is required |
 | all-no-op firings need persistent replay events | Falsified for Bronze | all matches remain available for the diagnostic transcript, but only first logical producers become persistent fire events |
 | one positive check can root one complete actual environment | Confirmed within the planner boundary | one-atom variable check and two-atom constant/repeated-variable checks pass; projected/decomposed checks fail closed |
@@ -163,12 +196,16 @@ A loop around current `run-rule` does not meet that contract.
 
 ## Equality result
 
-The proposed append-only successful-union forest is a plausible one-scope
-graph invariant and does not need speculative epochs inside that scope.
-However, it is unimplemented and not empirically validated end to end because
-the native union path does not expose both success and origin. The existing
-canary only establishes that native direct, redundant, and congruence equality
-behave under strict proof mode and that the slicer rejects them.
+The append-only successful-union forest is implemented for one non-popped
+scope. Native commit reports raw endpoints, rule-match origin, and
+applied/redundant outcome. Direct and nested constructor-union slices recover
+the unique successful-edge path and pass unchanged strict proof replay;
+redundant unions do not add edges or persistent union-only events.
+
+This does not establish general congruence/rebuild support. Originless rebuild
+unions and relation-row rekeys lack the required colliding-row and child-
+equality transition evidence and fail closed when the affected event is
+retained. Push/pop remains outside the no-epoch claim.
 
 ## Experiment ledger
 
@@ -183,17 +220,35 @@ behave under strict proof mode and that the slicer rejects them.
 | E6 | Is sequential replay adequate for Bronze? | passed for fully grounded positive set relations |
 | E7 | Does sequential replay preserve mutation waves? | falsified by insert/delete, delete/read, subsume/read, and lookup canaries |
 | E8 | Does `:expect` count after primitive filters? | falsified; source rejected before tracing |
-| E9 | Is the equality forest available from current hooks? | no; success plus origin is missing |
+| E9 | Is the equality forest available from current hooks? | passed for rule-originated direct unions; originless congruence/rebuild remains unsupported |
 | E10 | Are source planner flags preserved? | passed; emission preserves absence/presence of `:no-decomp` and validates it in the semantic rule mapping |
 | E11 | Are duplicate complete head rows counted once while the full head replays? | passed |
 | E12 | Can the public runner measure trace + slice + unchanged strict replay as one treatment? | passed: one release Bronze observation for each strict treatment; timing is point-only |
 | E13 | Can scalar relation input become self-contained source provenance? | passed: two TSV rows become source facts and both ordinary/strict replays pass with the directory removed |
+| E14 | Can immutable constructor creation and union be replayed? | passed for source, rule-created, nested, standalone, and constructor-union canaries in ordinary and strict modes |
+| E15 | Does one preferred witness identify a later constructor lookup? | falsified by the retained chained-lookup canary; exact body row/version evidence is missing |
+| E16 | May an unsupported but causally irrelevant firing be discarded? | passed: prerequisite error is deferred to reachability; retained variant still fails closed |
+| E17 | Does the unmodified pointer fixture slice and strictly replay? | passed: 706 pending, 600 effective, 1 retained |
+| E18 | Does the first real integrated treatment save time? | no on pointer: 1.06–1.12x wall time and 1.04–1.05x RSS over six rounds |
 
 ## Validation commands
 
 ```bash
 cargo test -p egglog --test run_rule
 cargo test -p egglog --test causal_slice
+cargo run --release -p egglog --bin egglog -- \
+  --mode no-messages -j 1 \
+  --fact-directory benchmarks/data/pointer-analysis-small \
+  --causal-slice --proof-testing benchmarks/pointer-analysis-small.egg
+uv run --locked ./bench.py \
+  --target . \
+  --compare-treatment proof-testing \
+  --treatment causal-proof-testing \
+  --rounds 6 --timeout-sec 120 \
+  --report /tmp/egglog-causal-pointer-20260720.jsonl \
+  --format markdown --detail phases \
+  --fact-directory benchmarks/data/pointer-analysis-small \
+  benchmarks/pointer-analysis-small.egg
 cargo run -p egglog --example causal_slice -- \
   .codex/causal-slice-v0/bronze.egg
 target/debug/egglog /tmp/causal-slice-v0-full.new.egg

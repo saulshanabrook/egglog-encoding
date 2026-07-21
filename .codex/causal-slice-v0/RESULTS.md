@@ -19,6 +19,14 @@ PR #23 cannot replay a projected ordinary Generic Join firing from partial
 bindings; that is the smallest replay counterexample and is now an explicit
 fail-closed boundary.
 
+The implementation has now advanced beyond scalar Bronze through immutable
+constructor witnesses, direct successful-union receipts, a one-scope equality
+forest, constructor lookup dependencies, and an unmodified real pointer
+fixture. Unsupported prerequisite elaboration is delayed until backward
+reachability, so an unsupported but causally irrelevant firing does not poison
+a sound slice. The same unsupported construct still fails closed when its
+event is retained.
+
 The Bronze fixture contains two initial facts, a two-rule derivation chain,
 multiple groundings, an irrelevant rule, and one positive check. Its
 computation schedule captures 6 rule matches, and the observation query adds
@@ -26,6 +34,29 @@ one match. All 6 rule firings are effective logical set inserts; the backward
 slice retains 2. The complete 6-leaf transcript and 2-leaf slice
 both pass ordinary execution and the unchanged strict proof checker. No
 automatic computation schedule remains in either emitted program.
+
+## Current real-fixture result
+
+`benchmarks/pointer-analysis-small.egg` is implemented and tested end to end
+with its checked-in scalar fact directory:
+
+- one ordinary/native traced execution produces 706 pending firings;
+- 600 firings have an effective row, constructor, or union effect;
+- the combined positive observation retains 1 firing;
+- the emitted source contains exactly one guarded `run-rule` leaf and no
+  original `(run 100000)` schedule;
+- ordinary replay and unchanged strict proof replay/check both pass;
+- `print-size` commands are preserved as read-only diagnostics and do not add
+  slice roots.
+
+The first retained-boundary counterexample is a two-wave chained constructor
+lookup. A row created as `ptr_points_to(A "alloc")` may later be matched through
+the equal syntax `ptr_points_to(expr_points_to("expr"))`. The native trace
+currently records bindings and head applications, but not the exact body table
+row used by the match. Searching historical witnesses by final equality would
+violate the no-inverse-guessing contract. The slicer therefore rejects this
+case when retained, while safely discarding the corresponding unretained load
+event in the pointer fixture.
 
 ## Repository state
 
@@ -86,8 +117,9 @@ requires exactly one file plus `--proof-testing`.
 - Trace mode disables physical parallel execution. This does not alter the
   logical matches or result for the admitted positive set-insert fragment, but
   physical parallel order is not claimed.
-- Potentially decomposed queries and Generic Join shapes that can project a
-  required source variable fail closed before the run.
+- Generic Join shapes that can project a required source variable fail closed
+  before the run. Broad rules are admitted when the ordinary native planner
+  produces one bag; the tracing hook rejects an actual decomposed plan.
 
 The debug trace currently retains every raw match and binding through the
 whole schedule. Literal witnesses and `PendingFire`s are elaborated post-run,
@@ -109,18 +141,26 @@ this spike does not claim the intended wave-local memory behavior.
   event only when at least one complete head tuple is a first logical producer.
 - Duplicate facts inside one head count as one effective output row, while the
   emitted rule retains and executes the complete original head.
+- Successful rule-originated unions record raw typed endpoints and their
+  applied/redundant commit result. Applied edges enter one append-only
+  equality forest; redundant union-only firings remain no-ops.
+- Unsupported premise elaboration is attached to the promoted event and
+  diagnosed only if backward reachability retains that event. Head effects
+  and equality edges are still recorded chronologically for every firing.
 - One actual satisfying check environment roots every selected logical row;
   roots from multiple checks are combined.
 - Backward traversal and chronological emission are deterministic.
 
 ### Witnesses and source transformation
 
-- Each captured binding stores a scalar `WitnessId` and its original runtime
+- Each captured binding stores a syntax-specific `WitnessId` and its original runtime
   endpoint. Runtime `Value` IDs are never serialized.
-- Witness syntax is reconstructed once post-run from typed append-only base
-  values, not by per-match extraction or final e-class inverse search.
-- Only reachable literal witnesses are printed. Values that the current
-  printer cannot round-trip fail closed.
+- Literal and immutable constructor-application witnesses are captured from
+  native source/head applications with availability dependencies. They are
+  not reconstructed by per-match extraction or final e-class inverse search.
+- Only reachable witnesses are printed. Values that the current printer
+  cannot round-trip and retained constructor lookups lacking exact body-row
+  evidence fail closed.
 - Anonymous rules receive deterministic source-position/command-ordinal names
   before registration; collisions receive stable suffixes.
 - Original rule semantics and source planner flags, including `:no-decomp`,
@@ -181,8 +221,8 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | `i64` positive set relations | implemented and tested | full transcript, two-rule slice, two-body conjunction, duplicate/no-op, ordinary and strict proof replay |
 | `String`, `bool`, `f64`, `Unit` scalar path | implemented generically, less tested | same typed-literal path; unsafe String printer cases have fail-closed coverage; no separate successful strict slicer canary for every sort |
 | one/multiple positive checks | implemented and tested | one actual support per check, combined backward root |
-| conjunctive checks | implemented within planner boundary | constants or variables occurring across atoms; more than two atoms and projected variables rejected |
-| multi-atom rules | implemented within planner boundary | exact two-body join passes; potentially decomposed and projected-variable shapes rejected |
+| conjunctive checks | implemented within planner boundary | one actual complete environment; projected or decomposed observation plans rejected |
+| multi-atom rules | implemented within planner boundary | broad single-plan rule passes; native decomposed plans and projected-variable shapes reject explicitly |
 | deterministic anonymous naming | implemented and tested | parsed AST source location plus ordinal and collision suffix |
 | complete manual transcript | implemented and tested | 6 guarded leaves, no automatic schedule |
 | dynamic rule-application slice | implemented and tested | 6 promoted events become 2 retained |
@@ -192,12 +232,14 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | physical source `RowId` provenance | not implemented | factorized expansion discards tags; Bronze uses grounded logical rows |
 | decomposed-join provenance | rejected | intermediate rows have no shadow `DepId` |
 | projected existential grounding | rejected | PR #23 partial bind changes match count; missing selector/witness interface |
-| equality/congruence slicing | rejected | successful-union success plus origin hook absent |
+| direct equality/union slicing | implemented and tested | commit receipts retain origin and applied/redundant result; direct and constructor-union slices pass strict proofs |
+| congruence/rebuild equality | rejected when causally retained | originless rebuild unions and exact row-rekey support are absent |
 | extract observation | rejected | selected-term/equality dependency path not implemented; no optimality claim |
 | negative check/absence | rejected | no tombstone or exhaustiveness evidence |
 | delete/subsume | rejected | state provenance absent and sequential replay diverges |
-| functions, merges, RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
-| application/global/constructor witnesses | rejected | proactive syntax/availability witness hook absent |
+| constructor lookups | implemented for exact captured syntax | lookup availability plus output equality path are retained; equal-but-different body syntax needs exact native row evidence |
+| mutable functions, merges, other RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
+| constructor witnesses | implemented and tested | source, rule-created, standalone, nested, and constructor-union canaries; globals remain rejected |
 | containers | rejected | same outer ID can represent changed contents |
 | push/pop | rejected | runtime IDs can be reused after restore |
 | output effects, includes, opaque I/O | rejected | reproducibility/hidden schedules unproven; scalar relation input is the one admitted I/O normalization |
@@ -228,21 +270,39 @@ replacement, rebuild/rekey, deletion, compaction, or reuse. General provenance
 needs either generation-aware physical identity with exact migration, or the
 smallest stable logical identity exposed at match/commit.
 
-The native mutation path additionally lacks lane-aligned `PendingFireId`s,
-lookup hit/miss dependencies, proposal origins, and per-proposal commit
-receipts (`New`, `Changed`, `NoOp`, `Deleted`, old/new identity).
+The native path now carries rule-match lane origins through head table
+applications and union proposals, and union commit returns applied/redundant
+receipts. It still lacks exact body-row evidence, general lookup hit/miss
+dependencies, and per-proposal row commit receipts (`New`, `Changed`, `NoOp`,
+`Deleted`, old/new identity).
+
+### Chained constructor lookup
+
+The reduced two-wave canary creates `ptr_points_to(A "alloc")`, then binds the
+same argument through the equal term `expr_points_to("expr")`. The ordinary
+run succeeds, but the trace exposes only complete variable bindings at the
+action leaf; it does not identify the constructor table row used by the body
+lookup. One preferred witness per endpoint cannot recover that syntax.
+
+The exact missing interface is match-time body evidence containing source atom
+identity, table identity, a generation-safe row/version identity, and the raw
+row values. Factorized expansion currently discards the `TaggedRowBuffer`
+source `RowId` before `ActionBuffer::push_bindings`. Retained instances fail
+closed. Unretained instances may be dropped after head/equality reachability is
+known, without scanning the final database or guessing among witnesses.
 
 ### Equality
 
-A separate successful-edge arena is a plausible forest within one non-popped
-scope: successful edges join distinct components, so later edges cannot change
-an earlier unique path. This is a reasoned invariant, not implemented or
-end-to-end tested. Current union commit discards success and origin, and native
-UF parents path-compress. Congruence would also need both colliding-row
-dependencies and child equalities.
+A separate successful-edge arena is implemented for one non-popped scope.
+Union commit records raw endpoints, rule-match origin, and applied/redundant
+outcome. Every applied edge joins distinct components; direct and nested
+constructor-union canaries recover the unique earlier path and pass strict
+proof replay. A later redundant edge is not added.
 
-No epoch is needed by Bronze because equality and scopes are rejected. The
-global no-epoch claim is false: push/pop can reuse `Value(0)` for another term.
+No epoch is needed for this tested one-scope forest. Congruence/rebuild unions
+without an originating firing and relation-row rekeys remain fail-closed when
+retained. The global no-epoch claim is still false: push/pop can reuse
+`Value(0)` for another term.
 
 ### Sequential waves
 
@@ -334,26 +394,46 @@ This is one point-only sample, not speedup evidence. Its purpose was to prove
 that the public runner builds, caches, and measures the complete one-process
 pipeline under distinct treatment identities.
 
+### Pointer fixture benchmark
+
+Commit `eb68822314c4` was measured with six interleaved release rounds per
+treatment, a 120-second timeout, and the same binary/backend/fact directory.
+The baseline treatment was unchanged `proof-testing`; the candidate was the
+integrated `causal-proof-testing` process. Report cache:
+`/tmp/egglog-causal-pointer-20260720.jsonl`.
+
+| Metric | Original strict proof (95% CI) | Integrated causal strict proof (95% CI) | Candidate / baseline |
+|---|---:|---:|---:|
+| wall time | 358–377 ms | 399–401 ms | 1.06–1.12x |
+| peak RSS | 105.2–105.4 MiB | 109.9–110.4 MiB | 1.04–1.05x |
+
+Recorded ruleset phases were faster in the candidate: search decreased by
+about 0.37 ms, apply by 0.70 ms, and merge by 2.14 ms. Those gains were
+outweighed by approximately +35.9 ms outside recorded rulesets, accounting for
+110% of the wall-time increase. This is the first real empirical result: the
+tiny slice works, but the current traced-run/elaboration/emission/reparse and
+strict replay pipeline does not yet save total time on this fixture.
+
 ## Current benchmark frontier
 
-All six default workloads now have an explicit capability frontier. None is
-yet admitted end to end; failures remain diagnostics rather than timed rows.
+All six default workloads now have an explicit capability frontier. Pointer
+analysis is admitted end to end; the remaining failures stay in the validation
+bucket rather than being timed as successful rows.
 
 | Workload | Current first boundary | Major subsequent requirements |
 |---|---|---|
 | `math-microbenchmark.egg` | datatype/application values | rewrite-generated rules, equality/congruence provenance, and a conservative root for print-only observation |
-| `pointer-analysis-small.egg` | non-scalar `Allocation` relation | constructor witnesses, equality support, exact projected/decomposed join premises; scalar input provenance is now implemented |
+| `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
 | `herbie.egg` | non-scalar `Math` relation | application witnesses, rewrites, custom merges, primitive filters, and multiple temporal boundaries |
 | `luminal-llama.egg` | non-scalar `IList` relation | application/container witnesses, multiple schedules, delete/subsume, and mutable-state batching |
 | `hardboiled_conv1d_32.egg` | non-scalar `BinOp` relation | containers, functions, rewrites, filters, broad joins, subsume, and batch replay |
 | `eggcc-2mm-pass1.egg` | non-scalar `Type` relation | constructors, functions/merges, broad joins, multiple schedules, globals, delete/subsume, containers, and stateful primitives |
 
-The implementation order selected from these failures is: application/global
-witnesses and non-scalar relation tuples; successful-union/equality and
-rewrite mapping; exact projected/decomposed premise evidence; immutable
-functions; shared-prestate batch plus mutable state; then containers and
-opaque/stateful primitives. Pointer analysis is the first intended unmodified
-default workload because it avoids delete, subsume, and custom merges.
+The next implementation order selected from these failures is: attribute the
+pointer treatment's outside-ruleset cost; preserve exact body-row evidence for
+retained chained lookups; add rewrite-generated rule mapping and a print-only
+root for the math fixture; then immutable functions, shared-prestate batch plus
+mutable state, containers, and opaque/stateful primitives.
 
 ## Validation status
 
@@ -375,37 +455,51 @@ Bronze implementation at the initial handoff:
 - `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
 - `cargo fmt --all -- --check` and `git diff --check`: passed.
 
+Current constructor/equality/pointer continuation:
+
+- `cargo test -p egglog --test causal_slice`: 38 passed, including the
+  unmodified pointer fixture in ordinary and unchanged strict proof replay;
+- `make rust-nits`: passed after the lazy-prerequisite patch;
+- release pointer correctness command: passed;
+- benchmark collection: 12/12 fresh runs succeeded (6 per treatment);
+- `make check` and `make proof-tests` have not yet been rerun after the latest
+  constructor/equality/pointer commits; their last full results are the Bronze
+  results above.
+
 ## Implemented fact, measurement, proposal, and falsification
 
-- Implemented/tested fact: the bounded `i64` Bronze fixture is traced once,
-  sliced from a positive check, replayed only through guarded manual leaves,
-  and accepted by the unchanged strict checker.
-- Empirical measurement: the toy has 6 matched/promoted and 2 retained events;
-  traced generation is 1.28x ordinary and strict proof replay is 1.90x ordinary
-  at process level.
-- Plausible but untested: a one-scope successful-union forest, a streaming
-  wave trace sink, generation-aware mutable sidecars, proactive app witnesses,
-  and a native shared-pre-state batch.
+- Implemented/tested fact: Bronze plus the pointer fixture are traced once,
+  sliced from positive observations, replayed only through guarded manual
+  leaves, and accepted by the unchanged strict checker. Direct successful
+  unions and immutable constructor witnesses are included.
+- Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
+  firing; the integrated treatment is currently 1.06–1.12x slower and
+  1.04–1.05x higher RSS than strict proof-testing of the original.
+- Plausible but untested: a streaming wave trace sink, generation-aware mutable
+  sidecars, exact body-row transport through factorized joins, and a native
+  shared-pre-state batch.
 - Falsified: general complete match bindings, partial-bind replay of projected
-  firings, naked `RowId` stability, native origin/receipt availability,
-  globally epoch-free equality endpoints, post-filter `:expect`, and general
-  sequential-wave equivalence.
+  firings, naked `RowId` stability, one preferred syntax as constructor-body
+  provenance, globally epoch-free equality endpoints, post-filter `:expect`,
+  and general sequential-wave equivalence.
 
 ## Recommended next patches
 
-The benchmark path and scalar relation inputs are now implemented. The next
-capability patches should follow the observed default-suite frontier:
+The benchmark path, scalar inputs, immutable constructor witnesses, direct
+unions, and the first real fixture are implemented. The next patches should be:
 
-1. capture immutable application/global witnesses at creation time and admit
-   non-scalar relation tuples without final extraction;
-2. add successful-union receipts, equality dependencies, and deterministic
-   rewrite/birewrite source-to-registered-rule mappings;
-3. preserve exact logical premise rows and projected variables through Generic
-   Join and decomposed plans;
-4. stream each native wave into a callback so raw matches do not coexist with
+1. split the integrated pointer treatment into traced-native, elaboration/
+   emission/reparse, and strict sliced-replay timers; the measured +35.9 ms
+   outside rulesets is the first optimization target;
+2. carry exact match-time body atom/table/row-version evidence through
+   factorized expansion so retained chained constructor lookups never require
+   witness guessing;
+3. stream each native wave into a callback so raw matches do not coexist with
    the entire elaborated arena;
-5. add lane-aligned origins, dynamic reads, commit receipts, and guarded
-   shared-prestate batch replay before mutation support;
+4. add deterministic rewrite/birewrite source-to-registered-rule mapping and a
+   conservative print-only observation root for `math-microbenchmark.egg`;
+5. add dynamic reads, general row commit receipts, and guarded shared-prestate
+   batch replay before mutation support;
 6. add delete/subsume visibility, custom merges, containers, and opaque
    externals only after their focused canaries pass.
 
@@ -424,7 +518,19 @@ Local reviewable commits:
 6. `984c9fa6` — record the validated boundary and initial final runs;
 7. `f292c6a` — add one-process strict causal benchmark treatments and CLI;
 8. `f6a9b09` — normalize scalar relation inputs into self-contained replay
-   source facts.
+   source facts;
+9. `7f5d3158` — record the benchmark enablement frontier;
+10. `46d6d0e7`, `338330f0`, `74c1ed84` — trace, replay, and admit immutable
+    constructor witnesses;
+11. `8e9cb9cb`, `e44d53d9`, `54e05cf0` — retain union commit outcomes, slice
+    equality causes, and preserve constructor union origins;
+12. `643126ce` — trace exact-syntax constructor lookup dependencies;
+13. `2921f364` — admit broad single-plan rules and read-only diagnostics;
+14. `f1e632ca` — pin the retained chained-lookup provenance counterexample;
+15. `eb688223` — defer unsupported prerequisites until backward slicing while
+    preserving fail-closed retained events;
+16. `b674b003` — lock the unmodified pointer fixture into ordinary and strict
+    sliced replay coverage.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
