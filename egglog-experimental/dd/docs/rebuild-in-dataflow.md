@@ -1,7 +1,88 @@
-# Moving the rebuild fixpoint into the dataflow
+# Compiling schedules and rules into the dataflow
 
 Status: investigation (see `tests/rebuild_fixpoint.rs` for a passing prototype
-of the core mechanism). Follows the perf work on `oflatt-dd-perf`.
+of the rebuild fixpoint). Follows the perf work on `oflatt-dd-perf`.
+
+## Agreed goal (July 2026)
+
+A general compiler from (rules + schedule), as seen through the backend API,
+to ONE DD dataflow — including user-rule saturation, not just rebuild. The
+host shrinks to: feeding command-level inputs, evaluating impure primitives,
+and reading outputs at command boundaries (`check` / `extract` /
+`print-size`). One epoch per COMMAND, not per iteration. This also dissolves
+the data-duplication question: host tables stop being engine working state
+and become at most a read cache for command-boundary queries.
+
+The schedule-node mapping:
+
+| Schedule node | Dataflow construct |
+|---|---|
+| `(run :ruleset R)` once | bounded region (joins + heads), no feedback |
+| `(saturate (run R))` | nested `iterate` scope |
+| `(run N :ruleset R)` | `iterate` with feedback gated on round < N |
+| `(seq A B)` | data-dependency chaining of regions |
+
+Prerequisite: a backend-API extension so the backend SEES the schedule tree —
+e.g. an optional `run_schedule(schedule, rulesets)` entry point whose default
+implementation interprets the tree by calling `run_rules` per iteration
+(main backend unchanged; DD overrides it).
+
+### Fresh ids inside the dataflow: the memoizing mint operator
+
+User-rule heads mint fresh ids on lookup-miss, and mints on a DERIVED path
+must be replay-stable: DD re-runs operator logic on retraction deltas (delete
+rules, rebuild churn today; every `iterate` round in the fixpoint), and a
+fresh-counter mint on replay yields a different id — the retraction then
+fails to cancel the original insertion, corrupting multiplicities (negative
+phantom rows), which is far worse than the semantically-absorbable "duplicate
+id that congruence unions away".
+
+Decision: a stateful **memoizing mint operator** — an append-only
+`canonical_key -> id` dictionary inside a timely operator, minting from the
+shared counter on first sight, returning the memoized id on any replay
+(negative deltas never mint; they look up). Properties:
+
+- Retraction-safe by construction: `-match` replays produce the same id, so
+  cancellation is exact.
+- The dictionary never shrinks, matching egglog's write-only term relations
+  (terms outlive their rows so proofs can refer to them).
+- Dataflow rebuild (the backend clone path) re-primes the dictionary from the
+  existing term relations while seeding inputs — same id space, no re-mints.
+- Keeps compact u32 counter ids and exact output parity with the main
+  backend. (Deterministic skolem/hash ids remain the stateless fallback, but
+  would need 64-bit ids to dodge birthday collisions and cannot promise
+  parity; shelved unless the operator's state management proves ugly.)
+
+Termination guard: mints happen only behind an antijoin against the view
+(mint-on-MISS) — mint-per-match is the classic non-terminating chase.
+
+### `(delete ...)` is data, not DD retraction
+
+egglog's rules are MONOTONE-FIRE: a match's consequences persist after the
+matched row is deleted; delete only hides the row from FUTURE matches. The
+host architecture gets this for free (negative binding deltas are ignored;
+effects are durable table writes). The in-dataflow compiler must not let
+DD's view maintenance un-derive fired effects, so it uses a two-layer model:
+
+- **Table state is the integral of an append-only event stream.** User
+  deletes/subsumes append `-` events (forward-only), mirroring the host
+  event logs. New matches don't see the row; old consequences stand.
+- **Head effects pass through a "rising-edge" operator** — the sibling of
+  the memoizing mint: stateful, emits one effect event per 0→positive
+  transition of a binding's count and NOTHING on falling edges. This
+  reproduces monotone-fire exactly, including refire-on-reinsert (each
+  remove-then-reinsert is a new rising edge — today's version-bump
+  semantics). Append-only output ⇒ monotone ⇒ safe inside `iterate`.
+- **Genuine view-maintenance retraction remains confined to** the match
+  computation (a `-` event must cancel stale bindings inside the joins, as
+  DD already does for us today) and the rebuild layer, where the FD view
+  really is a maintained view of terms + labels — which is why the
+  prototype's formulation is correct there.
+
+So the compiler's toolkit is DD's native joins/`iterate` for matching and
+rebuild, plus two small history-sensitive operators (memoizing mint,
+rising-edge fire) implementing egglog's monotone-fire semantics on top of
+DD's view-maintenance substrate.
 
 ## Motivation
 
@@ -54,8 +135,10 @@ incrementally in later epochs.
 - Canonical view deltas and `labels` deltas are drained like rule bindings
   today and applied directly to the host tables — no host merges for rebuild
   (DD already resolved the FD), shrinking `apply_writes` to user-rule effects.
-- User rules keep the current path: their heads mint fresh ids
-  (`lookup_or_create`) and run primitives, which cannot live in the dataflow.
+- User rules can join this incrementally: first keep the current host path
+  (their heads mint), then move them in-dataflow via the memoizing mint
+  operator (see the goal section above) so whole `run`/`saturate` schedules
+  compile into the dataflow.
 
 Expected effect at run 11: epochs collapse from ~225 to roughly one per user
 iteration (~30), the remove/reinsert version-bump churn for rebuild rows
