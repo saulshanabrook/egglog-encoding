@@ -2839,13 +2839,7 @@ fn model_source_fact(
     constructors: &IndexMap<String, ConstructorDecl>,
     source_globals: &IndexMap<String, String>,
 ) -> Result<SourceFact, CausalSliceError> {
-    if let GenericAction::Let(span, name, expr) = action {
-        if !name.starts_with('$') {
-            return unsupported(
-                span,
-                format!("a source let whose global name `{name}` does not start with `$`"),
-            );
-        }
+    if let GenericAction::Let(_, name, expr) = action {
         let GenericExpr::Call(_, function, _) = expr else {
             return unsupported(
                 &expr.span(),

@@ -844,6 +844,38 @@ fn dynamic_global_references_replay_without_becoming_rule_bindings() {
 }
 
 #[test]
+fn legacy_unprefixed_global_replays_without_becoming_a_rule_binding() {
+    let source = r#"
+        (datatype Expr (A))
+        (relation Seed (Expr i64))
+        (relation Done (Expr i64))
+        (let ZERO (A))
+        (Seed ZERO 7)
+        (rule ((Seed ZERO n)) ((Done ZERO n)) :name "use-global" :no-decomp)
+        (run 1)
+        (check (Done ZERO 7))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("legacy-global-native.egg".to_owned()), source)
+        .unwrap();
+    let slice = causal_slice_program(Some("legacy-global.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(let ZERO (A))"));
+    assert!(has_replay_firing(
+        &slice.source,
+        "use-global",
+        &[("n", "7")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("legacy-global-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn dynamic_global_references_replay_through_rewrite_lookup_and_union() {
     let source = r#"
         (datatype Math (Num BigRat) (Neg Math))
@@ -931,6 +963,31 @@ fn dollar_prefixed_local_shadowed_by_a_later_global_fails_closed() {
         error
             .to_string()
             .contains("source global `$a` shadowing an earlier local rule variable"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unprefixed_local_shadowed_by_a_later_global_fails_closed() {
+    let source = r#"
+        (datatype Expr (A))
+        (relation Seed (i64))
+        (relation Done (i64))
+        (rule ((Seed value)) ((Done value)) :name "copy")
+        (Seed 7)
+        (let value (A))
+        (run 1)
+        (check (Done 7))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("legacy-shadow-native.egg".to_owned()), source)
+        .unwrap();
+    let error = causal_slice_program(Some("legacy-shadow.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("source global `value` shadowing an earlier local rule variable"),
         "{error}"
     );
 }
