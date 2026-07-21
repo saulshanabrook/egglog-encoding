@@ -3,7 +3,7 @@
 //! This module is a feasibility spike, not a general egglog provenance API. It
 //! records match-time bindings from one ordinary reference-backend execution,
 //! reconstructs exact relation tuples for a monotone fragment, and emits a
-//! source program whose only schedule leaves are guarded `run-rule` calls.
+//! source program whose only schedule leaves are guarded manual rule batches.
 
 use std::{
     path::Path,
@@ -15,8 +15,9 @@ use thiserror::Error;
 use crate::{
     EGraph, Error as EgglogError, TermDag,
     ast::{
-        Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
-        Rewrite, Rule, RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span,
+        Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact,
+        GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire, Rewrite, Rule,
+        RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span,
     },
     core_relations::{
         RuleExecutionTrace, RuleMatch, TableApplication, TableId, UnionOutcome, UnionReceipt, Value,
@@ -77,9 +78,8 @@ pub struct CausalSliceStats {
     pub source_events: usize,
     pub dependency_nodes: usize,
     pub witness_nodes: usize,
-    /// Replay-only eq-sort aliases introduced after one successful inline
-    /// guarded use. These share repeated source witnesses without making a
-    /// term available before the original execution did.
+    /// Distinct closed witness expressions shared by compact per-wave replay
+    /// batches.
     pub shared_replay_witnesses: usize,
     pub equality_edges: usize,
     pub prefix_fallbacks: usize,
@@ -493,15 +493,6 @@ impl WitnessArena {
 struct BindingWitness {
     syntax: WitnessId,
     endpoint: Value,
-}
-
-impl BindingWitness {
-    fn expr(self, witnesses: &WitnessArena, span: &Span) -> Expr {
-        // The endpoint is intentionally retained with the immutable syntax.
-        // V0 does not print it or resolve it through the final database.
-        let _captured_endpoint = self.endpoint;
-        witnesses.expr(self.syntax, span)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -1121,8 +1112,9 @@ fn generate_causal_slice(
             &witnesses,
             &source_expansions,
         )
+        .0
     });
-    let source = emit_program(
+    let (source, shared_replay_witnesses) = emit_program(
         &commands,
         schedule_index,
         &schedule_span,
@@ -1180,7 +1172,7 @@ fn generate_causal_slice(
         source_events,
         dependency_nodes: dependencies.nodes.len(),
         witness_nodes: witnesses.nodes.len(),
-        shared_replay_witnesses: 0,
+        shared_replay_witnesses,
         equality_edges: equality_forest.edge_count(),
         prefix_fallbacks,
         captured_bindings,
@@ -4068,166 +4060,92 @@ fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> 
     retained
 }
 
-const MAX_SHARED_REPLAY_WITNESSES: usize = 32;
 const SHARED_REPLAY_WITNESS_PREFIX: &str = "$__csw";
 
-fn witness_source_lengths(witnesses: &WitnessArena) -> Vec<usize> {
-    let mut lengths = Vec::with_capacity(witnesses.nodes.len());
-    for (index, record) in witnesses.nodes.iter().enumerate() {
-        let length = match &record.node {
-            WitnessNode::Literal { value, .. } => value.to_string().len(),
-            WitnessNode::App {
-                function, children, ..
-            } => {
-                let mut length = function.len().saturating_add(2);
-                for child in children {
-                    debug_assert!(child.index() < index);
-                    length = length
-                        .saturating_add(1)
-                        .saturating_add(lengths[child.index()]);
-                }
-                length
-            }
-        };
-        lengths.push(length);
-    }
-    lengths
-}
-
-fn shared_replay_witness_prefix(commands: &[Command]) -> String {
-    for namespace in 0usize.. {
-        let prefix = format!("{SHARED_REPLAY_WITNESS_PREFIX}{namespace}_");
-        if commands
-            .iter()
-            .all(|command| !command.to_string().contains(&prefix))
-        {
-            return prefix;
-        }
-    }
-    unreachable!("the finite source cannot occupy every replay witness namespace")
-}
-
-fn select_shared_replay_witnesses(
-    fires: &[CompactReplayFire],
-    witnesses: &WitnessArena,
-    prefix: &str,
-) -> Vec<Option<String>> {
-    let mut uses = vec![0usize; witnesses.nodes.len()];
-    for fire in fires {
-        for witness in &fire.bindings {
-            uses[witness.index()] = uses[witness.index()].saturating_add(1);
-        }
-    }
-
-    let lengths = witness_source_lengths(witnesses);
-    let mut candidates = Vec::new();
-    for (index, record) in witnesses.nodes.iter().enumerate() {
-        let WitnessNode::App { .. } = record.node else {
-            continue;
-        };
-        let count = uses[index];
-        if count < 3 {
-            continue;
-        }
-        let alias = format!("{prefix}{index}");
-        let inline_bytes = count.saturating_mul(lengths[index]);
-        // The first guarded use remains inline. Only after that successful
-        // match do we define the alias, repeating the expression once in the
-        // definition; every later use can then use the short closed name.
-        let shared_bytes = lengths[index]
-            .saturating_mul(2)
-            .saturating_add(count.saturating_mul(alias.len()))
-            .saturating_add(8);
-        if let Some(savings) = inline_bytes.checked_sub(shared_bytes)
-            && savings > 0
-        {
-            candidates.push((savings, WitnessId(index as u32), alias));
-        }
-    }
-    candidates
-        .sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-
-    let mut aliases = vec![None; witnesses.nodes.len()];
-    for (_, witness, alias) in candidates.into_iter().take(MAX_SHARED_REPLAY_WITNESSES) {
-        aliases[witness.index()] = Some(alias);
-    }
-    aliases
-}
-
 fn emit_prefix_replay_commands(
-    commands: &[Command],
+    _commands: &[Command],
     schedule_span: &Span,
     rules: &IndexMap<String, RuleModel>,
     fires: &[CompactReplayFire],
     witnesses: &WitnessArena,
 ) -> (String, usize) {
-    let prefix = shared_replay_witness_prefix(commands);
-    let aliases = select_shared_replay_witnesses(fires, witnesses, &prefix);
-    let mut defined = HashSet::default();
     let mut previous_position = None;
     let mut rendered = String::new();
+    let mut shared_witnesses = 0usize;
 
-    for fire in fires {
-        let position = (fire.wave, fire.ordinal);
-        if let Some(previous) = previous_position {
-            debug_assert!(previous < position);
+    let mut start = 0usize;
+    while start < fires.len() {
+        let wave = fires[start].wave;
+        let mut end = start + 1;
+        while end < fires.len() && fires[end].wave == wave {
+            end += 1;
         }
-        previous_position = Some(position);
+        let wave_fires = &fires[start..end];
+        let mut witness_indices = IndexMap::<WitnessId, u32>::default();
+        let mut witness_uses = HashMap::<WitnessId, usize>::default();
+        let mut group_indices = IndexMap::<u32, u32>::default();
+        for fire in wave_fires {
+            let position = (fire.wave, fire.ordinal);
+            if let Some(previous) = previous_position {
+                debug_assert!(previous < position);
+            }
+            previous_position = Some(position);
+            let next_group = u32::try_from(group_indices.len())
+                .expect("packed replay group count exceeded u32 capacity");
+            group_indices.entry(fire.rule_index).or_insert(next_group);
+            for witness in &fire.bindings {
+                let next_witness = u32::try_from(witness_indices.len())
+                    .expect("packed replay witness count exceeded u32 capacity");
+                witness_indices.entry(*witness).or_insert(next_witness);
+                *witness_uses.entry(*witness).or_default() += 1;
+            }
+        }
 
-        let (rule_name, model) = rules
-            .get_index(fire.rule_index as usize)
-            .expect("captured compact replay rule index must remain valid");
-        debug_assert_eq!(model.replay_var_order.len(), fire.bindings.len());
-        let mut define_after = IndexSet::default();
-        let bindings = model
-            .replay_var_order
-            .iter()
-            .zip(&fire.bindings)
-            .map(|(variable, witness)| {
-                let expression = match &aliases[witness.index()] {
-                    Some(alias) if defined.contains(witness) => {
-                        Expr::Var(schedule_span.clone(), alias.clone())
-                    }
-                    Some(_) => {
-                        define_after.insert(*witness);
-                        witnesses.expr(*witness, schedule_span)
-                    }
-                    None => witnesses.expr(*witness, schedule_span),
-                };
-                (variable.clone(), expression)
+        let packed_witnesses = witness_indices
+            .keys()
+            .map(|witness| witnesses.expr(*witness, schedule_span))
+            .collect();
+        shared_witnesses += witness_uses.values().filter(|uses| **uses > 1).count();
+        let groups = group_indices
+            .keys()
+            .map(|rule_index| {
+                let (rule_name, model) = rules
+                    .get_index(*rule_index as usize)
+                    .expect("captured compact replay rule index must remain valid");
+                GenericPackedRuleGroup {
+                    span: schedule_span.clone(),
+                    rule: rule_name.clone(),
+                    variables: model.replay_var_order.clone().into_boxed_slice(),
+                }
             })
             .collect();
-        let replay = Command::RunSchedule(Schedule::RunRule(
+        let packed_fires = wave_fires
+            .iter()
+            .map(|fire| PackedRuleFire {
+                span: schedule_span.clone(),
+                group: group_indices[&fire.rule_index],
+                witnesses: fire
+                    .bindings
+                    .iter()
+                    .map(|witness| witness_indices[witness])
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            })
+            .collect();
+        let replay = Command::RunSchedule(Schedule::RunRuleBatchPacked(
             schedule_span.clone(),
-            RunRuleConfig {
-                rule: rule_name.clone(),
-                bindings,
-                selectors: Vec::new(),
-                expect: Some(1),
+            GenericPackedRunRuleBatch {
+                witnesses: packed_witnesses,
+                groups,
+                fires: packed_fires,
             },
         ));
         rendered.push_str(&replay.to_string());
         rendered.push('\n');
-
-        // A successful inline selector proves the witness was already
-        // available at this replay point. Defining it afterward cannot enable
-        // the firing that justified the alias.
-        for witness in define_after {
-            let alias = aliases[witness.index()]
-                .as_ref()
-                .expect("selected replay witness must have an alias");
-            let definition = Command::Action(Action::Let(
-                schedule_span.clone(),
-                alias.clone(),
-                witnesses.expr(witness, schedule_span),
-            ));
-            rendered.push_str(&definition.to_string());
-            rendered.push('\n');
-            defined.insert(witness);
-        }
+        start = end;
     }
 
-    (rendered, defined.len())
+    (rendered, shared_witnesses)
 }
 
 fn emit_program<'a>(
@@ -4238,54 +4156,40 @@ fn emit_program<'a>(
     fires: impl IntoIterator<Item = &'a GroundedFire>,
     witnesses: &WitnessArena,
     source_expansions: &SourceCommandExpansions,
-) -> String {
-    let mut previous_position = None;
-    let mut replay_commands = String::new();
-    for fire in fires {
-        let position = (fire.wave, fire.ordinal);
-        if let Some(previous) = previous_position {
-            debug_assert!(previous < position);
-        }
-        previous_position = Some(position);
-        append_replay_command(&mut replay_commands, fire, schedule_span, rules, witnesses);
-    }
-    emit_program_with_replay_commands(
-        commands,
-        schedule_index,
-        &replay_commands,
-        source_expansions,
-    )
-}
-
-fn append_replay_command(
-    rendered: &mut String,
-    fire: &GroundedFire,
-    schedule_span: &Span,
-    rules: &IndexMap<String, RuleModel>,
-    witnesses: &WitnessArena,
-) {
-    let model = &rules[&fire.rule];
-    let bindings = model
-        .replay_var_order
-        .iter()
-        .map(|var| {
-            (
-                var.clone(),
-                fire.bindings[var].expr(witnesses, schedule_span),
-            )
+) -> (String, usize) {
+    let compact = fires
+        .into_iter()
+        .map(|fire| {
+            let rule_index = rules
+                .get_index_of(&fire.rule)
+                .expect("grounded replay rule was validated during modeling");
+            let model = &rules[&fire.rule];
+            let bindings = model
+                .replay_var_order
+                .iter()
+                .map(|variable| fire.bindings[variable].syntax)
+                .collect::<Vec<_>>()
+                .into_boxed_slice();
+            CompactReplayFire {
+                rule_index: u32::try_from(rule_index)
+                    .expect("packed replay rule index exceeded u32 capacity"),
+                wave: fire.wave,
+                ordinal: fire.ordinal,
+                bindings,
+            }
         })
-        .collect();
-    let replay = Command::RunSchedule(Schedule::RunRule(
-        schedule_span.clone(),
-        RunRuleConfig {
-            rule: fire.rule.clone(),
-            bindings,
-            selectors: Vec::new(),
-            expect: Some(1),
-        },
-    ));
-    rendered.push_str(&replay.to_string());
-    rendered.push('\n');
+        .collect::<Vec<_>>();
+    let (replay_commands, shared_replay_witnesses) =
+        emit_prefix_replay_commands(commands, schedule_span, rules, &compact, witnesses);
+    (
+        emit_program_with_replay_commands(
+            commands,
+            schedule_index,
+            &replay_commands,
+            source_expansions,
+        ),
+        shared_replay_witnesses,
+    )
 }
 
 fn emit_program_with_replay_commands(

@@ -2,10 +2,85 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use egglog::{
     EGraph,
+    ast::{Command, Schedule},
     causal_slice::{
         causal_slice_program, causal_slice_program_with_fact_directory, causal_slice_replay_program,
     },
 };
+
+fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
+    fn visit(schedule: &Schedule, firings: &mut Vec<(String, Vec<(String, String)>)>) {
+        match schedule {
+            Schedule::RunRule(_, config) => firings.push((
+                config.rule.clone(),
+                config
+                    .bindings
+                    .iter()
+                    .map(|(variable, witness)| (variable.clone(), witness.to_string()))
+                    .collect(),
+            )),
+            Schedule::RunRuleBatch(_, configs) => {
+                for config in configs {
+                    firings.push((
+                        config.rule.clone(),
+                        config
+                            .bindings
+                            .iter()
+                            .map(|(variable, witness)| (variable.clone(), witness.to_string()))
+                            .collect(),
+                    ));
+                }
+            }
+            Schedule::RunRuleBatchPacked(_, batch) => {
+                for fire in &batch.fires {
+                    let group = &batch.groups[fire.group as usize];
+                    firings.push((
+                        group.rule.clone(),
+                        group
+                            .variables
+                            .iter()
+                            .zip(fire.witnesses.iter())
+                            .map(|(variable, witness)| {
+                                (
+                                    variable.clone(),
+                                    batch.witnesses[*witness as usize].to_string(),
+                                )
+                            })
+                            .collect(),
+                    ));
+                }
+            }
+            Schedule::Sequence(_, schedules) => {
+                for schedule in schedules {
+                    visit(schedule, firings);
+                }
+            }
+            Schedule::Run(..) | Schedule::Repeat(..) | Schedule::Saturate(..) => {
+                panic!("generated replay retained an automatic schedule")
+            }
+        }
+    }
+
+    let commands = EGraph::default().parse_program(None, source).unwrap();
+    let mut firings = Vec::new();
+    for command in commands {
+        if let Command::RunSchedule(schedule) = command {
+            visit(&schedule, &mut firings);
+        }
+    }
+    firings
+}
+
+fn has_replay_firing(source: &str, rule: &str, bindings: &[(&str, &str)]) -> bool {
+    replay_firings(source).iter().any(|(candidate, actual)| {
+        candidate == rule
+            && actual
+                == &bindings
+                    .iter()
+                    .map(|(variable, witness)| ((*variable).to_owned(), (*witness).to_owned()))
+                    .collect::<Vec<_>>()
+    })
+}
 
 static NEXT_INPUT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -99,7 +174,11 @@ fn scalar_relation_input_is_embedded_as_replayable_source_facts() {
     assert!(!slice.source.contains("(input"));
     assert!(slice.source.contains("(Seed 1)"));
     assert!(slice.source.contains("(Seed 2)"));
-    assert!(!slice.source.contains("irrelevant\" :bind"));
+    assert!(
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
+    );
 
     // The replay is self-contained: it must not fall back to the original
     // external fact source after slicing.
@@ -129,16 +208,16 @@ fn trace_retains_body_variables_that_the_rule_head_does_not_use() {
     let slice = causal_slice_program(Some("private-variable.egg".to_owned()), source).unwrap();
 
     assert_eq!(slice.stats.matched_applications, 2);
-    assert!(
-        slice
-            .full_transcript_source
-            .contains(":bind ((x 1) (y 10)) :expect 1")
-    );
-    assert!(
-        slice
-            .full_transcript_source
-            .contains(":bind ((x 1) (y 20)) :expect 1")
-    );
+    assert!(has_replay_firing(
+        &slice.full_transcript_source,
+        "copy",
+        &[("x", "1"), ("y", "10")]
+    ));
+    assert!(has_replay_firing(
+        &slice.full_transcript_source,
+        "copy",
+        &[("x", "1"), ("y", "20")]
+    ));
 
     for replay_source in [&slice.full_transcript_source, &slice.source] {
         let mut ordinary = EGraph::default();
@@ -287,11 +366,7 @@ fn two_body_relation_rule_replays_both_exact_premises() {
 
     assert_eq!(slice.stats.pending_firings, 1);
     assert_eq!(slice.stats.retained_applications, 1);
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"join\" :bind ((x 1)) :expect 1)")
-    );
+    assert!(has_replay_firing(&slice.source, "join", &[("x", "1")]));
 
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
@@ -319,11 +394,7 @@ fn broad_single_plan_rule_replays_every_grounded_premise() {
 
     let slice = causal_slice_program(Some("broad-single-plan.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.retained_applications, 1);
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"broad\" :bind ((x 1)) :expect 1)")
-    );
+    assert!(has_replay_firing(&slice.source, "broad", &[("x", "1")]));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -352,7 +423,11 @@ fn read_only_print_size_is_preserved_without_becoming_a_slice_root() {
 
     let slice = causal_slice_program(Some("print-size.egg".to_owned()), source).unwrap();
     assert!(slice.source.contains("(print-size Irrelevant)"));
-    assert!(!slice.source.contains("run-rule \"irrelevant\""));
+    assert!(
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
+    );
     EGraph::default()
         .parse_and_run_program(Some("print-size-replay.egg".to_owned()), &slice.source)
         .unwrap();
@@ -426,7 +501,7 @@ fn one_wave_math_fixture_prefix_replays_ordinary_and_strictly() {
 }
 
 #[test]
-fn prefix_replay_shares_a_witness_only_after_one_guarded_inline_use() {
+fn prefix_replay_shares_each_closed_witness_once_per_wave() {
     let term = r#"(Pair (Pair (Leaf "x") (Leaf "y")) (Pair (Leaf "x") (Leaf "y")))"#;
     let mut source = String::from(
         r#"
@@ -444,11 +519,11 @@ fn prefix_replay_shares_a_witness_only_after_one_guarded_inline_use() {
     let replay =
         causal_slice_replay_program(Some("shared-witness.egg".to_owned()), &source).unwrap();
     assert_eq!(replay.stats.shared_replay_witnesses, 1);
-    let definition = replay.source.find("(let $__csw").unwrap();
-    let first_fire = replay.source.find("(run-schedule (run-rule").unwrap();
-    assert!(first_fire < definition);
-    assert!(replay.source[first_fire..definition].contains(term));
-    assert!(replay.source[definition..].contains("(e $__csw"));
+    let schedule = &replay.source[replay.source.find("(run-schedule").unwrap()..];
+    assert_eq!(schedule.matches(term).count(), 1);
+    assert!(replay.source.contains(":witnesses ("));
+    assert!(replay.source.contains(":groups ((\"copy\" (i e)))"));
+    assert!(!replay.source.contains("(let $__csw"));
 
     EGraph::default()
         .parse_and_run_program(Some("shared-witness-replay.egg".to_owned()), &replay.source)
@@ -495,22 +570,26 @@ fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays
     assert!(slice.stats.total_time >= accounted_time);
     assert!(!slice.source.contains("(saturate"));
     assert!(!slice.source.contains("(run derive"));
+    assert!(has_replay_firing(
+        &slice.source,
+        "seed-to-mid",
+        &[("x", "2")]
+    ));
+    assert!(has_replay_firing(
+        &slice.source,
+        "mid-to-goal",
+        &[("x", "2")]
+    ));
+    assert!(!has_replay_firing(
+        &slice.source,
+        "seed-to-mid",
+        &[("x", "1")]
+    ));
     assert!(
-        slice
-            .source
-            .contains("(run-rule \"seed-to-mid\" :bind ((x 2)) :expect 1)")
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
     );
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"mid-to-goal\" :bind ((x 2)) :expect 1)")
-    );
-    assert!(
-        !slice
-            .source
-            .contains("(run-rule \"seed-to-mid\" :bind ((x 1))")
-    );
-    assert!(!slice.source.contains("(run-rule \"irrelevant\""));
 
     for source in [&slice.full_transcript_source, &slice.source] {
         let mut ordinary = EGraph::default();
@@ -547,17 +626,17 @@ fn rule_created_constructor_witness_drives_sliced_replay_and_strict_proofs() {
 
     let slice = causal_slice_program(Some("constructor-witness.egg".to_owned()), source).unwrap();
     assert!(!slice.source.contains("(run 3)"));
+    assert!(has_replay_firing(&slice.source, "build", &[("n", "7")]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "finish",
+        &[("x", "(F (A 7))")]
+    ));
     assert!(
-        slice
-            .source
-            .contains("(run-rule \"build\" :bind ((n 7)) :expect 1)")
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
     );
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"finish\" :bind ((x (F (A 7)))) :expect 1)")
-    );
-    assert!(!slice.source.contains("run-rule \"irrelevant\""));
     assert_eq!(slice.stats.retained_applications, 2);
 
     for make_egraph in [EGraph::default, || {
@@ -589,11 +668,7 @@ fn source_constructor_witness_is_available_to_manual_replay() {
 
     let slice = causal_slice_program(Some("source-witness.egg".to_owned()), source).unwrap();
     assert!(slice.source.contains("(Seed (A 7))"));
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"copy\" :bind ((x (A 7))) :expect 1)")
-    );
+    assert!(has_replay_firing(&slice.source, "copy", &[("x", "(A 7)")]));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -620,11 +695,7 @@ fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
 
     let slice =
         causal_slice_program(Some("standalone-constructor.egg".to_owned()), source).unwrap();
-    assert!(
-        slice
-            .source
-            .contains("(run-rule \"build\" :bind ((x \"x\")) :expect 1)")
-    );
+    assert!(has_replay_firing(&slice.source, "build", &[("x", "\"x\"")]));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -652,12 +723,16 @@ fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
     let slice = causal_slice_program(Some("direct-union.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 1);
+    assert!(has_replay_firing(
+        &slice.source,
+        "unify",
+        &[("x", "(A 1)"), ("y", "(A 2)")]
+    ));
     assert!(
-        slice
-            .source
-            .contains("(run-rule \"unify\" :bind ((x (A 1)) (y (A 2))) :expect 1)")
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "redundant")
     );
-    assert!(!slice.source.contains("run-rule \"redundant\""));
 
     for replay_source in [&slice.full_transcript_source, &slice.source] {
         for make_egraph in [EGraph::default, || {
@@ -693,13 +768,15 @@ fn anonymous_rewrite_lowers_to_one_stable_strictly_replayable_rule() {
             .starts_with("__causal_slice_v0_rw_b")
     );
     assert!(!first.source.contains("(rewrite"));
-    assert!(first.source.contains(":expect 1"));
-    let replay_leaf = first
-        .source
-        .lines()
-        .find(|line| line.contains("(run-rule"))
-        .unwrap();
-    assert!(!replay_leaf.contains("__causal_slice_v0_root"));
+    let firings = replay_firings(&first.source);
+    assert_eq!(firings.len(), 1);
+    assert_eq!(firings[0].0, first.rule_mapping[0].registered_name);
+    assert!(
+        firings[0]
+            .1
+            .iter()
+            .all(|(variable, _)| !variable.contains("__causal_slice_v0_root"))
+    );
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -780,11 +857,11 @@ fn constructor_union_uses_native_application_and_union_causes() {
     let slice = causal_slice_program(Some("constructor-union.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 1);
-    assert!(
-        slice.source.contains(
-            "(run-rule \"make-points-to\" :bind ((e \"e\") (a (A \"alloc\"))) :expect 1)"
-        )
-    );
+    assert!(has_replay_firing(
+        &slice.source,
+        "make-points-to",
+        &[("e", "\"e\""), ("a", "(A \"alloc\")")]
+    ));
 
     for replay_source in [&slice.full_transcript_source, &slice.source] {
         for make_egraph in [EGraph::default, || {
@@ -823,12 +900,16 @@ fn constructor_lookup_body_retains_its_application_and_equality_causes() {
     let slice = causal_slice_program(Some("constructor-lookup.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 2);
-    assert!(slice.source.contains("run-rule \"make-points-to\""));
     assert!(
-        slice.source.contains(
-            "(run-rule \"read-points-to\" :bind ((e \"e\") (a (A \"alloc\"))) :expect 1)"
-        )
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "make-points-to")
     );
+    assert!(has_replay_firing(
+        &slice.source,
+        "read-points-to",
+        &[("e", "\"e\""), ("a", "(A \"alloc\")")]
+    ));
 
     for replay_source in [&slice.full_transcript_source, &slice.source] {
         for make_egraph in [EGraph::default, || {
@@ -921,10 +1002,11 @@ fn irrelevant_chained_lookup_does_not_block_a_sound_slice() {
     let slice =
         causal_slice_program(Some("irrelevant-chained-lookup.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.retained_applications, 1);
-    assert!(slice.source.contains("run-rule \"keep\""));
-    assert!(!slice.source.contains("run-rule \"load\""));
-    assert!(!slice.source.contains("run-rule \"make-expr\""));
-    assert!(!slice.source.contains("run-rule \"make-ptr\""));
+    let firings = replay_firings(&slice.source);
+    assert!(firings.iter().any(|(rule, _)| rule == "keep"));
+    assert!(!firings.iter().any(|(rule, _)| rule == "load"));
+    assert!(!firings.iter().any(|(rule, _)| rule == "make-expr"));
+    assert!(!firings.iter().any(|(rule, _)| rule == "make-ptr"));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -955,7 +1037,11 @@ fn nested_constructor_union_records_the_complete_source_syntax() {
         causal_slice_program(Some("nested-constructor-union.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 1);
-    assert!(slice.source.contains("run-rule \"make-pointer\""));
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "make-pointer")
+    );
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -1003,7 +1089,11 @@ fn anonymous_rule_names_are_source_based_and_stable() {
     assert_eq!(first.source, second.source);
     let name = &first.rule_mapping[0].registered_name;
     assert!(name.starts_with("__causal_slice_v0_b"));
-    assert!(first.source.contains(&format!("(run-rule \"{name}\"")));
+    assert!(
+        replay_firings(&first.source)
+            .iter()
+            .any(|(rule, _)| rule == name)
+    );
 }
 
 #[test]
@@ -1044,7 +1134,7 @@ fn pointer_fixture_slices_to_one_strictly_checked_firing() {
     assert_eq!(slice.stats.effective_applications, 600);
     assert_eq!(slice.stats.retained_applications, 1);
     assert!(!slice.source.contains("(run 100000)"));
-    assert_eq!(slice.source.matches("(run-rule ").count(), 1);
+    assert_eq!(replay_firings(&slice.source).len(), 1);
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -1078,8 +1168,8 @@ fn duplicate_anonymous_rules_get_distinct_names_and_no_ops_are_separated() {
     assert_eq!(slice.stats.effective_applications, 1);
     assert_eq!(slice.stats.no_op_applications, 1);
     assert_eq!(slice.stats.retained_applications, 1);
-    assert_eq!(slice.full_transcript_source.matches("(run-rule").count(), 2);
-    assert_eq!(slice.source.matches("(run-rule").count(), 1);
+    assert_eq!(replay_firings(&slice.full_transcript_source).len(), 2);
+    assert_eq!(replay_firings(&slice.source).len(), 1);
 
     let mut replay = EGraph::default();
     replay
@@ -1115,8 +1205,12 @@ fn positive_check_selects_one_actual_satisfying_grounding() {
     let source = ORIGINAL.replace("(check (Goal 2))", "(check (Goal x))");
     let slice = causal_slice_program(Some("witness.egg".to_owned()), &source).unwrap();
     assert_eq!(slice.stats.retained_applications, 2);
-    assert_eq!(slice.source.matches("(run-rule").count(), 2);
-    assert!(!slice.source.contains("(run-rule \"irrelevant\""));
+    assert_eq!(replay_firings(&slice.source).len(), 2);
+    assert!(
+        !replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "irrelevant")
+    );
 
     let mut replay = EGraph::default();
     replay
@@ -1148,10 +1242,11 @@ fn conjunctive_and_multiple_checks_retain_complete_heads_and_both_chains() {
     let slice = causal_slice_program(Some("combined-roots.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.observation_count, 2);
     assert_eq!(slice.stats.retained_applications, 3);
-    assert!(slice.source.contains("(run-rule \"fanout\""));
-    assert!(slice.source.contains("(run-rule \"finish\""));
-    assert!(slice.source.contains("(run-rule \"other-root\""));
-    assert!(!slice.source.contains("(run-rule \"irrelevant\""));
+    let firings = replay_firings(&slice.source);
+    assert!(firings.iter().any(|(rule, _)| rule == "fanout"));
+    assert!(firings.iter().any(|(rule, _)| rule == "finish"));
+    assert!(firings.iter().any(|(rule, _)| rule == "other-root"));
+    assert!(!firings.iter().any(|(rule, _)| rule == "irrelevant"));
     assert!(slice.source.contains("(B x)"));
     assert!(slice.source.contains("(Side x)"));
     assert_eq!(slice.source.matches("(check").count(), 2);
