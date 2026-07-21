@@ -58,14 +58,14 @@ pub(crate) enum Justification {
     Fiat,
     /// Term-free merge justification for a merge-body subexpression: function
     /// name, the two premise (view) proof expressions, and the pre-order index of
-    /// this subexpression in the merge body (matches the checker's
-    /// `subexpr_at_index`). It embeds no AST, so it needs neither the merged term
+    /// this subexpression in the merge body (matches `subexpr_at_index` in proof
+    /// conversion). It embeds no AST, so it needs neither the merged term
     /// nor the function key/children — usable in a `:merge` action.
     MergeIdx(String, String, String, usize),
     /// Term-free merge justification for the whole view row (function name + two
     /// premise proof expressions). The conclusion `f(children, merged)` is
-    /// reconstructed by the checker by running the whole merge body on the premise
-    /// outputs; no AST/children needed.
+    /// reconstructed during proof conversion by running the whole merge body on
+    /// the premise outputs; no AST/children needed.
     MergeRow(String, String, String),
 }
 
@@ -123,8 +123,8 @@ impl ProofInstrumentor<'_> {
         res.unwrap()
     }
 
-    /// Build a ProofList relation (`pnil`, then `pcons` folds) by minting a fresh
-    /// id per node and asserting the row, emitting the mints onto `stmts` and
+    /// Build a proof list (`pnil`, then `pcons` folds) by minting a fresh id
+    /// per node and asserting the row, emitting the mints onto `stmts` and
     /// returning the final list's var.
     pub(crate) fn format_prooflist(
         &mut self,
@@ -598,10 +598,9 @@ pub(crate) fn command_supports_proof_encoding(
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
     }
 
-    // An eq-sort-output `:no-merge` function is not modeled by the encoding: its
-    // conflict check needs union-find leaders (raw id equality is not e-class
-    // equality), which the encoding has no eager hook for. A file using one is
-    // proof-unsupported and runs plain only. Primitive/`Unit`-output `:no-merge` IS
+    // The conflict check for an eq-sort output needs union-find leaders (raw id
+    // equality is not e-class equality), which the encoding has no eager hook for;
+    // a file using one runs plain only. Primitive/`Unit`-output `:no-merge` is
     // supported (raw equality is equality there — encoded as an FD view declared
     // native `:no-merge` + `:internal-identity-vals 1`). Constructors/relations are
     // `Constructor` commands (not `Function`), and encoded globals (`:internal-let`,

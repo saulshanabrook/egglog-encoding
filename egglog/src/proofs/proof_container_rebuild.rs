@@ -14,9 +14,8 @@ use egglog_bridge::TableAction;
 use egglog_numeric_id::NumericId;
 
 /// Mint a fresh proof id and assert the relation row `(<action> args… out ())`,
-/// returning `out`. Proof constructors are relations `(@C args… out)`, so a proof
-/// node is built by minting its id and inserting the row (the id is the last
-/// input column, the `Unit` output is `()`).
+/// returning `out`. Proof constructors are relations, so a proof node is created
+/// by minting its id rather than by a constructor's lookup-or-insert.
 fn mint_proof_row(
     state: &mut FullState,
     action: &TableAction,
@@ -58,8 +57,8 @@ pub(crate) fn register_container_rebuild_from_spec(
     );
 
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
-        // Proof nodes are minted from the backend's id counter (proof constructors
-        // are relations). A backend without a counter can't run these proofs.
+        // Proof ids are minted from the backend's id counter; a backend without
+        // one can't run these proofs.
         let Some(id_counter) = eg.backend.eclass_id_counter() else {
             return;
         };
@@ -257,9 +256,7 @@ struct ContainerRebuildProof {
     trans_name: String,
     sym_name: String,
     container_normalize_name: String,
-    /// Counter for minting fresh proof ids: the proof constructors are relations
-    /// (`(@C args out)`), so a proof node is created by minting `out` and
-    /// inserting the row, rather than a constructor's lookup-or-insert.
+    /// Counter for minting fresh proof ids (see [`mint_proof_row`]).
     id_counter: egglog_backend_trait::CounterId,
 }
 

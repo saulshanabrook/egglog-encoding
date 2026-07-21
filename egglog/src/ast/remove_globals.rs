@@ -187,7 +187,7 @@ impl GlobalRemover<'_> {
             }
             // Handle the corner case where a global command is wrapped in (fail).
             // Remove globals from every wrapped command and keep the whole flattened
-            // result inside the `fail` (not just the last command).
+            // result inside the `fail`.
             GenericNCommand::Fail(span, cmds) => {
                 let mut removed = vec![];
                 for cmd in cmds {

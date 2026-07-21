@@ -211,8 +211,7 @@ pub type ContainerMergeFn =
 /// `:merge` on a union-find function. A backend therefore needs no dedicated
 /// `union` or `constructor` operation — generic tables, rules, and `:merge`
 /// suffice. This holds when evaluating actions too: a `union` action becomes a
-/// `:merge` write and a constructor application becomes a table insert, so the
-/// backend never sees union/constructor as primitive operations.
+/// `:merge` write and a constructor application becomes a table insert.
 pub trait Backend: Send + Sync {
     // -- table lifecycle ----------------------------------------------------
 
@@ -306,8 +305,8 @@ pub trait Backend: Send + Sync {
 
     /// Insert a batch of logical rows and flush. Each `(func, row)` gives a
     /// function id and its row as keys followed by all value columns (no
-    /// timestamp/subsumption — the backend fills those in). Duplicate view keys
-    /// are resolved by the view's `:merge` on flush, so callers plain-insert
+    /// timestamp/subsumption — the backend fills those in). Duplicate keys are
+    /// resolved by the function's `:merge` on flush, so callers plain-insert
     /// rather than get-or-insert.
     fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>);
 
@@ -366,9 +365,9 @@ pub trait Backend: Send + Sync {
     // relational backend), so the encoding does not reach into one backend's
     // internals directly.
 
-    /// Register the `get-fresh!` mint op for one eq-sort. Returns the
-    /// [`ExternalFunctionId`] its mint sites (`(@get-fresh-<Sort>!)`) resolve
-    /// to. The default mints an impure `() -> id` value from the backend's
+    /// Register the `get-fresh!` mint op. Returns the [`ExternalFunctionId`]
+    /// its mint sites (`(get-fresh! "Sort")`) resolve to. The default mints an
+    /// impure `() -> id` value from the backend's
     /// [`Backend::eclass_id_counter`], so it works for any counter-based
     /// backend. Called only when [`Backend::eclass_id_counter`] is `Some`.
     fn register_get_fresh(&mut self) -> ExternalFunctionId {
@@ -403,7 +402,8 @@ pub trait Backend: Send + Sync {
 
     /// Register the view-proof reader for the FD view named `view_name`
     /// (`n_keys` key columns): `(keys, fallback) -> proof`, returning output
-    /// column 1 for `keys` or `fallback` when the key is absent. Default panics.
+    /// column 1 for `keys` or `fallback` when the key is absent. The default
+    /// registers a panic.
     fn register_view_proof(&mut self, view_name: String, _n_keys: usize) -> ExternalFunctionId {
         self.new_panic(format!(
             "this backend does not support view-proof reads for view `{view_name}`"

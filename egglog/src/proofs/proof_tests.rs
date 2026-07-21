@@ -180,7 +180,7 @@ mod tests {
         let rule_name_var = rule_name_vars[0];
 
         // Proof constructors are relations, so each `Rule` proof is emitted as a
-        // `(set (@Rule <rule-name> <rule-proof> <ast> <ast> <id>) ())` action, not a
+        // `(set (@Rule <rule-name> <proof-list> <ast> <ast> <id>) ())` action, not a
         // call expression. Count those set actions and check they reuse the hoisted
         // rule-name variable as their first argument.
         let rule_uses = rule

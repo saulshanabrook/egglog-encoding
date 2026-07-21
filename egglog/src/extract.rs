@@ -711,10 +711,8 @@ pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> V
 }
 
 impl Function {
-    /// Returns the extraction head cost for this table. A view table carries its
-    /// term operation's cost via `:internal-cost` (the term table is a relation
-    /// that can't hold `:cost`); an ordinary constructor carries its own `:cost`.
-    /// Either way it is `decl.cost`.
+    /// Returns the extraction head cost for this table, whether from a view
+    /// table's `:internal-cost` or an ordinary constructor's `:cost`.
     pub(crate) fn extraction_head_cost(&self, _egraph: &EGraph) -> DefaultCost {
         self.decl.cost.unwrap_or(DefaultCost::unit())
     }

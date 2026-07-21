@@ -59,7 +59,7 @@ fn subexpr_at_index(expr: &ResolvedExpr, idx: usize) -> Option<&ResolvedExpr> {
 /// whole body. Evaluating the subexpression reconstructs the term the FD
 /// custom-function view merge minted at that position, so each nested
 /// merge-body subexpression yields its own conclusion. Used when converting a
-/// `MergeFnIdx`/`MergeFnRow` raw proof into its `MergeFn` conclusion.
+/// `MergeFnIdx` raw proof into its `MergeFn` conclusion.
 fn run_merge_subexpr(
     term_dag: &mut TermDag,
     func_name: &str,
@@ -155,7 +155,7 @@ enum RawProof {
     /// replaced by `b`. Minted by container rebuilds, which see elements in
     /// value order rather than the term form's canonical child order.
     /// Desugared by [`ProofStore::from_raw`] into positional
-    /// [`Congr`](RawProof::Congr) steps computed against the actual term.
+    /// [`Justification::Congr`] steps computed against the actual term.
     CongrAll(RawProofId, RawProofId),
     /// Given a proof that `t1 = c` for a container term `c`, produces a proof of
     /// `t1 = normalize(c)` — the container's canonicalization (reorder/dedup/
@@ -530,8 +530,8 @@ impl ProofStore {
         (store, proof_id)
     }
 
-    /// Reflexivize a (possibly non-reflexive) proof so it can serve as a `MergeFn`
-    /// premise (the checker requires premises to be reflexive, `lhs == rhs`). For
+    /// Reflexivize a (possibly non-reflexive) proof for use where the checker
+    /// requires a reflexive premise (`lhs == rhs`), e.g. a `MergeFn` premise. For
     /// `p : A = B` returns a proof of `B = B` as `Trans(Sym(p), p)`; an already-
     /// reflexive `p` is returned unchanged.
     ///
@@ -556,8 +556,8 @@ impl ProofStore {
         })
     }
 
-    /// The two `MergeFn*` premise proofs are reflexive proofs of colliding view
-    /// terms `f(inputs.., output)`. Extract the view head, the shared input args,
+    /// The two `MergeFn*` premise proofs end (rhs) at the colliding view terms
+    /// `f(inputs.., output)`. Extract the view head, the shared input args,
     /// and the two output values from the premises' rhs (read before reflexivizing).
     fn merge_premise_view(
         &self,
@@ -583,8 +583,7 @@ impl ProofStore {
     }
 
     /// Build a `MergeFn` proof of `to_prove = to_prove` from the two premises,
-    /// reflexivizing each (rebuild can rewrite an eq-sort-input premise into a
-    /// non-reflexive congruence proof; reflexive premises pass through unchanged).
+    /// reflexivizing each ([`ProofStore::reflexivize_premise`]).
     fn merge_fn_proof(
         &mut self,
         function: &str,
@@ -651,11 +650,8 @@ impl ProofStore {
                         .unwrap_or_else(|| panic!("could not find rule with name {name}"));
                     rule.body.iter().map(is_custom_func_fact).collect()
                 };
-                // `zip` intentionally aligns premises with the body facts and stops
-                // at the shorter: a body fact can contribute more than one premise
-                // proof (e.g. a container side condition), so there may be more
-                // premises than facts, and only the leading per-fact ones carry a
-                // reflexivization decision.
+                // Premises are in body-fact order, one per fact (the checker rejects
+                // any count mismatch), so zip pairs each with its fact's decision.
                 let converted_premises: Vec<ProofId> = converted_premises
                     .into_iter()
                     .zip(reflex_mask)
@@ -688,17 +684,9 @@ impl ProofStore {
             RawProof::MergeFnIdx(function, old_raw, new_raw, idx) => {
                 let old_proof_id = self.convert_raw_proof(prog, globals, raw_store, *old_raw);
                 let new_proof_id = self.convert_raw_proof(prog, globals, raw_store, *new_raw);
-                // The two premise proofs are reflexive proofs of the colliding view terms
-                // `f(c..., old_output)` and `f(c..., new_output)`. We extract the two outputs
-                // and reconstruct the conclusion term by evaluating subexpression `idx` of
-                // `function`'s merge body on those outputs (`old`/`new` bound accordingly).
-                //
                 // `idx` indexes all body nodes (pre-order, top node included). The
                 // conclusion is that node's own minted term, i.e. its existence proof in
                 // its FD view. The whole-view-row conclusion comes from `MergeFnRow`.
-                // The conclusion is subexpression `idx`'s own minted term (its
-                // existence proof in its FD view); the whole-view-row conclusion comes
-                // from `MergeFnRow`.
                 let (_head, _inputs, old_output, new_output) =
                     self.merge_premise_view(old_proof_id, new_proof_id);
                 let (to_prove, _props) = run_merge_subexpr(

@@ -174,7 +174,7 @@ pub struct EGraph {
     /// bridge's panic-function behavior.
     panic_message: Arc<Mutex<Option<String>>>,
     /// Relation name → `FunctionId`, populated by `add_table`. Lets the term
-    /// encoder's `set-if-empty` / view-proof ops (registered by view NAME before
+    /// encoder's `set-if-empty` / view-proof ops (registered by view name before
     /// the view table exists) resolve their view to a live relation at invoke
     /// time.
     pub(crate) table_ids: HashMap<String, FunctionId>,
@@ -240,9 +240,8 @@ impl EGraph {
         // `register_type` is idempotent, so a later frontend registration is a
         // no-op that returns the same id.
         db.base_values_mut().register_type::<()>();
-        // One counter feeds both `fresh_id_internal` and `get-fresh!`. Burn its
-        // initial 0 so the first minted id is 1, keeping 0 as a "null"/padding
-        // sentinel for the fixed-width DD rows.
+        // Burn the counter's initial 0 so the first minted id is 1, keeping 0 as
+        // a "null"/padding sentinel for the fixed-width DD rows.
         let id_counter = db.add_counter();
         db.inc_counter(id_counter);
         EGraph {
@@ -2450,8 +2449,6 @@ impl Backend for EGraph {
     }
 
     fn eclass_id_counter(&self) -> Option<CounterId> {
-        // Same counter `fresh_id_internal` mints from, so the term encoder's
-        // `get-fresh!` ids and native `FreshId`-default ids share one id space.
         Some(self.id_counter)
     }
 

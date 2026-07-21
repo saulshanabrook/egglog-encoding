@@ -383,15 +383,12 @@ impl EGraph {
         });
     }
 
-    /// Register a term-encoding op primitive whose runtime entrypoint is minted
-    /// by the backend SPI (`register_get_fresh` / `register_set_if_empty` /
-    /// `register_view_proof`) rather than by wrapping the primitive in a registry
-    /// action wrapper. `prim` supplies only the type constraints (its body is
-    /// never invoked); `make_id` asks each backend on the typechecker chain for
-    /// the [`ExternalFunctionId`] that services this op against that backend's
-    /// own storage. This bypasses the `action_registry()`-is-`Some` gate in
-    /// [`Self::register_registry_primitive`], so a backend without a registry
-    /// (e.g. Differential Dataflow) can still service these ops.
+    /// Register a term-encoding op primitive whose runtime entrypoint the backend
+    /// itself mints. `prim` supplies only the type constraints (its body is never
+    /// invoked); `make_id` asks each backend on the typechecker chain for the
+    /// [`ExternalFunctionId`] that services this op against that backend's own
+    /// storage. Unlike [`Self::register_registry_primitive`], this works on
+    /// backends without an action registry.
     pub(crate) fn add_backend_op_primitive<T, F>(
         &mut self,
         prim: T,

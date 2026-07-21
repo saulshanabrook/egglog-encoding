@@ -539,8 +539,7 @@ impl EGraph {
             proofs::proof_encoding_helpers::OrientProof::max(),
             Some(orient_proof_validator(false)),
         );
-        // `select-eq test cand if-eq else`: keeps a custom FD-view merge's proof
-        // column stable (reuse a premise proof on an unchanged output). See
+        // `select-eq` keeps a custom FD-view merge's proof column stable; see
         // [`crate::proofs::proof_encoding_helpers::SelectEqProof`].
         let select_eq_validator: PrimitiveValidator =
             Arc::new(|_: &mut TermDag, args: &[TermId]| -> Option<TermId> {
@@ -602,9 +601,7 @@ impl EGraph {
     }
 
     /// Enable the term/proof encoding pipeline with `typechecker` as the head of
-    /// the re-typechecking chain. (`get-fresh!` is already registered on every
-    /// e-graph by [`Self::with_backend`], so no per-`Sort` re-registration is
-    /// needed.)
+    /// the re-typechecking chain.
     fn enable_term_encoding(&mut self, typechecker: EGraph) {
         self.proof_state.original_typechecking = Some(Box::new(typechecker));
     }
@@ -2158,8 +2155,6 @@ impl EGraph {
                 return Ok(vec![res]);
             }
             ResolvedNCommand::Fail(span, cmds) => {
-                // Run the wrapped commands in order; the first error is the expected
-                // failure. If none error, the `fail` assertion itself fails.
                 let mut any_failed = false;
                 for c in cmds {
                     if let Err(e) = self.run_command(c) {
@@ -2402,25 +2397,22 @@ impl EGraph {
     /// Load `(input …)` facts natively into the term/proof encoding's tables. For
     /// each row we mint a term id (and, when the encoding carries proofs, its AST +
     /// fiat-proof ids) and insert the encoded term-relation, view, and proof rows
-    /// directly via the backend SPI — no compiled loader rule. Rows are
-    /// plain-inserted (no get-or-insert): a duplicate view key is resolved by the
-    /// view's `:merge`. The proof checker keeps using the per-row top-level fiat
-    /// actions (`desugared_before_proofs`); this just materializes the same table
-    /// state, so it works identically on any backend that services `add_values`.
+    /// directly. Rows are plain-inserted (no get-or-insert): a duplicate view key
+    /// is left to the view's merge/no-merge handling. The proof checker keeps using
+    /// the per-row top-level fiat actions (`desugared_before_proofs`); this just
+    /// materializes the same table state.
     ///
     /// Everything is derived from the encoded schema + annotations (never the
     /// pre-encoding `FuncType`), so it also works when a desugared program is
     /// replayed in a fresh e-graph. `func_name` names the encoded *term relation*;
-    /// its view is found by the view's `:internal-term-constructor` back-reference.
-    /// The encoded shape is read off the two schemas:
-    /// * constructor / relation (FD view, `term_inputs == view_inputs + 1`) — term
-    ///   row `(F children… term-id) Unit`, FD view `(children…) -> (term-id,
-    ///   proof)`, and the term id's `<Sort>Proof` row.
-    /// * custom `:merge` (FD view, `term_inputs == view_inputs + 2`) / `:no-merge`
-    ///   (non-FD all-column view) — term row `(f children… output term-id) Unit`
-    ///   and view row `(children… output proof)`; the proof lives only in the view
-    ///   (a custom's fresh term sort has no `<Sort>Proof`). A `:no-merge` custom
-    ///   also mirrors the output into its hidden `current` helper.
+    /// the encoded shape is read off the term and view schemas:
+    /// * constructor / relation (`term_inputs == view_inputs + 1`) — term row
+    ///   `(F children… term-id) Unit`, FD view `(children…) -> (term-id, proof)`,
+    ///   and the term id's `<Sort>Proof` row.
+    /// * custom `:merge` / `:no-merge` (`term_inputs == view_inputs + 2`) — term
+    ///   row `(f children… output term-id) Unit` and view row `(children… output
+    ///   proof)`; the proof lives only in the view (a custom's fresh term sort has
+    ///   no `<Sort>Proof`).
     fn native_input(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
         // The encoded term relation keeps the user's original name. Its last input
         // column is the minted term id; the columns before it are the CSV base
@@ -2447,9 +2439,9 @@ impl EGraph {
         // Proofs are on for this relation iff the view's proof column (its last
         // output) is not `Unit`; term-encoding-only mode uses `Unit` there.
         let proofs = view.schema.outputs.last().unwrap().name() != "Unit";
-        // Constructor iff its FD view keys on all children and the term relation
-        // adds exactly the term id (a custom `:merge` FD view adds an output column
-        // too; a `:no-merge` custom's view is the non-FD all-column form).
+        // Constructor iff the FD view keys on all children and the term relation
+        // adds exactly the term id; a custom's (`:merge` or `:no-merge`) term
+        // relation also carries the output column.
         let is_constructor = view.is_fd_view() && n_term_input == view_n_inputs + 1;
 
         let rows = Self::read_input_rows(self.fact_directory.as_deref(), &csv_sorts, &span, &file)?;
@@ -2473,11 +2465,10 @@ impl EGraph {
             })
             .collect();
 
-        // Proof tables, recovered from replay-safe annotations rather than the
-        // encoding-time `proof_names` maps: `Fiat` from the `Proof` sort's
-        // `:internal-proof-names`, the term-id sort's AST constructor by its
-        // signature `(<sort> <Ast>) -> Unit`, and (constructors only) `<Sort>Proof`
-        // from the term-id sort's `:internal-proof-func`.
+        // Proof tables: `Fiat` from the `Proof` sort's `:internal-proof-names`,
+        // the term-id sort's AST constructor by its `(<sort> <Ast>) -> Unit`
+        // signature, and (constructors only) `<Sort>Proof` from the term-id
+        // sort's `:internal-proof-func`.
         let proof_tables = proofs.then(|| {
             let fiat = self.proof_state.proof_names.fiat_constructor.clone();
             let fiat_fn = &self.functions[&fiat];
@@ -2601,12 +2592,8 @@ impl EGraph {
                 ProofInstrumentor::lower_inputs(self, resolved_before_proofs.clone())?;
             // Execution keeps every `(input …)` as an `Input` command, loaded
             // natively at run time by `EGraph::native_input` straight into the
-            // encoded tables (no loader rule, no per-mint global function).
-            // Function-style global desugaring (same pass native/off mode uses):
-            // each global `(let x …)` becomes an `:internal-let` no-arg function
-            // `set` to its value, with RHS uses looked up in the query. Replaces the
-            // old constructor+`union` desugaring so the top level uses `set` (no
-            // union), and the global is a function with a view like any other.
+            // encoded tables. Globals get the same function-style desugaring
+            // (`remove_globals`) as the non-encoding path.
             let typechecked_no_globals =
                 remove_globals::remove_globals(resolved_before_proofs, &mut self.parser.symbol_gen);
             // The term encoder runs before the encoded program is typechecked, so it

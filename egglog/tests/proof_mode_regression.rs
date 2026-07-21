@@ -150,7 +150,7 @@ fn proof_mode_allows_fail_wrapping_multi_operation_encoding() {
 
 #[test]
 fn proof_mode_fail_catches_failure_among_wrapped_commands() {
-    // `fail` runs every wrapped command in order and succeeds when any one fails:
+    // `fail` runs the wrapped commands in order and succeeds at the first failure:
     // the set succeeds and the mismatched check fails, so the `fail` passes.
     EGraph::new_with_proofs()
         .parse_and_run_program(

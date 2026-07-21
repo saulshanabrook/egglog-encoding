@@ -199,7 +199,7 @@ pub(crate) fn desugar_command(
         }
         Command::Fail(span, cmds) => {
             // Desugar every wrapped command and wrap the whole flattened result in
-            // one `fail`, so the assertion covers all of them (not just the last).
+            // one `fail`, so the assertion covers all of them.
             let mut desugared = vec![];
             for cmd in cmds {
                 desugared.extend(desugar_command(cmd, parser, proof_testing)?);

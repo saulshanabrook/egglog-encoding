@@ -51,10 +51,7 @@ pub struct ProofConstructorNames {
     pub trans: String,
     pub sym: String,
     pub normalize: String,
-    /// The `Fiat` justification constructor. Recorded here so that
-    /// [`EGraph::native_input`] can recover it (to mint base-fact proofs for
-    /// `(input …)` rows) when replaying an encoded program in a fresh e-graph,
-    /// where the encoding-time `proof_names` maps are unavailable.
+    /// The `Fiat` justification constructor.
     pub fiat: String,
 }
 
@@ -142,8 +139,7 @@ where
     Pop(Span, usize),
     /// Assert that at least one of the wrapped commands fails. The commands run
     /// in order; the first error is swallowed (the `fail` succeeds), and if none
-    /// error the `fail` itself errors. A `Vec` because desugaring / proof encoding
-    /// can expand one source command into several.
+    /// error the `fail` itself errors.
     Fail(Span, Vec<GenericNCommand<Head, Leaf>>),
     Input {
         span: Span,
@@ -789,9 +785,8 @@ where
         /// leaves them unchanged is skipped and the existing row kept. Only
         /// valid for merges that are idempotent on equal inputs.
         identity_vals: Option<usize>,
-        /// Extraction head cost, from `:internal-cost`. Used by view tables (whose
-        /// term table is a relation that can't carry a cost) to record the user
-        /// operation's cost for the extractor.
+        /// Extraction head cost, from `:internal-cost`. Used by view tables to
+        /// record the user operation's cost for the extractor.
         cost: Option<DefaultCost>,
     },
 
