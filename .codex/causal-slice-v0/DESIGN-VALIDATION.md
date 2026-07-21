@@ -26,7 +26,14 @@ record. The current implementation additionally confirms:
   unretained unsupported event is omitted, while a retained one returns the
   same fail-closed diagnostic;
 - the unmodified pointer fixture produces 706 pending, 600 effective, and 1
-  retained firing and passes ordinary plus unchanged strict proof replay.
+  retained firing and passes ordinary plus unchanged strict proof replay;
+- anonymous rewrites/birewrites lower through the parsed AST into stable named
+  registered rules, including compiler-substitution aliases needed to recover
+  their exact captured source bindings;
+- print-only programs use an explicit reported Prefix fallback retaining every
+  effective preceding firing; the exact math fixture passes ordinary and strict
+  replay through eight bounded waves, while its full 11-wave volume remains a
+  measured scale blocker.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -85,12 +92,13 @@ single plan; larger queries can be decomposed unless `:no-decomp` was already
 present in the source. The slicer preserves the original plan and planner
 flags; it does not normalize tracing to another planner.
 
-The initial validator rejected all equality, constructors, and unions. The
-current extension above admits immutable constructors, direct unions, and
-restricted constructor lookup binders. It still rejects primitive filters,
-mutable functions, rewrites, delete, subsume, custom merges, other RHS
-function lookups, external functions, containers, extracts, negative checks,
-push/pop, includes, output/opaque I/O, input `run-rule`, and DD.
+The initial validator rejected all equality, constructors, unions, and
+rewrites. The current extension above admits immutable constructors, direct
+unions, restricted constructor lookup binders, parsed rewrite/birewrite
+lowering, and a print-only Prefix fallback. It still rejects primitive
+filters, mutable functions, delete, subsume, custom merges, other RHS function
+lookups, external functions, containers, extracts, negative checks, push/pop,
+includes, output/opaque I/O, input `run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -124,6 +132,9 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | sequential leaves preserve arbitrary same-wave semantics | Falsified | insert/delete order, delete/subsume query pre-state, and RHS lookup each produce a reduced divergence |
 | `:expect` counts post-filter logical matches | Falsified | a false equality/primitive action filter can satisfy `:expect 1` and apply no head; v0 rejects filters |
 | scalar relation input requires external files during replay | Falsified for admitted TSV schemas | the slicer parses the file once through the shared native parser, executes those exact source facts, and emits them directly; replay passes after deleting the fact directory |
+| anonymous rewrite registration is too opaque for stable replay names | Falsified | parsed rewrite/birewrite lowering assigns stable source-position names and preserves one-to-many source mapping; focused ordinary and strict canaries pass |
+| print-only observations provide a narrow causal root | Falsified | `print-size` observes aggregate state, so v0 reports a conservative Prefix and retains every effective prior event; no slicing reduction is claimed |
+| bounded sequential rewrite replay preserves the math fixture result | Confirmed empirically through wave 8 | exact bounded variants pass ordinary and unchanged strict proof replay; this is not a general same-wave proof |
 
 ## Important implementation correction: pending lifetime
 
@@ -231,6 +242,9 @@ retained. Push/pop remains outside the no-epoch claim.
 | E17 | Does the unmodified pointer fixture slice and strictly replay? | passed: 706 pending, 600 effective, 1 retained |
 | E18 | Does the first real integrated treatment save time? | no on pointer: 1.06–1.12x wall time and 1.04–1.05x RSS over six rounds |
 | E19 | What accounts for the pointer wall regression? | five warm generator runs took 31.2–33.1 ms, dominated by 18.6–19.3 ms ordinary tracing and 6.1–7.0 ms emitted-program validation; slicing itself took 24–27 µs |
+| E20 | Can parsed anonymous rewrites and bare constructor terms replay without extraction? | passed: rewrite/birewrite naming, projected binding aliases, and bare source constructors pass focused ordinary and strict canaries |
+| E21 | Can the checked-in math fixture use a sound print-only root? | passed semantically through exact bounded wave 8 using a reported full effective Prefix; no reduction is possible for that observation |
+| E22 | Is the exact 11-wave math workload benchmark-ready with the current representation? | no: a debug generator probe was stopped at about 3.2 GiB RSS after 2:27; the smallest completed wave-8 replay emitted 2.69 MB and strict replay took 23.56 s |
 
 ## Validation commands
 
