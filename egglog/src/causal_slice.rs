@@ -186,6 +186,10 @@ struct RuleModel {
     body_primitives: Vec<QueryPrimitiveTemplate>,
     head: Vec<AtomTemplate>,
     head_constructors: Vec<AtomArg>,
+    /// Constructor applications hidden as a complete-head side effect. V0
+    /// admits these only when each target exactly aliases a live constructor
+    /// lookup in the same body and one independent union promotes the fire.
+    head_subsumes: Vec<AtomArg>,
     head_primitives: Vec<AtomArg>,
     head_unions: Vec<EqualityTemplate>,
     var_order: Vec<String>,
@@ -2680,6 +2684,7 @@ fn model_rule(
     }
     let mut head = Vec::new();
     let mut head_constructors = Vec::new();
+    let mut head_subsumes = Vec::new();
     let mut head_unions = Vec::new();
     for action in &rule.head.0 {
         let args = match action {
@@ -2731,6 +2736,38 @@ fn model_rule(
                 head_unions.push(equality);
                 args
             }
+            GenericAction::Change(span, crate::ast::Change::Subsume, function, args) => {
+                let Some(constructor) = constructors.get(function) else {
+                    return unsupported(
+                        span,
+                        format!(
+                            "subsume target `{function}` in rule `{}` is not a constructor",
+                            rule.name
+                        ),
+                    );
+                };
+                let target = model_atom_arg(
+                    &Expr::Call(span.clone(), function.clone(), args.clone()),
+                    &constructor.output,
+                    constructors,
+                    source_globals,
+                    "rule head subsume",
+                )?;
+                if !body_lookups
+                    .iter()
+                    .any(|lookup| same_atom_arg_shape(&lookup.application, &target))
+                {
+                    return unsupported(
+                        span,
+                        format!(
+                            "subsume target in rule `{}` that does not exactly alias a live body constructor lookup",
+                            rule.name
+                        ),
+                    );
+                }
+                head_subsumes.push(target.clone());
+                vec![target]
+            }
             _ => {
                 return unsupported_action(
                     action,
@@ -2754,6 +2791,7 @@ fn model_rule(
         .iter()
         .flat_map(|atom| atom.args.iter())
         .chain(head_constructors.iter())
+        .chain(head_subsumes.iter())
         .chain(
             head_unions
                 .iter()
@@ -2780,7 +2818,21 @@ fn model_rule(
             ),
         );
     }
-    if !head_unions.is_empty() && (rule.head.0.len() != 1 || head_unions.len() != 1) {
+    if !head_subsumes.is_empty()
+        && (head_unions.len() != 1 || rule.head.0.len() != 1 + head_subsumes.len())
+    {
+        return unsupported(
+            &rule.span,
+            format!(
+                "subsume side effects in rule `{}` without exactly one independent union head",
+                rule.name
+            ),
+        );
+    }
+    if !head_unions.is_empty()
+        && head_subsumes.is_empty()
+        && (rule.head.0.len() != 1 || head_unions.len() != 1)
+    {
         return unsupported(
             &rule.span,
             format!(
@@ -2801,6 +2853,11 @@ fn model_rule(
         let mut head_vars = atom_variables(&head);
         for constructor in &head_constructors {
             for (_, var) in atom_arg_vars(constructor) {
+                head_vars.insert(var.as_str());
+            }
+        }
+        for subsume in &head_subsumes {
+            for (_, var) in atom_arg_vars(subsume) {
                 head_vars.insert(var.as_str());
             }
         }
@@ -2856,6 +2913,7 @@ fn model_rule(
         body_primitives,
         head,
         head_constructors,
+        head_subsumes,
         head_primitives,
         head_unions,
         var_order,
@@ -3737,6 +3795,51 @@ fn atom_arg_contains_app(arg: &AtomArg) -> bool {
     }
 }
 
+/// Compare source-level applications while deliberately ignoring spans. This
+/// is stricter than equality modulo the e-graph: a replay-safe subsume target
+/// must be the same logical constructor application that made the body match,
+/// not merely another term in its eventual e-class.
+fn same_atom_arg_shape(left: &AtomArg, right: &AtomArg) -> bool {
+    match (left, right) {
+        (AtomArg::Var(_, left), AtomArg::Var(_, right)) => left == right,
+        (
+            AtomArg::Global {
+                name: left_name,
+                sort: left_sort,
+            },
+            AtomArg::Global {
+                name: right_name,
+                sort: right_sort,
+            },
+        ) => left_name == right_name && left_sort == right_sort,
+        (AtomArg::Lit(left), AtomArg::Lit(right)) => left == right,
+        (
+            AtomArg::App {
+                function: left_function,
+                args: left_args,
+                input_sorts: left_inputs,
+                output_sort: left_output,
+            },
+            AtomArg::App {
+                function: right_function,
+                args: right_args,
+                input_sorts: right_inputs,
+                output_sort: right_output,
+            },
+        ) => {
+            left_function == right_function
+                && left_inputs == right_inputs
+                && left_output == right_output
+                && left_args.len() == right_args.len()
+                && left_args
+                    .iter()
+                    .zip(right_args)
+                    .all(|(left, right)| same_atom_arg_shape(left, right))
+        }
+        _ => false,
+    }
+}
+
 fn collect_replay_primitives(arg: &AtomArg, primitives: &mut Vec<AtomArg>) {
     let AtomArg::App {
         function,
@@ -3799,6 +3902,9 @@ fn rule_global_uses(rule: &RuleModel) -> IndexMap<&str, &str> {
     }
     for constructor in &rule.head_constructors {
         collect_atom_arg_globals(constructor, &mut globals);
+    }
+    for subsume in &rule.head_subsumes {
+        collect_atom_arg_globals(subsume, &mut globals);
     }
     for equality in &rule.head_unions {
         collect_atom_arg_globals(&equality.left, &mut globals);
@@ -4163,10 +4269,10 @@ fn elaborate_prefix_replay(
                 witnesses,
                 true,
             )?;
-            for constructor in &model.head_constructors {
+            for constructor in model.head_constructors.iter().chain(&model.head_subsumes) {
                 let AtomArg::App { output_sort, .. } = constructor else {
                     return Err(CausalSliceError::Invariant(
-                        "modeled constructor head lost its application node".to_owned(),
+                        "modeled constructor action lost its application node".to_owned(),
                     ));
                 };
                 ground_arg(egraph, constructor, output_sort, &bindings, witnesses)?;
@@ -4462,10 +4568,10 @@ fn elaborate_events(
                 witnesses,
                 prefix_fallback,
             )?;
-            for constructor in &model.head_constructors {
+            for constructor in model.head_constructors.iter().chain(&model.head_subsumes) {
                 let AtomArg::App { output_sort, .. } = constructor else {
                     return Err(CausalSliceError::Invariant(
-                        "modeled constructor head lost its application node".to_owned(),
+                        "modeled constructor action lost its application node".to_owned(),
                     ));
                 };
                 ground_arg(egraph, constructor, output_sort, &bindings, witnesses)?;

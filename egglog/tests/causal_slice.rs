@@ -1902,6 +1902,105 @@ fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
 }
 
 #[test]
+fn retained_constructor_subsume_side_effect_replays_in_one_shared_wave() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64))
+        (relation Peer (i64))
+        (ruleset fold)
+        (rule ((= e (A x)))
+              ((union e (B x)) (subsume (A x)))
+              :ruleset fold
+              :name "fold-and-hide")
+        (rule ((= e (A x)))
+              ((Peer x))
+              :ruleset fold
+              :name "peer")
+        (let $a (A 1))
+        (run-schedule (run fold))
+        (check (= $a (B 1)))
+        (check (Peer 1))
+    "#;
+
+    let slice = causal_slice_program(Some("subsume-side-effect.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(subsume (A x))"));
+    assert_eq!(slice.stats.equality_edges, 1);
+    assert_eq!(slice.stats.retained_applications, 2);
+    assert!(
+        has_replay_firing(
+            &slice.source,
+            "fold-and-hide",
+            &[("x", "1"), ("e", "(A 1)")]
+        ),
+        "{:?}",
+        replay_firings(&slice.source)
+    );
+    assert!(has_replay_firing(
+        &slice.source,
+        "peer",
+        &[("x", "1"), ("e", "(A 1)")]
+    ));
+
+    let replay_with_visibility_guard = format!(
+        "{}\n(run-schedule (run-rule \"peer\" :bind ((x 1) (e (A 1))) :expect 0))",
+        slice.source
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("subsume-side-effect-replay.egg".to_owned()),
+                &replay_with_visibility_guard,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn constructor_subsume_requires_an_exact_live_body_alias_and_one_union() {
+    let non_alias = r#"
+        (datatype Expr (A i64) (B i64))
+        (rule ((= e (A x)))
+              ((union e (B x)) (subsume (B x)))
+              :name "non-alias")
+        (let $a (A 1))
+        (run 1)
+        (check (= $a (B 1)))
+    "#;
+    let error =
+        causal_slice_program(Some("subsume-non-alias.egg".to_owned()), non_alias).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("does not exactly alias a live body constructor lookup"),
+        "{error}"
+    );
+
+    let no_independent_union = r#"
+        (datatype Expr (A i64))
+        (relation Goal ())
+        (rule ((= e (A x)))
+              ((subsume (A x)))
+              :name "hide-only")
+        (rule () ((Goal)) :name "goal")
+        (A 1)
+        (run 1)
+        (check (Goal))
+    "#;
+    let error = causal_slice_program(
+        Some("subsume-without-union.egg".to_owned()),
+        no_independent_union,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("without exactly one independent union head"),
+        "{error}"
+    );
+}
+
+#[test]
 fn anonymous_rewrite_lowers_to_one_stable_strictly_replayable_rule() {
     let source = r#"
         (datatype Expr (A i64) (F Expr))
