@@ -571,6 +571,39 @@ impl WitnessArena {
         Ok(())
     }
 
+    fn alias_app_endpoint(
+        &mut self,
+        node: WitnessNode,
+        endpoint: Value,
+        availability: DepId,
+    ) -> Result<WitnessId, CausalSliceError> {
+        let sort = match &node {
+            WitnessNode::App { sort, .. } => sort.clone(),
+            WitnessNode::Literal { .. } => {
+                return Err(CausalSliceError::Invariant(
+                    "only constructor syntax may receive an endpoint alias".to_owned(),
+                ));
+            }
+        };
+        if let Some(witness) = self.ids.get(&node).copied()
+            && self.endpoint(witness) == Some(endpoint)
+        {
+            self.prefer_endpoint_witness(&sort, endpoint, witness)?;
+            return Ok(witness);
+        }
+        let id = WitnessId(u32::try_from(self.nodes.len()).map_err(|_| {
+            CausalSliceError::Invariant("witness arena exceeded u32 capacity".to_owned())
+        })?);
+        self.nodes.push(WitnessRecord {
+            node: node.clone(),
+            original_value: Some(endpoint),
+            availability,
+        });
+        self.ids.insert(node, id);
+        self.prefer_endpoint_witness(&sort, endpoint, id)?;
+        Ok(id)
+    }
+
     fn bind_global(
         &mut self,
         name: &str,
@@ -4279,6 +4312,8 @@ fn elaborate_source_fact(
                 trace_functions,
                 witnesses,
                 prefix_fallback,
+                None,
+                None,
             )?;
             observed.extend(effects.observed_rows);
             new_rows.extend(effects.new_rows);
@@ -4482,6 +4517,8 @@ fn elaborate_prefix_replay(
                             trace_functions,
                             witnesses,
                             true,
+                            None,
+                            None,
                         )?;
                         effective_output_rows += effects.new_rows.len();
                         if effects.new_rows.is_empty() && effects.new_witnesses.is_empty() {
@@ -4566,6 +4603,8 @@ fn elaborate_prefix_replay(
                 trace_functions,
                 witnesses,
                 true,
+                None,
+                None,
             )?;
             for constructor in model.head_constructors.iter().chain(&model.head_subsumes) {
                 let AtomArg::App { output_sort, .. } = constructor else {
@@ -4800,6 +4839,8 @@ fn elaborate_events(
                     trace_functions,
                     witnesses,
                     prefix_fallback,
+                    Some(&equality_forest),
+                    Some(&mut dependencies),
                 ) {
                     Ok(effects) => effects,
                     Err(CausalSliceError::Unsupported { .. })
@@ -4817,6 +4858,8 @@ fn elaborate_events(
                             trace_functions,
                             witnesses,
                             prefix_fallback,
+                            Some(&equality_forest),
+                            Some(&mut dependencies),
                         )?
                     }
                     Err(error) => return Err(error),
@@ -4845,6 +4888,10 @@ fn elaborate_events(
                 let has_effect = !effective_outputs.is_empty()
                     || !effects.new_witnesses.is_empty()
                     || applied_union;
+                let mut effect_prerequisites = DepArena::EMPTY;
+                for dependency in effects.read_dependencies.iter().copied() {
+                    effect_prerequisites = dependencies.and(effect_prerequisites, dependency)?;
+                }
 
                 match policy {
                     OpaqueRulePolicy::EmptyBodyInitializer => {
@@ -4865,7 +4912,7 @@ fn elaborate_events(
                         let promoted = if has_effect {
                             let event = events.push(ReplayEvent {
                                 kind: EventKind::Fire(grounding.clone()),
-                                prerequisites: DepArena::EMPTY,
+                                prerequisites: effect_prerequisites,
                                 deferred_prerequisite_error: None,
                                 effective_outputs: effective_outputs.clone(),
                             })?;
@@ -4894,7 +4941,7 @@ fn elaborate_events(
                         if has_effect {
                             let event = events.push(ReplayEvent {
                                 kind: EventKind::OpaqueFire,
-                                prerequisites: DepArena::EMPTY,
+                                prerequisites: effect_prerequisites,
                                 deferred_prerequisite_error: Some(error.clone()),
                                 effective_outputs: effective_outputs.clone(),
                             })?;
@@ -5025,7 +5072,7 @@ fn elaborate_events(
                 }
                 Ok(prerequisites)
             })();
-            let (prerequisites, prerequisite_error) = match prerequisite_result {
+            let (mut prerequisites, prerequisite_error) = match prerequisite_result {
                 Ok(prerequisites) => (prerequisites, None),
                 Err(CausalSliceError::Unsupported { location, reason }) => (
                     DepArena::EMPTY,
@@ -5041,7 +5088,12 @@ fn elaborate_events(
                 trace_functions,
                 witnesses,
                 prefix_fallback,
+                Some(&equality_forest),
+                Some(&mut dependencies),
             )?;
+            for dependency in effects.read_dependencies.iter().copied() {
+                prerequisites = dependencies.and(prerequisites, dependency)?;
+            }
             for constructor in model.head_constructors.iter().chain(&model.head_subsumes) {
                 let AtomArg::App { output_sort, .. } = constructor else {
                     return Err(CausalSliceError::Invariant(
@@ -5685,6 +5737,7 @@ struct FireApplicationEffects {
     observed_rows: Vec<RowKey>,
     new_rows: Vec<RowKey>,
     new_witnesses: Vec<WitnessId>,
+    read_dependencies: Vec<DepId>,
 }
 
 enum QueryPrimitiveOutcome {
@@ -6107,10 +6160,13 @@ fn elaborate_fire_applications<'a>(
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
     witnesses: &mut WitnessArena,
     prefix_fallback: bool,
+    equality_forest: Option<&EqualityForest>,
+    mut dependencies: Option<&mut DepArena>,
 ) -> Result<FireApplicationEffects, CausalSliceError> {
     let mut observed_rows = Vec::new();
     let mut new_rows = Vec::new();
     let mut new_witnesses = Vec::new();
+    let mut read_dependencies = Vec::new();
     for application in applications {
         let meta = trace_functions.get(&application.table).ok_or_else(|| {
             CausalSliceError::Unsupported {
@@ -6202,11 +6258,64 @@ fn elaborate_fire_applications<'a>(
                             if witnesses.nodes[witness.index()].node != expected
                                 && !prefix_fallback =>
                         {
-                            return Err(CausalSliceError::Unsupported {
-                                location: format!("constructor application `{}`", meta.name),
-                                reason: "a table hit whose match-time syntax conflicts with its captured witness"
-                                    .to_owned(),
-                            });
+                            let exact = witnesses.ids.get(&expected).copied();
+                            let Some(exact) = exact else {
+                                return Err(CausalSliceError::Unsupported {
+                                    location: format!("constructor application `{}`", meta.name),
+                                    reason: "a table hit whose match-time syntax conflicts with its captured witness"
+                                        .to_owned(),
+                                });
+                            };
+                            let exact_endpoint = witnesses.endpoint(exact).ok_or_else(|| {
+                                CausalSliceError::Invariant(format!(
+                                    "constructor witness `{}` has no captured endpoint",
+                                    meta.name
+                                ))
+                            })?;
+                            if exact_endpoint == application.result {
+                                witnesses.prefer_endpoint_witness(
+                                    &meta.output_sort,
+                                    application.result,
+                                    exact,
+                                )?;
+                                read_dependencies.push(witnesses.availability(exact));
+                                continue;
+                            }
+                            let old = TypedEndpoint {
+                                sort: meta.output_sort.clone(),
+                                value: exact_endpoint,
+                            };
+                            let current = TypedEndpoint {
+                                sort: meta.output_sort.clone(),
+                                value: application.result,
+                            };
+                            let explanation = equality_forest
+                                .and_then(|forest| forest.explain(&old, &current))
+                                .ok_or_else(|| CausalSliceError::Unsupported {
+                                    location: format!(
+                                        "constructor application `{}`",
+                                        meta.name
+                                    ),
+                                    reason: "a table hit whose exact syntax changed endpoints without a captured successful-union path"
+                                        .to_owned(),
+                                })?;
+                            let dependency_arena =
+                                dependencies.as_deref_mut().ok_or_else(|| {
+                                    CausalSliceError::Invariant(
+                                        "constructor endpoint alias lacked a dependency arena"
+                                            .to_owned(),
+                                    )
+                                })?;
+                            let mut availability = witnesses.availability(exact);
+                            for dependency in explanation {
+                                availability = dependency_arena.and(availability, dependency)?;
+                            }
+                            witnesses.alias_app_endpoint(
+                                expected,
+                                application.result,
+                                availability,
+                            )?;
+                            read_dependencies.push(availability);
                         }
                         Some(_) => {}
                         None if prefix_fallback => {
@@ -6249,6 +6358,7 @@ fn elaborate_fire_applications<'a>(
         observed_rows,
         new_rows,
         new_witnesses,
+        read_dependencies,
     })
 }
 

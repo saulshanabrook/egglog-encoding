@@ -2408,6 +2408,79 @@ fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
 }
 
 #[test]
+fn constructor_table_hit_retains_the_equality_that_changed_its_endpoint() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64) (Wrap Expr))
+        (relation Seed ())
+        (relation Trigger ())
+        (relation Out (Expr))
+        (ruleset first)
+        (ruleset second)
+        (rule ((Seed))
+              ((union (Wrap (B 1)) (Wrap (A 1))))
+              :ruleset first
+              :name "unify")
+        (rule ((Trigger))
+              ((Out (Wrap (A 1))))
+              :ruleset second
+              :name "hit")
+        (Seed)
+        (Trigger)
+        (run-schedule (run first) (run second))
+        (check (Out (Wrap (A 1))))
+    "#;
+
+    let slice = causal_slice_program(Some("constructor-hit-alias.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "unify", &[]));
+    assert!(has_replay_firing(&slice.source, "hit", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("constructor-hit-alias-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn congruence_created_constructor_syntax_remains_an_explicit_boundary() {
+    let source = r#"
+        (datatype Expr (A i64) (B i64) (Wrap Expr))
+        (relation Seed ())
+        (relation Trigger ())
+        (relation Out (Expr))
+        (ruleset first)
+        (ruleset second)
+        (rule ((Seed))
+              ((union (B 1) (A 1)))
+              :ruleset first
+              :name "unify-children")
+        (rule ((Trigger))
+              ((Out (Wrap (B 1))))
+              :ruleset second
+              :name "hit-congruence")
+        (Wrap (A 1))
+        (Seed)
+        (Trigger)
+        (run-schedule (run first) (run second))
+        (check (Out (Wrap (B 1))))
+    "#;
+
+    let error =
+        causal_slice_replay_program(Some("constructor-congruence-hit.egg".to_owned()), source)
+            .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("table hit whose match-time syntax conflicts"),
+        "{error}"
+    );
+}
+
+#[test]
 fn retained_constructor_subsume_side_effect_replays_in_one_shared_wave() {
     let source = r#"
         (datatype Expr (A i64) (B i64))
