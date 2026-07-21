@@ -28,6 +28,15 @@ reachability, so an unsupported but causally irrelevant firing does not poison
 a sound slice. The same unsupported construct still fails closed when its
 event is retained.
 
+The current extension also covers visible single-output mutable functions whose
+merge expression is syntactically exact `:merge new`. The native sorted-write
+commit path reports the exact proposal origin and `Inserted`, `Replaced`, or
+`NoOp` outcome; the slicer maintains a pre-wave complete-row dependency
+sidecar, attaches lookup dependencies to pending fires, and publishes committed
+state only after every match in the wave is elaborated. Ordinary and strict
+proof canaries cover unique writes, irrelevant writers, mixed union/set heads,
+same-wave old-state reads, and fail-closed equality rekeys.
+
 Grounded packed replay now records the residual-query/head instruction
 boundary, evaluates every requested grounding against one shared pre-state,
 and validates the complete post-filter binding before any head runs. The
@@ -126,6 +135,35 @@ approximately-2x-native performance target. Current phase reporting describes
 only the final proof EGraph; the 2.81–2.82 s “outside recorded rulesets” cell
 still combines traced execution, elaboration, slicing, emission, validation,
 and replay setup.
+
+### Luminal fixture result
+
+`benchmarks/luminal-llama.egg` now completes one ordinary traced execution, a
+schedule-free causal slice, packed guarded replay, and the unchanged strict
+proof checker. The selected equality concludes `Iota = KernelIota`. Its
+retained Iota-lowering firing has a mixed `union` plus exact `:merge new` dtype
+write; complete-head replay and the dtype row dependency both remain intact.
+
+At commit `53230e7d9fcb`, the trace recorded 12,568 pending firings, 11,698
+effective promoted events, 870 all-no-op firings, and 17,850 dependency nodes.
+The positive observation retained one firing and four source events. The
+emitted program shrank from 455,788 to 392,939 bytes because v0 still preserves
+all declarations, rules, and ordinary source initialization.
+
+Six fresh interleaved release rounds compared the complete causal treatment
+with unchanged strict `proof-testing`:
+
+| Metric | Original strict proof (95% CI) | Integrated causal strict proof (95% CI) | Candidate / baseline |
+|---|---:|---:|---:|
+| wall time | 19.0–19.4 s | 18.8–19.2 s | 0.975–1.01x |
+| peak RSS | 1.5–1.7 GiB | 1.4–1.4 GiB | 0.837–0.947x |
+
+The same causal samples compared with six ordinary native samples were
+42.8–45.2x slower and used 12.3–12.4x the peak RSS. The report is
+`/tmp/causal-slice-luminal-smoke-20260721.jsonl`. This is an admission and
+source-retention result: the dynamic slice is only 1/11,698 of effective rule
+events, but proof time is statistically indistinguishable from the original
+because almost the complete source program still enters the proof run.
 
 ### Math fixture result
 
@@ -338,7 +376,8 @@ No proof encoding, evaluator, checker, or expected proof was weakened.
 | negative check/absence | rejected | no tombstone or exhaustiveness evidence |
 | delete/subsume | rejected | state provenance absent and sequential replay diverges |
 | constructor lookups | implemented for exact captured syntax | lookup availability plus output equality path are retained; equal-but-different body syntax needs exact native row evidence |
-| mutable functions, merges, other RHS lookups | rejected | dynamic read dependencies, proposal origins, and receipts absent |
+| exact single-output `:merge new` functions | implemented and tested | exact lookup rows, proposal origins, `Inserted`/`Replaced`/`NoOp` commit receipts, pre-wave sidecars, rebuild migration, and complete-head replay pass focused ordinary/strict canaries and Luminal |
+| custom merges, lookup misses, deletes, and other mutable state | rejected | merge callback reads, tombstones, visibility, and general mutation semantics remain absent |
 | constructor witnesses | implemented and tested | source, rule-created, standalone, nested, constructor-union, BigInt/BigRat, and closed-global canaries |
 | mutually recursive `datatype*` | implemented and tested | original parsed syntax is preserved; all mutually recursive sorts and constructors are modeled; nested constructor replay passes ordinary and strict proof modes; unsupported inline presorts fail closed |
 | rule-head BigRat arithmetic | implemented and tested narrowly | one replay-safe binary `+`, `-`, `*`, `/` or unary `neg`, `abs`, `floor`, `ceil`, `round` application per complete head; exact native evidence and a pre-wave result witness are required |
@@ -377,11 +416,13 @@ replacement, rebuild/rekey, deletion, compaction, or reuse. General provenance
 needs either generation-aware physical identity with exact migration, or the
 smallest stable logical identity exposed at match/commit.
 
-The native path now carries rule-match lane origins through head table
-applications and union proposals, and union commit returns applied/redundant
-receipts. It still lacks exact body-row evidence, general lookup hit/miss
-dependencies, and per-proposal row commit receipts (`New`, `Changed`, `NoOp`,
-`Deleted`, old/new identity).
+The native path carries rule-match lane origins through head table applications
+and union proposals. Union commit returns applied/redundant receipts, and the
+watched sorted-write path returns exact `Inserted`, `Replaced`, or `NoOp`
+receipts with old/new complete rows for single-output `:merge new` functions.
+It still lacks exact body-row evidence, lookup-miss/tombstone evidence, delete
+and visibility receipts, and provenance for arbitrary custom-merge callback
+reads.
 
 ### Chained constructor lookup
 
@@ -612,27 +653,27 @@ so a new witness DAG format is not yet justified by this fixture.
 ## Current benchmark frontier
 
 All six default workloads now have an explicit capability frontier. Math,
-pointer analysis, and the real Eggcc proof fixture are admitted end to end;
-the remaining failures stay in the validation bucket rather than being timed
-as successful rows.
+pointer analysis, the real Eggcc proof fixture, and Luminal are admitted end to
+end; the remaining failures stay in the validation bucket rather than being
+timed as successful rows.
 
 | Workload | Current first boundary | Major subsequent requirements |
 |---|---|---|
 | `math-microbenchmark.egg` | implemented and benchmarked | exact 11-wave ordinary and strict replay pass; the print-only Prefix retains 836,160 effective events, so the integrated treatment is 3.03x slower and 2.46x higher RSS in one round |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | mutable `lo` read at line 80 | query `pow`/`log`/comparisons and unary/binary BigRat heads now pass their prior boundaries; exact function-row read provenance, custom merges, push/pop, and multiple schedules remain |
-| `luminal-llama.egg` | `subsume` in the line-66 constant-folding head | mutually recursive `datatype*` and query-side i64 `+` are admitted; visibility provenance for the mixed `union`/`subsume` head is next, followed by six schedule boundaries and broader mutable state |
+| `herbie.egg` | custom merged `lo`/`hi` state after line 80 | query `pow`/`log`/comparisons, unary/binary BigRat heads, and exact `:merge new` rows pass; custom merge result/read provenance, push/pop, and multiple schedules remain |
+| `luminal-llama.egg` | implemented and benchmarked | 12,568 pending / 11,698 effective / 1 retained; ordinary and unchanged strict replay pass; 0.975–1.01x strict-proof wall despite a one-fire dynamic slice because 392,939 source bytes remain |
 | `hardboiled_conv1d_32.egg` | `Call` body pattern with opaque `VecExpr` at line 234 | inert `UnstableFn` schemas are admitted; versioned container witnesses, functions, filters, broad joins, and subsume provenance remain |
 | `eggcc-2mm-pass1.egg` | implemented and benchmarked | ordinary trace, causal slice, guarded replay, and unchanged strict checker pass; integrated causal proof is 0.528–0.532x full strict-proof time but 2.50–2.54x native time; unsupported mutable/container paths not retained by this observation still fail closed when relevant |
 
-The declaration-only and query-primitive frontiers are now closed. Herbie has
-reached mutable function-row reads; Luminal has reached subsume visibility;
-the selected Eggcc observation now slices around unsupported irrelevant state;
-and Hardboiled remains at versioned container values. Guarded post-filter
-shared-prestate replay, exact global snapshots, and narrow BigRat/i64 primitive
-evidence are implemented; mutable commit/read, delete, general subsume,
-container-version, and opaque external provenance remain fail-closed when
-causally retained.
+The declaration-only, query-primitive, and exact `:merge new` frontiers are now
+closed. Herbie has reached custom merged function rows; the selected Luminal
+and Eggcc observations slice around causally irrelevant unsupported state; and
+Hardboiled remains at versioned container values. Guarded post-filter
+shared-prestate replay, exact global snapshots, narrow BigRat/i64 primitive
+evidence, and exact new-value state receipts are implemented. Custom merges,
+lookup misses, delete, general subsume, container versions, and opaque external
+provenance remain fail-closed when causally retained.
 
 ## Validation status
 
@@ -751,6 +792,20 @@ Current Eggcc/congruence continuation at `31ecaaae3ccd`:
 - `make check` has not yet been rerun after the latest continuation; its last
   complete run passed at the post-filter checkpoint above.
 
+Current mutable/Luminal continuation at `53230e7d9fcb`:
+
+- `cargo test -p egglog --test causal_slice`: 114 passed, including five exact
+  `:merge new` state/replay canaries;
+- `cargo check -p egglog` and
+  `cargo clippy -p egglog --test causal_slice -- -D warnings`: passed;
+- the debug `egglog-experimental --causal-slice --proof-testing` Luminal command
+  passed and emitted a strict checked proof;
+- 12/12 release benchmark runs succeeded for causal versus strict proof, and
+  12/12 succeeded for causal versus native, in the same append-only report;
+- formatting and `git diff --check` passed before the implementation commit;
+- `make proof-tests` and `make check` have not yet been rerun after the mutable
+  continuation; their last complete runs passed at the post-filter checkpoint.
+
 ## Implemented fact, measurement, proposal, and falsification
 
 - Implemented/tested fact: Bronze plus the pointer fixture are traced once,
@@ -773,6 +828,11 @@ Current Eggcc/congruence continuation at `31ecaaae3ccd`:
   `UnstableFn` schemas can be preserved without introducing replay events;
   constructor applications still use native table evidence, and runtime
   container/callback values still fail closed.
+- Implemented/tested fact: visible single-output functions with syntactically
+  exact `:merge new` carry exact pre-wave row dependencies and per-proposal
+  commit outcomes. Effective writes promote their firing, duplicate writes keep
+  the prior support, and exact rebuild receipts migrate current state or fail
+  closed. Luminal uses this path end to end.
 - Empirical measurement: pointer has 706 pending, 600 effective, and 1 retained
   firing; the integrated treatment is currently 1.06–1.12x slower and
   1.04–1.05x higher RSS than strict proof-testing of the original. Exact math
@@ -782,9 +842,14 @@ Current Eggcc/congruence continuation at `31ecaaae3ccd`:
   0.528–0.532x the wall time and 0.629–0.642x the RSS of unchanged full strict
   proof mode across six interleaved rounds. It remains 2.50–2.54x native wall
   time and 3.96–4.20x native RSS.
-- Plausible but untested: a streaming wave trace sink, generation-aware mutable
-  sidecars, exact body-row transport through factorized joins, and sharing the
-  836,160-fire tape across typecheck/proof/preparation AST transformations.
+- Empirical measurement: Luminal retains 1/11,698 effective firings and reduces
+  source from 455,788 to 392,939 bytes, yet six rounds measure 0.975–1.01x
+  unchanged strict-proof wall time. Peak RSS improves to 0.837–0.947x. Versus
+  native, the integrated path is 42.8–45.2x slower and 12.3–12.4x higher RSS.
+- Plausible but untested: source-level declaration/rule/initializer slicing,
+  proof-mode compile reuse, a streaming wave trace sink, exact body-row
+  transport through factorized joins, and sharing the 836,160-fire tape across
+  typecheck/proof/preparation AST transformations.
 - Falsified: general complete match bindings, partial-bind replay of projected
   firings, naked `RowId` stability, one preferred syntax as constructor-body
   provenance, globally epoch-free equality endpoints, standalone
@@ -794,29 +859,29 @@ Current Eggcc/congruence continuation at `31ecaaae3ccd`:
 ## Recommended next patches
 
 The benchmark path, scalar inputs, immutable constructor/global witnesses,
-direct unions, guarded shared-prestate batches, and three real fixtures are
-implemented. The next patches should be:
+direct unions, guarded shared-prestate batches, exact `:merge new` state, and
+four real fixtures are implemented. The next patches should be:
 
-1. expose the existing causal generator stage timings and retained-event
-   counts in the benchmark timing summary, and measure trace, elaboration,
-   validation, and proof replay separately without changing the end-to-end
-   headline metric;
-2. stream or compact completed native waves so raw matches do not coexist with
-   the entire elaborated arena, then remeasure Eggcc RSS;
-3. add exact dynamic function-row read dependencies and commit receipts for a
-   no-merge canary before attempting Herbie's custom `lo`/`hi` merges or
-   Eggcc's mutable initialization;
-4. add subsume visibility receipts/current sidecars for Luminal only after a
-   focused same-wave mixed union/subsume canary passes ordinary and strict
-   replay;
-5. avoid reparsing the generated source solely for in-process validation after
+1. slice causally unused rule definitions and source initialization, or reuse
+   the already parsed/typechecked program when entering proof replay, then
+   remeasure Luminal; its one-fire dynamic slice currently preserves 392,939
+   source bytes and is time-neutral versus full proof;
+2. expose the existing generator stage timings and retained-event counts in the
+   benchmark timing summary without changing the end-to-end headline metric;
+3. stream or compact completed native waves so raw matches do not coexist with
+   the entire elaborated arena, then remeasure Eggcc and Luminal RSS;
+4. extend exact state receipts to Herbie's custom `lo`/`hi` merges only after a
+   focused old/incoming/result dependency canary establishes the callback-read
+   contract;
+5. add versioned container witnesses and current-version dependencies for the
+   first retained Hardboiled `VecExpr` use;
+6. avoid reparsing the generated source solely for in-process validation after
    the already-validated parsed/source rule mapping is available;
-6. carry exact match-time body atom/table/row-version evidence through
+7. carry exact match-time body atom/table/row-version evidence through
    factorized expansion so retained chained constructor lookups never require
    witness guessing;
-7. add dynamic-read/general row commit receipts before mutation support;
-8. add delete/subsume visibility, custom merges, containers, and opaque
-   externals only after their focused canaries pass.
+8. add lookup-miss/tombstone and delete/subsume visibility evidence only after
+   their focused same-wave canaries pass.
 
 ## Commit and diff summary
 
@@ -904,7 +969,11 @@ Local reviewable commits:
 49. `c0ecdf33`, `076e9835`, `31ecaaae` — defer unreachable projected
     groundings and add endpoint-qualified constructor/check provenance through
     equality and congruence boundaries.
+50. `ebb35a87`, `5a1989a1`, `53230e7d` — trace exact sorted-write commit
+    outcomes, maintain exact `:merge new` row dependencies, and admit the real
+    Luminal proof fixture.
 
-The final diff is confined to the reference native trace, the causal-slice
-module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
-logic changed. Nothing has been pushed.
+The final diff is confined to reference native tracing/commit receipts,
+frontend causal treatment plumbing, the causal-slice module/example/tests, and
+`.codex/causal-slice-v0/`. The proof encoding and checker are unchanged.
+Nothing has been pushed.

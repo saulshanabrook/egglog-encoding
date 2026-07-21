@@ -1,8 +1,9 @@
 # Causal Slice v0 Design Validation
 
-Status: Bronze implemented and tested. The exact-plan boundary, mutable-state
-sidecar proposal, equality hook, and general sequential-wave claim were
-actively falsified rather than silently generalized.
+Status: Bronze and exact single-output `:merge new` state are implemented and
+tested. The exact-plan boundary, general mutable-state sidecar proposal,
+equality hook, and general sequential-wave claim were actively falsified
+rather than silently generalized.
 
 Date: 2026-07-21.
 
@@ -42,8 +43,14 @@ record. The current implementation additionally confirms:
   excluded from replay bindings. The native trace snapshots their exact
   zero-key values against each wave pre-state; when canonicalization changes a
   value, the slice retains the successful-union path from definition to use;
-- inert custom-function declarations are preserved, while any read, write,
-  merge, or default use remains fail-closed without mutable-state provenance.
+- inert custom-function declarations are preserved; runtime reads and writes
+  remain fail-closed unless they satisfy the exact `:merge new` contract below,
+  and every custom merge/default remains fail-closed without its own state
+  provenance;
+- visible single-output functions with syntactically exact `:merge new` use
+  exact sorted-write receipts, pre-wave complete-row dependency sidecars, and
+  post-wave publication; five ordinary/strict canaries and the real Luminal
+  fixture pass;
 - positive-check constructor rows are now captured on the native check query
   itself with complete grounded inputs/output and the chosen match origin;
   observation grounding uses that exact row plus successful-union edges rather
@@ -57,7 +64,11 @@ record. The current implementation additionally confirms:
   schedule-free guarded replay, and the unchanged strict proof checker;
 - six interleaved release rounds measured causal Eggcc proof at
   0.528–0.532x full strict-proof wall time, while the complete pipeline remains
-  2.50–2.54x ordinary native wall time.
+  2.50–2.54x ordinary native wall time;
+- the unmodified Luminal fixture retains 1 of 11,698 effective firings and
+  passes strict replay, but six rounds are 0.975–1.01x full strict-proof wall
+  time because the emitted program still retains 392,939 of 455,788 source
+  bytes.
 
 The strongest newly falsified assumption is that one preferred syntax per
 runtime endpoint identifies constructor body provenance. After a union and
@@ -122,10 +133,11 @@ unions, restricted constructor lookup binders, parsed rewrite/birewrite
 lowering, closed immutable globals, inert custom-function declarations, and a
 print-only Prefix fallback. It also admits one exact deterministic query
 primitive from the tested i64/BigRat whitelist and narrow proof-validating
-BigRat head arithmetic. It still rejects mutable functions, delete, subsume,
-custom merges, other RHS function lookups, arbitrary external functions,
-containers, extracts, negative checks, push/pop, includes, output/opaque I/O,
-input `run-rule`, and DD.
+BigRat head arithmetic. It also admits exact single-output `:merge new`
+function lookups and writes with successful commit/rebuild evidence. It still
+rejects custom merges, lookup misses, delete, general subsume, arbitrary
+external functions, containers, extracts, negative checks, push/pop, includes,
+output/opaque I/O, input `run-rule`, and DD.
 
 ## Design-invariant validation
 
@@ -142,8 +154,8 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | exact source `RowId`s survive factorized final expansion | Falsified | `TaggedRowBuffer` carries a tag, but expansion discards it before `ActionBuffer::push_bindings` and has no source-atom identity |
 | decomposed materializations already carry a shadow dependency | Falsified on the current path | materialized rows have no `DepId`; v0 rejects potentially decomposed rules/checks |
 | naked `RowId` is a stable sidecar key | Falsified | generation changes, replacement, rebuild/rekey, deletion, compaction, and slot reuse invalidate or recycle IDs |
-| action lanes and mutation proposals carry a pending-fire origin | Confirmed for traced head applications and union proposals | traced `ActionState` lanes carry `RuleMatchId`; table applications and union receipts preserve it; general row mutations remain incomplete |
-| commit reports which proposal was new, changed, redundant, or deleted | Confirmed only for union applied/redundant outcome | general row `TableChange` remains aggregate and parallel staging may coalesce same-key proposals |
+| action lanes and mutation proposals carry a pending-fire origin | Confirmed for traced head applications, union proposals, and watched sorted writes | traced `ActionState` lanes carry `RuleMatchId`; table applications, union receipts, and exact `:merge new` receipts preserve it; general row mutations remain incomplete |
+| commit reports which proposal was new, changed, redundant, or deleted | Confirmed for union outcome and watched exact sorted writes | union reports applied/redundant; watched sorted writes report `Inserted`, `Replaced`, or `NoOp` plus old/new complete rows. Delete and arbitrary custom-merge callback evidence remain absent |
 | lookup hits and misses expose row/tombstone evidence | Falsified | vectorized lookup drops row identity and hit/miss provenance; there is no tombstone dependency |
 | successful union exposes raw endpoints, origin, and success | Confirmed for traced rule proposals | `UnionReceipt` records raw lhs/rhs, optional `RuleMatchId`, and applied/redundant outcome; originless rebuild/congruence unions remain unsupported |
 | successful raw-endpoint edges form a forest without epochs in one scope | Confirmed for direct and constructor-union canaries | applied edges join distinct components, redundant edges are omitted, and strict replay resolves the unique path |
@@ -176,6 +188,8 @@ counterexample. `Reasoned only` is not an implemented or empirical claim.
 | raw equality-sort binding IDs remain stable across replay waves | Falsified | later union/rebuild can displace a representative; packed matching canonicalizes expected and captured ID cells against the same batch prestate |
 | compact per-wave replay scales to exact math | Confirmed for completion, falsified for savings | exact wave 11 completes and passes strict replay, but its full Prefix is 3.03x slower and 2.46x higher RSS in one public-runner round |
 | causal slicing can reduce a real full-proof workload end to end | Confirmed for Eggcc, not a general claim | six interleaved rounds are 0.528–0.532x full strict-proof wall time and 0.629–0.642x RSS; versus native the complete process is still 2.50–2.54x time and 3.96–4.20x RSS |
+| exact `:merge new` mutable state has sufficient commit evidence | Confirmed narrowly | unique write/read, irrelevant writer, mixed union/set, same-wave old-state read, and equality-rekey fail-closed canaries pass; effective receipts promote events and no-op receipts retain prior support |
+| a one-fire dynamic slice necessarily makes proof replay cheap | Falsified by Luminal | 1/11,698 effective firings are retained, but preserving 392,939 source bytes yields 0.975–1.01x full strict-proof wall time across six rounds |
 
 ## Important implementation correction: pending lifetime
 
@@ -296,8 +310,10 @@ retained. Push/pop remains outside the no-epoch claim.
 | E30 | Can Herbie's query-side `pow` use a traced post-filter grounding? | yes narrowly: successful and failed `pow` candidates are distinguished from one native run, the result is in the packed grounding, and ordinary/strict replay pass; `RuleMatch` alone remains insufficient |
 | E31 | Can mutually recursive `datatype*` declarations remain source-level replay syntax? | yes: two mutually recursive sorts and nested constructors replay in ordinary and unchanged strict proof modes; unsupported inline `Map` fails closed |
 | E32 | Can `UnstableFn` be admitted only as an inert opaque schema? | yes: declaration/schema-only replay passes ordinary and strict modes, while a rule body reading the value is rejected |
-| E33 | Does the query bridge advance real fixtures? | yes: Herbie advances from line-64 `pow` through unary heads, `log`, and comparisons to line-80 mutable `lo`; Luminal advances from line-66 i64 `+` to `subsume` in that head |
+| E33 | Does the query bridge advance real fixtures? | yes: Herbie advances from line-64 `pow` through unary heads, `log`, and comparisons to mutable `lo`; Luminal advances through query-side i64 `+` and, with exact `:merge new` receipts, completes strict replay |
 | E34 | Are failed query primitive candidates replayed as firings? | no: focused `pow(0,-1)`, `log(2)`, and false BigRat predicate candidates produce no retained replay fire, while successful peers replay strictly |
+| E35 | Are exact `:merge new` receipts sufficient for mutable row dependencies? | yes narrowly: five focused canaries cover new/replaced/no-op state, complete mixed heads, same-wave prestate, rebuild migration, and the strict-proof rekey boundary |
+| E36 | Does Luminal's one-fire dynamic slice save strict-proof time? | no: six rounds retain 1/11,698 effective events but measure 0.975–1.01x full proof wall; source preservation leaves 392,939 bytes to parse/typecheck/instrument |
 
 ## Validation commands
 
@@ -324,6 +340,14 @@ uv run --locked ./bench.py \
   --rounds 1 --timeout-sec 120 --force-run \
   --report /tmp/causal-slice-packed-math-20260720.jsonl \
   --format markdown egglog/tests/math-microbenchmark.egg
+target/debug/egglog-experimental \
+  --causal-slice --proof-testing benchmarks/luminal-llama.egg
+uv run --locked ./bench.py \
+  --target . --treatment causal-proof-testing \
+  --compare-target . --compare-treatment proof-testing \
+  --rounds 6 --timeout-sec 300 \
+  --report /tmp/causal-slice-luminal-smoke-20260721.jsonl \
+  --format markdown --detail files benchmarks/luminal-llama.egg
 cargo run -p egglog --example causal_slice -- \
   .codex/causal-slice-v0/bronze.egg
 target/debug/egglog /tmp/causal-slice-v0-full.new.egg
