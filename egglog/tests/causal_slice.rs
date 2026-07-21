@@ -621,6 +621,49 @@ fn constructor_lookup_body_retains_its_application_and_equality_causes() {
 }
 
 #[test]
+fn chained_constructor_lookup_requires_exact_match_row_provenance() {
+    let source = r#"
+        (datatype Allocation (A String))
+        (constructor expr_points_to (String) Allocation)
+        (constructor ptr_points_to (Allocation) Allocation)
+        (relation ExprEdge (String String))
+        (relation PtrEdge (String String))
+        (relation Load (String String))
+        (rule ((ExprEdge expr alloc))
+              ((union (expr_points_to expr) (A alloc)))
+              :name "make-expr")
+        (rule ((PtrEdge from to))
+              ((union (ptr_points_to (A from)) (A to)))
+              :name "make-ptr")
+        (rule ((Load expr result)
+               (= (expr_points_to expr) alloc)
+               (= (ptr_points_to alloc) pointee))
+              ((union (expr_points_to result) pointee))
+              :name "load")
+        (ExprEdge "expr" "alloc")
+        (PtrEdge "alloc" "pointee")
+        (Load "expr" "result")
+        (run 2)
+        (check (= (expr_points_to "result") (A "pointee")))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("chained-constructor-lookup.egg".to_owned()), source)
+        .unwrap();
+
+    // The first lookup binds `alloc` using `(expr_points_to "expr")`, while
+    // the constructor row enabling the second lookup was created with
+    // `(A "alloc")`. Those terms are equal, but choosing a historical
+    // constructor witness by searching their e-class would guess the body
+    // producer rather than capture the exact row used by the native match.
+    let error = causal_slice_program(Some("chained-constructor-lookup.egg".to_owned()), source)
+        .unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("grounded constructor `ptr_points_to`"));
+    assert!(message.contains("syntax that was unavailable at the captured firing"));
+}
+
+#[test]
 fn nested_constructor_union_records_the_complete_source_syntax() {
     let source = r#"
         (datatype Allocation (A String))
@@ -634,8 +677,8 @@ fn nested_constructor_union_records_the_complete_source_syntax() {
         (check (= (ptr_points_to (A "from")) (A "to")))
     "#;
 
-    let slice = causal_slice_program(Some("nested-constructor-union.egg".to_owned()), source)
-        .unwrap();
+    let slice =
+        causal_slice_program(Some("nested-constructor-union.egg".to_owned()), source).unwrap();
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 1);
     assert!(slice.source.contains("run-rule \"make-pointer\""));
