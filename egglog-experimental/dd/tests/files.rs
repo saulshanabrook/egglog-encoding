@@ -67,7 +67,9 @@ const DEBUG_SUBSET: &[&str] = &[
 ///   `ActionRegistry`; DD has direct container storage but no registry
 ///   execution state for read primitives over its term-encoded mirror):
 ///   `container-proofs`, `container-fail`, `container-reorder-proofs`,
-///   `datatypes`, `nested-container-dirty-propagation`, `hardboiled_conv1d_32`.
+///   `custom-container-output-rebuild`, `datatypes`,
+///   `nested-container-dirty-propagation`, `hardboiled_conv1d_32`,
+///   `repro-querybug3`.
 /// - `input` from an external CSV whose path is relative to the corpus dir; the
 ///   DD harness runs from the `dd` crate root, so the file cannot be found:
 ///   `string_quotes`.
@@ -78,6 +80,11 @@ const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[
         "container-reorder-proofs.egg",
         "requires a backend action registry",
     ),
+    (
+        "custom-container-output-rebuild.egg",
+        "requires a backend action registry",
+    ),
+    ("repro-querybug3.egg", "requires a backend action registry"),
     ("datatypes.egg", "requires a backend action registry"),
     (
         "nested-container-dirty-propagation.egg",

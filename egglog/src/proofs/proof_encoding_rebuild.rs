@@ -11,8 +11,12 @@ use crate::*;
 enum ValueRebuild {
     /// The value is the term's e-class (constructors and globals).
     Eclass,
-    /// A custom `:merge` function's eq-sort output at child index `out_idx`.
+    /// A custom function's eq-sort output at child index `out_idx`.
     CustomOutput { out_idx: usize },
+    /// A custom function's eq-container output at child index `out_idx`,
+    /// canonicalized by the container rebuild primitive (containers have no
+    /// `@UF` to chase).
+    ContainerOutput { out_idx: usize },
 }
 
 impl ProofInstrumentor<'_> {
@@ -178,43 +182,54 @@ impl ProofInstrumentor<'_> {
             );
             rules.push_str(&self.rebuild_rule(&facts, &actions, is_container));
         }
-        // FD view value column: when it is unioned to a smaller `@UF` leader, update
-        // the row's value to the leader (see [`Self::fd_value_rebuild_rule`]). A
-        // constructor/global's value *is* its e-class; a custom `:merge` function's
-        // eq-sort output takes the delete-then-reinsert path. A non-eq-sort custom
-        // output has no leader to chase, so nothing is emitted.
+        // FD view value column (see [`Self::fd_value_rebuild_rule`]). A
+        // constructor/global's value *is* its e-class; a custom function's
+        // eq-sort or eq-container output takes the delete-then-reinsert path.
+        // A base-sort custom output never goes stale, so nothing is emitted.
         if output_is_eclass {
             rules.push_str(&self.fd_value_rebuild_rule(fdecl, &key_vars, ValueRebuild::Eclass));
-        } else if fdecl.subtype == FunctionSubtype::Custom
-            && !self.is_encoded_global(fdecl)
-            && types[n - 1].is_eq_sort()
-        {
-            rules.push_str(&self.fd_value_rebuild_rule(
-                fdecl,
-                &key_vars,
-                ValueRebuild::CustomOutput { out_idx: n - 1 },
-            ));
+        } else if fdecl.subtype == FunctionSubtype::Custom && !self.is_encoded_global(fdecl) {
+            if types[n - 1].is_eq_sort() {
+                rules.push_str(&self.fd_value_rebuild_rule(
+                    fdecl,
+                    &key_vars,
+                    ValueRebuild::CustomOutput { out_idx: n - 1 },
+                ));
+            } else if types[n - 1].is_eq_container_sort() {
+                rules.push_str(&self.fd_value_rebuild_rule(
+                    fdecl,
+                    &key_vars,
+                    ValueRebuild::ContainerOutput { out_idx: n - 1 },
+                ));
+            }
         }
         self.parse_program(&rules)
     }
 
-    /// One rule that canonicalizes an FD view's value column when it is unioned to a
-    /// smaller `@UF` leader.
+    /// One rule that canonicalizes an FD view's stale value column.
     ///
     /// * [`ValueRebuild::Eclass`] (constructors/globals): the value *is* the
     ///   e-class, so re-`set` the same key and let the congruence `:merge` keep the
     ///   min. The row proof `canon = f(children)` is `Trans(Sym(key = leader), key =
     ///   f(children))`.
-    /// * [`ValueRebuild::CustomOutput`] (a custom `:merge` function's eq-sort
-    ///   output): `delete` the stale row first, so the re-`set` inserts without
-    ///   re-running the user merge. The row proof rewrites the output child by
-    ///   `Congr` at its position.
+    /// * [`ValueRebuild::CustomOutput`] (a custom function's eq-sort output):
+    ///   `delete` the stale row first, so the re-`set` inserts without re-running
+    ///   the user merge. The row proof rewrites the output child by `Congr` at its
+    ///   position.
+    /// * [`ValueRebuild::ContainerOutput`] (a custom function's eq-container
+    ///   output): like `CustomOutput`, but the value canonicalizes via the
+    ///   container rebuild primitive (`:naive` — it reads `@UF` tables the rule
+    ///   doesn't join on), and the rebuilt container gets a reflexive
+    ///   `<CSort>Proof` anchor for later rebuilds.
     fn fd_value_rebuild_rule(
         &mut self,
         fdecl: &ResolvedFunctionDecl,
         key_vars: &[String],
         kind: ValueRebuild,
     ) -> String {
+        if let ValueRebuild::ContainerOutput { out_idx } = kind {
+            return self.fd_container_value_rebuild_rule(fdecl, key_vars, out_idx);
+        }
         let value_uf_name = self.uf_name(fdecl.resolved_schema.output().name());
         let (query_view, value_var, view_prf) = self.query_fd_view(&fdecl.name, key_vars);
         let canon = self.fresh_var();
@@ -243,6 +258,7 @@ impl ProofInstrumentor<'_> {
                         &proof_sort,
                     )
                 }
+                ValueRebuild::ContainerOutput { .. } => unreachable!("handled above"),
             };
             (lets.join("\n                      "), pf)
         } else {
@@ -256,11 +272,70 @@ impl ProofInstrumentor<'_> {
                 let keys_str = ListDisplay(key_vars, " ").to_string();
                 format!("{proof_lets}\n(delete ({view_name} {keys_str}))\n{set_canon}")
             }
+            ValueRebuild::ContainerOutput { .. } => unreachable!("handled above"),
         };
         let facts = format!(
             "{query_view}\n(= (values {canon} {uf_prf}) ({value_uf_name} {value_var}))\n(!= {value_var} {canon})"
         );
         self.rebuild_rule(&facts, &actions, false)
+    }
+
+    /// The [`ValueRebuild::ContainerOutput`] arm of
+    /// [`Self::fd_value_rebuild_rule`]: canonicalize a custom function's
+    /// container-valued output with the container rebuild primitive,
+    /// delete-then-reinsert the row (dodging the user merge), and in proof mode
+    /// compose the row proof with a `Congr` at the output position and anchor
+    /// the rebuilt container's reflexive `<CSort>Proof`.
+    fn fd_container_value_rebuild_rule(
+        &mut self,
+        fdecl: &ResolvedFunctionDecl,
+        key_vars: &[String],
+        out_idx: usize,
+    ) -> String {
+        let out_ty = fdecl.resolved_schema.output().clone();
+        let value_prim = self.container_rebuild_prim(&out_ty);
+        let (query_view, value_var, view_prf) = self.query_fd_view(&fdecl.name, key_vars);
+        let canon = self.fresh_var();
+        let canon_fact = format!("(= {canon} ({value_prim} {value_var}))");
+        let (proof_lets, pf_arg, cproof_set) = if self.proofs_enabled() {
+            let congr = self.proof_names().congr_constructor.clone();
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            let proof_sort = self.proof_sort();
+            let proof_prim = self.container_rebuild_proof_prim(&out_ty);
+            let rebuild_pf = self.fresh_var();
+            let cproof = self.term_proof_name(out_ty.name());
+            let mut lets = vec![format!("(let {rebuild_pf} ({proof_prim} {value_var}))")];
+            let new_pf = self.mint(
+                &mut lets,
+                &congr,
+                &format!("{view_prf} {out_idx} {rebuild_pf}"),
+                &proof_sort,
+            );
+            let mut cproof_stmts = vec![];
+            let sym_pf = self.mint(&mut cproof_stmts, &sym, &rebuild_pf, &proof_sort);
+            let trans_pf = self.mint(
+                &mut cproof_stmts,
+                &trans,
+                &format!("{sym_pf} {rebuild_pf}"),
+                &proof_sort,
+            );
+            cproof_stmts.push(format!("(set ({cproof} {canon}) {trans_pf})"));
+            (
+                lets.join("\n                      "),
+                new_pf,
+                cproof_stmts.join("\n                      "),
+            )
+        } else {
+            (String::new(), "()".to_string(), String::new())
+        };
+        let set_canon = self.update_fd_view(&fdecl.name, key_vars, &canon, &pf_arg);
+        let view_name = self.view_name(&fdecl.name);
+        let keys_str = ListDisplay(key_vars, " ").to_string();
+        let facts = format!("{query_view}\n{canon_fact}\n(!= {value_var} {canon})");
+        let actions =
+            format!("{proof_lets}\n(delete ({view_name} {keys_str}))\n{set_canon}\n{cproof_set}");
+        self.rebuild_rule(&facts, &actions, true)
     }
 
     /// Rules that update the to_subsume tables when children change. One rule per
