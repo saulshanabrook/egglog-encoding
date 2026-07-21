@@ -37,6 +37,18 @@ pub struct CausalSlice {
     pub rule_mapping: Vec<SourceRuleMapping>,
 }
 
+/// The retained replay projection from one traced ordinary execution.
+///
+/// Unlike [`CausalSlice`], this result does not construct the diagnostic full
+/// transcript. Production replay uses this form so discarded firings are not
+/// rendered and reparsed merely to throw them away.
+#[derive(Clone, Debug)]
+pub struct CausalReplay {
+    pub source: String,
+    pub stats: CausalSliceStats,
+    pub rule_mapping: Vec<SourceRuleMapping>,
+}
+
 #[derive(Clone, Debug)]
 pub struct CausalSliceStats {
     pub original_bytes: usize,
@@ -89,14 +101,16 @@ pub struct CausalSliceStats {
     /// Observation-root construction, backward reachability, and retained
     /// unsupported-prerequisite validation.
     pub slicing_time: Duration,
-    /// Source rendering for both the full transcript and retained slice.
+    /// Source rendering for the requested replay projection(s).
     pub emission_time: Duration,
-    /// Parse-and-mapping validation of both emitted programs.
+    /// Parse-and-mapping validation of every emitted program.
     pub emitted_validation_time: Duration,
     /// End-to-end generator time through emitted-source validation and final
     /// counter calculation. The small difference from the named stages is
     /// bookkeeping between stage boundaries.
     pub total_time: Duration,
+    /// Diagnostic full-transcript bytes, or zero when only the retained replay
+    /// projection was requested.
     pub full_transcript_bytes: usize,
     pub sliced_bytes: usize,
 }
@@ -686,6 +700,15 @@ pub fn causal_slice_program(
     causal_slice_program_with_fact_directory(filename, input, None)
 }
 
+/// Trace and slice a program while constructing only the retained replay
+/// projection used by ordinary or proof-mode execution.
+pub fn causal_slice_replay_program(
+    filename: Option<String>,
+    input: &str,
+) -> Result<CausalReplay, CausalSliceError> {
+    causal_slice_replay_program_with_fact_directory(filename, input, None)
+}
+
 /// Trace and slice a program while resolving supported scalar relation inputs
 /// relative to `fact_directory`. Input rows are embedded as ordinary source
 /// facts in both replay projections, so the emitted programs are independent
@@ -695,6 +718,46 @@ pub fn causal_slice_program_with_fact_directory(
     input: &str,
     fact_directory: Option<&Path>,
 ) -> Result<CausalSlice, CausalSliceError> {
+    let generated = generate_causal_slice(filename, input, fact_directory, true)?;
+    Ok(CausalSlice {
+        source: generated.source,
+        full_transcript_source: generated
+            .full_transcript_source
+            .expect("the diagnostic projection was requested"),
+        stats: generated.stats,
+        rule_mapping: generated.rule_mapping,
+    })
+}
+
+/// Trace and slice a program while resolving supported scalar relation inputs
+/// relative to `fact_directory`, without constructing the discarded full
+/// transcript projection.
+pub fn causal_slice_replay_program_with_fact_directory(
+    filename: Option<String>,
+    input: &str,
+    fact_directory: Option<&Path>,
+) -> Result<CausalReplay, CausalSliceError> {
+    let generated = generate_causal_slice(filename, input, fact_directory, false)?;
+    Ok(CausalReplay {
+        source: generated.source,
+        stats: generated.stats,
+        rule_mapping: generated.rule_mapping,
+    })
+}
+
+struct GeneratedCausalSlice {
+    source: String,
+    full_transcript_source: Option<String>,
+    stats: CausalSliceStats,
+    rule_mapping: Vec<SourceRuleMapping>,
+}
+
+fn generate_causal_slice(
+    filename: Option<String>,
+    input: &str,
+    fact_directory: Option<&Path>,
+    include_full_transcript: bool,
+) -> Result<GeneratedCausalSlice, CausalSliceError> {
     let total_start = Instant::now();
     let preparation_start = Instant::now();
     let mut parser = EGraph::default();
@@ -856,15 +919,17 @@ pub fn causal_slice_program_with_fact_directory(
     let emission_start = Instant::now();
     let schedule_span = command_schedule_span(&commands[schedule_index])
         .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
-    let full_transcript_source = emit_program(
-        &commands,
-        schedule_index,
-        &schedule_span,
-        &rules,
-        pending_fires.iter().map(|fire| &fire.grounding),
-        &witnesses,
-        &source_expansions,
-    );
+    let full_transcript_source = include_full_transcript.then(|| {
+        emit_program(
+            &commands,
+            schedule_index,
+            &schedule_span,
+            &rules,
+            pending_fires.iter().map(|fire| &fire.grounding),
+            &witnesses,
+            &source_expansions,
+        )
+    });
     let source = emit_program(
         &commands,
         schedule_index,
@@ -882,12 +947,14 @@ pub fn causal_slice_program_with_fact_directory(
     let emission_time = emission_start.elapsed();
 
     let emitted_validation_start = Instant::now();
-    validate_emitted_program(
-        filename.clone(),
-        &full_transcript_source,
-        &rules,
-        &rule_mapping,
-    )?;
+    if let Some(full_transcript_source) = &full_transcript_source {
+        validate_emitted_program(
+            filename.clone(),
+            full_transcript_source,
+            &rules,
+            &rule_mapping,
+        )?;
+    }
     validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
     let emitted_validation_time = emitted_validation_start.elapsed();
 
@@ -936,11 +1003,11 @@ pub fn causal_slice_program_with_fact_directory(
         emission_time,
         emitted_validation_time,
         total_time,
-        full_transcript_bytes: full_transcript_source.len(),
+        full_transcript_bytes: full_transcript_source.as_ref().map_or(0, String::len),
         sliced_bytes: source.len(),
     };
 
-    Ok(CausalSlice {
+    Ok(GeneratedCausalSlice {
         source,
         full_transcript_source,
         stats,

@@ -4,7 +4,9 @@ use std::{
     process::ExitCode,
 };
 
-use egglog::causal_slice::causal_slice_program_with_fact_directory;
+use egglog::causal_slice::{
+    causal_slice_program_with_fact_directory, causal_slice_replay_program_with_fact_directory,
+};
 
 fn main() -> ExitCode {
     let mut args = env::args_os();
@@ -53,61 +55,60 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let slice = match causal_slice_program_with_fact_directory(
-        Some(path.to_string_lossy().into_owned()),
-        &input,
-        fact_directory.as_deref(),
-    ) {
-        Ok(slice) => slice,
+    let filename = Some(path.to_string_lossy().into_owned());
+    let generated = if full {
+        causal_slice_program_with_fact_directory(filename, &input, fact_directory.as_deref())
+            .map(|slice| (slice.full_transcript_source, slice.stats))
+    } else {
+        causal_slice_replay_program_with_fact_directory(filename, &input, fact_directory.as_deref())
+            .map(|replay| (replay.source, replay.stats))
+    };
+    let (output, stats) = match generated {
+        Ok(generated) => generated,
         Err(error) => {
             report(format_args!("{error}"));
             return ExitCode::FAILURE;
         }
     };
 
-    let output = if full {
-        &slice.full_transcript_source
-    } else {
-        &slice.source
-    };
     if let Err(error) = io::stdout().lock().write_all(output.as_bytes()) {
         report(format_args!("failed to write generated source: {error}"));
         return ExitCode::FAILURE;
     }
     report(format_args!(
         "causal slice: {} waves, {} pending, {} promoted, {} no-op, {} retained; bytes {} -> {} (full {}); total {:?}",
-        slice.stats.waves,
-        slice.stats.pending_firings,
-        slice.stats.promoted_events,
-        slice.stats.no_op_applications,
-        slice.stats.retained_applications,
-        slice.stats.original_bytes,
-        slice.stats.sliced_bytes,
-        slice.stats.full_transcript_bytes,
-        slice.stats.total_time,
+        stats.waves,
+        stats.pending_firings,
+        stats.promoted_events,
+        stats.no_op_applications,
+        stats.retained_applications,
+        stats.original_bytes,
+        stats.sliced_bytes,
+        stats.full_transcript_bytes,
+        stats.total_time,
     ));
     report(format_args!(
         "generator phases: prepare {:?}; trace {:?}; elaborate {:?}; slice {:?}; emit {:?}; validate {:?}",
-        slice.stats.preparation_time,
-        slice.stats.traced_run_time,
-        slice.stats.elaboration_time,
-        slice.stats.slicing_time,
-        slice.stats.emission_time,
-        slice.stats.emitted_validation_time,
+        stats.preparation_time,
+        stats.traced_run_time,
+        stats.elaboration_time,
+        stats.slicing_time,
+        stats.emission_time,
+        stats.emitted_validation_time,
     ));
     report(format_args!(
         "trace volume: {} application source bindings; {} observation matches / {} source bindings; {} raw bindings; max batch {}; >= {} bytes; arenas: {} source events, {} deps, {} witnesses, {} equality edges, {} prefixes",
-        slice.stats.captured_bindings,
-        slice.stats.observation_matches,
-        slice.stats.observation_bindings,
-        slice.stats.raw_trace_bindings,
-        slice.stats.max_batch_matches,
-        slice.stats.raw_trace_lower_bound_bytes,
-        slice.stats.source_events,
-        slice.stats.dependency_nodes,
-        slice.stats.witness_nodes,
-        slice.stats.equality_edges,
-        slice.stats.prefix_fallbacks,
+        stats.captured_bindings,
+        stats.observation_matches,
+        stats.observation_bindings,
+        stats.raw_trace_bindings,
+        stats.max_batch_matches,
+        stats.raw_trace_lower_bound_bytes,
+        stats.source_events,
+        stats.dependency_nodes,
+        stats.witness_nodes,
+        stats.equality_edges,
+        stats.prefix_fallbacks,
     ));
     ExitCode::SUCCESS
 }

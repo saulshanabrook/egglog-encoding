@@ -176,12 +176,12 @@ where
                 panic!("Failed to read file {arg}")
             });
             let program = if args.causal_slice {
-                match causal_slice::causal_slice_program_with_fact_directory(
+                match causal_slice::causal_slice_replay_program_with_fact_directory(
                     Some(input.to_string_lossy().into_owned()),
                     &original_program,
                     args.fact_directory.as_deref(),
                 ) {
-                    Ok(slice) => slice.source,
+                    Ok(replay) => replay.source,
                     Err(error) => {
                         log::error!("{error}");
                         std::process::exit(1);

@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use egglog::{
     EGraph,
-    causal_slice::{causal_slice_program, causal_slice_program_with_fact_directory},
+    causal_slice::{
+        causal_slice_program, causal_slice_program_with_fact_directory, causal_slice_replay_program,
+    },
 };
 
 static NEXT_INPUT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -39,6 +41,22 @@ const FULL_TRANSCRIPT: &str = r#"
       (run-rule "mid-to-goal" :bind ((x 2)) :expect 1))
     (check (Goal 2))
 "#;
+
+#[test]
+fn retained_only_api_matches_the_validated_slice_without_a_transcript() {
+    let complete = causal_slice_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
+    let replay = causal_slice_replay_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
+
+    assert_eq!(replay.source, complete.source);
+    assert_eq!(replay.rule_mapping, complete.rule_mapping);
+    assert_eq!(replay.stats.full_transcript_bytes, 0);
+    assert_eq!(replay.stats.sliced_bytes, complete.stats.sliced_bytes);
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("bronze-retained-only.egg".to_owned()), &replay.source)
+        .unwrap();
+}
 
 #[test]
 fn full_manual_transcript_replays_in_normal_and_proof_modes() {
