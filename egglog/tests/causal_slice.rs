@@ -547,6 +547,68 @@ fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
 }
 
 #[test]
+fn anonymous_rewrite_lowers_to_one_stable_strictly_replayable_rule() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (relation Seed (Expr))
+        (Seed (F (A 1)))
+        (rewrite (F x) x)
+        (run 1)
+        (check (= (F (A 1)) (A 1)))
+    "#;
+
+    let first = causal_slice_program(Some("rewrite.egg".to_owned()), source).unwrap();
+    let second = causal_slice_program(Some("rewrite.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    assert_eq!(first.rule_mapping.len(), 1);
+    assert_eq!(first.rule_mapping[0].source_command_index, 3);
+    assert!(first.rule_mapping[0].original_name.is_none());
+    assert!(
+        first.rule_mapping[0]
+            .registered_name
+            .starts_with("__causal_slice_v0_rw_b")
+    );
+    assert!(!first.source.contains("(rewrite"));
+    assert!(first.source.contains(":expect 1"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("rewrite-replay.egg".to_owned()), &first.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn one_birewrite_maps_to_two_distinct_registered_rules() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr) (G Expr))
+        (relation Seed (Expr))
+        (Seed (F (A 1)))
+        (birewrite (F x) (G x))
+        (run 1)
+        (check (= (F (A 1)) (G (A 1))))
+    "#;
+
+    let slice = causal_slice_program(Some("birewrite.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.rule_mapping.len(), 2);
+    assert_eq!(slice.rule_mapping[0].source_command_index, 3);
+    assert_eq!(slice.rule_mapping[1].source_command_index, 3);
+    assert_ne!(
+        slice.rule_mapping[0].registered_name,
+        slice.rule_mapping[1].registered_name
+    );
+    assert!(!slice.source.contains("(birewrite"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("birewrite-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn constructor_union_uses_native_application_and_union_causes() {
     let source = r#"
         (datatype Allocation (A String))

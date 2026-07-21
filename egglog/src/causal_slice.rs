@@ -15,8 +15,8 @@ use thiserror::Error;
 use crate::{
     EGraph, Error as EgglogError, TermDag,
     ast::{
-        Action, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
-        RuleEvalMode, RunRuleConfig, Schedule, Span,
+        Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
+        Rewrite, Rule, RuleEvalMode, RunRuleConfig, Schedule, Span,
     },
     core_relations::{
         RuleExecutionTrace, RuleMatch, TableApplication, TableId, UnionOutcome, UnionReceipt, Value,
@@ -191,6 +191,13 @@ struct ConstructorLookupTemplate {
 struct SourceFact {
     command_index: usize,
     atom: AtomTemplate,
+}
+
+#[derive(Clone, Debug)]
+struct SourceRuleOrigin {
+    source_command_index: usize,
+    source_location: String,
+    original_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -665,11 +672,12 @@ pub fn causal_slice_program_with_fact_directory(
     let total_start = Instant::now();
     let preparation_start = Instant::now();
     let mut parser = EGraph::default();
-    let mut commands = parser.parse_program(filename.clone(), input)?;
+    let commands = parser.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
+    let (mut commands, source_rule_origins) = lower_rewrites(commands, source_name)?;
 
     let (relations, constructors) = collect_declarations(&commands, source_name)?;
-    let rule_mapping = name_and_prepare_rules(&mut commands, source_name)?;
+    let rule_mapping = name_and_prepare_rules(&mut commands, source_name, &source_rule_origins)?;
     let ProgramModel {
         rules,
         checks,
@@ -1154,6 +1162,7 @@ fn collect_declarations(
 fn name_and_prepare_rules(
     commands: &mut [Command],
     source_name: &str,
+    source_rule_origins: &IndexMap<usize, SourceRuleOrigin>,
 ) -> Result<Vec<SourceRuleMapping>, CausalSliceError> {
     let mut used_names = HashSet::default();
     for command in commands.iter() {
@@ -1213,15 +1222,195 @@ fn name_and_prepare_rules(
             );
         }
 
+        let origin = source_rule_origins.get(&command_index);
         mapping.push(SourceRuleMapping {
-            source_command_index: command_index,
-            source_location: rule.span.to_string(),
-            original_name,
+            source_command_index: origin
+                .map(|origin| origin.source_command_index)
+                .unwrap_or(command_index),
+            source_location: origin
+                .map(|origin| origin.source_location.clone())
+                .unwrap_or_else(|| rule.span.to_string()),
+            original_name: origin
+                .map(|origin| origin.original_name.clone())
+                .unwrap_or(original_name),
             registered_name: rule.name.clone(),
             semantic_definition: semantic_rule_definition(rule),
         });
     }
     Ok(mapping)
+}
+
+fn lower_rewrites(
+    commands: Vec<Command>,
+    source_name: &str,
+) -> Result<(Vec<Command>, IndexMap<usize, SourceRuleOrigin>), CausalSliceError> {
+    let mut used_rule_names = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Rule { rule } if !rule.name.is_empty() => Some(rule.name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    let mut lowered = Vec::with_capacity(commands.len());
+    let mut origins = IndexMap::default();
+
+    for (source_command_index, command) in commands.into_iter().enumerate() {
+        match command {
+            Command::Rewrite(ruleset, rewrite, subsume) => {
+                if subsume {
+                    return unsupported(
+                        &rewrite.span,
+                        "a subsuming rewrite; causal prefix replay requires explicit visibility provenance"
+                            .to_owned(),
+                    );
+                }
+                let original_name = (!rewrite.name.is_empty()).then(|| rewrite.name.clone());
+                let source_location = rewrite.span.to_string();
+                let rule = lower_one_rewrite(
+                    ruleset,
+                    rewrite,
+                    source_command_index,
+                    0,
+                    &mut used_rule_names,
+                    source_name,
+                )?;
+                let lowered_index = lowered.len();
+                lowered.push(Command::Rule { rule });
+                origins.insert(
+                    lowered_index,
+                    SourceRuleOrigin {
+                        source_command_index,
+                        source_location,
+                        original_name,
+                    },
+                );
+            }
+            Command::BiRewrite(ruleset, rewrite) => {
+                let original_name = (!rewrite.name.is_empty()).then(|| rewrite.name.clone());
+                let source_location = rewrite.span.to_string();
+                let reverse = Rewrite {
+                    span: rewrite.span.clone(),
+                    lhs: rewrite.rhs.clone(),
+                    rhs: rewrite.lhs.clone(),
+                    conditions: rewrite.conditions.clone(),
+                    name: rewrite.name.clone(),
+                };
+                for (expansion_index, rewrite) in [rewrite, reverse].into_iter().enumerate() {
+                    let rule = lower_one_rewrite(
+                        ruleset.clone(),
+                        rewrite,
+                        source_command_index,
+                        expansion_index,
+                        &mut used_rule_names,
+                        source_name,
+                    )?;
+                    let lowered_index = lowered.len();
+                    lowered.push(Command::Rule { rule });
+                    origins.insert(
+                        lowered_index,
+                        SourceRuleOrigin {
+                            source_command_index,
+                            source_location: source_location.clone(),
+                            original_name: original_name.clone(),
+                        },
+                    );
+                }
+            }
+            command => lowered.push(command),
+        }
+    }
+    Ok((lowered, origins))
+}
+
+fn lower_one_rewrite(
+    ruleset: String,
+    rewrite: Rewrite,
+    source_command_index: usize,
+    expansion_index: usize,
+    used_rule_names: &mut HashSet<String>,
+    source_name: &str,
+) -> Result<Rule, CausalSliceError> {
+    let (start, end) = match &rewrite.span {
+        Span::Egglog(span) => (span.i, span.j),
+        _ => {
+            return Err(CausalSliceError::Unsupported {
+                location: format!("{source_name}: top-level command {source_command_index}"),
+                reason: "a rewrite without an egglog source span".to_owned(),
+            });
+        }
+    };
+    let base =
+        format!("__causal_slice_v0_rw_b{start}_e{end}_c{source_command_index}_r{expansion_index}");
+    let mut name = base.clone();
+    let mut collision = 0usize;
+    while !used_rule_names.insert(name.clone()) {
+        name = format!("{base}_n{collision}");
+        collision += 1;
+    }
+
+    let mut used_vars = HashSet::default();
+    collect_expr_vars(&rewrite.lhs, &mut used_vars);
+    collect_expr_vars(&rewrite.rhs, &mut used_vars);
+    for condition in &rewrite.conditions {
+        collect_fact_vars(condition, &mut used_vars);
+    }
+    let root_base = format!(
+        "__causal_slice_v0_root_b{start}_e{end}_c{source_command_index}_r{expansion_index}"
+    );
+    let mut root = root_base.clone();
+    let mut collision = 0usize;
+    while used_vars.contains(&root) {
+        root = format!("{root_base}_n{collision}");
+        collision += 1;
+    }
+
+    let span = rewrite.span;
+    let body = std::iter::once(Fact::Eq(
+        span.clone(),
+        Expr::Var(span.clone(), root.clone()),
+        rewrite.lhs,
+    ))
+    .chain(rewrite.conditions)
+    .collect();
+    let head = Actions::singleton(Action::Union(
+        span.clone(),
+        Expr::Var(span.clone(), root),
+        rewrite.rhs,
+    ));
+    Ok(Rule {
+        span,
+        body,
+        head,
+        ruleset,
+        name,
+        eval_mode: RuleEvalMode::Seminaive,
+        no_decomp: false,
+        include_subsumed: false,
+    })
+}
+
+fn collect_expr_vars(expr: &Expr, vars: &mut HashSet<String>) {
+    match expr {
+        GenericExpr::Var(_, var) => {
+            vars.insert(var.clone());
+        }
+        GenericExpr::Call(_, _, args) => {
+            for arg in args {
+                collect_expr_vars(arg, vars);
+            }
+        }
+        GenericExpr::Lit(..) => {}
+    }
+}
+
+fn collect_fact_vars(fact: &Fact, vars: &mut HashSet<String>) {
+    match fact {
+        GenericFact::Fact(expr) => collect_expr_vars(expr, vars),
+        GenericFact::Eq(_, left, right) => {
+            collect_expr_vars(left, vars);
+            collect_expr_vars(right, vars);
+        }
+    }
 }
 
 fn validate_and_model(
@@ -1460,17 +1649,12 @@ fn model_rule(
             constructors,
             &format!("rule `{}` body", rule.name),
         )?;
-        for (var_span, var) in atom_arg_vars(&lookup.application) {
-            if !var_sorts.contains_key(var) {
-                return unsupported(
-                    var_span,
-                    format!(
-                        "constructor lookup input variable `{var}` before a typed relation/lookup binding in rule `{}`",
-                        rule.name
-                    ),
-                );
-            }
-        }
+        register_arg_vars(
+            &lookup.application,
+            &lookup.sort,
+            &mut var_order,
+            &mut var_sorts,
+        )?;
         register_arg_vars(&lookup.output, &lookup.sort, &mut var_order, &mut var_sorts)?;
         body_lookups.push(lookup);
     }
@@ -1707,13 +1891,20 @@ fn model_constructor_lookup(
     constructors: &IndexMap<String, ConstructorDecl>,
     context: &str,
 ) -> Result<ConstructorLookupTemplate, CausalSliceError> {
-    let GenericExpr::Call(call_span, function, args) = left else {
-        return unsupported(
-            span,
-            format!(
-                "equality or primitive filters in {context}; only `(= (constructor ...) output-var)` lookup binders are supported"
-            ),
-        );
+    let (application_expr, output_expr) = match (left, right) {
+        (GenericExpr::Call(..), GenericExpr::Var(..)) => (left, right),
+        (GenericExpr::Var(..), GenericExpr::Call(..)) => (right, left),
+        _ => {
+            return unsupported(
+                span,
+                format!(
+                    "equality or primitive filters in {context}; only a constructor application equated with an output variable is supported"
+                ),
+            );
+        }
+    };
+    let GenericExpr::Call(call_span, function, args) = application_expr else {
+        unreachable!("constructor application orientation was checked above")
     };
     let constructor = constructors
         .get(function)
@@ -1721,21 +1912,16 @@ fn model_constructor_lookup(
             location: call_span.to_string(),
             reason: format!("function/primitive lookup `{function}` in {context}"),
         })?;
-    let GenericExpr::Var(output_span, output_var) = right else {
-        return unsupported(
-            span,
-            format!(
-                "equality or primitive filters in {context}; constructor lookup output must be a source variable"
-            ),
-        );
+    let GenericExpr::Var(output_span, output_var) = output_expr else {
+        unreachable!("constructor output orientation was checked above")
     };
     if output_var == "_" || output_var.starts_with('@') {
         return unsupported(
             output_span,
             "wildcard or parser-generated constructor lookup output variables",
         );
-    }
-    let application = model_atom_arg(left, &constructor.output, constructors, context)?;
+    };
+    let application = model_atom_arg(application_expr, &constructor.output, constructors, context)?;
     let AtomArg::App {
         args: modeled_args, ..
     } = &application
@@ -1744,12 +1930,6 @@ fn model_constructor_lookup(
             "modeled constructor lookup lost its application".to_owned(),
         ));
     };
-    if modeled_args.iter().any(atom_arg_contains_app) {
-        return unsupported(
-            call_span,
-            format!("a nested constructor lookup input in {context}"),
-        );
-    }
     if args.len() != modeled_args.len() {
         return Err(CausalSliceError::Invariant(
             "constructor lookup source/model arity diverged".to_owned(),
@@ -2230,13 +2410,7 @@ fn elaborate_events(
                     "native trace referenced unmodeled rule `{rule_name}`"
                 ))
             })?;
-            let bindings = reconstruct_bindings(
-                egraph,
-                &captured.bindings,
-                &model.var_order,
-                &model.var_sorts,
-                witnesses,
-            )?;
+            let bindings = reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
             let prerequisite_result = (|| {
                 let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
 
@@ -2546,6 +2720,111 @@ fn reconstruct_bindings(
         };
         debug_assert_eq!(binding.endpoint, value);
         result.insert(var.clone(), binding);
+    }
+    Ok(result)
+}
+
+fn reconstruct_rule_bindings(
+    egraph: &EGraph,
+    captured: &[(std::sync::Arc<str>, Value)],
+    model: &RuleModel,
+    witnesses: &mut WitnessArena,
+) -> Result<IndexMap<String, BindingWitness>, CausalSliceError> {
+    let captured_by_name = captured
+        .iter()
+        .map(|(name, value)| (name.as_ref(), *value))
+        .collect::<HashMap<_, _>>();
+    let mut result = IndexMap::default();
+    for var in &model.var_order {
+        let Some(value) = captured_by_name.get(var.as_str()).copied() else {
+            continue;
+        };
+        let sort_name = &model.var_sorts[var];
+        let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!("runtime sort `{sort_name}` disappeared"))
+        })?;
+        let syntax = if sort.is_eq_sort() {
+            witnesses.by_endpoint(sort_name, value).ok_or_else(|| {
+                CausalSliceError::Unsupported {
+                    location: format!("captured binding `{var}`"),
+                    reason: format!(
+                        "a `{sort_name}` endpoint without a match-time constructor witness"
+                    ),
+                }
+            })?
+        } else {
+            scalar_witness(
+                egraph,
+                sort_name,
+                value,
+                witnesses,
+                &format!("binding `{var}`"),
+            )?
+        };
+        result.insert(
+            var.clone(),
+            BindingWitness {
+                syntax,
+                endpoint: value,
+            },
+        );
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for lookup in &model.body_lookups {
+            let AtomArg::Var(_, output_var) = &lookup.output else {
+                return Err(CausalSliceError::Invariant(
+                    "modeled constructor lookup output stopped being a variable".to_owned(),
+                ));
+            };
+            if result.contains_key(output_var)
+                || atom_arg_vars(&lookup.application)
+                    .iter()
+                    .any(|(_, var)| !result.contains_key(*var))
+            {
+                continue;
+            }
+            let endpoint = ground_arg(
+                egraph,
+                &lookup.application,
+                &lookup.sort,
+                &result,
+                witnesses,
+            )?;
+            let syntax = witnesses
+                .by_endpoint(&lookup.sort, endpoint.value)
+                .ok_or_else(|| CausalSliceError::Unsupported {
+                    location: lookup.span.to_string(),
+                    reason: format!(
+                        "a derived constructor output `{output_var}` without replay syntax"
+                    ),
+                })?;
+            result.insert(
+                output_var.clone(),
+                BindingWitness {
+                    syntax,
+                    endpoint: endpoint.value,
+                },
+            );
+            changed = true;
+        }
+    }
+
+    if let Some(var) = model
+        .var_order
+        .iter()
+        .find(|var| !result.contains_key(var.as_str()))
+    {
+        let available = captured_by_name
+            .keys()
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(CausalSliceError::Invariant(format!(
+            "match-time binding for `{var}` was projected away and could not be derived from constructor inputs; available names: [{available}]"
+        )));
     }
     Ok(result)
 }
