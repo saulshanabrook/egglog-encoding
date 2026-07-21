@@ -506,6 +506,39 @@ fn prefix_replay_rejects_an_opaque_state_effect() {
 }
 
 #[test]
+fn prefix_replay_rejects_an_effective_opaque_delete() {
+    let source = r#"
+        (relation R (i64))
+        (relation Trigger ())
+        (rule ((Trigger))
+              ((delete (R 1)))
+              :name "delete-r")
+        (R 1)
+        (Trigger)
+        (run 1)
+        (print-size R)
+    "#;
+
+    let outputs = EGraph::default()
+        .parse_and_run_program(Some("opaque-delete-native.egg".to_owned()), source)
+        .unwrap();
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, egglog::CommandOutput::PrintFunctionSize(0)))
+    );
+
+    let error =
+        causal_slice_replay_program(Some("opaque-delete.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("non-insert/union head action in rule `delete-r`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn prefix_replay_keeps_a_closed_zero_binding_initializer() {
     let source = r#"
         (datatype Expr (A i64))
