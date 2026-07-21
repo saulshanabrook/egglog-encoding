@@ -609,6 +609,31 @@ fn one_birewrite_maps_to_two_distinct_registered_rules() {
 }
 
 #[test]
+fn bare_ground_constructor_initialization_supports_rewrite_replay() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (rewrite (F x) x)
+        (F (A 1))
+        (run 1)
+        (check (= (F (A 1)) (A 1)))
+    "#;
+
+    let slice = causal_slice_program(Some("bare-constructor.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(F (A 1))"));
+    assert_eq!(slice.stats.source_facts, 1);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("bare-constructor-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn constructor_union_uses_native_application_and_union_causes() {
     let source = r#"
         (datatype Allocation (A String))
@@ -1299,7 +1324,7 @@ fn native_direct_redundant_and_congruence_equalities_pass_strict_proofs() {
     assert!(
         error
             .to_string()
-            .contains("a non-relation initialization action")
+            .contains("a non-insert initialization action")
     );
 }
 

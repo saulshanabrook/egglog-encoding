@@ -190,7 +190,13 @@ struct ConstructorLookupTemplate {
 #[derive(Clone, Debug)]
 struct SourceFact {
     command_index: usize,
-    atom: AtomTemplate,
+    kind: SourceFactKind,
+}
+
+#[derive(Clone, Debug)]
+enum SourceFactKind {
+    Relation(AtomTemplate),
+    Constructor(AtomArg),
 }
 
 #[derive(Clone, Debug)]
@@ -1497,10 +1503,10 @@ fn validate_and_model(
                     }
                     let fact = SourceFact {
                         command_index: index,
-                        atom: AtomTemplate {
+                        kind: SourceFactKind::Relation(AtomTemplate {
                             relation: name.clone(),
                             args: args.iter().cloned().map(AtomArg::Lit).collect(),
-                        },
+                        }),
                     };
                     expansion.push(source_fact_command(span, &fact));
                     source_facts.push(fact);
@@ -2063,10 +2069,36 @@ fn model_source_fact(
     constructors: &IndexMap<String, ConstructorDecl>,
 ) -> Result<SourceFact, CausalSliceError> {
     let GenericAction::Expr(_, expr) = action else {
-        return unsupported_action(action, "a non-relation initialization action");
+        return unsupported_action(action, "a non-insert initialization action");
     };
-    let atom = model_atom(expr, relations, constructors, "source initialization")?;
-    for arg in &atom.args {
+    let GenericExpr::Call(span, function, _) = expr else {
+        return unsupported(&expr.span(), "a non-call source initialization".to_owned());
+    };
+    let kind = if relations.contains_key(function) {
+        SourceFactKind::Relation(model_atom(
+            expr,
+            relations,
+            constructors,
+            "source initialization",
+        )?)
+    } else if let Some(constructor) = constructors.get(function) {
+        SourceFactKind::Constructor(model_atom_arg(
+            expr,
+            &constructor.output,
+            constructors,
+            "source initialization",
+        )?)
+    } else {
+        return unsupported(
+            span,
+            format!("primitive or function call `{function}` in source initialization"),
+        );
+    };
+    let args = match &kind {
+        SourceFactKind::Relation(atom) => atom.args.as_slice(),
+        SourceFactKind::Constructor(application) => std::slice::from_ref(application),
+    };
+    for arg in args {
         if let Some((span, var)) = atom_arg_vars(arg).into_iter().next() {
             return unsupported(
                 span,
@@ -2076,20 +2108,22 @@ fn model_source_fact(
     }
     Ok(SourceFact {
         command_index,
-        atom,
+        kind,
     })
 }
 
 fn source_fact_command(span: &Span, fact: &SourceFact) -> Command {
-    let args = fact
-        .atom
+    let SourceFactKind::Relation(atom) = &fact.kind else {
+        panic!("only expanded input relation rows are rendered as source fact commands")
+    };
+    let args = atom
         .args
         .iter()
         .map(|arg| source_atom_arg_expr(span, arg))
         .collect();
     Command::Action(GenericAction::Expr(
         span.clone(),
-        Expr::Call(span.clone(), fact.atom.relation.clone(), args),
+        Expr::Call(span.clone(), atom.relation.clone(), args),
     ))
 }
 
@@ -2335,22 +2369,57 @@ fn elaborate_events(
                 // syntax is available before every replay leaf without a
                 // retained dynamic firing dependency.
             }
-            let expected = ground_atoms(
-                egraph,
-                std::slice::from_ref(&fact.atom),
-                &IndexMap::default(),
-                witnesses,
-                relations,
-            )?;
-            if !same_row_multiset(&expected, &observed) {
-                return Err(CausalSliceError::Invariant(format!(
-                    "native source applications for command {} do not match its source relation fact",
-                    fact.command_index
-                )));
+            match &fact.kind {
+                SourceFactKind::Relation(atom) => {
+                    let expected = ground_atoms(
+                        egraph,
+                        std::slice::from_ref(atom),
+                        &IndexMap::default(),
+                        witnesses,
+                        relations,
+                    )?;
+                    if !same_row_multiset(&expected, &observed) {
+                        return Err(CausalSliceError::Invariant(format!(
+                            "native source applications for command {} do not match its source relation fact",
+                            fact.command_index
+                        )));
+                    }
+                }
+                SourceFactKind::Constructor(application) => {
+                    if !observed.is_empty() || !new_rows.is_empty() {
+                        return Err(CausalSliceError::Invariant(format!(
+                            "source constructor command {} unexpectedly produced relation rows",
+                            fact.command_index
+                        )));
+                    }
+                    let AtomArg::App { output_sort, .. } = application else {
+                        return Err(CausalSliceError::Invariant(
+                            "source constructor initialization stopped being an application"
+                                .to_owned(),
+                        ));
+                    };
+                    let _endpoint = ground_arg(
+                        egraph,
+                        application,
+                        output_sort,
+                        &IndexMap::default(),
+                        witnesses,
+                    )?;
+                }
             }
             new_rows
         } else {
-            vec![source_row(egraph, relations, fact, witnesses)?]
+            match &fact.kind {
+                SourceFactKind::Relation(..) => {
+                    vec![source_row(egraph, relations, fact, witnesses)?]
+                }
+                SourceFactKind::Constructor(..) => {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source constructor command {} had no native trace",
+                        fact.command_index
+                    )));
+                }
+            }
         };
         for row in rows {
             if producers.contains_key(&row) {
@@ -3164,8 +3233,13 @@ fn source_row(
     fact: &SourceFact,
     witnesses: &mut WitnessArena,
 ) -> Result<RowKey, CausalSliceError> {
-    let declaration = &relations[&fact.atom.relation];
-    for (arg, sort) in fact.atom.args.iter().zip(&declaration.sorts) {
+    let SourceFactKind::Relation(atom) = &fact.kind else {
+        return Err(CausalSliceError::Invariant(
+            "source_row received a constructor-only initialization".to_owned(),
+        ));
+    };
+    let declaration = &relations[&atom.relation];
+    for (arg, sort) in atom.args.iter().zip(&declaration.sorts) {
         let AtomArg::Lit(literal) = arg else {
             return Err(CausalSliceError::Unsupported {
                 location: format!("source command {}", fact.command_index),
@@ -3178,7 +3252,7 @@ fn source_row(
     }
     ground_atoms(
         egraph,
-        std::slice::from_ref(&fact.atom),
+        std::slice::from_ref(atom),
         &IndexMap::default(),
         witnesses,
         relations,
