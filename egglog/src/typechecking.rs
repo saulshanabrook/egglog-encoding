@@ -548,6 +548,7 @@ impl EGraph {
                     let names = &mut self.proof_state.proof_names;
                     names.proof_datatype = name.clone();
                     names.congr_constructor = pc.congr.clone();
+                    names.congr_all_constructor = pc.congr_all.clone();
                     names.eq_trans_constructor = pc.trans.clone();
                     names.eq_sym_constructor = pc.sym.clone();
                     names.container_normalize_constructor = pc.normalize.clone();

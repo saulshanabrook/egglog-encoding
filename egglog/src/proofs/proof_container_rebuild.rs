@@ -74,7 +74,7 @@ pub(crate) fn register_container_rebuild_from_spec(
         // The global proof constructors, recovered from proof_state (repopulated
         // from the `Proof` sort's `:internal-proof-names` on re-parse).
         let names = &eg.proof_state.proof_names;
-        let congr_name = names.congr_constructor.clone();
+        let congr_all_name = names.congr_all_constructor.clone();
         let trans_name = names.eq_trans_constructor.clone();
         let sym_name = names.eq_sym_constructor.clone();
         let container_normalize_name = names.container_normalize_constructor.clone();
@@ -89,7 +89,7 @@ pub(crate) fn register_container_rebuild_from_spec(
                 uf_names,
                 aux_names,
                 cproof_names,
-                congr_name,
+                congr_all_name,
                 trans_name,
                 sym_name,
                 container_normalize_name,
@@ -290,10 +290,10 @@ impl ReadPrim for ContainerRebuild {
     }
 }
 
-/// Proof-mode counterpart of [`ContainerRebuild`]: mints a `Congr` chain
+/// Proof-mode counterpart of [`ContainerRebuild`]: mints a `CongrAll` chain
 /// proving `old_container = rebuilt_container` (recursing through nested
 /// containers). Reads `UF_<E>` (element equality proofs) and `<CSort>Proof`
-/// (reflexive bases), mints `Congr`/`Trans`/`Sym` terms, and anchors a
+/// (reflexive bases), mints `CongrAll`/`Trans`/`Sym` terms, and anchors a
 /// reflexive proof on each rebuilt container so it can be rebuilt again later.
 /// It is a [`FullPrim`], valid only in a `:naive` rule's action.
 #[derive(Clone)]
@@ -307,8 +307,8 @@ struct ContainerRebuildProof {
     aux_names: HashMap<String, String>,
     /// container-sort name -> `<CSort>Proof` table name (all reachable containers)
     cproof_names: HashMap<String, String>,
-    /// `Congr` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
-    congr_name: String,
+    /// `CongrAll` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
+    congr_all_name: String,
     trans_name: String,
     sym_name: String,
     container_normalize_name: String,
@@ -344,9 +344,11 @@ impl FullPrim for ContainerRebuildProof {
 /// Recursively rebuild `value` (of container sort `sort`) and produce a proof
 /// that `value = rebuilt`. Returns `(rebuilt_value, proof)`. Uses the same
 /// per-child resolution as [`rebuild_container_value_rec`], additionally
-/// folding a `Congr` step for every changed child and recording a reflexive
-/// anchor `<CSort>Proof(rebuilt) = Trans(Sym proof, proof)` so the rebuilt
-/// value can itself be rebuilt in a later iteration.
+/// folding a `CongrAll` step for every distinct changed child and recording a
+/// reflexive anchor `<CSort>Proof(rebuilt) = Trans(Sym proof, proof)` so the
+/// rebuilt value can itself be rebuilt in a later iteration. The steps match
+/// elements by term (`CongrAll`), never by position: elements here come in
+/// value order, not the term form's canonical child order.
 fn rebuild_container_proof_rec(
     state: &mut FullState,
     prim: &ContainerRebuildProof,
@@ -362,9 +364,14 @@ fn rebuild_container_proof_rec(
         sort.inner_values(cvs, value)
     };
 
+    // One entry per distinct changed element: `CongrAll` replaces every
+    // occurrence at once, matching `rebuild_with_leaders`.
     let mut leaders: HashMap<Value, Value> = HashMap::default();
-    let mut child_proofs: Vec<(usize, Value)> = vec![];
-    for (j, (esort, eval)) in elements.iter().enumerate() {
+    let mut child_proofs: Vec<Value> = vec![];
+    for (esort, eval) in &elements {
+        if leaders.contains_key(eval) {
+            continue;
+        }
         if esort.is_eq_sort() {
             // Chain the two hops and compose their proofs: `natural --connector-->
             // canonical --uf_proof--> leader`. Either hop may be absent.
@@ -394,14 +401,14 @@ fn rebuild_container_proof_rec(
             }
             if cur != *eval {
                 leaders.insert(*eval, cur);
-                child_proofs.push((j, proof.expect("changed element must carry a proof")));
+                child_proofs.push(proof.expect("changed element must carry a proof"));
             }
         } else if esort.is_eq_container_sort() {
             let (rebuilt_child, child_proof) =
                 rebuild_container_proof_rec(state, prim, esort, *eval)?;
             if rebuilt_child != *eval {
                 leaders.insert(*eval, rebuilt_child);
-                child_proofs.push((j, child_proof));
+                child_proofs.push(child_proof);
             }
         }
     }
@@ -413,20 +420,14 @@ fn rebuild_container_proof_rec(
         rebuild_with_leaders(cvs, es, sort, value, &leaders)
     };
 
-    // Fold a `Congr` step per changed child onto the reflexive base. This
-    // proves `value = raw`, where `raw` is the term with children replaced in
-    // place (it may be in non-canonical order, or have duplicate/clobbering
-    // entries for collapsing containers).
-    let congr_action = state.registry().lookup_table(&prim.congr_name)?.clone();
+    // Fold a `CongrAll` step per changed child onto the reflexive base. This
+    // proves `value = raw`, where `raw` is the term with children replaced by
+    // their leaders (it may be in non-canonical order, or have duplicate/
+    // clobbering entries for collapsing containers).
+    let congr_all_action = state.registry().lookup_table(&prim.congr_all_name)?.clone();
     let mut current = base;
-    for (j, proof) in child_proofs {
-        let j_val = state.base_values().get::<i64>(j as i64);
-        current = mint_proof_row(
-            state,
-            &congr_action,
-            prim.id_counter,
-            &[current, j_val, proof],
-        );
+    for proof in child_proofs {
+        current = mint_proof_row(state, &congr_all_action, prim.id_counter, &[current, proof]);
     }
 
     // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`

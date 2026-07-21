@@ -1,0 +1,50 @@
+;; Container rebuild proofs must identify changed elements by term, not by
+;; position: containers iterate elements in value (creation) order, while the
+;; proof's term form orders children canonically (AST order for sets/multisets,
+;; key order for maps). `Id`-wrapped terms are created after their `N` payloads
+;; but sort before them, so the two orders disagree; unions then collapse or
+;; reshape elements across rebuild rounds.
+
+(datatype Math (N i64) (Id Math))
+(relation Go ())
+(Go)
+(rewrite (Id x) x)
+
+;; A set element is reshaped and collapses into another element.
+(sort MSet (Set Math))
+(relation HoldsSet (MSet))
+(rule ((Go)) ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3)))))
+(rule ((Go)) ((union (N 1) (N 3))))
+
+;; A multiset keeps both copies when elements collapse.
+(sort MBag (MultiSet Math))
+(relation HoldsBag (MBag))
+(rule ((Go)) ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13)))))
+(rule ((Go)) ((union (N 11) (N 13))))
+
+;; A map whose key creation order disagrees with canonical key order; the
+;; reshaped key and unioned values rebuild both columns.
+(sort MMap (Map Math Math))
+(relation HoldsMap (MMap))
+(rule ((Go)) ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24)))))
+(rule ((Go)) ((union (N 23) (N 24))))
+
+;; A vec with a repeated element: one element equality rewrites every copy.
+(sort MVec (Vec Math))
+(relation HoldsVec (MVec))
+(rule ((Go)) ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32)))))
+
+;; Nested sets: both inner sets rebuild, and the outer set's proof composes
+;; the inner rebuild proofs.
+(sort MSetSet (Set MSet))
+(relation HoldsNested (MSetSet))
+(rule ((Go)) ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43))))))
+(rule ((Go)) ((union (N 41) (N 43))))
+
+(run 8)
+
+(check (HoldsSet (set-of (N 1) (N 2))))
+(check (HoldsBag (multiset-of (N 11) (N 11) (N 12))))
+(check (HoldsMap (map-of (N 21) (N 23) (N 22) (N 23))))
+(check (HoldsVec (vec-of (N 31) (N 31) (N 32))))
+(check (HoldsNested (set-of (set-of (N 41) (N 42)) (set-of (N 41)))))

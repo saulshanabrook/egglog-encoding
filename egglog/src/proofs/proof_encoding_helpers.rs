@@ -29,6 +29,7 @@ pub(crate) struct EncodingNames {
     pub(crate) eq_trans_constructor: String,
     pub(crate) eq_sym_constructor: String,
     pub(crate) congr_constructor: String,
+    pub(crate) congr_all_constructor: String,
     pub(crate) container_normalize_constructor: String,
     pub(crate) eval_constructor: String,
     /// For a given function symbol, the name of the function that converts to the AST type.
@@ -81,6 +82,7 @@ impl EncodingNames {
             eq_trans_constructor: symbol_gen.fresh("Trans"),
             eq_sym_constructor: symbol_gen.fresh("Sym"),
             congr_constructor: symbol_gen.fresh("Congr"),
+            congr_all_constructor: symbol_gen.fresh("CongrAll"),
             container_normalize_constructor: symbol_gen.fresh("ContainerNormalize"),
             eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
@@ -389,6 +391,7 @@ impl ProofInstrumentor<'_> {
             ref eq_trans_constructor,
             ref eq_sym_constructor,
             ref congr_constructor,
+            ref congr_all_constructor,
             ref container_normalize_constructor,
             ref eval_constructor,
             ref pcons,
@@ -402,7 +405,7 @@ impl ProofInstrumentor<'_> {
 (sort {ast_sort}) ;; wrap sorts in this for proofs
 ;; The proof datatype records the global proof constructor names so container
 ;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
-(sort {proof_datatype} :internal-proof-names {congr_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor})
+(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor})
 
 ;; Proof/AST/ProofList terms are relations, not constructors: the encoding mints
 ;; a fresh id (`get-fresh!`) and asserts the row, so congruent duplicates are
@@ -437,6 +440,11 @@ impl ProofInstrumentor<'_> {
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
 (function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+
+;; element-matching congruence (used by container rebuilds): given a proof that
+;; t1 = c and a proof that a = b, produces a justification that t1 = c with
+;; every child of c equal to a replaced by b.
+(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
 
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,

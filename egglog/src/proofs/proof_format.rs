@@ -150,6 +150,13 @@ enum RawProof {
     /// and a proof that ci = c2,
     /// produces a justification that t1 = f(..., c2, ...)
     Congr(RawProofId, usize, RawProofId),
+    /// Given a proof that `t1 = c` and a child proof `a = b`, produces a
+    /// justification that `t1 = c'` where every child of `c` equal to `a` is
+    /// replaced by `b`. Minted by container rebuilds, which see elements in
+    /// value order rather than the term form's canonical child order.
+    /// Desugared by [`ProofStore::from_raw`] into positional
+    /// [`Congr`](RawProof::Congr) steps computed against the actual term.
+    CongrAll(RawProofId, RawProofId),
     /// Given a proof that `t1 = c` for a container term `c`, produces a proof of
     /// `t1 = normalize(c)` — the container's canonicalization (reorder/dedup/
     /// merge), which a structural `Congr` chain can't express.
@@ -373,6 +380,11 @@ impl RawProofStore {
             let child_index = self.parse_index(args[1]);
             let child_proof = self.parse_proof(args[2]);
             RawProof::Congr(proof, child_index, child_proof)
+        } else if head == self.names.congr_all_constructor {
+            assert!(args.len() == 2, "congr-all constructor should have 2 args");
+            let proof = self.parse_proof(args[0]);
+            let child_proof = self.parse_proof(args[1]);
+            RawProof::CongrAll(proof, child_proof)
         } else if head == self.names.eval_constructor {
             assert!(args.is_empty(), "eval constructor should have no args");
             RawProof::Eval
@@ -757,6 +769,13 @@ impl ProofStore {
                     },
                 }
             }
+            RawProof::CongrAll(proof_raw, child_raw) => {
+                let base_id = self.convert_raw_proof(prog, globals, raw_store, *proof_raw);
+                let child_id = self.convert_raw_proof(prog, globals, raw_store, *child_raw);
+                let expanded_id = self.expand_congr_all(base_id, child_id);
+                self.proof_id.insert(raw_proof.clone(), expanded_id);
+                return expanded_id;
+            }
             RawProof::ContainerNormalize(inner_raw) => {
                 let inner_id = self.convert_raw_proof(prog, globals, raw_store, *inner_raw);
                 let inner_lhs = self.id_to_proof[inner_id].lhs();
@@ -941,6 +960,45 @@ impl ProofStore {
                 }
             }
         }
+    }
+
+    /// Expand an element-matching congruence ([`RawProof::CongrAll`]) into a
+    /// chain of positional [`Justification::Congr`] steps, one per child of
+    /// the base proof's rhs equal to the child proof's lhs, so the user-facing
+    /// proof needs no new justification kind.
+    ///
+    /// A `CongrAll` may be the identity at the term level, expanding to zero
+    /// steps: distinct element *values* can share one term shape (a natural id
+    /// and its dedup id), so the child proof's endpoints may coincide, and a
+    /// prior `CongrAll` whose lhs is that shared term already rewrote every
+    /// occurrence.
+    fn expand_congr_all(&mut self, base_id: ProofId, child_id: ProofId) -> ProofId {
+        let child_lhs = self.id_to_proof[child_id].lhs();
+        let child_rhs = self.id_to_proof[child_id].rhs();
+        let mut current = base_id;
+        if child_lhs == child_rhs {
+            return current;
+        }
+        loop {
+            let lhs = self.id_to_proof[current].lhs();
+            let rhs = self.id_to_proof[current].rhs();
+            let Term::App(_, children) = self.term_dag.get(rhs) else {
+                panic!("congr-all requires an application term. Conversion assumes valid proofs.");
+            };
+            let Some(child_index) = children.iter().position(|c| *c == child_lhs) else {
+                break;
+            };
+            let new_rhs = self.replace_term_child(rhs, child_index, child_rhs);
+            current = self.id_to_proof.push(Proof {
+                proposition: Proposition::new(lhs, new_rhs),
+                justification: Justification::Congr {
+                    proof: current,
+                    child_index,
+                    child_proof: child_id,
+                },
+            });
+        }
+        current
     }
 
     pub(super) fn replace_term_child(

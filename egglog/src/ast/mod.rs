@@ -47,6 +47,7 @@ impl Display for ContainerRebuildSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProofConstructorNames {
     pub congr: String,
+    pub congr_all: String,
     pub trans: String,
     pub sym: String,
     pub normalize: String,
@@ -1065,8 +1066,8 @@ where
                 if let Some(pc) = proof_constructors {
                     write!(
                         f,
-                        " :internal-proof-names {} {} {} {} {}",
-                        pc.congr, pc.trans, pc.sym, pc.normalize, pc.fiat
+                        " :internal-proof-names {} {} {} {} {} {}",
+                        pc.congr, pc.congr_all, pc.trans, pc.sym, pc.normalize, pc.fiat
                     )?;
                 }
                 write!(f, ")")

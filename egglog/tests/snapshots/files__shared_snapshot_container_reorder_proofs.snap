@@ -1,0 +1,12 @@
+---
+source: egglog/tests/files.rs
+expression: snapshot_content_across_treatments
+---
+((Go 1)
+ (HoldsBag 1)
+ (HoldsMap 1)
+ (HoldsNested 1)
+ (HoldsSet 1)
+ (HoldsVec 1)
+ (Id 7)
+ (N 15))

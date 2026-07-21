@@ -2013,6 +2013,7 @@ impl EGraph {
                     let names = &mut self.proof_state.proof_names;
                     names.proof_datatype = name.clone();
                     names.congr_constructor = pc.congr;
+                    names.congr_all_constructor = pc.congr_all;
                     names.eq_trans_constructor = pc.trans;
                     names.eq_sym_constructor = pc.sym;
                     names.container_normalize_constructor = pc.normalize;

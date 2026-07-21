@@ -163,6 +163,30 @@ fn proof_mode_fail_catches_failure_among_wrapped_commands() {
         .unwrap();
 }
 
+/// A set element is reshaped (`(Id (N 1))` → `(N 1)`) and then collapses into
+/// another element (`(N 1)` = `(N 3)`), in a set whose value-order element
+/// list disagrees with its term form's AST order. Guards against container
+/// rebuild proofs identifying changed elements by position instead of by term.
+#[test]
+fn unordered_container_reshaped_element_collapse_proof() {
+    let program = "
+(datatype Math (N i64) (Id Math))
+(sort MSet (Set Math))
+(relation Holds (MSet))
+(relation Go ())
+(Go)
+(rewrite (Id x) x)
+(rule ((Go)) ((Holds (set-of (Id (N 1)) (Id (N 2)) (N 3)))))
+(rule ((Go)) ((union (N 1) (N 3))))
+(run 8)
+(check (Holds (set-of (N 1) (N 2))))
+";
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(None, program)
+        .unwrap();
+}
+
 #[test]
 fn pointer_analysis_sample_passes_proof_checking() {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))

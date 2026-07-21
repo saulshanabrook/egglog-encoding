@@ -466,11 +466,16 @@ rescan the view each round. Nested containers (e.g. `(Vec (Vec Math))`) rebuild
 by recursing through container-typed elements.
 
 **Proofs.** A container's term form is the s-expr of its constructor —
-`(vec-of e0 e1 …)`, `(pair a b)`, `(map-of k0 v0 …)` — so the generic `Congr`
-machinery applies unchanged. Every container sort gets a reflexive `<Sort>Proof`
-table (a `container = container` proof, set at creation); a `Congr` chain over
-the changed elements, anchored there, proves `old = new` and folds into the
-view's congruence step like an eq-sort child's UF proof.
+`(vec-of e0 e1 …)`, `(pair a b)`, `(map-of k0 v0 …)`. Every container sort gets
+a reflexive `<Sort>Proof` table (a `container = container` proof, set at
+creation); a chain of congruence steps over the changed elements, anchored
+there, proves `old = new` and folds into the view's congruence step like an
+eq-sort child's UF proof. The chain uses `CongrAll` (element-matching
+congruence: replace every child equal to `a` by `b`) rather than positional
+`Congr`: the rebuild primitive sees elements in *value* order, while the term
+form orders children canonically (e.g. AST order for sets). `CongrAll` exists
+only in the raw e-graph proof; proof conversion desugars it into positional
+`Congr` steps computed against the actual term.
 
 For reordering/merging containers (`Set`, `Map`, `MultiSet`) the element-wise
 `Congr` term can be out of order or hold duplicates, so a `ContainerNormalize`

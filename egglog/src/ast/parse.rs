@@ -380,7 +380,7 @@ impl Parser {
                 // (sort <name>)
                 // (sort <name> :internal-uf <uf-function>)
                 // (sort <name> :internal-proof-func <internal-proof-func-name>)
-                // (sort <name> :internal-proof-names <congr> <trans> <sym>)
+                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize>)
                 // (sort <name> (<container sort> <argument sort>*))
                 match tail {
                     [name] => vec![Command::Sort {
@@ -456,9 +456,14 @@ impl Parser {
                                     proof_func =
                                         Some(pf.expect_atom("internal-proof-func function name")?);
                                 }
-                                (":internal-proof-names", [congr, trans, sym, normalize, fiat]) => {
+                                (
+                                    ":internal-proof-names",
+                                    [congr, congr_all, trans, sym, normalize, fiat],
+                                ) => {
                                     proof_constructors = Some(ProofConstructorNames {
                                         congr: congr.expect_atom("congr constructor")?,
+                                        congr_all: congr_all
+                                            .expect_atom("congr-all constructor")?,
                                         trans: trans.expect_atom("trans constructor")?,
                                         sym: sym.expect_atom("sym constructor")?,
                                         normalize: normalize
@@ -469,7 +474,7 @@ impl Parser {
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>] [:internal-uf-aux <uf-aux>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>] [:internal-uf-aux <uf-aux>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }
