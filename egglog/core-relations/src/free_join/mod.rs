@@ -138,6 +138,10 @@ pub enum GuardedRuleSetRunError {
     UnknownGroundingVariable { name: Arc<str> },
     #[error("grounded rule batch run indices must be unique and contiguous from zero")]
     InvalidGroundedRunOrder,
+    #[error("grounded rule batch encountered an invalid residual-query/head boundary")]
+    InvalidQueryHeadBoundary,
+    #[error("grounded rule batch residual query instructions attempted to mutate state")]
+    QueryPrefixMutated,
 }
 
 /// One logical rule-body match captured immediately before its complete head

@@ -82,6 +82,8 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         }
     }
 
+    builder.finish_query();
+
     for action in &core.head.0 {
         match action {
             GenericCoreAction::Let(span, variable, call, arguments) => {

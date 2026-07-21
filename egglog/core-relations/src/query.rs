@@ -44,6 +44,9 @@ pub struct CachedPlan {
 pub(crate) struct ActionInfo {
     pub(crate) used_vars: SmallVec<[Variable; 4]>,
     pub(crate) instrs: Arc<Pooled<Vec<Instr>>>,
+    /// Instructions before this index finish the residual query; instructions
+    /// at and after it implement the complete rule head.
+    pub(crate) head_start: usize,
 }
 
 /// A set of rules to run against a [`Database`].
@@ -118,6 +121,7 @@ impl<'outer> RuleSetBuilder<'outer> {
         QueryBuilder {
             rsb: self,
             instrs,
+            head_start: None,
             query: Query {
                 var_info: Default::default(),
                 atoms: Default::default(),
@@ -287,6 +291,7 @@ pub struct QueryBuilder<'outer, 'a> {
     rsb: &'a mut RuleSetBuilder<'outer>,
     query: Query,
     instrs: Pooled<Vec<Instr>>,
+    head_start: Option<usize>,
 }
 
 impl<'outer, 'a> QueryBuilder<'outer, 'a> {
@@ -528,6 +533,13 @@ impl RuleBuilder<'_, '_> {
         self.build_with_description("")
     }
 
+    /// Mark the boundary between residual query instructions and rule-head
+    /// instructions for exact grounded guards.
+    pub fn finish_query(&mut self) {
+        assert!(self.qb.head_start.is_none(), "query boundary set twice");
+        self.qb.head_start = Some(self.qb.instrs.len());
+    }
+
     fn build_symbol_map(&self) -> SymbolMap {
         let var_info = &self.qb.query.var_info;
         SymbolMap {
@@ -562,6 +574,7 @@ impl RuleBuilder<'_, '_> {
         let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {
             instrs: Arc::new(self.qb.instrs),
             used_vars,
+            head_start: self.qb.head_start.unwrap_or(0),
         });
         self.qb.query.action = action_id;
         // Plan the query
@@ -724,6 +737,17 @@ impl RuleBuilder<'_, '_> {
         args: &[QueryEntry],
     ) -> Result<Variable, QueryError> {
         let res = self.qb.new_var();
+        self.call_external_into(func, args, res)?;
+        Ok(res)
+    }
+
+    /// Apply an external function and bind its result to an existing variable.
+    pub fn call_external_into(
+        &mut self,
+        func: ExternalFunctionId,
+        args: &[QueryEntry],
+        res: Variable,
+    ) -> Result<(), QueryError> {
         self.qb.instrs.push(Instr::External {
             func,
             args: args.to_vec(),
@@ -731,7 +755,7 @@ impl RuleBuilder<'_, '_> {
         });
         self.qb.mark_used(args);
         self.qb.mark_defined(&res.into());
-        Ok(res)
+        Ok(())
     }
 
     /// Look up the given key in the given table. If the lookup fails, then call the given external

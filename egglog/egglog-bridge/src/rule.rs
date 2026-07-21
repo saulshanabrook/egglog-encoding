@@ -192,6 +192,14 @@ impl RuleBuilder<'_> {
         self.query.add_rule.push(Box::new(cb));
     }
 
+    /// Mark the end of residual query instructions in the native action tape.
+    pub fn finish_query(&mut self) {
+        self.add_callback(|_, rule| {
+            rule.finish_query();
+            Ok(())
+        });
+    }
+
     /// Access the underlying egraph within the builder.
     pub fn egraph(&self) -> &EGraph {
         self.resources.egraph
@@ -495,13 +503,18 @@ impl RuleBuilder<'_> {
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let mut dst_vars = inner.convert_all(&entries);
             let expected = dst_vars.pop().expect("must specify a return value");
-            let var = rb.call_external(func, &dst_vars)?;
             match entries.last().unwrap() {
                 QueryEntry::Var(Variable { id, .. }) if !inner.grounded.contains(id) => {
-                    inner.mapping.insert(*id, var.into());
+                    let core_relations::QueryEntry::Var(result) = expected else {
+                        unreachable!("an ungrounded query result has a variable destination")
+                    };
+                    rb.call_external_into(func, &dst_vars, result)?;
                     inner.grounded.insert(*id);
                 }
-                _ => rb.assert_eq(var.into(), expected),
+                _ => {
+                    let var = rb.call_external(func, &dst_vars)?;
+                    rb.assert_eq(var.into(), expected);
+                }
             }
             Ok(())
         }));

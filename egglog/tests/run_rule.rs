@@ -471,6 +471,99 @@ fn packed_run_rule_batch_follows_projected_variable_aliases() {
 }
 
 #[test]
+fn packed_run_rule_batch_guards_query_primitive_results() {
+    let program = r#"
+        (relation Inputs (i64 i64))
+        (relation Out (i64))
+        (rule ((Inputs a b) (= result (+ a b)))
+              ((Out result))
+              :name "fold-add")
+        (Inputs 2 3)
+        (run-schedule
+          (run-rule-batch
+            :witnesses (2 3 5)
+            :groups (("fold-add" (a b result)))
+            :fires ((0 0 1 2))))
+        (check (Out 5))
+    "#;
+    for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+        egraph
+            .parse_and_run_program(Some("packed-query-result.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_run_rule_batch_rejects_wrong_query_primitive_result_atomically() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Inputs (i64 i64))
+                (relation Out (i64))
+                (rule ((Inputs a b) (= result (+ a b)))
+                      ((Out result))
+                      :name "fold-add")
+                (Inputs 2 3)
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (2 3 6)
+                    :groups (("fold-add" (a b result)))
+                    :fires ((0 0 1 2))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "fold-add"
+    ));
+    egraph
+        .parse_and_run_program(None, "(fail (check (Out 5)))")
+        .unwrap();
+}
+
+#[test]
+fn packed_run_rule_batch_allows_shared_inputs_with_distinct_full_groundings() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Inputs (i64 i64))
+                (relation Out (i64))
+                (rule ((Inputs a b) (= result (+ a b)))
+                      ((Out result))
+                      :name "fold-add")
+                (Inputs 2 3)
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (2 3 5 6)
+                    :groups (("fold-add" (a b result)))
+                    :fires ((0 0 1 2) (0 0 1 3))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "fold-add"
+    ));
+    egraph
+        .parse_and_run_program(None, "(fail (check (Out 5)))")
+        .unwrap();
+}
+
+#[test]
 fn packed_run_rule_batch_uses_constructor_views_in_strict_proof_mode() {
     let program = r#"
         (datatype Expr (A) (B))

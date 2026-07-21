@@ -170,7 +170,7 @@ impl Bindings {
         self.assert_invariant();
     }
 
-    fn get(&self, var: Variable) -> Option<&[Value]> {
+    pub(crate) fn get(&self, var: Variable) -> Option<&[Value]> {
         let start = self.var_offsets.get(var)?;
         Some(&self.data[*start..*start + self.matches])
     }
