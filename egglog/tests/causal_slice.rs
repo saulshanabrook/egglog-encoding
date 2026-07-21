@@ -283,6 +283,62 @@ fn two_body_relation_rule_replays_both_exact_premises() {
 }
 
 #[test]
+fn broad_single_plan_rule_replays_every_grounded_premise() {
+    let source = r#"
+        (relation A (i64))
+        (relation B (i64))
+        (relation C (i64))
+        (relation Goal (i64))
+        (rule ((A x) (B x) (C x)) ((Goal x)) :name "broad")
+        (A 1)
+        (B 1)
+        (C 1)
+        (run 1)
+        (check (Goal 1))
+    "#;
+
+    let slice = causal_slice_program(Some("broad-single-plan.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(
+        slice
+            .source
+            .contains("(run-rule \"broad\" :bind ((x 1)) :expect 1)")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("broad-single-plan-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn read_only_print_size_is_preserved_without_becoming_a_slice_root() {
+    let source = r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (relation Irrelevant (i64))
+        (rule ((Seed x)) ((Goal x)) :name "goal")
+        (rule ((Seed x)) ((Irrelevant x)) :name "irrelevant")
+        (Seed 1)
+        (run 1)
+        (check (Goal 1))
+        (print-size Irrelevant)
+    "#;
+
+    let slice = causal_slice_program(Some("print-size.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(print-size Irrelevant)"));
+    assert!(!slice.source.contains("run-rule \"irrelevant\""));
+    EGraph::default()
+        .parse_and_run_program(Some("print-size-replay.egg".to_owned()), &slice.source)
+        .unwrap();
+}
+
+#[test]
 fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays() {
     let slice = causal_slice_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
 
@@ -561,6 +617,37 @@ fn constructor_lookup_body_retains_its_application_and_equality_causes() {
                 )
                 .unwrap();
         }
+    }
+}
+
+#[test]
+fn nested_constructor_union_records_the_complete_source_syntax() {
+    let source = r#"
+        (datatype Allocation (A String))
+        (constructor ptr_points_to (Allocation) Allocation)
+        (relation Edge (String String))
+        (rule ((Edge from to))
+              ((union (ptr_points_to (A from)) (A to)))
+              :name "make-pointer")
+        (Edge "from" "to")
+        (run 1)
+        (check (= (ptr_points_to (A "from")) (A "to")))
+    "#;
+
+    let slice = causal_slice_program(Some("nested-constructor-union.egg".to_owned()), source)
+        .unwrap();
+    assert_eq!(slice.stats.equality_edges, 1);
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(slice.source.contains("run-rule \"make-pointer\""));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-constructor-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
     }
 }
 

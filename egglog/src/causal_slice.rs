@@ -1321,6 +1321,10 @@ fn validate_and_model(
                     "extract observations in Bronze",
                 );
             }
+            Command::PrintSize(..) => {
+                // Preserve read-only diagnostics at their original boundary.
+                // They describe the sliced replay state but do not add roots.
+            }
             _ => {
                 return unsupported_command(
                     command,
@@ -1363,16 +1367,6 @@ fn model_rule(
     if rule.head.0.is_empty() {
         return unsupported(&rule.span, format!("an empty head on rule `{}`", rule.name));
     }
-    if rule.body.len() > 2 && !rule.no_decomp {
-        return unsupported(
-            &rule.span,
-            format!(
-                "potentially tree-decomposed rule `{}`; causal slice v0 has no provenance for materialized intermediate rows",
-                rule.name
-            ),
-        );
-    }
-
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
