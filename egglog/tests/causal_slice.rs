@@ -51,6 +51,8 @@ fn retained_only_api_matches_the_validated_slice_without_a_transcript() {
     assert_eq!(replay.rule_mapping, complete.rule_mapping);
     assert_eq!(replay.stats.full_transcript_bytes, 0);
     assert_eq!(replay.stats.sliced_bytes, complete.stats.sliced_bytes);
+    assert_eq!(replay.source.matches("(run-schedule").count(), 2);
+    assert!(!replay.source.contains("(seq"));
 
     EGraph::new_with_proofs()
         .with_proof_testing()

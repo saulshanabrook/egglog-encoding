@@ -3656,47 +3656,36 @@ fn emit_program<'a>(
     source_expansions: &SourceCommandExpansions,
 ) -> String {
     let mut previous_position = None;
-    let leaves = fires
-        .into_iter()
-        .map(|fire| {
-            let position = (fire.wave, fire.ordinal);
-            if let Some(previous) = previous_position {
-                debug_assert!(previous < position);
-            }
-            previous_position = Some(position);
-            let model = &rules[&fire.rule];
-            let bindings = model
-                .var_order
-                .iter()
-                .map(|var| {
-                    (
-                        var.clone(),
-                        fire.bindings[var].expr(witnesses, schedule_span),
-                    )
-                })
-                .collect();
-            Schedule::RunRule(
-                schedule_span.clone(),
-                RunRuleConfig {
-                    rule: fire.rule.clone(),
-                    bindings,
-                    selectors: Vec::new(),
-                    expect: Some(1),
-                },
-            )
-        })
-        .collect::<Vec<_>>();
-
+    let mut fires = fires.into_iter();
     let mut rendered = String::new();
     for (index, command) in commands.iter().enumerate() {
         if index == schedule_index {
-            if !leaves.is_empty() {
-                let replay_schedule = if leaves.len() == 1 {
-                    leaves[0].clone()
-                } else {
-                    Schedule::Sequence(schedule_span.clone(), leaves.clone())
-                };
-                let replay = Command::RunSchedule(replay_schedule);
+            for fire in fires.by_ref() {
+                let position = (fire.wave, fire.ordinal);
+                if let Some(previous) = previous_position {
+                    debug_assert!(previous < position);
+                }
+                previous_position = Some(position);
+                let model = &rules[&fire.rule];
+                let bindings = model
+                    .var_order
+                    .iter()
+                    .map(|var| {
+                        (
+                            var.clone(),
+                            fire.bindings[var].expr(witnesses, schedule_span),
+                        )
+                    })
+                    .collect();
+                let replay = Command::RunSchedule(Schedule::RunRule(
+                    schedule_span.clone(),
+                    RunRuleConfig {
+                        rule: fire.rule.clone(),
+                        bindings,
+                        selectors: Vec::new(),
+                        expect: Some(1),
+                    },
+                ));
                 rendered.push_str(&replay.to_string());
                 rendered.push('\n');
             }
