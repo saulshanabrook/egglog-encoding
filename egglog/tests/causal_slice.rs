@@ -1662,18 +1662,19 @@ fn unstable_fn_sort_is_preserved_only_in_inert_schemas() {
     let dynamic_source = r#"
         (sort Callback (UnstableFn (i64) i64))
         (relation HasCallback (Callback))
-        (relation Goal ())
-        (rule ((HasCallback callback)) ((Goal)) :name "read-callback")
+        (relation Seed ())
+        (rule ((HasCallback callback)) ((Seed)) :name "read-callback")
+        (Seed)
         (run 1)
-        (check (Goal))
+        (check (Seed))
     "#;
-    let error = causal_slice_program(Some("dynamic-unstable-fn.egg".to_owned()), dynamic_source)
-        .unwrap_err();
+    let replay =
+        causal_slice_replay_program(Some("dynamic-unstable-fn.egg".to_owned()), dynamic_source)
+            .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("relation `HasCallback` with opaque container sort `Callback` in rule body"),
-        "{error}"
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "read-callback")
     );
 }
 
@@ -1682,18 +1683,19 @@ fn container_values_remain_an_explicit_runtime_boundary() {
     let relation_use = r#"
         (sort Values (Vec i64))
         (relation HasValues (Values))
-        (relation Goal ())
-        (rule ((HasValues items)) ((Goal)) :name "read-values")
+        (relation Seed ())
+        (rule ((HasValues items)) ((Seed)) :name "read-values")
+        (Seed)
         (run 1)
-        (check (Goal))
+        (check (Seed))
     "#;
-    let error = causal_slice_program(Some("container-relation-use.egg".to_owned()), relation_use)
-        .unwrap_err();
+    let replay =
+        causal_slice_replay_program(Some("container-relation-use.egg".to_owned()), relation_use)
+            .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("relation `HasValues` with opaque container sort `Values` in rule body"),
-        "{error}"
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "read-values")
     );
 
     let constructor_use = r#"
@@ -1789,9 +1791,108 @@ fn custom_function_state_use_remains_an_explicit_boundary() {
     assert!(
         error
             .to_string()
-            .contains("non-insert/union head action in rule `write-hi`"),
+            .contains("equality or primitive function lookup `hi` in positive check"),
         "{error}"
     );
+}
+
+#[test]
+fn irrelevant_unsupported_rule_is_deferred_past_backward_slicing() {
+    let source = r#"
+        (function F (i64) i64 :no-merge)
+        (relation Seed (i64))
+        (relation Trigger ())
+        (relation Goal (i64))
+        (rule ((Seed n)) ((Goal n)) :name "goal")
+        (rule ((Trigger)) ((set (F 0) 7)) :name "opaque-write")
+        (Seed 7)
+        (Trigger)
+        (run 1)
+        (check (Goal 7))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("opaque-irrelevant.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[("n", "7")]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "opaque-write")
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("opaque-irrelevant-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn retained_unsupported_rule_fails_after_backward_slicing() {
+    let source = r#"
+        (function F (i64) i64 :no-merge)
+        (relation Trigger ())
+        (relation Goal (i64))
+        (rule ((Trigger))
+              ((set (F 0) 7) (Goal 7))
+              :name "opaque-producer")
+        (Trigger)
+        (run 1)
+        (check (Goal 7))
+    "#;
+
+    let error =
+        causal_slice_replay_program(Some("opaque-retained.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("non-insert/union head action in rule `opaque-producer`"),
+        "{error}"
+    );
+}
+
+#[test]
+fn opaque_empty_body_constructor_initializer_replays_with_no_bindings() {
+    let source = r#"
+        (datatype Expr (A i64))
+        (relation Goal (Expr))
+        (function Len (Expr) i64 :no-merge)
+        (ruleset initialize-rules)
+        (ruleset later)
+        (rule ()
+              ((let e (A 7))
+               (Goal e))
+              :ruleset initialize-rules
+              :name "initialize")
+        (rule ()
+              ((set (Len (A 7)) 1))
+              :ruleset later
+              :name "unsupported-later")
+        (run initialize-rules 1)
+        (run later 1)
+        (check (Goal (A 7)))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("opaque-initializer.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "initialize", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "unsupported-later")
+    );
+    assert_eq!(replay.stats.retained_applications, 1);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("opaque-initializer-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -2001,7 +2102,7 @@ fn retained_constructor_subsume_side_effect_replays_in_one_shared_wave() {
 }
 
 #[test]
-fn constructor_subsume_requires_an_exact_live_body_alias_and_one_union() {
+fn constructor_subsume_requires_an_exact_alias_when_retained() {
     let non_alias = r#"
         (datatype Expr (A i64) (B i64))
         (rule ((= e (A x)))
@@ -2031,17 +2132,23 @@ fn constructor_subsume_requires_an_exact_live_body_alias_and_one_union() {
         (run 1)
         (check (Goal))
     "#;
-    let error = causal_slice_program(
+    let replay = causal_slice_replay_program(
         Some("subsume-without-union.egg".to_owned()),
         no_independent_union,
     )
-    .unwrap_err();
+    .unwrap();
     assert!(
-        error
-            .to_string()
-            .contains("without exactly one independent union head"),
-        "{error}"
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule == "hide-only")
     );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("subsume-without-union-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
 }
 
 #[test]

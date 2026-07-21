@@ -196,6 +196,19 @@ struct RuleModel {
     replay_var_order: Vec<String>,
     var_sorts: IndexMap<String, String>,
     global_uses: IndexMap<String, String>,
+    opaque: Option<OpaqueRulePolicy>,
+}
+
+#[derive(Clone, Debug)]
+enum OpaqueRulePolicy {
+    /// The rule may execute during tracing, but retaining one of its effects
+    /// must surface the original source-located modeling boundary.
+    Reject(DeferredUnsupported),
+    /// A premise-free rule containing only local constructor lets and
+    /// relation/constructor inserts. Its complete head can be replayed with
+    /// an empty exact grounding even though the narrow structured model does
+    /// not represent head-local variables.
+    EmptyBodyInitializer,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -707,6 +720,7 @@ struct PendingFire {
 enum EventKind {
     Source { row: RowKey },
     Fire(GroundedFire),
+    OpaqueFire,
 }
 
 #[derive(Clone, Debug)]
@@ -749,11 +763,14 @@ impl EventArena {
 
 struct Elaboration {
     pending_fires: Vec<PendingFire>,
+    opaque_pending_firings: usize,
+    opaque_promoted_events: usize,
     events: EventArena,
     dependencies: DepArena,
     producers: IndexMap<RowKey, DepId>,
     source_events: usize,
     equality_forest: EqualityForest,
+    opaque_equality_error: Option<DeferredUnsupported>,
 }
 
 struct PrefixElaboration {
@@ -975,6 +992,7 @@ struct ObservationInput<'a> {
     traces: &'a [Vec<RuleExecutionTrace>],
     producers: &'a IndexMap<RowKey, DepId>,
     equality_forest: &'a EqualityForest,
+    opaque_equality_error: Option<&'a DeferredUnsupported>,
 }
 
 struct SourceExecutionTrace {
@@ -1261,11 +1279,14 @@ fn generate_causal_slice(
     }
     let Elaboration {
         pending_fires,
+        opaque_pending_firings,
+        opaque_promoted_events,
         events,
         mut dependencies,
         producers: final_producers,
         source_events,
         equality_forest,
+        opaque_equality_error,
     } = elaborate_events(
         ElaborationInput {
             egraph: &egraph,
@@ -1290,6 +1311,7 @@ fn generate_causal_slice(
             traces: &check_batches,
             producers: &final_producers,
             equality_forest: &equality_forest,
+            opaque_equality_error: opaque_equality_error.as_ref(),
         },
         &mut dependencies,
         &mut witnesses,
@@ -1329,6 +1351,13 @@ fn generate_causal_slice(
     {
         return Err(error.into_error());
     }
+    if include_full_transcript && opaque_pending_firings > 0 {
+        return Err(CausalSliceError::Unsupported {
+            location: source_name.to_owned(),
+            reason: "a diagnostic full transcript containing opaque rule groundings; use the retained replay projection so unreachable unsupported rules can be sliced away"
+                .to_owned(),
+        });
+    }
     drop(schedule_batches);
     drop(check_batches);
     let slicing_time = slicing_start.elapsed();
@@ -1356,6 +1385,7 @@ fn generate_causal_slice(
             .filter_map(|event| match &events.events[event.index()].kind {
                 EventKind::Source { .. } => None,
                 EventKind::Fire(fire) => Some(fire),
+                EventKind::OpaqueFire => None,
             }),
         &witnesses,
         &source_expansions,
@@ -1377,15 +1407,21 @@ fn generate_causal_slice(
     let effective_applications = pending_fires
         .iter()
         .filter(|fire| fire.promoted.is_some())
-        .count();
+        .count()
+        + opaque_promoted_events;
     let retained_applications = retained
         .iter()
-        .filter(|event| matches!(events.events[event.index()].kind, EventKind::Fire(_)))
+        .filter(|event| {
+            matches!(
+                events.events[event.index()].kind,
+                EventKind::Fire(_) | EventKind::OpaqueFire
+            )
+        })
         .count();
     let effective_output_rows = events
         .events
         .iter()
-        .filter(|event| matches!(event.kind, EventKind::Fire(_)))
+        .filter(|event| matches!(event.kind, EventKind::Fire(_) | EventKind::OpaqueFire))
         .map(|event| event.effective_outputs.len())
         .sum::<usize>();
     let total_time = total_start.elapsed();
@@ -1394,11 +1430,11 @@ fn generate_causal_slice(
         source_facts: source_facts.len(),
         observation_count: checks.len(),
         waves,
-        pending_firings: pending_fires.len(),
-        matched_applications: pending_fires.len(),
+        pending_firings: pending_fires.len() + opaque_pending_firings,
+        matched_applications: pending_fires.len() + opaque_pending_firings,
         effective_applications,
         effective_output_rows,
-        no_op_applications: pending_fires.len() - effective_applications,
+        no_op_applications: pending_fires.len() + opaque_pending_firings - effective_applications,
         promoted_events: effective_applications,
         retained_applications,
         source_events,
@@ -1522,6 +1558,10 @@ fn resolve_rule_primitives(
 ) -> Result<IndexMap<String, ResolvedRulePrimitives>, CausalSliceError> {
     let mut resolved = IndexMap::default();
     for (rule_name, model) in rules {
+        if model.opaque.is_some() {
+            resolved.insert(rule_name.clone(), ResolvedRulePrimitives::default());
+            continue;
+        }
         let registered = egraph
             .rulesets
             .values()
@@ -2087,19 +2127,6 @@ fn name_and_prepare_rules(
             rule.name = candidate;
         }
 
-        if rule.eval_mode != RuleEvalMode::Seminaive {
-            return unsupported(
-                &rule.span,
-                format!("non-default evaluation mode on rule `{}`", rule.name),
-            );
-        }
-        if rule.include_subsumed {
-            return unsupported(
-                &rule.span,
-                format!("subsumed-row matching on rule `{}`", rule.name),
-            );
-        }
-
         let origin = source_rule_origins.get(&command_index);
         mapping.push(SourceRuleMapping {
             source_command_index: origin
@@ -2362,13 +2389,23 @@ fn validate_and_model(
                     .get(&index)
                     .map(|origin| origin.derived_replay_vars.as_slice())
                     .unwrap_or_default();
-                let model = model_rule(
+                let model = match model_rule(
                     rule,
                     relations,
                     constructors,
                     &source_globals,
                     derived_replay_vars,
-                )?;
+                ) {
+                    Ok(model) => model,
+                    Err(CausalSliceError::Unsupported { location, reason }) => opaque_rule_model(
+                        rule,
+                        relations,
+                        constructors,
+                        &source_globals,
+                        DeferredUnsupported { location, reason },
+                    ),
+                    Err(error) => return Err(error),
+                };
                 if rules.insert(rule.name.clone(), model).is_some() {
                     return unsupported(
                         &rule.span,
@@ -2573,6 +2610,114 @@ fn validate_and_model(
     })
 }
 
+fn opaque_rule_model(
+    rule: &crate::ast::Rule,
+    relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+    error: DeferredUnsupported,
+) -> RuleModel {
+    let opaque =
+        if empty_body_initializer_is_replayable(rule, relations, constructors, source_globals) {
+            OpaqueRulePolicy::EmptyBodyInitializer
+        } else {
+            OpaqueRulePolicy::Reject(error)
+        };
+    RuleModel {
+        span: rule.span.clone(),
+        body: Vec::new(),
+        body_lookups: Vec::new(),
+        body_primitives: Vec::new(),
+        head: Vec::new(),
+        head_constructors: Vec::new(),
+        head_subsumes: Vec::new(),
+        head_primitives: Vec::new(),
+        head_unions: Vec::new(),
+        var_order: Vec::new(),
+        replay_var_order: Vec::new(),
+        var_sorts: IndexMap::default(),
+        global_uses: IndexMap::default(),
+        opaque: Some(opaque),
+    }
+}
+
+fn empty_body_initializer_is_replayable(
+    rule: &crate::ast::Rule,
+    relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+) -> bool {
+    if !rule.body.is_empty() || rule.eval_mode != RuleEvalMode::Seminaive {
+        return false;
+    }
+    let mut locals = HashSet::default();
+    for action in &rule.head.0 {
+        match action {
+            GenericAction::Let(_, name, expression) => {
+                if !initializer_expr_is_replayable(
+                    expression,
+                    false,
+                    &locals,
+                    relations,
+                    constructors,
+                    source_globals,
+                ) {
+                    return false;
+                }
+                locals.insert(name.clone());
+            }
+            GenericAction::Expr(_, expression) => {
+                if !initializer_expr_is_replayable(
+                    expression,
+                    true,
+                    &locals,
+                    relations,
+                    constructors,
+                    source_globals,
+                ) {
+                    return false;
+                }
+            }
+            GenericAction::Set(..)
+            | GenericAction::Change(..)
+            | GenericAction::Union(..)
+            | GenericAction::Panic(..) => return false,
+        }
+    }
+    true
+}
+
+fn initializer_expr_is_replayable(
+    expression: &Expr,
+    allow_relation: bool,
+    locals: &HashSet<String>,
+    relations: &IndexMap<String, RelationDecl>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+) -> bool {
+    match expression {
+        GenericExpr::Lit(..) => true,
+        GenericExpr::Var(_, variable) => {
+            locals.contains(variable) || source_globals.contains_key(variable)
+        }
+        GenericExpr::Call(_, function, args) => {
+            let known_call = constructors.contains_key(function)
+                || (allow_relation && relations.contains_key(function));
+            known_call
+                && args.iter().all(|arg| {
+                    initializer_expr_is_replayable(
+                        arg,
+                        false,
+                        locals,
+                        relations,
+                        constructors,
+                        source_globals,
+                    )
+                })
+        }
+    }
+}
+
 fn model_rule(
     rule: &crate::ast::Rule,
     relations: &IndexMap<String, RelationDecl>,
@@ -2580,6 +2725,18 @@ fn model_rule(
     source_globals: &IndexMap<String, String>,
     derived_replay_vars: &[String],
 ) -> Result<RuleModel, CausalSliceError> {
+    if rule.eval_mode != RuleEvalMode::Seminaive {
+        return unsupported(
+            &rule.span,
+            format!("non-default evaluation mode on rule `{}`", rule.name),
+        );
+    }
+    if rule.include_subsumed {
+        return unsupported(
+            &rule.span,
+            format!("subsumed-row matching on rule `{}`", rule.name),
+        );
+    }
     if rule.head.0.is_empty() {
         return unsupported(&rule.span, format!("an empty head on rule `{}`", rule.name));
     }
@@ -2915,6 +3072,7 @@ fn model_rule(
         replay_var_order,
         var_sorts,
         global_uses: IndexMap::default(),
+        opaque: None,
     };
     model.global_uses = rule_global_uses(&model)
         .into_iter()
@@ -4360,6 +4518,7 @@ fn elaborate_events(
     let mut events = EventArena::default();
     let mut producers = IndexMap::default();
     let mut equality_forest = EqualityForest::default();
+    let mut opaque_equality_error = None;
     let mut source_events = 0;
     for fact in source_facts {
         let rows = elaborate_source_fact(
@@ -4388,6 +4547,8 @@ fn elaborate_events(
     }
 
     let mut pending_fires = Vec::new();
+    let mut opaque_pending_firings = 0usize;
+    let mut opaque_promoted_events = 0usize;
     for (wave, batch) in batches.iter().enumerate() {
         witnesses.load_current_globals(&batch.globals)?;
         let prestate_witnesses = snapshot_primitive_result_witnesses(batch, witnesses);
@@ -4440,6 +4601,124 @@ fn elaborate_events(
                     "native trace referenced unmodeled rule `{rule_name}`"
                 ))
             })?;
+            if let Some(policy) = &model.opaque {
+                let known_applications = applications_by_origin[ordinal]
+                    .iter()
+                    .copied()
+                    .filter(|application| trace_functions.contains_key(&application.table))
+                    .collect::<Vec<_>>();
+                if matches!(policy, OpaqueRulePolicy::EmptyBodyInitializer)
+                    && (known_applications.len() != applications_by_origin[ordinal].len()
+                        || !primitives_by_origin.for_origin(ordinal).is_empty()
+                        || !unions_by_origin[ordinal].is_empty())
+                {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
+                    )));
+                }
+                let effects = match elaborate_fire_applications(
+                    egraph,
+                    known_applications.iter().copied(),
+                    trace_functions,
+                    witnesses,
+                    prefix_fallback,
+                ) {
+                    Ok(effects) => effects,
+                    Err(CausalSliceError::Unsupported { .. })
+                        if matches!(policy, OpaqueRulePolicy::Reject(_)) =>
+                    {
+                        let relation_applications =
+                            known_applications.iter().copied().filter(|application| {
+                                trace_functions
+                                    .get(&application.table)
+                                    .is_some_and(|meta| meta.kind == TraceFunctionKind::Relation)
+                            });
+                        elaborate_fire_applications(
+                            egraph,
+                            relation_applications,
+                            trace_functions,
+                            witnesses,
+                            prefix_fallback,
+                        )?
+                    }
+                    Err(error) => return Err(error),
+                };
+                let effective_outputs = effects
+                    .new_rows
+                    .into_iter()
+                    .filter(|row| !producers.contains_key(row) && !new_outputs.contains_key(row))
+                    .collect::<Vec<_>>();
+                let applied_union = unions_by_origin[ordinal]
+                    .iter()
+                    .any(|receipt| matches!(receipt.outcome, UnionOutcome::Applied { .. }));
+                let has_effect = !effective_outputs.is_empty()
+                    || !effects.new_witnesses.is_empty()
+                    || applied_union;
+
+                match policy {
+                    OpaqueRulePolicy::EmptyBodyInitializer => {
+                        let grounding = GroundedFire {
+                            rule: rule_name.to_owned(),
+                            wave: u32::try_from(wave).map_err(|_| {
+                                CausalSliceError::Invariant(
+                                    "wave index exceeded u32 capacity".to_owned(),
+                                )
+                            })?,
+                            ordinal: u32::try_from(ordinal).map_err(|_| {
+                                CausalSliceError::Invariant(
+                                    "wave ordinal exceeded u32 capacity".to_owned(),
+                                )
+                            })?,
+                            bindings: IndexMap::default(),
+                        };
+                        let promoted = if has_effect {
+                            let event = events.push(ReplayEvent {
+                                kind: EventKind::Fire(grounding.clone()),
+                                prerequisites: DepArena::EMPTY,
+                                deferred_prerequisite_error: None,
+                                effective_outputs: effective_outputs.clone(),
+                            })?;
+                            let dependency = dependencies.event(event)?;
+                            for row in effective_outputs {
+                                new_outputs.insert(row, dependency);
+                            }
+                            for witness in effects.new_witnesses {
+                                witnesses.set_availability(witness, dependency);
+                            }
+                            Some(event)
+                        } else {
+                            None
+                        };
+                        pending_fires.push(PendingFire {
+                            grounding,
+                            promoted,
+                        });
+                    }
+                    OpaqueRulePolicy::Reject(error) => {
+                        opaque_pending_firings += 1;
+                        if applied_union && opaque_equality_error.is_none() {
+                            opaque_equality_error = Some(error.clone());
+                        }
+                        if has_effect {
+                            let event = events.push(ReplayEvent {
+                                kind: EventKind::OpaqueFire,
+                                prerequisites: DepArena::EMPTY,
+                                deferred_prerequisite_error: Some(error.clone()),
+                                effective_outputs: effective_outputs.clone(),
+                            })?;
+                            let dependency = dependencies.event(event)?;
+                            for row in effective_outputs {
+                                new_outputs.insert(row, dependency);
+                            }
+                            for witness in effects.new_witnesses {
+                                witnesses.set_availability(witness, dependency);
+                            }
+                            opaque_promoted_events += 1;
+                        }
+                    }
+                }
+                continue;
+            }
             let mut bindings =
                 reconstruct_rule_bindings(egraph, &captured.bindings, model, witnesses)?;
             let primitive_indices = primitives_by_origin.for_origin(ordinal);
@@ -4648,11 +4927,14 @@ fn elaborate_events(
     }
     Ok(Elaboration {
         pending_fires,
+        opaque_pending_firings,
+        opaque_promoted_events,
         events,
         dependencies,
         producers,
         source_events,
         equality_forest,
+        opaque_equality_error,
     })
 }
 
@@ -4668,6 +4950,7 @@ fn observation_roots(
         traces,
         producers,
         equality_forest,
+        opaque_equality_error,
     } = input;
     if checks.len() != traces.len() {
         return Err(CausalSliceError::Invariant(format!(
@@ -4740,12 +5023,21 @@ fn observation_roots(
                 root,
                 endpoint_availability(&right, witnesses, &equality.span)?,
             )?;
-            let explanation = equality_forest.explain(&left, &right).ok_or_else(|| {
-                CausalSliceError::Invariant(format!(
-                    "positive check matched equality `{}` without a recorded cause",
-                    equality.span
-                ))
-            })?;
+            let explanation = match equality_forest.explain(&left, &right) {
+                Some(explanation) => explanation,
+                None if opaque_equality_error.is_some() => {
+                    return Err(opaque_equality_error
+                        .expect("checked as present")
+                        .clone()
+                        .into_error());
+                }
+                None => {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "positive check matched equality `{}` without a recorded cause",
+                        equality.span
+                    )));
+                }
+            };
             for dependency in explanation {
                 root = dependencies.and(root, dependency)?;
             }
