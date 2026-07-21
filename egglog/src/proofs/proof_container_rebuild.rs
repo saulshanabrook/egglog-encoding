@@ -4,9 +4,11 @@
 //! [`ContainerRebuildSpec`] ([`register_container_rebuild_from_spec`]), and
 //! defines the `ContainerRebuild` / `ContainerRebuildProof` primitives that
 //! canonicalize a container's elements to their union-find leaders (and, in
-//! proof mode, prove the rebuild). The encoder side that *builds* the spec lives
-//! in [`super::proof_encoding`].
+//! proof mode, prove the rebuild). Also holds the encoder-side spec bookkeeping
+//! ([`ProofInstrumentor::build_container_rebuild_spec`] and the primitive-name
+//! lookups).
 
+use super::proof_encoding::ProofInstrumentor;
 use crate::exec_state::{Internal, RegistrySealed};
 use crate::*;
 use egglog_backend_trait::CounterId;
@@ -196,7 +198,7 @@ where
 
 /// A term-encoding primitive that canonicalizes a container value's elements to
 /// their union-find leaders (recursing through nested containers). Registered
-/// per container sort by `ensure_container_rebuild` and
+/// per container sort by `container_rebuild_prim` and
 /// invoked from the container-column arm of the rebuild rules. It reads the
 /// single `UF_<E>` tables, so it is only valid in a `:naive` rule (read-context body).
 #[derive(Clone)]
@@ -376,4 +378,72 @@ fn rebuild_container_proof_rec(
     }
 
     Some((rebuilt, current))
+}
+
+impl ProofInstrumentor<'_> {
+    /// Build the [`ContainerRebuildSpec`] for a container sort: mint and cache
+    /// the fresh rebuild-primitive names. The primitives themselves are
+    /// registered from the spec when the Sort is typechecked (see
+    /// [`register_container_rebuild_from_spec`]).
+    pub(super) fn build_container_rebuild_spec(
+        &mut self,
+        container_sort: &ArcSort,
+    ) -> ContainerRebuildSpec {
+        let sort_name = container_sort.name().to_string();
+        let proof_mode = self.egraph.proof_state.proofs_enabled;
+
+        let internal_rebuild_prim = self.egraph.parser.symbol_gen.fresh("container_rebuild");
+        self.egraph
+            .proof_state
+            .container_rebuild_name
+            .insert(sort_name.clone(), internal_rebuild_prim.clone());
+
+        let internal_rebuild_proof_prim = proof_mode.then(|| {
+            let proof_prim = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh("container_rebuild_proof");
+            self.egraph
+                .proof_state
+                .container_rebuild_proof_name
+                .insert(sort_name, proof_prim.clone());
+            proof_prim
+        });
+
+        ContainerRebuildSpec {
+            internal_rebuild_prim,
+            internal_rebuild_proof_prim,
+        }
+    }
+
+    /// The (already-built) container value-rebuild primitive name for a sort.
+    pub(super) fn container_rebuild_prim(&mut self, container_sort: &ArcSort) -> String {
+        self.egraph
+            .proof_state
+            .container_rebuild_name
+            .get(container_sort.name())
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "container rebuild primitive not built for sort {}",
+                    container_sort.name()
+                )
+            })
+    }
+
+    /// The (already-built) container proof-rebuild primitive name for a sort.
+    pub(super) fn container_rebuild_proof_prim(&mut self, container_sort: &ArcSort) -> String {
+        self.egraph
+            .proof_state
+            .container_rebuild_proof_name
+            .get(container_sort.name())
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "container rebuild proof primitive not built for sort {}",
+                    container_sort.name()
+                )
+            })
+    }
 }
