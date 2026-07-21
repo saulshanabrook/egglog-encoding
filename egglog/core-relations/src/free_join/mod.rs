@@ -179,10 +179,11 @@ pub struct TableApplication {
     pub newly_staged: bool,
 }
 
-/// One successful primary application from a rule-head
-/// `ExternalWithFallback` instruction. The frontend uses the resolved
-/// function ID and exact lane values to admit only proof-validating pure
-/// primitives; fallback and query-side external calls remain unsupported.
+/// One successful primary external application. This covers `External`
+/// instructions used by query primitives and the primary function of a
+/// rule-head `ExternalWithFallback`; fallback applications remain untraced.
+/// The frontend uses the resolved function ID and exact lane values to admit
+/// only explicitly supported proof-validating primitives.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimitiveApplication {
     pub origin: RuleMatchId,

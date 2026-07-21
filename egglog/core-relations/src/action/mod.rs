@@ -911,6 +911,23 @@ impl ExecutionState<'_> {
                     args,
                     *dst,
                 );
+                if let Some((origins, instruction, _, primitives)) = trace {
+                    let results = &bindings[*dst];
+                    let mut successful = mask.clone();
+                    for_each_binding_with_mask!(successful, args.as_slice(), bindings, |iter| {
+                        iter.zip(results)
+                            .zip(origins)
+                            .for_each(|((args, result), origin)| {
+                                primitives.push(PrimitiveApplication {
+                                    origin: *origin,
+                                    instruction,
+                                    function: *func,
+                                    args: args.as_slice().to_vec(),
+                                    result: *result,
+                                });
+                            })
+                    });
+                }
             }
             Instr::ExternalWithFallback {
                 f1,

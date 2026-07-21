@@ -1400,6 +1400,80 @@ fn traced_external_with_fallback_records_only_primary_successes() {
     assert_eq!(primitive.instruction, 0);
 }
 
+#[test]
+fn traced_external_records_only_successful_lanes() {
+    let mut db = Database::default();
+    let [source, sink] = (0..2)
+        .map(|_| {
+            db.add_table(
+                SortedWritesTable::new(
+                    1,
+                    2,
+                    None,
+                    vec![],
+                    Box::new(move |_, a, b, _| {
+                        assert_eq!(a[0], b[0], "merge not supported");
+                        false
+                    }),
+                ),
+                iter::empty(),
+                iter::empty(),
+            )
+        })
+        .collect::<Vec<_>>()[..]
+    else {
+        unreachable!()
+    };
+
+    {
+        let mut buffer = db.new_buffer(source);
+        for (value, payload) in [(1, 0), (2, 2), (3, 0), (4, 0)] {
+            buffer.stage_insert(&[v(value), v(payload)]);
+        }
+    }
+    db.merge_all();
+
+    let invocations = Arc::new(AtomicUsize::new(0));
+    let assert_even = {
+        let invocations = invocations.clone();
+        db.add_external_function(Box::new(make_external_func(move |_, args| {
+            invocations.fetch_add(1, Ordering::Relaxed);
+            let [value] = args else { panic!() };
+            value.rep().is_multiple_of(2).then_some(*value)
+        })))
+    };
+
+    let mut ruleset = RuleSetBuilder::new(&mut db);
+    let mut query = ruleset.new_rule();
+    let value = query.new_var_named("value");
+    let payload = query.new_var_named("payload");
+    query
+        .add_atom(source, &[value.into(), payload.into()], &[])
+        .unwrap();
+    let mut rule = query.build();
+    rule.assert_ne(value.into(), payload.into()).unwrap();
+    let result = rule.call_external(assert_even, &[value.into()]).unwrap();
+    rule.insert(sink, &[result.into(), payload.into()]).unwrap();
+    rule.build_with_description("trace-query-primitive");
+    let ruleset = ruleset.build();
+
+    let (_, trace) = db
+        .run_rule_set_traced(&ruleset, ReportLevel::TimeOnly)
+        .unwrap();
+    assert_eq!(trace.matches.len(), 4);
+    assert_eq!(invocations.load(Ordering::Relaxed), 3);
+    assert_eq!(trace.primitives.len(), 1);
+    let primitive = &trace.primitives[0];
+    assert_eq!(primitive.function, assert_even);
+    assert_eq!(primitive.args, vec![v(4)]);
+    assert_eq!(primitive.result, v(4));
+    assert_eq!(
+        trace.matches[primitive.origin.index()].bindings,
+        vec![("value".into(), v(4)), ("payload".into(), v(0))]
+    );
+    assert_eq!(primitive.instruction, 1);
+}
+
 fn call_external_with_fallback_inner() {
     // Insert (f 1) (f 2) (f 3) (f 5).
     // Iterate over f, binding x to 1, 2, 3.
