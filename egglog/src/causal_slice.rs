@@ -139,7 +139,7 @@ enum AtomArg {
 struct RuleModel {
     span: Span,
     body: Vec<AtomTemplate>,
-    body_equalities: Vec<EqualityTemplate>,
+    body_lookups: Vec<ConstructorLookupTemplate>,
     head: Vec<AtomTemplate>,
     head_constructors: Vec<AtomArg>,
     head_unions: Vec<EqualityTemplate>,
@@ -159,6 +159,14 @@ struct EqualityTemplate {
     span: Span,
     left: AtomArg,
     right: AtomArg,
+    sort: String,
+}
+
+#[derive(Clone, Debug)]
+struct ConstructorLookupTemplate {
+    span: Span,
+    application: AtomArg,
+    output: AtomArg,
     sort: String,
 }
 
@@ -1368,7 +1376,6 @@ fn model_rule(
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
-    let body_equalities = Vec::new();
     for fact in &rule.body {
         match fact {
             GenericFact::Fact(expr) => {
@@ -1385,16 +1392,35 @@ fn model_rule(
                 register_atom_vars(&atom, relations, &mut var_order, &mut var_sorts)?;
                 body.push(atom);
             }
-            GenericFact::Eq(..) => {
+            GenericFact::Eq(..) => {}
+        }
+    }
+    let mut body_lookups = Vec::new();
+    for fact in &rule.body {
+        let GenericFact::Eq(span, left, right) = fact else {
+            continue;
+        };
+        let lookup = model_constructor_lookup(
+            span,
+            left,
+            right,
+            &var_sorts,
+            constructors,
+            &format!("rule `{}` body", rule.name),
+        )?;
+        for (var_span, var) in atom_arg_vars(&lookup.application) {
+            if !var_sorts.contains_key(var) {
                 return unsupported(
-                    &rule.span,
+                    var_span,
                     format!(
-                        "equality or primitive filters in rule `{}`; constructor lookup provenance is not yet modeled",
+                        "constructor lookup input variable `{var}` before a typed relation/lookup binding in rule `{}`",
                         rule.name
                     ),
                 );
             }
         }
+        register_arg_vars(&lookup.output, &lookup.sort, &mut var_order, &mut var_sorts)?;
+        body_lookups.push(lookup);
     }
     let mut head = Vec::new();
     let mut head_constructors = Vec::new();
@@ -1476,7 +1502,7 @@ fn model_rule(
     // projected firing, so PR #23 cannot replay the ordinary physical match
     // with an exact guard. One-atom rules use MinCover and retain every column.
     if rule.body.len() > 1 {
-        let body_occurrences = variable_fact_occurrences(&body, &body_equalities);
+        let body_occurrences = variable_rule_fact_occurrences(&body, &body_lookups);
         let mut head_vars = atom_variables(&head);
         for constructor in &head_constructors {
             for (_, var) in atom_arg_vars(constructor) {
@@ -1507,7 +1533,7 @@ fn model_rule(
     Ok(RuleModel {
         span: rule.span.clone(),
         body,
-        body_equalities,
+        body_lookups,
         head,
         head_constructors,
         head_unions,
@@ -1558,7 +1584,7 @@ fn model_check(
         }
     }
     if facts.len() > 1 {
-        let occurrences = variable_fact_occurrences(&atoms, &equalities);
+        let occurrences = variable_check_fact_occurrences(&atoms, &equalities);
         if let Some(var) = var_order
             .iter()
             .find(|var| occurrences.get(var.as_str()).copied() == Some(1))
@@ -1621,6 +1647,81 @@ fn model_equality(
     })
 }
 
+fn model_constructor_lookup(
+    span: &Span,
+    left: &Expr,
+    right: &Expr,
+    known_var_sorts: &IndexMap<String, String>,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    context: &str,
+) -> Result<ConstructorLookupTemplate, CausalSliceError> {
+    let GenericExpr::Call(call_span, function, args) = left else {
+        return unsupported(
+            span,
+            format!(
+                "equality or primitive filters in {context}; only `(= (constructor ...) output-var)` lookup binders are supported"
+            ),
+        );
+    };
+    let constructor = constructors
+        .get(function)
+        .ok_or_else(|| CausalSliceError::Unsupported {
+            location: call_span.to_string(),
+            reason: format!("function/primitive lookup `{function}` in {context}"),
+        })?;
+    let GenericExpr::Var(output_span, output_var) = right else {
+        return unsupported(
+            span,
+            format!(
+                "equality or primitive filters in {context}; constructor lookup output must be a source variable"
+            ),
+        );
+    };
+    if output_var == "_" || output_var.starts_with('@') {
+        return unsupported(
+            output_span,
+            "wildcard or parser-generated constructor lookup output variables",
+        );
+    }
+    let application = model_atom_arg(left, &constructor.output, constructors, context)?;
+    let AtomArg::App {
+        args: modeled_args, ..
+    } = &application
+    else {
+        return Err(CausalSliceError::Invariant(
+            "modeled constructor lookup lost its application".to_owned(),
+        ));
+    };
+    if modeled_args.iter().any(atom_arg_contains_app) {
+        return unsupported(
+            call_span,
+            format!("a nested constructor lookup input in {context}"),
+        );
+    }
+    if args.len() != modeled_args.len() {
+        return Err(CausalSliceError::Invariant(
+            "constructor lookup source/model arity diverged".to_owned(),
+        ));
+    }
+    if let Some(previous) = known_var_sorts.get(output_var)
+        && previous != &constructor.output
+    {
+        return unsupported(
+            output_span,
+            format!(
+                "constructor lookup output `{output_var}` has sort `{previous}` instead of `{}` in {context}",
+                constructor.output
+            ),
+        );
+    }
+    Ok(ConstructorLookupTemplate {
+        span: span.clone(),
+        application,
+        output: AtomArg::Var(output_span.clone(), output_var.clone()),
+        sort: constructor.output.clone(),
+    })
+}
+
 fn infer_equality_expr_sort(
     expr: &Expr,
     known_var_sorts: &IndexMap<String, String>,
@@ -1658,7 +1759,27 @@ fn register_equality_vars(
     register_arg_vars(&equality.right, &equality.sort, order, sorts)
 }
 
-fn variable_fact_occurrences<'a>(
+fn variable_rule_fact_occurrences<'a>(
+    atoms: &'a [AtomTemplate],
+    lookups: &'a [ConstructorLookupTemplate],
+) -> HashMap<&'a str, usize> {
+    let mut occurrences = variable_atom_occurrences(atoms);
+    for lookup in lookups {
+        let mut vars = HashSet::default();
+        for (_, var) in atom_arg_vars(&lookup.application)
+            .into_iter()
+            .chain(atom_arg_vars(&lookup.output))
+        {
+            vars.insert(var.as_str());
+        }
+        for var in vars {
+            *occurrences.entry(var).or_default() += 1;
+        }
+    }
+    occurrences
+}
+
+fn variable_check_fact_occurrences<'a>(
     atoms: &'a [AtomTemplate],
     equalities: &'a [EqualityTemplate],
 ) -> HashMap<&'a str, usize> {
@@ -2093,24 +2214,30 @@ fn elaborate_events(
                     }
                 }
             }
-            for equality in &model.body_equalities {
-                let (left, right) = ground_equality(egraph, equality, &bindings, witnesses)?;
-                premise_dependencies.insert(endpoint_availability(
-                    &left,
+            for lookup in &model.body_lookups {
+                let (application, application_witness) = ground_application_witness(
+                    egraph,
+                    &lookup.application,
+                    &lookup.sort,
+                    &bindings,
                     witnesses,
-                    &equality.span,
-                )?);
+                )?;
+                let output =
+                    ground_arg(egraph, &lookup.output, &lookup.sort, &bindings, witnesses)?;
+                premise_dependencies.insert(witnesses.availability(application_witness));
                 premise_dependencies.insert(endpoint_availability(
-                    &right,
+                    &output,
                     witnesses,
-                    &equality.span,
+                    &lookup.span,
                 )?);
-                let explanation = equality_forest.explain(&left, &right).ok_or_else(|| {
-                    CausalSliceError::Invariant(format!(
-                        "rule `{rule_name}` matched equality `{}` without a recorded pre-wave cause",
-                        equality.span
-                    ))
-                })?;
+                let explanation = equality_forest
+                    .explain(&application, &output)
+                    .ok_or_else(|| CausalSliceError::Unsupported {
+                        location: lookup.span.to_string(),
+                        reason: format!(
+                            "constructor lookup in rule `{rule_name}` whose canonical output lacks a captured successful-union path"
+                        ),
+                    })?;
                 premise_dependencies.extend(explanation);
             }
             let mut prerequisites = DepArena::EMPTY;
@@ -2398,6 +2525,61 @@ fn ground_equality(
         )));
     }
     Ok((left, right))
+}
+
+fn ground_application_witness(
+    egraph: &EGraph,
+    application: &AtomArg,
+    sort: &str,
+    bindings: &IndexMap<String, BindingWitness>,
+    witnesses: &WitnessArena,
+) -> Result<(TypedEndpoint, WitnessId), CausalSliceError> {
+    let endpoint = ground_arg(egraph, application, sort, bindings, witnesses)?;
+    let AtomArg::App {
+        function,
+        args,
+        input_sorts,
+        ..
+    } = application
+    else {
+        return Err(CausalSliceError::Invariant(
+            "constructor lookup grounding lost its application".to_owned(),
+        ));
+    };
+    let children = args
+        .iter()
+        .zip(input_sorts)
+        .map(|(arg, input_sort)| {
+            let child = ground_arg(egraph, arg, input_sort, bindings, witnesses)?;
+            witnesses
+                .by_endpoint(input_sort, child.value)
+                .ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "constructor lookup `{function}` child lacked captured syntax"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let node = WitnessNode::App {
+        sort: sort.to_owned(),
+        function: function.clone(),
+        children,
+    };
+    let witness =
+        witnesses
+            .ids
+            .get(&node)
+            .copied()
+            .ok_or_else(|| CausalSliceError::Unsupported {
+                location: format!("constructor lookup `{function}`"),
+                reason: "syntax that was unavailable at the captured match".to_owned(),
+            })?;
+    if witnesses.endpoint(witness) != Some(endpoint.value) {
+        return Err(CausalSliceError::Invariant(format!(
+            "constructor lookup `{function}` witness endpoint diverged while grounding"
+        )));
+    }
+    Ok((endpoint, witness))
 }
 
 fn endpoint_availability(

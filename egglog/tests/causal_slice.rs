@@ -521,6 +521,50 @@ fn constructor_union_uses_native_application_and_union_causes() {
 }
 
 #[test]
+fn constructor_lookup_body_retains_its_application_and_equality_causes() {
+    let source = r#"
+        (datatype Allocation (A String))
+        (constructor expr_points_to (String) Allocation)
+        (relation Seed (String Allocation))
+        (relation Use (String))
+        (relation Goal (Allocation))
+        (rule ((Seed e a))
+              ((union (expr_points_to e) a))
+              :name "make-points-to")
+        (rule ((Use e) (= (expr_points_to e) a))
+              ((Goal a))
+              :name "read-points-to")
+        (Seed "e" (A "alloc"))
+        (Use "e")
+        (run 2)
+        (check (Goal (A "alloc")))
+    "#;
+
+    let slice = causal_slice_program(Some("constructor-lookup.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.equality_edges, 1);
+    assert_eq!(slice.stats.retained_applications, 2);
+    assert!(slice.source.contains("run-rule \"make-points-to\""));
+    assert!(
+        slice.source.contains(
+            "(run-rule \"read-points-to\" :bind ((e \"e\") (a (A \"alloc\"))) :expect 1)"
+        )
+    );
+
+    for replay_source in [&slice.full_transcript_source, &slice.source] {
+        for make_egraph in [EGraph::default, || {
+            EGraph::new_with_proofs().with_proof_testing()
+        }] {
+            make_egraph()
+                .parse_and_run_program(
+                    Some("constructor-lookup-replay.egg".to_owned()),
+                    replay_source,
+                )
+                .unwrap();
+        }
+    }
+}
+
+#[test]
 fn equality_rekeyed_relation_rows_fail_closed_without_commit_provenance() {
     let source = r#"
         (datatype Expr (A i64))
