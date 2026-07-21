@@ -426,6 +426,43 @@ fn one_wave_math_fixture_prefix_replays_ordinary_and_strictly() {
 }
 
 #[test]
+fn prefix_replay_shares_a_witness_only_after_one_guarded_inline_use() {
+    let term = r#"(Pair (Pair (Leaf "x") (Leaf "y")) (Pair (Leaf "x") (Leaf "y")))"#;
+    let mut source = String::from(
+        r#"
+        (datatype Expr (Leaf String) (Pair Expr Expr))
+        (relation Seed (i64 Expr))
+        (relation Done (i64))
+        (rule ((Seed i e)) ((Done i)) :name "copy")
+        "#,
+    );
+    for index in 0..40 {
+        source.push_str(&format!("(Seed {index} {term})\n"));
+    }
+    source.push_str("(run 1)\n(print-size Done)\n");
+
+    let replay =
+        causal_slice_replay_program(Some("shared-witness.egg".to_owned()), &source).unwrap();
+    assert_eq!(replay.stats.shared_replay_witnesses, 1);
+    let definition = replay.source.find("(let $__csw").unwrap();
+    let first_fire = replay.source.find("(run-schedule (run-rule").unwrap();
+    assert!(first_fire < definition);
+    assert!(replay.source[first_fire..definition].contains(term));
+    assert!(replay.source[definition..].contains("(e $__csw"));
+
+    EGraph::default()
+        .parse_and_run_program(Some("shared-witness-replay.egg".to_owned()), &replay.source)
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("shared-witness-replay-strict.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
 fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays() {
     let slice = causal_slice_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
 

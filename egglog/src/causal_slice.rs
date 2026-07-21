@@ -77,6 +77,10 @@ pub struct CausalSliceStats {
     pub source_events: usize,
     pub dependency_nodes: usize,
     pub witness_nodes: usize,
+    /// Replay-only eq-sort aliases introduced after one successful inline
+    /// guarded use. These share repeated source witnesses without making a
+    /// term available before the original execution did.
+    pub shared_replay_witnesses: usize,
     pub equality_edges: usize,
     pub prefix_fallbacks: usize,
     /// Source-variable pairs captured for scheduled rule applications.
@@ -568,8 +572,7 @@ struct Elaboration {
 }
 
 struct PrefixElaboration {
-    replay_commands: String,
-    rendering_time: Duration,
+    replay_fires: Vec<CompactReplayFire>,
     pending_firings: usize,
     captured_bindings: usize,
     effective_applications: usize,
@@ -577,6 +580,17 @@ struct PrefixElaboration {
     source_events: usize,
     witness_nodes: usize,
     equality_edges: usize,
+}
+
+/// Prefix fallback can retain hundreds of thousands of effective firings. A
+/// compact rule index plus witness IDs keeps those firings available for a
+/// source-sharing pass without retaining their expanded syntax or per-variable
+/// hash maps.
+struct CompactReplayFire {
+    rule_index: u32,
+    wave: u32,
+    ordinal: u32,
+    bindings: Box<[WitnessId]>,
 }
 
 /// A compact stable grouping from one match origin to indices in a trace
@@ -929,8 +943,7 @@ fn generate_causal_slice(
             ));
         }
         let PrefixElaboration {
-            replay_commands,
-            rendering_time,
+            replay_fires,
             pending_firings,
             captured_bindings,
             effective_applications,
@@ -946,20 +959,26 @@ fn generate_causal_slice(
             &source_traces,
             schedule_batches,
             &trace_functions,
-            &schedule_span,
             &mut witnesses,
         )?;
-        let elaboration_time = elaboration_start.elapsed().saturating_sub(rendering_time);
+        let elaboration_time = elaboration_start.elapsed();
         let slicing_time = Duration::ZERO;
 
         let emission_start = Instant::now();
+        let (replay_commands, shared_replay_witnesses) = emit_prefix_replay_commands(
+            &commands,
+            &schedule_span,
+            &rules,
+            &replay_fires,
+            &witnesses,
+        );
         let source = emit_program_with_replay_commands(
             &commands,
             schedule_index,
             &replay_commands,
             &source_expansions,
         );
-        let emission_time = rendering_time + emission_start.elapsed();
+        let emission_time = emission_start.elapsed();
 
         let emitted_validation_start = Instant::now();
         validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
@@ -980,6 +999,7 @@ fn generate_causal_slice(
             source_events,
             dependency_nodes: 0,
             witness_nodes,
+            shared_replay_witnesses,
             equality_edges,
             prefix_fallbacks,
             captured_bindings,
@@ -1148,6 +1168,7 @@ fn generate_causal_slice(
         source_events,
         dependency_nodes: dependencies.nodes.len(),
         witness_nodes: witnesses.nodes.len(),
+        shared_replay_witnesses: 0,
         equality_edges: equality_forest.edge_count(),
         prefix_fallbacks,
         captured_bindings,
@@ -2826,7 +2847,6 @@ fn elaborate_prefix_replay(
     source_traces: &IndexMap<usize, Vec<RuleExecutionTrace>>,
     batches: Vec<RuleExecutionTrace>,
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
-    schedule_span: &Span,
     witnesses: &mut WitnessArena,
 ) -> Result<PrefixElaboration, CausalSliceError> {
     let mut source_rows = IndexSet::default();
@@ -2842,8 +2862,7 @@ fn elaborate_prefix_replay(
         )?);
     }
 
-    let mut replay_commands = String::new();
-    let mut rendering_time = Duration::ZERO;
+    let mut replay_fires = Vec::new();
     let mut pending_firings = 0usize;
     let mut captured_bindings = 0usize;
     let mut effective_applications = 0usize;
@@ -2920,26 +2939,41 @@ fn elaborate_prefix_replay(
                 continue;
             }
 
-            let fire = GroundedFire {
-                rule: rule_name.to_owned(),
+            let rule_index = rules.get_index_of(rule_name).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "native trace referenced unindexed rule `{rule_name}`"
+                ))
+            })?;
+            let replay_bindings = model
+                .replay_var_order
+                .iter()
+                .map(|variable| {
+                    let binding = bindings.get(variable).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "captured rule `{rule_name}` omitted replay variable `{variable}`"
+                        ))
+                    })?;
+                    Ok(binding.syntax)
+                })
+                .collect::<Result<Vec<_>, CausalSliceError>>()?;
+            replay_fires.push(CompactReplayFire {
+                rule_index: u32::try_from(rule_index).map_err(|_| {
+                    CausalSliceError::Invariant("rule index exceeded u32 capacity".to_owned())
+                })?,
                 wave: u32::try_from(wave).map_err(|_| {
                     CausalSliceError::Invariant("wave index exceeded u32 capacity".to_owned())
                 })?,
                 ordinal: u32::try_from(ordinal).map_err(|_| {
                     CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
                 })?,
-                bindings,
-            };
-            let rendering_start = Instant::now();
-            append_replay_command(&mut replay_commands, &fire, schedule_span, rules, witnesses);
-            rendering_time += rendering_start.elapsed();
+                bindings: replay_bindings.into_boxed_slice(),
+            });
             effective_applications += 1;
         }
     }
 
     Ok(PrefixElaboration {
-        replay_commands,
-        rendering_time,
+        replay_fires,
         pending_firings,
         captured_bindings,
         effective_applications,
@@ -4016,6 +4050,168 @@ fn backward_slice(events: &EventArena, dependencies: &DepArena, root: DepId) -> 
     retained
 }
 
+const MAX_SHARED_REPLAY_WITNESSES: usize = 32;
+const SHARED_REPLAY_WITNESS_PREFIX: &str = "$__csw";
+
+fn witness_source_lengths(witnesses: &WitnessArena) -> Vec<usize> {
+    let mut lengths = Vec::with_capacity(witnesses.nodes.len());
+    for (index, record) in witnesses.nodes.iter().enumerate() {
+        let length = match &record.node {
+            WitnessNode::Literal { value, .. } => value.to_string().len(),
+            WitnessNode::App {
+                function, children, ..
+            } => {
+                let mut length = function.len().saturating_add(2);
+                for child in children {
+                    debug_assert!(child.index() < index);
+                    length = length
+                        .saturating_add(1)
+                        .saturating_add(lengths[child.index()]);
+                }
+                length
+            }
+        };
+        lengths.push(length);
+    }
+    lengths
+}
+
+fn shared_replay_witness_prefix(commands: &[Command]) -> String {
+    for namespace in 0usize.. {
+        let prefix = format!("{SHARED_REPLAY_WITNESS_PREFIX}{namespace}_");
+        if commands
+            .iter()
+            .all(|command| !command.to_string().contains(&prefix))
+        {
+            return prefix;
+        }
+    }
+    unreachable!("the finite source cannot occupy every replay witness namespace")
+}
+
+fn select_shared_replay_witnesses(
+    fires: &[CompactReplayFire],
+    witnesses: &WitnessArena,
+    prefix: &str,
+) -> Vec<Option<String>> {
+    let mut uses = vec![0usize; witnesses.nodes.len()];
+    for fire in fires {
+        for witness in &fire.bindings {
+            uses[witness.index()] = uses[witness.index()].saturating_add(1);
+        }
+    }
+
+    let lengths = witness_source_lengths(witnesses);
+    let mut candidates = Vec::new();
+    for (index, record) in witnesses.nodes.iter().enumerate() {
+        let WitnessNode::App { .. } = record.node else {
+            continue;
+        };
+        let count = uses[index];
+        if count < 3 {
+            continue;
+        }
+        let alias = format!("{prefix}{index}");
+        let inline_bytes = count.saturating_mul(lengths[index]);
+        // The first guarded use remains inline. Only after that successful
+        // match do we define the alias, repeating the expression once in the
+        // definition; every later use can then use the short closed name.
+        let shared_bytes = lengths[index]
+            .saturating_mul(2)
+            .saturating_add(count.saturating_mul(alias.len()))
+            .saturating_add(8);
+        if let Some(savings) = inline_bytes.checked_sub(shared_bytes)
+            && savings > 0
+        {
+            candidates.push((savings, WitnessId(index as u32), alias));
+        }
+    }
+    candidates
+        .sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+
+    let mut aliases = vec![None; witnesses.nodes.len()];
+    for (_, witness, alias) in candidates.into_iter().take(MAX_SHARED_REPLAY_WITNESSES) {
+        aliases[witness.index()] = Some(alias);
+    }
+    aliases
+}
+
+fn emit_prefix_replay_commands(
+    commands: &[Command],
+    schedule_span: &Span,
+    rules: &IndexMap<String, RuleModel>,
+    fires: &[CompactReplayFire],
+    witnesses: &WitnessArena,
+) -> (String, usize) {
+    let prefix = shared_replay_witness_prefix(commands);
+    let aliases = select_shared_replay_witnesses(fires, witnesses, &prefix);
+    let mut defined = HashSet::default();
+    let mut previous_position = None;
+    let mut rendered = String::new();
+
+    for fire in fires {
+        let position = (fire.wave, fire.ordinal);
+        if let Some(previous) = previous_position {
+            debug_assert!(previous < position);
+        }
+        previous_position = Some(position);
+
+        let (rule_name, model) = rules
+            .get_index(fire.rule_index as usize)
+            .expect("captured compact replay rule index must remain valid");
+        debug_assert_eq!(model.replay_var_order.len(), fire.bindings.len());
+        let mut define_after = IndexSet::default();
+        let bindings = model
+            .replay_var_order
+            .iter()
+            .zip(&fire.bindings)
+            .map(|(variable, witness)| {
+                let expression = match &aliases[witness.index()] {
+                    Some(alias) if defined.contains(witness) => {
+                        Expr::Var(schedule_span.clone(), alias.clone())
+                    }
+                    Some(_) => {
+                        define_after.insert(*witness);
+                        witnesses.expr(*witness, schedule_span)
+                    }
+                    None => witnesses.expr(*witness, schedule_span),
+                };
+                (variable.clone(), expression)
+            })
+            .collect();
+        let replay = Command::RunSchedule(Schedule::RunRule(
+            schedule_span.clone(),
+            RunRuleConfig {
+                rule: rule_name.clone(),
+                bindings,
+                selectors: Vec::new(),
+                expect: Some(1),
+            },
+        ));
+        rendered.push_str(&replay.to_string());
+        rendered.push('\n');
+
+        // A successful inline selector proves the witness was already
+        // available at this replay point. Defining it afterward cannot enable
+        // the firing that justified the alias.
+        for witness in define_after {
+            let alias = aliases[witness.index()]
+                .as_ref()
+                .expect("selected replay witness must have an alias");
+            let definition = Command::Action(Action::Let(
+                schedule_span.clone(),
+                alias.clone(),
+                witnesses.expr(witness, schedule_span),
+            ));
+            rendered.push_str(&definition.to_string());
+            rendered.push('\n');
+            defined.insert(witness);
+        }
+    }
+
+    (rendered, defined.len())
+}
+
 fn emit_program<'a>(
     commands: &[Command],
     schedule_index: usize,
@@ -4106,11 +4302,20 @@ fn validate_emitted_program(
     let mut parser = EGraph::default();
     let parsed = parser.parse_program(filename, source)?;
     let mut emitted_rules = HashMap::default();
+    let mut replay_globals = HashSet::default();
     for command in &parsed {
         match command {
-            Command::RunSchedule(schedule) => validate_replay_schedule(schedule, rules)?,
+            Command::RunSchedule(schedule) => {
+                validate_replay_schedule(schedule, rules, &replay_globals)?
+            }
             Command::Rule { rule } => {
                 emitted_rules.insert(rule.name.as_str(), semantic_rule_definition(rule));
+            }
+            Command::Action(Action::Let(span, name, expression))
+                if name.starts_with(SHARED_REPLAY_WITNESS_PREFIX) =>
+            {
+                validate_closed_replay_witness(expression, span, &replay_globals)?;
+                replay_globals.insert(name.clone());
             }
             Command::Include(span, _) => {
                 return unsupported(span, "an include in emitted source".to_owned());
@@ -4145,6 +4350,7 @@ fn validate_emitted_program(
 fn validate_replay_schedule(
     schedule: &Schedule,
     rules: &IndexMap<String, RuleModel>,
+    replay_globals: &HashSet<String>,
 ) -> Result<(), CausalSliceError> {
     match schedule {
         Schedule::RunRule(span, config) => {
@@ -4177,13 +4383,13 @@ fn validate_replay_schedule(
                 )));
             }
             for (_, expr) in &config.bindings {
-                validate_closed_replay_witness(expr, span)?;
+                validate_closed_replay_witness(expr, span, replay_globals)?;
             }
             Ok(())
         }
         Schedule::Sequence(_, schedules) => {
             for schedule in schedules {
-                validate_replay_schedule(schedule, rules)?;
+                validate_replay_schedule(schedule, rules, replay_globals)?;
             }
             Ok(())
         }
@@ -4196,15 +4402,20 @@ fn validate_replay_schedule(
     }
 }
 
-fn validate_closed_replay_witness(expr: &Expr, span: &Span) -> Result<(), CausalSliceError> {
+fn validate_closed_replay_witness(
+    expr: &Expr,
+    span: &Span,
+    replay_globals: &HashSet<String>,
+) -> Result<(), CausalSliceError> {
     match expr {
         GenericExpr::Lit(..) => Ok(()),
         GenericExpr::Call(_, _, args) => {
             for arg in args {
-                validate_closed_replay_witness(arg, span)?;
+                validate_closed_replay_witness(arg, span, replay_globals)?;
             }
             Ok(())
         }
+        GenericExpr::Var(_, var) if replay_globals.contains(var) => Ok(()),
         GenericExpr::Var(_, var) => unsupported(
             span,
             format!("a replay witness containing free variable `{var}`"),

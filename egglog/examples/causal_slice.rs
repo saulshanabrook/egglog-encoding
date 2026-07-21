@@ -97,7 +97,7 @@ fn main() -> ExitCode {
         stats.emitted_validation_time,
     ));
     report(format_args!(
-        "trace volume: {} application source bindings; {} observation matches / {} source bindings; {} raw bindings; max batch {}; >= {} bytes; arenas: {} source events, {} deps, {} witnesses, {} equality edges, {} prefixes",
+        "trace volume: {} application source bindings; {} observation matches / {} source bindings; {} raw bindings; max batch {}; >= {} bytes; arenas: {} source events, {} deps, {} witnesses ({} shared in replay), {} equality edges, {} prefixes",
         stats.captured_bindings,
         stats.observation_matches,
         stats.observation_bindings,
@@ -107,6 +107,7 @@ fn main() -> ExitCode {
         stats.source_events,
         stats.dependency_nodes,
         stats.witness_nodes,
+        stats.shared_replay_witnesses,
         stats.equality_edges,
         stats.prefix_fallbacks,
     ));
