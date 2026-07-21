@@ -29,7 +29,8 @@ use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
     IterationReport, MergeAction, MergeFn, ReadMode, ReportLevel, RuleActionCall, RuleBodyCall,
-    RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, ScheduleLeafReport, ScheduleSpec,
+    Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -495,6 +496,64 @@ impl EGraph {
 
     pub(crate) fn fresh_id_internal(&mut self) -> u32 {
         self.db.inc_counter(self.id_counter) as u32
+    }
+
+    /// Execute a schedule tree over [`Backend::run_rules`], appending one
+    /// report per executed `Run` leaf; returns whether any leaf changed the
+    /// database. Control flow matches the frontend interpreter exactly:
+    /// `Repeat`/`Saturate` stop once a full pass over the inner schedule
+    /// makes no change.
+    fn execute_schedule(
+        &mut self,
+        schedule: &ScheduleSpec,
+        leaves: &mut Vec<ScheduleLeafReport>,
+    ) -> Result<bool> {
+        match schedule {
+            ScheduleSpec::Run { ruleset, rules } => {
+                let iteration = Backend::run_rules(
+                    self,
+                    RuleSetRun {
+                        name: Some(ruleset),
+                        rules,
+                    },
+                )?;
+                let changed = iteration.changed();
+                leaves.push(ScheduleLeafReport {
+                    ruleset: ruleset.clone(),
+                    iteration,
+                });
+                Ok(changed)
+            }
+            ScheduleSpec::Repeat(limit, inner) => {
+                let mut updated = false;
+                for _ in 0..*limit {
+                    let pass = self.execute_schedule(inner, leaves)?;
+                    updated |= pass;
+                    if !pass {
+                        break;
+                    }
+                }
+                Ok(updated)
+            }
+            ScheduleSpec::Saturate(inner) => {
+                let mut updated = false;
+                loop {
+                    let pass = self.execute_schedule(inner, leaves)?;
+                    updated |= pass;
+                    if !pass {
+                        break;
+                    }
+                }
+                Ok(updated)
+            }
+            ScheduleSpec::Sequence(inners) => {
+                let mut updated = false;
+                for inner in inners {
+                    updated |= self.execute_schedule(inner, leaves)?;
+                }
+                Ok(updated)
+            }
+        }
     }
 
     /// Apply full-row sets in dependency-ordered waves. Merge-generated sets
@@ -2555,6 +2614,18 @@ impl Backend for EGraph {
         let mut report = IterationReport::default();
         report.rule_set_report.changed = changed;
         Ok(report)
+    }
+
+    fn run_schedule(
+        &mut self,
+        schedule: &ScheduleSpec,
+    ) -> Option<Result<Vec<ScheduleLeafReport>>> {
+        // Take the whole schedule tree: today this interprets it over
+        // `run_rules` with the frontend's exact control flow (so reports are
+        // identical), and it is the seam where schedule regions will compile
+        // into native dataflow fixpoints (docs/rebuild-in-dataflow.md).
+        let mut leaves = Vec::new();
+        Some(self.execute_schedule(schedule, &mut leaves).map(|_| leaves))
     }
 
     fn flush_updates(&mut self) -> bool {

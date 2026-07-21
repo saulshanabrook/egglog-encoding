@@ -43,7 +43,7 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScheduleSpec,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -1242,6 +1242,60 @@ impl EGraph {
 
     // returns whether the egraph was updated
     fn run_schedule(&mut self, sched: &ResolvedSchedule) -> Result<RunReport, Error> {
+        // A backend may opt into executing the whole schedule tree natively
+        // (e.g. as dataflow fixpoints). Delegation preserves reports exactly:
+        // the backend returns one report per executed Run leaf in execution
+        // order, folded here precisely as the interpreter below would.
+        // Schedules the backend cannot receive (an `until` clause needs a
+        // host-side fact check per leaf visit) skip lowering entirely.
+        if let Some(spec) = self.lower_schedule(sched)
+            && let Some(outcome) = self.backend.run_schedule(&spec)
+        {
+            let leaves = outcome.map_err(|e| Error::BackendError(e.to_string()))?;
+            let mut report = RunReport::default();
+            for leaf in leaves {
+                report.union(RunReport::singleton(&leaf.ruleset, leaf.iteration));
+            }
+            return Ok(report);
+        }
+        self.run_schedule_interpreted(sched)
+    }
+
+    /// Lower a schedule to the backend-facing [`ScheduleSpec`], or `None` when
+    /// it contains anything the backend hook cannot execute (an `until`
+    /// condition, or a ruleset unknown at lowering time — the interpreter owns
+    /// the error/skip behavior for those).
+    fn lower_schedule(&self, sched: &ResolvedSchedule) -> Option<ScheduleSpec> {
+        match sched {
+            ResolvedSchedule::Run(_span, config) => {
+                let GenericRunConfig { ruleset, until } = config;
+                if until.is_some() || !self.rulesets.contains_key(ruleset) {
+                    return None;
+                }
+                let mut rules = Vec::new();
+                Self::collect_rule_ids(&self.rulesets, ruleset, &mut rules);
+                Some(ScheduleSpec::Run {
+                    ruleset: ruleset.to_string(),
+                    rules,
+                })
+            }
+            ResolvedSchedule::Repeat(_span, limit, sched) => Some(ScheduleSpec::Repeat(
+                *limit,
+                Box::new(self.lower_schedule(sched)?),
+            )),
+            ResolvedSchedule::Saturate(_span, sched) => {
+                Some(ScheduleSpec::Saturate(Box::new(self.lower_schedule(sched)?)))
+            }
+            ResolvedSchedule::Sequence(_span, scheds) => Some(ScheduleSpec::Sequence(
+                scheds
+                    .iter()
+                    .map(|s| self.lower_schedule(s))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
+        }
+    }
+
+    fn run_schedule_interpreted(&mut self, sched: &ResolvedSchedule) -> Result<RunReport, Error> {
         match sched {
             ResolvedSchedule::Run(span, config) => self.run_rules(span, config),
             ResolvedSchedule::Repeat(_span, limit, sched) => {
@@ -1362,6 +1416,26 @@ impl EGraph {
         s
     }
 
+    /// Collect the rule ids of a (possibly combined) ruleset, in order.
+    fn collect_rule_ids(
+        rulesets: &IndexMap<String, Ruleset>,
+        ruleset: &str,
+        ids: &mut Vec<egglog_bridge::RuleId>,
+    ) {
+        match &rulesets[ruleset] {
+            Ruleset::Rules(rules) => {
+                for (_, id) in rules.values() {
+                    ids.push(*id);
+                }
+            }
+            Ruleset::Combined(sub_rulesets) => {
+                for sub_ruleset in sub_rulesets {
+                    Self::collect_rule_ids(rulesets, sub_ruleset, ids);
+                }
+            }
+        }
+    }
+
     /// Runs a ruleset for an iteration.
     ///
     /// This applies every match it finds (under semi-naive).
@@ -1369,27 +1443,8 @@ impl EGraph {
     ///
     /// This will return an error if an egglog primitive returns None in an action.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
-        fn collect_rule_ids(
-            ruleset: &str,
-            rulesets: &IndexMap<String, Ruleset>,
-            ids: &mut Vec<egglog_bridge::RuleId>,
-        ) {
-            match &rulesets[ruleset] {
-                Ruleset::Rules(rules) => {
-                    for (_, id) in rules.values() {
-                        ids.push(*id);
-                    }
-                }
-                Ruleset::Combined(sub_rulesets) => {
-                    for sub_ruleset in sub_rulesets {
-                        collect_rule_ids(sub_ruleset, rulesets, ids);
-                    }
-                }
-            }
-        }
-
-        let mut rule_ids = Vec::new();
-        collect_rule_ids(ruleset, &self.rulesets, &mut rule_ids);
+        let mut rule_ids: Vec<egglog_bridge::RuleId> = Vec::new();
+        Self::collect_rule_ids(&self.rulesets, ruleset, &mut rule_ids);
 
         let iteration_report = self
             .backend

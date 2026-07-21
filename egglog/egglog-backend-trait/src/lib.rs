@@ -185,6 +185,33 @@ pub struct RuleSetRun<'a> {
     pub rules: &'a [RuleId],
 }
 
+/// A whole schedule tree handed to a backend that opts into
+/// [`Backend::run_schedule`]. Mirrors the frontend's schedule AST with
+/// rulesets pre-resolved to rule ids; leaves with host-side per-iteration
+/// machinery (e.g. `until` conditions) are never lowered into this form.
+#[derive(Clone, Debug)]
+pub enum ScheduleSpec {
+    /// One bounded iteration of a ruleset.
+    Run { ruleset: String, rules: Vec<RuleId> },
+    /// Run the inner schedule up to `limit` times, stopping early once a full
+    /// pass makes no database change.
+    Repeat(usize, Box<ScheduleSpec>),
+    /// Run the inner schedule until a full pass makes no database change.
+    Saturate(Box<ScheduleSpec>),
+    /// Run the inner schedules in order.
+    Sequence(Vec<ScheduleSpec>),
+}
+
+/// One executed `ScheduleSpec::Run` leaf, in execution order, from a backend
+/// schedule run. The frontend folds these exactly as its own interpreter
+/// would (`RunReport::singleton` per leaf, unioned), so reports — including
+/// `(print-stats)` output — are identical either way.
+#[derive(Debug)]
+pub struct ScheduleLeafReport {
+    pub ruleset: String,
+    pub iteration: IterationReport,
+}
+
 /// Backend-selected policy for reconciling two ids that rebuild to the same
 /// container value. The container type is supplied separately to
 /// [`Backend::container_merge_fn`], so a backend may choose a different policy
@@ -334,6 +361,21 @@ pub trait Backend: Send + Sync {
     /// contract in the crate docs, especially for function `set`/`merge`,
     /// `remove`, `subsume`, and constructor lookup-or-insert effects.
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport>;
+
+    /// Optionally run a WHOLE schedule tree, returning one report per executed
+    /// `Run` leaf in execution order — or `None` to have the frontend
+    /// interpret the tree by calling [`Backend::run_rules`] per iteration (the
+    /// default, and the behavior of the reference backend).
+    ///
+    /// A backend that takes over must match the interpreter's control flow:
+    /// `Repeat(limit, s)` runs `s` up to `limit` times, stopping early once a
+    /// full pass over `s` reports no change; `Saturate(s)` loops until a full
+    /// pass reports no change; `Sequence` runs in order. This hook exists so a
+    /// backend can execute fixpoints natively (e.g. inside a dataflow) instead
+    /// of being clocked one bounded iteration at a time.
+    fn run_schedule(&mut self, _schedule: &ScheduleSpec) -> Option<Result<Vec<ScheduleLeafReport>>> {
+        None
+    }
 
     /// Drain staged inserts and rebuild if the union-find changed. Returns
     /// whether the database changed.
