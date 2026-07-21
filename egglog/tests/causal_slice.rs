@@ -1416,6 +1416,54 @@ fn container_sort_is_allowed_in_inert_table_schemas() {
 }
 
 #[test]
+fn unstable_fn_sort_is_preserved_only_in_inert_schemas() {
+    let inert_source = r#"
+        (sort Callback (UnstableFn (i64) i64))
+        (relation Opaque (Callback))
+        (relation Seed ())
+        (Seed)
+        (run 1)
+        (check (Seed))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("inert-unstable-fn.egg".to_owned()), inert_source).unwrap();
+    assert!(
+        slice
+            .source
+            .contains("(sort Callback (UnstableFn (i64) i64))")
+    );
+    assert!(slice.source.contains("(relation Opaque (Callback))"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("inert-unstable-fn-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+
+    let dynamic_source = r#"
+        (sort Callback (UnstableFn (i64) i64))
+        (relation HasCallback (Callback))
+        (relation Goal ())
+        (rule ((HasCallback callback)) ((Goal)) :name "read-callback")
+        (run 1)
+        (check (Goal))
+    "#;
+    let error = causal_slice_program(Some("dynamic-unstable-fn.egg".to_owned()), dynamic_source)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("relation `HasCallback` with opaque container sort `Callback` in rule body"),
+        "{error}"
+    );
+}
+
+#[test]
 fn container_values_remain_an_explicit_runtime_boundary() {
     let relation_use = r#"
         (sort Values (Vec i64))

@@ -1689,7 +1689,7 @@ fn trace_function_metadata(
 }
 
 fn schema_only_container_presort(presort: &str) -> bool {
-    matches!(presort, "Pair" | "Set" | "Vec")
+    matches!(presort, "Pair" | "Set" | "UnstableFn" | "Vec")
 }
 
 fn collect_declarations(
