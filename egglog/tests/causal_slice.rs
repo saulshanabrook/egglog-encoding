@@ -609,6 +609,50 @@ fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays
 }
 
 #[test]
+fn consecutive_top_level_schedules_replay_in_chronological_waves() {
+    let source = r#"
+        (relation Seed (i64))
+        (relation Mid (i64))
+        (relation Goal (i64))
+        (ruleset first)
+        (ruleset second)
+        (rule ((Seed x)) ((Mid x)) :ruleset first :name "seed-to-mid")
+        (rule ((Mid x)) ((Goal x)) :ruleset second :name "mid-to-goal")
+        (Seed 7)
+        (run first 1)
+        (run second 1)
+        (check (Goal 7))
+    "#;
+
+    let slice = causal_slice_program(Some("two-schedules.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.waves, 2);
+    assert_eq!(slice.stats.retained_applications, 2);
+    assert_eq!(
+        replay_firings(&slice.source),
+        vec![
+            (
+                "seed-to-mid".to_owned(),
+                vec![("x".to_owned(), "7".to_owned())]
+            ),
+            (
+                "mid-to-goal".to_owned(),
+                vec![("x".to_owned(), "7".to_owned())]
+            ),
+        ]
+    );
+    assert!(!slice.source.contains("(run first 1)"));
+    assert!(!slice.source.contains("(run second 1)"));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("two-schedules-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn rule_created_constructor_witness_drives_sliced_replay_and_strict_proofs() {
     let source = r#"
         (datatype Expr (A i64) (F Expr))

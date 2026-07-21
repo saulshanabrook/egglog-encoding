@@ -927,7 +927,7 @@ struct ProgramModel {
     source_facts: Vec<SourceFact>,
     constructors: IndexMap<String, ConstructorDecl>,
     source_expansions: SourceCommandExpansions,
-    schedule_index: usize,
+    schedule_indices: Vec<usize>,
     prefix_fallbacks: usize,
 }
 
@@ -1065,7 +1065,7 @@ fn generate_causal_slice(
         source_facts,
         constructors,
         source_expansions,
-        schedule_index,
+        schedule_indices,
         prefix_fallbacks,
     } = validate_and_model(
         &commands,
@@ -1079,14 +1079,14 @@ fn generate_causal_slice(
 
     let mut egraph = EGraph::default().with_union_to_set_optimization(false);
     let trace_start = Instant::now();
-    let mut schedule_batches = None;
+    let mut schedule_batches = Vec::new();
     let mut check_batches = Vec::new();
     let mut source_traces = IndexMap::default();
 
     for (command_index, command) in commands.iter().cloned().enumerate() {
-        if command_index == schedule_index {
+        if schedule_indices.contains(&command_index) {
             let batches = run_one_traced_command(&mut egraph, command)?;
-            schedule_batches = Some(batches);
+            schedule_batches.extend(batches);
         } else if matches!(command, Command::Check(..)) {
             check_batches.push(run_one_traced_command(&mut egraph, command)?);
         } else if let Some(expansion) = source_expansions.get(&command_index) {
@@ -1127,9 +1127,9 @@ fn generate_causal_slice(
     }
     let traced_run_time = trace_start.elapsed();
     let elaboration_start = Instant::now();
-    let schedule_batches = schedule_batches.ok_or_else(|| {
-        CausalSliceError::Invariant("validated schedule was not executed".to_owned())
-    })?;
+    let schedule_index = *schedule_indices
+        .first()
+        .ok_or_else(|| CausalSliceError::Invariant("validated schedules disappeared".to_owned()))?;
     let waves = schedule_batches.len();
     let observation_matches = check_batches
         .iter()
@@ -1208,7 +1208,7 @@ fn generate_causal_slice(
         );
         let source = emit_program_with_replay_commands(
             &commands,
-            schedule_index,
+            &schedule_indices,
             &replay_commands,
             &source_expansions,
         );
@@ -1337,7 +1337,7 @@ fn generate_causal_slice(
     let full_transcript_source = include_full_transcript.then(|| {
         emit_program(
             &commands,
-            schedule_index,
+            &schedule_indices,
             &schedule_span,
             &rules,
             pending_fires.iter().map(|fire| &fire.grounding),
@@ -1348,7 +1348,7 @@ fn generate_causal_slice(
     });
     let (source, shared_replay_witnesses) = emit_program(
         &commands,
-        schedule_index,
+        &schedule_indices,
         &schedule_span,
         &rules,
         retained
@@ -2309,7 +2309,7 @@ fn validate_and_model(
     let mut source_facts = Vec::new();
     let mut source_expansions = SourceCommandExpansions::default();
     let mut source_globals = IndexMap::default();
-    let mut schedule_index = None;
+    let mut schedule_indices = Vec::new();
     let mut observations_started = false;
     let mut print_size_observations = 0usize;
 
@@ -2321,7 +2321,7 @@ fn validate_and_model(
             | Command::Constructor { .. }
             | Command::Function { .. }
             | Command::AddRuleset(..) => {
-                if schedule_index.is_some() {
+                if !schedule_indices.is_empty() {
                     return unsupported_command(
                         command,
                         index,
@@ -2342,7 +2342,7 @@ fn validate_and_model(
                 .as_ref()
                 .is_none_or(|(presort, _)| schema_only_container_presort(presort)) =>
             {
-                if schedule_index.is_some() {
+                if !schedule_indices.is_empty() {
                     return unsupported_command(
                         command,
                         index,
@@ -2352,7 +2352,7 @@ fn validate_and_model(
                 }
             }
             Command::Rule { rule } => {
-                if schedule_index.is_some() {
+                if !schedule_indices.is_empty() {
                     return unsupported(
                         &rule.span,
                         "rule declaration after the computation schedule".to_owned(),
@@ -2377,7 +2377,7 @@ fn validate_and_model(
                 }
             }
             Command::Action(action) => {
-                if schedule_index.is_some() {
+                if !schedule_indices.is_empty() {
                     return unsupported_action(
                         action,
                         "ordinary action after the computation schedule",
@@ -2404,7 +2404,7 @@ fn validate_and_model(
                 source_facts.push(fact);
             }
             Command::Input { span, name, file } => {
-                if schedule_index.is_some() {
+                if !schedule_indices.is_empty() {
                     return unsupported(
                         span,
                         "an input command after the computation schedule".to_owned(),
@@ -2445,14 +2445,6 @@ fn validate_and_model(
                 source_expansions.insert(index, expansion);
             }
             Command::RunSchedule(schedule) => {
-                if schedule_index.replace(index).is_some() {
-                    return unsupported_command(
-                        command,
-                        index,
-                        source_name,
-                        "more than one top-level computation schedule",
-                    );
-                }
                 if observations_started {
                     return unsupported_command(
                         command,
@@ -2462,9 +2454,10 @@ fn validate_and_model(
                     );
                 }
                 validate_input_schedule(schedule)?;
+                schedule_indices.push(index);
             }
             Command::Check(span, facts) => {
-                if schedule_index.is_none() {
+                if schedule_indices.is_empty() {
                     return unsupported(span, "a positive check before the schedule".to_owned());
                 }
                 observations_started = true;
@@ -2515,7 +2508,7 @@ fn validate_and_model(
                 // Preserve read-only diagnostics at their original boundary.
                 // In a print-only program they conservatively retain the
                 // complete effective execution prefix.
-                if schedule_index.is_none() {
+                if schedule_indices.is_empty() {
                     return unsupported_command(
                         command,
                         index,
@@ -2534,7 +2527,7 @@ fn validate_and_model(
                             .to_owned(),
                     );
                 }
-                if schedule_index.is_none() {
+                if schedule_indices.is_empty() {
                     return unsupported(span, "print-stats before the schedule".to_owned());
                 }
                 // Preserved as an operational diagnostic, not as a semantic
@@ -2552,10 +2545,12 @@ fn validate_and_model(
         }
     }
 
-    let schedule_index = schedule_index.ok_or_else(|| CausalSliceError::Unsupported {
-        location: source_name.to_owned(),
-        reason: "a program without exactly one computation schedule".to_owned(),
-    })?;
+    if schedule_indices.is_empty() {
+        return Err(CausalSliceError::Unsupported {
+            location: source_name.to_owned(),
+            reason: "a program without a computation schedule".to_owned(),
+        });
+    }
     let prefix_fallbacks = if checks.is_empty() {
         print_size_observations
     } else {
@@ -2573,7 +2568,7 @@ fn validate_and_model(
         source_facts,
         constructors: constructors.clone(),
         source_expansions,
-        schedule_index,
+        schedule_indices,
         prefix_fallbacks,
     })
 }
@@ -6140,7 +6135,7 @@ fn emit_prefix_replay_commands(
 
 fn emit_program<'a>(
     commands: &[Command],
-    schedule_index: usize,
+    schedule_indices: &[usize],
     schedule_span: &Span,
     rules: &IndexMap<String, RuleModel>,
     fires: impl IntoIterator<Item = &'a GroundedFire>,
@@ -6174,7 +6169,7 @@ fn emit_program<'a>(
     (
         emit_program_with_replay_commands(
             commands,
-            schedule_index,
+            schedule_indices,
             &replay_commands,
             source_expansions,
         ),
@@ -6184,14 +6179,19 @@ fn emit_program<'a>(
 
 fn emit_program_with_replay_commands(
     commands: &[Command],
-    schedule_index: usize,
+    schedule_indices: &[usize],
     replay_commands: &str,
     source_expansions: &SourceCommandExpansions,
 ) -> String {
     let mut rendered = String::new();
     for (index, command) in commands.iter().enumerate() {
-        if index == schedule_index {
+        if schedule_indices.first().copied() == Some(index) {
             rendered.push_str(replay_commands);
+        } else if schedule_indices.contains(&index) {
+            // All traced waves are emitted at the first of the consecutive
+            // computation boundaries. Each packed leaf retains its original
+            // commit/rebuild boundary, while later automatic schedules are
+            // removed rather than secretly re-executed.
         } else if let Some(expansion) = source_expansions.get(&index) {
             for command in expansion {
                 rendered.push_str(&command.to_string());
