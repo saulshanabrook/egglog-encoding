@@ -1704,11 +1704,36 @@ impl EGraph {
                     ))
                 })
             }
-            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), _) => {
-                Err(Error::BackendError(format!(
-                    "{span}\npacked replay witnesses do not support primitive {}",
-                    primitive.name()
-                )))
+            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), children) => {
+                let values = children
+                    .iter()
+                    .map(|child| self.eval_replay_witness(child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let base_values = self.backend.base_values();
+                match (
+                    primitive.name(),
+                    primitive.output().name(),
+                    values.as_slice(),
+                ) {
+                    ("bigint", "BigInt", [value]) => {
+                        let value = base_values.unwrap::<i64>(*value);
+                        Ok(base_values.get(Z::new(value.into())))
+                    }
+                    ("bigrat", "BigRat", [numerator, denominator]) => {
+                        let numerator = base_values.unwrap::<Z>(*numerator).0.clone();
+                        let denominator = base_values.unwrap::<Z>(*denominator).0.clone();
+                        if denominator == num::BigInt::from(0) {
+                            return Err(Error::BackendError(format!(
+                                "{span}\npacked replay BigRat witness has a zero denominator"
+                            )));
+                        }
+                        Ok(base_values.get(Q::new(num::BigRational::new(numerator, denominator))))
+                    }
+                    _ => Err(Error::BackendError(format!(
+                        "{span}\npacked replay witnesses do not support primitive {}",
+                        primitive.name()
+                    ))),
+                }
             }
             ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::BackendError(
                 format!("{span}\npacked replay witnesses do not support tuple expressions"),

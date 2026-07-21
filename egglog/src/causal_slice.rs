@@ -216,6 +216,7 @@ struct SourceFact {
 enum SourceFactKind {
     Relation(AtomTemplate),
     Constructor(AtomArg),
+    GlobalConstructor { name: String, sort: String },
 }
 
 #[derive(Clone, Debug)]
@@ -394,6 +395,32 @@ impl WitnessArena {
             id
         };
         self.bind_endpoint_with_alias(sort, endpoint, id, allow_endpoint_alias)?;
+        Ok(id)
+    }
+
+    fn intern_syntax_app(
+        &mut self,
+        sort: &str,
+        function: &str,
+        children: Vec<WitnessId>,
+    ) -> Result<WitnessId, CausalSliceError> {
+        let node = WitnessNode::App {
+            sort: sort.to_owned(),
+            function: function.to_owned(),
+            children,
+        };
+        if let Some(id) = self.ids.get(&node) {
+            return Ok(*id);
+        }
+        let id = WitnessId(u32::try_from(self.nodes.len()).map_err(|_| {
+            CausalSliceError::Invariant("witness arena exceeded u32 capacity".to_owned())
+        })?);
+        self.nodes.push(WitnessRecord {
+            node: node.clone(),
+            original_value: None,
+            availability: DepArena::EMPTY,
+        });
+        self.ids.insert(node, id);
         Ok(id)
     }
 
@@ -756,7 +783,7 @@ struct ElaborationInput<'a> {
     rules: &'a IndexMap<String, RuleModel>,
     relations: &'a IndexMap<String, RelationDecl>,
     source_facts: &'a [SourceFact],
-    source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
+    source_traces: &'a IndexMap<usize, SourceExecutionTrace>,
     batches: &'a [RuleExecutionTrace],
     trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
     prefix_fallback: bool,
@@ -767,7 +794,7 @@ struct PrefixElaborationInput<'a> {
     rules: &'a IndexMap<String, RuleModel>,
     relations: &'a IndexMap<String, RelationDecl>,
     source_facts: &'a [SourceFact],
-    source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
+    source_traces: &'a IndexMap<usize, SourceExecutionTrace>,
     batches: Vec<RuleExecutionTrace>,
     trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
 }
@@ -779,6 +806,11 @@ struct ObservationInput<'a> {
     traces: &'a [Vec<RuleExecutionTrace>],
     producers: &'a IndexMap<RowKey, DepId>,
     equality_forest: &'a EqualityForest,
+}
+
+struct SourceExecutionTrace {
+    batches: Vec<RuleExecutionTrace>,
+    global_endpoint: Option<Value>,
 }
 
 /// Trace one ordinary reference-backend execution and emit a guarded manual
@@ -891,7 +923,35 @@ fn generate_causal_slice(
         } else if let Some(expansion) = source_expansions.get(&command_index) {
             egraph.run_program(expansion.clone())?;
         } else if matches!(command, Command::Action(..)) {
-            source_traces.insert(command_index, run_one_traced_command(&mut egraph, command)?);
+            let global_name = match &command {
+                Command::Action(Action::Let(_, name, _)) => Some(name.clone()),
+                _ => None,
+            };
+            let batches = run_one_traced_command(&mut egraph, command)?;
+            let global_endpoint = global_name
+                .map(|name| {
+                    let function = egraph.functions.get(&name).ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "source global `{name}` was not registered by its defining action"
+                        ))
+                    })?;
+                    egraph
+                        .backend
+                        .lookup_id(function.backend_id, &[])
+                        .ok_or_else(|| {
+                            CausalSliceError::Invariant(format!(
+                                "source global `{name}` has no value after its defining action"
+                            ))
+                        })
+                })
+                .transpose()?;
+            source_traces.insert(
+                command_index,
+                SourceExecutionTrace {
+                    batches,
+                    global_endpoint,
+                },
+            );
         } else {
             egraph.run_program(vec![command])?;
         }
@@ -1816,6 +1876,7 @@ fn validate_and_model(
     let mut checks = Vec::new();
     let mut source_facts = Vec::new();
     let mut source_expansions = SourceCommandExpansions::default();
+    let mut source_globals = IndexMap::default();
     let mut schedule_index = None;
     let mut observations_started = false;
     let mut print_size_observations = 0usize;
@@ -1879,7 +1940,17 @@ fn validate_and_model(
                         "ordinary action after the computation schedule",
                     );
                 }
-                source_facts.push(model_source_fact(index, action, relations, constructors)?);
+                let fact =
+                    model_source_fact(index, action, relations, constructors, &source_globals)?;
+                if let SourceFactKind::GlobalConstructor { name, sort } = &fact.kind
+                    && source_globals.insert(name.clone(), sort.clone()).is_some()
+                {
+                    return unsupported_action(
+                        action,
+                        format!("a duplicate source global `{name}`"),
+                    );
+                }
+                source_facts.push(fact);
             }
             Command::Input { span, name, file } => {
                 if schedule_index.is_some() {
@@ -2534,7 +2605,37 @@ fn model_source_fact(
     action: &Action,
     relations: &IndexMap<String, RelationDecl>,
     constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
 ) -> Result<SourceFact, CausalSliceError> {
+    if let GenericAction::Let(span, name, expr) = action {
+        if !name.starts_with('$') {
+            return unsupported(
+                span,
+                format!("a source let whose global name `{name}` does not start with `$`"),
+            );
+        }
+        let GenericExpr::Call(_, function, _) = expr else {
+            return unsupported(
+                &expr.span(),
+                "a source global not rooted in an immutable constructor".to_owned(),
+            );
+        };
+        if !constructors.contains_key(function) {
+            return unsupported(
+                &expr.span(),
+                format!("source global `{name}` rooted in primitive or function `{function}`"),
+            );
+        }
+        let sort = validate_closed_source_expr(expr, constructors, source_globals)?;
+        return Ok(SourceFact {
+            command_index,
+            kind: SourceFactKind::GlobalConstructor {
+                name: name.clone(),
+                sort,
+            },
+        });
+    }
+
     let GenericAction::Expr(_, expr) = action else {
         return unsupported_action(action, "a non-insert initialization action");
     };
@@ -2564,6 +2665,9 @@ fn model_source_fact(
     let args = match &kind {
         SourceFactKind::Relation(atom) => atom.args.as_slice(),
         SourceFactKind::Constructor(application) => std::slice::from_ref(application),
+        SourceFactKind::GlobalConstructor { .. } => {
+            unreachable!("source globals return before ordinary source-fact validation")
+        }
     };
     for arg in args {
         if let Some((span, var)) = atom_arg_vars(arg).into_iter().next() {
@@ -2577,6 +2681,108 @@ fn model_source_fact(
         command_index,
         kind,
     })
+}
+
+fn validate_closed_source_expr(
+    expr: &Expr,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+) -> Result<String, CausalSliceError> {
+    match expr {
+        GenericExpr::Lit(_, literal) => Ok(match literal {
+            Literal::Int(_) => "i64",
+            Literal::Float(_) => "f64",
+            Literal::String(_) => "String",
+            Literal::Bool(_) => "bool",
+            Literal::Unit => "Unit",
+        }
+        .to_owned()),
+        GenericExpr::Var(span, name) => {
+            source_globals
+                .get(name)
+                .cloned()
+                .ok_or_else(|| CausalSliceError::Unsupported {
+                    location: span.to_string(),
+                    reason: format!("an unknown or non-global source binding `{name}`"),
+                })
+        }
+        GenericExpr::Call(span, function, args) => {
+            let (input_sorts, output_sort): (&[&str], &str) = if let Some(constructor) =
+                constructors.get(function)
+            {
+                let input_sorts = constructor
+                    .inputs
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+                return validate_closed_source_call(
+                    span,
+                    function,
+                    args,
+                    &input_sorts,
+                    &constructor.output,
+                    constructors,
+                    source_globals,
+                );
+            } else {
+                match function.as_str() {
+                    "bigint" => (&["i64"], "BigInt"),
+                    "from-string" => (&["String"], "BigInt"),
+                    "bigrat" => (&["BigInt", "BigInt"], "BigRat"),
+                    _ => {
+                        return unsupported(
+                            span,
+                            format!(
+                                "primitive or function `{function}` in a source global expression"
+                            ),
+                        );
+                    }
+                }
+            };
+            validate_closed_source_call(
+                span,
+                function,
+                args,
+                input_sorts,
+                output_sort,
+                constructors,
+                source_globals,
+            )
+        }
+    }
+}
+
+fn validate_closed_source_call(
+    span: &Span,
+    function: &str,
+    args: &[Expr],
+    input_sorts: &[&str],
+    output_sort: &str,
+    constructors: &IndexMap<String, ConstructorDecl>,
+    source_globals: &IndexMap<String, String>,
+) -> Result<String, CausalSliceError> {
+    if args.len() != input_sorts.len() {
+        return unsupported(
+            span,
+            format!(
+                "source global call `{function}` with arity {} instead of {}",
+                args.len(),
+                input_sorts.len()
+            ),
+        );
+    }
+    for (arg, expected) in args.iter().zip(input_sorts) {
+        let actual = validate_closed_source_expr(arg, constructors, source_globals)?;
+        if actual != *expected {
+            return unsupported(
+                &arg.span(),
+                format!(
+                    "source global call `{function}` expecting `{expected}` but receiving `{actual}`"
+                ),
+            );
+        }
+    }
+    Ok(output_sort.to_owned())
 }
 
 fn source_fact_command(span: &Span, fact: &SourceFact) -> Command {
@@ -2795,16 +3001,16 @@ fn validate_input_schedule(schedule: &Schedule) -> Result<(), CausalSliceError> 
 fn elaborate_source_fact(
     egraph: &EGraph,
     fact: &SourceFact,
-    source_traces: &IndexMap<usize, Vec<RuleExecutionTrace>>,
+    source_traces: &IndexMap<usize, SourceExecutionTrace>,
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
     relations: &IndexMap<String, RelationDecl>,
     witnesses: &mut WitnessArena,
     prefix_fallback: bool,
 ) -> Result<Vec<RowKey>, CausalSliceError> {
-    if let Some(batches) = source_traces.get(&fact.command_index) {
+    if let Some(trace) = source_traces.get(&fact.command_index) {
         let mut observed = Vec::new();
         let mut new_rows = Vec::new();
-        for batch in batches {
+        for batch in &trace.batches {
             if !batch.unions.is_empty() {
                 return Err(CausalSliceError::Unsupported {
                     location: format!("source command {}", fact.command_index),
@@ -2835,6 +3041,12 @@ fn elaborate_source_fact(
         }
         match &fact.kind {
             SourceFactKind::Relation(atom) => {
+                if trace.global_endpoint.is_some() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source relation command {} captured a global endpoint",
+                        fact.command_index
+                    )));
+                }
                 let expected = ground_atoms(
                     egraph,
                     std::slice::from_ref(atom),
@@ -2850,7 +3062,7 @@ fn elaborate_source_fact(
                 }
             }
             SourceFactKind::Constructor(application) => {
-                if !observed.is_empty() || !new_rows.is_empty() {
+                if trace.global_endpoint.is_some() || !observed.is_empty() || !new_rows.is_empty() {
                     return Err(CausalSliceError::Invariant(format!(
                         "source constructor command {} unexpectedly produced relation rows",
                         fact.command_index
@@ -2869,6 +3081,26 @@ fn elaborate_source_fact(
                     witnesses,
                 )?;
             }
+            SourceFactKind::GlobalConstructor { name, sort } => {
+                if !observed.is_empty() || !new_rows.is_empty() {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "source global command {} unexpectedly produced relation rows",
+                        fact.command_index
+                    )));
+                }
+                let endpoint = trace.global_endpoint.ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "source global `{name}` did not capture its definition-time endpoint"
+                    ))
+                })?;
+                if witnesses.by_endpoint(sort, endpoint).is_none() {
+                    return Err(CausalSliceError::Unsupported {
+                        location: format!("source global `{name}`"),
+                        reason: "a constructor result without an immutable replay witness"
+                            .to_owned(),
+                    });
+                }
+            }
         }
         Ok(new_rows)
     } else {
@@ -2878,6 +3110,10 @@ fn elaborate_source_fact(
             }
             SourceFactKind::Constructor(..) => Err(CausalSliceError::Invariant(format!(
                 "source constructor command {} had no native trace",
+                fact.command_index
+            ))),
+            SourceFactKind::GlobalConstructor { .. } => Err(CausalSliceError::Invariant(format!(
+                "source global command {} had no native trace",
                 fact.command_index
             ))),
         }
@@ -3943,23 +4179,86 @@ fn scalar_witness(
     let mut termdag = TermDag::default();
     let term = sort.reconstruct_termdag_base(egraph.backend.base_values(), value, &mut termdag);
     let expr = termdag.term_to_expr(&term, Span::Panic);
-    let GenericExpr::Lit(_, literal) = expr else {
-        return Err(CausalSliceError::Unsupported {
-            location: location.to_owned(),
-            reason: format!("a non-scalar `{sort_name}` value without a constructor witness"),
-        });
-    };
-    if !literal_is_source_stable(&literal) {
-        return Err(CausalSliceError::Unsupported {
-            location: location.to_owned(),
-            reason: format!(
-                "a `{sort_name}` witness that egglog's source printer cannot round-trip"
-            ),
-        });
-    }
-    let witness = witnesses.intern_literal(sort_name, literal)?;
+    let witness = intern_reconstructed_base_witness(&expr, sort_name, witnesses, location)?;
     witnesses.bind_endpoint(sort_name, value, witness)?;
     Ok(witness)
+}
+
+fn intern_reconstructed_base_witness(
+    expr: &Expr,
+    sort: &str,
+    witnesses: &mut WitnessArena,
+    location: &str,
+) -> Result<WitnessId, CausalSliceError> {
+    match expr {
+        GenericExpr::Lit(_, literal) => {
+            let actual = match literal {
+                Literal::Int(_) => "i64",
+                Literal::Float(_) => "f64",
+                Literal::String(_) => "String",
+                Literal::Bool(_) => "bool",
+                Literal::Unit => "Unit",
+            };
+            if actual != sort || !literal_is_source_stable(literal) {
+                return Err(CausalSliceError::Unsupported {
+                    location: location.to_owned(),
+                    reason: format!(
+                        "a `{sort}` witness that egglog's source printer cannot round-trip"
+                    ),
+                });
+            }
+            witnesses.intern_literal(sort, literal.clone())
+        }
+        GenericExpr::Call(span, function, args) => {
+            if sort == "BigInt" && function == "from-string" {
+                let [GenericExpr::Lit(_, Literal::String(value))] = args.as_slice() else {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "reconstructed BigInt at {span} is not one canonical string"
+                    )));
+                };
+                let value = value
+                    .parse::<i64>()
+                    .map_err(|_| CausalSliceError::Unsupported {
+                        location: location.to_owned(),
+                        reason: format!(
+                            "a BigInt witness outside the replayable i64 range: `{value}`"
+                        ),
+                    })?;
+                let child = witnesses.intern_literal("i64", Literal::Int(value))?;
+                return witnesses.intern_syntax_app("BigInt", "bigint", vec![child]);
+            }
+            let input_sorts: &[&str] = match (sort, function.as_str()) {
+                ("BigInt", "bigint") => &["i64"],
+                ("BigRat", "bigrat") => &["BigInt", "BigInt"],
+                _ => {
+                    return Err(CausalSliceError::Unsupported {
+                        location: location.to_owned(),
+                        reason: format!(
+                            "a non-scalar `{sort}` value reconstructed through unsupported primitive `{function}`"
+                        ),
+                    });
+                }
+            };
+            if args.len() != input_sorts.len() {
+                return Err(CausalSliceError::Invariant(format!(
+                    "reconstructed `{function}` at {span} has arity {} instead of {}",
+                    args.len(),
+                    input_sorts.len()
+                )));
+            }
+            let children = args
+                .iter()
+                .zip(input_sorts)
+                .map(|(arg, input_sort)| {
+                    intern_reconstructed_base_witness(arg, input_sort, witnesses, location)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            witnesses.intern_syntax_app(sort, function, children)
+        }
+        GenericExpr::Var(span, variable) => Err(CausalSliceError::Invariant(format!(
+            "reconstructed base witness at {span} contains variable `{variable}`"
+        ))),
+    }
 }
 
 fn source_row(
@@ -3970,7 +4269,7 @@ fn source_row(
 ) -> Result<RowKey, CausalSliceError> {
     let SourceFactKind::Relation(atom) = &fact.kind else {
         return Err(CausalSliceError::Invariant(
-            "source_row received a constructor-only initialization".to_owned(),
+            "source_row received a constructor-only or global initialization".to_owned(),
         ));
     };
     let declaration = &relations[&atom.relation];

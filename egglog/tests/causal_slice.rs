@@ -734,6 +734,99 @@ fn immutable_big_number_constructor_sorts_are_preserved() {
 }
 
 #[test]
+fn constructor_global_with_bigrat_child_replays_ordinary_and_strictly() {
+    let source = r#"
+        (datatype Math (Num BigRat) (Neg Math))
+        (relation Done (BigRat))
+        (let $zero (Num (bigrat (bigint 0) (bigint 1))))
+        (let $neg-zero (Neg $zero))
+        (rule ((= x (Num n))) ((Done n)) :name "copy-number")
+        (run 1)
+        (check (Done n))
+    "#;
+
+    let slice = causal_slice_program(Some("bigrat-global.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(let $zero (Num (bigrat"));
+    assert!(slice.source.contains("(let $neg-zero (Neg $zero))"));
+    assert!(
+        replay_firings(&slice.source)
+            .iter()
+            .any(|(rule, _)| rule == "copy-number")
+    );
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-global-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn constructor_global_rejects_arbitrary_primitives() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (let $bad
+          (Num (+ (bigrat (bigint 1) (bigint 1))
+                  (bigrat (bigint 2) (bigint 1)))))
+        (run 1)
+        (print-size Math)
+    "#;
+
+    let error = causal_slice_program(Some("primitive-global.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("primitive or function `+` in a source global expression")
+    );
+}
+
+#[test]
+fn constructor_global_rejects_unprintable_bigints() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Marker ())
+        (let $too-big
+          (Num (bigrat (from-string "9223372036854775808") (bigint 1))))
+        (Marker)
+        (run 1)
+        (check (Marker))
+    "#;
+
+    let error =
+        causal_slice_program(Some("large-bigint-global.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("a BigInt witness outside the replayable i64 range"),
+        "{error}"
+    );
+}
+
+#[test]
+fn dynamic_global_references_remain_an_explicit_boundary() {
+    let source = r#"
+        (datatype Math (Num BigRat))
+        (relation Trigger ())
+        (relation Done (Math))
+        (let $zero (Num (bigrat (bigint 0) (bigint 1))))
+        (Trigger)
+        (rule ((Trigger)) ((Done $zero)) :name "use-global")
+        (run 1)
+        (check (Done $zero))
+    "#;
+
+    let error = causal_slice_program(Some("dynamic-global.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("head-only variable `$zero` in rule `use-global`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn container_presort_remains_an_explicit_boundary() {
     let source = r#"
         (sort Values (Vec i64))
