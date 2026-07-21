@@ -689,7 +689,11 @@ Current post-filter/query continuation:
   and `git diff --check` passed;
 - fresh real-fixture probes advanced Herbie from line-64 `pow` to line-80
   mutable `lo`, and Luminal from line-66 i64 `+` to the same rule's `subsume`;
-- `make proof-tests` and `make check` remain pending after these commits.
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- `make check`: passed, including formatting, Ruff, mypy, Clippy, 170 Python
+  tests, the full Rust workspace, 764 reference file fixtures, experimental/DD
+  tests, and doctests;
+- `git diff --check`: passed.
 
 ## Implemented fact, measurement, proposal, and falsification
 
