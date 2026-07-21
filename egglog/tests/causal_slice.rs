@@ -875,7 +875,48 @@ fn retained_bigrat_binary_arithmetic_replays_strictly() {
 }
 
 #[test]
-fn pure_bigrat_query_requires_exact_postfilter_grounding() {
+fn pure_i64_query_primitive_replays_its_complete_grounding() {
+    let source = r#"
+        (datatype Math (Num i64))
+        (relation Inputs (Math Math))
+        (relation Done (Math))
+        (let $two (Num 2))
+        (let $three (Num 3))
+        (let $five (Num 5))
+        (Inputs $two $three)
+        (rule ((Inputs x y)
+               (= x (Num a))
+               (= y (Num b))
+               (= result (+ a b)))
+              ((Done (Num result)))
+              :name "fold-add"
+              :no-decomp)
+        (run 1)
+        (check (Done $five))
+    "#;
+
+    let slice = causal_slice_program(Some("i64-query-add.egg".to_owned()), source).unwrap();
+    let firing = replay_firings(&slice.source)
+        .into_iter()
+        .find(|(rule, _)| rule == "fold-add")
+        .expect("retained query primitive firing");
+    assert!(
+        firing
+            .1
+            .iter()
+            .any(|(variable, witness)| variable == "result" && witness == "5")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("i64-query-add-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
+fn pure_bigrat_query_replays_with_exact_postfilter_grounding() {
     let source = r#"
         (datatype Math (Num BigRat))
         (relation Inputs (Math Math))
@@ -883,7 +924,10 @@ fn pure_bigrat_query_requires_exact_postfilter_grounding() {
         (let $two (Num (bigrat (bigint 2) (bigint 1))))
         (let $three (Num (bigrat (bigint 3) (bigint 1))))
         (let $eight (Num (bigrat (bigint 8) (bigint 1))))
+        (let $zero (Num (bigrat (bigint 0) (bigint 1))))
+        (let $negative-one (Num (bigrat (bigint -1) (bigint 1))))
         (Inputs $two $three)
+        (Inputs $zero $negative-one)
         (rule ((Inputs x y)
                (= x (Num a))
                (= y (Num b))
@@ -903,13 +947,27 @@ fn pure_bigrat_query_requires_exact_postfilter_grounding() {
             .unwrap();
     }
 
-    let error = causal_slice_program(Some("bigrat-pow.egg".to_owned()), source).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("function/primitive lookup `pow`"),
-        "{error}"
+    let slice = causal_slice_program(Some("bigrat-pow.egg".to_owned()), source).unwrap();
+    let firing = replay_firings(&slice.source)
+        .into_iter()
+        .find(|(rule, _)| rule == "fold-pow")
+        .expect("retained query primitive firing");
+    assert_eq!(
+        replay_firings(&slice.source)
+            .iter()
+            .filter(|(rule, _)| rule == "fold-pow")
+            .count(),
+        1,
+        "the failed pow candidate must not become a replay firing"
     );
+    assert!(firing.1.iter().any(|(variable, _)| variable == "result"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("bigrat-pow-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
 }
 
 #[test]
