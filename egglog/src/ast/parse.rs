@@ -1669,6 +1669,19 @@ mod tests {
     }
 
     #[test]
+    fn datatype_unextractable_variant_parser_display_roundtrip() {
+        let source = "(datatype Expr (U i64 :unextractable))";
+        let command = Parser::default()
+            .get_program_from_string(None, source)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+
+        assert_eq!(command.to_string(), source);
+    }
+
+    #[test]
     fn run_rule_schedule_parser_display_roundtrip() {
         let source = r#"(run-rule "step" :bind ((x (Node 1)) (y 2)) :expect 1)"#;
         let mut parser = Parser::default();

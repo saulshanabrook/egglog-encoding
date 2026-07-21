@@ -1673,17 +1673,16 @@ fn collect_declarations(
                 span,
                 name,
                 schema,
-                unextractable,
                 hidden,
                 let_binding,
                 term_constructor,
                 ..
             } => {
-                if *unextractable || *hidden || *let_binding || term_constructor.is_some() {
+                if *hidden || *let_binding || term_constructor.is_some() {
                     return unsupported(
                         span,
                         format!(
-                            "standalone constructor `{name}` with extraction, hidden, global, or encoded-view annotations"
+                            "standalone constructor `{name}` with hidden, global, or encoded-view annotations"
                         ),
                     );
                 }

@@ -1140,6 +1140,39 @@ fn standalone_and_constructor_only_head_actions_replay_as_complete_firings() {
 }
 
 #[test]
+fn unextractable_constructor_witness_replays_without_extraction() {
+    let source = r#"
+        (sort E)
+        (constructor U (i64) E :unextractable)
+        (relation Seed (E))
+        (relation Goal (E))
+        (Seed (U 7))
+        (rule ((Seed e)) ((Goal e)) :name "copy" :no-decomp)
+        (run 1)
+        (check (Goal (U 7)))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("unextractable-constructor.egg".to_owned()), source).unwrap();
+    assert!(
+        slice
+            .source
+            .contains("(constructor U (i64) E :unextractable)")
+    );
+    assert!(has_replay_firing(&slice.source, "copy", &[("e", "(U 7)")]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("unextractable-constructor-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn direct_union_slice_retains_applied_edge_and_drops_redundant_firing() {
     let source = r#"
         (datatype Expr (A i64))
