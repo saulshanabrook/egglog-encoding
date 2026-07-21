@@ -22,10 +22,24 @@ The schedule-node mapping:
 | `(run N :ruleset R)` | `iterate` with feedback gated on round < N |
 | `(seq A B)` | data-dependency chaining of regions |
 
-Prerequisite: a backend-API extension so the backend SEES the schedule tree —
-e.g. an optional `run_schedule(schedule, rulesets)` entry point whose default
-implementation interprets the tree by calling `run_rules` per iteration
-(main backend unchanged; DD overrides it).
+Prerequisite: a backend-API extension so the backend SEES the schedule tree.
+The frontend's interpreter is already the exact shape needed — a small
+recursive `run_schedule` over `ResolvedSchedule::{Run, Repeat, Saturate,
+Sequence}` (`egglog/src/lib.rs`, `fn run_schedule`). Concretely:
+
+- `egglog-backend-trait` gains a `ScheduleSpec` tree (`Run { rules }`,
+  `Repeat(n, _)`, `Saturate(_)`, `Sequence(_)`) and an optional trait method
+  `run_schedule(&mut self, &ScheduleSpec) -> Result<IterationReport>` whose
+  DEFAULT implementation interprets the tree by calling `run_rules` per
+  iteration — the main backend is unchanged by construction.
+- The frontend's `run_schedule` lowers `ResolvedSchedule` to `ScheduleSpec`
+  and delegates to the backend hook. The term encoding's own rebuild
+  schedule flows through the same path, so the DD backend sees it too.
+- Fallback rule: schedule regions that involve host-side per-iteration
+  machinery — custom `Scheduler` objects (`egglog/src/scheduler.rs`, with
+  their ban/backoff callbacks) or `until` conditions — cannot be compiled;
+  the DD override detects those regions and interprets them via the default
+  path, compiling only "plain" subtrees.
 
 ### Fresh ids inside the dataflow: the memoizing mint operator
 
