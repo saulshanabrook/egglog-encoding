@@ -2959,12 +2959,12 @@ fn model_query_primitive(
 ) -> Result<Option<QueryPrimitiveTemplate>, CausalSliceError> {
     let (application_expr, output_expr) = match (left, right) {
         (GenericExpr::Call(_, function, _), GenericExpr::Var(..))
-            if matches!(function.as_str(), "+" | "pow") =>
+            if matches!(function.as_str(), "+" | "pow" | "log") =>
         {
             (left, right)
         }
         (GenericExpr::Var(..), GenericExpr::Call(_, function, _))
-            if matches!(function.as_str(), "+" | "pow") =>
+            if matches!(function.as_str(), "+" | "pow" | "log") =>
         {
             (right, left)
         }
@@ -2976,6 +2976,7 @@ fn model_query_primitive(
     let (input_sorts, output_sort): (&[&str], &str) = match function.as_str() {
         "+" => (&["i64", "i64"], "i64"),
         "pow" => (&["BigRat", "BigRat"], "BigRat"),
+        "log" => (&["BigRat"], "BigRat"),
         _ => unreachable!("query primitive name was checked above"),
     };
     if args.len() != input_sorts.len() {
@@ -3607,6 +3608,7 @@ fn replay_safe_bigrat_primitive_arity(function: &str) -> Option<usize> {
 fn replay_safe_query_primitive(function: &str, input_sorts: &[String], output_sort: &str) -> bool {
     (function == "+" && input_sorts == ["i64", "i64"] && output_sort == "i64")
         || (function == "pow" && input_sorts == ["BigRat", "BigRat"] && output_sort == "BigRat")
+        || (function == "log" && input_sorts == ["BigRat"] && output_sort == "BigRat")
 }
 
 fn atom_arg_contains_app(arg: &AtomArg) -> bool {
