@@ -339,6 +339,70 @@ fn read_only_print_size_is_preserved_without_becoming_a_slice_root() {
 }
 
 #[test]
+fn print_only_program_uses_a_reported_effective_prefix() {
+    let source = r#"
+        (datatype Expr (A i64) (F Expr))
+        (rewrite (F x) x)
+        (F (A 1))
+        (run 2)
+        (print-size F)
+        (print-size)
+        (print-stats)
+    "#;
+
+    let mut original = EGraph::default();
+    let original_outputs = original
+        .parse_and_run_program(Some("print-prefix-original.egg".to_owned()), source)
+        .unwrap();
+    let slice = causal_slice_program(Some("print-prefix.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.prefix_fallbacks, 2);
+    assert!(slice.source.contains("run-rule"));
+    assert!(!slice.source.contains("(run 2)"));
+    assert!(slice.source.contains("(print-stats)"));
+
+    let mut replay = EGraph::default();
+    let replay_outputs = replay
+        .parse_and_run_program(Some("print-prefix-replay.egg".to_owned()), &slice.source)
+        .unwrap();
+    let print_sizes = |outputs: &[egglog::CommandOutput]| {
+        outputs
+            .iter()
+            .filter_map(|output| match output {
+                egglog::CommandOutput::PrintFunctionSize(size) => Some(format!("one:{size}")),
+                egglog::CommandOutput::PrintAllFunctionsSize(sizes) => {
+                    Some(format!("all:{sizes:?}"))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(print_sizes(&original_outputs), print_sizes(&replay_outputs));
+
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("print-prefix-strict.egg".to_owned()), &slice.source)
+        .unwrap();
+}
+
+#[test]
+fn one_wave_math_fixture_prefix_replays_ordinary_and_strictly() {
+    let source = include_str!("math-microbenchmark.egg").replace("(run 11)", "(run 1)");
+    let slice = causal_slice_program(Some("math-one-wave.egg".to_owned()), &source).unwrap();
+    assert_eq!(slice.stats.prefix_fallbacks, 3);
+    assert_eq!(slice.rule_mapping.len(), 24);
+    assert!(!slice.source.contains("(run 1)"));
+    assert!(slice.source.contains("run-rule"));
+
+    EGraph::default()
+        .parse_and_run_program(Some("math-one-wave-replay.egg".to_owned()), &slice.source)
+        .unwrap();
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(Some("math-one-wave-strict.egg".to_owned()), &slice.source)
+        .unwrap();
+}
+
+#[test]
 fn bronze_slice_traces_once_removes_irrelevant_applications_and_strictly_replays() {
     let slice = causal_slice_program(Some("bronze.egg".to_owned()), ORIGINAL).unwrap();
 

@@ -16,7 +16,7 @@ use crate::{
     EGraph, Error as EgglogError, TermDag,
     ast::{
         Action, Actions, Command, Expr, Fact, GenericAction, GenericExpr, GenericFact, Literal,
-        Rewrite, Rule, RuleEvalMode, RunRuleConfig, Schedule, Span,
+        Rewrite, Rule, RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span,
     },
     core_relations::{
         RuleExecutionTrace, RuleMatch, TableApplication, TableId, UnionOutcome, UnionReceipt, Value,
@@ -352,6 +352,7 @@ impl WitnessArena {
         children: Vec<WitnessId>,
         endpoint: Value,
         availability: DepId,
+        allow_endpoint_alias: bool,
     ) -> Result<WitnessId, CausalSliceError> {
         let node = WitnessNode::App {
             sort: sort.to_owned(),
@@ -372,7 +373,7 @@ impl WitnessArena {
             self.ids.insert(node, id);
             id
         };
-        self.bind_endpoint(sort, endpoint, id)?;
+        self.bind_endpoint_with_alias(sort, endpoint, id, allow_endpoint_alias)?;
         Ok(id)
     }
 
@@ -382,12 +383,25 @@ impl WitnessArena {
         endpoint: Value,
         id: WitnessId,
     ) -> Result<(), CausalSliceError> {
+        self.bind_endpoint_with_alias(sort, endpoint, id, false)
+    }
+
+    fn bind_endpoint_with_alias(
+        &mut self,
+        sort: &str,
+        endpoint: Value,
+        id: WitnessId,
+        allow_endpoint_alias: bool,
+    ) -> Result<(), CausalSliceError> {
         let key = TypedEndpoint {
             sort: sort.to_owned(),
             value: endpoint,
         };
         if let Some(previous) = self.endpoints.get(&key) {
             if *previous != id {
+                if allow_endpoint_alias {
+                    return Ok(());
+                }
                 return Err(CausalSliceError::Unsupported {
                     location: format!("captured `{sort}` value"),
                     reason: "one runtime endpoint with conflicting replay witnesses".to_owned(),
@@ -397,6 +411,10 @@ impl WitnessArena {
         }
         if let Some(previous) = self.nodes[id.index()].original_value {
             if previous != endpoint {
+                if allow_endpoint_alias {
+                    self.endpoints.insert(key, id);
+                    return Ok(());
+                }
                 return Err(CausalSliceError::Unsupported {
                     location: format!("captured `{sort}` constructor application"),
                     reason: "one source term producing distinct runtime endpoints in the same no-equality trace"
@@ -621,6 +639,7 @@ struct ProgramModel {
     constructors: IndexMap<String, ConstructorDecl>,
     source_expansions: SourceCommandExpansions,
     schedule_index: usize,
+    prefix_fallbacks: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -645,6 +664,7 @@ struct ElaborationInput<'a> {
     source_traces: &'a IndexMap<usize, Vec<RuleExecutionTrace>>,
     batches: &'a [RuleExecutionTrace],
     trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
+    prefix_fallback: bool,
 }
 
 struct ObservationInput<'a> {
@@ -691,6 +711,7 @@ pub fn causal_slice_program_with_fact_directory(
         constructors,
         source_expansions,
         schedule_index,
+        prefix_fallbacks,
     } = validate_and_model(
         &commands,
         &relations,
@@ -775,6 +796,7 @@ pub fn causal_slice_program_with_fact_directory(
             source_traces: &source_traces,
             batches: &schedule_batches,
             trace_functions: &trace_functions,
+            prefix_fallback: prefix_fallbacks > 0,
         },
         &mut witnesses,
     )?;
@@ -807,12 +829,24 @@ pub fn causal_slice_program_with_fact_directory(
                 * check.var_sorts.len()
         })
         .sum();
-    let retained = backward_slice(&events, &dependencies, roots);
-    if let Some(error) = retained.iter().find_map(|event| {
-        events.events[event.index()]
-            .deferred_prerequisite_error
-            .clone()
-    }) {
+    let retained = if prefix_fallbacks > 0 {
+        let mut retained = IndexSet::default();
+        for index in 0..events.events.len() {
+            retained.insert(EventId(u32::try_from(index).map_err(|_| {
+                CausalSliceError::Invariant("event index exceeded u32 capacity".to_owned())
+            })?));
+        }
+        retained
+    } else {
+        backward_slice(&events, &dependencies, roots)
+    };
+    if prefix_fallbacks == 0
+        && let Some(error) = retained.iter().find_map(|event| {
+            events.events[event.index()]
+                .deferred_prerequisite_error
+                .clone()
+        })
+    {
         return Err(error.into_error());
     }
     drop(schedule_batches);
@@ -888,7 +922,7 @@ pub fn causal_slice_program_with_fact_directory(
         dependency_nodes: dependencies.nodes.len(),
         witness_nodes: witnesses.nodes.len(),
         equality_edges: equality_forest.edge_count(),
-        prefix_fallbacks: 0,
+        prefix_fallbacks,
         captured_bindings,
         observation_matches,
         observation_bindings,
@@ -932,7 +966,7 @@ fn run_one_traced_command(
         .map_err(|error| CausalSliceError::Invariant(error.to_string()))?;
 
     let result = egraph.run_program(vec![command]);
-    let batches = egraph
+    let mut batches = egraph
         .backend
         .as_any_mut()
         .downcast_mut::<egglog_bridge::EGraph>()
@@ -940,7 +974,81 @@ fn run_one_traced_command(
         .take_rule_match_trace()
         .expect("the trace was started immediately above");
     result?;
+    restore_projected_source_bindings(egraph, &mut batches)?;
     Ok(batches)
+}
+
+fn restore_projected_source_bindings(
+    egraph: &EGraph,
+    batches: &mut [RuleExecutionTrace],
+) -> Result<(), CausalSliceError> {
+    for batch in batches {
+        for captured in &mut batch.matches {
+            let Some(substitutions) = egraph.rulesets.values().find_map(|ruleset| match ruleset {
+                Ruleset::Rules(rules) => rules
+                    .get(captured.rule.as_ref())
+                    .map(|registered| registered.substitutions.as_ref()),
+                Ruleset::Combined(..) => None,
+            }) else {
+                // Command-level source actions use a synthetic native rule
+                // name and have no source-rule canonicalization aliases.
+                continue;
+            };
+            let mut values = captured
+                .bindings
+                .iter()
+                .map(|(name, value)| (name.to_string(), *value))
+                .collect::<HashMap<_, _>>();
+            for (source, _) in substitutions {
+                if values.contains_key(&source.name) {
+                    continue;
+                }
+                let Some(value) = resolve_substitution_value(
+                    source,
+                    substitutions,
+                    &values,
+                    egraph.backend.base_values(),
+                ) else {
+                    continue;
+                };
+                captured
+                    .bindings
+                    .push((std::sync::Arc::from(source.name.as_str()), value));
+                values.insert(source.name.clone(), value);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn resolve_substitution_value(
+    source: &crate::ast::ResolvedVar,
+    substitutions: &[(crate::ast::ResolvedVar, crate::core::ResolvedAtomTerm)],
+    values: &HashMap<String, Value>,
+    base_values: &crate::core_relations::BaseValues,
+) -> Option<Value> {
+    let mut current = substitutions
+        .iter()
+        .find(|(candidate, _)| candidate == source)
+        .map(|(_, target)| target)?;
+    for _ in 0..=substitutions.len() {
+        match current {
+            crate::core::GenericAtomTerm::Var(_, variable)
+            | crate::core::GenericAtomTerm::Global(_, variable) => {
+                if let Some(value) = values.get(variable.name.as_str()) {
+                    return Some(*value);
+                }
+                current = substitutions
+                    .iter()
+                    .find(|(candidate, _)| candidate == variable)
+                    .map(|(_, target)| target)?;
+            }
+            crate::core::GenericAtomTerm::Literal(_, literal) => {
+                return Some(literal_to_value(base_values, literal));
+            }
+        }
+    }
+    None
 }
 
 fn trace_function_metadata(
@@ -1432,6 +1540,7 @@ fn validate_and_model(
     let mut source_expansions = SourceCommandExpansions::default();
     let mut schedule_index = None;
     let mut observations_started = false;
+    let mut print_size_observations = 0usize;
 
     for (index, command) in commands.iter().enumerate() {
         match command {
@@ -1576,7 +1685,33 @@ fn validate_and_model(
             }
             Command::PrintSize(..) => {
                 // Preserve read-only diagnostics at their original boundary.
-                // They describe the sliced replay state but do not add roots.
+                // In a print-only program they conservatively retain the
+                // complete effective execution prefix.
+                if schedule_index.is_none() {
+                    return unsupported_command(
+                        command,
+                        index,
+                        source_name,
+                        "a print-size observation before the schedule",
+                    );
+                }
+                observations_started = true;
+                print_size_observations += 1;
+            }
+            Command::PrintOverallStatistics(span, file) => {
+                if file.is_some() {
+                    return unsupported(
+                        span,
+                        "print-stats file output; causal replay does not reproduce output side effects"
+                            .to_owned(),
+                    );
+                }
+                if schedule_index.is_none() {
+                    return unsupported(span, "print-stats before the schedule".to_owned());
+                }
+                // Preserved as an operational diagnostic, not as a semantic
+                // observation: manual replay necessarily changes run reports.
+                observations_started = true;
             }
             _ => {
                 return unsupported_command(
@@ -1593,10 +1728,15 @@ fn validate_and_model(
         location: source_name.to_owned(),
         reason: "a program without exactly one computation schedule".to_owned(),
     })?;
-    if checks.is_empty() {
+    let prefix_fallbacks = if checks.is_empty() {
+        print_size_observations
+    } else {
+        0
+    };
+    if checks.is_empty() && prefix_fallbacks == 0 {
         return Err(CausalSliceError::Unsupported {
             location: source_name.to_owned(),
-            reason: "a program without at least one positive check root".to_owned(),
+            reason: "a program without a positive check or print-size prefix root".to_owned(),
         });
     }
     Ok(ProgramModel {
@@ -1606,6 +1746,7 @@ fn validate_and_model(
         constructors: constructors.clone(),
         source_expansions,
         schedule_index,
+        prefix_fallbacks,
     })
 }
 
@@ -2334,6 +2475,7 @@ fn elaborate_events(
         source_traces,
         batches,
         trace_functions,
+        prefix_fallback,
     } = input;
     let mut dependencies = DepArena::default();
     let mut events = EventArena::default();
@@ -2361,8 +2503,13 @@ fn elaborate_events(
                     }
                 }
                 let applications = batch.applications.iter().collect::<Vec<_>>();
-                let effects =
-                    elaborate_fire_applications(egraph, &applications, trace_functions, witnesses)?;
+                let effects = elaborate_fire_applications(
+                    egraph,
+                    &applications,
+                    trace_functions,
+                    witnesses,
+                    prefix_fallback,
+                )?;
                 observed.extend(effects.observed_rows);
                 new_rows.extend(effects.new_rows);
                 // Source commands are preserved in full, so their constructor
@@ -2452,14 +2599,17 @@ fn elaborate_events(
         }
         let mut unions_by_origin = vec![Vec::new(); batch.matches.len()];
         for receipt in &batch.unions {
-            let origin = receipt
-                .origin
-                .ok_or_else(|| CausalSliceError::Unsupported {
+            let Some(origin) = receipt.origin else {
+                if prefix_fallback {
+                    continue;
+                }
+                return Err(CausalSliceError::Unsupported {
                     location: format!("traced wave {wave}"),
                     reason:
                         "a congruence, merge, or rebuild union without an originating rule match"
                             .to_owned(),
-                })?;
+                });
+            };
             let Some(unions) = unions_by_origin.get_mut(origin.index()) else {
                 return Err(CausalSliceError::Invariant(format!(
                     "union origin {} exceeded {} matches",
@@ -2561,6 +2711,7 @@ fn elaborate_events(
                 &applications_by_origin[ordinal],
                 trace_functions,
                 witnesses,
+                prefix_fallback,
             )?;
             for constructor in &model.head_constructors {
                 let AtomArg::App { output_sort, .. } = constructor else {
@@ -2576,13 +2727,20 @@ fn elaborate_events(
                     "native applications for rule `{rule_name}` do not match its complete source head"
                 )));
             }
-            let expected_unions = model
-                .head_unions
-                .iter()
-                .map(|equality| ground_equality(egraph, equality, &bindings, witnesses))
-                .collect::<Result<Vec<_>, _>>()?;
-            let applied_unions =
-                match_union_receipts(rule_name, &expected_unions, &unions_by_origin[ordinal])?;
+            let applied_unions = if prefix_fallback {
+                classify_prefix_union_receipts(
+                    rule_name,
+                    &model.head_unions,
+                    &unions_by_origin[ordinal],
+                )?
+            } else {
+                let expected_unions = model
+                    .head_unions
+                    .iter()
+                    .map(|equality| ground_equality(egraph, equality, &bindings, witnesses))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match_union_receipts(rule_name, &expected_unions, &unions_by_origin[ordinal])?
+            };
 
             let effective_outputs = effects
                 .new_rows
@@ -3032,7 +3190,7 @@ fn match_union_receipts(
             .position(|receipt| receipt.lhs == left.value && receipt.rhs == right.value)
         else {
             return Err(CausalSliceError::Invariant(format!(
-                "rule `{rule_name}` committed a union whose typed raw endpoints do not match its source head"
+                "rule `{rule_name}` expected union endpoints ({left:?}, {right:?}) but native commit reported {unmatched:?}"
             )));
         };
         let receipt = unmatched.swap_remove(index);
@@ -3052,6 +3210,41 @@ fn match_union_receipts(
     Ok(applied)
 }
 
+fn classify_prefix_union_receipts(
+    rule_name: &str,
+    expected: &[EqualityTemplate],
+    receipts: &[&UnionReceipt],
+) -> Result<Vec<(TypedEndpoint, TypedEndpoint)>, CausalSliceError> {
+    if expected.len() != receipts.len() {
+        return Err(CausalSliceError::Invariant(format!(
+            "rule `{rule_name}` modeled {} union action(s) but native commit reported {} receipt(s)",
+            expected.len(),
+            receipts.len()
+        )));
+    }
+    let mut applied = Vec::new();
+    for (equality, receipt) in expected.iter().zip(receipts) {
+        if let UnionOutcome::Applied { parent, child } = receipt.outcome {
+            if parent == child {
+                return Err(CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` reported a successful union with identical committed endpoints"
+                )));
+            }
+            applied.push((
+                TypedEndpoint {
+                    sort: equality.sort.clone(),
+                    value: receipt.lhs,
+                },
+                TypedEndpoint {
+                    sort: equality.sort.clone(),
+                    value: receipt.rhs,
+                },
+            ));
+        }
+    }
+    Ok(applied)
+}
+
 struct FireApplicationEffects {
     observed_rows: Vec<RowKey>,
     new_rows: Vec<RowKey>,
@@ -3063,6 +3256,7 @@ fn elaborate_fire_applications(
     applications: &[&TableApplication],
     trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
     witnesses: &mut WitnessArena,
+    prefix_fallback: bool,
 ) -> Result<FireApplicationEffects, CausalSliceError> {
     let mut observed_rows = Vec::new();
     let mut new_rows = Vec::new();
@@ -3125,24 +3319,46 @@ fn elaborate_fire_applications(
                         children,
                         application.result,
                         DepArena::EMPTY,
+                        prefix_fallback,
                     )?;
                     if !was_known {
                         new_witnesses.push(witness);
                     }
                 } else {
-                    let witness = witnesses
-                        .by_endpoint(&meta.output_sort, application.result)
-                        .ok_or_else(|| CausalSliceError::Unsupported {
-                            location: format!("constructor application `{}`", meta.name),
-                            reason: "a table hit without a previously captured constructor witness"
-                                .to_owned(),
-                        })?;
-                    if witnesses.nodes[witness.index()].node != expected {
-                        return Err(CausalSliceError::Unsupported {
-                            location: format!("constructor application `{}`", meta.name),
-                            reason: "a table hit whose match-time syntax conflicts with its captured witness"
-                                .to_owned(),
-                        });
+                    match witnesses.by_endpoint(&meta.output_sort, application.result) {
+                        Some(witness)
+                            if witnesses.nodes[witness.index()].node != expected
+                                && !prefix_fallback =>
+                        {
+                            return Err(CausalSliceError::Unsupported {
+                                location: format!("constructor application `{}`", meta.name),
+                                reason: "a table hit whose match-time syntax conflicts with its captured witness"
+                                    .to_owned(),
+                            });
+                        }
+                        Some(_) => {}
+                        None if prefix_fallback => {
+                            // A congruence-created row may have no earlier
+                            // syntax witness. This exact table hit proves the
+                            // source application denotes its endpoint in the
+                            // fully retained prestate, but is not a producer.
+                            witnesses.intern_app(
+                                &meta.output_sort,
+                                &meta.name,
+                                children,
+                                application.result,
+                                DepArena::EMPTY,
+                                true,
+                            )?;
+                        }
+                        None => {
+                            return Err(CausalSliceError::Unsupported {
+                                location: format!("constructor application `{}`", meta.name),
+                                reason:
+                                    "a table hit without a previously captured constructor witness"
+                                        .to_owned(),
+                            });
+                        }
                     }
                 }
             }
