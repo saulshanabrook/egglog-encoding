@@ -4,17 +4,6 @@ use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
 use crate::*;
 
-/// Deterministic name of a sort's auxiliary union-find `@UF-Aux-<Sort>`, which
-/// maps a *natural* (as-built) e-class id to its canonical dedup id plus the
-/// connector proof `natural = canonical`. Used only for container elements: a
-/// container is built over natural element ids (so its term-proof extracts the
-/// syntactic shape), and the container rebuild reads `UF-Aux` (in addition to
-/// the main `UF`) to canonicalize those elements and thread the connector proof.
-/// Deterministic (not a fresh symbol) so the rebuild can recompute it.
-pub(crate) fn uf_aux_name(sort: &str) -> String {
-    format!("@UF-Aux-{sort}")
-}
-
 /// Term-construction side channel (proof mode): maps a built term's canonical
 /// e-class var to `(natural e-class var, connector proof var)`, where the
 /// connector proves `natural = canonical`. A parent term reads its children's
@@ -40,6 +29,10 @@ enum ValueRebuild {
 #[derive(Clone)]
 pub(crate) struct EncodingState {
     pub uf_parent: HashMap<String, String>,
+    /// Maps eq-sort name -> its auxiliary union-find `UF_Aux_<Sort>` (natural
+    /// e-class id -> canonical dedup id + connector proof). Set from the
+    /// `:internal-uf-aux` annotation; read by container rebuild for elements.
+    pub uf_aux_parent: HashMap<String, String>,
     /// Maps sort name -> proof function name (set from :internal-proof-func annotation).
     pub proof_func_parent: HashMap<String, String>,
     /// Maps container sort name -> the name of its registered container-rebuild
@@ -67,6 +60,7 @@ impl EncodingState {
     pub(crate) fn new(symbol_gen: &mut SymbolGen) -> Self {
         Self {
             uf_parent: HashMap::default(),
+            uf_aux_parent: HashMap::default(),
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
@@ -301,10 +295,10 @@ impl<'a> ProofInstrumentor<'a> {
         let proof_tables = if proofs {
             let term_proof_name = self.term_proof_name(sort_name);
             let add_to_ast_code = self.add_to_ast(sort_name);
-            // `@UF-Aux-<Sort>`: natural -> (canonical, connector proof). Written
+            // `UF_Aux_<Sort>`: natural -> (canonical, connector proof). Written
             // only for container elements; the container rebuild reads it. `:merge
             // old` keeps the first edge (each natural is minted once).
-            let aux_name = uf_aux_name(sort_name);
+            let aux_name = self.uf_aux_name(sort_name);
             format!(
                 "{add_to_ast_code}
                  (function {term_proof_name} ({sort_name}) {proof_type} :merge old :internal-hidden)
@@ -1642,12 +1636,12 @@ impl<'a> ProofInstrumentor<'a> {
         let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
         let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
 
-        // Natural term + its (rule-justified) term proof. `fv_nat` stays *unseeded*
-        // (only the canonical node below is written to the view), so it is never
-        // pulled into the view's congruence `:merge` and stays as-built — hence its
-        // `@Rule` endpoint extracts the syntactic shape the rule head produced, and
-        // recording it as `fv_nat`'s existence proof is valid (and required, since
-        // proof-testing can enumerate the natural row as a witness).
+        // Mint the proof terms first, then assemble the statements. `fv_nat` stays
+        // *unseeded* (only `fv_can` is written to the view) so it is never pulled
+        // into the view's congruence `:merge`; its `@Rule` endpoint therefore keeps
+        // the as-built shape the rule head produced. `fv_can` is always a separate
+        // node (even when no child changed) with the reflexive proof `fv_can =
+        // fv_can`, exempt from the rule-head check.
         let fv_nat = self.mint(
             &mut res,
             &func_type.name,
@@ -1655,11 +1649,7 @@ impl<'a> ProofInstrumentor<'a> {
             &view_sort,
         );
         let nat_prf = self.term_proof_for_justification(&mut res, &fv_nat, &to_ast, justification);
-        res.push(format!(
-            "(set ({term_proof_constructor} {fv_nat}) {nat_prf})"
-        ));
-
-        // `Congr` chain: `fv_nat = f(deduped children)` (rewrite each changed child).
+        // `Congr` chain: `fv_nat = f(deduped children)`.
         let mut nat_to_dedup_term = nat_prf.clone();
         for (i, (_, _, conn)) in children.iter().enumerate() {
             if let Some(conn) = conn {
@@ -1671,18 +1661,6 @@ impl<'a> ProofInstrumentor<'a> {
                 );
             }
         }
-
-        // Canonical-children term that seeds the view — always a *separate* node
-        // from `fv_nat`, even when no child changed (`nat_args == dedup_args`).
-        // The natural node must stay unseeded so it is never pulled into the view's
-        // congruence `:merge` (which natively unions e-classes): if `fv_nat` were
-        // the seed, a birewrite that re-keys this view to a differently-shaped
-        // partner (e.g. `(IntImm32 x) <-> (IntImm 32 x)`) would natively merge
-        // `fv_nat` into that partner, and the natural `@Rule` endpoint threaded up
-        // through the Congr chain would then extract the partner's shape instead of
-        // the as-built one the rule head produced. `fv_can`'s proof is the
-        // *reflexive* `fv_can = fv_can` from the Congr chain (`Trans (Sym e-to-e')
-        // e-to-e'`), exempt from the rule-head check.
         let fv_can = self.mint(
             &mut res,
             &func_type.name,
@@ -1696,24 +1674,28 @@ impl<'a> ProofInstrumentor<'a> {
             &format!("{sym_ntd} {nat_to_dedup_term}"),
             &proof_sort,
         );
+
+        // Anchor both term proofs, dedup `fv_can` to the view e-class, and read the
+        // view's stored proof (`dedup = f(children)`).
+        let dedup = self.fresh_var();
+        let vprf = self.fresh_var();
+        let view_proof = crate::proofs::proof_fresh::view_proof_prim_name(&view);
+        let dedup_args = ListDisplay(&dedup_args, " ");
+        res.push(format!(
+            "(set ({term_proof_constructor} {fv_nat}) {nat_prf})"
+        ));
         res.push(format!(
             "(set ({term_proof_constructor} {fv_can}) {can_prf})"
         ));
-
-        // Dedup to the view e-class; read its stored proof (`dedup = f(children)`).
-        let dedup = self.fresh_var();
         res.push(format!(
-            "(let {dedup} ({set_if_empty} {} {fv_can} {can_prf}))",
-            ListDisplay(&dedup_args, " ")
+            "(let {dedup} ({set_if_empty} {dedup_args} {fv_can} {can_prf}))"
         ));
-        let view_proof = crate::proofs::proof_fresh::view_proof_prim_name(&view);
-        let vprf = self.fresh_var();
         res.push(format!(
-            "(let {vprf} ({view_proof} {} {can_prf}))",
-            ListDisplay(&dedup_args, " ")
+            "(let {vprf} ({view_proof} {dedup_args} {can_prf}))"
         ));
 
-        // connector: `fv_nat = dedup` = Trans(fv_nat = f(children), Sym(dedup = f(children))).
+        // connector `fv_nat = dedup` = Trans(nat_to_dedup, Sym(dedup = f(children))).
+        // `sym_vprf` reads the `vprf` let, so it must follow the statements above.
         let sym_vprf = self.mint(&mut res, &sym, &vprf, &proof_sort);
         let connector = self.mint(
             &mut res,
@@ -1899,12 +1881,10 @@ impl<'a> ProofInstrumentor<'a> {
                         // constructor connector).
                         let mut build_args = Vec::with_capacity(args.len());
                         for a in &args {
-                            match (&elem_sort, nat_conn.get(a).cloned()) {
+                            match (elem_sort.clone(), nat_conn.get(a).cloned()) {
                                 (Some(es), Some((nat, Some(conn)))) => {
-                                    res.push(format!(
-                                        "(set ({} {nat}) (values {a} {conn}))",
-                                        uf_aux_name(es)
-                                    ));
+                                    let aux = self.uf_aux_name(&es);
+                                    res.push(format!("(set ({aux} {nat}) (values {a} {conn}))"));
                                     build_args.push(nat);
                                 }
                                 _ => build_args.push(a.clone()),
@@ -2154,7 +2134,14 @@ impl<'a> ProofInstrumentor<'a> {
                 let uf_name = if is_container {
                     None
                 } else {
-                    Some((self.uf_name(name), None))
+                    // Proof mode also records the aux union-find (`:internal-uf-aux`)
+                    // so container rebuild recovers it on re-parse.
+                    let aux = if self.egraph.proof_state.proofs_enabled {
+                        Some(self.uf_aux_name(name))
+                    } else {
+                        None
+                    };
+                    Some((self.uf_name(name), None, aux))
                 };
                 // Every sort (containers included) records its `<Sort>Proof`
                 // table via `:internal-proof-func` so container rebuild can

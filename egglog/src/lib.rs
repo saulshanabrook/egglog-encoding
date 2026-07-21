@@ -1990,10 +1990,15 @@ impl EGraph {
                 ..
             } => {
                 // Restore the sort's UF metadata into proof_state.
-                if let Some((uf_ctor, _uf_index)) = uf {
+                if let Some((uf_ctor, _uf_index, uf_aux)) = uf {
                     self.proof_state
                         .uf_parent
                         .insert(name.clone(), uf_ctor.clone());
+                    if let Some(uf_aux) = uf_aux {
+                        self.proof_state
+                            .uf_aux_parent
+                            .insert(name.clone(), uf_aux.clone());
+                    }
                 }
                 // If the sort has a :internal-proof-func field, store the mapping for proof lookup.
                 // This annotation is set by proof instrumentation and consumed here.

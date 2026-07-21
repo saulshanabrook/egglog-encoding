@@ -432,9 +432,10 @@ impl Parser {
                         }]
                     }
                     [name, rest @ ..] => {
-                        // Parse :internal-uf / :internal-proof-func and the
-                        // :internal-proof-names global proof-constructor record.
-                        let mut uf = None;
+                        // Parse :internal-uf / :internal-uf-aux / :internal-proof-func
+                        // and the :internal-proof-names global proof-constructor record.
+                        let mut uf: Option<(String, Option<String>)> = None;
+                        let mut uf_aux: Option<String> = None;
                         let mut proof_func = None;
                         let mut proof_constructors = None;
                         for (key, val) in self.parse_options(rest)? {
@@ -447,6 +448,9 @@ impl Parser {
                                         uf_ctor.expect_atom("uf constructor name")?,
                                         Some(uf_index.expect_atom("uf index function name")?),
                                     ));
+                                }
+                                (":internal-uf-aux", [aux]) => {
+                                    uf_aux = Some(aux.expect_atom("uf aux function name")?);
                                 }
                                 (":internal-proof-func", [pf]) => {
                                     proof_func =
@@ -465,11 +469,14 @@ impl Parser {
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>] [:internal-uf-aux <uf-aux>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }
                         }
+                        // Fold `:internal-uf-aux` into the uf tuple (always paired
+                        // with `:internal-uf` in generated code).
+                        let uf = uf.map(|(ctor, index)| (ctor, index, uf_aux));
                         vec![Command::Sort {
                             span,
                             name: self.parse_name(name, "sort name")?,

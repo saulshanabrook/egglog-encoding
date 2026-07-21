@@ -113,6 +113,29 @@ impl ProofInstrumentor<'_> {
         }
     }
 
+    /// Fresh name of a sort's auxiliary union-find `UF_Aux_<Sort>` (natural
+    /// e-class id -> canonical dedup id + connector proof `natural = canonical`),
+    /// cached in `uf_aux_parent`. Written only for container elements; the
+    /// container rebuild reads it (alongside the main `UF`) to canonicalize an
+    /// element built over its natural id and thread its connector proof. The name
+    /// round-trips via `:internal-uf-aux` so re-parse recovers it, not recomputes.
+    pub(crate) fn uf_aux_name(&mut self, sort: &str) -> String {
+        if let Some(name) = self.egraph.proof_state.uf_aux_parent.get(sort) {
+            name.clone()
+        } else {
+            let fresh_name = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh(&format!("UF_Aux_{sort}"));
+            self.egraph
+                .proof_state
+                .uf_aux_parent
+                .insert(sort.to_string(), fresh_name.clone());
+            fresh_name
+        }
+    }
+
     pub(crate) fn parse_program(&mut self, input: &str) -> Vec<Command> {
         self.egraph.parser.ensure_no_reserved_symbols = false;
         let res = self.egraph.parser.get_program_from_string(None, input);
