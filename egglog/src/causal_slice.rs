@@ -1007,7 +1007,7 @@ pub fn causal_slice_program(
     filename: Option<String>,
     input: &str,
 ) -> Result<CausalSlice, CausalSliceError> {
-    causal_slice_program_with_fact_directory(filename, input, None)
+    causal_slice_program_with_egraph(filename, input, EGraph::default())
 }
 
 /// Trace and slice a program while constructing only the retained replay
@@ -1016,7 +1016,7 @@ pub fn causal_slice_replay_program(
     filename: Option<String>,
     input: &str,
 ) -> Result<CausalReplay, CausalSliceError> {
-    causal_slice_replay_program_with_fact_directory(filename, input, None)
+    causal_slice_replay_program_with_egraph(filename, input, EGraph::default())
 }
 
 /// Trace and slice a program while resolving supported scalar relation inputs
@@ -1028,7 +1028,23 @@ pub fn causal_slice_program_with_fact_directory(
     input: &str,
     fact_directory: Option<&Path>,
 ) -> Result<CausalSlice, CausalSliceError> {
-    let generated = generate_causal_slice(filename, input, fact_directory, true)?;
+    let egraph = EGraph {
+        fact_directory: fact_directory.map(Path::to_path_buf),
+        ..EGraph::default()
+    };
+    causal_slice_program_with_egraph(filename, input, egraph)
+}
+
+/// Trace and slice using a fresh ordinary reference-backed `EGraph` whose
+/// parser, sorts, primitives, and commands may have been configured by a
+/// downstream crate. The graph is consumed and must not contain source
+/// program state or have term/proof encoding enabled.
+pub fn causal_slice_program_with_egraph(
+    filename: Option<String>,
+    input: &str,
+    egraph: EGraph,
+) -> Result<CausalSlice, CausalSliceError> {
+    let generated = generate_causal_slice(filename, input, egraph, true)?;
     Ok(CausalSlice {
         source: generated.source,
         full_transcript_source: generated
@@ -1047,7 +1063,22 @@ pub fn causal_slice_replay_program_with_fact_directory(
     input: &str,
     fact_directory: Option<&Path>,
 ) -> Result<CausalReplay, CausalSliceError> {
-    let generated = generate_causal_slice(filename, input, fact_directory, false)?;
+    let egraph = EGraph {
+        fact_directory: fact_directory.map(Path::to_path_buf),
+        ..EGraph::default()
+    };
+    causal_slice_replay_program_with_egraph(filename, input, egraph)
+}
+
+/// Construct only the retained replay projection using a fresh configured
+/// ordinary reference-backed `EGraph`. See
+/// [`causal_slice_program_with_egraph`] for the template contract.
+pub fn causal_slice_replay_program_with_egraph(
+    filename: Option<String>,
+    input: &str,
+    egraph: EGraph,
+) -> Result<CausalReplay, CausalSliceError> {
+    let generated = generate_causal_slice(filename, input, egraph, false)?;
     Ok(CausalReplay {
         source: generated.source,
         stats: generated.stats,
@@ -1065,13 +1096,15 @@ struct GeneratedCausalSlice {
 fn generate_causal_slice(
     filename: Option<String>,
     input: &str,
-    fact_directory: Option<&Path>,
+    mut egraph: EGraph,
     include_full_transcript: bool,
 ) -> Result<GeneratedCausalSlice, CausalSliceError> {
     let total_start = Instant::now();
     let preparation_start = Instant::now();
-    let mut parser = EGraph::default();
-    let commands = parser.parse_program(filename.clone(), input)?;
+    let validation_template = egraph.clone();
+    let fact_directory = egraph.fact_directory.clone();
+    egraph = egraph.with_union_to_set_optimization(false);
+    let commands = egraph.parse_program(filename.clone(), input)?;
     let source_name = filename.as_deref().unwrap_or("<input>");
     let (mut commands, source_rule_origins) = lower_rewrites(commands, source_name)?;
 
@@ -1091,11 +1124,10 @@ fn generate_causal_slice(
         &constructors,
         &source_rule_origins,
         source_name,
-        fact_directory,
+        fact_directory.as_deref(),
     )?;
     let preparation_time = preparation_start.elapsed();
 
-    let mut egraph = EGraph::default().with_union_to_set_optimization(false);
     let trace_start = Instant::now();
     let mut schedule_batches = Vec::new();
     let mut check_batches = Vec::new();
@@ -1233,7 +1265,13 @@ fn generate_causal_slice(
         let emission_time = emission_start.elapsed();
 
         let emitted_validation_start = Instant::now();
-        validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
+        validate_emitted_program(
+            &validation_template,
+            filename,
+            &source,
+            &rules,
+            &rule_mapping,
+        )?;
         let emitted_validation_time = emitted_validation_start.elapsed();
         let total_time = total_start.elapsed();
         let stats = CausalSliceStats {
@@ -1395,13 +1433,20 @@ fn generate_causal_slice(
     let emitted_validation_start = Instant::now();
     if let Some(full_transcript_source) = &full_transcript_source {
         validate_emitted_program(
+            &validation_template,
             filename.clone(),
             full_transcript_source,
             &rules,
             &rule_mapping,
         )?;
     }
-    validate_emitted_program(filename, &source, &rules, &rule_mapping)?;
+    validate_emitted_program(
+        &validation_template,
+        filename,
+        &source,
+        &rules,
+        &rule_mapping,
+    )?;
     let emitted_validation_time = emitted_validation_start.elapsed();
 
     let effective_applications = pending_fires
@@ -6555,12 +6600,13 @@ fn emit_program_with_replay_commands(
 }
 
 fn validate_emitted_program(
+    template: &EGraph,
     filename: Option<String>,
     source: &str,
     rules: &IndexMap<String, RuleModel>,
     mapping: &[SourceRuleMapping],
 ) -> Result<(), CausalSliceError> {
-    let mut parser = EGraph::default();
+    let mut parser = template.clone();
     let parsed = parser.parse_program(filename, source)?;
     let mut emitted_rules = HashMap::default();
     let mut replay_globals = HashSet::default();

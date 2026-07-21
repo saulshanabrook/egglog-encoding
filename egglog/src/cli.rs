@@ -140,6 +140,19 @@ where
         std::process::exit(2);
     }
 
+    EGraph::set_num_threads(args.threads);
+    egraph.fact_directory.clone_from(&args.fact_directory);
+    egraph.seminaive = !args.naive;
+    egraph.no_decomp = args.no_decomp;
+    egraph.set_report_level(args.report_level);
+    if args.strict_mode {
+        egraph.set_strict_mode(true);
+    }
+    // Causal slicing must trace an ordinary run even when the emitted replay
+    // will execute below in term/proof mode. Preserve downstream parser, sort,
+    // primitive, and command registrations before enabling those modes.
+    let mut causal_slice_egraph = args.causal_slice.then(|| egraph.clone());
+
     if args.term_encoding {
         egraph = egraph.with_term_encoding_enabled();
     }
@@ -151,15 +164,6 @@ where
     if args.proof_testing {
         egraph = egraph.with_proofs_enabled();
         egraph = egraph.with_proof_testing();
-    }
-
-    EGraph::set_num_threads(args.threads);
-    egraph.fact_directory.clone_from(&args.fact_directory);
-    egraph.seminaive = !args.naive;
-    egraph.no_decomp = args.no_decomp;
-    egraph.set_report_level(args.report_level);
-    if args.strict_mode {
-        egraph.set_strict_mode(true);
     }
     if args.inputs.is_empty() {
         match egraph.repl(args.mode) {
@@ -176,10 +180,12 @@ where
                 panic!("Failed to read file {arg}")
             });
             let program = if args.causal_slice {
-                match causal_slice::causal_slice_replay_program_with_fact_directory(
+                match causal_slice::causal_slice_replay_program_with_egraph(
                     Some(input.to_string_lossy().into_owned()),
                     &original_program,
-                    args.fact_directory.as_deref(),
+                    causal_slice_egraph
+                        .take()
+                        .expect("causal slicing validated exactly one input"),
                 ) {
                     Ok(replay) => replay.source,
                     Err(error) => {
