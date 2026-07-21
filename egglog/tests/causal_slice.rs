@@ -705,6 +705,35 @@ fn bare_eq_sort_constructor_witness_replays_ordinary_and_strictly() {
 }
 
 #[test]
+fn immutable_big_number_constructor_sorts_are_preserved() {
+    let source = r#"
+        (datatype Numeric (Z BigInt) (Q BigRat))
+        (relation Seed (i64))
+        (relation Done (i64))
+        (Seed 1)
+        (rule ((Seed x)) ((Done x)) :name "copy")
+        (run 1)
+        (check (Done 1))
+    "#;
+
+    let slice = causal_slice_program(Some("big-number-sorts.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(Z BigInt)"));
+    assert!(slice.source.contains("(Q BigRat)"));
+    assert!(has_replay_firing(&slice.source, "copy", &[("x", "1")]));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("big-number-sorts-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn container_presort_remains_an_explicit_boundary() {
     let source = r#"
         (sort Values (Vec i64))

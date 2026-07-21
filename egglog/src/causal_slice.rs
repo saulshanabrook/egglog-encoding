@@ -1423,8 +1423,10 @@ fn collect_declarations(
         })
         .collect::<HashSet<_>>();
     let supported_sort = |sort: &str| {
-        matches!(sort, "i64" | "String" | "bool" | "f64" | "Unit")
-            || datatype_sorts.contains(sort)
+        matches!(
+            sort,
+            "i64" | "String" | "bool" | "f64" | "Unit" | "BigInt" | "BigRat"
+        ) || datatype_sorts.contains(sort)
             || eq_sorts.contains(sort)
     };
     for (index, command) in commands.iter().enumerate() {
