@@ -664,6 +664,56 @@ fn chained_constructor_lookup_requires_exact_match_row_provenance() {
 }
 
 #[test]
+fn irrelevant_chained_lookup_does_not_block_a_sound_slice() {
+    let source = r#"
+        (datatype Allocation (A String))
+        (constructor expr_points_to (String) Allocation)
+        (constructor ptr_points_to (Allocation) Allocation)
+        (relation ExprEdge (String String))
+        (relation PtrEdge (String String))
+        (relation Load (String String))
+        (relation Seed (String))
+        (relation Goal (String))
+        (rule ((ExprEdge expr alloc))
+              ((union (expr_points_to expr) (A alloc)))
+              :name "make-expr")
+        (rule ((PtrEdge from to))
+              ((union (ptr_points_to (A from)) (A to)))
+              :name "make-ptr")
+        (rule ((Load expr result)
+               (= (expr_points_to expr) alloc)
+               (= (ptr_points_to alloc) pointee))
+              ((union (expr_points_to result) pointee))
+              :name "load")
+        (rule ((Seed value)) ((Goal value)) :name "keep")
+        (ExprEdge "expr" "alloc")
+        (PtrEdge "alloc" "pointee")
+        (Load "expr" "result")
+        (Seed "kept")
+        (run 2)
+        (check (Goal "kept"))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("irrelevant-chained-lookup.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(slice.source.contains("run-rule \"keep\""));
+    assert!(!slice.source.contains("run-rule \"load\""));
+    assert!(!slice.source.contains("run-rule \"make-expr\""));
+    assert!(!slice.source.contains("run-rule \"make-ptr\""));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("irrelevant-chained-lookup-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn nested_constructor_union_records_the_complete_source_syntax() {
     let source = r#"
         (datatype Allocation (A String))
@@ -699,10 +749,12 @@ fn equality_rekeyed_relation_rows_fail_closed_without_commit_provenance() {
     let source = r#"
         (datatype Expr (A i64))
         (relation Pair (Expr Expr))
+        (relation Goal ())
         (rule ((Pair x y)) ((union x y)) :name "unify")
+        (rule ((Pair x x)) ((Goal)) :name "observe-rekeyed")
         (Pair (A 1) (A 2))
         (run 2)
-        (check (= (A 1) (A 2)))
+        (check (Goal))
     "#;
 
     let error = causal_slice_program(Some("relation-rekey.egg".to_owned()), source).unwrap_err();

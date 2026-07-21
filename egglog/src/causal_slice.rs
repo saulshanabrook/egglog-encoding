@@ -460,7 +460,23 @@ enum EventKind {
 struct ReplayEvent {
     kind: EventKind,
     prerequisites: DepId,
+    deferred_prerequisite_error: Option<DeferredUnsupported>,
     effective_outputs: Vec<RowKey>,
+}
+
+#[derive(Clone, Debug)]
+struct DeferredUnsupported {
+    location: String,
+    reason: String,
+}
+
+impl DeferredUnsupported {
+    fn into_error(self) -> CausalSliceError {
+        CausalSliceError::Unsupported {
+            location: self.location,
+            reason: self.reason,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -755,6 +771,13 @@ pub fn causal_slice_program_with_fact_directory(
         })
         .sum();
     let retained = backward_slice(&events, &dependencies, roots);
+    if let Some(error) = retained.iter().find_map(|event| {
+        events.events[event.index()]
+            .deferred_prerequisite_error
+            .clone()
+    }) {
+        return Err(error.into_error());
+    }
     drop(schedule_batches);
     drop(check_batches);
 
@@ -2121,6 +2144,7 @@ fn elaborate_events(
             let event = events.push(ReplayEvent {
                 kind: EventKind::Source { row: row.clone() },
                 prerequisites: DepArena::EMPTY,
+                deferred_prerequisite_error: None,
                 effective_outputs: vec![row.clone()],
             })?;
             let dependency = dependencies.event(event)?;
@@ -2178,70 +2202,81 @@ fn elaborate_events(
                 &model.var_sorts,
                 witnesses,
             )?;
-            let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
+            let prerequisite_result = (|| {
+                let body = ground_atoms(egraph, &model.body, &bindings, witnesses, relations)?;
 
-            let mut premise_dependencies = IndexSet::default();
-            for row in &body {
-                match producers.get(row) {
-                    Some(dependency) => {
-                        premise_dependencies.insert(*dependency);
-                    }
-                    None if new_outputs.contains_key(row) => {
-                        return Err(CausalSliceError::Invariant(format!(
-                            "rule `{rule_name}` matched a tuple produced only in the same wave: {}",
-                            display_row(row)
-                        )));
-                    }
-                    None => {
-                        if equality_forest.edge_count() > 0 {
-                            return Err(CausalSliceError::Unsupported {
-                                location: model.span.to_string(),
-                                reason: format!(
-                                    "an equality-canonicalized premise of rule `{rule_name}` without commit-time relation-row rekey provenance"
-                                ),
-                            });
+                let mut premise_dependencies = IndexSet::default();
+                for row in &body {
+                    match producers.get(row) {
+                        Some(dependency) => {
+                            premise_dependencies.insert(*dependency);
                         }
-                        return Err(CausalSliceError::Invariant(format!(
-                            "rule `{rule_name}` matched without a known source row: {}",
-                            display_row(row)
-                        )));
+                        None if new_outputs.contains_key(row) => {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "rule `{rule_name}` matched a tuple produced only in the same wave: {}",
+                                display_row(row)
+                            )));
+                        }
+                        None => {
+                            if equality_forest.edge_count() > 0 {
+                                return Err(CausalSliceError::Unsupported {
+                                    location: model.span.to_string(),
+                                    reason: format!(
+                                        "an equality-canonicalized premise of rule `{rule_name}` without commit-time relation-row rekey provenance"
+                                    ),
+                                });
+                            }
+                            return Err(CausalSliceError::Invariant(format!(
+                                "rule `{rule_name}` matched without a known source row: {}",
+                                display_row(row)
+                            )));
+                        }
                     }
                 }
-            }
-            for lookup in &model.body_lookups {
-                let (application, application_witness) = ground_application_witness(
-                    egraph,
-                    &lookup.application,
-                    &lookup.sort,
-                    &bindings,
-                    witnesses,
-                )?;
-                let output =
-                    ground_arg(egraph, &lookup.output, &lookup.sort, &bindings, witnesses)?;
-                premise_dependencies.insert(witnesses.availability(application_witness));
-                premise_dependencies.insert(endpoint_availability(
-                    &output,
-                    witnesses,
-                    &lookup.span,
-                )?);
-                let explanation = equality_forest
-                    .explain(&application, &output)
-                    .ok_or_else(|| CausalSliceError::Unsupported {
-                        location: lookup.span.to_string(),
-                        reason: format!(
-                            "constructor lookup in rule `{rule_name}` whose canonical output lacks a captured successful-union path"
-                        ),
-                    })?;
-                premise_dependencies.extend(explanation);
-            }
-            let mut prerequisites = DepArena::EMPTY;
-            for dependency in premise_dependencies {
-                prerequisites = dependencies.and(prerequisites, dependency)?;
-            }
-            for binding in bindings.values() {
-                prerequisites =
-                    dependencies.and(prerequisites, witnesses.availability(binding.syntax))?;
-            }
+                for lookup in &model.body_lookups {
+                    let (application, application_witness) = ground_application_witness(
+                        egraph,
+                        &lookup.application,
+                        &lookup.sort,
+                        &bindings,
+                        witnesses,
+                    )?;
+                    let output =
+                        ground_arg(egraph, &lookup.output, &lookup.sort, &bindings, witnesses)?;
+                    premise_dependencies.insert(witnesses.availability(application_witness));
+                    premise_dependencies.insert(endpoint_availability(
+                        &output,
+                        witnesses,
+                        &lookup.span,
+                    )?);
+                    let explanation = equality_forest.explain(&application, &output).ok_or_else(
+                        || CausalSliceError::Unsupported {
+                            location: lookup.span.to_string(),
+                            reason: format!(
+                                "constructor lookup in rule `{rule_name}` whose canonical output lacks a captured successful-union path"
+                            ),
+                        },
+                    )?;
+                    premise_dependencies.extend(explanation);
+                }
+                let mut prerequisites = DepArena::EMPTY;
+                for dependency in premise_dependencies {
+                    prerequisites = dependencies.and(prerequisites, dependency)?;
+                }
+                for binding in bindings.values() {
+                    prerequisites =
+                        dependencies.and(prerequisites, witnesses.availability(binding.syntax))?;
+                }
+                Ok(prerequisites)
+            })();
+            let (prerequisites, deferred_prerequisite_error) = match prerequisite_result {
+                Ok(prerequisites) => (prerequisites, None),
+                Err(CausalSliceError::Unsupported { location, reason }) => (
+                    DepArena::EMPTY,
+                    Some(DeferredUnsupported { location, reason }),
+                ),
+                Err(error) => return Err(error),
+            };
 
             let effects = elaborate_fire_applications(
                 egraph,
@@ -2295,6 +2330,7 @@ fn elaborate_events(
                 let event = events.push(ReplayEvent {
                     kind: EventKind::Fire(grounding.clone()),
                     prerequisites,
+                    deferred_prerequisite_error,
                     effective_outputs: effective_outputs.clone(),
                 })?;
                 let dependency = dependencies.event(event)?;
