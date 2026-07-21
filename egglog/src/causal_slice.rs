@@ -2401,7 +2401,8 @@ fn validate_and_model(
             | Command::Datatypes { .. }
             | Command::Constructor { .. }
             | Command::Function { .. }
-            | Command::AddRuleset(..) => {
+            | Command::AddRuleset(..)
+            | Command::UnstableCombinedRuleset(..) => {
                 if !schedule_indices.is_empty() {
                     return unsupported_command(
                         command,

@@ -1861,6 +1861,53 @@ fn inert_custom_function_declaration_is_preserved_without_state_provenance() {
 }
 
 #[test]
+fn combined_ruleset_declarations_are_preserved_for_tracing() {
+    let source = r#"
+        (ruleset first)
+        (ruleset second)
+        (relation Seed (i64))
+        (relation Middle (i64))
+        (relation Goal (i64))
+        (rule ((Seed x)) ((Middle x)) :ruleset first :name "first-rule")
+        (rule ((Middle x)) ((Goal x)) :ruleset second :name "second-rule")
+        (unstable-combined-ruleset both first second)
+        (Seed 1)
+        (run both 3)
+        (check (Goal 1))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("combined-ruleset.egg".to_owned()), source).unwrap();
+    assert!(
+        replay
+            .source
+            .contains("(unstable-combined-ruleset both first second)")
+    );
+    assert!(has_replay_firing(
+        &replay.source,
+        "first-rule",
+        &[("x", "1")]
+    ));
+    assert!(has_replay_firing(
+        &replay.source,
+        "second-rule",
+        &[("x", "1")]
+    ));
+    assert!(!replay.source.contains("(run both 3)"));
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("combined-ruleset-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn custom_function_state_use_remains_an_explicit_boundary() {
     let source = r#"
         (function hi (i64) i64 :merge (min old new))
