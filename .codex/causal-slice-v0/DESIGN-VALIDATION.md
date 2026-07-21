@@ -230,6 +230,7 @@ retained. Push/pop remains outside the no-epoch claim.
 | E16 | May an unsupported but causally irrelevant firing be discarded? | passed: prerequisite error is deferred to reachability; retained variant still fails closed |
 | E17 | Does the unmodified pointer fixture slice and strictly replay? | passed: 706 pending, 600 effective, 1 retained |
 | E18 | Does the first real integrated treatment save time? | no on pointer: 1.06–1.12x wall time and 1.04–1.05x RSS over six rounds |
+| E19 | What accounts for the pointer wall regression? | five warm generator runs took 31.2–33.1 ms, dominated by 18.6–19.3 ms ordinary tracing and 6.1–7.0 ms emitted-program validation; slicing itself took 24–27 µs |
 
 ## Validation commands
 

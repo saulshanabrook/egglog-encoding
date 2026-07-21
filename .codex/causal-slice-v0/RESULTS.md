@@ -409,10 +409,31 @@ integrated `causal-proof-testing` process. Report cache:
 
 Recorded ruleset phases were faster in the candidate: search decreased by
 about 0.37 ms, apply by 0.70 ms, and merge by 2.14 ms. Those gains were
-outweighed by approximately +35.9 ms outside recorded rulesets, accounting for
-110% of the wall-time increase. This is the first real empirical result: the
-tiny slice works, but the current traced-run/elaboration/emission/reparse and
-strict replay pipeline does not yet save total time on this fixture.
+outweighed by approximately +35.9 ms outside the *final proof EGraph's*
+recorded rulesets, accounting for 110% of the wall-time increase. That residual
+includes the complete ordinary traced execution in the slicer's separate local
+EGraph; it is not pure slicing overhead.
+
+The generator now exposes disjoint stage timings. After one cold release run,
+five serialized pointer runs measured:
+
+| Generator stage | Warm observed range |
+|---|---:|
+| complete generator | 31.2–33.1 ms |
+| preparation/modeling | 1.8–2.0 ms |
+| ordinary traced execution | 18.6–19.3 ms |
+| event/witness elaboration | 3.2–3.3 ms |
+| backward slicing | 24–27 µs |
+| source emission | 1.3–1.4 ms |
+| parsing/validating both emitted programs | 6.1–7.0 ms |
+
+The benchmark report means were 367.612 ms wall / 17.534 ms recorded rulesets
+for original `proof-testing` and 400.231 ms wall / 14.213 ms recorded rulesets
+for `causal-proof-testing`. The +32.619 ms wall delta closely tracks the
+31–33 ms generator. The first optimization targets are therefore the traced
+ordinary run and the currently redundant full-transcript/slice validation;
+the backward walk is already negligible. The tiny slice works, but the current
+complete pipeline does not yet save total time on this fixture.
 
 ## Current benchmark frontier
 
@@ -422,12 +443,12 @@ bucket rather than being timed as successful rows.
 
 | Workload | Current first boundary | Major subsequent requirements |
 |---|---|---|
-| `math-microbenchmark.egg` | datatype/application values | rewrite-generated rules, equality/congruence provenance, and a conservative root for print-only observation |
+| `math-microbenchmark.egg` | first anonymous rewrite | rewrite-generated rule mapping, naked constructor sources, `print-stats`, equality/congruence provenance, and a conservative root for print-only observation |
 | `pointer-analysis-small.egg` | implemented and benchmarked | 706 pending / 600 effective / 1 retained; ordinary and strict replay pass; retained equal-syntax chained lookups still need exact body-row provenance |
-| `herbie.egg` | non-scalar `Math` relation | application witnesses, rewrites, custom merges, primitive filters, and multiple temporal boundaries |
-| `luminal-llama.egg` | non-scalar `IList` relation | application/container witnesses, multiple schedules, delete/subsume, and mutable-state batching |
-| `hardboiled_conv1d_32.egg` | non-scalar `BinOp` relation | containers, functions, rewrites, filters, broad joins, subsume, and batch replay |
-| `eggcc-2mm-pass1.egg` | non-scalar `Type` relation | constructors, functions/merges, broad joins, multiple schedules, globals, delete/subsume, containers, and stateful primitives |
+| `herbie.egg` | `BigRat` constructor input sort | application witnesses, rewrites, custom merges, primitive filters, and multiple temporal boundaries |
+| `luminal-llama.egg` | `IList` presort relation | datatype-encoded lists, multiple schedules, delete/subsume, functions, and mutable-state batching |
+| `hardboiled_conv1d_32.egg` | `Variable` standalone-constructor sort | containers, functions, rewrites, filters, broad joins, subsume, and batch replay |
+| `eggcc-2mm-pass1.egg` | `TypeList` constructor input sort | constructors, functions/merges, broad joins, multiple schedules, globals, delete/subsume, containers, and stateful primitives |
 
 The next implementation order selected from these failures is: attribute the
 pointer treatment's outside-ruleset cost; preserve exact body-row evidence for
@@ -534,7 +555,11 @@ Local reviewable commits:
     sliced replay coverage;
 17. `c47b9a3` — record the first integrated pointer benchmark result;
 18. `bcd79c9` — format the causal benchmark tests for the final full gate;
-19. the final local HEAD commit records the completed validation ledger.
+19. `facb233` — record the completed initial validation ledger;
+20. `590b5f0` — expose disjoint causal generator phase timings and fact-aware
+    diagnostics;
+21. the current documentation commit records the measured attribution and
+    corrected benchmark frontier.
 
 The final diff is confined to the reference native trace, the causal-slice
 module/example/tests, and `.codex/causal-slice-v0/`. No evaluator/proof-checker
