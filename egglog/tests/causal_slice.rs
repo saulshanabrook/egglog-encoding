@@ -1858,6 +1858,33 @@ fn duplicate_head_actions_count_one_output_but_replay_the_complete_head() {
 }
 
 #[test]
+fn empty_body_rule_replays_one_ground_match_and_its_complete_head() {
+    let source = r#"
+        (relation Existing (i64))
+        (relation Goal (i64))
+        (Existing 1)
+        (rule ()
+              ((Existing 1) (Goal 7))
+              :name "initialize")
+        (run 2)
+        (check (Goal 7))
+    "#;
+
+    let slice = causal_slice_program(Some("empty-body.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.matched_applications, 1);
+    assert_eq!(slice.stats.effective_applications, 1);
+    assert_eq!(slice.stats.retained_applications, 1);
+    assert!(has_replay_firing(&slice.source, "initialize", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("empty-body-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn positive_check_selects_one_actual_satisfying_grounding() {
     let source = ORIGINAL.replace("(check (Goal 2))", "(check (Goal x))");
     let slice = causal_slice_program(Some("witness.egg".to_owned()), &source).unwrap();

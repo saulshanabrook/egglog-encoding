@@ -2304,9 +2304,6 @@ fn model_rule(
     source_globals: &IndexMap<String, String>,
     derived_replay_vars: &[String],
 ) -> Result<RuleModel, CausalSliceError> {
-    if rule.body.is_empty() {
-        return unsupported(&rule.span, format!("an empty body on rule `{}`", rule.name));
-    }
     if rule.head.0.is_empty() {
         return unsupported(&rule.span, format!("an empty head on rule `{}`", rule.name));
     }
