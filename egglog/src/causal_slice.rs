@@ -144,12 +144,14 @@ pub enum CausalSliceError {
 #[derive(Clone, Debug)]
 struct RelationDecl {
     sorts: Vec<String>,
+    opaque_sort: Option<String>,
 }
 
 #[derive(Clone, Debug)]
 struct ConstructorDecl {
     inputs: Vec<String>,
     output: String,
+    opaque_sort: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -1567,6 +1569,10 @@ fn trace_function_metadata(
     Ok(result)
 }
 
+fn schema_only_container_presort(presort: &str) -> bool {
+    matches!(presort, "Pair" | "Vec")
+}
+
 fn collect_declarations(
     commands: &[Command],
     source_name: &str,
@@ -1602,12 +1608,24 @@ fn collect_declarations(
             _ => None,
         })
         .collect::<HashSet<_>>();
+    let opaque_sorts = commands
+        .iter()
+        .filter_map(|command| match command {
+            Command::Sort {
+                name,
+                presort_and_args: Some((presort, _)),
+                ..
+            } if schema_only_container_presort(presort) => Some(name.clone()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let supported_sort = |sort: &str| {
         matches!(
             sort,
             "i64" | "String" | "bool" | "f64" | "Unit" | "BigInt" | "BigRat"
         ) || datatype_sorts.contains(sort)
             || eq_sorts.contains(sort)
+            || opaque_sorts.contains(sort)
     };
     for (index, command) in commands.iter().enumerate() {
         match command {
@@ -1634,6 +1652,11 @@ fn collect_declarations(
                             ConstructorDecl {
                                 inputs: variant.types.clone(),
                                 output: name.clone(),
+                                opaque_sort: variant
+                                    .types
+                                    .iter()
+                                    .find(|sort| opaque_sorts.contains(*sort))
+                                    .cloned(),
                             },
                         )
                         .is_some()
@@ -1659,6 +1682,10 @@ fn collect_declarations(
                         name.clone(),
                         RelationDecl {
                             sorts: inputs.clone(),
+                            opaque_sort: inputs
+                                .iter()
+                                .find(|sort| opaque_sorts.contains(*sort))
+                                .cloned(),
                         },
                     )
                     .is_some()
@@ -1708,6 +1735,12 @@ fn collect_declarations(
                         ConstructorDecl {
                             inputs: schema.input.clone(),
                             output: output.clone(),
+                            opaque_sort: schema
+                                .input
+                                .iter()
+                                .chain(std::iter::once(output))
+                                .find(|sort| opaque_sorts.contains(*sort))
+                                .cloned(),
                         },
                     )
                     .is_some()
@@ -2017,14 +2050,17 @@ fn validate_and_model(
                 }
             }
             Command::Sort {
-                presort_and_args: None,
+                presort_and_args,
                 uf: None,
                 proof_func: None,
                 container_rebuild: None,
                 proof_constructors: None,
                 unionable: true,
                 ..
-            } => {
+            } if presort_and_args
+                .as_ref()
+                .is_none_or(|(presort, _)| schema_only_container_presort(presort)) =>
+            {
                 if schedule_index.is_some() {
                     return unsupported_command(
                         command,
@@ -3029,6 +3065,12 @@ fn model_atom(
             location: span.to_string(),
             reason: format!("primitive or function call `{relation}` in {context}"),
         })?;
+    if let Some(sort) = &declaration.opaque_sort {
+        return unsupported(
+            span,
+            format!("relation `{relation}` with opaque container sort `{sort}` in {context}"),
+        );
+    }
     if args.len() != declaration.sorts.len() {
         return unsupported(
             span,
@@ -3093,6 +3135,14 @@ fn model_atom_arg(
                         location: span.to_string(),
                         reason: format!("nested non-constructor call `{function}` in {context}"),
                     })?;
+            if let Some(sort) = &constructor.opaque_sort {
+                return unsupported(
+                    span,
+                    format!(
+                        "constructor `{function}` with opaque container sort `{sort}` in {context}"
+                    ),
+                );
+            }
             if constructor.output != expected_sort {
                 return unsupported(
                     span,

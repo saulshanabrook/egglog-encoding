@@ -1048,7 +1048,7 @@ fn dynamic_global_endpoint_change_retains_its_equality_cause() {
 }
 
 #[test]
-fn container_presort_remains_an_explicit_boundary() {
+fn inert_container_sort_declaration_is_preserved() {
     let source = r#"
         (sort Values (Vec i64))
         (relation Seed ())
@@ -1057,8 +1057,127 @@ fn container_presort_remains_an_explicit_boundary() {
         (check (Seed))
     "#;
 
-    let error = causal_slice_program(Some("container-presort.egg".to_owned()), source).unwrap_err();
-    assert!(error.to_string().contains("custom sorts"));
+    let slice = causal_slice_program(Some("container-presort.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(sort Values (Vec i64))"));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("container-presort-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn container_sort_is_allowed_in_inert_table_schemas() {
+    let source = r#"
+        (sort Values (Vec i64))
+        (sort Entry (Pair String i64))
+        (datatype Expr (Unused Values))
+        (constructor UnusedEntry (Entry) Expr)
+        (relation Opaque (Values Entry))
+        (function score (Values) Entry :merge old)
+        (relation Seed ())
+        (Seed)
+        (run 1)
+        (check (Seed))
+    "#;
+
+    let slice = causal_slice_program(Some("container-schema.egg".to_owned()), source).unwrap();
+    assert!(slice.source.contains("(datatype Expr (Unused Values))"));
+    assert!(
+        slice
+            .source
+            .contains("(constructor UnusedEntry (Entry) Expr)")
+    );
+    assert!(slice.source.contains("(relation Opaque (Values Entry))"));
+    assert!(
+        slice
+            .source
+            .contains("(function score (Values) Entry :merge old)")
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("container-schema-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn container_values_remain_an_explicit_runtime_boundary() {
+    let relation_use = r#"
+        (sort Values (Vec i64))
+        (relation HasValues (Values))
+        (relation Goal ())
+        (rule ((HasValues items)) ((Goal)) :name "read-values")
+        (run 1)
+        (check (Goal))
+    "#;
+    let error = causal_slice_program(Some("container-relation-use.egg".to_owned()), relation_use)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("relation `HasValues` with opaque container sort `Values` in rule body"),
+        "{error}"
+    );
+
+    let constructor_use = r#"
+        (sort Values (Vec i64))
+        (datatype Expr (Call Values))
+        (relation Goal (Expr))
+        (Goal (Call (vec-of 1)))
+        (run 1)
+        (check (Goal value))
+    "#;
+    let error = causal_slice_program(
+        Some("container-constructor-use.egg".to_owned()),
+        constructor_use,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains(
+            "constructor `Call` with opaque container sort `Values` in source initialization"
+        ),
+        "{error}"
+    );
+
+    let check_use = r#"
+        (sort Values (Vec i64))
+        (relation HasValues (Values))
+        (run 1)
+        (check (HasValues item))
+    "#;
+    let error =
+        causal_slice_program(Some("container-check-use.egg".to_owned()), check_use).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("relation `HasValues` with opaque container sort `Values` in positive check"),
+        "{error}"
+    );
+}
+
+#[test]
+fn unproven_container_presorts_remain_an_explicit_boundary() {
+    let source = r#"
+        (sort Values (Set i64))
+        (relation Seed ())
+        (Seed)
+        (run 1)
+        (check (Seed))
+    "#;
+
+    let error = causal_slice_program(Some("set-presort.egg".to_owned()), source).unwrap_err();
+    assert!(error.to_string().contains("custom sorts"), "{error}");
 }
 
 #[test]
