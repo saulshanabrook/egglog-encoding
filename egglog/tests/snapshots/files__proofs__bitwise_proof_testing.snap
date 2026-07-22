@@ -2,12 +2,48 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Computed (= 0 0))
-(Computed (= 8 8))
-(Computed (= 10 10))
-(Computed (= 2 2))
-(Computed (= 8 8))
-(Computed (= 1 1))
-(Computed (= 2 2))
-(Computed (= 2 2))
-(Computed (= -1 -1))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor3) (@ExistsConstructor3))
+  (name "@prove_exists_rule3")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor4) (@ExistsConstructor4))
+  (name "@prove_exists_rule4")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor5) (@ExistsConstructor5))
+  (name "@prove_exists_rule5")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor6) (@ExistsConstructor6))
+  (name "@prove_exists_rule6")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor7) (@ExistsConstructor7))
+  (name "@prove_exists_rule7")
+  (premises (Eval))
+  (substitution))
+(Rule
+  (= (@ExistsConstructor8) (@ExistsConstructor8))
+  (name "@prove_exists_rule8")
+  (premises (Eval))
+  (substitution))

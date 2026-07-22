@@ -275,7 +275,7 @@ expression: proof_snapshot
          )")
                   t32
                   t34)
-                (Computed (= () ())))
+                (Eval))
               (substitution
                 (@rewrite_var__2 t30)
                 (ty (TArr (TUnitConst) (TUnitConst)))
@@ -319,7 +319,7 @@ expression: proof_snapshot
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
             t3
             t5)
-          (Computed (= () ())))
+          (Eval))
         (substitution (@rewrite_var__2 t2) (ty (TUnitConst)) (y "x") t4 (x "y"))))
     (substitution
       (t (TUnitConst))
@@ -363,7 +363,7 @@ expression: proof_snapshot
               "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
             t4
             t6)
-          (Computed (= () ())))
+          (Eval))
         (substitution (@rewrite_var__2 t3) (ty (TUnitConst)) (y "x") t5 (x "y"))))
     (substitution (t t0) (ctx (NilConst)) (@rewrite_var__1 t3) (x "y")))
   1)

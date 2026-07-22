@@ -647,8 +647,7 @@ expression: proof_snapshot
                                                       (x (Const 1.0))))))
 (let t29 (a t0))
 (let t30 (substitution t29))
-(let prf1 (Computed (= () ())))
-(let prf2
+(let prf1
   (Rule
                                             (=
                                               (is-not-zero (Const 2.0))
@@ -681,18 +680,18 @@ expression: proof_snapshot
            )")
                                                 t28
                                                 t30)
-                                              prf1)
+                                              (Eval))
                                             (substitution
-                                              (@v776 (Const 0.0))
+                                              (@v773 (Const 0.0))
                                               (x (Const 2.0)))))
-(let t31 (premises (Fiat (= t1 t1)) prf2))
+(let t31 (premises (Fiat (= t1 t1)) prf1))
 (let t32
   (substitution
                                           t29
                                           (b (Const 2.0))
                                           (@rewrite_var__9 t1)))
 (let t33 (b t7))
-(let prf3
+(let prf2
   (Rule
                                     (= t1 (Mul t7 t0))
                                     (name "(rewrite (Mul a b) (Mul b a))")
@@ -708,14 +707,14 @@ expression: proof_snapshot
 (let t35 (@rewrite_var__15 t1))
 (let t36 (c (Sqrt (Var "five"))))
 (let t37 (MathU t7))
-(let prf4
+(let prf3
   (Rule
                                           (= t7 t7)
                                           (name
                                             "(rewrite (Div a b) (Mul a (Pow b (Const -1.0))) :when ((is-not-zero b)))")
                                           t31
                                           t32))
-(let prf5
+(let prf4
   (Sym
                                 (= t24 t7)
                                 (Rule
@@ -731,7 +730,7 @@ expression: proof_snapshot
                                         "(rule ((= e (Pow x y)))
         ((MathU e))
            )")
-                                      (premises prf4)
+                                      (premises prf3)
                                       (substitution
                                         (y (Const -1.0))
                                         (e t7)
@@ -748,9 +747,9 @@ expression: proof_snapshot
                                 (= t1 (Add t24 t10))
                                 (name
                                   "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
-                                (premises prf3)
+                                (premises prf2)
                                 (substitution t34 t35 (b (Const 1.0)) t36))
-                              prf5
+                              prf4
                               0)
                             1)))
 (let t39 (c t10))
@@ -769,14 +768,14 @@ expression: proof_snapshot
 (let t52 (Add t13 t51))
 (let t53 (Add t12 t51))
 (let t54 (MathU t17))
-(let prf6
+(let prf5
   (Rule
                                                 (= t17 t17)
                                                 (name
                                                   "(rewrite (Sub a b) (Add a (Mul (Const -1.0) b)))")
                                                 t20
                                                 t22))
-(let prf7
+(let prf6
   (Rule
                                     (= t17 (Add (Const 0.0) t17))
                                     (name "(rewrite (Add a b) (Add b a))")
@@ -794,7 +793,7 @@ expression: proof_snapshot
                                               "(rule ((= e (Mul x y)))
         ((MathU e))
            )")
-                                            (premises prf6)
+                                            (premises prf5)
                                             (substitution
                                               (y t3)
                                               (e t17)
@@ -809,24 +808,24 @@ expression: proof_snapshot
 (let t57 (Mul t7 t2))
 (let t58 (Mul t2 t7))
 (let t59 (a t2))
-(let prf8
+(let prf7
   (Rule
                                                       (= t3 t58)
                                                       (name
                                                         "(rewrite (Div a b) (Mul a (Pow b (Const -1.0))) :when ((is-not-zero b)))")
                                                       (premises
                                                         (Fiat (= t3 t3))
-                                                        prf2)
+                                                        prf1)
                                                       (substitution
                                                         t59
                                                         (b (Const 2.0))
                                                         (@rewrite_var__9 t3))))
-(let prf9
+(let prf8
   (Rule
                                                   (= t3 t57)
                                                   (name
                                                     "(rewrite (Mul a b) (Mul b a))")
-                                                  (premises prf8)
+                                                  (premises prf7)
                                                   (substitution
                                                     t59
                                                     (@rewrite_var__5 t3)
@@ -838,7 +837,7 @@ expression: proof_snapshot
                                                     (a (Const 1.0))
                                                     t61
                                                     (@rewrite_var__8 t2)))
-(let prf10
+(let prf9
   (Rule
                                                   (= t2 t56)
                                                   (name
@@ -853,7 +852,7 @@ expression: proof_snapshot
   (premises
                                 (Congr
                                   (= t17 (Add (Const 0.0) t53))
-                                  prf7
+                                  prf6
                                   (Rule
                                     (= t17 t53)
                                     (name
@@ -861,7 +860,7 @@ expression: proof_snapshot
                                     (premises
                                       (Congr
                                         (= t17 (Mul (Const -1.0) t55))
-                                        prf6
+                                        prf5
                                         (Congr
                                           (= t3 t55)
                                           (Rule
@@ -871,15 +870,15 @@ expression: proof_snapshot
                                             (premises
                                               (Congr
                                                 (= t3 (Mul t7 t56))
+                                                prf8
                                                 prf9
-                                                prf10
                                                 1))
                                             (substitution
                                               t34
                                               t63
                                               (b (Const 1.0))
                                               t64))
-                                          prf5
+                                          prf4
                                           0)
                                         1))
                                     (substitution (a (Const -1.0)) t65 t33 t66))
@@ -890,12 +889,12 @@ expression: proof_snapshot
 (let t71 (Add t50 t7))
 (let t72 (Add t46 (Const 1.0)))
 (let t73 (b t46))
-(let prf11
+(let prf10
   (Rule
                                                     (= t2 t72)
                                                     (name
                                                       "(rewrite (Add a b) (Add b a))")
-                                                    (premises prf10)
+                                                    (premises prf9)
                                                     (substitution
                                                       (@rewrite_var__4 t2)
                                                       (a (Const 1.0))
@@ -904,8 +903,8 @@ expression: proof_snapshot
   (premises
                                                 (Congr
                                                   (= t3 (Mul t7 t72))
-                                                  prf9
-                                                  prf11
+                                                  prf8
+                                                  prf10
                                                   1)))
 (let t75
   (substitution
@@ -917,7 +916,7 @@ expression: proof_snapshot
   (premises
                                         (Congr
                                           (= t17 (Mul (Const -1.0) t71))
-                                          prf6
+                                          prf5
                                           (Congr
                                             (= t3 t71)
                                             (Rule
@@ -926,7 +925,7 @@ expression: proof_snapshot
                                                 "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                               t74
                                               t75)
-                                            prf5
+                                            prf4
                                             1)
                                           1)))
 (let t77 (c t7))
@@ -936,7 +935,7 @@ expression: proof_snapshot
                                         t65
                                         (b t50)
                                         t77))
-(let prf12
+(let prf11
   (Rule
                                       (= t51 t51)
                                       (name
@@ -953,8 +952,8 @@ expression: proof_snapshot
                                                           (=
                                                             t17
                                                             (Mul (Const -1.0) t58))
-                                                          prf6
-                                                          prf8
+                                                          prf5
+                                                          prf7
                                                           1)))
 (let t84 (@rewrite_var__7 t17))
 (let t85
@@ -980,7 +979,7 @@ expression: proof_snapshot
                                                             "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                                           t83
                                                           t85)
-                                                        prf11
+                                                        prf10
                                                         1)))
 (let t89
   (substitution
@@ -1077,8 +1076,8 @@ expression: proof_snapshot
   (premises
                                                 (Congr
                                                   (= t17 (Mul (Const -1.0) t57))
-                                                  prf6
-                                                  prf9
+                                                  prf5
+                                                  prf8
                                                   1)))
 (let t94 (c t2))
 (let t95
@@ -1087,14 +1086,14 @@ expression: proof_snapshot
                                                 (a (Const -1.0))
                                                 t33
                                                 t94))
-(let prf13
+(let prf12
   (Rule
                                               (= t12 t12)
                                               (name
                                                 "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                               t93
                                               t95))
-(let prf14
+(let prf13
   (Trans
                                   (= t70 t48)
                                   (Sym
@@ -1112,7 +1111,7 @@ expression: proof_snapshot
                                         (Rule
                                           (= t12 t79)
                                           (name "(rewrite (Mul a b) (Mul b a))")
-                                          (premises prf13)
+                                          (premises prf12)
                                           (substitution
                                             (a (Const -1.0))
                                             (@rewrite_var__5 t12)
@@ -1126,20 +1125,20 @@ expression: proof_snapshot
                                         "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                       t91
                                       t92))))
-(let prf15
+(let prf14
   (Trans
                                 (= t51 t48)
                                 (Rule
                                   (= t51 t70)
                                   (name
                                     "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
-                                  (premises prf12)
+                                  (premises prf11)
                                   (substitution
                                     (@rewrite_var__7 t51)
                                     (a (Const -1.0))
                                     t33
                                     t64))
-                                prf14))
+                                prf13))
 (let t96 (Mul (Sqrt (Var "five")) t7))
 (let t97 (Mul (Const 1.0) (Sqrt (Var "five"))))
 (let t98 (Mul (Const -1.0) (Const -1.0)))
@@ -1176,7 +1175,7 @@ expression: proof_snapshot
                                               (x (Var "five"))))))
 (let t103 (a (Sqrt (Var "five"))))
 (let t104 (substitution t103))
-(let prf16
+(let prf15
   (Rule
                                         (= (Sqrt (Var "five")) t6)
                                         (name
@@ -1191,7 +1190,7 @@ expression: proof_snapshot
   (premises
                                       (Congr
                                         (= t1 (Mul t7 t105))
-                                        prf3
+                                        prf2
                                         (Rule
                                           (= t0 t105)
                                           (name "(rewrite (Add a b) (Add b a))")
@@ -1199,20 +1198,20 @@ expression: proof_snapshot
                                           (substitution t106 (a (Const 1.0)) t61))
                                         1)))
 (let t108 (substitution t34 t35 t61 (c (Const 1.0))))
-(let prf17
+(let prf16
   (Rule
                                     (= t10 t10)
                                     (name
                                       "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                     t107
                                     t108))
-(let prf18
+(let prf17
   (Rule
                                 (= t10 t96)
                                 (name "(rewrite (Mul a b) (Mul b a))")
-                                (premises prf17)
+                                (premises prf16)
                                 (substitution t34 (@rewrite_var__5 t10) t61)))
-(let prf19
+(let prf18
   (Trans
                             (= t48 t10)
                             (Congr
@@ -1253,13 +1252,13 @@ expression: proof_snapshot
                                   (Rule
                                     (= (Sqrt (Var "five")) t97)
                                     (name "(rewrite (Mul a b) (Mul b a))")
-                                    (premises prf16)
+                                    (premises prf15)
                                     (substitution
                                       t103
                                       (@rewrite_var__5 (Sqrt (Var "five")))
                                       (b (Const 1.0))))))
                               0)
-                            (Sym (= t96 t10) prf18)))
+                            (Sym (= t96 t10) prf17)))
 (let t109
   (premises
                       (Congr
@@ -1293,13 +1292,13 @@ expression: proof_snapshot
                                   "(rewrite (Add a (Add b c)) (Add (Add a b) c))")
                                 t67
                                 t69)
-                              prf15
+                              prf14
                               1))
-                          prf19
+                          prf18
                           1)
                         1)))
 (let t110 (substitution t39 t34 (@rewrite_var__6 t18) (b t13)))
-(let prf20
+(let prf19
   (Rule
                     (= t18 t16)
                     (name "(rewrite (Add a (Add b c)) (Add (Add a b) c))")
@@ -1307,7 +1306,7 @@ expression: proof_snapshot
                     t110))
 (let t111 (a t10))
 (let t112 (Add (Const 0.0) t10))
-(let prf21
+(let prf20
   (Rule
                                             (= t7 (Const 0.5))
                                             (name
@@ -1319,16 +1318,16 @@ expression: proof_snapshot
                                                   (Div (Const 1.0) (Const 2.0)))
                                                 (name
                                                   "(rewrite (Pow x (Const -1.0)) (Div (Const 1.0) x) :when ((is-not-zero x)))")
-                                                (premises prf4 prf2)
+                                                (premises prf3 prf1)
                                                 (substitution
                                                   (@rewrite_var__21 t7)
                                                   (x (Const 2.0))))
-                                              prf1)
+                                              (Eval))
                                             (substitution
                                               (a 1.0)
                                               (b 2.0)
                                               (@rewrite_var__3 t7))))
-(let prf22
+(let prf21
   (Rule
                                       (= t12 (Const -0.5))
                                       (name
@@ -1336,18 +1335,18 @@ expression: proof_snapshot
                                       (premises
                                         (Congr
                                           (= t12 (Mul (Const -1.0) (Const 0.5)))
-                                          prf13
-                                          prf21
+                                          prf12
+                                          prf20
                                           1))
                                       (substitution
                                         (@rewrite_var__2 t12)
                                         (a -1.0)
                                         (b 0.5))))
-(let prf23 (Sym (= (Const -0.5) t12) prf22))
+(let prf22 (Sym (= (Const -0.5) t12) prf21))
 (let t113 (Mul t7 (Const 0.0)))
 (let t114 (Add (Const 0.0) (Sqrt (Var "five"))))
 (let t115 (Add (Sqrt (Var "five")) (Const 0.0)))
-(let prf24
+(let prf23
   (Rule
                                 (= (Sqrt (Var "five")) t115)
                                 (name
@@ -1357,7 +1356,7 @@ expression: proof_snapshot
                                 t102
                                 t104))
 (let t116 (Add (Const 0.0) t0))
-(let prf25
+(let prf24
   (Rule
                       (= t113 (Const 0.0))
                       (name "(rewrite (Mul (Const a) (Const b)) (Const (* a b)))")
@@ -1371,7 +1370,7 @@ expression: proof_snapshot
                             (premises
                               (Congr
                                 (= t1 (Mul t7 t116))
-                                prf3
+                                prf2
                                 (Rule
                                   (= t0 t116)
                                   (name "(rewrite (Add a b) (Add b a))")
@@ -1387,7 +1386,7 @@ expression: proof_snapshot
                                   (substitution t106 t29 (b (Const 0.0))))
                                 1))
                             (substitution t34 t35 (b (Const 0.0)) (c t0)))
-                          prf21
+                          prf20
                           0))
                       (substitution (@rewrite_var__2 t113) (a 0.5) (b 0.0))))
 (let t117 (Add t17 t10))
@@ -1398,7 +1397,7 @@ expression: proof_snapshot
 (let t122 (Mul t12 (Const 1.0)))
 (let t123 (Add t120 t122))
 (let t124 (Add t70 t122))
-(let prf26
+(let prf25
   (Rule
                                           (= t17 (Mul t12 t2))
                                           (name
@@ -1410,13 +1409,13 @@ expression: proof_snapshot
   (premises
                                 (Congr
                                   (= t17 (Add (Const 0.0) t124))
-                                  prf7
+                                  prf6
                                   (Rule
                                     (= t17 t124)
                                     (name
                                       "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                     (premises
-                                      (Congr (= t17 (Mul t12 t72)) prf26 prf11 1))
+                                      (Congr (= t17 (Mul t12 t72)) prf25 prf10 1))
                                     (substitution t125 t65 t73 (c (Const 1.0))))
                                   1)))
 (let t127 (substitution (c t122) (a (Const 0.0)) t68 (b t70)))
@@ -1431,7 +1430,7 @@ expression: proof_snapshot
 (let t136 (Add (Const 0.0) t50))
 (let t137 (Add (Const 0.0) t46))
 (let t138 (MathU t46))
-(let prf27
+(let prf26
   (Rule
                                                                   (= t46 t46)
                                                                   (name
@@ -1443,7 +1442,7 @@ expression: proof_snapshot
   (premises
                                           (Congr
                                             (= t51 (Mul (Const -1.0) t136))
-                                            prf12
+                                            prf11
                                             (Congr
                                               (= t50 t136)
                                               (Rule
@@ -1479,7 +1478,7 @@ expression: proof_snapshot
                                                                 "(rule ((= e (Mul x y)))
         ((MathU e))
            )")
-                                                              (premises prf27)
+                                                              (premises prf26)
                                                               (substitution
                                                                 t27
                                                                 (e t46)
@@ -1495,7 +1494,7 @@ expression: proof_snapshot
                                                   (@rewrite_var__15 t50)
                                                   (b (Const 0.0))
                                                   t64))
-                                              prf25
+                                              prf24
                                               0)
                                             1)))
 (let t141
@@ -1536,7 +1535,7 @@ expression: proof_snapshot
                                         "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                       t107
                                       t108)
-                                    prf5
+                                    prf4
                                     1)
                                   1))
                               (substitution t77 t40 t41 t43)))
@@ -1575,7 +1574,7 @@ expression: proof_snapshot
                                         (premises
                                           (Congr
                                             (= t17 (Mul t12 t128))
-                                            prf26
+                                            prf25
                                             (Rule
                                               (= t2 t128)
                                               (name
@@ -1610,13 +1609,13 @@ expression: proof_snapshot
                                           t125
                                           (b (Const 1.0))
                                           t94))
-                                      prf22
+                                      prf21
                                       0))
                                   (substitution
                                     (@rewrite_var__2 t122)
                                     (a -0.5)
                                     (b 1.0)))
-                                prf23)
+                                prf22)
                               1))
                           (Trans
                             (= t120 t10)
@@ -1632,7 +1631,7 @@ expression: proof_snapshot
                                       "(rewrite (Add a (Add b c)) (Add (Add a b) c))")
                                     t126
                                     t127)
-                                  prf14
+                                  prf13
                                   1)
                                 (Sym
                                   (= t131 t130)
@@ -1645,7 +1644,7 @@ expression: proof_snapshot
                                       (premises
                                         (Congr
                                           (= t17 (Add (Const 0.0) t132))
-                                          prf7
+                                          prf6
                                           (Rule
                                             (= t17 t132)
                                             (name
@@ -1658,7 +1657,7 @@ expression: proof_snapshot
                                         (a (Const 0.0))
                                         t68
                                         (b t51)))
-                                    prf15
+                                    prf14
                                     1)))
                               (Trans
                                 (= t130 t48)
@@ -1686,8 +1685,8 @@ expression: proof_snapshot
                                             (premises
                                               (Congr
                                                 (= t46 (Mul (Const -1.0) t115))
-                                                prf27
-                                                prf24
+                                                prf26
+                                                prf23
                                                 1))
                                             (substitution
                                               (a (Const -1.0))
@@ -1707,14 +1706,14 @@ expression: proof_snapshot
                                         "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                       t140
                                       t141)))
-                                prf15))
-                            prf19)
+                                prf14))
+                            prf18)
                           0)
                         1))
                     (substitution t133 t111 (@rewrite_var__6 t117) t43))
-                  prf18
+                  prf17
                   0)
-                prf18
+                prf17
                 1)))
 (let t143 (substitution t77 t103 (@rewrite_var__16 t11) t33))
 (Congr
@@ -1744,7 +1743,7 @@ expression: proof_snapshot
                       t38
                       t42))
                   (substitution t23 (a t18) t43))
-                prf20
+                prf19
                 1))
             (substitution t39 t111 t41 (b t14)))
           (Trans
@@ -1754,13 +1753,13 @@ expression: proof_snapshot
               (Rule
                 (= t18 t15)
                 (name "(rewrite (Add a b) (Add b a))")
-                (premises prf20)
+                (premises prf19)
                 (substitution t45 (a t14) t43)))
             (Trans
               (= t18 t10)
               (Congr
                 (= t18 t112)
-                prf20
+                prf19
                 (Rule
                   (= t14 (Const 0.0))
                   (name "(rewrite (Add (Const a) (Const b)) (Const (+ a b)))")
@@ -1792,17 +1791,17 @@ expression: proof_snapshot
                                       "(rewrite (Add a (Add b c)) (Add (Add a b) c))")
                                     t67
                                     t69)
-                                  prf22
+                                  prf21
                                   1))
                               (substitution
                                 (a 0.0)
                                 (b -0.5)
                                 (@rewrite_var__ t13)))
-                            prf23)
+                            prf22)
                           1)
-                        prf21
+                        prf20
                         0)
-                      prf22
+                      prf21
                       1))
                   (substitution (a 0.5) (b -0.5) (@rewrite_var__ t14)))
                 0)
@@ -1817,11 +1816,11 @@ expression: proof_snapshot
                     (premises
                       (Congr
                         (= t10 (Mul t7 t114))
-                        prf17
+                        prf16
                         (Rule
                           (= (Sqrt (Var "five")) t114)
                           (name "(rewrite (Add a b) (Add b a))")
-                          (premises prf24)
+                          (premises prf23)
                           (substitution
                             (@rewrite_var__4 (Sqrt (Var "five")))
                             t103
@@ -1832,7 +1831,7 @@ expression: proof_snapshot
                       (@rewrite_var__15 t10)
                       (b (Const 0.0))
                       t36))
-                  prf25
+                  prf24
                   0))))
           0)
         (Rule
@@ -1853,13 +1852,13 @@ expression: proof_snapshot
                 (name "(rewrite (Add (Mul a b) (Mul a c)) (Mul a (Add b c)))")
                 t142
                 t143)
-              prf21
+              prf20
               0)
-            prf21
+            prf20
             1))
         (substitution (a 0.5) (b 0.5) (@rewrite_var__ t8)))
       1)
-    (Sym (= t6 (Sqrt (Var "five"))) prf16))
+    (Sym (= t6 (Sqrt (Var "five"))) prf15))
   1)
 (let t0 (Add (Var "x") (Const 3.0)))
 (let t1 (Mul t0 (Add (Var "x") (Const 1.0))))
@@ -2084,7 +2083,7 @@ expression: proof_snapshot
          )")
           (premises prf0)
           (substitution (x "x") (c (Var "y"))))
-        (Computed (= () ())))
+        (Eval))
       (substitution (v "x") (w "y"))))
   (substitution (c (Var "y")) (@rewrite_var__24 t0) (x "x")))
 (let t0 (Mul (Const 2.0) (Var "x")))
@@ -3227,7 +3226,7 @@ expression: proof_snapshot
          )")
                       (premises prf10)
                       (substitution (x "x") (c (Var "y"))))
-                    (Computed (= () ())))
+                    (Eval))
                   (substitution (v "x") (w "y"))))
               (substitution (c (Var "y")) (@rewrite_var__24 t7) (x "x")))
             prf8)
@@ -3300,8 +3299,8 @@ expression: proof_snapshot
               (premises prf0)
               (substitution (y (Ln (Var "x"))) (e t0) (x (Var "x")))))
           (substitution (a t0)))
-        (Computed (= () ())))
-      (substitution (@v776 (Const 0.0)) (x (Var "x")))))
+        (Eval))
+      (substitution (@v773 (Const 0.0)) (x (Var "x")))))
   (substitution (@rewrite_var__29 t0) (x (Var "x"))))
 (let t0 (Pow (Var "x") (Const 3.0)))
 (let t1 (Diff (Var "x") t0))
@@ -3358,8 +3357,7 @@ expression: proof_snapshot
            )")
                                       t19
                                       t21))
-(let prf3 (Computed (= () ())))
-(let prf4
+(let prf3
   (Rule
                                   (=
                                     (is-not-zero (Var "x"))
@@ -3379,12 +3377,12 @@ expression: proof_snapshot
                                       (premises (Fiat (= (Var "x") (Var "x"))))
                                       (substitution (e (Var "x")) (x "x")))
                                     prf2
-                                    prf3)
-                                  (substitution (@v776 (Const 0.0)) (x (Var "x")))))
+                                    (Eval))
+                                  (substitution (@v773 (Const 0.0)) (x (Var "x")))))
 (let t22
   (premises
                                 prf0
-                                prf4
+                                prf3
                                 (Rule
                                   (=
                                     (is-not-zero (Const 3.0))
@@ -3405,9 +3403,9 @@ expression: proof_snapshot
                                         (Fiat (= (Const 3.0) (Const 3.0))))
                                       (substitution (e (Const 3.0)) (x 3.0)))
                                     prf2
-                                    prf3)
+                                    (Eval))
                                   (substitution
-                                    (@v776 (Const 0.0))
+                                    (@v773 (Const 0.0))
                                     (x (Const 3.0))))))
 (let t23
   (substitution
@@ -3427,14 +3425,14 @@ expression: proof_snapshot
 (let t26 (@rewrite_var__15 t1))
 (let t27 (c t12))
 (let t28 (substitution t25 t26 (b t8) t27))
-(let prf5
+(let prf4
   (Rule
                           (= t1 t16)
                           (name
                             "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                           t24
                           t28))
-(let t29 (premises (Congr (= t1 (Mul (Const 1.0) t16)) prf1 prf5 1)))
+(let t29 (premises (Congr (= t1 (Mul (Const 1.0) t16)) prf1 prf4 1)))
 (let t30 (b t9))
 (let t31 (c t13))
 (let t32 (substitution (a (Const 1.0)) t26 t30 t31))
@@ -3442,14 +3440,14 @@ expression: proof_snapshot
 (let t34 (Mul t9 (Const 1.0)))
 (let t35 (Mul t0 t7))
 (let t36 (Mul t7 (Const 1.0)))
-(let prf6
+(let prf5
   (Rule
                             (= t9 t9)
                             (name
                               "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                             t24
                             t28))
-(let prf7
+(let prf6
   (Rule
                                   (= t8 t8)
                                   (name
@@ -3457,7 +3455,7 @@ expression: proof_snapshot
                                   t22
                                   t23))
 (let t37 (b t7))
-(let prf8
+(let prf7
   (Rule
                               (= t6 (Const 1.0))
                               (name
@@ -3470,15 +3468,15 @@ expression: proof_snapshot
                                   t22
                                   t23))
                               (substitution (@rewrite_var__23 t6) (x "x"))))
-(let prf9
+(let prf8
   (Congr
                             (= t8 t36)
                             (Rule
                               (= t8 (Mul t7 t6))
                               (name "(rewrite (Mul a b) (Mul b a))")
-                              (premises prf7)
+                              (premises prf6)
                               (substitution (a t6) (@rewrite_var__5 t8) t37))
-                            prf8
+                            prf7
                             1))
 (let t38 (@rewrite_var__7 t9))
 (let t39 (Mul t0 (Const 1.0)))
@@ -3488,12 +3486,12 @@ expression: proof_snapshot
   (premises
                               (Congr
                                 (= t9 (Mul t0 t41))
-                                prf6
-                                (Congr (= t8 t41) prf7 prf8 0)
+                                prf5
+                                (Congr (= t8 t41) prf6 prf7 0)
                                 1)))
 (let t43 (substitution t38 t25 (b (Const 1.0)) (c t7)))
 (let t44 (MathU t0))
-(let prf10
+(let prf9
   (Rule
                               (= t0 t39)
                               (name
@@ -3543,7 +3541,7 @@ expression: proof_snapshot
 (let t53 (Diff (Var "x") (Const 1.0)))
 (let t54 (Mul t0 t53))
 (let t55 (Mul t0 (Const 0.0)))
-(let prf11
+(let prf10
   (Rule
                               (= t11 t11)
                               (name
@@ -3555,13 +3553,13 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                       (Const 3.0)
                                       "x"))
-(let prf12
+(let prf11
   (Rule
                           (= t11 (Const 0.0))
                           (name
                             "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                           (premises
-                            prf11
+                            prf10
                             (Rule
                               (= t56 t56)
                               (name
@@ -3575,7 +3573,7 @@ expression: proof_snapshot
                                     "(rule ((Diff (Var x) c))
         ((is-const-or-distinct-var-demand c x))
            )")
-                                  (premises prf11)
+                                  (premises prf10)
                                   (substitution (x "x") (c (Const 3.0)))))
                               (substitution (v "x") (c 3.0))))
                           (substitution
@@ -3584,14 +3582,14 @@ expression: proof_snapshot
                             (x "x"))))
 (let t58
   (premises
-                              (Congr (= t1 (Diff (Var "x") t39)) prf0 prf10 1)))
+                              (Congr (= t1 (Diff (Var "x") t39)) prf0 prf9 1)))
 (let t59
   (substitution
                               (@rewrite_var__26 t1)
                               t25
                               (x (Var "x"))
                               (b (Const 1.0))))
-(let prf13
+(let prf12
   (Rule
                                 (= t53 t53)
                                 (name
@@ -3603,8 +3601,8 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                         (Const 1.0)
                                         "x"))
-(let t62 (premises prf13))
-(let prf14
+(let t62 (premises prf12))
+(let prf13
   (Congr
                           (= t54 t55)
                           (Rule
@@ -3618,7 +3616,7 @@ expression: proof_snapshot
                             (name
                               "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                             (premises
-                              prf13
+                              prf12
                               (Rule
                                 (= t60 t60)
                                 (name
@@ -3640,7 +3638,7 @@ expression: proof_snapshot
                               (@rewrite_var__24 t53)
                               (x "x")))
                           1))
-(let prf15
+(let prf14
   (Rule
                       (= t12 t12)
                       (name
@@ -3658,11 +3656,11 @@ expression: proof_snapshot
                 (= t9 (Mul t0 t66))
                 (Congr
                   (= t9 t35)
-                  prf6
+                  prf5
                   (Rule
                     (= t8 t7)
                     (name "(rewrite (Mul a (Const 1.0)) a)")
-                    (premises prf9)
+                    (premises prf8)
                     (substitution (a t7) (@rewrite_var__12 t8)))
                   1)
                 (Rule
@@ -3680,7 +3678,7 @@ expression: proof_snapshot
                             "(rewrite (Diff x (Pow f g)) (Mul (Pow f g) (Add (Mul (Diff x f) (Div g f)) (Mul (Diff x g) (Ln f)))) :when ((is-not-zero f) (is-not-zero g)))")
                           t22
                           t23)
-                        prf4)
+                        prf3)
                       (substitution
                         (a (Const 3.0))
                         (b (Var "x"))
@@ -3707,7 +3705,7 @@ expression: proof_snapshot
 (let t75 (Mul t53 (Const 1.0)))
 (let t76 (Add t54 t54))
 (let t77 (Add t54 t1))
-(let prf16
+(let prf15
   (Congr
                                     (= t1 t77)
                                     (Rule
@@ -3720,7 +3718,7 @@ expression: proof_snapshot
                                     1))
 (let t78 (MathU t53))
 (let t79 (a t53))
-(let prf17
+(let prf16
   (Rule
                           (= t53 t75)
                           (name
@@ -3737,7 +3735,7 @@ expression: proof_snapshot
                               t62
                               (substitution (y (Const 1.0)) (e t53) (x (Var "x")))))
                           (substitution t79)))
-(let prf18
+(let prf17
   (Rule
               (= t70 (Const 2.0))
               (name "(rewrite (Add (Const a) (Const b)) (Const (+ a b)))")
@@ -3760,16 +3758,16 @@ expression: proof_snapshot
                               (name
                                 "(rewrite (Add a (Add b c)) (Add (Add a b) c))")
                               (premises
-                                (Congr (= t1 (Add t54 t77)) prf16 prf16 1))
+                                (Congr (= t1 (Add t54 t77)) prf15 prf15 1))
                               (substitution (c t1) (a t54) t64 (b t54))))
                           (substitution
                             (c t53)
                             t25
                             (@rewrite_var__16 t76)
                             (b t53)))
-                        prf17
+                        prf16
                         0)
-                      prf17
+                      prf16
                       1))
                   (substitution
                     (c (Const 1.0))
@@ -3819,7 +3817,7 @@ expression: proof_snapshot
                   (Rule
                     (= t9 (Mul t35 (Const 1.0)))
                     (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
-                    (premises (Congr (= t9 (Mul t0 t36)) prf6 prf9 1))
+                    (premises (Congr (= t9 (Mul t0 t36)) prf5 prf8 1))
                     (substitution t38 t25 t37 (c (Const 1.0))))
                   (Trans
                     (= t35 t9)
@@ -3832,7 +3830,7 @@ expression: proof_snapshot
                           (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                           t42
                           t43)
-                        (Sym (= t39 t0) prf10)
+                        (Sym (= t39 t0) prf9)
                         0))
                     (Sym
                       (= t40 t9)
@@ -3864,7 +3862,7 @@ expression: proof_snapshot
                   (Rule
                     (= t0 t45)
                     (name "(rewrite (Mul a b) (Mul b a))")
-                    (premises prf10)
+                    (premises prf9)
                     (substitution t25 (@rewrite_var__5 t0) (b (Const 1.0)))))
                 0))
             (Trans
@@ -3887,16 +3885,16 @@ expression: proof_snapshot
                         (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                         t51
                         t52)
-                      prf12
+                      prf11
                       1)
-                    (Sym (= t55 t54) prf14))
+                    (Sym (= t55 t54) prf13))
                   (Rule
                     (= t54 (Const 0.0))
                     (name "(rewrite (Mul a (Const 0.0)) (Const 0.0))")
-                    (premises prf14)
+                    (premises prf13)
                     (substitution t25 (@rewrite_var__11 t54))))
                 0)
-              (Sym (= t49 t12) (Congr (= t12 t49) prf15 prf12 0))))
+              (Sym (= t49 t12) (Congr (= t12 t49) prf14 prf11 0))))
           0)
         (Rule
           (= t12 (Const 0.0))
@@ -3907,9 +3905,9 @@ expression: proof_snapshot
               (Rule
                 (= t12 (Mul (Ln (Var "x")) t11))
                 (name "(rewrite (Mul a b) (Mul b a))")
-                (premises prf15)
+                (premises prf14)
                 (substitution (a t11) (@rewrite_var__5 t12) (b (Ln (Var "x")))))
-              prf12
+              prf11
               1))
           (substitution (a (Ln (Var "x"))) (@rewrite_var__11 t12)))
         0)
@@ -3938,7 +3936,7 @@ expression: proof_snapshot
                         t19
                         t21))
                     (substitution t33 t20 (b (Const 0.0))))
-                  prf5
+                  prf4
                   1))
               (substitution t31 (a (Const 0.0)) t64 t30)))
           (substitution (@rewrite_var__4 t10) (a (Const 0.0)) t30))
@@ -3957,7 +3955,7 @@ expression: proof_snapshot
                   "(rule ((= e (Mul x y)))
       ((MathU e))
          )")
-                (premises prf6)
+                (premises prf5)
                 (substitution (y t8) (e t9) (x t0))))
             (substitution (a t9))))))
     (Rule
@@ -3991,9 +3989,9 @@ expression: proof_snapshot
               t72
               t73))
           (substitution (a 3.0) (b -1.0) (@rewrite_var__ t71)))
-        (Sym (= (Const 2.0) t70) prf18))
+        (Sym (= (Const 2.0) t70) prf17))
       1)
-    prf18
+    prf17
     1)
   1)
 (let t0 (Pow (Var "x") (Const 3.0)))
@@ -4547,8 +4545,7 @@ expression: proof_snapshot
                                                         (e t4)
                                                         (x (Var "x")))))
                                                   (substitution (a t4))))
-(let prf17 (Computed (= () ())))
-(let prf18
+(let prf17
   (Rule
                                               (=
                                                 (is-not-zero (Var "x"))
@@ -4558,14 +4555,14 @@ expression: proof_snapshot
          (!= x (Const 0.0)))
         ((is-not-zero x))
            )")
-                                              (premises prf6 prf16 prf17)
+                                              (premises prf6 prf16 (Eval))
                                               (substitution
-                                                (@v776 (Const 0.0))
+                                                (@v773 (Const 0.0))
                                                 (x (Var "x")))))
 (let t111
   (premises
                                             prf13
-                                            prf18
+                                            prf17
                                             (Rule
                                               (=
                                                 (is-not-zero (Const 3.0))
@@ -4591,9 +4588,9 @@ expression: proof_snapshot
                                                     (e (Const 3.0))
                                                     (x 3.0)))
                                                 prf16
-                                                prf17)
+                                                (Eval))
                                               (substitution
-                                                (@v776 (Const 0.0))
+                                                (@v773 (Const 0.0))
                                                 (x (Const 3.0))))))
 (let t112
   (substitution
@@ -4612,7 +4609,7 @@ expression: proof_snapshot
 (let t114 (@rewrite_var__15 t12))
 (let t115 (c t104))
 (let t116 (substitution t17 t114 (b t98) t115))
-(let prf19
+(let prf18
   (Rule
                                       (= t12 t109)
                                       (name
@@ -4630,14 +4627,14 @@ expression: proof_snapshot
                                       (Congr
                                         (= t12 (Mul (Const 1.0) t109))
                                         prf15
-                                        prf19
+                                        prf18
                                         1)))
 (let t124 (b t99))
 (let t125 (c t105))
 (let t126 (substitution (a (Const 1.0)) t114 t124 t125))
 (let t127 (Mul t91 t97))
 (let t128 (Mul (Const 1.0) t97))
-(let prf20
+(let prf19
   (Rule
                                             (= t99 t99)
                                             (name
@@ -4648,7 +4645,7 @@ expression: proof_snapshot
   (premises
                                         (Congr
                                           (= t99 (Mul t0 t128))
-                                          prf20
+                                          prf19
                                           (Congr
                                             (= t98 t128)
                                             (Rule
@@ -4663,14 +4660,14 @@ expression: proof_snapshot
 (let t130 (@rewrite_var__7 t99))
 (let t131 (c t97))
 (let t132 (substitution t130 t17 (b (Const 1.0)) t131))
-(let prf21
+(let prf20
   (Rule
                                       (= t99 t127)
                                       (name
                                         "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                       t129
                                       t132))
-(let prf22
+(let prf21
   (Congr
                                       (= t127 t122)
                                       (Rule
@@ -4681,7 +4678,7 @@ expression: proof_snapshot
                                         t132)
                                       (Sym (= t91 t0) prf14)
                                       0))
-(let prf23 (Trans (= t99 t122) prf21 prf22))
+(let prf22 (Trans (= t99 t122) prf20 prf21))
 (let t133
   (premises
                                 (Congr
@@ -4692,7 +4689,7 @@ expression: proof_snapshot
                                       "(rewrite (Mul a (Add b c)) (Add (Mul a b) (Mul a c)))")
                                     t123
                                     t126)
-                                  prf23
+                                  prf22
                                   1)))
 (let t134 (b t0))
 (let t135
@@ -4701,14 +4698,14 @@ expression: proof_snapshot
                                 (a (Const 1.0))
                                 t134
                                 t131))
-(let prf24
+(let prf23
   (Rule
                               (= t107 t121)
                               (name
                                 "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                               t133
                               t135))
-(let prf25
+(let prf24
   (Sym
                                   (= t120 t0)
                                   (Rule
@@ -4719,7 +4716,7 @@ expression: proof_snapshot
                                       t17
                                       (@rewrite_var__5 t0)
                                       (b (Const 1.0))))))
-(let prf26
+(let prf25
   (Congr
                                 (= t121 t122)
                                 (Rule
@@ -4728,7 +4725,7 @@ expression: proof_snapshot
                                     "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                   t133
                                   t135)
-                                prf25
+                                prf24
                                 0))
 (let t136 (Mul t120 t104))
 (let t137
@@ -4765,7 +4762,7 @@ expression: proof_snapshot
 (let t144 (Diff (Var "x") (Const 1.0)))
 (let t145 (Mul t0 t144))
 (let t146 (Mul t0 (Const 0.0)))
-(let prf27
+(let prf26
   (Rule
                                           (= t103 t103)
                                           (name
@@ -4780,7 +4777,7 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                                   (Const 3.0)
                                                   "x"))
-(let prf28
+(let prf27
   (Rule
                                             (= t144 t144)
                                             (name
@@ -4795,7 +4792,7 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                                     (Const 1.0)
                                                     "x"))
-(let prf29
+(let prf28
   (Congr
                                       (= t145 t146)
                                       (Rule
@@ -4809,7 +4806,7 @@ expression: proof_snapshot
                                         (name
                                           "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                                         (premises
-                                          prf28
+                                          prf27
                                           (Rule
                                             (= t149 t149)
                                             (name
@@ -4823,7 +4820,7 @@ expression: proof_snapshot
                                                   "(rule ((Diff (Var x) c))
         ((is-const-or-distinct-var-demand c x))
            )")
-                                                (premises prf28)
+                                                (premises prf27)
                                                 (substitution
                                                   (x "x")
                                                   (c (Const 1.0)))))
@@ -4842,7 +4839,7 @@ expression: proof_snapshot
                                             "(rewrite (Diff x (Mul a b)) (Add (Mul a (Diff x b)) (Mul b (Diff x a))))")
                                           t69
                                           t70)
-                                        prf18
+                                        prf17
                                         (Rule
                                           (=
                                             (is-not-zero (Const 2.0))
@@ -4867,9 +4864,9 @@ expression: proof_snapshot
                                                 (e (Const 2.0))
                                                 (x 2.0)))
                                             prf16
-                                            prf17)
+                                            (Eval))
                                           (substitution
-                                            (@v776 (Const 0.0))
+                                            (@v773 (Const 0.0))
                                             (x (Const 2.0))))))
 (let t153
   (substitution
@@ -4877,7 +4874,7 @@ expression: proof_snapshot
                                         (g (Const 2.0))
                                         (f (Var "x"))
                                         (x (Var "x"))))
-(let prf30
+(let prf29
   (Rule
                                       (= t101 t101)
                                       (name
@@ -4889,7 +4886,7 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                               (Const 2.0)
                                               "x"))
-(let prf31
+(let prf30
   (Congr
                                 (= t102 t139)
                                 (Rule
@@ -4911,7 +4908,7 @@ expression: proof_snapshot
                                   (name
                                     "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                                   (premises
-                                    prf30
+                                    prf29
                                     (Rule
                                       (= t154 t154)
                                       (name
@@ -4925,7 +4922,7 @@ expression: proof_snapshot
                                             "(rule ((Diff (Var x) c))
         ((is-const-or-distinct-var-demand c x))
            )")
-                                          (premises prf30)
+                                          (premises prf29)
                                           (substitution (x "x") (c (Const 2.0)))))
                                       (substitution (v "x") (c 2.0))))
                                   (substitution
@@ -4956,7 +4953,7 @@ expression: proof_snapshot
                                         t17
                                         (@rewrite_var__25 t12)
                                         (x (Var "x"))))
-(let prf32
+(let prf31
   (Rule
                                 (= t156 t156)
                                 (name
@@ -4968,7 +4965,7 @@ expression: proof_snapshot
   (is-const-or-distinct-var-demand
                                         (Const 0.0)
                                         "x"))
-(let prf33
+(let prf32
   (Congr
                           (= t157 t100)
                           (Rule
@@ -4988,7 +4985,7 @@ expression: proof_snapshot
                                       t159
                                       t160))
                                   (substitution t117 t90 (b t156)))
-                                prf19
+                                prf18
                                 1))
                             (substitution
                               t125
@@ -5000,7 +4997,7 @@ expression: proof_snapshot
                             (name
                               "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                             (premises
-                              prf32
+                              prf31
                               (Rule
                                 (= t161 t161)
                                 (name
@@ -5014,7 +5011,7 @@ expression: proof_snapshot
                                       "(rule ((Diff (Var x) c))
         ((is-const-or-distinct-var-demand c x))
            )")
-                                    (premises prf32)
+                                    (premises prf31)
                                     (substitution (x "x") (c (Const 0.0)))))
                                 (substitution (v "x") (c 0.0))))
                             (substitution
@@ -5031,7 +5028,7 @@ expression: proof_snapshot
   (premises
                             (Congr
                               (= t99 (Mul t0 t166))
-                              prf23
+                              prf22
                               (Rule
                                 (= t97 t166)
                                 (name "(rewrite (Mul a b) (Mul b a))")
@@ -5047,7 +5044,7 @@ expression: proof_snapshot
                                           "(rewrite (Diff x (Pow f g)) (Mul (Pow f g) (Add (Mul (Diff x f) (Div g f)) (Mul (Diff x g) (Ln f)))) :when ((is-not-zero f) (is-not-zero g)))")
                                         t111
                                         t112)
-                                      prf18)
+                                      prf17)
                                     (substitution
                                       (a (Const 3.0))
                                       (b (Var "x"))
@@ -5064,8 +5061,8 @@ expression: proof_snapshot
                         (= t99 (Mul (Const 1.0) t165))
                         (Trans
                           (= t99 t107)
-                          (Trans (= t99 t121) prf23 (Sym (= t122 t121) prf26))
-                          (Sym (= t121 t107) prf24))
+                          (Trans (= t99 t121) prf22 (Sym (= t122 t121) prf25))
+                          (Sym (= t121 t107) prf23))
                         (Rule
                           (= t99 t165)
                           (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
@@ -5100,20 +5097,20 @@ expression: proof_snapshot
                                 (Rule
                                   (= t12 t108)
                                   (name "(rewrite (Add a b) (Add b a))")
-                                  (premises prf19)
+                                  (premises prf18)
                                   (substitution t117 t118 t119))
                                 1))
                             (substitution (a (Const 1.0)) t114 t119 (c t99)))
                           (Trans
                             (= t107 t99)
-                            prf24
+                            prf23
                             (Trans
                               (= t121 t99)
-                              prf26
+                              prf25
                               (Trans
                                 (= t122 t99)
-                                (Sym (= t122 t127) prf22)
-                                (Sym (= t127 t99) prf21))))
+                                (Sym (= t122 t127) prf21)
+                                (Sym (= t127 t99) prf20))))
                           1)
                         (Trans
                           (= t106 t102)
@@ -5133,7 +5130,7 @@ expression: proof_snapshot
                                   "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                                 t137
                                 t138)
-                              prf25
+                              prf24
                               0))
                           (Trans
                             (= t105 t102)
@@ -5170,7 +5167,7 @@ expression: proof_snapshot
                                       (name
                                         "(rewrite (Diff (Var x) c) (Const 0.0) :when ((is-const-or-distinct-var c x)))")
                                       (premises
-                                        prf27
+                                        prf26
                                         (Rule
                                           (= t147 t147)
                                           (name
@@ -5184,7 +5181,7 @@ expression: proof_snapshot
                                                 "(rule ((Diff (Var x) c))
         ((is-const-or-distinct-var-demand c x))
            )")
-                                              (premises prf27)
+                                              (premises prf26)
                                               (substitution
                                                 (x "x")
                                                 (c (Const 3.0)))))
@@ -5194,31 +5191,31 @@ expression: proof_snapshot
                                         (@rewrite_var__24 t103)
                                         (x "x")))
                                     1)
-                                  (Sym (= t146 t145) prf29))
+                                  (Sym (= t146 t145) prf28))
                                 (Rule
                                   (= t145 (Const 0.0))
                                   (name
                                     "(rewrite (Mul a (Const 0.0)) (Const 0.0))")
-                                  (premises prf29)
+                                  (premises prf28)
                                   (substitution t17 (@rewrite_var__11 t145))))
                               1)
-                            (Sym (= t139 t102) prf31)))
+                            (Sym (= t139 t102) prf30)))
                         0)
                       (Rule
                         (= t102 (Const 0.0))
                         (name "(rewrite (Mul a (Const 0.0)) (Const 0.0))")
-                        (premises prf31)
+                        (premises prf30)
                         (substitution (a (Ln (Var "x"))) (@rewrite_var__11 t102)))
                       0)
                     (Trans
                       (= t100 t99)
-                      (Sym (= t100 t157) prf33)
+                      (Sym (= t100 t157) prf32)
                       (Trans
                         (= t157 t99)
                         (Rule
                           (= t157 t163)
                           (name "(rewrite (Add a b) (Add b a))")
-                          (premises prf33)
+                          (premises prf32)
                           (substitution
                             (@rewrite_var__4 t157)
                             (a (Const 0.0))
@@ -5238,7 +5235,7 @@ expression: proof_snapshot
                                   "(rule ((= e (Mul x y)))
         ((MathU e))
            )")
-                                (premises prf20)
+                                (premises prf19)
                                 (substitution (y t98) (e t99) (x t0))))
                             (substitution t118))))))
                   (Rule
@@ -5255,7 +5252,7 @@ expression: proof_snapshot
               (c (Const 3.0))))
 (let t175 (Mul t83 (Const 1.0)))
 (let t176 (Mul t82 (Const 1.0)))
-(let prf34
+(let prf33
   (Rule
                             (= t83 t83)
                             (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
@@ -5263,7 +5260,7 @@ expression: proof_snapshot
                             t169))
 (let t177 (MathU t82))
 (let t178 (Div (Const 2.0) (Var "x")))
-(let prf35
+(let prf34
   (Trans
                   (= t84 t83)
                   (Rule
@@ -5284,7 +5281,7 @@ expression: proof_snapshot
                       (premises
                         (Congr
                           (= t83 (Mul t0 t176))
-                          prf34
+                          prf33
                           (Rule
                             (= t82 t176)
                             (name
@@ -5310,7 +5307,7 @@ expression: proof_snapshot
                                           "(rewrite (Diff x (Pow f g)) (Mul (Pow f g) (Add (Mul (Diff x f) (Div g f)) (Mul (Diff x g) (Ln f)))) :when ((is-not-zero f) (is-not-zero g)))")
                                         t152
                                         t153)
-                                      prf18)
+                                      prf17)
                                     (substitution
                                       (a (Const 2.0))
                                       (b (Var "x"))
@@ -5327,7 +5324,7 @@ expression: proof_snapshot
                         t167
                         (c (Const 1.0)))))))
 (let t179 (Add (Const 3.0) (Const -1.0)))
-(let t180 (premises prf34))
+(let t180 (premises prf33))
 (let t181
   (substitution
                   (@rewrite_var__17 t83)
@@ -5551,9 +5548,9 @@ expression: proof_snapshot
                 (name "(rewrite (Mul a (Mul b c)) (Mul (Mul a b) c))")
                 t173
                 t174)
-              prf35
+              prf34
               1)
-            prf35)
+            prf34)
           (Congr
             (= t83 t1)
             (Rule
@@ -6408,8 +6405,8 @@ expression: proof_snapshot
                                 (e t0)
                                 (x (Ln (Var "x"))))))
                           (substitution (a t0)))
-                        (Computed (= () ())))
-                      (substitution (@v776 (Const 0.0)) (x (Var "x")))))
+                        (Eval))
+                      (substitution (@v773 (Const 0.0)) (x (Var "x")))))
 (Congr
   (= t0 (Sub t1 (Var "x")))
   (Congr

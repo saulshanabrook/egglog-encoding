@@ -807,8 +807,7 @@ expression: proof_snapshot
 (let t6 (bddor (TrueConst) t1))
 (let t7 (bddand t6 t1))
 (let t8 (ITE 1 t6 t4))
-(let prf0 (Computed (= () ())))
-(let t9 (premises (Fiat (= t2 t2)) prf0))
+(let t9 (premises (Fiat (= t2 t2)) (Eval)))
 (let t10
   (substitution
                     (m 2)
@@ -830,7 +829,7 @@ expression: proof_snapshot
                   t9
                   t10)
                 0)
-              prf0))
+              (Eval)))
 (let t12
   (substitution
               (m 2)
@@ -933,7 +932,7 @@ expression: proof_snapshot
                 (= t13 t13)
                 (name
                   "(rewrite (bddand (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddand a1 (ITE m b1 b2)) (bddand a2 (ITE m b1 b2))) :when ((< n m)))")
-                (premises (Fiat (= t14 t14)) prf0)
+                (premises (Fiat (= t14 t14)) (Eval))
                 (substitution
                   (m 2)
                   (b2 (FalseConst))
@@ -1013,7 +1012,6 @@ expression: proof_snapshot
                   (@rewrite_var__13 t1)
                   (a1 (TrueConst))
                   (a2 (FalseConst))))
-(let prf0 (Computed (= () ())))
 (let t12
   (premises
             (Congr
@@ -1026,7 +1024,7 @@ expression: proof_snapshot
                 t10
                 t11)
               0)
-            prf0))
+            (Eval)))
 (let t13
   (substitution
             (m 1)
@@ -1037,7 +1035,7 @@ expression: proof_snapshot
             (a2 (bddnot (FalseConst)))
             (b1 (TrueConst))))
 (let t14 (bddxor (TrueConst) t2))
-(let prf1
+(let prf0
   (Rule
               (= (bddnot (FalseConst)) (TrueConst))
               (name "(rewrite (bddnot $False) $True)")
@@ -1050,7 +1048,7 @@ expression: proof_snapshot
                   t11))
               (substitution (@rewrite_var__12 (bddnot (FalseConst))))))
 (let t15 (bddxor t0 t2))
-(let t16 (premises (Fiat (= t15 t15)) prf0))
+(let t16 (premises (Fiat (= t15 t15)) (Eval)))
 (let t17
   (substitution
                   (m 1)
@@ -1060,7 +1058,7 @@ expression: proof_snapshot
                   (a1 (TrueConst))
                   (a2 (FalseConst))
                   (b1 (TrueConst))))
-(let prf2
+(let prf1
   (Rule
             (= t14 t4)
             (name "(rewrite (bddxor $True n) (bddnot n))")
@@ -1073,7 +1071,7 @@ expression: proof_snapshot
                 t17))
             (substitution (@rewrite_var__15 t14) (n t2))))
 (let t18 (bddxor (FalseConst) t2))
-(let prf3
+(let prf2
   (Rule
             (= (bddnot (TrueConst)) (FalseConst))
             (name "(rewrite (bddnot $True) $False)")
@@ -1092,7 +1090,7 @@ expression: proof_snapshot
 (let t23 (bddxor (TrueConst) t22))
 (let t24 (bddxor (FalseConst) t22))
 (let t25 (ITE 0 t23 t24))
-(let prf4
+(let prf3
   (Rule
                     (= t4 t22)
                     (name
@@ -1105,8 +1103,8 @@ expression: proof_snapshot
                       (a2 (FalseConst)))))
 (let t26
   (premises
-                (Congr (= t5 (bddxor t0 t22)) (Fiat (= t5 t5)) prf4 1)
-                prf0))
+                (Congr (= t5 (bddxor t0 t22)) (Fiat (= t5 t5)) prf3 1)
+                (Eval)))
 (let t27
   (substitution
                 (m 1)
@@ -1116,8 +1114,8 @@ expression: proof_snapshot
                 (a1 (TrueConst))
                 (a2 (FalseConst))
                 (b1 (bddnot (TrueConst)))))
-(let prf5 (Sym (= t22 t4) prf4))
-(let prf6
+(let prf4 (Sym (= t22 t4) prf3))
+(let prf5
   (Congr
                   (= t23 t19)
                   (Rule
@@ -1126,9 +1124,9 @@ expression: proof_snapshot
                       "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                     t26
                     t27)
-                  prf5
+                  prf4
                   1))
-(let prf7
+(let prf6
   (Congr
                 (= t24 t20)
                 (Rule
@@ -1137,13 +1135,13 @@ expression: proof_snapshot
                     "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                   t26
                   t27)
-                prf5
+                prf4
                 1))
 (let t28 (bddnot t14))
 (let t29 (bddnot t4))
 (let t30 (bddnot t15))
 (let t31 (ITE 0 t14 t18))
-(let prf8
+(let prf7
   (Congr
                 (= t28 t29)
                 (Rule
@@ -1162,7 +1160,7 @@ expression: proof_snapshot
                         t17)
                       0))
                   (substitution (n 0) (@rewrite_var__13 t30) (a1 t14) (a2 t18)))
-                prf2
+                prf1
                 0))
 (let t32 (ITE 1 (bddnot (FalseConst)) (bddnot (TrueConst))))
 (let t33 (ITE 1 (FalseConst) (TrueConst)))
@@ -1170,15 +1168,15 @@ expression: proof_snapshot
   (premises
                 (Congr
                   (= t28 (bddnot t33))
-                  prf8
+                  prf7
                   (Congr
                     (= t4 t33)
                     (Congr
                       (= t4 (ITE 1 (bddnot (TrueConst)) (TrueConst)))
-                      prf4
-                      prf1
+                      prf3
+                      prf0
                       2)
-                    prf3
+                    prf2
                     1)
                   0)))
 (let t35
@@ -1209,9 +1207,9 @@ expression: proof_snapshot
               "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
             t12
             t13)
-          prf1
+          prf0
           0)
-        prf2)
+        prf1)
       2)
     (Trans
       (= t7 t2)
@@ -1223,7 +1221,7 @@ expression: proof_snapshot
             "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
           t12
           t13)
-        prf3
+        prf2
         0)
       (Rule
         (= t18 t2)
@@ -1261,14 +1259,14 @@ expression: proof_snapshot
                   "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                 t26
                 t27)
-              prf6
+              prf5
               1)
-            prf7
+            prf6
             2))
         (Rule
           (= t20 t4)
           (name "(rewrite (bddxor $False x) x)")
-          (premises (Trans (= t20 t20) (Sym (= t20 t24) prf7) prf7))
+          (premises (Trans (= t20 t20) (Sym (= t20 t24) prf6) prf6))
           (substitution (@rewrite_var__16 t20) (x t4)))
         2)
       (Trans
@@ -1278,9 +1276,9 @@ expression: proof_snapshot
           (Rule
             (= t19 t29)
             (name "(rewrite (bddxor $True n) (bddnot n))")
-            (premises (Trans (= t19 t19) (Sym (= t19 t23) prf6) prf6))
+            (premises (Trans (= t19 t19) (Sym (= t19 t23) prf5) prf5))
             (substitution (@rewrite_var__15 t19) (n t4)))
-          (Sym (= t29 t28) prf8))
+          (Sym (= t29 t28) prf7))
         (Trans
           (= t28 t2)
           (Rule
@@ -1299,9 +1297,9 @@ expression: proof_snapshot
                   "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
                 t34
                 t35)
-              prf1
+              prf0
               1)
-            prf3
+            prf2
             2)))
       1)))
 (let t0 (ITE 0 (TrueConst) (FalseConst)))
@@ -1322,7 +1320,6 @@ expression: proof_snapshot
                   (@rewrite_var__13 t1)
                   (a1 (TrueConst))
                   (a2 (FalseConst))))
-(let prf0 (Computed (= () ())))
 (let t13
   (premises
             (Congr
@@ -1335,7 +1332,7 @@ expression: proof_snapshot
                 t11
                 t12)
               0)
-            prf0))
+            (Eval)))
 (let t14
   (substitution
             (m 1)
@@ -1346,7 +1343,7 @@ expression: proof_snapshot
             (a2 (bddnot (FalseConst)))
             (b1 (TrueConst))))
 (let t15 (bddxor (TrueConst) t2))
-(let prf1
+(let prf0
   (Rule
               (= (bddnot (FalseConst)) (TrueConst))
               (name "(rewrite (bddnot $False) $True)")
@@ -1358,7 +1355,7 @@ expression: proof_snapshot
                   t11
                   t12))
               (substitution (@rewrite_var__12 (bddnot (FalseConst))))))
-(let t16 (premises (Fiat (= t4 t4)) prf0))
+(let t16 (premises (Fiat (= t4 t4)) (Eval)))
 (let t17
   (substitution
                   (m 1)
@@ -1368,7 +1365,7 @@ expression: proof_snapshot
                   (a1 (TrueConst))
                   (a2 (FalseConst))
                   (b1 (TrueConst))))
-(let prf2
+(let prf1
   (Rule
             (= t15 t6)
             (name "(rewrite (bddxor $True n) (bddnot n))")
@@ -1381,7 +1378,7 @@ expression: proof_snapshot
                 t17))
             (substitution (@rewrite_var__15 t15) (n t2))))
 (let t18 (bddxor (FalseConst) t2))
-(let prf3
+(let prf2
   (Rule
             (= (bddnot (TrueConst)) (FalseConst))
             (name "(rewrite (bddnot $True) $False)")
@@ -1393,7 +1390,7 @@ expression: proof_snapshot
                 t11
                 t12))
             (substitution (@rewrite_var__11 (bddnot (TrueConst))))))
-(let prf4
+(let prf3
   (Rule
           (= t18 t2)
           (name "(rewrite (bddxor $False x) x)")
@@ -1435,7 +1432,7 @@ expression: proof_snapshot
                       "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
                     t22
                     t23)
-                  prf2
+                  prf1
                   0)
                 (Congr
                   (= t6 t25)
@@ -1451,9 +1448,9 @@ expression: proof_snapshot
                         (@rewrite_var__13 t6)
                         (a1 (TrueConst))
                         (a2 (FalseConst))))
-                    prf1
+                    prf0
                     2)
-                  prf3
+                  prf2
                   1)
                 0)))
 (let t27
@@ -1484,9 +1481,9 @@ expression: proof_snapshot
               "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
             t13
             t14)
-          prf1
+          prf0
           0)
-        prf2)
+        prf1)
       2)
     (Trans
       (= t8 t2)
@@ -1498,9 +1495,9 @@ expression: proof_snapshot
             "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
           t13
           t14)
-        prf3
+        prf2
         0)
-      prf4)
+      prf3)
     1)
   (Sym
     (= t7 t5)
@@ -1522,7 +1519,7 @@ expression: proof_snapshot
               "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
             t22
             t23)
-          prf4
+          prf3
           0)
         2)
       (Trans
@@ -1543,16 +1540,16 @@ expression: proof_snapshot
                 "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
               t26
               t27)
-            prf1
+            prf0
             1)
-          prf3
+          prf2
           2))
       1)))
 (let t0 (ITE 2 (TrueConst) (FalseConst)))
 (let t1 (bddand (ITE 1 (TrueConst) (FalseConst)) t0))
 (let t2 (bddand (TrueConst) t0))
 (let t3 (bddand (FalseConst) t0))
-(let t4 (premises (Fiat (= t1 t1)) (Computed (= () ()))))
+(let t4 (premises (Fiat (= t1 t1)) (Eval)))
 (let t5
   (substitution
           (m 2)
@@ -1632,8 +1629,7 @@ expression: proof_snapshot
                               "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
                             t22
                             t23))
-(let prf1 (Computed (= () ())))
-(let t24 (premises (Fiat (= t4 t4)) prf1))
+(let t24 (premises (Fiat (= t4 t4)) (Eval)))
 (let t25
   (substitution
                             (m 1)
@@ -1663,7 +1659,7 @@ expression: proof_snapshot
                       (a1 (bddnot (TrueConst)))
                       (b1 t11)
                       (b2 t8)))
-(let prf2
+(let prf1
   (Rule
                       (= (bddnot (FalseConst)) (TrueConst))
                       (name "(rewrite (bddnot $False) $True)")
@@ -1675,7 +1671,7 @@ expression: proof_snapshot
                           t22
                           t23))
                       (substitution (@rewrite_var__12 (bddnot (FalseConst))))))
-(let prf3
+(let prf2
   (Rule
                     (= (bddnot (TrueConst)) (FalseConst))
                     (name "(rewrite (bddnot $True) $False)")
@@ -1687,7 +1683,7 @@ expression: proof_snapshot
                         t22
                         t23))
                     (substitution (@rewrite_var__11 (bddnot (TrueConst))))))
-(let prf4
+(let prf3
   (Congr
                   (= t1 t15)
                   (Congr
@@ -1702,9 +1698,9 @@ expression: proof_snapshot
                         (@rewrite_var__13 t1)
                         (a1 (TrueConst))
                         (a2 (FalseConst))))
-                    prf2
+                    prf1
                     2)
-                  prf3
+                  prf2
                   1))
 (let t28
   (premises
@@ -1724,9 +1720,9 @@ expression: proof_snapshot
                     t26
                     t27)
                   0)
-                prf4
+                prf3
                 1)
-              prf1))
+              (Eval)))
 (let t29
   (substitution
               (m 1)
@@ -1736,8 +1732,8 @@ expression: proof_snapshot
               (a1 t12)
               (a2 t9)
               (b1 (FalseConst))))
-(let prf5 (Sym (= t15 t1) prf4))
-(let prf6
+(let prf4 (Sym (= t15 t1) prf3))
+(let prf5
   (Congr
                 (= t16 t13)
                 (Rule
@@ -1746,9 +1742,9 @@ expression: proof_snapshot
                     "(rewrite (bddand (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddand a1 (ITE m b1 b2)) (bddand a2 (ITE m b1 b2))) :when ((< n m)))")
                   t28
                   t29)
-                prf5
+                prf4
                 1))
-(let prf7
+(let prf6
   (Congr
               (= t17 t10)
               (Rule
@@ -1757,10 +1753,10 @@ expression: proof_snapshot
                   "(rewrite (bddand (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddand a1 (ITE m b1 b2)) (bddand a2 (ITE m b1 b2))) :when ((< n m)))")
                 t28
                 t29)
-              prf5
+              prf4
               1))
 (let t30 (bddand (FalseConst) t1))
-(let prf8
+(let prf7
   (Congr
                     (= t12 t30)
                     (Congr
@@ -1783,13 +1779,13 @@ expression: proof_snapshot
                             t25))
                         (substitution (@rewrite_var__15 t11) (n t0)))
                       1)
-                    prf3
+                    prf2
                     0))
-(let prf9
+(let prf8
   (Rule
                 (= t12 (FalseConst))
                 (name "(rewrite (bddand $False n) $False)")
-                (premises prf8)
+                (premises prf7)
                 (substitution (@rewrite_var__2 t12) (n t1))))
 (let t31 (ITE 1 (FalseConst) (FalseConst)))
 (let t32
@@ -1804,7 +1800,7 @@ expression: proof_snapshot
                   (= t10 (bddand t0 t15))
                   (Congr
                     (= t10 (bddand t0 t1))
-                    (Trans (= t10 t10) (Sym (= t10 t17) prf7) prf7)
+                    (Trans (= t10 t10) (Sym (= t10 t17) prf6) prf6)
                     (Rule
                       (= t9 t0)
                       (name "(rewrite (bddand $True x) x)")
@@ -1831,11 +1827,11 @@ expression: proof_snapshot
                                   t25))
                               (substitution (@rewrite_var__16 t8) t33))
                             1)
-                          prf2
+                          prf1
                           0))
                       (substitution t33 (@rewrite_var__3 t9)))
                     0)
-                  prf4
+                  prf3
                   1)))
 (let t35
   (substitution
@@ -1847,7 +1843,7 @@ expression: proof_snapshot
                 (b2 (TrueConst))))
 (let t36 (bddand (bddnot (FalseConst)) (FalseConst)))
 (let t37 (bddand t2 t3))
-(let prf10 (Fiat (= t37 t37)))
+(let prf9 (Fiat (= t37 t37)))
 (let t38
   (premises
                           (Congr
@@ -1855,7 +1851,7 @@ expression: proof_snapshot
                             (Rule
                               (= t37 (bddand t3 t2))
                               (name "(rewrite (bddand x y) (bddand y x))")
-                              (premises prf10)
+                              (premises prf9)
                               (substitution (@rewrite_var__1 t37) (x t2) (y t3)))
                             prf0
                             0)))
@@ -1868,7 +1864,7 @@ expression: proof_snapshot
                           (a1 (bddnot (TrueConst)))
                           (b1 (TrueConst))
                           (b2 (FalseConst))))
-(let prf11
+(let prf10
   (Congr
                       (= t36 (bddand (TrueConst) (FalseConst)))
                       (Rule
@@ -1877,17 +1873,17 @@ expression: proof_snapshot
                           "(rewrite (bddand (ITE n a1 a2) (ITE n b1 b2)) (ITE n (bddand a1 b1) (bddand a2 b2)))")
                         t38
                         t40)
-                      prf2
+                      prf1
                       0))
-(let prf12 (Sym (= (bddand (TrueConst) (FalseConst)) t36) prf11))
-(let prf13
+(let prf11 (Sym (= (bddand (TrueConst) (FalseConst)) t36) prf10))
+(let prf12
   (Rule
                     (= t36 (FalseConst))
                     (name "(rewrite (bddand $True x) x)")
-                    (premises prf11)
+                    (premises prf10)
                     (substitution (x (FalseConst)) (@rewrite_var__3 t36))))
 (let t41 (bddand (bddnot (TrueConst)) (TrueConst)))
-(let prf14
+(let prf13
   (Congr
                     (= t41 (bddand (FalseConst) (TrueConst)))
                     (Rule
@@ -1896,18 +1892,18 @@ expression: proof_snapshot
                         "(rewrite (bddand (ITE n a1 a2) (ITE n b1 b2)) (ITE n (bddand a1 b1) (bddand a2 b2)))")
                       t38
                       t40)
-                    prf3
+                    prf2
                     0))
-(let prf15 (Sym (= (bddand (FalseConst) (TrueConst)) t41) prf14))
-(let prf16
+(let prf14 (Sym (= (bddand (FalseConst) (TrueConst)) t41) prf13))
+(let prf15
   (Rule
                   (= t41 (FalseConst))
                   (name "(rewrite (bddand $False n) $False)")
-                  (premises prf14)
+                  (premises prf13)
                   (substitution (@rewrite_var__2 t41) (n (TrueConst)))))
 (let t42 (bddand (TrueConst) (bddnot (TrueConst))))
 (let t43 (bddand (FalseConst) (bddnot (FalseConst))))
-(let t44 (premises (Congr (= t37 (bddand t2 t20)) prf10 prf0 1)))
+(let t44 (premises (Congr (= t37 (bddand t2 t20)) prf9 prf0 1)))
 (let t45
   (substitution
                     t39
@@ -1916,7 +1912,7 @@ expression: proof_snapshot
                     (a1 (TrueConst))
                     (b1 (bddnot (TrueConst)))
                     (b2 (bddnot (FalseConst)))))
-(let prf17
+(let prf16
   (Congr
           (= t37 t7)
           (Congr
@@ -1941,9 +1937,9 @@ expression: proof_snapshot
                         "(rewrite (bddand (ITE n a1 a2) (ITE n b1 b2)) (ITE n (bddand a1 b1) (bddand a2 b2)))")
                       t44
                       t45)
-                    prf2
+                    prf1
                     1)
-                  prf15)
+                  prf14)
                 2)
               (Trans
                 (= t42 t36)
@@ -1955,13 +1951,13 @@ expression: proof_snapshot
                       "(rewrite (bddand (ITE n a1 a2) (ITE n b1 b2)) (ITE n (bddand a1 b1) (bddand a2 b2)))")
                     t44
                     t45)
-                  prf3
+                  prf2
                   1)
-                prf12)
+                prf11)
               1)
-            prf16
+            prf15
             2)
-          prf13
+          prf12
           1))
 (Trans
   (= t6 (FalseConst))
@@ -1987,9 +1983,9 @@ expression: proof_snapshot
                 "(rewrite (bddand (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddand a1 (ITE m b1 b2)) (bddand a2 (ITE m b1 b2))) :when ((< n m)))")
               t28
               t29)
-            prf6
+            prf5
             1)
-          prf7
+          prf6
           2))
       (Trans
         (= t13 (FalseConst))
@@ -1997,11 +1993,11 @@ expression: proof_snapshot
           (= t13 t12)
           (Congr
             (= t13 t30)
-            (Trans (= t13 t13) (Sym (= t13 t16) prf6) prf6)
-            prf9
+            (Trans (= t13 t13) (Sym (= t13 t16) prf5) prf5)
+            prf8
             0)
-          (Sym (= t30 t12) prf8))
-        prf9)
+          (Sym (= t30 t12) prf7))
+        prf8)
       1)
     (Rule
       (= t10 (FalseConst))
@@ -2027,23 +2023,23 @@ expression: proof_snapshot
                 t35)
               (Trans
                 (= (bddand (TrueConst) (FalseConst)) (FalseConst))
-                prf12
-                prf13)
+                prf11
+                prf12)
               1)
             (Trans
               (= (bddand (FalseConst) (TrueConst)) (FalseConst))
-              prf15
-              prf16)
+              prf14
+              prf15)
             2)))
       (substitution (n 1) (a (FalseConst)) (@rewrite_var__ t10)))
     2)
   (Trans
     (= t7 (FalseConst))
-    (Sym (= t7 t37) prf17)
+    (Sym (= t7 t37) prf16)
     (Rule
       (= t37 (FalseConst))
       (name "(rewrite (ITE n a a) a)")
-      (premises prf17)
+      (premises prf16)
       (substitution (n 0) (a (FalseConst)) (@rewrite_var__ t37)))))
 (let t0 (ITE 1 (TrueConst) (FalseConst)))
 (let t1 (bddnot t0))
@@ -2134,7 +2130,6 @@ expression: proof_snapshot
                                     (@rewrite_var__13 t1)
                                     (a1 (TrueConst))
                                     (a2 (FalseConst)))))
-(let prf4 (Computed (= () ())))
 (let t30
   (premises
                               (Congr
@@ -2142,7 +2137,7 @@ expression: proof_snapshot
                                 (Fiat (= t4 t4))
                                 prf3
                                 1)
-                              prf4))
+                              (Eval)))
 (let t31
   (substitution
                               (m 1)
@@ -2152,8 +2147,8 @@ expression: proof_snapshot
                               (a1 (TrueConst))
                               (a2 (FalseConst))
                               (b1 (bddnot (TrueConst)))))
-(let prf5 (Sym (= t26 t1) prf3))
-(let prf6
+(let prf4 (Sym (= t26 t1) prf3))
+(let prf5
   (Congr
                                 (= t27 t8)
                                 (Rule
@@ -2162,9 +2157,9 @@ expression: proof_snapshot
                                     "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                                   t30
                                   t31)
-                                prf5
+                                prf4
                                 1))
-(let prf7
+(let prf6
   (Congr
                               (= t28 t11)
                               (Rule
@@ -2173,7 +2168,7 @@ expression: proof_snapshot
                                   "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                                 t30
                                 t31)
-                              prf5
+                              prf4
                               1))
 (let t32
   (premises
@@ -2210,9 +2205,9 @@ expression: proof_snapshot
                                   "(rewrite (bddxor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddxor a1 (ITE m b1 b2)) (bddxor a2 (ITE m b1 b2))) :when ((< n m)))")
                                 t30
                                 t31)
-                              prf6
+                              prf5
                               1)
-                            prf7
+                            prf6
                             2))
                         1)))
 (let t33
@@ -2223,7 +2218,7 @@ expression: proof_snapshot
                       (a1 (FalseConst))
                       (b1 t8)
                       (b2 t11)))
-(let prf8
+(let prf7
   (Congr
                   (= t1 t15)
                   (Congr
@@ -2251,9 +2246,9 @@ expression: proof_snapshot
                     t32
                     t33)
                   0)
-                prf8
+                prf7
                 1)
-              prf4))
+              (Eval)))
 (let t35
   (substitution
               (m 1)
@@ -2263,8 +2258,8 @@ expression: proof_snapshot
               (a1 t9)
               (b1 (FalseConst))
               (@rewrite_var__9 t6)))
-(let prf9 (Sym (= t15 t1) prf8))
-(let prf10
+(let prf8 (Sym (= t15 t1) prf7))
+(let prf9
   (Congr
                 (= t16 t10)
                 (Rule
@@ -2273,9 +2268,9 @@ expression: proof_snapshot
                     "(rewrite (bddor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddor a1 (ITE m b1 b2)) (bddor a2 (ITE m b1 b2))) :when ((< n m)))")
                   t34
                   t35)
-                prf9
+                prf8
                 1))
-(let prf11
+(let prf10
   (Congr
               (= t17 t13)
               (Rule
@@ -2284,10 +2279,10 @@ expression: proof_snapshot
                   "(rewrite (bddor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddor a1 (ITE m b1 b2)) (bddor a2 (ITE m b1 b2))) :when ((< n m)))")
                 t34
                 t35)
-              prf9
+              prf8
               1))
 (let t36 (bddor (TrueConst) t1))
-(let prf12
+(let prf11
   (Congr
                     (= t12 t36)
                     (Rule
@@ -2299,15 +2294,15 @@ expression: proof_snapshot
                     (Rule
                       (= t11 t1)
                       (name "(rewrite (bddxor $False x) x)")
-                      (premises (Trans (= t11 t11) (Sym (= t11 t28) prf7) prf7))
+                      (premises (Trans (= t11 t11) (Sym (= t11 t28) prf6) prf6))
                       (substitution (@rewrite_var__16 t11) t20))
                     1))
 (let t37 (n t1))
-(let prf13
+(let prf12
   (Rule
                 (= t12 (TrueConst))
                 (name "(rewrite (bddor $True n) $True)")
-                (premises prf12)
+                (premises prf11)
                 (substitution (@rewrite_var__7 t12) t37)))
 (let t38 (ITE 1 (TrueConst) (TrueConst)))
 (let t39
@@ -2322,7 +2317,7 @@ expression: proof_snapshot
 (let t44 (bddnot t43))
 (let t45 (bddxor (FalseConst) t0))
 (let t46 (ITE 0 t40 t45))
-(let t47 (premises (Fiat (= t43 t43)) prf4))
+(let t47 (premises (Fiat (= t43 t43)) (Eval)))
 (let t48
   (substitution
                                             (m 1)
@@ -2332,7 +2327,7 @@ expression: proof_snapshot
                                             (a1 (TrueConst))
                                             (a2 (FalseConst))
                                             (b1 (TrueConst))))
-(let prf14
+(let prf13
   (Congr
                                   (= t41 t42)
                                   (Rule
@@ -2374,7 +2369,7 @@ expression: proof_snapshot
                                     (bddnot (TrueConst))))
 (let t50
   (premises
-                                  (Congr (= t41 (bddnot t15)) prf14 prf8 0)))
+                                  (Congr (= t41 (bddnot t15)) prf13 prf7 0)))
 (let t51
   (substitution
                                   (n 1)
@@ -2387,7 +2382,7 @@ expression: proof_snapshot
                   (= t10 (bddor t0 t15))
                   (Congr
                     (= t10 (bddor t0 t1))
-                    (Trans (= t10 t10) (Sym (= t10 t16) prf10) prf10)
+                    (Trans (= t10 t10) (Sym (= t10 t16) prf9) prf9)
                     (Rule
                       (= t9 t0)
                       (name "(rewrite (bddor $False x) x)")
@@ -2408,9 +2403,9 @@ expression: proof_snapshot
                                 (= t8 t42)
                                 (name "(rewrite (bddxor $True n) (bddnot n))")
                                 (premises
-                                  (Trans (= t8 t8) (Sym (= t8 t27) prf6) prf6))
+                                  (Trans (= t8 t8) (Sym (= t8 t27) prf5) prf5))
                                 (substitution (@rewrite_var__15 t8) t37))
-                              (Sym (= t42 t41) prf14))
+                              (Sym (= t42 t41) prf13))
                             (Trans
                               (= t41 t0)
                               (Rule
@@ -2436,7 +2431,7 @@ expression: proof_snapshot
                           1))
                       (substitution (x t0) (@rewrite_var__8 t9)))
                     0)
-                  prf8
+                  prf7
                   1)))
 (let t53
   (substitution
@@ -2448,7 +2443,7 @@ expression: proof_snapshot
                 (b2 (TrueConst))))
 (let t54 (bddor (bddnot (FalseConst)) (FalseConst)))
 (let t55 (bddor t2 t3))
-(let prf15 (Fiat (= t55 t55)))
+(let prf14 (Fiat (= t55 t55)))
 (let t56
   (premises
                           (Congr
@@ -2456,7 +2451,7 @@ expression: proof_snapshot
                             (Rule
                               (= t55 (bddor t3 t2))
                               (name "(rewrite (bddor x y) (bddor y x))")
-                              (premises prf15)
+                              (premises prf14)
                               (substitution (y t3) (@rewrite_var__6 t55) (x t2)))
                             prf0
                             0)))
@@ -2469,7 +2464,7 @@ expression: proof_snapshot
                           (a1 (bddnot (TrueConst)))
                           (b1 (TrueConst))
                           (b2 (FalseConst))))
-(let prf16
+(let prf15
   (Congr
                       (= t54 (bddor (TrueConst) (FalseConst)))
                       (Rule
@@ -2480,15 +2475,15 @@ expression: proof_snapshot
                         t58)
                       prf1
                       0))
-(let prf17 (Sym (= (bddor (TrueConst) (FalseConst)) t54) prf16))
-(let prf18
+(let prf16 (Sym (= (bddor (TrueConst) (FalseConst)) t54) prf15))
+(let prf17
   (Rule
                     (= t54 (TrueConst))
                     (name "(rewrite (bddor $True n) $True)")
-                    (premises prf16)
+                    (premises prf15)
                     (substitution (@rewrite_var__7 t54) (n (FalseConst)))))
 (let t59 (bddor (bddnot (TrueConst)) (TrueConst)))
-(let prf19
+(let prf18
   (Congr
                     (= t59 (bddor (FalseConst) (TrueConst)))
                     (Rule
@@ -2499,16 +2494,16 @@ expression: proof_snapshot
                       t58)
                     prf2
                     0))
-(let prf20 (Sym (= (bddor (FalseConst) (TrueConst)) t59) prf19))
-(let prf21
+(let prf19 (Sym (= (bddor (FalseConst) (TrueConst)) t59) prf18))
+(let prf20
   (Rule
                   (= t59 (TrueConst))
                   (name "(rewrite (bddor $False x) x)")
-                  (premises prf19)
+                  (premises prf18)
                   (substitution (x (TrueConst)) (@rewrite_var__8 t59))))
 (let t60 (bddor (TrueConst) (bddnot (TrueConst))))
 (let t61 (bddor (FalseConst) (bddnot (FalseConst))))
-(let t62 (premises (Congr (= t55 (bddor t2 t23)) prf15 prf0 1)))
+(let t62 (premises (Congr (= t55 (bddor t2 t23)) prf14 prf0 1)))
 (let t63
   (substitution
                     t57
@@ -2517,7 +2512,7 @@ expression: proof_snapshot
                     (a1 (TrueConst))
                     (b1 (bddnot (TrueConst)))
                     (b2 (bddnot (FalseConst)))))
-(let prf22
+(let prf21
   (Congr
           (= t55 t7)
           (Congr
@@ -2544,7 +2539,7 @@ expression: proof_snapshot
                       t63)
                     prf1
                     1)
-                  prf20)
+                  prf19)
                 2)
               (Trans
                 (= t60 t54)
@@ -2558,11 +2553,11 @@ expression: proof_snapshot
                     t63)
                   prf2
                   1)
-                prf17)
+                prf16)
               1)
-            prf21
+            prf20
             2)
-          prf18
+          prf17
           1))
 (Trans
   (= t6 (TrueConst))
@@ -2588,9 +2583,9 @@ expression: proof_snapshot
                 "(rewrite (bddor (ITE n a1 a2) (ITE m b1 b2)) (ITE n (bddor a1 (ITE m b1 b2)) (bddor a2 (ITE m b1 b2))) :when ((< n m)))")
               t34
               t35)
-            prf10
+            prf9
             1)
-          prf11
+          prf10
           2))
       (Trans
         (= t13 (TrueConst))
@@ -2598,11 +2593,11 @@ expression: proof_snapshot
           (= t13 t12)
           (Congr
             (= t13 t36)
-            (Trans (= t13 t13) (Sym (= t13 t17) prf11) prf11)
-            prf13
+            (Trans (= t13 t13) (Sym (= t13 t17) prf10) prf10)
+            prf12
             0)
-          (Sym (= t36 t12) prf12))
-        prf13)
+          (Sym (= t36 t12) prf11))
+        prf12)
       2)
     (Rule
       (= t10 (TrueConst))
@@ -2628,18 +2623,18 @@ expression: proof_snapshot
                 t53)
               (Trans
                 (= (bddor (TrueConst) (FalseConst)) (TrueConst))
-                prf17
-                prf18)
+                prf16
+                prf17)
               1)
-            (Trans (= (bddor (FalseConst) (TrueConst)) (TrueConst)) prf20 prf21)
+            (Trans (= (bddor (FalseConst) (TrueConst)) (TrueConst)) prf19 prf20)
             2)))
       (substitution (n 1) (a (TrueConst)) (@rewrite_var__ t10)))
     1)
   (Trans
     (= t7 (TrueConst))
-    (Sym (= t7 t55) prf22)
+    (Sym (= t7 t55) prf21)
     (Rule
       (= t55 (TrueConst))
       (name "(rewrite (ITE n a a) a)")
-      (premises prf22)
+      (premises prf21)
       (substitution (n 0) (a (TrueConst)) (@rewrite_var__ t55)))))

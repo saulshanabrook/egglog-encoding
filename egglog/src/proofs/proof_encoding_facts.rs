@@ -2,7 +2,7 @@
 //! rewritten to read the view tables, and each matched fact collects a premise
 //! proof for the rule's proof list.
 
-use super::proof_checker::is_container_side_condition;
+use super::proof_checker::is_primitive_side_condition;
 use super::proof_encoding::ProofInstrumentor;
 use crate::typechecking::FuncType;
 use crate::*;
@@ -18,13 +18,19 @@ impl ProofInstrumentor<'_> {
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
     ) -> String {
-        // A container side condition: a fact that builds a container with a
-        // primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`, or a bare
-        // `(vec-of e)` guard). The container has no carryable proof — emit the
+        // A primitive side condition: a fact that computes a container or a
+        // base value with a primitive (`(= xs (vec-of e))`, `(= v (bigrat a
+        // b))`, or a bare guard). Its result has no carryable proof — emit the
         // fact as-is so the e-graph computes it (its arguments are already
         // bound), with the `Eval` marker as its proof; the checker verifies it
         // by re-evaluation (see `check_side_condition`, which shares this gate).
-        if is_container_side_condition(fact) {
+        //
+        // Verbatim emission requires the fact to be free of function calls
+        // (a global read is a nullary call post-`remove_globals`, and would
+        // need instrumentation). Such facts take the instrumented path below;
+        // the checker still treats them as side conditions and ignores the
+        // premise slot's content, so only the premise count must line up.
+        if is_primitive_side_condition(fact) && fact_has_no_function_calls(fact) {
             res.push(fact.to_string());
             if self.egraph.proof_state.proofs_enabled {
                 let eval_constructor = self.proof_names().eval_constructor.clone();
@@ -323,4 +329,18 @@ impl ProofInstrumentor<'_> {
         let a2 = self.mint(stmts, &to_ast, value, &ast_sort);
         self.mint(stmts, &computed, &format!("{a1} {a2}"), &proof_sort)
     }
+}
+
+/// Whether every expression in `fact` is free of function calls (variables,
+/// literals, and primitive applications only), so the encoder may emit it
+/// verbatim as a side condition.
+fn fact_has_no_function_calls(fact: &ResolvedFact) -> bool {
+    let mut ok = true;
+    fact.clone().visit_exprs(&mut |expr| {
+        if matches!(expr, ResolvedExpr::Call(_, ResolvedCall::Func(_), _)) {
+            ok = false;
+        }
+        expr
+    });
+    ok
 }

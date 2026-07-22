@@ -255,7 +255,7 @@ expression: proof_snapshot
           (s (Stmt "struct s *sp = malloc(sizeof(struct s))"))
           (c (Expr "malloc(sizeof(struct s))"))
           (t1 (Type "struct s*")))))
-    (Computed (= () ())))
+    (Eval))
   (substitution
     (@v3017 (expr-points-to (Expr "sp")))
     (@v3016 (expr-points-to (Expr "u")))))

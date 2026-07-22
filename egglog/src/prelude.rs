@@ -848,6 +848,15 @@ pub trait BaseSort: Any + Send + Sync + Debug {
     fn register_primitives(&self, _eg: &mut EGraph) {}
     fn reconstruct_termdag(&self, _: &BaseValues, _: Value, _: &mut TermDag) -> TermId;
 
+    /// For a base sort whose values termify as an application rather than a
+    /// literal (e.g. a BigInt's `(from-string "…")`): the canonical head and a
+    /// validator recognizing that value term form (see
+    /// [`Sort::value_term_validator`]). `None` (the default) for literal-backed
+    /// sorts.
+    fn value_term_validator(&self) -> Option<(String, crate::PrimitiveValidator)> {
+        None
+    }
+
     fn to_arcsort(self) -> ArcSort
     where
         Self: Sized,
@@ -892,6 +901,10 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
         termdag: &mut TermDag,
     ) -> TermId {
         self.0.reconstruct_termdag(base_values, value, termdag)
+    }
+
+    fn value_term_validator(&self) -> Option<(String, crate::PrimitiveValidator)> {
+        self.0.value_term_validator()
     }
 }
 

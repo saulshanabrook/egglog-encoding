@@ -20,23 +20,28 @@ use crate::{
 };
 use thiserror::Error;
 
-/// A side condition is a rule-body fact that is just a container-producing
-/// primitive applied to bound variables — `(= v (vec-of e))`, `(= (set-of a)
-/// (set-of b))`, or a bare `(vec-of e)` guard. The encoder emits it with a bare
-/// [`Justification::Eval`] marker as its proof, and the checker verifies it by
-/// re-evaluation in [`ProofStore::check_side_condition`] rather than by matching
-/// a premise proposition. Both use this gate, so they cannot drift.
-pub(super) fn is_container_side_condition(fact: &ResolvedFact) -> bool {
-    fn is_container_primitive(expr: &ResolvedExpr) -> bool {
+/// A side condition is a rule-body fact that is just a primitive computation
+/// over bound variables — a container build like `(= v (vec-of e))`, a
+/// base-value computation like `(= v (bigrat a b))`, or a bare guard. The
+/// encoder emits it with a bare [`Justification::Eval`] marker as its proof,
+/// and the checker verifies it by re-evaluation in
+/// [`ProofStore::check_side_condition`] rather than by matching a premise
+/// proposition. Both use this gate, so they cannot drift. Eq-sort-output
+/// primitives are excluded: their results are e-class members carried by term
+/// proofs, not recomputable values.
+pub(super) fn is_primitive_side_condition(fact: &ResolvedFact) -> bool {
+    fn is_recomputable_primitive(expr: &ResolvedExpr) -> bool {
         matches!(
             expr,
             ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
-                if p.output().is_eq_container_sort()
+                if !p.output().is_eq_sort()
         )
     }
     match fact {
-        ResolvedFact::Eq(_, lhs, rhs) => is_container_primitive(lhs) || is_container_primitive(rhs),
-        ResolvedFact::Fact(expr) => is_container_primitive(expr),
+        ResolvedFact::Eq(_, lhs, rhs) => {
+            is_recomputable_primitive(lhs) || is_recomputable_primitive(rhs)
+        }
+        ResolvedFact::Fact(expr) => is_recomputable_primitive(expr),
     }
 }
 
@@ -627,11 +632,12 @@ impl ProofStore {
             }
 
             Justification::Computed => {
-                // A reflexive equality over a primitive computation: accept when
-                // the term is a chain of primitive applications over
-                // literals/variables. Constructor or function heads never
-                // qualify, so no term-existence claim can be smuggled in.
-                if proof.lhs() == proof.rhs() && self.computable_term(proof.lhs()) {
+                // A reflexive equality over a termified base value: accept when
+                // recomputing the term with its sort's value-form recognizer
+                // reproduces it (literals are their own computation).
+                // Constructor and container heads have no recognizer, so no
+                // term-existence claim can be smuggled in.
+                if proof.lhs() == proof.rhs() && self.termified_value(proof.lhs()) {
                     Ok(Proposition::new(proof.lhs(), proof.rhs()))
                 } else {
                     Err(ProofCheckErrorKind::InvalidComputed {
@@ -686,7 +692,7 @@ impl ProofStore {
                 // proposition.
                 for (fact, &premise_id) in rule.body.iter().zip(premise_proofs.iter()) {
                     self.assert_body_proof_normal_form(fact, name)?;
-                    if is_container_side_condition(fact) {
+                    if is_primitive_side_condition(fact) {
                         self.check_side_condition(fact, &mut working_subst, name)?;
                     } else {
                         let prop = self.check_proof_with_context(premise_id, program, ctx)?;
@@ -980,16 +986,23 @@ impl ProofStore {
         result
     }
 
-    /// Whether `term` is a primitive computation: a literal, a variable, or an
-    /// application of a base-value primitive (by name; the presort/container
-    /// families are excluded) to primitive computations. The term the
-    /// [`Justification::Computed`] rule accepts reflexively.
-    fn computable_term(&self, term: TermId) -> bool {
-        match self.term_dag.get(term) {
-            Term::Lit(_) | Term::Var(_) => true,
+    /// Whether `term` is a termified base value: a literal, or a sort's
+    /// canonical value term form recomputed by that sort's recognizer
+    /// (`Sort::value_term_validator`) to exactly this term, over termified
+    /// arguments. The term the [`Justification::Computed`] rule accepts
+    /// reflexively — verified by running the computation, not by shape.
+    fn termified_value(&mut self, term: TermId) -> bool {
+        match self.term_dag.get(term).clone() {
+            Term::Lit(_) => true,
+            Term::Var(_) => false,
             Term::App(head, args) => {
-                self.computable_prims.contains(head)
-                    && args.iter().all(|a| self.computable_term(*a))
+                let Some(validator) = self.value_term_validators.get(&head).cloned() else {
+                    return false;
+                };
+                if !args.iter().all(|a| self.termified_value(*a)) {
+                    return false;
+                }
+                validator(&mut self.term_dag, &args) == Some(term)
             }
         }
     }

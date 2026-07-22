@@ -155,9 +155,8 @@ expression: proof_snapshot
                                                             prf12)
                                                           1))
 (let prf14 (Fiat (= (TopConst) (TopConst))))
-(let prf15 (Computed (= () ())))
 (let t26 (e (Const (I 10))))
-(let prf16
+(let prf15
   (Congr
                           (= t5 t3)
                           (Rule
@@ -243,7 +242,7 @@ expression: proof_snapshot
                                                   (x (V "b"))
                                                   (k (TopConst))))
                                               prf14
-                                              prf15)
+                                              (Eval))
                                             (substitution
                                               t26
                                               (y "b")
@@ -252,7 +251,7 @@ expression: proof_snapshot
                                               (x "ten")
                                               (val (TopConst))))
                                           prf14
-                                          prf15)
+                                          (Eval))
                                         (substitution
                                           (e (Const (I 1)))
                                           (y "b")
@@ -261,7 +260,7 @@ expression: proof_snapshot
                                           (x "one")
                                           (val (TopConst))))
                                       prf14
-                                      prf15)
+                                      (Eval))
                                     (substitution
                                       (e (Const (I 0)))
                                       (y "b")
@@ -270,7 +269,7 @@ expression: proof_snapshot
                                       (x "zero")
                                       (val (TopConst))))
                                   prf14
-                                  prf15)
+                                  (Eval))
                                 (substitution
                                   t26
                                   (y "b")
@@ -287,10 +286,10 @@ expression: proof_snapshot
                               (b (V "b"))))
                           (Sym (= t4 (Prog (L 5))) prf1)
                           1))
-(let prf17 (Congr prop0 (Trans (= t3 t3) (Sym prop0 prf16) prf16) prf1 1))
+(let prf16 (Congr prop0 (Trans (= t3 t3) (Sym prop0 prf15) prf15) prf1 1))
 (let t27 (const-prop (L 5) (V "x") (I 10)))
-(let prf18 (Fiat (= (I 10) (I 10))))
-(let prf19
+(let prf17 (Fiat (= (I 10) (I 10))))
+(let prf18
   (Rule
                 (= t2 t2)
                 (name
@@ -300,7 +299,7 @@ expression: proof_snapshot
          (set (const-prop l2 x) val))
            )")
                 (premises
-                  prf17
+                  prf16
                   (Rule
                     (= t27 t27)
                     (name
@@ -309,7 +308,7 @@ expression: proof_snapshot
            )")
                     (premises prf4)
                     (substitution (li 4) (x (V "x")) (k (I 10))))
-                  prf18)
+                  prf17)
                 (substitution
                   (l1 (L 6))
                   (x (V "x"))
@@ -321,8 +320,8 @@ expression: proof_snapshot
 (let t28 (const-prop (L 13) (V "zero") (I 0)))
 (let t29 (const-prop (L 5) (V "zero") (I 0)))
 (let t30 (const-prop (L 4) (V "zero") (I 0)))
-(let prf20 (Fiat (= (I 0) (I 0))))
-(let prf21
+(let prf19 (Fiat (= (I 0) (I 0))))
+(let prf20
   (Rule
                 (= t28 t28)
                 (name
@@ -332,7 +331,7 @@ expression: proof_snapshot
          (set (const-prop l2 x) val))
            )")
                 (premises
-                  prf17
+                  prf16
                   (Rule
                     (= t29 t29)
                     (name
@@ -351,8 +350,8 @@ expression: proof_snapshot
            )")
                         (premises prf7)
                         (substitution (li 3) (x (V "zero")) (k (I 0))))
-                      prf20
-                      prf15)
+                      prf19
+                      (Eval))
                     (substitution
                       t26
                       (y "zero")
@@ -360,7 +359,7 @@ expression: proof_snapshot
                       (@n4 (I 0))
                       (x "x")
                       (val (I 0))))
-                  prf20)
+                  prf19)
                 (substitution
                   (l1 (L 6))
                   (x (V "zero"))
@@ -390,8 +389,8 @@ expression: proof_snapshot
          )")
           (premises
             prf0
-            prf19
-            prf21
+            prf18
+            prf20
             (Sym
               (= (I 10) t31)
               (Rule
@@ -406,7 +405,7 @@ expression: proof_snapshot
        (= v2 (const-prop l x2)))
       ((add-val v1 v2))
          )")
-                    (premises prf0 prf19 prf18 prf21 prf20)
+                    (premises prf0 prf18 prf17 prf20 prf19)
                     (substitution
                       (@n5 (I 10))
                       (v2 (I 0))
@@ -426,5 +425,5 @@ expression: proof_snapshot
             (val 10)
             (x (V "y")))))
       (substitution (li 13) (x (V "y")) (k (I 10))))
-    prf18)
+    prf17)
   (substitution (@n23 (I 10))))
