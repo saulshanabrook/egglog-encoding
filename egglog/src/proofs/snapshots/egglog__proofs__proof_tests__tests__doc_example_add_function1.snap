@@ -1,5 +1,6 @@
 ---
 source: egglog/src/proofs/proof_tests.rs
+assertion_line: 492
 expression: snapshot
 ---
 (ruleset __parent)
@@ -40,12 +41,12 @@ expression: snapshot
       ((let __v13 (get-fresh! "Math"))
        (set (Add a b __v13) ())
        (let __v14 (set-if-empty-__AddView! a b __v13 ()))
-       (let __v15 (get-fresh! "Math"))
-       (set (Add b a __v15) ())
-       (let __v16 (set-if-empty-__AddView! b a __v15 ()))
-       (set (__UF_Math (ordering-max __v14 __v16)) (values (ordering-min __v14 __v16) ())))
+       (let __union_operand __v14)
+       (set (Add b a __union_operand) ())
+       (set (__AddView b a) (values __union_operand ()))
+       (let __union_operand1 __union_operand))
          :name "commutativity")
-(check (= (values __v17 __v18) (__AddView 1 2))
-(= (values __v19 __v20) (__AddView 2 1))
-(= __v17 __v19))
+(check (= (values __v15 __v16) (__AddView 1 2))
+(= (values __v17 __v18) (__AddView 2 1))
+(= __v15 __v17))
 (run-schedule (seq (saturate (seq (run __rebuilding_cleanup) (saturate (run __parent)) (run __rebuilding))) (run __delete_subsume_ruleset)))

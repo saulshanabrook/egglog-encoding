@@ -161,40 +161,52 @@ row — identity-on-miss makes it its own representative.
 
 ## Union in a rule
 
-The commutativity rule builds `(Add b a)` and unions it with `(Add a b)`:
+When a `union` operand is a freshly-built constructor term, the term-mode
+encoding builds it *directly into* the other operand's e-class rather than
+minting a new id and unioning it away. Two passes over the rule's actions
+implement this:
+
+1. **Normalize** — lift every constructor-application `union` operand into a
+   `let`, so both operand shapes become one: inline `(union (Add a b) (Add b a))`
+   and let-bound `(let l (Add a b)) (let r (Add b a)) (union l r)` normalize to
+   the same let-bound form.
+2. **Construct-into** — for `(union l r)` where an operand is a constructor-`let`,
+   pick the other operand as the *survivor* (built normally) and build the
+   *victim* into the survivor's e-class, dropping the explicit union.
+
+The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class:
 
 ```text
 (rule ((= (values e p) (AddView a b)))
       ((let ab (get-fresh! "Math"))
        (set (Add a b ab) ())
        (let ab_canon (set-if-empty-AddView! a b ab ()))
-       (let ba (get-fresh! "Math"))
-       (set (Add b a ba) ())
-       (let ba_canon (set-if-empty-AddView! b a ba ()))
-       (set (UF_Math (ordering-max ab_canon ba_canon))
-            (values (ordering-min ab_canon ba_canon) ())))
+       (set (Add b a ab_canon) ())
+       (set (AddView b a) (values ab_canon ())))
        :name "commutativity")
 ```
 
-The body query matches an `Add` row and binds `a` and `b` to its **canonical**
-children (a view read; see [Queries](#queries)). The head then builds the two
-terms and unions them:
+- **Survivor.** `(Add a b)` is built normally (mint + `set-if-empty`), yielding
+  its canonical e-class `ab_canon`.
+- **Victim → survivor.** `(Add b a)` is written using `ab_canon` as its id: the
+  term-relation row `(set (Add b a ab_canon) ())` and a plain `set` on the view
+  `(set (AddView b a) (values ab_canon ()))`. No fresh id is minted and no
+  `UF_Math` edge is added — `(Add b a)` simply *is* `ab_canon`. The victim's
+  variable is bound to `ab_canon` too, so a later reuse of it (e.g. a subsequent
+  `(Add r a)`) shares the same representative.
+- **Congruence handles collisions.** If `(Add b a)` already exists under a
+  different e-class, the plain view `set` collides on children key `b a` and the
+  view's congruence `:merge` unions the two e-classes in `UF_Math` — exactly the
+  edge an explicit union would have produced.
 
-- **Build a term.** `(let ab (get-fresh! "Math"))` mints a fresh id and
-  `(set (Add a b ab) ())` records the term-relation row for that id. `ab` is that
-  specific new node.
-- **Canonicalize it.** `(set-if-empty-AddView! a b ab ())` interns the
-  application into the view keyed by its children `a b`. If a row for `(Add a b)`
-  already exists it returns that row's e-class; otherwise it installs `ab`. Either
-  way `ab_canon` is the *canonical* e-class for `(Add a b)`, so nothing downstream
-  ever sees the raw `ab`.
-- **Union.** `(set (UF_Math (ordering-max ab_canon ba_canon)) (values (ordering-min …) ()))`
-  points the larger of the two canonical e-classes at the smaller, the union-find
-  convention from [Data structures](#union-find). `ordering-max`/`min` make the
-  choice deterministic.
+Only one operand needs to be a constructor application. When neither is — a
+`(union x y)` over matched variables — the encoder builds both and sets the
+`UF_<Sort>` edge directly: `(set (UF_Math (ordering-max x y)) (values
+(ordering-min x y) ()))`.
 
-So even the term-mode encoding already mints-then-canonicalizes every built term;
-proofs (next) just thread an equality alongside each of those steps.
+This optimization is term-mode only. In proof mode the general path (next) mints
+and canonicalizes both operands so it can thread an equality proof through each
+step.
 
 ## Building nested terms with proofs
 

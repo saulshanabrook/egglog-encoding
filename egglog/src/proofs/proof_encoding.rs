@@ -1,7 +1,9 @@
 #[doc = include_str!("proof_encoding.md")]
 use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
+use crate::util::HashSet;
 use crate::*;
+use egglog_ast::generic_ast::GenericExpr;
 
 /// Term-construction side channel (proof mode): maps a built term's canonical
 /// e-class var to `(natural e-class var, connector proof var)`, where the
@@ -249,6 +251,160 @@ impl<'a> ProofInstrumentor<'a> {
         let sym_min = self.mint(stmts, &sym, &min_pf, &proof_sort);
         let edge = self.mint(stmts, &trans, &format!("{max_pf} {sym_min}"), &proof_sort);
         format!("(set ({uf_name} {larger}) (values {smaller} {edge}))")
+    }
+
+    /// The `(FuncType, args)` of a constructor-application expression, else `None`.
+    fn constructor_operand(expr: &ResolvedExpr) -> Option<(&FuncType, &[ResolvedExpr])> {
+        match expr {
+            ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args)
+                if func_type.subtype == FunctionSubtype::Constructor =>
+            {
+                Some((func_type, args.as_slice()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Term-mode normal form for the construct-into optimization: lift every
+    /// constructor-application operand of a `union` into a preceding `let`, so
+    /// each union operand is a variable. This unifies the inline shape
+    /// `(union (F …) (G …))` with the let-bound shape
+    /// `(let a (F …)) (let b (G …)) (union a b)` before planning runs.
+    fn normalize_union_operands(&mut self, actions: &[ResolvedAction]) -> Vec<ResolvedAction> {
+        let mut out = vec![];
+        for action in actions {
+            match action {
+                ResolvedAction::Union(span, lhs, rhs) => {
+                    let lhs = self.lift_union_operand(lhs.clone(), &mut out);
+                    let rhs = self.lift_union_operand(rhs.clone(), &mut out);
+                    out.push(ResolvedAction::Union(span.clone(), lhs, rhs));
+                }
+                other => out.push(other.clone()),
+            }
+        }
+        out
+    }
+
+    /// If `operand` is a constructor application, bind it to a fresh `let`
+    /// (pushed onto `out`) and return a variable referencing it; otherwise
+    /// return `operand` unchanged.
+    fn lift_union_operand(
+        &mut self,
+        operand: ResolvedExpr,
+        out: &mut Vec<ResolvedAction>,
+    ) -> ResolvedExpr {
+        if Self::constructor_operand(&operand).is_none() {
+            return operand;
+        }
+        let span = operand.span();
+        let var = ResolvedVar {
+            name: self.egraph.parser.symbol_gen.fresh("union_operand"),
+            sort: operand.output_type(),
+            is_global_ref: false,
+        };
+        out.push(ResolvedAction::Let(span.clone(), var.clone(), operand));
+        GenericExpr::Var(span, var)
+    }
+
+    /// Plan the construct-into optimization over normalized actions (union
+    /// operands are variables). Returns a map `victim -> survivor` — the
+    /// victim's constructor is built into the survivor's e-class instead of a
+    /// fresh one — and the set of union action indices it makes redundant.
+    ///
+    /// Conservative: only a `union` of two distinct, not-yet-touched variables
+    /// where at least one is a constructor-`let` is optimized. The victim is the
+    /// later-defined constructor operand (so the survivor's e-class is already
+    /// bound where the victim is built); a matched (un-`let`) variable is always
+    /// an eligible survivor.
+    fn plan_construct_into(
+        actions: &[ResolvedAction],
+    ) -> (HashMap<String, String>, HashSet<usize>) {
+        let mut all_def: HashMap<String, usize> = HashMap::default();
+        let mut ctor_def: HashMap<String, usize> = HashMap::default();
+        for (i, action) in actions.iter().enumerate() {
+            if let ResolvedAction::Let(_, v, expr) = action {
+                all_def.insert(v.name.clone(), i);
+                if Self::constructor_operand(expr).is_some() {
+                    ctor_def.insert(v.name.clone(), i);
+                }
+            }
+        }
+
+        let mut construct_into: HashMap<String, String> = HashMap::default();
+        let mut dropped: HashSet<usize> = HashSet::default();
+        let mut used: HashSet<String> = HashSet::default();
+        for (i, action) in actions.iter().enumerate() {
+            let ResolvedAction::Union(_, lhs, rhs) = action else {
+                continue;
+            };
+            let (GenericExpr::Var(_, va), GenericExpr::Var(_, vb)) = (lhs, rhs) else {
+                continue;
+            };
+            let (a, b) = (va.name.clone(), vb.name.clone());
+            if a == b {
+                // Union of a variable with itself is a no-op.
+                dropped.insert(i);
+                continue;
+            }
+            if used.contains(&a) || used.contains(&b) {
+                // Keep chains of optimized unions out of scope for now.
+                continue;
+            }
+            let (victim, survivor) = match (ctor_def.get(&a), ctor_def.get(&b)) {
+                (Some(&ia), Some(&ib)) => {
+                    if ia >= ib {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    }
+                }
+                (Some(_), None) => (a, b),
+                (None, Some(_)) => (b, a),
+                (None, None) => continue,
+            };
+            // The survivor's e-class must be bound where the victim is built: a
+            // matched variable always is; a `let` must precede the victim's.
+            let victim_idx = ctor_def[&victim];
+            if let Some(&survivor_idx) = all_def.get(&survivor)
+                && survivor_idx >= victim_idx
+            {
+                continue;
+            }
+            used.insert(victim.clone());
+            used.insert(survivor.clone());
+            construct_into.insert(victim, survivor);
+            dropped.insert(i);
+        }
+        (construct_into, dropped)
+    }
+
+    /// Lower a construct-into victim `(let victim (F args))`: build `F(args)`'s
+    /// children, write the term row and view value pointing at `target`'s
+    /// e-class with a plain view `set` (so a collision with an existing `F(args)`
+    /// unions the two via the view's congruence `:merge`), and bind `victim` to
+    /// `target` so later uses share the representative.
+    fn instrument_construct_into(
+        &mut self,
+        res: &mut Vec<String>,
+        expr: &ResolvedExpr,
+        target: &str,
+        victim: &str,
+        justification: &Justification,
+        nat_conn: &mut NatConn,
+    ) {
+        let (func_type, args) = Self::constructor_operand(expr)
+            .expect("construct-into victim must be a constructor application");
+        let ctor_name = func_type.name.clone();
+        let child_vals: Vec<String> = args
+            .iter()
+            .map(|arg| self.instrument_action_expr(arg, res, justification, nat_conn))
+            .collect();
+        res.push(format!(
+            "(set ({ctor_name} {} {target}) ())",
+            ListDisplay(&child_vals, " ")
+        ));
+        res.push(self.update_fd_view(&ctor_name, &child_vals, target, "()"));
+        res.push(format!("(let {victim} {target})"));
     }
 
     /// The parent table is the database representation of a union-find datastructure.
@@ -648,6 +804,9 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedAction::Union(_span, generic_expr, generic_expr1) => {
+                // A union whose operand is a freshly-built constructor term is
+                // optimized upstream in `instrument_actions` (term mode); this
+                // arm handles the remaining general unions.
                 let v1 =
                     self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
                 let v2 =
@@ -1247,9 +1406,38 @@ impl<'a> ProofInstrumentor<'a> {
         justification: &Justification,
         nat_conn: &mut NatConn,
     ) -> Vec<String> {
+        if self.proofs_enabled() {
+            let mut res = vec![];
+            for action in actions {
+                res.extend(self.instrument_action(action, justification, nat_conn));
+            }
+            return res;
+        }
+
+        // Term mode: normalize union operands to variables, then build each
+        // freshly-constructed union operand directly into the other operand's
+        // e-class (see proof_encoding.md, "Union in a rule").
+        let normalized = self.normalize_union_operands(actions);
+        let (construct_into, dropped) = Self::plan_construct_into(&normalized);
         let mut res = vec![];
-        for action in actions {
-            res.extend(self.instrument_action(action, justification, nat_conn));
+        for (i, action) in normalized.iter().enumerate() {
+            if dropped.contains(&i) {
+                continue;
+            }
+            match action {
+                ResolvedAction::Let(_, v, expr) if construct_into.contains_key(&v.name) => {
+                    let target = construct_into[&v.name].clone();
+                    self.instrument_construct_into(
+                        &mut res,
+                        expr,
+                        &target,
+                        &v.name,
+                        justification,
+                        nat_conn,
+                    );
+                }
+                _ => res.extend(self.instrument_action(action, justification, nat_conn)),
+            }
         }
         res
     }
@@ -1508,7 +1696,11 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::CoreAction(action) => {
                 let mut nat_conn = NatConn::default();
                 let instrumented = self
-                    .instrument_action(action, &Justification::Fiat, &mut nat_conn)
+                    .instrument_actions(
+                        std::slice::from_ref(action),
+                        &Justification::Fiat,
+                        &mut nat_conn,
+                    )
                     .join("\n");
                 res.extend(self.parse_program(&instrumented));
             }

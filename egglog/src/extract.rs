@@ -910,14 +910,19 @@ mod tests {
                 None,
                 r#"
                 (sort E)
-                (constructor A () E)
-                (constructor B () E)
-                (constructor C () E)
-                (relation Go ())
-                (Go)
-                (rule ((Go))
-                      ((union (A) (B))
-                       (union (B) (C))))
+                (constructor Mk (i64) E)
+                (Mk 0)
+                (Mk 1)
+                (Mk 2)
+                ; Union query-matched variables (existing e-classes), not
+                ; freshly-built constructor terms: this takes the general
+                ; `UF_<Sort>` edge path (forming a multi-edge chain to compress)
+                ; rather than the term-mode construct-into-e-class optimization,
+                ; which would fuse the operands with no chain to compress.
+                (relation Link (E E))
+                (Link (Mk 0) (Mk 1))
+                (Link (Mk 1) (Mk 2))
+                (rule ((Link x y)) ((union x y)))
                 (run 1)
                 "#,
             )
