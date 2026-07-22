@@ -39,6 +39,7 @@ use hashbrown::{HashMap, HashSet};
 mod compile;
 mod dd_native;
 mod interpret;
+mod merge_hub;
 pub mod monotone;
 mod schedule_compiler;
 
@@ -213,6 +214,11 @@ pub struct EGraph {
     pub(crate) set_if_empty_ops: HashMap<ExternalFunctionId, ViewOp>,
     /// View-proof reader ops, keyed like `set_if_empty_ops`.
     pub(crate) view_proof_ops: HashMap<ExternalFunctionId, ViewOp>,
+    /// Primitives the merge hub observed returning values that are neither
+    /// argument echoes nor unit — evaluating those on a database clone would
+    /// diverge from the host interners, so compiled schedules referencing
+    /// them fall back to the interpreter permanently.
+    pub(crate) unsafe_prims: HashSet<ExternalFunctionId>,
 }
 
 /// A term-encoding view op (`set-if-empty` or view-proof) the DD interpreter
@@ -293,6 +299,7 @@ impl EGraph {
             table_ids: HashMap::new(),
             set_if_empty_ops: HashMap::new(),
             view_proof_ops: HashMap::new(),
+            unsafe_prims: HashSet::new(),
         }
     }
 
@@ -511,6 +518,26 @@ impl EGraph {
     pub(crate) fn advance_fresh_ids(&mut self, count: usize) {
         let current = self.db.read_counter(self.id_counter);
         self.db.set_counter(self.id_counter, current + count);
+    }
+
+    /// A clone of the embedded primitive-evaluation database, for compiled
+    /// operators that must invoke primitives off the host. Safe only for
+    /// primitives whose results are argument echoes or the unit value —
+    /// anything interning NEW base values diverges from the host's interners
+    /// (the merge hub enforces this dynamically).
+    pub(crate) fn db_clone(&self) -> Database {
+        self.db.clone()
+    }
+
+    /// The interned rep of the unit value `()` (stable across [`Self::db_clone`]
+    /// clones: it is registered at construction, before any clone).
+    pub(crate) fn unit_rep(&self) -> u32 {
+        self.db.base_values().get(()).rep()
+    }
+
+    /// Merge-dependency level for wave ordering (readable targets first).
+    pub(crate) fn merge_level(&self, f: FunctionId) -> usize {
+        self.info(f).merge_level
     }
 
     /// Execute a schedule tree over [`Backend::run_rules`], appending one
@@ -2911,6 +2938,7 @@ impl Backend for EGraph {
             table_ids: self.table_ids.clone(),
             set_if_empty_ops: self.set_if_empty_ops.clone(),
             view_proof_ops: self.view_proof_ops.clone(),
+            unsafe_prims: self.unsafe_prims.clone(),
         })
     }
 

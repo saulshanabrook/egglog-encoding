@@ -2,46 +2,44 @@
 //! a single epoch — loops become in-dataflow fixpoints instead of host-driven
 //! iterations (docs/rebuild-in-dataflow.md).
 //!
-//! Schedule nodes map to dataflow constructs: `Sequence` chains table states
-//! through leaves; `Saturate` opens a nested scope whose feedback `Variable`s
-//! carry each written table to fixpoint; `Repeat(n)` is the same scope with
-//! feedback gated to rounds `< n` (at most n bounded hops, early convergence
-//! free); a `Run` leaf joins rule bodies against the incoming state and merges
-//! each rule's effects into the outgoing state.
+//! Schedule nodes map to dataflow constructs: `Sequence` chains leaves;
+//! `Saturate`/`Repeat(n)` open ONE nested iterative scope built around the
+//! [`crate::merge_hub`]:
 //!
-//! Head actions compile onto the monotone-fire toolkit ([`crate::monotone`]):
+//! ```text
+//!   state(f) = entered seeds ∪ hub output deltas(f)
+//!   bindings = rule joins over state          (round r = host iteration r)
+//!   effects  = latched, tagged write ops      (rising_edge per stream)
+//!   Variable(+1 round) feeds effects to the hub, which applies them with
+//!   the host MergeTransaction's exact semantics (set-if-empty, deletes,
+//!   then merge WAVES to fixpoint) at round r+1.
+//! ```
 //!
-//! - `(get-fresh! "sort")` lowers to a [`memoizing_mint`] stage keyed by
-//!   `(rule, binding)` — replay-stable fresh ids, one per firing, drawn from
-//!   a range reserved on the host counter and consumed after the run.
-//! - `set-if-empty-<view>!` (the term encoder's hash-cons) lowers to a
-//!   [`first_per_key`] latch per (leaf, view): candidates race per key, the
-//!   earliest round's minimum wins ONCE, and pre-existing view keys are
-//!   primed as zero-priority sentinels so they always win. The latched
-//!   output is append-only, so loop feedback stays monotone.
-//! - Plain `Set`s are idempotent set-union inserts (`distinct`).
+//! Effects produced at round r land at round r+1, so matches always see the
+//! previous iteration's state — egglog's match-then-apply model — while merge
+//! waves run inside one hub timestamp and never consume a `Repeat` budget.
+//! The gate filters fed effects to rounds `< n`, so `Repeat(0)` is a no-op
+//! and `Repeat(n)` applies exactly n iterations, converging early for free.
 //!
-//! This still compiles a SUBSET and falls back to the interpreter with an
-//! env-gated reason (`EGGLOG_DD_DUMP_PLANS=1`) otherwise: rule bodies must be
-//! pure `Live` table atoms; heads may mint (at most one minting leaf per
-//! schedule — each mint stage owns an id range — and one mint per rule),
-//! write tables whose value columns are agreed constants, and hash-cons into
-//! views whose result is unused; loops must not nest. General merges, body
-//! primitives, deletes/subsumes, used hash-cons results (constructors), and
-//! nested loops arrive next.
+//! Head actions: `(get-fresh! "sort")` lowers to a [`memoizing_mint`] stage
+//! keyed by `(rule, binding)` — replay-stable ids from a reserved host
+//! counter range; `set-if-empty-<view>!` and `delete` lower to hub ops.
 //!
-//! Faithfulness: a leaf computes every rule's matches against the SAME
-//! pre-leaf state before any effect lands (egglog's match-then-apply model);
-//! loop rounds see round-boundary snapshots exactly like host iterations; a
-//! table's final state leaves a loop as `seed ∪ gated feedback`, so
-//! `Repeat(0)` is a no-op and `Repeat(n)` applies exactly n passes. Fresh-id
-//! VALUES are implementation-defined in the reference backend too (host
-//! HashMap iteration order), so the compiled deterministic assignment is
-//! observably equivalent. Compiled leaves report `changed` per leaf at the
-//! top level and per enclosing loop inside one (an OR-preserving attribution;
+//! This compiles a SUBSET and falls back to the interpreter with an
+//! env-gated reason (`EGGLOG_DD_DUMP_PLANS=1`) otherwise: bodies are pure
+//! `Live` table atoms; every write happens inside ONE loop with ONE
+//! write-bearing leaf (multi-leaf sequences need per-leaf phasing, and
+//! same-scope writes at the epoch level would need a cycle timely cannot
+//! express outside a loop); merges may use column ops and primitives but not
+//! table lookups; at most one minting leaf. Primitive evaluation inside the
+//! dataflow uses a cloned `Database`, guarded dynamically: a result that is
+//! not an argument echo or unit aborts the run BEFORE any host mutation,
+//! caches the primitive as uncompilable, and falls back to the interpreter.
+//!
+//! Compiled leaves report `changed` per leaf (net row deltas plus mints); a
+//! loop's changes are attributed to its leaves collectively (OR-preserving;
 //! per-leaf flags do not appear in printed outputs).
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use anyhow::{anyhow, Result};
@@ -51,8 +49,8 @@ use differential_dataflow::operators::iterate::Variable;
 use differential_dataflow::{AsCollection, VecCollection};
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
-    FunctionId, IterationReport, ReadMode, RuleActionCall, RuleBodyCall, ScheduleLeafReport,
-    ScheduleSpec,
+    FunctionId, IterationReport, MergeAction, MergeFn, ReadMode, RuleActionCall, RuleBodyCall,
+    ScheduleLeafReport, ScheduleSpec,
 };
 use egglog_numeric_id::NumericId;
 use hashbrown::{HashMap, HashSet};
@@ -64,17 +62,17 @@ use timely::progress::Timestamp;
 
 use crate::compile::Slot;
 use crate::dd_native::{atom_vars, pack_key128, pack_row, plan_join, AtomOps, RowN, W};
-use crate::monotone::{first_per_key, memoizing_mint};
+use crate::merge_hub::{merge_hub, HubChannels, HubOp, HubTable, OP_DELETE, OP_SET, OP_SIE};
+use crate::monotone::{memoizing_mint, rising_edge};
 use crate::EGraph;
 
 /// Compiled-region rows run at the planner cap width; per-region ladder
 /// selection (as the fused join does) is a later optimization.
 type Row = RowN<W>;
 type Coll<'s, T> = VecCollection<'s, T, Row>;
-/// Accumulated net weight of a region's new-row stream (`> 0` = changed).
-type ChangeSink = Rc<RefCell<isize>>;
-/// Final-state minus seed deltas for one table, drained into the host.
-type DrainSink = Rc<RefCell<Vec<(Row, isize)>>>;
+/// Net row deltas per (table, row); nonzero anywhere = changed.
+type DeltaSink = Rc<std::cell::RefCell<HashMap<(u32, Row), isize>>>;
+type CountSink = Rc<std::cell::RefCell<isize>>;
 
 /// A column of an effect row: copied from a binding column, a constant, or
 /// this rule's minted fresh id.
@@ -85,8 +83,7 @@ enum Src {
     Mint,
 }
 
-/// One join stage of a compiled rule (atoms 1..): the joined table, the
-/// binding/atom key columns, and the compiled remap program.
+/// One join stage of a compiled rule (atoms 1..).
 struct StagePlan {
     func: FunctionId,
     left_cols: Vec<usize>,
@@ -94,11 +91,11 @@ struct StagePlan {
     ops: AtomOps,
 }
 
-/// A lowered `set-if-empty-<view>!` hash-cons: insert `srcs` (keys then
-/// outputs) into `view` only if the key prefix is absent, first writer wins.
-struct SieEffect {
-    view: FunctionId,
-    n_keys: usize,
+/// A lowered write: the hub op kind, target table, and per-column sources
+/// (full row for sets/sie; key columns for deletes).
+struct WriteEffect {
+    op: u8,
+    func: FunctionId,
     srcs: Vec<Src>,
 }
 
@@ -107,9 +104,7 @@ struct CompiledRule {
     first_ops: AtomOps,
     stages: Vec<StagePlan>,
     needs_mint: bool,
-    /// Plain table `Set`s: target and per-column sources (arity wide).
-    sets: Vec<(FunctionId, Vec<Src>)>,
-    sies: Vec<SieEffect>,
+    writes: Vec<WriteEffect>,
 }
 
 struct LeafPlan {
@@ -117,8 +112,8 @@ struct LeafPlan {
     rules: Vec<CompiledRule>,
 }
 
-/// Validated schedule shape: loops (`Repeat`/`Saturate`) contain no nested
-/// loops, so the dataflow needs exactly one nested-scope level.
+/// Validated schedule shape: exactly one loop carries every write, loops do
+/// not nest, and the writing loop has one write-bearing leaf.
 enum Region {
     Leaf(usize),
     Seq(Vec<Region>),
@@ -129,18 +124,12 @@ enum Region {
 struct Prep {
     region: Region,
     leaves: Vec<LeafPlan>,
+    /// All tables read or written anywhere in the schedule.
     involved: Vec<FunctionId>,
-    written: HashSet<FunctionId>,
-    /// The single leaf allowed to mint, if any.
+    /// Tables the hub owns: written by rules or (transitively) by merge-block
+    /// side effects.
+    hub_tables: HashSet<FunctionId>,
     minting_leaf: Option<usize>,
-}
-
-/// Shared per-run context for leaf lowering.
-struct LeafCtx {
-    /// First fresh id the (single) mint stage may assign.
-    first_id: u32,
-    /// Net count of ids the mint stage assigned.
-    mint_count: ChangeSink,
 }
 
 /// Log (env-gated) why a schedule fell back to the interpreter, then `None`.
@@ -151,8 +140,10 @@ fn fallback<T>(reason: &str) -> Option<T> {
     None
 }
 
-/// Compile and run `spec`, or `None` when any part of it is outside the
-/// supported subset (the caller falls back to the interpreter).
+/// Compile and run `spec`. `None` means the schedule is outside the supported
+/// subset — including the DYNAMIC case where a primitive proved unsafe to
+/// evaluate off-host (cached; nothing was mutated) — and the caller falls
+/// back to the interpreter.
 pub(crate) fn try_run_compiled(
     eg: &mut EGraph,
     spec: &ScheduleSpec,
@@ -163,13 +154,17 @@ pub(crate) fn try_run_compiled(
     let prep = prepare(eg, spec)?;
     if std::env::var("EGGLOG_DD_DUMP_PLANS").is_ok() {
         eprintln!(
-            "[dd-compile] compiled schedule: {} leaves, {} tables ({} written)",
+            "[dd-compile] compiled schedule: {} leaves, {} tables ({} hub-owned)",
             prep.leaves.len(),
             prep.involved.len(),
-            prep.written.len(),
+            prep.hub_tables.len(),
         );
     }
-    Some(run_compiled(eg, prep))
+    match run_compiled(eg, prep) {
+        Ok(Some(leaves)) => Some(Ok(leaves)),
+        Ok(None) => fallback("a primitive proved unsafe to evaluate off-host (cached)"),
+        Err(e) => Some(Err(e)),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -180,10 +175,10 @@ fn prepare(eg: &EGraph, spec: &ScheduleSpec) -> Option<Prep> {
     let mut leaves = Vec::new();
     let region = shape(eg, spec, false, &mut leaves)?;
 
+    // Involved tables and directly-written tables.
     let mut involved: Vec<FunctionId> = Vec::new();
-    let mut set_written: HashSet<FunctionId> = HashSet::new();
-    let mut sie_written: HashSet<FunctionId> = HashSet::new();
     let mut seen: HashSet<FunctionId> = HashSet::new();
+    let mut written: HashSet<FunctionId> = HashSet::new();
     for leaf in &leaves {
         for rule in &leaf.rules {
             for f in std::iter::once(rule.first_func).chain(rule.stages.iter().map(|s| s.func)) {
@@ -191,26 +186,36 @@ fn prepare(eg: &EGraph, spec: &ScheduleSpec) -> Option<Prep> {
                     involved.push(f);
                 }
             }
-            for (f, _) in &rule.sets {
-                set_written.insert(*f);
-                if seen.insert(*f) {
-                    involved.push(*f);
-                }
-            }
-            for sie in &rule.sies {
-                sie_written.insert(sie.view);
-                if seen.insert(sie.view) {
-                    involved.push(sie.view);
+            for w in &rule.writes {
+                written.insert(w.func);
+                if seen.insert(w.func) {
+                    involved.push(w.func);
                 }
             }
         }
     }
-    if set_written.intersection(&sie_written).next().is_some() {
-        return fallback("a table is both Set-written and hash-cons-written");
+
+    // Close the hub set over merge-block side-effect targets (e.g. a view's
+    // merge writes the union-find), validating merge shapes as we go.
+    let mut hub_tables = written.clone();
+    let mut frontier: Vec<FunctionId> = hub_tables.iter().copied().collect();
+    while let Some(f) = frontier.pop() {
+        let (_, merge, _, _) = eg.function_spec(f);
+        let mut targets = Vec::new();
+        if !merge_supported(eg, &merge, &mut targets) {
+            return fallback("a written table's merge is not compiled (table lookup or nested program)");
+        }
+        for t in targets {
+            if hub_tables.insert(t) {
+                frontier.push(t);
+                if seen.insert(t) {
+                    involved.push(t);
+                }
+            }
+        }
     }
 
-    // At most ONE minting leaf: each minting leaf owns a mint-stage operator
-    // instance, and multiple instances would need disjoint id ranges.
+    // Structural gates.
     let mut minting_leaf = None;
     for (i, leaf) in leaves.iter().enumerate() {
         if leaf.rules.iter().any(|r| r.needs_mint) {
@@ -220,12 +225,9 @@ fn prepare(eg: &EGraph, spec: &ScheduleSpec) -> Option<Prep> {
             minting_leaf = Some(i);
         }
     }
+    validate_write_placement(&region, &leaves)?;
 
-    // Table gates: bounded arity, no subsumed side-set, stored rows exactly
-    // arity wide, and every plain-Set writer agrees with the seeds on the
-    // (constant) value columns so set-union insertion never needs a merge.
-    // Hash-cons targets are exempt: their per-key race is decided by the
-    // first_per_key latch instead.
+    // Table gates.
     for &f in &involved {
         let arity = eg.info(f).arity;
         if arity > W {
@@ -239,55 +241,116 @@ fn prepare(eg: &EGraph, spec: &ScheduleSpec) -> Option<Prep> {
                 return fallback("an involved table stores rows wider than its arity");
             }
         }
-    }
-    for &f in &set_written {
-        let arity = eg.info(f).arity;
-        let n_keys = eg.n_keys(f);
-        let mut value_consts: Option<Vec<u32>> = None;
-        for leaf in &leaves {
-            for rule in &leaf.rules {
-                for (target, srcs) in &rule.sets {
-                    if *target != f {
-                        continue;
-                    }
-                    let vals: Option<Vec<u32>> = srcs[n_keys..arity]
-                        .iter()
-                        .map(|s| match s {
-                            Src::Const(v) => Some(*v),
-                            Src::Col(_) | Src::Mint => None,
-                        })
-                        .collect();
-                    let Some(vals) = vals else {
-                        return fallback("a Set writes non-constant value columns");
-                    };
-                    match &value_consts {
-                        None => value_consts = Some(vals),
-                        Some(prior) if *prior == vals => {}
-                        Some(_) => {
-                            return fallback("writers disagree on a table's value constants")
-                        }
-                    }
+        if hub_tables.contains(&f) {
+            if let Some(keys) = eg.by_key.get(&f) {
+                if keys.values().any(|entries| entries.len() != 1) {
+                    return fallback("a hub table transiently holds multiple rows per key");
                 }
-            }
-        }
-        if let (Some(vals), Some(rows)) = (&value_consts, eg.mirror.get(&f)) {
-            if rows
-                .iter()
-                .any(|r| r[n_keys..arity] != vals[..arity - n_keys])
-            {
-                return fallback("seed rows disagree with the written value constants");
             }
         }
     }
 
-    let written: HashSet<FunctionId> = set_written.union(&sie_written).copied().collect();
     Some(Prep {
         region,
         leaves,
         involved,
-        written,
+        hub_tables,
         minting_leaf,
     })
+}
+
+/// Merge programs the hub can fold: column ops, constants, primitives not
+/// known-unsafe, and merge-block `set`/`let` actions. Table lookups fall
+/// back. Collects merge-block set targets into `targets`.
+fn merge_supported(eg: &EGraph, merge: &MergeFn, targets: &mut Vec<FunctionId>) -> bool {
+    match merge {
+        MergeFn::AssertEq
+        | MergeFn::UnionId
+        | MergeFn::Old
+        | MergeFn::New
+        | MergeFn::OldCol(_)
+        | MergeFn::NewCol(_)
+        | MergeFn::LetVar(_)
+        | MergeFn::Const(_) => true,
+        MergeFn::Primitive(id, args) => {
+            !eg.unsafe_prims.contains(id)
+                && !eg.set_if_empty_ops.contains_key(id)
+                && !eg.view_proof_ops.contains_key(id)
+                && args.iter().all(|a| merge_supported(eg, a, targets))
+        }
+        MergeFn::Function(..) | MergeFn::Lookup(..) => false,
+        MergeFn::Columns(columns) => columns.iter().all(|c| merge_supported(eg, c, targets)),
+        MergeFn::Block { actions, result } => {
+            for action in actions {
+                match action {
+                    MergeAction::Set(f, args) => {
+                        targets.push(*f);
+                        if !args.iter().all(|a| merge_supported(eg, a, targets)) {
+                            return false;
+                        }
+                    }
+                    MergeAction::Let { value, .. } => {
+                        if !merge_supported(eg, value, targets) {
+                            return false;
+                        }
+                    }
+                    MergeAction::Union(..) => return false,
+                }
+            }
+            merge_supported(eg, result, targets)
+        }
+    }
+}
+
+/// Writes must all live inside exactly ONE loop, in ONE write-bearing leaf:
+/// the hub's effects-through-a-round-Variable cycle needs a loop scope, and a
+/// second write leaf in the same round would see its sibling's writes a round
+/// late (the host applies per leaf).
+fn validate_write_placement(region: &Region, leaves: &[LeafPlan]) -> Option<()> {
+    fn write_leaves(region: &Region, leaves: &[LeafPlan], out: &mut Vec<usize>) {
+        match region {
+            Region::Leaf(i) => {
+                if leaves[*i].rules.iter().any(|r| !r.writes.is_empty() || r.needs_mint) {
+                    out.push(*i);
+                }
+            }
+            Region::Seq(children) => {
+                for child in children {
+                    write_leaves(child, leaves, out);
+                }
+            }
+            Region::Loop(_, inner) => write_leaves(inner, leaves, out),
+        }
+    }
+    fn check(region: &Region, leaves: &[LeafPlan], in_loop: bool) -> Option<()> {
+        match region {
+            Region::Leaf(i) => {
+                let writes = leaves[*i]
+                    .rules
+                    .iter()
+                    .any(|r| !r.writes.is_empty() || r.needs_mint);
+                if writes && !in_loop {
+                    return fallback("writes outside a loop are not compiled yet");
+                }
+                Some(())
+            }
+            Region::Seq(children) => {
+                for child in children {
+                    check(child, leaves, in_loop)?;
+                }
+                Some(())
+            }
+            Region::Loop(_, inner) => {
+                let mut writers = Vec::new();
+                write_leaves(inner, leaves, &mut writers);
+                if writers.len() > 1 {
+                    return fallback("more than one write-bearing leaf in a loop");
+                }
+                check(inner, leaves, true)
+            }
+        }
+    }
+    check(region, leaves, false)
 }
 
 fn shape(
@@ -424,8 +487,7 @@ fn prepare_leaf(
         };
 
         let mut needs_mint = false;
-        let mut sets = Vec::new();
-        let mut sies = Vec::new();
+        let mut writes = Vec::new();
         for action in &rule.core.head.0 {
             match action {
                 GenericCoreAction::Let(_, var, RuleActionCall::Primitive { id, name, .. }, args) => {
@@ -449,9 +511,9 @@ fn prepare_leaf(
                         let Some(srcs) = srcs else {
                             return fallback("a hash-cons argument is not compiled yet");
                         };
-                        sies.push(SieEffect {
-                            view,
-                            n_keys: op.n_keys,
+                        writes.push(WriteEffect {
+                            op: OP_SIE,
+                            func: view,
                             srcs,
                         });
                         alias.insert(var.id, HeadVal::SieResult);
@@ -480,15 +542,39 @@ fn prepare_leaf(
                     if srcs.len() != eg.info(*id).arity {
                         return fallback("a Set's column count differs from the table arity");
                     }
-                    sets.push((*id, srcs));
+                    writes.push(WriteEffect {
+                        op: OP_SET,
+                        func: *id,
+                        srcs,
+                    });
                 }
                 GenericCoreAction::Set(..) => {
                     return fallback("a Set on a primitive is not compiled");
                 }
+                GenericCoreAction::Change(_, change, RuleActionCall::Table { id, .. }, args) => {
+                    if !matches!(change, egglog_ast::generic_ast::Change::Delete) {
+                        return fallback("subsume is not compiled yet");
+                    }
+                    if args.len() != eg.n_keys(*id) {
+                        return fallback("a delete does not address exactly the key columns");
+                    }
+                    let srcs: Option<Vec<Src>> = args
+                        .iter()
+                        .map(|t| resolve(&alias, t).and_then(&as_src))
+                        .collect();
+                    let Some(srcs) = srcs else {
+                        return fallback("a delete reads a value that is not compiled yet");
+                    };
+                    writes.push(WriteEffect {
+                        op: OP_DELETE,
+                        func: *id,
+                        srcs,
+                    });
+                }
                 GenericCoreAction::Change(..)
                 | GenericCoreAction::Union(..)
                 | GenericCoreAction::Panic(..) => {
-                    return fallback("a head action other than Set/Let is not compiled yet");
+                    return fallback("a head action other than Set/Let/delete is not compiled yet");
                 }
             }
         }
@@ -498,8 +584,7 @@ fn prepare_leaf(
             first_ops,
             stages,
             needs_mint,
-            sets,
-            sies,
+            writes,
         });
     }
     Some(LeafPlan {
@@ -512,7 +597,16 @@ fn prepare_leaf(
 // Execution: build the dataflow, run one epoch, drain into the host tables.
 // ---------------------------------------------------------------------------
 
-fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> {
+struct RunCtx {
+    first_id: u32,
+    mint_count: CountSink,
+    deltas: DeltaSink,
+    channels: HubChannels,
+}
+
+/// `Ok(None)` = a primitive proved unsafe off-host: nothing was mutated, the
+/// primitive is cached, and the caller must interpret instead.
+fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Option<Vec<ScheduleLeafReport>>> {
     use timely::communication::allocator::thread::Thread;
     use timely::communication::allocator::Allocator;
     use timely::worker::Worker;
@@ -522,38 +616,51 @@ fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> 
         return Err(anyhow!(message));
     }
 
-    let leaf_sinks: Vec<ChangeSink> = prep.leaves.iter().map(|_| ChangeSink::default()).collect();
-    let ctx = LeafCtx {
+    let ctx = RunCtx {
         first_id: eg.peek_fresh_id(),
-        mint_count: ChangeSink::default(),
+        mint_count: CountSink::default(),
+        deltas: DeltaSink::default(),
+        channels: HubChannels::default(),
     };
-    let reports = |sinks: &[ChangeSink], minted: isize| -> Vec<ScheduleLeafReport> {
-        prep.leaves
-            .iter()
-            .enumerate()
-            .zip(sinks)
-            .map(|((i, leaf), sink)| {
-                let mut iteration = IterationReport::default();
-                // A mint alone is a database change (the reference counts any
-                // fresh-id advance as one).
-                iteration.rule_set_report.changed =
-                    *sink.borrow() > 0 || (prep.minting_leaf == Some(i) && minted > 0);
-                ScheduleLeafReport {
-                    ruleset: leaf.ruleset.clone(),
-                    iteration,
-                }
-            })
-            .collect()
-    };
-    if prep.involved.is_empty() {
-        return Ok(reports(&leaf_sinks, 0));
-    }
-
-    let drain_sinks: HashMap<FunctionId, DrainSink> = prep
-        .written
+    let hub_specs: HashMap<u32, HubTable> = prep
+        .hub_tables
         .iter()
-        .map(|&f| (f, DrainSink::default()))
+        .map(|&f| {
+            let (n_keys, merge, _, n_identity_vals) = eg.function_spec(f);
+            (
+                f.rep(),
+                HubTable {
+                    n_keys,
+                    arity: eg.info(f).arity,
+                    merge,
+                    n_identity_vals,
+                    level: eg.merge_level(f),
+                    name: eg.relation_name(f).to_string(),
+                },
+            )
+        })
         .collect();
+    let hub_seeds: HashMap<u32, HashMap<Vec<u32>, Vec<u32>>> = prep
+        .hub_tables
+        .iter()
+        .map(|&f| {
+            let n_keys = eg.n_keys(f);
+            let rows = eg
+                .mirror
+                .get(&f)
+                .map(|rows| {
+                    rows.iter()
+                        .map(|r| (r[..n_keys].to_vec(), r[n_keys..].to_vec()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (f.rep(), rows)
+        })
+        .collect();
+
+    if prep.involved.is_empty() {
+        return Ok(Some(reports(&prep, false)));
+    }
 
     let alloc = Allocator::Thread(Thread::default());
     let mut worker = Worker::new(
@@ -564,10 +671,10 @@ fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> 
     let probe = ProbeHandle::new();
     let mut sessions = {
         let probe = probe.clone();
-        let leaf_sinks = leaf_sinks.clone();
-        let drain_sinks = drain_sinks.clone();
         let prep_ref = &prep;
         let ctx_ref = &ctx;
+        let db = eg.db_clone();
+        let unit_rep = eg.unit_rep();
         worker.dataflow::<u32, _, _>(move |scope| {
             let mut sessions = HashMap::new();
             let mut state: HashMap<FunctionId, Coll<'_, u32>> = HashMap::new();
@@ -579,22 +686,28 @@ fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> 
             let seeds = state.clone();
 
             walk_outer(
+                prep_ref,
                 &prep_ref.region,
-                &prep_ref.leaves,
-                &leaf_sinks,
                 ctx_ref,
+                (db, unit_rep, hub_specs, hub_seeds),
                 scope,
                 &mut state,
             );
 
-            for (&f, sink) in &drain_sinks {
-                let sink = Rc::clone(sink);
+            for (&f, seed) in &seeds {
+                if !prep_ref.hub_tables.contains(&f) {
+                    continue;
+                }
+                let sink = Rc::clone(&ctx_ref.deltas);
+                let frep = f.rep();
                 state[&f]
                     .clone()
-                    .concat(seeds[&f].clone().negate())
+                    .concat(seed.clone().negate())
                     .inspect_batch(move |_t, batch| {
-                        sink.borrow_mut()
-                            .extend(batch.iter().map(|(d, _t, w)| (*d, *w)));
+                        let mut sink = sink.borrow_mut();
+                        for (row, _t, w) in batch.iter() {
+                            *sink.entry((frep, *row)).or_insert(0) += w;
+                        }
                     })
                     .probe_with(&probe);
             }
@@ -615,6 +728,15 @@ fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> 
     drop(sessions);
     drop(worker);
 
+    // Dynamic outcomes, checked BEFORE any host mutation.
+    if let Some(id) = *ctx.channels.unsafe_prim.borrow() {
+        eg.unsafe_prims.insert(id);
+        return Ok(None);
+    }
+    if let Some(message) = ctx.channels.error.borrow_mut().take() {
+        return Err(anyhow!(message));
+    }
+
     // Consume the fresh ids the mint stage assigned from the reserved range.
     let minted = *ctx.mint_count.borrow();
     if minted < 0 {
@@ -622,145 +744,180 @@ fn run_compiled(eg: &mut EGraph, prep: Prep) -> Result<Vec<ScheduleLeafReport>> 
     }
     eg.advance_fresh_ids(minted as usize);
 
-    for (f, sink) in drain_sinks {
-        let arity = eg.info(f).arity;
-        let mut net: HashMap<Row, isize> = HashMap::new();
-        for (row, w) in sink.borrow_mut().drain(..) {
-            *net.entry(row).or_insert(0) += w;
-        }
-        for (row, w) in net {
-            if w == 0 {
-                continue;
-            }
-            if w < 0 {
-                return Err(anyhow!(
-                    "compiled schedule produced a retraction for `{}`; the compiled subset must be insert-only",
-                    eg.relation_name(f)
-                ));
-            }
-            let full: Vec<u32> = (0..arity).map(|i| row[i]).collect();
-            eg.insert_live_row(f, full.into_boxed_slice());
+    // Apply net deltas: removals first, then inserts.
+    let deltas = std::mem::take(&mut *ctx.deltas.borrow_mut());
+    let changed = deltas.values().any(|w| *w != 0) || minted > 0;
+    let mut removes: Vec<(FunctionId, Row)> = Vec::new();
+    let mut inserts: Vec<(FunctionId, Row)> = Vec::new();
+    for ((frep, row), w) in &deltas {
+        let f = FunctionId::new(*frep);
+        match w.cmp(&0) {
+            std::cmp::Ordering::Less => removes.push((f, *row)),
+            std::cmp::Ordering::Greater => inserts.push((f, *row)),
+            std::cmp::Ordering::Equal => {}
         }
     }
+    for (f, row) in removes {
+        let n_keys = eg.n_keys(f);
+        let key: Box<[u32]> = (0..n_keys).map(|i| row[i]).collect();
+        let keys: HashSet<Box<[u32]>> = [key].into_iter().collect();
+        eg.remove_matching_keys(f, n_keys, &keys);
+    }
+    for (f, row) in inserts {
+        let arity = eg.info(f).arity;
+        let full: Vec<u32> = (0..arity).map(|i| row[i]).collect();
+        eg.insert_live_row(f, full.into_boxed_slice());
+    }
 
-    Ok(reports(&leaf_sinks, minted))
+    Ok(Some(reports(&prep, changed)))
 }
 
-/// Walk at the epoch scope: leaves/sequences apply directly; each loop opens
-/// ONE nested iterative scope.
+fn reports(prep: &Prep, changed: bool) -> Vec<ScheduleLeafReport> {
+    prep.leaves
+        .iter()
+        .enumerate()
+        .map(|(i, leaf)| {
+            let mut iteration = IterationReport::default();
+            // Changes are attributed to write-bearing leaves (an OR-preserving
+            // attribution; per-leaf flags do not appear in printed outputs).
+            let leaf_writes = leaf
+                .rules
+                .iter()
+                .any(|r| !r.writes.is_empty() || r.needs_mint);
+            iteration.rule_set_report.changed =
+                changed && (leaf_writes || prep.minting_leaf == Some(i));
+            ScheduleLeafReport {
+                ruleset: leaf.ruleset.clone(),
+                iteration,
+            }
+        })
+        .collect()
+}
+
+type HubWiring = (
+    egglog_core_relations::Database,
+    u32,
+    HashMap<u32, HubTable>,
+    HashMap<u32, HashMap<Vec<u32>, Vec<u32>>>,
+);
+
+/// Walk at the epoch scope. Read-only leaves/sequences evaluate against the
+/// current state (which never changes at this scope: all writes live inside
+/// the single writing loop); the writing loop opens the hub scope.
 fn walk_outer<'s>(
+    prep: &Prep,
     region: &Region,
-    leaves: &[LeafPlan],
-    sinks: &[ChangeSink],
-    ctx: &LeafCtx,
+    ctx: &RunCtx,
+    hub: HubWiring,
     scope: Scope<'s, u32>,
     state: &mut HashMap<FunctionId, Coll<'s, u32>>,
 ) {
     match region {
-        Region::Leaf(i) => {
-            let written = apply_leaf(&leaves[*i], ctx, state);
-            for (f, prev) in written {
-                observe_additions(&state[&f], &prev, std::slice::from_ref(&sinks[*i]));
-            }
-        }
+        // Read-only at this scope (validated): nothing to do.
+        Region::Leaf(_) => {}
         Region::Seq(children) => {
             for child in children {
-                walk_outer(child, leaves, sinks, ctx, scope, state);
+                walk_outer(prep, child, ctx, hub.clone(), scope, state);
             }
         }
         Region::Loop(bound, inner) => {
-            let written = written_tables(inner, leaves);
-            let inner_sinks: Vec<ChangeSink> = leaf_indices(inner)
-                .into_iter()
-                .map(|i| Rc::clone(&sinks[i]))
-                .collect();
-            let prev_state: HashMap<FunctionId, Coll<'s, u32>> = written
-                .iter()
-                .map(|&f| (f, state[&f].clone()))
-                .collect();
+            let (db, unit_rep, hub_specs, hub_seeds) = hub;
             let bound = *bound;
             let finals = scope.scoped::<Product<u32, u64>, _, _>("CompiledRegion", |inner_scope| {
                 let step = Product::new(Default::default(), 1);
                 let mut inner_state: HashMap<FunctionId, Coll<'_, Product<u32, u64>>> =
                     HashMap::new();
-                let mut vars = Vec::new();
-                let mut bases = HashMap::new();
                 for (&f, coll) in state.iter() {
-                    let entered = coll.clone().enter(inner_scope);
-                    if written.contains(&f) {
-                        // `base = seed ∪ fed` is the round-boundary state: it
-                        // is what leaves read, what leaves the loop (so
-                        // Repeat(0) is a no-op), and the fixpoint value.
-                        let (var, fed) = Variable::new(inner_scope, step);
-                        let base = entered.concat(fed).distinct();
-                        vars.push((f, var));
-                        bases.insert(f, base.clone());
-                        inner_state.insert(f, base);
-                    } else {
-                        inner_state.insert(f, entered);
+                    inner_state.insert(f, coll.clone().enter(inner_scope));
+                }
+
+                // The hub cycle: effects (round r) → Variable(+1) → hub
+                // (applied at r+1) → state deltas → next round's matches.
+                let (ops_var, ops_fed) =
+                    Variable::<_, Vec<(HubOp, _, isize)>>::new(inner_scope, step);
+                let hub_out = merge_hub(
+                    &ops_fed,
+                    hub_specs,
+                    hub_seeds,
+                    db,
+                    unit_rep,
+                    ctx.channels.clone(),
+                );
+                for &f in &prep.hub_tables {
+                    let frep = f.rep();
+                    let deltas = hub_out
+                        .clone()
+                        .flat_map(move |(t, row)| (t == frep).then_some(row));
+                    let base = inner_state[&f].clone().concat(deltas);
+                    inner_state.insert(f, base);
+                }
+
+                let effects = walk_region_effects(prep, inner, ctx, &mut inner_state);
+                let fed = match (effects, bound) {
+                    (Some(effects), Some(n)) => effects
+                        .inner
+                        .clone()
+                        .filter(move |(_, t, _)| t.inner < n)
+                        .as_collection(),
+                    (Some(effects), None) => effects,
+                    (None, _) => {
+                        // A read-only loop never changes state: feed nothing.
+                        ops_fed.clone().filter(|_| false)
                     }
-                }
+                };
+                ops_var.set(fed);
 
-                walk_flat(inner, leaves, ctx, &mut inner_state);
-
-                let mut finals = Vec::new();
-                for (f, var) in vars {
-                    let updated = inner_state[&f].clone();
-                    let fed_back = match bound {
-                        Some(n) => updated
-                            .inner
-                            .clone()
-                            .filter(move |(_, t, _)| t.inner < n)
-                            .as_collection(),
-                        None => updated,
-                    };
-                    var.set(fed_back);
-                    finals.push((f, bases[&f].clone().leave(scope)));
-                }
-                finals
+                prep.hub_tables
+                    .iter()
+                    .map(|&f| (f, inner_state[&f].clone().leave(scope)))
+                    .collect::<Vec<_>>()
             });
             for (f, final_state) in finals {
-                observe_additions(&final_state, &prev_state[&f], &inner_sinks);
                 state.insert(f, final_state);
             }
         }
     }
 }
 
-/// Walk inside a loop scope: validation guarantees no nested loops here.
-fn walk_flat<'s, T>(
+/// Build a loop body's binding joins and latched, tagged write-op stream.
+fn walk_region_effects<'s, T>(
+    prep: &Prep,
     region: &Region,
-    leaves: &[LeafPlan],
-    ctx: &LeafCtx,
+    ctx: &RunCtx,
     state: &mut HashMap<FunctionId, Coll<'s, T>>,
-) where
+) -> Option<VecCollection<'s, T, HubOp>>
+where
     T: Timestamp + Lattice + Ord,
 {
     match region {
-        Region::Leaf(i) => {
-            apply_leaf(&leaves[*i], ctx, state);
-        }
+        Region::Leaf(i) => apply_leaf(&prep.leaves[*i], ctx, state),
         Region::Seq(children) => {
+            let mut out: Option<VecCollection<'s, T, HubOp>> = None;
             for child in children {
-                walk_flat(child, leaves, ctx, state);
+                if let Some(effects) = walk_region_effects(prep, child, ctx, state) {
+                    out = Some(match out {
+                        None => effects,
+                        Some(prior) => prior.concat(effects),
+                    });
+                }
             }
+            out
         }
         Region::Loop(..) => unreachable!("shape() rejects nested loops"),
     }
 }
 
-/// One bounded hop of a leaf: every rule's matches are computed against the
-/// SAME incoming state, then all effects land at once. Returns each written
-/// table's pre-leaf state for change observation.
+/// One leaf: rule joins against the incoming state, the mint stage, and the
+/// latched tagged write ops (fed to the hub by the enclosing loop).
 fn apply_leaf<'s, T>(
     leaf: &LeafPlan,
-    ctx: &LeafCtx,
+    ctx: &RunCtx,
     state: &mut HashMap<FunctionId, Coll<'s, T>>,
-) -> Vec<(FunctionId, Coll<'s, T>)>
+) -> Option<VecCollection<'s, T, HubOp>>
 where
     T: Timestamp + Lattice + Ord,
 {
-    // Pass 1: every rule's binding collection against the pre-leaf state.
+    // Every rule's binding collection against the same incoming state.
     let mut bindings: Vec<Coll<'s, T>> = Vec::new();
     for rule in &leaf.rules {
         let ops0 = rule.first_ops.clone();
@@ -806,11 +963,13 @@ where
         None
     };
 
-    // Pass 2: build effect rows from (binding, minted id) per rule.
-    let mut set_effects: HashMap<FunctionId, Vec<Coll<'s, T>>> = HashMap::new();
-    type SieCandidates<'s, T> = (usize, Vec<VecCollection<'s, T, (Row, (u8, Row))>>);
-    let mut sie_candidates: HashMap<FunctionId, SieCandidates<'s, T>> = HashMap::new();
+    // Tagged write ops from every rule, latched so retracted bindings never
+    // retract an applied effect (monotone-fire).
+    let mut all_ops: Option<VecCollection<'s, T, HubOp>> = None;
     for (tag, (rule, cur)) in leaf.rules.iter().zip(&bindings).enumerate() {
+        if rule.writes.is_empty() {
+            continue;
+        }
         let enriched: VecCollection<'s, T, (Row, u32)> = if rule.needs_mint {
             let tag = tag as u32;
             minted
@@ -821,60 +980,21 @@ where
         } else {
             cur.clone().map(|b: Row| (b, 0u32))
         };
-        for (f, srcs) in &rule.sets {
-            let srcs = srcs.clone();
-            let effect = enriched.clone().map(move |(b, id)| build_row(&srcs, &b, id));
-            set_effects.entry(*f).or_default().push(effect);
-        }
-        for sie in &rule.sies {
-            let srcs = sie.srcs.clone();
-            let n_keys = sie.n_keys;
-            let candidate = enriched.clone().map(move |(b, id)| {
-                let full = build_row(&srcs, &b, id);
-                let mut key = Row::default();
-                for i in 0..n_keys {
-                    key[i] = full[i];
-                }
-                (key, (1u8, full))
+        for write in &rule.writes {
+            let srcs = write.srcs.clone();
+            let op = write.op;
+            let frep = write.func.rep();
+            let stream = enriched
+                .clone()
+                .map(move |(b, id)| (op, frep, build_row(&srcs, &b, id)));
+            let latched = rising_edge(&stream);
+            all_ops = Some(match all_ops {
+                None => latched,
+                Some(prior) => prior.concat(latched),
             });
-            sie_candidates
-                .entry(sie.view)
-                .or_insert_with(|| (n_keys, Vec::new()))
-                .1
-                .push(candidate);
         }
     }
-
-    let mut written = Vec::new();
-    for (f, effects) in set_effects {
-        let prev = state[&f].clone();
-        let mut all = prev.clone();
-        for effect in effects {
-            all = all.concat(effect);
-        }
-        state.insert(f, all.distinct());
-        written.push((f, prev));
-    }
-    for (view, (n_keys, candidates)) in sie_candidates {
-        let prev = state[&view].clone();
-        // Pre-existing keys are primed as zero-priority sentinels: they win
-        // the latch race, so only genuinely-new keys produce inserts.
-        let mut race = prev.clone().map(move |r: Row| {
-            let mut key = Row::default();
-            for i in 0..n_keys {
-                key[i] = r[i];
-            }
-            (key, (0u8, Row::default()))
-        });
-        for candidate in candidates {
-            race = race.concat(candidate);
-        }
-        let inserts = first_per_key(&race)
-            .flat_map(|(_key, (priority, full))| (priority == 1).then_some(full));
-        state.insert(view, prev.clone().concat(inserts));
-        written.push((view, prev));
-    }
-    written
+    all_ops
 }
 
 /// Materialize an effect row from its column sources.
@@ -890,168 +1010,247 @@ fn build_row(srcs: &[Src], binding: &Row, minted: u32) -> Row {
     row
 }
 
-/// Accumulate the net weight of `updated \ prev` into every sink (the streams
-/// are insert-only, so a positive net means new rows landed).
-fn observe_additions<'s, T>(updated: &Coll<'s, T>, prev: &Coll<'s, T>, sinks: &[ChangeSink])
-where
-    T: Timestamp + Lattice + Ord,
-{
-    let sinks: Vec<ChangeSink> = sinks.iter().map(Rc::clone).collect();
-    updated
-        .clone()
-        .concat(prev.clone().negate())
-        .inspect_batch(move |_t, batch| {
-            let net: isize = batch.iter().map(|(_, _, w)| *w).sum();
-            for sink in &sinks {
-                *sink.borrow_mut() += net;
-            }
-        });
-}
-
-fn written_tables(region: &Region, leaves: &[LeafPlan]) -> HashSet<FunctionId> {
-    let mut out = HashSet::new();
-    let mut visit = vec![region];
-    while let Some(r) = visit.pop() {
-        match r {
-            Region::Leaf(i) => {
-                for rule in &leaves[*i].rules {
-                    for (f, _) in &rule.sets {
-                        out.insert(*f);
-                    }
-                    for sie in &rule.sies {
-                        out.insert(sie.view);
-                    }
-                }
-            }
-            Region::Seq(children) => visit.extend(children.iter()),
-            Region::Loop(_, inner) => visit.push(inner),
-        }
-    }
-    out
-}
-
-fn leaf_indices(region: &Region) -> Vec<usize> {
-    let mut out = Vec::new();
-    let mut visit = vec![region];
-    while let Some(r) = visit.pop() {
-        match r {
-            Region::Leaf(i) => out.push(*i),
-            Region::Seq(children) => visit.extend(children.iter()),
-            Region::Loop(_, inner) => visit.push(inner),
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egglog_backend_trait::{Backend, ColumnTy, DefaultVal, FunctionConfig, MergeFn};
+    use egglog_backend_trait::{Backend, ColumnTy, DefaultVal, FunctionConfig};
 
     fn row(vals: &[u32]) -> Box<[u32]> {
         vals.to_vec().into_boxed_slice()
     }
 
-    /// Tables for `A(x) => B(x, fresh!); V[x] set-if-empty (fresh!, ())`.
-    fn mint_fixture(eg: &mut EGraph) -> (FunctionId, FunctionId, FunctionId) {
+    fn table(
+        eg: &mut EGraph,
+        name: &str,
+        schema: Vec<ColumnTy>,
+        n_vals: usize,
+        merge: MergeFn,
+    ) -> FunctionId {
+        Backend::add_table(
+            eg,
+            FunctionConfig {
+                schema,
+                n_vals,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge,
+                name: name.to_string(),
+                can_subsume: false,
+            },
+        )
+    }
+
+    /// Tables for `A(x, v) => B(x, fresh!) ; V[x] sie (fresh!, ()) ; set F(x)=v`.
+    fn fixture(eg: &mut EGraph) -> (FunctionId, FunctionId, FunctionId, FunctionId) {
         let unit_ty = Backend::base_values(eg).get_ty::<()>();
-        let table = |eg: &mut EGraph, name: &str, schema: Vec<ColumnTy>| {
-            Backend::add_table(
-                eg,
-                FunctionConfig {
-                    schema,
-                    n_vals: 1,
-                    n_identity_vals: None,
-                    default: DefaultVal::Fail,
-                    merge: MergeFn::Old,
-                    name: name.to_string(),
-                    can_subsume: false,
-                },
-            )
-        };
-        let a = table(eg, "A", vec![ColumnTy::Id, ColumnTy::Base(unit_ty)]);
+        let unit = ColumnTy::Base(unit_ty);
+        let a = table(eg, "A", vec![ColumnTy::Id, ColumnTy::Id, unit], 1, MergeFn::Old);
         let b = table(
             eg,
             "B",
-            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+            vec![ColumnTy::Id, ColumnTy::Id, unit],
+            1,
+            MergeFn::Old,
         );
+        // The view maps key -> (eclass, unit): two value columns.
         let v = table(
             eg,
             "V",
-            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+            vec![ColumnTy::Id, ColumnTy::Id, unit],
+            2,
+            MergeFn::Columns(vec![MergeFn::Old, MergeFn::Old]),
         );
-        eg.insert_live_row(a, row(&[1, 0]));
-        eg.insert_live_row(a, row(&[2, 0]));
-        (a, b, v)
+        // F folds same-key writes with UnionId (min) — a genuine merge.
+        let f = table(
+            eg,
+            "F",
+            vec![ColumnTy::Id, ColumnTy::Id, unit],
+            2,
+            MergeFn::Columns(vec![MergeFn::UnionId, MergeFn::Old]),
+        );
+        (a, b, v, f)
     }
 
-    fn mint_prep(a: FunctionId, b: FunctionId, v: FunctionId) -> Prep {
+    fn leaf_rule(
+        a: FunctionId,
+        b: FunctionId,
+        v: FunctionId,
+        f: FunctionId,
+        needs_mint: bool,
+    ) -> CompiledRule {
         let mut layout = HashMap::new();
         layout.insert(0u32, 0usize);
         layout.insert(1u32, 1usize);
-        let rule = CompiledRule {
-            first_func: a,
-            first_ops: AtomOps::bind_stage(&[Slot::Var(0), Slot::Var(1)], &layout),
-            stages: Vec::new(),
-            needs_mint: true,
-            sets: vec![(b, vec![Src::Col(0), Src::Mint, Src::Const(0)])],
-            sies: vec![SieEffect {
-                view: v,
-                n_keys: 1,
+        layout.insert(2u32, 2usize);
+        let mut writes = vec![WriteEffect {
+            op: OP_SET,
+            func: f,
+            srcs: vec![Src::Col(0), Src::Col(1), Src::Const(0)],
+        }];
+        if needs_mint {
+            writes.push(WriteEffect {
+                op: OP_SET,
+                func: b,
                 srcs: vec![Src::Col(0), Src::Mint, Src::Const(0)],
-            }],
-        };
+            });
+            writes.push(WriteEffect {
+                op: OP_SIE,
+                func: v,
+                srcs: vec![Src::Col(0), Src::Mint, Src::Const(0)],
+            });
+        }
+        CompiledRule {
+            first_func: a,
+            first_ops: AtomOps::bind_stage(
+                &[Slot::Var(0), Slot::Var(1), Slot::Var(2)],
+                &layout,
+            ),
+            stages: Vec::new(),
+            needs_mint,
+            writes,
+        }
+    }
+
+    fn prep_for(
+        eg: &EGraph,
+        rule: CompiledRule,
+        involved: Vec<FunctionId>,
+        hub: Vec<FunctionId>,
+        minting: bool,
+    ) -> Prep {
+        let _ = eg;
         Prep {
             region: Region::Loop(None, Box::new(Region::Leaf(0))),
             leaves: vec![LeafPlan {
                 ruleset: "t".to_string(),
                 rules: vec![rule],
             }],
-            involved: vec![a, b, v],
-            written: [b, v].into_iter().collect(),
-            minting_leaf: Some(0),
+            involved,
+            hub_tables: hub.into_iter().collect(),
+            minting_leaf: minting.then_some(0),
         }
     }
 
-    /// One replay-stable id per binding, assigned in binding order from the
-    /// reserved counter range; the hash-cons view gets one row per key; the
-    /// host counter advances past the minted range.
+    /// Mint + hash-cons + merge fold end to end: one replay-stable id per
+    /// binding; one view row per key; UnionId folds colliding F writes to the
+    /// minimum; the counter advances past the minted range.
     #[test]
-    fn minting_and_hash_cons_compile() {
+    fn hub_folds_mints_and_hash_cons() {
         let mut eg = EGraph::new();
-        let (a, b, v) = mint_fixture(&mut eg);
+        let (a, b, v, f) = fixture(&mut eg);
+        // Two rows sharing F-key 1 (values 7 and 5 -> min 5), one row key 2.
+        eg.insert_live_row(a, row(&[1, 7, 0]));
+        eg.insert_live_row(a, row(&[1, 5, 0]));
+        eg.insert_live_row(a, row(&[2, 9, 0]));
         let first = eg.peek_fresh_id();
 
-        let leaves = run_compiled(&mut eg, mint_prep(a, b, v)).expect("compiled run succeeds");
+        let prep = prep_for(
+            &eg,
+            leaf_rule(a, b, v, f, true),
+            vec![a, b, v, f],
+            vec![b, v, f],
+            true,
+        );
+        let leaves = run_compiled(&mut eg, prep)
+            .expect("compiled run succeeds")
+            .expect("no unsafe primitives here");
         assert!(leaves[0].iteration.changed());
 
-        let expected_b: crate::HashSet<Box<[u32]>> =
-            [row(&[1, first, 0]), row(&[2, first + 1, 0])]
-                .into_iter()
-                .collect();
+        // Bindings sort as (1,5,_) < (1,7,_) < (2,9,_): ids in that order.
+        let expected_b: crate::HashSet<Box<[u32]>> = [
+            row(&[1, first, 0]),
+            row(&[1, first + 1, 0]),
+            row(&[2, first + 2, 0]),
+        ]
+        .into_iter()
+        .collect();
         assert_eq!(eg.mirror[&b], expected_b);
-        assert_eq!(eg.mirror[&v], expected_b);
-        assert_eq!(eg.peek_fresh_id(), first + 2);
-    }
-
-    /// A pre-existing view key wins the set-if-empty race: no second row for
-    /// that key, while fresh keys still land.
-    #[test]
-    fn hash_cons_respects_existing_keys() {
-        let mut eg = EGraph::new();
-        let (a, b, v) = mint_fixture(&mut eg);
-        eg.insert_live_row(v, row(&[1, 99, 0]));
-        let first = eg.peek_fresh_id();
-
-        run_compiled(&mut eg, mint_prep(a, b, v)).expect("compiled run succeeds");
-
+        // One view row per key; the minimum candidate row wins deterministically.
         let expected_v: crate::HashSet<Box<[u32]>> =
-            [row(&[1, 99, 0]), row(&[2, first + 1, 0])]
+            [row(&[1, first, 0]), row(&[2, first + 2, 0])]
                 .into_iter()
                 .collect();
         assert_eq!(eg.mirror[&v], expected_v);
-        // B still gets one row per firing, minted ids unaffected by the race.
-        assert_eq!(eg.mirror[&b].len(), 2);
-        assert_eq!(eg.peek_fresh_id(), first + 2);
+        // UnionId merge folded key 1 to min(7, 5) = 5.
+        let expected_f: crate::HashSet<Box<[u32]>> = [row(&[1, 5, 0]), row(&[2, 9, 0])]
+            .into_iter()
+            .collect();
+        assert_eq!(eg.mirror[&f], expected_f);
+        assert_eq!(eg.peek_fresh_id(), first + 3);
+    }
+
+    /// A pre-existing view key wins set-if-empty; a pre-existing F row folds
+    /// with incoming writes through the merge.
+    #[test]
+    fn hub_respects_existing_rows() {
+        let mut eg = EGraph::new();
+        let (a, b, v, f) = fixture(&mut eg);
+        eg.insert_live_row(a, row(&[1, 7, 0]));
+        eg.insert_live_row(v, row(&[1, 99, 0]));
+        eg.insert_live_row(f, row(&[1, 3, 0]));
+        let first = eg.peek_fresh_id();
+
+        let prep = prep_for(
+            &eg,
+            leaf_rule(a, b, v, f, true),
+            vec![a, b, v, f],
+            vec![b, v, f],
+            true,
+        );
+        run_compiled(&mut eg, prep)
+            .expect("compiled run succeeds")
+            .expect("no unsafe primitives here");
+
+        let expected_v: crate::HashSet<Box<[u32]>> = [row(&[1, 99, 0])].into_iter().collect();
+        assert_eq!(eg.mirror[&v], expected_v);
+        // min(3, 7) = 3: the merge kept the existing row (no drain delta).
+        let expected_f: crate::HashSet<Box<[u32]>> = [row(&[1, 3, 0])].into_iter().collect();
+        assert_eq!(eg.mirror[&f], expected_f);
+        assert_eq!(eg.peek_fresh_id(), first + 1);
+    }
+
+    /// An AssertEq merge violation surfaces as the host's error message.
+    #[test]
+    fn hub_surfaces_merge_errors() {
+        let mut eg = EGraph::new();
+        let (a, b, v, f) = fixture(&mut eg);
+        let unit_ty = Backend::base_values(&eg).get_ty::<()>();
+        let strict = table(
+            &mut eg,
+            "S",
+            vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Base(unit_ty)],
+            2,
+            MergeFn::Columns(vec![MergeFn::AssertEq, MergeFn::Old]),
+        );
+        let _ = (b, v, f);
+        eg.insert_live_row(a, row(&[1, 7, 0]));
+        eg.insert_live_row(strict, row(&[1, 3, 0]));
+
+        let rule = CompiledRule {
+            first_func: a,
+            first_ops: AtomOps::bind_stage(
+                &[Slot::Var(0), Slot::Var(1), Slot::Var(2)],
+                &{
+                    let mut l = HashMap::new();
+                    l.insert(0u32, 0usize);
+                    l.insert(1u32, 1usize);
+                    l.insert(2u32, 2usize);
+                    l
+                },
+            ),
+            stages: Vec::new(),
+            needs_mint: false,
+            writes: vec![WriteEffect {
+                op: OP_SET,
+                func: strict,
+                srcs: vec![Src::Col(0), Src::Col(1), Src::Const(0)],
+            }],
+        };
+        let prep = prep_for(&eg, rule, vec![a, strict], vec![strict], false);
+        let err = run_compiled(&mut eg, prep)
+            .expect_err("conflicting AssertEq write must error");
+        assert!(err.to_string().contains("illegal merge attempted"));
+        // Nothing landed on the host.
+        assert_eq!(eg.mirror[&strict].len(), 1);
     }
 }
