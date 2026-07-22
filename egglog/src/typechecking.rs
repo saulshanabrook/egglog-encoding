@@ -1377,15 +1377,20 @@ impl TypeInfo {
         self.global_sorts.get(sym)
     }
 
-    /// Every registered primitive validator, keyed by primitive name (all
+    /// The validators of base-value primitives, keyed by primitive name (all
     /// overloads). Lets the proof checker re-evaluate primitive-built terms
-    /// from terms alone.
+    /// from terms alone. Presort (container / unstable-fn) primitives are
+    /// excluded: their results are eq-container terms whose existence a
+    /// reflexive proof must witness, not recompute.
     pub(crate) fn primitive_validators(
         &self,
     ) -> HashMap<String, Vec<crate::typechecking::PrimitiveValidator>> {
         let mut out: HashMap<String, Vec<crate::typechecking::PrimitiveValidator>> =
             HashMap::default();
         for (name, prims) in &self.primitives {
+            if self.reserved_primitives.contains(name.as_str()) {
+                continue;
+            }
             for prim in prims {
                 if let Some(v) = &prim.validator {
                     out.entry(name.clone()).or_default().push(v.clone());

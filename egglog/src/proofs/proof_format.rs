@@ -504,11 +504,13 @@ impl ProofStore {
         validator(&mut self.term_dag, &args).unwrap_or(term_id)
     }
 
-    /// Whether `term` is a primitive-closed computation the checker can
-    /// re-evaluate from the term alone: a literal, or an application of a
-    /// registered primitive (any overload) to primitive-closed arguments whose
-    /// validator reproduces exactly this term. A reflexive `Fiat` over such a
-    /// term is self-evident.
+    /// Whether `term` is a base-value computation the checker can re-evaluate
+    /// from the term alone: a literal, or an application of a base-value
+    /// primitive (any overload) to such arguments whose validator reproduces
+    /// exactly this term. A reflexive `Fiat` over such a term is self-evident.
+    /// Terms that carry an existence claim stay excluded: eq-sort terms have
+    /// constructor heads (absent from the validator map), and container terms'
+    /// primitives are filtered out of `TypeInfo::primitive_validators`.
     pub(super) fn reflexive_primitive_term(&mut self, term: TermId) -> bool {
         match self.term_dag.get(term).clone() {
             Term::Lit(_) => true,
