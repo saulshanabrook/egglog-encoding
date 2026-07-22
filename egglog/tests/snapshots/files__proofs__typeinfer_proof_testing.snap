@@ -8,9 +8,10 @@ expression: proof_snapshot
 (let t3 (Forall (set-of) t2))
 (let t4 (Cons (V "x") t3 (Nil)))
 (let t5 (typeof t4 (Var (V "x")) 1))
-(let t6 (premises (Fiat (= t0 t0)) (Eval)))
+(let t6 (premises (Fiat (= t0 t0)) (Fiat (= 1 1))))
 (let t7
   (substitution
+        (cc 1)
         (@rewrite_var__12 t0)
         (ctx (Nil))
         (e (Var (V "x")))
@@ -67,7 +68,7 @@ expression: proof_snapshot
               (substitution (tl (Nil)) (s t3) (x (V "x")) (@rewrite_var__ t8)))
             0))
         (substitution (c 1) (t t2) (@rewrite_var__6 t5) (vs (set-of))))
-      (Eval))
+      (Fiat (= () ())))
     (substitution (otype t5) (s t1) (c 1) (vs (set-of))))
   1)
 (let t0 (Abs (V "x") (Var (V "x"))))
@@ -92,7 +93,7 @@ expression: proof_snapshot
 (let t19
   (premises
                         (Fiat (= t4 t4))
-                        (Eval)
+                        (Fiat (= 1 1))
                         (Rule
                           (= t16 t16)
                           (name
@@ -115,16 +116,18 @@ expression: proof_snapshot
                             (e t0)
                             (s1 1)
                             (x (V "x"))))
-                        (Eval)))
+                        (Fiat (= 3 3))))
 (let t20
   (substitution
+                        (@rewrite_var__13 t4)
+                        (c1 1)
+                        (c 0)
                         (e1 t0)
                         (e2 t3)
-                        (sz 2)
                         (ctx (Nil))
-                        (@rewrite_var__13 t4)
+                        (c2 3)
                         (x (V "id"))
-                        (c 0)))
+                        (sz 2)))
 (let t21 (expr-size t1 3))
 (let t22 (expr-size (Var (V "id")) 1))
 (let prf0
@@ -146,7 +149,7 @@ expression: proof_snapshot
                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                       t19
                       t20)
-                    (Eval)
+                    (Fiat (= 4 4))
                     (Rule
                       (= t21 t21)
                       (name
@@ -157,9 +160,18 @@ expression: proof_snapshot
            )")
                       (premises (Fiat (= t1 t1)) prf0 prf0)
                       (substitution t23 t24 (e t1) (s2 1) (s1 1)))
-                    (Eval)))
+                    (Fiat (= 7 7))))
 (let t26 (ctx t13))
-(let t27 (substitution (e1 t1) (e2 t2) (to t4) t26 (c 3) (sz 3)))
+(let t27
+  (substitution
+                    (c 3)
+                    (c1 4)
+                    (e1 t1)
+                    (e2 t2)
+                    (to t4)
+                    t26
+                    (c2 7)
+                    (sz 3)))
 (let t28 (subst-fresh t6 t7 8))
 (let t29 (TArr t28 t28))
 (let t30 (TArr (TBool) t15))
@@ -180,16 +192,18 @@ expression: proof_snapshot
            )")
                                                     t25
                                                     t27)
-                                                  (Eval)
+                                                  (Fiat (= 8 8))
                                                   prf0
-                                                  (Eval)))
+                                                  (Fiat (= 9 9))))
 (let t36
   (substitution
+                                                  (c 7)
+                                                  (c1 8)
                                                   t23
                                                   (e2 (True))
                                                   (to t15)
                                                   t26
-                                                  (c 7)
+                                                  (c2 9)
                                                   (sz 1)))
 (let t37
   (typeof
@@ -209,16 +223,18 @@ expression: proof_snapshot
            )")
                                                         t25
                                                         t27)
-                                                      (Eval)
+                                                      (Fiat (= 5 5))
                                                       prf0
-                                                      (Eval)))
+                                                      (Fiat (= 6 6))))
 (let t39
   (substitution
+                                                      (c 4)
+                                                      (c1 5)
                                                       t23
                                                       t24
                                                       (to t14)
                                                       t26
-                                                      (c 4)
+                                                      (c2 6)
                                                       (sz 1)))
 (let t40
   (premises
@@ -305,9 +321,10 @@ expression: proof_snapshot
                                                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                                 t19
                                                                 t20)
-                                                              (Eval)))
+                                                              (Fiat (= 2 2))))
 (let t51
   (substitution
+                                                              (cc 2)
                                                               (@rewrite_var__12
                                                                 t11)
                                                               (ctx (Nil))
@@ -344,7 +361,8 @@ expression: proof_snapshot
                                                                           (V "x"))
                                                                         (@rewrite_var__11
                                                                           t48)))
-(let prf5
+(let prf5 (Fiat (= () ())))
+(let prf6
   (Congr
                                                           (= t11 t32)
                                                           prf4
@@ -409,7 +427,7 @@ expression: proof_snapshot
                                                                   (@rewrite_var__6
                                                                     t48)
                                                                   (vs (set-of))))
-                                                              (Eval))
+                                                              prf5)
                                                             (substitution
                                                               (otype t48)
                                                               (s t5)
@@ -422,7 +440,7 @@ expression: proof_snapshot
                                                                 (Nil)
                                                                 t7))
 (let t57 (fr t7))
-(let prf6
+(let prf7
   (Rule
                                                         (= t55 t55)
                                                         (name
@@ -470,13 +488,13 @@ expression: proof_snapshot
                                                                 (= (Nil) (Nil))))
                                                             (substitution
                                                               (c (Nil))))
-                                                          (Eval))
+                                                          prf5)
                                                         (substitution
                                                           (key-set (set-of))
                                                           (x t5)
                                                           (ctx (Nil)))))
 (let t58 (to t7))
-(let prf7
+(let prf8
   (Congr
                                                   (= t43 t42)
                                                   (Rule
@@ -495,19 +513,19 @@ expression: proof_snapshot
                                                             (Nil)
                                                             t32))
                                                         prf3
-                                                        prf5
+                                                        prf6
                                                         1)
-                                                      prf6
-                                                      prf6)
+                                                      prf7
+                                                      prf7)
                                                     (substitution
                                                       t58
                                                       (ctx (Nil))
                                                       (qs1 t6)
                                                       (qs2 t6)
                                                       t57))
-                                                  (Sym (= t32 t11) prf5)
+                                                  (Sym (= t32 t11) prf6)
                                                   1))
-(let prf8
+(let prf9
   (Rule
                                           (= t12 t33)
                                           (name
@@ -516,8 +534,8 @@ expression: proof_snapshot
                                             prf2
                                             (Trans
                                               (= t42 t42)
-                                              (Sym (= t42 t43) prf7)
-                                              prf7))
+                                              (Sym (= t42 t43) prf8)
+                                              prf8))
                                           (substitution
                                             t45
                                             (ctx (Nil))
@@ -570,14 +588,14 @@ expression: proof_snapshot
                                               (@rewrite_var__11 t31)))
                                           prf1
                                           0)
-                                        prf8
+                                        prf9
                                         0))
                                     (substitution
                                       (c 8)
                                       t45
                                       (@rewrite_var__6 t31)
                                       t59))
-                                  prf5
+                                  prf6
                                   1))
                               (substitution
                                 t59
@@ -650,14 +668,14 @@ expression: proof_snapshot
                                           t41)
                                         prf1
                                         0)
-                                      prf8
+                                      prf9
                                       0))
                                   (substitution
                                     (c 5)
                                     t45
                                     (@rewrite_var__6 t37)
                                     t59))
-                                prf5
+                                prf6
                                 1))
                             (substitution t59 (@rewrite_var__5 t37) t58 (c 5) t57)))
                         (Rule
@@ -777,10 +795,10 @@ expression: proof_snapshot
                                 (@rewrite_var__11 t63)))
                             prf1
                             0)
-                          prf8
+                          prf9
                           0))
                       (substitution (c 6) t45 (@rewrite_var__6 t63) t59))
-                    prf5
+                    prf6
                     1))
                 (substitution t59 (@rewrite_var__5 t63) t58 (c 6) t57))))))
 (let t70 (substitution (fr2 t8) (fr1 (TBool)) (to2 t8) (to1 t4)))
@@ -833,7 +851,7 @@ expression: proof_snapshot
 (let t24
   (premises
                                           (Fiat (= t2 t2))
-                                          (Eval)
+                                          (Fiat (= 1 1))
                                           (Rule
                                             (= t21 t21)
                                             (name
@@ -860,14 +878,16 @@ expression: proof_snapshot
                                               (e t0)
                                               (s1 1)
                                               (x (V "x"))))
-                                          (Eval)))
+                                          (Fiat (= 3 3))))
 (let t25
   (substitution
+                                          (c 0)
+                                          (c1 1)
                                           (e1 t0)
                                           (e2 t1)
                                           (to t2)
                                           (ctx (Nil))
-                                          (c 0)
+                                          (c2 3)
                                           (sz 2)))
 (let t26
   (premises
@@ -882,9 +902,10 @@ expression: proof_snapshot
            )")
                                         t24
                                         t25)
-                                      (Eval)))
+                                      (Fiat (= 2 2))))
 (let t27
   (substitution
+                                      (cc 2)
                                       (@rewrite_var__12 t20)
                                       (ctx (Nil))
                                       t23
@@ -938,6 +959,7 @@ expression: proof_snapshot
            )")
                         t28
                         t29))
+(let prf1 (Fiat (= () ())))
 (let t32
   (premises
           (Rule
@@ -951,9 +973,10 @@ expression: proof_snapshot
            )")
             t24
             t25)
-          (Eval)))
+          (Fiat (= 4 4))))
 (let t33
   (substitution
+          (cc 4)
           (@rewrite_var__12 t9)
           (ctx (Nil))
           (e (Var (V "y")))
@@ -1043,7 +1066,7 @@ expression: proof_snapshot
               (substitution (c 2) (t t9) (@rewrite_var__6 t2) (vs (set-of))))
             (Sym (= t9 t11) prf0)
             1)
-          (Eval))
+          prf1)
         (substitution (otype t2) (s t10) (c 2) (vs (set-of))))
       prf0)
     (Rule
@@ -1085,7 +1108,7 @@ expression: proof_snapshot
               (substitution (tl (Nil)) (s t5) (x (V "y")) (@rewrite_var__ t34)))
             0))
         (substitution (c 4) (t t4) (@rewrite_var__6 t7) (vs (set-of))))
-      (Eval))
+      prf1)
     (substitution (otype t7) (s t3) (c 4) (vs (set-of))))
   1)
 (let t0 (typeof (Nil) (Let (V "x") (True) (True)) 0))
@@ -1100,7 +1123,7 @@ expression: proof_snapshot
         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
       (premises
         (Fiat (= t0 t0))
-        (Eval)
+        (Fiat (= 1 1))
         (Rule
           (= (expr-size (True) 1) (expr-size (True) 1))
           (name
@@ -1109,15 +1132,17 @@ expression: proof_snapshot
          )")
           (premises (Fiat (= (True) (True))))
           (substitution (e (True))))
-        (Eval))
+        (Fiat (= 2 2)))
       (substitution
+        (@rewrite_var__13 t0)
+        (c1 1)
+        (c 0)
         (e1 (True))
         (e2 (True))
-        (sz 1)
         (ctx (Nil))
-        (@rewrite_var__13 t0)
+        (c2 2)
         (x (V "x"))
-        (c 0))))
+        (sz 1))))
   (substitution (ctx t1) (c 2) (@rewrite_var__8 t0)))
 (let t0 (typeof (Nil) (Let (V "x") (True) (Var (V "x"))) 0))
 (let t1 (typeof (Nil) (True) 1))
@@ -1127,7 +1152,7 @@ expression: proof_snapshot
 (let t5
   (premises
                       (Fiat (= t0 t0))
-                      (Eval)
+                      (Fiat (= 1 1))
                       (Rule
                         (= (expr-size (True) 1) (expr-size (True) 1))
                         (name
@@ -1136,16 +1161,18 @@ expression: proof_snapshot
            )")
                         (premises (Fiat (= (True) (True))))
                         (substitution (e (True))))
-                      (Eval)))
+                      (Fiat (= 2 2))))
 (let t6
   (substitution
+                      (@rewrite_var__13 t0)
+                      (c1 1)
+                      (c 0)
                       (e1 (True))
                       (e2 (Var (V "x")))
-                      (sz 1)
                       (ctx (Nil))
-                      (@rewrite_var__13 t0)
+                      (c2 2)
                       (x (V "x"))
-                      (c 0)))
+                      (sz 1)))
 (let t7
   (premises
                   (Rule
@@ -1251,8 +1278,15 @@ expression: proof_snapshot
 (let t8 (Forall (set-of) t4))
 (let t9 (Cons (V "x") t8 (Nil)))
 (let t10 (typeof t9 t1 1))
-(let t11 (premises (Fiat (= t2 t2)) (Eval)))
-(let t12 (substitution (@rewrite_var__12 t2) (ctx (Nil)) (e t1) (x (V "x")) (c 0)))
+(let t11 (premises (Fiat (= t2 t2)) (Fiat (= 1 1))))
+(let t12
+  (substitution
+        (cc 1)
+        (@rewrite_var__12 t2)
+        (ctx (Nil))
+        (e t1)
+        (x (V "x"))
+        (c 0)))
 (let t13 (set-of t5))
 (let t14 (TVar t5))
 (let t15 (subst-fresh t13 t14 4))
@@ -1273,7 +1307,7 @@ expression: proof_snapshot
                                   "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                 t11
                                 t12)
-                              (Eval)
+                              (Fiat (= 2 2))
                               (Rule
                                 (= t22 t22)
                                 (name
@@ -1297,17 +1331,19 @@ expression: proof_snapshot
                                   (e t0)
                                   (s1 1)
                                   (x (V "z"))))
-                              (Eval)))
+                              (Fiat (= 4 4))))
 (let t26 (ctx t9))
 (let t27
   (substitution
+                              (@rewrite_var__13 t10)
+                              (c1 2)
+                              (c 1)
                               (e1 t0)
                               (e2 (Var (V "y")))
-                              (sz 2)
                               t26
-                              (@rewrite_var__13 t10)
+                              (c2 4)
                               (x (V "y"))
-                              (c 1)))
+                              (sz 2)))
 (let t28
   (premises
                           (Rule
@@ -1355,9 +1391,10 @@ expression: proof_snapshot
                                               "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                             t25
                                             t27)
-                                          (Eval)))
+                                          (Fiat (= 3 3))))
 (let t40
   (substitution
+                                          (cc 3)
                                           (@rewrite_var__12 t17)
                                           t26
                                           t24
@@ -1385,8 +1422,9 @@ expression: proof_snapshot
                                                     (ctx t36)
                                                     (x (V "z"))
                                                     (@rewrite_var__11 t37)))
+(let prf3 (Fiat (= () ())))
 (let t44 (s t5))
-(let prf3
+(let prf4
   (Congr
                                       (= t17 t16)
                                       prf2
@@ -1433,7 +1471,7 @@ expression: proof_snapshot
                                               (t t14)
                                               (@rewrite_var__6 t37)
                                               (vs (set-of))))
-                                          (Eval))
+                                          prf3)
                                         (substitution
                                           (otype t37)
                                           t44
@@ -1447,7 +1485,7 @@ expression: proof_snapshot
 (let t49 (ftvCtx t9 t48))
 (let t50 (ftvScheme t8 t48))
 (let t51 (ftv t4 t48))
-(let prf4
+(let prf5
   (Rule
                                     (= t45 t45)
                                     (name
@@ -1536,10 +1574,10 @@ expression: proof_snapshot
                                           (fvs1 (set-of))
                                           (c t9)
                                           (x (V "x"))))
-                                      (Eval))
+                                      prf3)
                                     (substitution (key-set t48) (x t5) t26)))
 (let t52 (to t14))
-(let prf5
+(let prf6
   (Congr
                               (= t32 t31)
                               (Rule
@@ -1554,12 +1592,12 @@ expression: proof_snapshot
                                   (Congr
                                     (= t33 (has-qs-demand t9 t16))
                                     prf1
-                                    prf3
+                                    prf4
                                     1)
-                                  prf4
-                                  prf4)
+                                  prf5
+                                  prf5)
                                 (substitution t52 t26 (qs1 t13) (qs2 t13) t47))
-                              (Sym (= t16 t17) prf3)
+                              (Sym (= t16 t17) prf4)
                               1))
 (let t53 (vs t13))
 (let t54
@@ -1603,14 +1641,14 @@ expression: proof_snapshot
                         "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                       (premises
                         prf0
-                        (Trans (= t31 t31) (Sym (= t31 t32) prf5) prf5))
+                        (Trans (= t31 t31) (Sym (= t31 t32) prf6) prf6))
                       (substitution t34 t26 (@rewrite_var__1 t19) (qs t13)))
                     0))
                 (substitution (c 4) t34 (@rewrite_var__6 t10) t53))
-              prf3
+              prf4
               1)))
 (let t55 (substitution t53 (@rewrite_var__5 t10) t52 (c 4) t47))
-(let prf6
+(let prf7
   (Rule
           (= t15 t6)
           (name
@@ -1625,7 +1663,7 @@ expression: proof_snapshot
                 "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
               t54
               t55)
-            (Eval))
+            prf3)
           (substitution (otype t15) t44 (c 4) t53)))
 (Congr
   (= t2 (TArr t4 t7))
@@ -1645,9 +1683,9 @@ expression: proof_snapshot
           "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
         t54
         t55)
-      prf6
+      prf7
       0)
-    prf6
+    prf7
     1)
   1)
 (let t0 (Abs (V "a") (Var (V "a"))))
@@ -1677,7 +1715,7 @@ expression: proof_snapshot
 (let t24
   (premises
                                                 (Fiat (= t4 t4))
-                                                (Eval)
+                                                (Fiat (= 1 1))
                                                 (Rule
                                                   (=
                                                     (expr-size (True) 1)
@@ -1689,17 +1727,19 @@ expression: proof_snapshot
                                                   (premises
                                                     (Fiat (= (True) (True))))
                                                   (substitution (e (True))))
-                                                (Eval)))
+                                                (Fiat (= 2 2))))
 (let t25 (@rewrite_var__13 t4))
 (let t26
   (substitution
+                                                t25
+                                                (c1 1)
+                                                (c 0)
                                                 (e1 (True))
                                                 (e2 t3)
-                                                (sz 1)
                                                 (ctx (Nil))
-                                                t25
+                                                (c2 2)
                                                 (x (V "x"))
-                                                (c 0)))
+                                                (sz 1)))
 (let t27 (expr-size t0 2))
 (let t28 (expr-size (Var (V "a")) 1))
 (let t29 (e (Var (V "a"))))
@@ -1711,7 +1751,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t24
                                               t26)
-                                            (Eval)
+                                            (Fiat (= 3 3))
                                             (Rule
                                               (= t27 t27)
                                               (name
@@ -1738,17 +1778,19 @@ expression: proof_snapshot
                                                 (e t0)
                                                 (s1 1)
                                                 (x (V "a"))))
-                                            (Eval)))
+                                            (Fiat (= 5 5))))
 (let t31 (ctx t13))
 (let t32
   (substitution
+                                            t25
+                                            (c1 3)
+                                            (c 2)
                                             (e1 t0)
                                             (e2 t2)
-                                            (sz 2)
                                             t31
-                                            t25
+                                            (c2 5)
                                             (x (V "f"))
-                                            (c 2)))
+                                            (sz 2)))
 (let t33
   (premises
                                         (Rule
@@ -1757,7 +1799,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t30
                                           t32)
-                                        (Eval)
+                                        (Fiat (= 6 6))
                                         (Rule
                                           (=
                                             (expr-size (MyUnit) 1)
@@ -1768,17 +1810,19 @@ expression: proof_snapshot
            )")
                                           (premises (Fiat (= (MyUnit) (MyUnit))))
                                           (substitution (e (MyUnit))))
-                                        (Eval)))
+                                        (Fiat (= 7 7))))
 (let t34 (ctx t16))
 (let t35
   (substitution
+                                        t25
+                                        (c1 6)
+                                        (c 5)
                                         (e1 (MyUnit))
                                         (e2 t1)
-                                        (sz 1)
                                         t34
-                                        t25
+                                        (c2 7)
                                         (x (V "x"))
-                                        (c 5)))
+                                        (sz 1)))
 (let t36 (expr-size (Var (V "f")) 1))
 (let t37
   (premises
@@ -1788,7 +1832,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t33
                                       t35)
-                                    (Eval)
+                                    (Fiat (= 8 8))
                                     (Rule
                                       (= t36 t36)
                                       (name
@@ -1798,15 +1842,17 @@ expression: proof_snapshot
                                       (premises
                                         (Fiat (= (Var (V "f")) (Var (V "f")))))
                                       (substitution (e (Var (V "f"))) (x (V "f"))))
-                                    (Eval)))
+                                    (Fiat (= 9 9))))
 (let t38 (ctx t19))
 (let t39
   (substitution
+                                    (c 7)
+                                    (c1 8)
                                     (e1 (Var (V "f")))
                                     (e2 (Var (V "x")))
                                     (to t4)
                                     t38
-                                    (c 7)
+                                    (c2 9)
                                     (sz 1)))
 (let t40
   (premises
@@ -1827,10 +1873,11 @@ expression: proof_snapshot
                                 t38
                                 (x (V "f"))
                                 (@rewrite_var__11 t20)))
+(let prf0 (Fiat (= () ())))
 (let t42 (tl t16))
 (let t43 (s t18))
 (let t44 (tl t13))
-(let prf0
+(let prf1
   (Rule
                                 (= t15 t15)
                                 (name
@@ -1841,14 +1888,14 @@ expression: proof_snapshot
 (let t46 (has-qs t13 t21 t6))
 (let t47 (has-qs-demand t13 t14))
 (let t48 (t t14))
-(let prf1
+(let prf2
   (Rule
                                             (= t47 t47)
                                             (name
                                               "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                            (premises prf0)
+                                            (premises prf1)
                                             (substitution t48 (sc t15) t31)))
 (let t49 (Forall (set-of) t7))
 (let t50 (Cons (V "a") t49 t13))
@@ -1862,15 +1909,16 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t30
                                                   t32)
-                                                (Eval)))
+                                                (Fiat (= 4 4))))
 (let t54
   (substitution
+                                                (cc 4)
                                                 (@rewrite_var__12 t14)
                                                 t31
                                                 t29
                                                 (x (V "a"))
                                                 (c 3)))
-(let prf2
+(let prf3
   (Rule
                                               (= t14 t52)
                                               (name
@@ -1892,10 +1940,10 @@ expression: proof_snapshot
                                                           (ctx t50)
                                                           (x (V "a"))
                                                           (@rewrite_var__11 t51)))
-(let prf3
+(let prf4
   (Congr
                                             (= t14 t21)
-                                            prf2
+                                            prf3
                                             (Rule
                                               (= t51 t7)
                                               (name
@@ -1943,7 +1991,7 @@ expression: proof_snapshot
                                                     (t t7)
                                                     (@rewrite_var__6 t51)
                                                     (vs (set-of))))
-                                                (Eval))
+                                                prf0)
                                               (substitution
                                                 (otype t51)
                                                 (s t5)
@@ -1955,14 +2003,14 @@ expression: proof_snapshot
 (let t60 (fr t7))
 (let t61 (ftvCtx t13 (set-of)))
 (let t62 (ftvScheme t12 (set-of)))
-(let prf4
+(let prf5
   (Rule
                                                             (= t12 t12)
                                                             (name
                                                               "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                             t24
                                                             t26))
-(let prf5
+(let prf6
   (Rule
                                                             (= t11 (TBool))
                                                             (name
@@ -1988,7 +2036,7 @@ expression: proof_snapshot
   (has-qs-demand
                                                                   (Nil)
                                                                   t11))
-(let prf6
+(let prf7
   (Rule
                                           (= t58 t58)
                                           (name
@@ -2008,8 +2056,8 @@ expression: proof_snapshot
                                               (premises
                                                 (Congr
                                                   (= t47 (has-qs-demand t13 t52))
-                                                  prf1
                                                   prf2
+                                                  prf3
                                                   1))
                                               (substitution t60 (to t51) t31))
                                             (Rule
@@ -2059,8 +2107,8 @@ expression: proof_snapshot
                                                             (generalize
                                                               (Nil)
                                                               (TBool)))
-                                                          prf4
                                                           prf5
+                                                          prf6
                                                           1)
                                                         (Rule
                                                           (= t63 t63)
@@ -2081,12 +2129,12 @@ expression: proof_snapshot
                                                                   "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                                                (premises prf4)
+                                                                (premises prf5)
                                                                 (substitution
                                                                   (t t11)
                                                                   (sc t12)
                                                                   (ctx (Nil))))
-                                                              prf5
+                                                              prf6
                                                               1))
                                                           (substitution
                                                             (ctx (Nil)))))
@@ -2118,13 +2166,13 @@ expression: proof_snapshot
                                                 (fvs1 (set-of))
                                                 (c t13)
                                                 (x (V "x"))))
-                                            (Eval))
+                                            prf0)
                                           (substitution
                                             (key-set (set-of))
                                             (x t5)
                                             t31)))
 (let t65 (to t7))
-(let prf7
+(let prf8
   (Congr
                                     (= t46 t45)
                                     (Rule
@@ -2138,13 +2186,13 @@ expression: proof_snapshot
                                       (premises
                                         (Congr
                                           (= t47 (has-qs-demand t13 t21))
-                                          prf1
-                                          prf3
+                                          prf2
+                                          prf4
                                           1)
-                                        prf6
-                                        prf6)
+                                        prf7
+                                        prf7)
                                       (substitution t65 t31 (qs1 t6) (qs2 t6) t60))
-                                    (Sym (= t21 t14) prf3)
+                                    (Sym (= t21 t14) prf4)
                                     1))
 (let t66 (vs t6))
 (let t67 (typeof t19 (Var (V "x")) 9))
@@ -2168,14 +2216,14 @@ expression: proof_snapshot
                               t38
                               (x (V "x"))
                               (@rewrite_var__11 t67)))
-(let prf8
+(let prf9
   (Rule
                                 (= t18 t18)
                                 (name
                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                 t33
                                 t35))
-(let prf9
+(let prf10
   (Rule
                                 (= t17 (TUnit))
                                 (name "(rewrite (typeof ctx (MyUnit) c) (TUnit))")
@@ -2235,7 +2283,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                       t40
                                       t41)
-                                    (Eval))
+                                    prf0)
                                   (substitution
                                     t42
                                     (t t23)
@@ -2253,12 +2301,12 @@ expression: proof_snapshot
                             (name
                               "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                             (premises
-                              prf0
-                              (Trans (= t45 t45) (Sym (= t45 t46) prf7) prf7))
+                              prf1
+                              (Trans (= t45 t45) (Sym (= t45 t46) prf8) prf8))
                             (substitution t48 t31 (@rewrite_var__1 t15) (qs t6)))
                           0))
                       (substitution (c 8) t48 (@rewrite_var__6 t20) t66))
-                    prf3
+                    prf4
                     1))
                 (substitution t66 (@rewrite_var__5 t20) t65 (c 8) t60)))
             (Congr
@@ -2314,7 +2362,7 @@ expression: proof_snapshot
                           (name
                             "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                           (premises
-                            (Congr (= t18 (generalize t16 (TUnit))) prf8 prf9 1)
+                            (Congr (= t18 (generalize t16 (TUnit))) prf9 prf10 1)
                             (Rule
                               (= t71 t71)
                               (name
@@ -2330,9 +2378,9 @@ expression: proof_snapshot
                                       "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                    (premises prf8)
+                                    (premises prf9)
                                     (substitution (t t17) (sc t18) t34))
-                                  prf9
+                                  prf10
                                   1))
                               (substitution t34)))
                           (substitution
@@ -2399,7 +2447,7 @@ expression: proof_snapshot
 (let t25
   (premises
                                                 (Fiat (= t4 t4))
-                                                (Eval)
+                                                (Fiat (= 1 1))
                                                 (Rule
                                                   (=
                                                     (expr-size (MyUnit) 1)
@@ -2411,17 +2459,19 @@ expression: proof_snapshot
                                                   (premises
                                                     (Fiat (= (MyUnit) (MyUnit))))
                                                   (substitution (e (MyUnit))))
-                                                (Eval)))
+                                                (Fiat (= 2 2))))
 (let t26 (@rewrite_var__13 t4))
 (let t27
   (substitution
+                                                t26
+                                                (c1 1)
+                                                (c 0)
                                                 (e1 (MyUnit))
                                                 (e2 t3)
-                                                (sz 1)
                                                 (ctx (Nil))
-                                                t26
+                                                (c2 2)
                                                 (x (V "x"))
-                                                (c 0)))
+                                                (sz 1)))
 (let t28 (expr-size t0 2))
 (let t29 (expr-size (Var (V "x")) 1))
 (let t30 (e (Var (V "x"))))
@@ -2433,7 +2483,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t25
                                               t27)
-                                            (Eval)
+                                            (Fiat (= 3 3))
                                             (Rule
                                               (= t28 t28)
                                               (name
@@ -2460,17 +2510,19 @@ expression: proof_snapshot
                                                 (e t0)
                                                 (s1 1)
                                                 (x (V "y"))))
-                                            (Eval)))
+                                            (Fiat (= 5 5))))
 (let t32 (ctx t14))
 (let t33
   (substitution
+                                            t26
+                                            (c1 3)
+                                            (c 2)
                                             (e1 t0)
                                             (e2 t2)
-                                            (sz 2)
                                             t32
-                                            t26
+                                            (c2 5)
                                             (x (V "f"))
-                                            (c 2)))
+                                            (sz 2)))
 (let t34
   (premises
                                         (Rule
@@ -2479,7 +2531,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t31
                                           t33)
-                                        (Eval)
+                                        (Fiat (= 6 6))
                                         (Rule
                                           (=
                                             (expr-size (True) 1)
@@ -2490,17 +2542,19 @@ expression: proof_snapshot
            )")
                                           (premises (Fiat (= (True) (True))))
                                           (substitution (e (True))))
-                                        (Eval)))
+                                        (Fiat (= 7 7))))
 (let t35 (ctx t17))
 (let t36
   (substitution
+                                        t26
+                                        (c1 6)
+                                        (c 5)
                                         (e1 (True))
                                         (e2 t1)
-                                        (sz 1)
                                         t35
-                                        t26
+                                        (c2 7)
                                         (x (V "x"))
-                                        (c 5)))
+                                        (sz 1)))
 (let t37 (expr-size (Var (V "f")) 1))
 (let t38
   (premises
@@ -2510,7 +2564,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t34
                                       t36)
-                                    (Eval)
+                                    (Fiat (= 8 8))
                                     (Rule
                                       (= t37 t37)
                                       (name
@@ -2520,15 +2574,17 @@ expression: proof_snapshot
                                       (premises
                                         (Fiat (= (Var (V "f")) (Var (V "f")))))
                                       (substitution (e (Var (V "f"))) (x (V "f"))))
-                                    (Eval)))
+                                    (Fiat (= 9 9))))
 (let t39 (ctx t20))
 (let t40
   (substitution
+                                    (c 7)
+                                    (c1 8)
                                     (e1 (Var (V "f")))
                                     (e2 (Var (V "x")))
                                     (to t4)
                                     t39
-                                    (c 7)
+                                    (c2 9)
                                     (sz 1)))
 (let t41
   (premises
@@ -2549,10 +2605,11 @@ expression: proof_snapshot
                                 t39
                                 (x (V "f"))
                                 (@rewrite_var__11 t21)))
+(let prf0 (Fiat (= () ())))
 (let t43 (tl t17))
 (let t44 (s t19))
 (let t45 (tl t14))
-(let prf0
+(let prf1
   (Rule
                                 (= t16 t16)
                                 (name
@@ -2563,14 +2620,14 @@ expression: proof_snapshot
 (let t47 (has-qs t14 t22 t6))
 (let t48 (has-qs-demand t14 t15))
 (let t49 (t t15))
-(let prf1
+(let prf2
   (Rule
                                             (= t48 t48)
                                             (name
                                               "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                            (premises prf0)
+                                            (premises prf1)
                                             (substitution t49 (sc t16) t32)))
 (let t50 (Forall (set-of) t8))
 (let t51 (Cons (V "y") t50 t14))
@@ -2584,15 +2641,16 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t31
                                                   t33)
-                                                (Eval)))
+                                                (Fiat (= 4 4))))
 (let t55
   (substitution
+                                                (cc 4)
                                                 (@rewrite_var__12 t15)
                                                 t32
                                                 t30
                                                 (x (V "y"))
                                                 (c 3)))
-(let prf2
+(let prf3
   (Rule
                                               (= t15 t53)
                                               (name
@@ -2615,14 +2673,14 @@ expression: proof_snapshot
                                                             (x (V "x"))
                                                             (@rewrite_var__11 t52)))
 (let t59 (s t13))
-(let prf3
+(let prf4
   (Rule
                                                               (= t13 t13)
                                                               (name
                                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                               t25
                                                               t27))
-(let prf4
+(let prf5
   (Rule
                                                               (= t12 (TUnit))
                                                               (name
@@ -2648,7 +2706,7 @@ expression: proof_snapshot
   (has-qs-demand
                                                                     (Nil)
                                                                     t12))
-(let prf5
+(let prf6
   (Rule
                                                         (=
                                                           t13
@@ -2664,8 +2722,8 @@ expression: proof_snapshot
                                                               (generalize
                                                                 (Nil)
                                                                 (TUnit)))
-                                                            prf3
                                                             prf4
+                                                            prf5
                                                             1)
                                                           (Rule
                                                             (= t60 t60)
@@ -2686,12 +2744,12 @@ expression: proof_snapshot
                                                                     "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                                                  (premises prf3)
+                                                                  (premises prf4)
                                                                   (substitution
                                                                     (t t12)
                                                                     (sc t13)
                                                                     (ctx (Nil))))
-                                                                prf4
+                                                                prf5
                                                                 1))
                                                             (substitution
                                                               (ctx (Nil)))))
@@ -2700,7 +2758,7 @@ expression: proof_snapshot
                                                           (ctx (Nil))
                                                           (@rewrite_var__1 t13)
                                                           (qs (set-of)))))
-(let prf6
+(let prf7
   (Rule
                                               (= t52 (TUnit))
                                               (name
@@ -2759,7 +2817,7 @@ expression: proof_snapshot
                                                                     "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                                                   t57
                                                                   t58)
-                                                                (Eval))
+                                                                prf0)
                                                               (substitution
                                                                 t45
                                                                 (t t56)
@@ -2772,7 +2830,7 @@ expression: proof_snapshot
                                                             (x (V "x"))
                                                             (@rewrite_var__ t56)))
                                                         0)
-                                                      prf5
+                                                      prf6
                                                       0))
                                                   (substitution
                                                     (c 4)
@@ -2783,15 +2841,15 @@ expression: proof_snapshot
                                                 (@rewrite_var__4 t52)
                                                 (c 4)
                                                 (vs (set-of)))))
-(let prf7 (Congr (= t15 t22) prf2 prf6 1))
+(let prf8 (Congr (= t15 t22) prf3 prf7 1))
 (let t62 (has-qs t14 t8 t6))
 (let t63 (has-qs-demand t14 t8))
 (let t64
   (premises
                                                 (Congr
                                                   (= t48 (has-qs-demand t14 t53))
-                                                  prf1
                                                   prf2
+                                                  prf3
                                                   1)))
 (let t65 (fr t8))
 (let t66 (substitution t65 (to t52) t32))
@@ -2799,7 +2857,7 @@ expression: proof_snapshot
 (let t68 (ftvScheme t13 (set-of)))
 (let t69 (has-qs t14 (TUnit) (set-of)))
 (let t70 (has-qs-demand t14 t52))
-(let prf8
+(let prf9
   (Congr
                                     (= t47 t46)
                                     (Rule
@@ -2813,8 +2871,8 @@ expression: proof_snapshot
                                       (premises
                                         (Congr
                                           (= t48 (has-qs-demand t14 t22))
-                                          prf1
-                                          prf7
+                                          prf2
+                                          prf8
                                           1)
                                         (Rule
                                           (= t62 t62)
@@ -2868,7 +2926,7 @@ expression: proof_snapshot
         ((ftvScheme e (set-diff fvs qs)))
            )")
                                                   (premises
-                                                    prf5
+                                                    prf6
                                                     (Rule
                                                       (=
                                                         (ftv (TUnit) (set-of))
@@ -2892,7 +2950,7 @@ expression: proof_snapshot
                                                 (fvs1 (set-of))
                                                 (c t14)
                                                 (x (V "x"))))
-                                            (Eval))
+                                            prf0)
                                           (substitution
                                             (key-set (set-of))
                                             (x t5)
@@ -2915,7 +2973,7 @@ expression: proof_snapshot
            )")
                                                 t64
                                                 t66)
-                                              prf6
+                                              prf7
                                               1))
                                           (substitution t32)))
                                       (substitution
@@ -2924,7 +2982,7 @@ expression: proof_snapshot
                                         (qs1 t6)
                                         (qs2 (set-of))
                                         t65))
-                                    (Sym (= t22 t15) prf7)
+                                    (Sym (= t22 t15) prf8)
                                     1))
 (let t71 (vs t6))
 (let t72
@@ -2964,7 +3022,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                       t41
                                       t42)
-                                    (Eval))
+                                    prf0)
                                   (substitution
                                     t43
                                     (t t24)
@@ -2982,12 +3040,12 @@ expression: proof_snapshot
                             (name
                               "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                             (premises
-                              prf0
-                              (Trans (= t46 t46) (Sym (= t46 t47) prf8) prf8))
+                              prf1
+                              (Trans (= t46 t46) (Sym (= t46 t47) prf9) prf9))
                             (substitution t49 t32 (@rewrite_var__1 t16) (qs t6)))
                           0))
                       (substitution (c 8) t49 (@rewrite_var__6 t21) t71))
-                    prf7
+                    prf8
                     1)))
 (let t73 (substitution t71 (@rewrite_var__5 t21) (to (TUnit)) (c 8) t65))
 (let t74 (typeof t20 (Var (V "x")) 9))
@@ -3011,14 +3069,14 @@ expression: proof_snapshot
                               t39
                               (x (V "x"))
                               (@rewrite_var__11 t74)))
-(let prf9
+(let prf10
   (Rule
                                 (= t19 t19)
                                 (name
                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                 t34
                                 t36))
-(let prf10
+(let prf11
   (Rule
                                 (= t18 (TBool))
                                 (name "(rewrite (typeof ctx (True) c) (TBool))")
@@ -3107,7 +3165,7 @@ expression: proof_snapshot
                         (name
                           "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                         (premises
-                          (Congr (= t19 (generalize t17 (TBool))) prf9 prf10 1)
+                          (Congr (= t19 (generalize t17 (TBool))) prf10 prf11 1)
                           (Rule
                             (= t78 t78)
                             (name
@@ -3123,9 +3181,9 @@ expression: proof_snapshot
                                     "(rule ((= sc (generalize ctx t)))
       ((has-qs-demand ctx t))
          )")
-                                  (premises prf9)
+                                  (premises prf10)
                                   (substitution (t t18) (sc t19) t35))
-                                prf10
+                                prf11
                                 1))
                             (substitution t35)))
                         (substitution
@@ -3326,7 +3384,7 @@ expression: proof_snapshot
 (let t46
   (premises
                                                           (Fiat (= t5 t5))
-                                                          (Eval)
+                                                          (Fiat (= 1 1))
                                                           (Rule
                                                             (= t32 t32)
                                                             (name
@@ -3401,15 +3459,17 @@ expression: proof_snapshot
                                                               (e t4)
                                                               (s1 8)
                                                               (x (V "x"))))
-                                                          (Eval)))
+                                                          (Fiat (= 10 10))))
 (let t47 (to t5))
 (let t48
   (substitution
+                                                          (c 0)
+                                                          (c1 1)
                                                           (e1 t4)
                                                           (e2 (MyUnit))
                                                           t47
                                                           (ctx (Nil))
-                                                          (c 0)
+                                                          (c2 10)
                                                           (sz 9)))
 (let t49
   (premises
@@ -3424,9 +3484,10 @@ expression: proof_snapshot
            )")
                                                         t46
                                                         t48)
-                                                      (Eval)))
+                                                      (Fiat (= 2 2))))
 (let t50
   (substitution
+                                                      (cc 2)
                                                       (@rewrite_var__12 t30)
                                                       (ctx (Nil))
                                                       t45
@@ -3492,19 +3553,21 @@ expression: proof_snapshot
                                                   "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                                 t49
                                                 t50)
-                                              (Eval)
+                                              (Fiat (= 3 3))
                                               prf1
-                                              (Eval)))
+                                              (Fiat (= 5 5))))
 (let t54 (ctx t15))
 (let t55
   (substitution
+                                              (@rewrite_var__13 t27)
+                                              (c1 3)
+                                              (c 2)
                                               t43
                                               t44
-                                              (sz 2)
                                               t54
-                                              (@rewrite_var__13 t27)
+                                              (c2 5)
                                               (x (V "f"))
-                                              (c 2)))
+                                              (sz 2)))
 (let t56
   (premises
                                         (Trans
@@ -3526,19 +3589,21 @@ expression: proof_snapshot
                                               "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                             t53
                                             t55))
-                                        (Eval)
+                                        (Fiat (= 6 6))
                                         prf2
-                                        (Eval)))
+                                        (Fiat (= 7 7))))
 (let t57 (ctx t18))
 (let t58
   (substitution
+                                        (@rewrite_var__13 t5)
+                                        (c1 6)
+                                        (c 5)
                                         (e1 (True))
                                         t42
-                                        (sz 1)
                                         t57
-                                        (@rewrite_var__13 t5)
+                                        (c2 7)
                                         (x (V "x"))
-                                        (c 5)))
+                                        (sz 1)))
 (let t59
   (premises
                                     (Rule
@@ -3547,11 +3612,20 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t56
                                       t58)
-                                    (Eval)
+                                    (Fiat (= 8 8))
                                     prf3
-                                    (Eval)))
+                                    (Fiat (= 9 9))))
 (let t60 (ctx t21))
-(let t61 (substitution t40 t41 t47 t60 (c 7) (sz 1)))
+(let t61
+  (substitution
+                                    (c 7)
+                                    (c1 8)
+                                    t40
+                                    t41
+                                    t47
+                                    t60
+                                    (c2 9)
+                                    (sz 1)))
 (let t62
   (premises
                                 (Rule
@@ -3571,10 +3645,11 @@ expression: proof_snapshot
                                 t60
                                 (x (V "f"))
                                 (@rewrite_var__11 t22)))
+(let prf4 (Fiat (= () ())))
 (let t64 (tl t18))
 (let t65 (s t20))
 (let t66 (tl t15))
-(let prf4
+(let prf5
   (Rule
                                 (= t17 t17)
                                 (name
@@ -3585,14 +3660,14 @@ expression: proof_snapshot
 (let t68 (has-qs t15 t23 t7))
 (let t69 (has-qs-demand t15 t16))
 (let t70 (t t16))
-(let prf5
+(let prf6
   (Rule
                                             (= t69 t69)
                                             (name
                                               "(rule ((= sc (generalize ctx t)))
         ((has-qs-demand ctx t))
            )")
-                                            (premises prf4)
+                                            (premises prf5)
                                             (substitution t70 (sc t17) t54)))
 (let t71 (Forall (set-of) t9))
 (let t72 (Cons (V "y") t71 t15))
@@ -3606,15 +3681,16 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t53
                                                   t55)
-                                                (Eval)))
+                                                (Fiat (= 4 4))))
 (let t76
   (substitution
+                                                (cc 4)
                                                 (@rewrite_var__12 t16)
                                                 t54
                                                 t36
                                                 (x (V "y"))
                                                 (c 3)))
-(let prf6
+(let prf7
   (Rule
                                               (= t16 t74)
                                               (name
@@ -3637,7 +3713,7 @@ expression: proof_snapshot
                                                             (x (V "x"))
                                                             (@rewrite_var__11 t73)))
 (let t80 (s t14))
-(let prf7
+(let prf8
   (Congr
                                                         (=
                                                           t14
@@ -3660,7 +3736,7 @@ expression: proof_snapshot
                                                           t51
                                                           t52)
                                                         1))
-(let prf8
+(let prf9
   (Rule
                                               (= t73 (TUnit))
                                               (name
@@ -3719,7 +3795,7 @@ expression: proof_snapshot
                                                                     "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                                                   t78
                                                                   t79)
-                                                                (Eval))
+                                                                prf4)
                                                               (substitution
                                                                 t66
                                                                 (t t77)
@@ -3732,7 +3808,7 @@ expression: proof_snapshot
                                                             (x (V "x"))
                                                             (@rewrite_var__ t77)))
                                                         0)
-                                                      prf7
+                                                      prf8
                                                       0))
                                                   (substitution
                                                     (c 4)
@@ -3743,15 +3819,15 @@ expression: proof_snapshot
                                                 (@rewrite_var__4 t73)
                                                 (c 4)
                                                 (vs (set-of)))))
-(let prf9 (Congr (= t16 t23) prf6 prf8 1))
+(let prf10 (Congr (= t16 t23) prf7 prf9 1))
 (let t81 (has-qs t15 t9 t7))
 (let t82 (has-qs-demand t15 t9))
 (let t83
   (premises
                                                 (Congr
                                                   (= t69 (has-qs-demand t15 t74))
-                                                  prf5
                                                   prf6
+                                                  prf7
                                                   1)))
 (let t84 (fr t9))
 (let t85 (substitution t84 (to t73) t54))
@@ -3759,7 +3835,7 @@ expression: proof_snapshot
 (let t87 (ftvScheme t14 (set-of)))
 (let t88 (has-qs t15 (TUnit) (set-of)))
 (let t89 (has-qs-demand t15 t73))
-(let prf10
+(let prf11
   (Congr
                                     (= t68 t67)
                                     (Rule
@@ -3773,8 +3849,8 @@ expression: proof_snapshot
                                       (premises
                                         (Congr
                                           (= t69 (has-qs-demand t15 t23))
-                                          prf5
-                                          prf9
+                                          prf6
+                                          prf10
                                           1)
                                         (Rule
                                           (= t81 t81)
@@ -3828,7 +3904,7 @@ expression: proof_snapshot
         ((ftvScheme e (set-diff fvs qs)))
            )")
                                                   (premises
-                                                    prf7
+                                                    prf8
                                                     (Rule
                                                       (=
                                                         (ftv (TUnit) (set-of))
@@ -3852,7 +3928,7 @@ expression: proof_snapshot
                                                 (fvs1 (set-of))
                                                 (c t15)
                                                 (x (V "x"))))
-                                            (Eval))
+                                            prf4)
                                           (substitution
                                             (key-set (set-of))
                                             (x t6)
@@ -3875,7 +3951,7 @@ expression: proof_snapshot
            )")
                                                 t83
                                                 t85)
-                                              prf8
+                                              prf9
                                               1))
                                           (substitution t54)))
                                       (substitution
@@ -3884,7 +3960,7 @@ expression: proof_snapshot
                                         (qs1 t7)
                                         (qs2 (set-of))
                                         t84))
-                                    (Sym (= t23 t16) prf9)
+                                    (Sym (= t23 t16) prf10)
                                     1))
 (let t90 (vs t7))
 (let t91
@@ -3924,7 +4000,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                       t62
                                       t63)
-                                    (Eval))
+                                    prf4)
                                   (substitution
                                     t64
                                     (t t25)
@@ -3942,12 +4018,12 @@ expression: proof_snapshot
                             (name
                               "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                             (premises
-                              prf4
-                              (Trans (= t67 t67) (Sym (= t67 t68) prf10) prf10))
+                              prf5
+                              (Trans (= t67 t67) (Sym (= t67 t68) prf11) prf11))
                             (substitution t70 t54 (@rewrite_var__1 t17) (qs t7)))
                           0))
                       (substitution (c 8) t70 (@rewrite_var__6 t22) t90))
-                    prf9
+                    prf10
                     1)))
 (let t92 (substitution t90 (@rewrite_var__5 t22) (to (TUnit)) (c 8) t84))
 (let t93 (typeof t21 (Var (V "x")) 9))
@@ -3971,14 +4047,14 @@ expression: proof_snapshot
                               t60
                               (x (V "x"))
                               (@rewrite_var__11 t93)))
-(let prf11
+(let prf12
   (Rule
                                 (= t20 t20)
                                 (name
                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                 t56
                                 t58))
-(let prf12
+(let prf13
   (Rule
                                 (= t19 (TBool))
                                 (name "(rewrite (typeof ctx (True) c) (TBool))")
@@ -4067,7 +4143,7 @@ expression: proof_snapshot
                         (name
                           "(rewrite (generalize ctx t) (Forall qs t) :when ((has-qs ctx t qs)))")
                         (premises
-                          (Congr (= t20 (generalize t18 (TBool))) prf11 prf12 1)
+                          (Congr (= t20 (generalize t18 (TBool))) prf12 prf13 1)
                           (Rule
                             (= t97 t97)
                             (name
@@ -4083,9 +4159,9 @@ expression: proof_snapshot
                                     "(rule ((= sc (generalize ctx t)))
       ((has-qs-demand ctx t))
          )")
-                                  (premises prf11)
+                                  (premises prf12)
                                   (substitution (t t19) (sc t20) t57))
-                                prf12
+                                prf13
                                 1))
                             (substitution t57)))
                         (substitution
@@ -4271,7 +4347,7 @@ expression: proof_snapshot
 (let t43
   (premises
                                     (Fiat (= t7 t7))
-                                    (Eval)
+                                    (Fiat (= 1 1))
                                     (Rule
                                       (= t25 t25)
                                       (name
@@ -4311,14 +4387,16 @@ expression: proof_snapshot
                                         (e t6)
                                         (s1 10)
                                         (x (V "x"))))
-                                    (Eval)))
+                                    (Fiat (= 12 12))))
 (let t44
   (substitution
+                                    (c 0)
+                                    (c1 1)
                                     (e1 t6)
                                     (e2 (MyUnit))
                                     (to t7)
                                     (ctx (Nil))
-                                    (c 0)
+                                    (c2 12)
                                     (sz 11)))
 (let t45
   (premises
@@ -4333,9 +4411,10 @@ expression: proof_snapshot
            )")
                                   t43
                                   t44)
-                                (Eval)))
+                                (Fiat (= 2 2))))
 (let t46
   (substitution
+                                (cc 2)
                                 (@rewrite_var__12 t24)
                                 (ctx (Nil))
                                 t42
@@ -4349,11 +4428,20 @@ expression: proof_snapshot
                                 "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                               t45
                               t46)
-                            (Eval)
+                            (Fiat (= 3 3))
                             prf3
-                            (Eval)))
+                            (Fiat (= 10 10))))
 (let t48 (ctx t13))
-(let t49 (substitution t40 t41 (to t23) t48 (c 2) (sz 7)))
+(let t49
+  (substitution
+                            (c 2)
+                            (c1 3)
+                            t40
+                            t41
+                            (to t23)
+                            t48
+                            (c2 10)
+                            (sz 7)))
 (let t50
   (premises
                         (Rule
@@ -4367,9 +4455,10 @@ expression: proof_snapshot
            )")
                           t47
                           t49)
-                        (Eval)))
+                        (Fiat (= 4 4))))
 (let t51
   (substitution
+                        (cc 4)
                         (@rewrite_var__12 t22)
                         t48
                         t38
@@ -4383,11 +4472,20 @@ expression: proof_snapshot
                         "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                       t50
                       t51)
-                    (Eval)
+                    (Fiat (= 5 5))
                     prf2
-                    (Eval)))
+                    (Fiat (= 9 9))))
 (let t53 (ctx t18))
-(let t54 (substitution t37 (e2 (True)) (to t21) t53 (c 4) (sz 4)))
+(let t54
+  (substitution
+                    (c 4)
+                    (c1 5)
+                    t37
+                    (e2 (True))
+                    (to t21)
+                    t53
+                    (c2 9)
+                    (sz 4)))
 (let t55 (TArr t16 t21))
 (let t56 (TArr t14 t7))
 (let t57 (TArr (TUnit) t7))
@@ -4541,9 +4639,10 @@ expression: proof_snapshot
            )")
                                       t52
                                       t54)
-                                    (Eval)))
+                                    (Fiat (= 6 6))))
 (let t73
   (substitution
+                                    (cc 6)
                                     (@rewrite_var__12 t19)
                                     t53
                                     t36
@@ -4557,11 +4656,20 @@ expression: proof_snapshot
                                     "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                   t72
                                   t73)
-                                (Eval)
+                                (Fiat (= 7 7))
                                 prf0
-                                (Eval)))
+                                (Fiat (= 8 8))))
 (let t75 (ctx t68))
-(let t76 (substitution t34 t35 (to t71) t75 (c 6) (sz 1)))
+(let t76
+  (substitution
+                                (c 6)
+                                (c1 7)
+                                t34
+                                t35
+                                (to t71)
+                                t75
+                                (c2 8)
+                                (sz 1)))
 (let t77 (TArr t66 t71))
 (let t78
   (premises
@@ -4618,8 +4726,9 @@ expression: proof_snapshot
                                 t75
                                 (x (V "f"))
                                 (@rewrite_var__11 t69)))
+(let prf6 (Fiat (= () ())))
 (let t89 (tl t13))
-(let prf6
+(let prf7
   (Rule
                               (= t16 t14)
                               (name
@@ -4645,8 +4754,15 @@ expression: proof_snapshot
            )")
                 t47
                 t49)
-              (Eval)))
-(let t94 (substitution (@rewrite_var__12 t14) t48 t33 (x (V "y")) (c 10)))
+              (Fiat (= 11 11))))
+(let t94
+  (substitution
+              (cc 11)
+              (@rewrite_var__12 t14)
+              t48
+              t33
+              (x (V "y"))
+              (c 10)))
 (let t95 (lookup t91 (V "x")))
 (let t96
   (premises
@@ -4819,7 +4935,7 @@ expression: proof_snapshot
                                       "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                     t87
                                     t88)
-                                  (Eval))
+                                  prf6)
                                 (substitution
                                   t83
                                   (t t86)
@@ -4840,7 +4956,7 @@ expression: proof_snapshot
                               "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                             t50
                             t51)
-                          prf6
+                          prf7
                           1)
                         0))
                     (substitution
@@ -4848,11 +4964,11 @@ expression: proof_snapshot
                       (t t14)
                       (@rewrite_var__6 t69)
                       (vs (set-of)))))
-                (Sym (= t14 t16) prf6)
+                (Sym (= t14 t16) prf7)
                 1)
-              (Eval))
+              prf6)
             (substitution (otype t19) (s t15) (c 7) (vs (set-of))))
-          prf6))
+          prf7))
       (Congr
         (= t14 t10)
         (Rule
@@ -4898,7 +5014,7 @@ expression: proof_snapshot
                                 "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                               t96
                               t97)
-                            (Eval))
+                            prf6)
                           (substitution
                             t89
                             (t t95)
@@ -4981,7 +5097,7 @@ expression: proof_snapshot
 (let t37
   (premises
                                                 (Fiat (= t5 t5))
-                                                (Eval)
+                                                (Fiat (= 1 1))
                                                 (Rule
                                                   (= t34 t34)
                                                   (name
@@ -5010,17 +5126,19 @@ expression: proof_snapshot
                                                     (e t0)
                                                     (s1 1)
                                                     (x (V "x"))))
-                                                (Eval)))
+                                                (Fiat (= 3 3))))
 (let t38 (@rewrite_var__13 t5))
 (let t39
   (substitution
+                                                t38
+                                                (c1 1)
+                                                (c 0)
                                                 (e1 t0)
                                                 (e2 t4)
-                                                (sz 2)
                                                 (ctx (Nil))
-                                                t38
+                                                (c2 3)
                                                 (x (V "id"))
-                                                (c 0)))
+                                                (sz 2)))
 (let t40 (expr-size t1 2))
 (let t41 (expr-size (Var (V "id")) 1))
 (let t42 (e (Var (V "id"))))
@@ -5046,7 +5164,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t37
                                               t39)
-                                            (Eval)
+                                            (Fiat (= 4 4))
                                             (Rule
                                               (= t40 t40)
                                               (name
@@ -5060,17 +5178,19 @@ expression: proof_snapshot
                                                 (e t1)
                                                 (s1 1)
                                                 (x (V "y"))))
-                                            (Eval)))
+                                            (Fiat (= 6 6))))
 (let t45 (ctx t20))
 (let t46
   (substitution
+                                            t38
+                                            (c1 4)
+                                            (c 3)
                                             (e1 t1)
                                             (e2 t3)
-                                            (sz 2)
                                             t45
-                                            t38
+                                            (c2 6)
                                             (x (V "iid"))
-                                            (c 3)))
+                                            (sz 2)))
 (let t47 (expr-size (Var (V "iid")) 1))
 (let t48
   (premises
@@ -5080,7 +5200,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t44
                                           t46)
-                                        (Eval)
+                                        (Fiat (= 7 7))
                                         (Rule
                                           (= t47 t47)
                                           (name
@@ -5093,15 +5213,17 @@ expression: proof_snapshot
                                           (substitution
                                             (e (Var (V "iid")))
                                             (x (V "iid"))))
-                                        (Eval)))
+                                        (Fiat (= 8 8))))
 (let t49 (ctx t29))
 (let t50
   (substitution
+                                        (c 6)
+                                        (c1 7)
                                         (e1 (Var (V "iid")))
                                         (e2 t2)
                                         (to t5)
                                         t49
-                                        (c 6)
+                                        (c2 8)
                                         (sz 1)))
 (let t51
   (premises
@@ -5143,9 +5265,10 @@ expression: proof_snapshot
                                                       "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                     t44
                                                     t46)
-                                                  (Eval)))
+                                                  (Fiat (= 5 5))))
 (let t60
   (substitution
+                                                  (cc 5)
                                                   (@rewrite_var__12 t27)
                                                   t45
                                                   t42
@@ -5266,9 +5389,14 @@ expression: proof_snapshot
                                                                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                                                 t37
                                                                                 t39)
-                                                                              (Eval)))
+                                                                              (Fiat
+                                                                                (=
+                                                                                  2
+                                                                                  2))))
 (let t81
   (substitution
+                                                                              (cc
+                                                                                2)
                                                                               (@rewrite_var__12
                                                                                 t18)
                                                                               (ctx
@@ -5314,10 +5442,15 @@ expression: proof_snapshot
                                                                                             "x"))
                                                                                         (@rewrite_var__11
                                                                                           t78)))
+(let prf8
+  (Fiat
+                                                                                (=
+                                                                                  ()
+                                                                                  ())))
 (let t85
   (s
                                                                                 t6))
-(let prf8
+(let prf9
   (Congr
                                                                           (=
                                                                             t18
@@ -5394,7 +5527,7 @@ expression: proof_snapshot
                                                                                     t78)
                                                                                   (vs
                                                                                     (set-of))))
-                                                                              (Eval))
+                                                                              prf8)
                                                                             (substitution
                                                                               (otype
                                                                                 t78)
@@ -5417,7 +5550,7 @@ expression: proof_snapshot
   (fr
                                                                                 t12))
 (let t89 (x t6))
-(let prf9
+(let prf10
   (Rule
                                                                         (=
                                                                           t86
@@ -5455,7 +5588,7 @@ expression: proof_snapshot
                                                                               (ctx
                                                                                 (Nil))))
                                                                           prf4
-                                                                          (Eval))
+                                                                          prf8)
                                                                         (substitution
                                                                           (key-set
                                                                             (set-of))
@@ -5463,7 +5596,7 @@ expression: proof_snapshot
                                                                           (ctx
                                                                             (Nil)))))
 (let t90 (to t12))
-(let prf10
+(let prf11
   (Congr
                                                                   (= t73 t71)
                                                                   (Rule
@@ -5482,10 +5615,10 @@ expression: proof_snapshot
                                                                             (Nil)
                                                                             t72))
                                                                         prf6
-                                                                        prf8
+                                                                        prf9
                                                                         1)
-                                                                      prf9
-                                                                      prf9)
+                                                                      prf10
+                                                                      prf10)
                                                                     (substitution
                                                                       t90
                                                                       (ctx (Nil))
@@ -5494,10 +5627,10 @@ expression: proof_snapshot
                                                                       t88))
                                                                   (Sym
                                                                     (= t72 t18)
-                                                                    prf8)
+                                                                    prf9)
                                                                   1))
 (let t91 (qs t11))
-(let prf11
+(let prf12
   (Rule
                                                           (= t19 t70)
                                                           (name
@@ -5508,8 +5641,8 @@ expression: proof_snapshot
                                                               (= t71 t71)
                                                               (Sym
                                                                 (= t71 t73)
-                                                                prf10)
-                                                              prf10))
+                                                                prf11)
+                                                              prf11))
                                                           (substitution
                                                             t75
                                                             (ctx (Nil))
@@ -5517,7 +5650,7 @@ expression: proof_snapshot
                                                             t91)))
 (let t92 (ftv t18 t11))
 (let t93 (ftv t12 t11))
-(let prf12
+(let prf13
   (Rule
                                                               (= t93 t93)
                                                               (name
@@ -5535,7 +5668,7 @@ expression: proof_snapshot
                                                                 (e t12)
                                                                 t89)))
 (let t94 (s t19))
-(let prf13
+(let prf14
   (Rule
                                                   (= t68 t68)
                                                   (name
@@ -5560,7 +5693,7 @@ expression: proof_snapshot
         ((ftvScheme e (set-diff fvs qs)))
            )")
                                                       (premises
-                                                        prf11
+                                                        prf12
                                                         (Rule
                                                           (= t92 t92)
                                                           (name
@@ -5570,9 +5703,9 @@ expression: proof_snapshot
         ((ftv e (set-union s1 s2)))
            )")
                                                           (premises
-                                                            prf8
-                                                            prf12
-                                                            prf12)
+                                                            prf9
+                                                            prf13
+                                                            prf13)
                                                           (substitution
                                                             t90
                                                             (e t18)
@@ -5626,7 +5759,7 @@ expression: proof_snapshot
                                                                                 t20
                                                                                 (V
                                                                                   "id")))
-(let prf14
+(let prf15
   (Rule
                                                                             (=
                                                                               t100
@@ -5645,7 +5778,7 @@ expression: proof_snapshot
                                                                                   "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                                                                 t101
                                                                                 t102)
-                                                                              (Eval))
+                                                                              prf8)
                                                                             (substitution
                                                                               t53
                                                                               (t
@@ -5658,7 +5791,7 @@ expression: proof_snapshot
                                                                               (x
                                                                                 (V
                                                                                   "id")))))
-(let prf15
+(let prf16
   (Rule
                                                                         (=
                                                                           t100
@@ -5666,7 +5799,7 @@ expression: proof_snapshot
                                                                         (name
                                                                           "(rewrite (lookup (Cons x s tl) x) s)")
                                                                         (premises
-                                                                          prf14)
+                                                                          prf15)
                                                                         (substitution
                                                                           (tl
                                                                             (Nil))
@@ -5718,9 +5851,9 @@ expression: proof_snapshot
                                                                           "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                                                         t101
                                                                         t102)
-                                                                      prf15
+                                                                      prf16
                                                                       0)
-                                                                    prf11
+                                                                    prf12
                                                                     0))
                                                                 (substitution
                                                                   (c 5)
@@ -5728,7 +5861,7 @@ expression: proof_snapshot
                                                                   (@rewrite_var__6
                                                                     t22)
                                                                   t104))
-                                                              prf8
+                                                              prf9
                                                               1)))
 (let t106
   (substitution
@@ -5737,14 +5870,14 @@ expression: proof_snapshot
                                                             t90
                                                             (c 5)
                                                             t88))
-(let prf16
+(let prf17
   (Rule
                                                           (= t22 t97)
                                                           (name
                                                             "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
                                                           t105
                                                           t106))
-(let prf17
+(let prf18
   (Congr
                                                         (=
                                                           t99
@@ -5758,7 +5891,7 @@ expression: proof_snapshot
            )")
                                                           t64
                                                           t67)
-                                                        prf16
+                                                        prf17
                                                         1))
 (let t107 (has-qs t20 t13 t95))
 (let t108 (TVar t7))
@@ -5769,7 +5902,7 @@ expression: proof_snapshot
                                                                       t13))
 (let t111 (fr t13))
 (let t112 (to t13))
-(let prf18
+(let prf19
   (Rule
                                                                     (= t13 t108)
                                                                     (name
@@ -5786,13 +5919,13 @@ expression: proof_snapshot
                                                                           "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
                                                                         t105
                                                                         t106)
-                                                                      (Eval))
+                                                                      prf8)
                                                                     (substitution
                                                                       (otype t13)
                                                                       t85
                                                                       (c 5)
                                                                       t104)))
-(let prf19
+(let prf20
   (Congr
                                                             (= t109 t107)
                                                             (Rule
@@ -5818,30 +5951,30 @@ expression: proof_snapshot
          (has-qs-demand ctx to))
            )")
                                                                     (premises
-                                                                      prf17)
+                                                                      prf18)
                                                                     (substitution
                                                                       t111
                                                                       t112
                                                                       t45))
-                                                                  prf18
+                                                                  prf19
                                                                   1)
-                                                                prf13
-                                                                (Eval))
+                                                                prf14
+                                                                prf8)
                                                               (substitution
                                                                 (key-set (set-of))
                                                                 (x t7)
                                                                 t45))
                                                             (Sym
                                                               (= t108 t13)
-                                                              prf18)
+                                                              prf19)
                                                             1))
-(let prf20
+(let prf21
   (Trans
                                                         (= t107 t107)
-                                                        (Sym (= t107 t109) prf19)
-                                                        prf19))
+                                                        (Sym (= t107 t109) prf20)
+                                                        prf20))
 (let t113 (qs2 t95))
-(let prf21
+(let prf22
   (Congr
                                                   (= t98 t96)
                                                   (Rule
@@ -5852,16 +5985,16 @@ expression: proof_snapshot
          (has-qs ctx to qs2))
         ((has-qs ctx (TArr fr to) (set-union qs1 qs2)))
            )")
-                                                    (premises prf17 prf20 prf20)
+                                                    (premises prf18 prf21 prf21)
                                                     (substitution
                                                       t112
                                                       t45
                                                       (qs1 t95)
                                                       t113
                                                       t111))
-                                                  (Sym (= t97 t22) prf16)
+                                                  (Sym (= t97 t22) prf17)
                                                   1))
-(let prf22
+(let prf23
   (Congr
                                         (= t56 t55)
                                         (Rule
@@ -5892,16 +6025,16 @@ expression: proof_snapshot
            )")
                                                   t64
                                                   t67)
-                                                prf13
-                                                (Eval))
+                                                prf14
+                                                prf8)
                                               (substitution
                                                 (key-set (set-of))
                                                 (x t9)
                                                 t45))
                                             (Trans
                                               (= t96 t96)
-                                              (Sym (= t96 t98) prf21)
-                                              prf21))
+                                              (Sym (= t96 t98) prf22)
+                                              prf22))
                                           (substitution
                                             t66
                                             t45
@@ -5954,8 +6087,8 @@ expression: proof_snapshot
                                   prf1
                                   (Trans
                                     (= t55 t55)
-                                    (Sym (= t55 t56) prf22)
-                                    prf22))
+                                    (Sym (= t55 t56) prf23)
+                                    prf23))
                                 (substitution
                                   t58
                                   t45
@@ -5985,16 +6118,18 @@ expression: proof_snapshot
            )")
                                                       t48
                                                       t50)
-                                                    (Eval)
+                                                    (Fiat (= 9 9))
                                                     prf0
-                                                    (Eval)))
+                                                    (Fiat (= 10 10))))
 (let t124
   (substitution
+                                                    (c 8)
+                                                    (c1 9)
                                                     t43
                                                     (e2 (True))
                                                     (to t117)
                                                     t49
-                                                    (c 8)
+                                                    (c2 10)
                                                     (sz 1)))
 (let t125
   (premises
@@ -6062,24 +6197,24 @@ expression: proof_snapshot
                                                         "(rewrite (typeof ctx (Var x) c) (instantiate (lookup ctx x) c))")
                                                       t125
                                                       t126)
-                                                    (Eval))
+                                                    prf8)
                                                   (substitution
                                                     t53
                                                     (t t122)
                                                     t54
                                                     (y (V "iid"))
                                                     (x (V "id"))))
-                                                (Sym (= t103 t100) prf14))
-                                              prf15)
+                                                (Sym (= t103 t100) prf15))
+                                              prf16)
                                             0)
-                                          prf11
+                                          prf12
                                           0))
                                       (substitution
                                         (c 9)
                                         t75
                                         (@rewrite_var__6 t121)
                                         t104))
-                                    prf8
+                                    prf9
                                     1))
                                 (substitution
                                   t104
@@ -6133,10 +6268,10 @@ expression: proof_snapshot
                   "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
                 t115
                 t116)
-              prf16
+              prf17
               1)))
 (let t131 (substitution t114 (@rewrite_var__5 t23) t112 (c 7) t111))
-(let prf23
+(let prf24
   (Rule
         (= t14 t8)
         (name
@@ -6153,9 +6288,9 @@ expression: proof_snapshot
                 "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
               t130
               t131)
-            prf18
+            prf19
             1)
-          (Eval))
+          prf8)
         (substitution (otype t14) (s t7) (c 7) t114)))
 (Congr
   (= t5 (TArr t8 t8))
@@ -6226,7 +6361,7 @@ expression: proof_snapshot
           "(rewrite (subst-fresh vs (TArr fr to) c) (TArr (subst-fresh vs fr c) (subst-fresh vs to c)))")
         t130
         t131))
-    prf23
+    prf24
     0)
-  prf23
+  prf24
   1)

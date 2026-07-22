@@ -102,6 +102,7 @@ impl BaseSort for BigRatSort {
             }),
         ))
     }
+
     type Base = Q;
 
     fn name(&self) -> &str {

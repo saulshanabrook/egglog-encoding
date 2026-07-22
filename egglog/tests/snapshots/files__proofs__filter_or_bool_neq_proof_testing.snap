@@ -2,89 +2,25 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Rule
-  (= (@ExistsConstructor) (@ExistsConstructor))
-  (name "@prove_exists_rule")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor1) (@ExistsConstructor1))
-  (name "@prove_exists_rule1")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor2) (@ExistsConstructor2))
-  (name "@prove_exists_rule2")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor3) (@ExistsConstructor3))
-  (name "@prove_exists_rule3")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor4) (@ExistsConstructor4))
-  (name "@prove_exists_rule4")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor5) (@ExistsConstructor5))
-  (name "@prove_exists_rule5")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor6) (@ExistsConstructor6))
-  (name "@prove_exists_rule6")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor7) (@ExistsConstructor7))
-  (name "@prove_exists_rule7")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor8) (@ExistsConstructor8))
-  (name "@prove_exists_rule8")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor9) (@ExistsConstructor9))
-  (name "@prove_exists_rule9")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor10) (@ExistsConstructor10))
-  (name "@prove_exists_rule10")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor11) (@ExistsConstructor11))
-  (name "@prove_exists_rule11")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor12) (@ExistsConstructor12))
-  (name "@prove_exists_rule12")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor13) (@ExistsConstructor13))
-  (name "@prove_exists_rule13")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor14) (@ExistsConstructor14))
-  (name "@prove_exists_rule14")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor15) (@ExistsConstructor15))
-  (name "@prove_exists_rule15")
-  (premises (Eval))
-  (substitution))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= true true))
+(Fiat (= false false))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
+(Fiat (= () ()))
 (let prf0 (Fiat (= (Val 1) (Val 1))))
 (Rule
   (= (@ExistsConstructor16) (@ExistsConstructor16))
   (name "@prove_exists_rule16")
-  (premises prf0 (Fiat (= (Val 2) (Val 2))) prf0 prf0 (Eval))
-  (substitution (@v564 (Val 1)) (@v561 (Val 1)) (@v563 (Val 1)) (@v562 (Val 2))))
+  (premises prf0 (Fiat (= (Val 2) (Val 2))) prf0 prf0 (Fiat (= () ())))
+  (substitution (@v710 (Val 1)) (@v711 (Val 1)) (@v708 (Val 1)) (@v709 (Val 2))))

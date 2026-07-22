@@ -7,5 +7,5 @@ expression: proof_snapshot
   (name "@prove_exists_rule")
   (premises
     (Fiat (= (predicate 1 false) (predicate 1 false)))
-    (Computed (= false false)))
+    (Fiat (= false false)))
   (substitution (@n false)))

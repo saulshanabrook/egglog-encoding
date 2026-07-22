@@ -14,5 +14,5 @@ expression: proof_snapshot
          )")
       (premises)
       (substitution))
-    (Computed (= 4 4)))
+    (Fiat (= 4 4)))
   (substitution (@n 4)))

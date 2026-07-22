@@ -2,18 +2,6 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Rule
-  (= (@ExistsConstructor) (@ExistsConstructor))
-  (name "@prove_exists_rule")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor1) (@ExistsConstructor1))
-  (name "@prove_exists_rule1")
-  (premises (Eval))
-  (substitution))
-(Rule
-  (= (@ExistsConstructor2) (@ExistsConstructor2))
-  (name "@prove_exists_rule2")
-  (premises (Eval))
-  (substitution))
+(Fiat (= "abcde" "abcde"))
+(Fiat (= 2 2))
+(Fiat (= "cd cd" "cd cd"))

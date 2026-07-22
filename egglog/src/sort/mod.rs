@@ -95,9 +95,9 @@ pub trait Sort: Any + Send + Sync + Debug {
 
     /// For a base sort whose values termify as an application rather than a
     /// literal (e.g. a BigInt's `(from-string "…")`): the canonical head and a
-    /// validator that recomputes that value term form. Proof checking runs it
-    /// to verify a `Computed` proof over a termified base value. `None` (the
-    /// default) for literal-backed and non-base sorts.
+    /// validator that recognizes/normalizes that value term form. Proof
+    /// checking uses it to accept a reflexive `Fiat` over a termified base
+    /// value. `None` (the default) for literal-backed and non-base sorts.
     fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
         None
     }

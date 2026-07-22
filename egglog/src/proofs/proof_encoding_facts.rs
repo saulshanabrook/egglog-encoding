@@ -2,8 +2,9 @@
 //! rewritten to read the view tables, and each matched fact collects a premise
 //! proof for the rule's proof list.
 
-use super::proof_checker::is_primitive_side_condition;
+use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::ProofInstrumentor;
+use crate::proofs::proof_encoding_helpers::Justification;
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -18,19 +19,13 @@ impl ProofInstrumentor<'_> {
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
     ) -> String {
-        // A primitive side condition: a fact that computes a container or a
-        // base value with a primitive (`(= xs (vec-of e))`, `(= v (bigrat a
-        // b))`, or a bare guard). Its result has no carryable proof — emit the
+        // A container side condition: a fact that builds a container with a
+        // primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`, or a bare
+        // `(vec-of e)` guard). The container has no carryable proof — emit the
         // fact as-is so the e-graph computes it (its arguments are already
         // bound), with the `Eval` marker as its proof; the checker verifies it
         // by re-evaluation (see `check_side_condition`, which shares this gate).
-        //
-        // Verbatim emission requires the fact to be free of function calls
-        // (a global read is a nullary call post-`remove_globals`, and would
-        // need instrumentation). Such facts take the instrumented path below;
-        // the checker still treats them as side conditions and ignores the
-        // premise slot's content, so only the premise count must line up.
-        if is_primitive_side_condition(fact) && fact_has_no_function_calls(fact) {
+        if is_container_side_condition(fact) {
             res.push(fact.to_string());
             if self.egraph.proof_state.proofs_enabled {
                 let eval_constructor = self.proof_names().eval_constructor.clone();
@@ -143,7 +138,7 @@ impl ProofInstrumentor<'_> {
                 let proof_code = if self.egraph.proof_state.proofs_enabled {
                     let lit_sort = literal_sort(lit);
                     let lit_str = format!("{lit}");
-                    self.computed_proof(action_lookups, lit_sort.name(), &lit_str)
+                    self.reflexive_fiat_proof(action_lookups, lit_sort.name(), &lit_str)
                 } else {
                     "()".to_string()
                 };
@@ -172,7 +167,7 @@ impl ProofInstrumentor<'_> {
                             .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
                         fresh_proof
                     } else {
-                        self.computed_proof(action_lookups, resolved_var.sort.name(), var)
+                        self.reflexive_fiat_proof(action_lookups, resolved_var.sort.name(), var)
                     },
                 )
             }
@@ -264,7 +259,7 @@ impl ProofInstrumentor<'_> {
                         } else {
                             // Base primitives produce a literal result; a
                             // reflexive `Fiat` over a literal is checker-valid.
-                            self.computed_proof(
+                            self.reflexive_fiat_proof(
                                 action_lookups,
                                 specialized_primitive.output().name(),
                                 &fv,
@@ -312,35 +307,20 @@ impl ProofInstrumentor<'_> {
         (res, action_lookups, proof_list)
     }
 
-    /// Mint a reflexive `Computed` proof `value = value` for a primitive
-    /// computation of `sort_name` (two identical ASTs under a `Computed`),
-    /// appending the mints to `stmts`.
-    fn computed_proof(&mut self, stmts: &mut Vec<String>, sort_name: &str, value: &str) -> String {
+    /// Mint a reflexive `Fiat` proof `value = value` for a term of `sort_name`
+    /// (two identical ASTs under a `Fiat`), appending the mints to `stmts`.
+    fn reflexive_fiat_proof(
+        &mut self,
+        stmts: &mut Vec<String>,
+        sort_name: &str,
+        value: &str,
+    ) -> String {
         let to_ast = self
             .proof_names()
             .sort_to_ast_constructor
             .get(sort_name)
             .unwrap()
             .clone();
-        let ast_sort = self.proof_names().ast_sort.clone();
-        let proof_sort = self.proof_sort();
-        let computed = self.proof_names().computed_constructor.clone();
-        let a1 = self.mint(stmts, &to_ast, value, &ast_sort);
-        let a2 = self.mint(stmts, &to_ast, value, &ast_sort);
-        self.mint(stmts, &computed, &format!("{a1} {a2}"), &proof_sort)
+        self.term_proof_for_justification(stmts, value, &to_ast, &Justification::Fiat)
     }
-}
-
-/// Whether every expression in `fact` is free of function calls (variables,
-/// literals, and primitive applications only), so the encoder may emit it
-/// verbatim as a side condition.
-fn fact_has_no_function_calls(fact: &ResolvedFact) -> bool {
-    let mut ok = true;
-    fact.clone().visit_exprs(&mut |expr| {
-        if matches!(expr, ResolvedExpr::Call(_, ResolvedCall::Func(_), _)) {
-            ok = false;
-        }
-        expr
-    });
-    ok
 }

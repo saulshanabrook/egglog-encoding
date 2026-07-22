@@ -104,18 +104,20 @@ impl ProofInstrumentor<'_> {
             .values()
             .filter_map(|sort| sort.rebuild_container_normalizer())
             .collect();
+        let value_term_validators = self
+            .egraph
+            .type_info
+            .sorts
+            .values()
+            .filter_map(|sort| sort.value_term_validator())
+            .collect();
         let (mut proof_store, proof_id) = proof_store_from_term(
             &self.egraph.proof_state.proof_names,
             termdag,
             proof_term_id,
             &self.egraph.proof_check_program,
             container_normalizers,
-            self.egraph
-                .type_info
-                .sorts
-                .values()
-                .filter_map(|sort| sort.value_term_validator())
-                .collect(),
+            value_term_validators,
         );
 
         // Remove globals from the proof
@@ -130,17 +132,8 @@ impl ProofInstrumentor<'_> {
         // this is stable across runs and backends.
         let proof = proof_store.get(proof_id);
         let extra_rule_removed = match proof.justification() {
-            // A side-condition marker (`Eval`) is only checkable inside its
-            // rule, so keep the wrapping rule in that case.
             Justification::Rule { premise_proofs, .. } => match premise_proofs.as_slice() {
-                [premise_proof_id]
-                    if !matches!(
-                        proof_store.get(*premise_proof_id).justification(),
-                        Justification::Eval
-                    ) =>
-                {
-                    *premise_proof_id
-                }
+                [premise_proof_id] => *premise_proof_id,
                 _ => proof_id,
             },
             _ => proof_id,

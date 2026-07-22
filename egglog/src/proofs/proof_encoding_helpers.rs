@@ -23,7 +23,6 @@ pub(crate) struct EncodingNames {
     pub(crate) ast_sort: String,
     pub(crate) proof_datatype: String,
     pub(crate) fiat_constructor: String,
-    pub(crate) computed_constructor: String,
     pub(crate) rule_constructor: String,
     pub(crate) merge_fn_idx_constructor: String,
     pub(crate) merge_fn_row_constructor: String,
@@ -77,7 +76,6 @@ impl EncodingNames {
             ast_sort: symbol_gen.fresh("Ast"),
             proof_datatype: symbol_gen.fresh("Proof"),
             fiat_constructor: symbol_gen.fresh("Fiat"),
-            computed_constructor: symbol_gen.fresh("Computed"),
             rule_constructor: symbol_gen.fresh("Rule"),
             merge_fn_idx_constructor: symbol_gen.fresh("MergeIdx"),
             merge_fn_row_constructor: symbol_gen.fresh("MergeRow"),
@@ -364,7 +362,6 @@ impl ProofInstrumentor<'_> {
             ref ast_sort,
             ref proof_datatype,
             ref fiat_constructor,
-            ref computed_constructor,
             ref rule_constructor,
             ref merge_fn_idx_constructor,
             ref merge_fn_row_constructor,
@@ -396,12 +393,8 @@ impl ProofInstrumentor<'_> {
 
 {to_ast_str}
 
-;; Fiat justification for top-level equalities, gives two terms t1 = t2 for the proposition being justified
+;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the proposition being justified
 (function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
-;; justification for a primitive computation in a query: proves t = t where t is
-;; a chain of primitive applications over literals/variables, re-checkable
-;; structurally (no constructors or functions)
-(function {computed_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
 ;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
 (function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
 

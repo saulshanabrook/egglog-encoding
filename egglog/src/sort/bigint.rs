@@ -60,6 +60,7 @@ impl BaseSort for BigIntSort {
             }),
         ))
     }
+
     type Base = Z;
 
     fn name(&self) -> &str {
