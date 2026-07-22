@@ -1,5 +1,34 @@
 # Compiling schedules and rules into the dataflow
 
+## Approved shared-crate roadmap (July 2026)
+
+Four changes outside the dd crate, in payoff order (approved in principle;
+sequence them as the compiled path engages):
+
+1. **`Backend::run_schedule` hook** (`egglog-backend-trait` + frontend
+   lowering) — DONE on this branch, needs review. Everything below builds on
+   it; the reference backend is unchanged by construction.
+2. **Primitive metadata** (`ExternalFunction` name/purity flags, populated by
+   `add_primitive!`) — turns the dynamic echo-or-unit safety guard into a
+   static prepare-time whitelist and unblocks compiling body primitives
+   (`!=` guards). Small.
+3. **Keyed `get-fresh!`** (term encoding) — the mint takes the hash-cons key
+   as arguments; the memo dictionary then coincides with the view's
+   key→eclass map, unlocking constructor compilation. Includes deciding
+   whether relation epoch columns exist at all for monotone-fire-aware
+   backends. Medium.
+4. **Shared append-only interner** (`core-relations`) — `Database` clones
+   share interner state instead of deep-copying it, making value-creating
+   primitives compilable and deleting the clone cost + dynamic guard
+   entirely. Medium; wants reference-side benchmarking.
+
+Deliberately NOT planned: widening `Value` to u64 for stateless hashed mints
+(the memoizing mint makes it unnecessary).
+
+Needing NO shared-crate changes, and on the critical path first: nested loop
+scopes (the spliced rebuild schedule shape) and multi-write-leaf phasing
+(the rebuild sequence's cleanup/parent/rebuilding leaves).
+
 Status: investigation (see `tests/rebuild_fixpoint.rs` for a passing prototype
 of the rebuild fixpoint). Follows the perf work on `oflatt-dd-perf`.
 
