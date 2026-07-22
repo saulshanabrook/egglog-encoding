@@ -46,7 +46,7 @@ fn bigint_compare_validator(
 pub struct BigIntSort;
 
 impl BaseSort for BigIntSort {
-    fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
+    fn prim_value_constructor(&self) -> Option<(String, PrimitiveValidator)> {
         // `bigint_term` termifies a value as `(from-string "<n>")`.
         Some((
             "from-string".to_owned(),

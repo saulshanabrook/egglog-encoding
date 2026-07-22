@@ -89,7 +89,7 @@ fn checked_bigrat_log(a: Q) -> Option<Q> {
 pub struct BigRatSort;
 
 impl BaseSort for BigRatSort {
-    fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
+    fn prim_value_constructor(&self) -> Option<(String, PrimitiveValidator)> {
         // `bigrat_term` termifies a value as `(bigrat <numer> <denom>)` over
         // BigInt value terms.
         Some((

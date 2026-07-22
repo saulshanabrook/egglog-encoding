@@ -851,9 +851,9 @@ pub trait BaseSort: Any + Send + Sync + Debug {
     /// For a base sort whose values termify as an application rather than a
     /// literal (e.g. a BigInt's `(from-string "…")`): the canonical head and a
     /// validator recognizing that value term form (see
-    /// [`Sort::value_term_validator`]). `None` (the default) for literal-backed
+    /// [`Sort::prim_value_constructor`]). `None` (the default) for literal-backed
     /// sorts.
-    fn value_term_validator(&self) -> Option<(String, crate::PrimitiveValidator)> {
+    fn prim_value_constructor(&self) -> Option<(String, crate::PrimitiveValidator)> {
         None
     }
 
@@ -903,8 +903,8 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
         self.0.reconstruct_termdag(base_values, value, termdag)
     }
 
-    fn value_term_validator(&self) -> Option<(String, crate::PrimitiveValidator)> {
-        self.0.value_term_validator()
+    fn prim_value_constructor(&self) -> Option<(String, crate::PrimitiveValidator)> {
+        self.0.prim_value_constructor()
     }
 }
 

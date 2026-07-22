@@ -98,7 +98,7 @@ pub trait Sort: Any + Send + Sync + Debug {
     /// validator that recognizes/normalizes that value term form. Proof
     /// checking uses it to accept a reflexive `Fiat` over a termified base
     /// value. `None` (the default) for literal-backed and non-base sorts.
-    fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
+    fn prim_value_constructor(&self) -> Option<(String, PrimitiveValidator)> {
         None
     }
 

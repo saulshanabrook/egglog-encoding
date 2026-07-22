@@ -574,6 +574,28 @@ fn format_substitution(term_dag: &TermDag, substitution: &HashMap<String, TermId
 }
 
 impl ProofStore {
+    /// Whether `term` is a termified base value the checker can re-evaluate
+    /// from the term alone: a literal, or a sort's canonical value term form
+    /// (`Sort::prim_value_constructor`) over such arguments, reproducing exactly
+    /// this term. A reflexive `Fiat` over such a term is self-evident. Terms
+    /// carrying an existence claim never qualify: eq-sort and container heads
+    /// are not value-term heads.
+    pub(super) fn reflexive_value_term(&mut self, term: TermId) -> bool {
+        match self.term_dag.get(term).clone() {
+            Term::Lit(_) => true,
+            Term::Var(_) => false,
+            Term::App(head, args) => {
+                let Some(validator) = self.prim_value_constructors.get(&head).cloned() else {
+                    return false;
+                };
+                if !args.iter().all(|a| self.reflexive_value_term(*a)) {
+                    return false;
+                }
+                validator(&mut self.term_dag, &args) == Some(term)
+            }
+        }
+    }
+
     /// Check that a proof is valid with respect to a typechecked program.
     pub(crate) fn check_proof(
         &mut self,

@@ -112,7 +112,7 @@ pub(crate) fn proof_store_from_term(
     proof_term: TermId,
     prog: &Vec<ResolvedNCommand>,
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    value_term_validators: HashMap<String, PrimitiveValidator>,
+    prim_value_constructors: HashMap<String, PrimitiveValidator>,
 ) -> (ProofStore, ProofId) {
     let (raw_store, raw_proof_id) =
         RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
@@ -121,7 +121,7 @@ pub(crate) fn proof_store_from_term(
         raw_store,
         raw_proof_id,
         container_normalizers,
-        value_term_validators,
+        prim_value_constructors,
     )
 }
 
@@ -187,10 +187,10 @@ pub struct ProofStore {
     /// normalizer), used by [`ProofStore::normalize_container`].
     container_normalizers: HashMap<String, PrimitiveValidator>,
     /// Canonical value-term head -> its sort's recognizer, for base sorts whose
-    /// values termify as applications (see `Sort::value_term_validator`). Used
+    /// values termify as applications (see `Sort::prim_value_constructor`). Used
     /// to accept a reflexive `Fiat` over a termified base value
     /// ([`ProofStore::reflexive_value_term`]).
-    value_term_validators: HashMap<String, PrimitiveValidator>,
+    pub(super) prim_value_constructors: HashMap<String, PrimitiveValidator>,
 }
 
 impl fmt::Debug for ProofStore {
@@ -505,28 +505,6 @@ impl ProofStore {
         validator(&mut self.term_dag, &args).unwrap_or(term_id)
     }
 
-    /// Whether `term` is a termified base value the checker can re-evaluate
-    /// from the term alone: a literal, or a sort's canonical value term form
-    /// (`Sort::value_term_validator`) over such arguments, reproducing exactly
-    /// this term. A reflexive `Fiat` over such a term is self-evident. Terms
-    /// carrying an existence claim never qualify: eq-sort and container heads
-    /// are not value-term heads.
-    pub(super) fn reflexive_value_term(&mut self, term: TermId) -> bool {
-        match self.term_dag.get(term).clone() {
-            Term::Lit(_) => true,
-            Term::Var(_) => false,
-            Term::App(head, args) => {
-                let Some(validator) = self.value_term_validators.get(&head).cloned() else {
-                    return false;
-                };
-                if !args.iter().all(|a| self.reflexive_value_term(*a)) {
-                    return false;
-                }
-                validator(&mut self.term_dag, &args) == Some(term)
-            }
-        }
-    }
-
     /// Get the [`Proof`] with the given id.
     /// Panics if the id is invalid (if it came from another proof store, for example).
     pub fn get(&self, proof_id: ProofId) -> &Proof {
@@ -550,14 +528,14 @@ impl ProofStore {
         raw_store: RawProofStore,
         raw_proof_id: RawProofId,
         container_normalizers: HashMap<String, PrimitiveValidator>,
-        value_term_validators: HashMap<String, PrimitiveValidator>,
+        prim_value_constructors: HashMap<String, PrimitiveValidator>,
     ) -> (ProofStore, ProofId) {
         let mut store = ProofStore {
             term_dag: raw_store.term_dag.clone(),
             proof_id: HashMap::default(),
             id_to_proof: DenseIdMap::new(),
             container_normalizers,
-            value_term_validators,
+            prim_value_constructors,
         };
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
