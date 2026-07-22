@@ -89,6 +89,20 @@ fn checked_bigrat_log(a: Q) -> Option<Q> {
 pub struct BigRatSort;
 
 impl BaseSort for BigRatSort {
+    fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
+        // `bigrat_term` termifies a value as `(bigrat <numer> <denom>)` over
+        // BigInt value terms.
+        Some((
+            "bigrat".to_owned(),
+            Arc::new(|termdag: &mut TermDag, args: &[TermId]| {
+                let [numer, denom] = args else { return None };
+                let numer = bigint::bigint_from_term(termdag, *numer)?;
+                let denom = bigint::bigint_from_term(termdag, *denom)?;
+                (!denom.is_zero()).then(|| bigrat_term(termdag, BigRational::new(numer, denom)))
+            }),
+        ))
+    }
+
     type Base = Q;
 
     fn name(&self) -> &str {

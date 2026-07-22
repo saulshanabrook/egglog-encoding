@@ -104,13 +104,20 @@ impl ProofInstrumentor<'_> {
             .values()
             .filter_map(|sort| sort.rebuild_container_normalizer())
             .collect();
+        let value_term_validators = self
+            .egraph
+            .type_info
+            .sorts
+            .values()
+            .filter_map(|sort| sort.value_term_validator())
+            .collect();
         let (mut proof_store, proof_id) = proof_store_from_term(
             &self.egraph.proof_state.proof_names,
             termdag,
             proof_term_id,
             &self.egraph.proof_check_program,
             container_normalizers,
-            self.egraph.type_info.primitive_validators(),
+            value_term_validators,
         );
 
         // Remove globals from the proof

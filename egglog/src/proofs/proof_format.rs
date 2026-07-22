@@ -112,7 +112,7 @@ pub(crate) fn proof_store_from_term(
     proof_term: TermId,
     prog: &Vec<ResolvedNCommand>,
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    primitive_validators: HashMap<String, Vec<PrimitiveValidator>>,
+    value_term_validators: HashMap<String, PrimitiveValidator>,
 ) -> (ProofStore, ProofId) {
     let (raw_store, raw_proof_id) =
         RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
@@ -121,7 +121,7 @@ pub(crate) fn proof_store_from_term(
         raw_store,
         raw_proof_id,
         container_normalizers,
-        primitive_validators,
+        value_term_validators,
     )
 }
 
@@ -186,10 +186,11 @@ pub struct ProofStore {
     /// Container constructor head -> its validator (the container's term
     /// normalizer), used by [`ProofStore::normalize_container`].
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    /// Primitive name -> the validators of its overloads, used to accept a
-    /// reflexive `Fiat` over a primitive-built term by re-evaluation
-    /// ([`ProofStore::reflexive_primitive_term`]).
-    primitive_validators: HashMap<String, Vec<PrimitiveValidator>>,
+    /// Canonical value-term head -> its sort's recognizer, for base sorts whose
+    /// values termify as applications (see `Sort::value_term_validator`). Used
+    /// to accept a reflexive `Fiat` over a termified base value
+    /// ([`ProofStore::reflexive_value_term`]).
+    value_term_validators: HashMap<String, PrimitiveValidator>,
 }
 
 impl fmt::Debug for ProofStore {
@@ -504,27 +505,24 @@ impl ProofStore {
         validator(&mut self.term_dag, &args).unwrap_or(term_id)
     }
 
-    /// Whether `term` is a base-value computation the checker can re-evaluate
-    /// from the term alone: a literal, or an application of a base-value
-    /// primitive (any overload) to such arguments whose validator reproduces
-    /// exactly this term. A reflexive `Fiat` over such a term is self-evident.
-    /// Terms that carry an existence claim stay excluded: eq-sort terms have
-    /// constructor heads (absent from the validator map), and container terms'
-    /// primitives are filtered out of `TypeInfo::primitive_validators`.
-    pub(super) fn reflexive_primitive_term(&mut self, term: TermId) -> bool {
+    /// Whether `term` is a termified base value the checker can re-evaluate
+    /// from the term alone: a literal, or a sort's canonical value term form
+    /// (`Sort::value_term_validator`) over such arguments, reproducing exactly
+    /// this term. A reflexive `Fiat` over such a term is self-evident. Terms
+    /// carrying an existence claim never qualify: eq-sort and container heads
+    /// are not value-term heads.
+    pub(super) fn reflexive_value_term(&mut self, term: TermId) -> bool {
         match self.term_dag.get(term).clone() {
             Term::Lit(_) => true,
             Term::Var(_) => false,
             Term::App(head, args) => {
-                let Some(validators) = self.primitive_validators.get(&head).cloned() else {
+                let Some(validator) = self.value_term_validators.get(&head).cloned() else {
                     return false;
                 };
-                if !args.iter().all(|a| self.reflexive_primitive_term(*a)) {
+                if !args.iter().all(|a| self.reflexive_value_term(*a)) {
                     return false;
                 }
-                validators
-                    .iter()
-                    .any(|v| v(&mut self.term_dag, &args) == Some(term))
+                validator(&mut self.term_dag, &args) == Some(term)
             }
         }
     }
@@ -552,14 +550,14 @@ impl ProofStore {
         raw_store: RawProofStore,
         raw_proof_id: RawProofId,
         container_normalizers: HashMap<String, PrimitiveValidator>,
-        primitive_validators: HashMap<String, Vec<PrimitiveValidator>>,
+        value_term_validators: HashMap<String, PrimitiveValidator>,
     ) -> (ProofStore, ProofId) {
         let mut store = ProofStore {
             term_dag: raw_store.term_dag.clone(),
             proof_id: HashMap::default(),
             id_to_proof: DenseIdMap::new(),
             container_normalizers,
-            primitive_validators,
+            value_term_validators,
         };
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));

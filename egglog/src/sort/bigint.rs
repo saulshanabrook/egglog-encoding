@@ -46,6 +46,21 @@ fn bigint_compare_validator(
 pub struct BigIntSort;
 
 impl BaseSort for BigIntSort {
+    fn value_term_validator(&self) -> Option<(String, PrimitiveValidator)> {
+        // `bigint_term` termifies a value as `(from-string "<n>")`.
+        Some((
+            "from-string".to_owned(),
+            Arc::new(|termdag: &mut TermDag, args: &[TermId]| {
+                let [arg] = args else { return None };
+                let Term::Lit(Literal::String(value)) = termdag.get(*arg) else {
+                    return None;
+                };
+                let parsed: BigInt = value.parse().ok()?;
+                Some(bigint_term(termdag, parsed))
+            }),
+        ))
+    }
+
     type Base = Z;
 
     fn name(&self) -> &str {

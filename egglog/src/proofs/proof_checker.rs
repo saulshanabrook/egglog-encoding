@@ -602,7 +602,7 @@ impl ProofStore {
                 // Accept a reflexive equality over a literal or a
                 // primitive-closed term (re-evaluated from the term alone), or
                 // any equality established by the global actions.
-                if (proof.lhs() == proof.rhs() && self.reflexive_primitive_term(proof.lhs()))
+                if (proof.lhs() == proof.rhs() && self.reflexive_value_term(proof.lhs()))
                     || ctx.in_globals(proof.lhs(), proof.rhs())
                 {
                     Ok(Proposition::new(proof.lhs(), proof.rhs()))
