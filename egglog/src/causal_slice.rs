@@ -8909,6 +8909,7 @@ fn prepare_observation_arg(
     dependencies: &mut DepArena,
     equality_forest: &EqualityForest,
     opaque_equality_error: Option<&DeferredUnsupported>,
+    app_index: &mut WaveAppIndex,
     selected_dependencies: &mut IndexSet<DepId>,
 ) -> Result<(TypedEndpoint, WitnessId), CausalSliceError> {
     let (value, witness) = match arg {
@@ -8979,6 +8980,7 @@ fn prepare_observation_arg(
                         dependencies,
                         equality_forest,
                         opaque_equality_error,
+                        app_index,
                         selected_dependencies,
                     )
                 })
@@ -9086,7 +9088,6 @@ fn prepare_observation_arg(
                 function: function.clone(),
                 children: child_witnesses,
             };
-            let syntax = witnesses.intern_syntax(&node)?;
             let candidates =
                 constructor_rows
                     .get(function)
@@ -9121,94 +9122,15 @@ fn prepare_observation_arg(
             {
                 witness
             } else {
-                let previous_instances = witnesses
-                    .syntax_instances
-                    .get(&syntax)
-                    .cloned()
-                    .unwrap_or_default();
-                if previous_instances.is_empty() {
-                    log::debug!(
-                        "causal observation row function={function} inputs={:?} output={value:?} has no prior syntax instance",
-                        children
-                            .iter()
-                            .map(|(endpoint, _)| endpoint.value)
-                            .collect::<Vec<_>>()
-                    );
-                    return Err(CausalSliceError::Unsupported {
-                        location: format!("positive check constructor `{function}`"),
-                        reason: "an exact match-time row without prior constructor-row provenance"
-                            .to_owned(),
-                    });
-                }
-                let mut selected_availability = None;
-                for previous in previous_instances {
-                    let Some(previous_output) = witnesses.endpoint(previous) else {
-                        continue;
-                    };
-                    let WitnessNode::App {
-                        children: previous_children,
-                        ..
-                    } = witnesses.nodes[previous.index()].node.clone()
-                    else {
-                        continue;
-                    };
-                    if previous_children.len() != children.len() {
-                        continue;
-                    }
-                    let mut availability = witnesses.availability(previous);
-                    let mut child_changed = false;
-                    let mut complete = true;
-                    for ((previous_child, (current_endpoint, current_child)), child_sort) in
-                        previous_children.iter().zip(&children).zip(input_sorts)
-                    {
-                        availability = dependencies
-                            .and(availability, witnesses.availability(*current_child))?;
-                        let Some(previous_endpoint) = witnesses.endpoint(*previous_child) else {
-                            complete = false;
-                            break;
-                        };
-                        if previous_endpoint == current_endpoint.value {
-                            continue;
-                        }
-                        child_changed = true;
-                        let Some(explanation) = equality_forest.explain(
-                            &TypedEndpoint {
-                                sort: child_sort.clone(),
-                                value: previous_endpoint,
-                            },
-                            current_endpoint,
-                        ) else {
-                            complete = false;
-                            break;
-                        };
-                        for dependency in explanation {
-                            availability = dependencies.and(availability, dependency)?;
-                        }
-                    }
-                    if !complete {
-                        continue;
-                    }
-                    if !child_changed && previous_output != value {
-                        let Some(explanation) = equality_forest.explain(
-                            &TypedEndpoint {
-                                sort: sort.to_owned(),
-                                value: previous_output,
-                            },
-                            &TypedEndpoint {
-                                sort: sort.to_owned(),
-                                value,
-                            },
-                        ) else {
-                            continue;
-                        };
-                        for dependency in explanation {
-                            availability = dependencies.and(availability, dependency)?;
-                        }
-                    }
-                    selected_availability = Some(availability);
-                    break;
-                }
-                let availability = match selected_availability {
+                let availability = match congruent_app_availability_explained(
+                    witnesses,
+                    &node,
+                    value,
+                    equality_forest,
+                    dependencies,
+                    None,
+                    app_index,
+                )? {
                     Some(availability) => availability,
                     None if opaque_equality_error.is_some() => {
                         let error = opaque_equality_error.expect("checked as present");
@@ -9266,6 +9188,7 @@ fn observation_roots(
     }
 
     let mut root = DepArena::EMPTY;
+    let mut app_index = WaveAppIndex::default();
     for (check, batches) in checks.iter().zip(traces) {
         if batches
             .iter()
@@ -9329,6 +9252,7 @@ fn observation_roots(
                     dependencies,
                     equality_forest,
                     opaque_equality_error,
+                    &mut app_index,
                     &mut observation_witness_dependencies,
                 )?;
             }
@@ -9346,6 +9270,7 @@ fn observation_roots(
                     dependencies,
                     equality_forest,
                     opaque_equality_error,
+                    &mut app_index,
                     &mut observation_witness_dependencies,
                 )?;
             }
@@ -12259,6 +12184,56 @@ fn congruent_app_availability(
     snapshot: Option<&WitnessSnapshot>,
     app_index: &mut WaveAppIndex,
 ) -> Result<Option<DepId>, CausalSliceError> {
+    congruent_app_availability_with_mode(
+        witnesses,
+        expected,
+        output,
+        equality_forest,
+        dependencies,
+        snapshot,
+        app_index,
+        CongruenceEqualityMode::Deferred,
+    )
+}
+
+fn congruent_app_availability_explained(
+    witnesses: &WitnessArena,
+    expected: &WitnessNode,
+    output: Value,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+    snapshot: Option<&WitnessSnapshot>,
+    app_index: &mut WaveAppIndex,
+) -> Result<Option<DepId>, CausalSliceError> {
+    congruent_app_availability_with_mode(
+        witnesses,
+        expected,
+        output,
+        equality_forest,
+        dependencies,
+        snapshot,
+        app_index,
+        CongruenceEqualityMode::Explained,
+    )
+}
+
+#[derive(Clone, Copy)]
+enum CongruenceEqualityMode {
+    Deferred,
+    Explained,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn congruent_app_availability_with_mode(
+    witnesses: &WitnessArena,
+    expected: &WitnessNode,
+    output: Value,
+    equality_forest: &EqualityForest,
+    dependencies: &mut DepArena,
+    snapshot: Option<&WitnessSnapshot>,
+    app_index: &mut WaveAppIndex,
+    equality_mode: CongruenceEqualityMode,
+) -> Result<Option<DepId>, CausalSliceError> {
     let WitnessNode::App {
         sort,
         function,
@@ -12308,6 +12283,7 @@ fn congruent_app_availability(
             .rev()
             .copied()
             .filter(|position| *position < visible),
+        equality_mode,
     )
 }
 
@@ -12342,6 +12318,7 @@ fn canonical_app_signature(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn congruent_app_availability_from_positions(
     witnesses: &WitnessArena,
     expected: &WitnessNode,
@@ -12350,6 +12327,7 @@ fn congruent_app_availability_from_positions(
     dependencies: &mut DepArena,
     candidates: &[WitnessId],
     positions: impl IntoIterator<Item = usize>,
+    equality_mode: CongruenceEqualityMode,
 ) -> Result<Option<DepId>, CausalSliceError> {
     let WitnessNode::App { sort, children, .. } = expected else {
         return Err(CausalSliceError::Invariant(
@@ -12404,11 +12382,22 @@ fn congruent_app_availability_from_positions(
                 sort: current_sort.clone(),
                 value: current_endpoint,
             };
-            if !equality_forest.are_equal(&left, &right) {
-                complete = false;
-                break;
+            match equality_mode {
+                CongruenceEqualityMode::Deferred => {
+                    if !equality_forest.are_equal(&left, &right) {
+                        complete = false;
+                        break;
+                    }
+                    support.push(dependencies.equality(left, right)?);
+                }
+                CongruenceEqualityMode::Explained => {
+                    let Some(explanation) = equality_forest.explain(&left, &right) else {
+                        complete = false;
+                        break;
+                    };
+                    support.extend(explanation);
+                }
             }
-            support.push(dependencies.equality(left, right)?);
         }
         if !complete {
             continue;
@@ -12422,10 +12411,20 @@ fn congruent_app_availability_from_positions(
                 sort: sort.clone(),
                 value: output,
             };
-            if !equality_forest.are_equal(&left, &right) {
-                continue;
+            match equality_mode {
+                CongruenceEqualityMode::Deferred => {
+                    if !equality_forest.are_equal(&left, &right) {
+                        continue;
+                    }
+                    support.push(dependencies.equality(left, right)?);
+                }
+                CongruenceEqualityMode::Explained => {
+                    let Some(explanation) = equality_forest.explain(&left, &right) else {
+                        continue;
+                    };
+                    support.extend(explanation);
+                }
             }
-            support.push(dependencies.equality(left, right)?);
         }
         let mut availability = DepArena::EMPTY;
         for dependency in support {
@@ -12472,6 +12471,7 @@ fn congruent_app_availability_linear(
         dependencies,
         candidates,
         (0..visible).rev(),
+        CongruenceEqualityMode::Deferred,
     )
 }
 

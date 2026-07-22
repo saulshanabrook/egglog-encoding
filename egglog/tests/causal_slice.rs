@@ -4589,7 +4589,7 @@ fn deeply_nested_single_fact_check_uses_the_traced_single_bag_plan() {
 }
 
 #[test]
-fn observation_only_congruence_without_prior_syntax_fails_closed() {
+fn observation_only_congruence_uses_prior_constructor_and_equality_support() {
     let source = r#"
         (datatype Expr (A i64) (B i64) (Wrap Expr))
         (relation Seed ())
@@ -4605,14 +4605,22 @@ fn observation_only_congruence_without_prior_syntax_fails_closed() {
         (check (Result (Wrap (B 1))))
     "#;
 
-    let error = causal_slice_program(Some("missing-congruence-producer.egg".to_owned()), source)
-        .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("exact match-time row without prior constructor-row provenance"),
-        "{error}"
-    );
+    let first =
+        causal_slice_program(Some("observation-only-congruence.egg".to_owned()), source).unwrap();
+    let second =
+        causal_slice_program(Some("observation-only-congruence.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    assert!(has_replay_firing(&first.source, "unify", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("observation-only-congruence-replay.egg".to_owned()),
+                &first.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]

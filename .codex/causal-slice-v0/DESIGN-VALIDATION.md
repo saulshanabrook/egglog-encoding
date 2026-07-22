@@ -36,12 +36,13 @@ final registry.
 | a fresh immutable container result requires an extraction or raw Value serialization | Falsified | exact child witness syntax and the captured registered specialization are sufficient |
 | a proof validator implies deterministic primitive replay | Falsified | unmarked custom Pure + validator specialization rejects; registration must assert the stronger contract |
 | one outer container Value identifies historical contents across rebuild | Falsified | traced dirty IDs prove same-ID semantic change; v0 rejects rather than reusing current contents |
-| Hardboiled is currently blocked by `VecExpr` | Falsified | its next failure is rewrite c145's compiler-generated root alias being rejected before exact substitution seeding |
+| Hardboiled is currently blocked by `VecExpr` | Falsified | it now crosses the fresh `VecExpr`, rewrite-root alias, and positive-check `Call` syntax boundaries; its retained `Type` equality currently crosses an untyped raw union edge |
 
-The next narrowly scoped semantic patch should distinguish compiler-generated
-aliases that are exactly recoverable from registered substitutions/captured
-source bindings from genuinely head-only variables. It should preserve the
-constructor-lookup criterion for variables that lack that exact mapping.
+The next diagnostic should identify the exact raw commit-forest edge on
+Hardboiled's retained `Type` equality path and classify its producer. Only then
+should the smallest missing typed equality receipt be added. Mutable container
+versioning remains deferred until a retained path actually reaches that
+boundary.
 
 ## Current checkpoint at `0d229525`
 

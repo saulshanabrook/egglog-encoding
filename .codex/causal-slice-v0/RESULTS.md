@@ -1,5 +1,64 @@
 # Causal Slice v0 Results
 
+## Observation-congruence checkpoint: 2026-07-21
+
+This checkpoint starts from clean, pushed commit
+`cb203b5aacc89cc5c1459f332eaa8e89bfa78812`. The verified live PR #23 head
+remains `4940be37429e7adf16cc43283b38508e692cf045`, which is the exact merge
+base. Before this change the branch was 92 commits ahead with stable aggregate
+patch ID `2775812a3d74a11928074797378ffd28637683ac`; the worktree was clean.
+
+The positive-check constructor path now uses the same wave application index as
+rule-body and action reconstruction. It searches prior applications of the same
+typed constructor, then accepts an observation alias only when every changed
+child and output has a complete typed equality explanation. The check marker
+continues to provide row identity only; it is never treated as a producer.
+
+The checked-in `Wrap(A 1)` / `Wrap(B 1)` canary was changed from an expected
+failure into a deterministic replay test. It retains the actual union and passes
+ordinary replay plus the unchanged strict proof checker. A first implementation
+used the hot path's deliberately deferred equality nodes and changed the
+fail-closed diagnostic in the retained-subsume canary. That experiment was not
+kept. The accepted implementation adds an observation-only `Explained` mode,
+leaving the Eggcc-oriented deferred path unchanged.
+
+Fresh validation on the accepted implementation:
+
+- `cargo test -p egglog --test causal_slice`: 136 passed;
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- `make check`: passed, including formatting, warning-denying Clippy, Python
+  checks/tests, the complete Rust workspace suite, doctests, and the DD timing
+  summary gate;
+- `cargo fmt --all --check`: passed;
+- `git diff --check`: passed; and
+- the focused observation-congruence and retained-subsume tests both passed
+  before the complete causal-slice run.
+
+The fresh release Hardboiled probe moved past the earlier positive-check `Call`
+row error. Its current exact boundary is:
+
+```text
+retained equality TypedEndpoint { sort: "Type", ... } =
+  TypedEndpoint { sort: "Type", ... }
+causal slice v0 does not support a successful-union path containing an untyped
+or opaque edge
+```
+
+This is not a container-version failure. It proves that one equality needed by
+the retained observation is connected in the raw native commit forest but one
+edge lacks a typed causal label. The exact edge class—rule-originated,
+congruence/rebuild, or another opaque producer—has not yet been classified.
+
+Container behavior is unchanged at this checkpoint. Fresh replay-safe `vec-of`
+values remain supported. A same-ID container whose contents change during
+rebuild is detected from its dirty outer ID and rejected because the trace still
+lacks an immutable pre/post version and the equalities responsible for the
+change. That rejection is currently program-global rather than retained-slice
+local. Hardboiled has still not demonstrated that this container boundary lies
+on its retained proof path.
+
+No performance benchmark was run for this semantic checkpoint.
+
 ## Hardboiled replay-frontier checkpoint: 2026-07-21
 
 This continuation started from `546a23a177fb1df65c22573fbf0770550ee76593`.
