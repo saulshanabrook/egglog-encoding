@@ -2,13 +2,10 @@
 source: egglog/tests/files.rs
 expression: snapshot
 ---
-array.egg
-bdd.egg
 before-proofs.egg
 bignum.egg
 complex-merge-prim.egg
 container-rebuild.egg
-cyk.egg
 cykjson.egg
 eggcc-extraction.egg
 eqsat-basic-multiset.egg
@@ -17,14 +14,12 @@ factoring-multisets.egg
 fusion.egg
 hardboiled_conv1d_128.egg
 herbie-tutorial.egg
-herbie.egg
 interval.egg
 lambda.egg
 levenshtein-distance.egg
 looking_up_global.egg
 luminal-llama.egg
 map.egg
-math.egg
 merge-action-block.egg
 merge_read.egg
 multiset.egg
@@ -46,7 +41,6 @@ towers-of-hanoi.egg
 tricky-type-checking.egg
 tuple-output.egg
 typed_primitive_unstable_app.egg
-typeinfer.egg
 uf-extraction.egg
 unsafe-seminaive-read-prim.egg
 unsafe-seminaive.egg

@@ -11,7 +11,7 @@ use crate::{
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
-    util::{FreshGen, HashMap, SymbolGen},
+    util::{FreshGen, HashMap, HashSet, SymbolGen},
 };
 
 /// Holds all the names used in proof encoding.
@@ -518,8 +518,29 @@ pub enum ProofEncodingUnsupportedReason {
 
 /// Checks whether a desugared program supports proof encoding.
 pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInfo) -> bool {
+    // Globals defined anywhere in the program, including inside `(push)`/`(pop)`
+    // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
+    // unregisters its globals), so checking against it alone misreads a popped
+    // global's action-side lookup as an unsupported function lookup.
+    let let_globals: HashSet<String> = commands
+        .iter()
+        .filter_map(|c| match c {
+            GenericCommand::Function {
+                name,
+                let_binding: true,
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
     for command in commands {
-        if command_supports_proof_encoding(command, type_info).is_err() {
+        if let Err(reason) = command_supports_proof_encoding_impl(command, type_info, &let_globals)
+        {
+            let cmd = command.to_string();
+            log::debug!(
+                "program does not support proofs: {reason}\n  command: {}",
+                &cmd[..cmd.len().min(160)]
+            );
             return false;
         }
     }
@@ -546,15 +567,40 @@ fn expr_primitives_have_validators(expr: &ResolvedExpr) -> bool {
 }
 
 /// Check if an action contains non-global function lookups in any of its expressions
-fn action_has_function_lookup(action: &ResolvedAction, type_info: &TypeInfo) -> bool {
+fn action_has_function_lookup(
+    action: &ResolvedAction,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
+) -> bool {
     let mut has_lookup = false;
     action.clone().visit_exprs(&mut |expr| {
-        if type_info.expr_has_function_lookup(&expr).is_some() {
+        if expr_has_non_global_lookup(&expr, type_info, extra_globals) {
             has_lookup = true;
         }
         expr
     });
     has_lookup
+}
+
+/// Like [`TypeInfo::expr_has_function_lookup`], but also treating names in
+/// `extra_globals` as globals (see [`program_supports_proofs`]).
+fn expr_has_non_global_lookup(
+    expr: &ResolvedExpr,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
+) -> bool {
+    use crate::ast::GenericExpr;
+    expr.find(&mut |e| {
+        if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
+            && func_type.subtype == crate::ast::FunctionSubtype::Custom
+            && !type_info.is_global(&func_type.name)
+            && !extra_globals.contains(&func_type.name)
+        {
+            return Some(span.clone());
+        }
+        None
+    })
+    .is_some()
 }
 
 /// Check if a fact contains a primitive expression whose result needs a stored term proof.
@@ -576,6 +622,17 @@ fn fact_has_eq_sort_primitive_result(fact: &ResolvedFact) -> bool {
 pub(crate) fn command_supports_proof_encoding(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
+) -> Result<(), ProofEncodingUnsupportedReason> {
+    command_supports_proof_encoding_impl(command, type_info, &HashSet::default())
+}
+
+/// [`command_supports_proof_encoding`] with `extra_globals`: let-bound names
+/// treated as globals even when out of scope in `type_info` (see
+/// [`program_supports_proofs`]).
+fn command_supports_proof_encoding_impl(
+    command: &ResolvedCommand,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
     // database; the term/proof encoding can't represent that.
@@ -646,7 +703,8 @@ pub(crate) fn command_supports_proof_encoding(
     // (global function calls are allowed - they get desugared to constructors)
     let mut has_function_lookup_in_action = false;
     command.clone().visit_actions(&mut |action| {
-        has_function_lookup_in_action |= action_has_function_lookup(&action, type_info);
+        has_function_lookup_in_action |=
+            action_has_function_lookup(&action, type_info, extra_globals);
         action
     });
 
@@ -656,7 +714,7 @@ pub(crate) fn command_supports_proof_encoding(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && type_info.expr_has_function_lookup(&merge.result).is_some()
+        && expr_has_non_global_lookup(&merge.result, type_info, extra_globals)
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }
@@ -724,8 +782,8 @@ pub(crate) fn command_supports_proof_encoding(
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
         GenericCommand::Extract(_, expr, variants) => {
-            if type_info.expr_has_function_lookup(expr).is_some()
-                || type_info.expr_has_function_lookup(variants).is_some()
+            if expr_has_non_global_lookup(expr, type_info, extra_globals)
+                || expr_has_non_global_lookup(variants, type_info, extra_globals)
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
             } else {

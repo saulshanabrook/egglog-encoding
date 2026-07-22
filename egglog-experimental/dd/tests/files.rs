@@ -69,7 +69,7 @@ const DEBUG_SUBSET: &[&str] = &[
 ///   `container-proofs`, `container-fail`, `container-reorder-proofs`,
 ///   `custom-container-output-rebuild`, `datatypes`,
 ///   `nested-container-dirty-propagation`, `hardboiled_conv1d_32`,
-///   `repro-querybug3`.
+///   `repro-querybug3`, `typeinfer`.
 /// - `input` from an external CSV whose path is relative to the corpus dir; the
 ///   DD harness runs from the `dd` crate root, so the file cannot be found:
 ///   `string_quotes`.
@@ -85,6 +85,7 @@ const KNOWN_UNSUPPORTED: &[(&str, &str)] = &[
         "requires a backend action registry",
     ),
     ("repro-querybug3.egg", "requires a backend action registry"),
+    ("typeinfer.egg", "requires a backend action registry"),
     ("datatypes.egg", "requires a backend action registry"),
     (
         "nested-container-dirty-propagation.egg",

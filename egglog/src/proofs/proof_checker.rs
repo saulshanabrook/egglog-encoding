@@ -599,13 +599,19 @@ impl ProofStore {
         let proof = self.id_to_proof[proof_id].clone();
         let result = match &proof.justification {
             Justification::Fiat => {
-                // if the both terms are primitives and equal, accept
-                let term = self.term_dag.get(proof.lhs());
-                if (matches!(term, Term::Lit(_)) && proof.lhs() == proof.rhs())
+                // Accept a reflexive equality over a literal or a
+                // primitive-closed term (re-evaluated from the term alone), or
+                // any equality established by the global actions.
+                if (proof.lhs() == proof.rhs() && self.reflexive_primitive_term(proof.lhs()))
                     || ctx.in_globals(proof.lhs(), proof.rhs())
                 {
                     Ok(Proposition::new(proof.lhs(), proof.rhs()))
                 } else {
+                    log::debug!(
+                        "invalid Fiat lhs: {}\ninvalid Fiat rhs: {}",
+                        format_term(&self.term_dag, proof.lhs()),
+                        format_term(&self.term_dag, proof.rhs())
+                    );
                     Err(ProofCheckErrorKind::InvalidFiat {
                         proof_id,
                         lhs: proof.lhs(),

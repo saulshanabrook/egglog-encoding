@@ -110,6 +110,7 @@ impl ProofInstrumentor<'_> {
             proof_term_id,
             &self.egraph.proof_check_program,
             container_normalizers,
+            self.egraph.type_info.primitive_validators(),
         );
 
         // Remove globals from the proof
@@ -135,6 +136,10 @@ impl ProofInstrumentor<'_> {
         if let Result::Err(e) =
             proof_store.check_proof(extra_rule_removed, &self.egraph.proof_check_program)
         {
+            log::debug!(
+                "failing existence proof:\n{}",
+                proof_store.proof_to_string(extra_rule_removed)
+            );
             panic!("Existence proof should be valid before simplification: {e}");
         }
 

@@ -1377,6 +1377,24 @@ impl TypeInfo {
         self.global_sorts.get(sym)
     }
 
+    /// Every registered primitive validator, keyed by primitive name (all
+    /// overloads). Lets the proof checker re-evaluate primitive-built terms
+    /// from terms alone.
+    pub(crate) fn primitive_validators(
+        &self,
+    ) -> HashMap<String, Vec<crate::typechecking::PrimitiveValidator>> {
+        let mut out: HashMap<String, Vec<crate::typechecking::PrimitiveValidator>> =
+            HashMap::default();
+        for (name, prims) in &self.primitives {
+            for prim in prims {
+                if let Some(v) = &prim.validator {
+                    out.entry(name.clone()).or_default().push(v.clone());
+                }
+            }
+        }
+        out
+    }
+
     pub fn is_global(&self, sym: &str) -> bool {
         self.global_sorts.contains_key(sym)
     }
