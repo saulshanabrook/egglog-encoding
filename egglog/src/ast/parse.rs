@@ -1122,6 +1122,7 @@ impl Parser {
                 }
                 if matches!(tail.first(), Some(Sexp::Atom(option, _)) if option.starts_with(':')) {
                     let mut witnesses = None;
+                    let mut witness_dag = None;
                     let mut groups = None;
                     let mut fires = None;
                     for (option, args) in self.parse_options(tail)? {
@@ -1132,6 +1133,61 @@ impl Parser {
                                     self,
                                     Self::parse_expr,
                                 )?);
+                            }
+                            (":witness-dag", [entries]) if witness_dag.is_none() => {
+                                let mut parsed = Vec::new();
+                                for entry in entries.expect_list("packed witness DAG")? {
+                                    let [kind, sort, rest @ ..] =
+                                        entry.expect_list("packed witness DAG node")?
+                                    else {
+                                        return error!(
+                                            entry.span(),
+                                            "packed witness DAG node requires a kind and sort"
+                                        );
+                                    };
+                                    let sort = sort.expect_atom("packed witness output sort")?;
+                                    let kind = kind.expect_atom("packed witness node kind")?;
+                                    match (kind.as_str(), rest) {
+                                        (":lit", [value]) => {
+                                            let Expr::Lit(_, value) = self.parse_expr(value)?
+                                            else {
+                                                return error!(
+                                                    value.span(),
+                                                    "packed :lit witness requires a literal"
+                                                );
+                                            };
+                                            parsed.push(GenericPackedWitnessNode::Literal {
+                                                span: entry.span(),
+                                                sort,
+                                                value,
+                                            });
+                                        }
+                                        (":call", [function, children @ ..]) => {
+                                            parsed.push(GenericPackedWitnessNode::Call {
+                                                span: entry.span(),
+                                                sort,
+                                                function: function
+                                                    .expect_atom("packed witness function")?,
+                                                children: children
+                                                    .iter()
+                                                    .map(|child| {
+                                                        child.expect_uint(
+                                                            "packed witness child index",
+                                                        )
+                                                    })
+                                                    .collect::<Result<Vec<_>, _>>()?
+                                                    .into_boxed_slice(),
+                                            });
+                                        }
+                                        _ => {
+                                            return error!(
+                                                entry.span(),
+                                                "packed witness DAG node must be (:lit <sort> <literal>) or (:call <sort> <function> <child index>*)"
+                                            );
+                                        }
+                                    }
+                                }
+                                witness_dag = Some(parsed);
                             }
                             (":groups", [entries]) if groups.is_none() => {
                                 let mut parsed = Vec::new();
@@ -1188,16 +1244,21 @@ impl Parser {
                             _ => {
                                 return error!(
                                     span,
-                                    "packed run-rule-batch requires one each of :witnesses, :groups, and :fires"
+                                    "packed run-rule-batch requires one witness dictionary, :groups, and :fires"
                                 );
                             }
                         }
                     }
-                    let (Some(witnesses), Some(groups), Some(fires)) = (witnesses, groups, fires)
-                    else {
+                    if witnesses.is_some() == witness_dag.is_some() {
                         return error!(
                             span,
-                            "packed run-rule-batch requires one each of :witnesses, :groups, and :fires"
+                            "packed run-rule-batch requires exactly one of :witnesses or :witness-dag"
+                        );
+                    }
+                    let (Some(groups), Some(fires)) = (groups, fires) else {
+                        return error!(
+                            span,
+                            "packed run-rule-batch requires one witness dictionary, :groups, and :fires"
                         );
                     };
                     if groups.is_empty() || fires.is_empty() {
@@ -1209,7 +1270,13 @@ impl Parser {
                     return Ok(Schedule::RunRuleBatchPacked(
                         span,
                         GenericPackedRunRuleBatch {
-                            witnesses,
+                            witnesses: match (witnesses, witness_dag) {
+                                (Some(witnesses), None) => {
+                                    GenericPackedWitnesses::Expressions(witnesses)
+                                }
+                                (None, Some(witnesses)) => GenericPackedWitnesses::Dag(witnesses),
+                                _ => unreachable!("witness representation was validated above"),
+                            },
                             groups,
                             fires: fires.into(),
                         },

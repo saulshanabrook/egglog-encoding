@@ -1334,11 +1334,74 @@ pub struct PackedRuleFire {
     pub witnesses: Box<[u32]>,
 }
 
+/// One node in a children-before-parent replay witness DAG. The explicit
+/// output sort lets the typechecker resolve overloaded primitives without
+/// expanding shared descendants back into expression trees.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GenericPackedWitnessNode<Head> {
+    Literal {
+        span: Span,
+        sort: String,
+        value: Literal,
+    },
+    Call {
+        span: Span,
+        sort: String,
+        function: Head,
+        children: Box<[u32]>,
+    },
+}
+
+impl<Head> GenericPackedWitnessNode<Head> {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Literal { span, .. } | Self::Call { span, .. } => span.clone(),
+        }
+    }
+
+    pub fn sort(&self) -> &str {
+        match self {
+            Self::Literal { sort, .. } | Self::Call { sort, .. } => sort,
+        }
+    }
+
+    fn map_head<Head2>(
+        self,
+        head: &mut impl FnMut(Head) -> Head2,
+    ) -> GenericPackedWitnessNode<Head2> {
+        match self {
+            Self::Literal { span, sort, value } => {
+                GenericPackedWitnessNode::Literal { span, sort, value }
+            }
+            Self::Call {
+                span,
+                sort,
+                function,
+                children,
+            } => GenericPackedWitnessNode::Call {
+                span,
+                sort,
+                function: head(function),
+                children,
+            },
+        }
+    }
+}
+
+/// The witness dictionary used by a packed replay batch. The enum is an
+/// explicit syntax discriminant: both representations may validly be empty
+/// for a zero-binding firing.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum GenericPackedWitnesses<Head, Leaf> {
+    Expressions(Vec<GenericExpr<Head, Leaf>>),
+    Dag(Vec<GenericPackedWitnessNode<Head>>),
+}
+
 /// A compact batch stores closed witness syntax and rule variable columns once,
 /// while retaining an ordered stream of exact-one guarded firings.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GenericPackedRunRuleBatch<Head, Leaf> {
-    pub witnesses: Vec<GenericExpr<Head, Leaf>>,
+    pub witnesses: GenericPackedWitnesses<Head, Leaf>,
     pub groups: Vec<GenericPackedRuleGroup<Leaf>>,
     pub fires: Arc<[PackedRuleFire]>,
 }
@@ -1353,11 +1416,17 @@ where
         f: &mut impl FnMut(GenericExpr<Head, Leaf>) -> GenericExpr<Head, Leaf>,
     ) -> Self {
         Self {
-            witnesses: self
-                .witnesses
-                .into_iter()
-                .map(|expr| expr.visit_exprs(f))
-                .collect(),
+            witnesses: match self.witnesses {
+                GenericPackedWitnesses::Expressions(witnesses) => {
+                    GenericPackedWitnesses::Expressions(
+                        witnesses
+                            .into_iter()
+                            .map(|expr| expr.visit_exprs(f))
+                            .collect(),
+                    )
+                }
+                GenericPackedWitnesses::Dag(witnesses) => GenericPackedWitnesses::Dag(witnesses),
+            },
             groups: self.groups,
             fires: self.fires,
         }
@@ -1373,11 +1442,22 @@ where
         Leaf2: Clone + PartialEq + Eq + Display + Hash,
     {
         GenericPackedRunRuleBatch {
-            witnesses: self
-                .witnesses
-                .into_iter()
-                .map(|expr| expr.map_symbols(head, leaf))
-                .collect(),
+            witnesses: match self.witnesses {
+                GenericPackedWitnesses::Expressions(witnesses) => {
+                    GenericPackedWitnesses::Expressions(
+                        witnesses
+                            .into_iter()
+                            .map(|expr| expr.map_symbols(head, leaf))
+                            .collect(),
+                    )
+                }
+                GenericPackedWitnesses::Dag(witnesses) => GenericPackedWitnesses::Dag(
+                    witnesses
+                        .into_iter()
+                        .map(|node| node.map_head(&mut *head))
+                        .collect(),
+                ),
+            },
             groups: self
                 .groups
                 .into_iter()
@@ -1398,6 +1478,15 @@ where
     }
 
     fn map_string_symbols(mut self, fun: &mut impl FnMut(String) -> String) -> Self {
+        if let GenericPackedWitnesses::Dag(witnesses) = &mut self.witnesses {
+            for witness in witnesses {
+                let sort = match witness {
+                    GenericPackedWitnessNode::Literal { sort, .. }
+                    | GenericPackedWitnessNode::Call { sort, .. } => sort,
+                };
+                *sort = fun(std::mem::take(sort));
+            }
+        }
         for group in &mut self.groups {
             group.rule = fun(std::mem::take(&mut group.rule));
         }
@@ -1407,11 +1496,39 @@ where
 
 impl<Head: Display, Leaf: Display> Display for GenericPackedRunRuleBatch<Head, Leaf> {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "(run-rule-batch :witnesses ({}) :groups (",
-            ListDisplay(&self.witnesses, " ")
-        )?;
+        write!(f, "(run-rule-batch ")?;
+        match &self.witnesses {
+            GenericPackedWitnesses::Expressions(witnesses) => {
+                write!(f, ":witnesses ({})", ListDisplay(witnesses, " "))?;
+            }
+            GenericPackedWitnesses::Dag(witnesses) => {
+                write!(f, ":witness-dag (")?;
+                for (index, node) in witnesses.iter().enumerate() {
+                    if index > 0 {
+                        write!(f, " ")?;
+                    }
+                    match node {
+                        GenericPackedWitnessNode::Literal { sort, value, .. } => {
+                            write!(f, "(:lit {sort} {value})")?;
+                        }
+                        GenericPackedWitnessNode::Call {
+                            sort,
+                            function,
+                            children,
+                            ..
+                        } => {
+                            write!(f, "(:call {sort} {function}")?;
+                            for child in children {
+                                write!(f, " {child}")?;
+                            }
+                            write!(f, ")")?;
+                        }
+                    }
+                }
+                write!(f, ")")?;
+            }
+        }
+        write!(f, " :groups (")?;
         for (index, group) in self.groups.iter().enumerate() {
             if index > 0 {
                 write!(f, " ")?;

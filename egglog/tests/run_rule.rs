@@ -413,6 +413,251 @@ fn packed_run_rule_batch_replays_multiple_groundings_of_one_rule() {
 }
 
 #[test]
+fn packed_run_rule_batch_partial_key_recovers_complete_head_bindings_strictly() {
+    let program = r#"
+        (relation Seed (i64 i64))
+        (relation Out (i64 i64))
+        (rule ((Seed x y)) ((Out x y)) :name "copy")
+        (Seed 1 9)
+        (Seed 2 9)
+        (run-schedule
+          (run-rule-batch
+            :witnesses (1 2)
+            :groups (("copy" (x)))
+            :fires ((0 0) (0 1))))
+        (check (Out 1 9))
+        (check (Out 2 9))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-partial-head.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_run_rule_batch_zero_key_recovers_one_complete_grounding_strictly() {
+    let program = r#"
+        (relation Seed (i64 i64))
+        (relation Out (i64 i64))
+        (rule ((Seed x y)) ((Out x y)) :name "copy")
+        (Seed 1 10)
+        (run-schedule
+          (run-rule-batch
+            :witnesses ()
+            :groups (("copy" ()))
+            :fires ((0))))
+        (check (Out 1 10))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-zero-key.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_run_rule_batch_partial_key_recovers_query_lookup_bindings_strictly() {
+    let program = r#"
+        (function F (i64) i64 :no-merge)
+        (relation Seed (i64 i64))
+        (relation Out (i64 i64))
+        (rule ((Seed x y) (= value (F y)))
+              ((Out x value))
+              :name "copy-lookup")
+        (set (F 10) 7)
+        (Seed 1 10)
+        (Seed 2 10)
+        (run-schedule
+          (run-rule-batch
+            :witnesses (1 2)
+            :groups (("copy-lookup" (x)))
+            :fires ((0 0) (0 1))))
+        (check (Out 1 7))
+        (check (Out 2 7))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-partial-lookup.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_run_rule_batch_partial_key_ambiguity_is_atomic() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            Some("packed-partial-ambiguous.egg".to_owned()),
+            r#"
+                (relation Seed (i64 i64))
+                (relation Out (i64 i64))
+                (rule ((Seed x y)) ((Out x y)) :name "copy")
+                (Seed 1 10)
+                (Seed 1 20)
+                (run-schedule
+                  (run-rule-batch
+                    :witnesses (1)
+                    :groups (("copy" (x)))
+                    :fires ((0 0))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 2,
+            ..
+        } if rule == "copy"
+    ));
+    egraph
+        .parse_and_run_program(None, "(fail (check (Out 1 10))) (fail (check (Out 1 20)))")
+        .unwrap();
+}
+
+#[test]
+fn packed_witness_dag_replays_empty_zero_binding_fires() {
+    for dictionary in [":witnesses ()", ":witness-dag ()"] {
+        let program = format!(
+            r#"
+                (relation Trigger ())
+                (relation Out ())
+                (rule ((Trigger)) ((Out)) :name "copy")
+                (Trigger)
+                (run-schedule
+                  (run-rule-batch
+                    {dictionary}
+                    :groups (("copy" ()))
+                    :fires ((0))))
+                (check (Out))
+            "#
+        );
+        EGraph::default()
+            .parse_and_run_program(None, &program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_witness_dag_shares_globals_and_constructor_diamonds_strictly() {
+    let program = r#"
+        (datatype Expr (Leaf) (Pair Expr Expr))
+        (relation Seed (Expr))
+        (relation GlobalSeed (Expr))
+        (relation Out (Expr))
+        (relation GlobalOut (Expr))
+        (rule ((Seed x)) ((Out x)) :name "copy")
+        (rule ((GlobalSeed x)) ((GlobalOut x)) :name "copy-global")
+        (let $leaf (Leaf))
+        (let $diamond (Pair $leaf $leaf))
+        (Seed $diamond)
+        (GlobalSeed $diamond)
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:call Expr $leaf)
+                          (:call Expr Pair 0 0)
+                          (:call Expr $diamond))
+            :groups (("copy" (x)) ("copy-global" (x)))
+            :fires ((0 1) (1 2))))
+        (check (Out $diamond))
+        (check (GlobalOut $diamond))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-witness-diamond.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_witness_dag_rejects_non_topological_and_unreachable_nodes() {
+    for (program, expected) in [
+        (
+            r#"
+                (datatype Expr (Leaf) (Pair Expr Expr))
+                (relation Seed (Expr))
+                (relation Out (Expr))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (Seed (Pair (Leaf) (Leaf)))
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:call Expr Pair 1 1)
+                                  (:call Expr Leaf))
+                    :groups (("copy" (x)))
+                    :fires ((0 0))))
+            "#,
+            "references non-prior child",
+        ),
+        (
+            r#"
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:lit i64 1) (:lit i64 2))
+                    :groups (("copy" (x)))
+                    :fires ((0 0))))
+            "#,
+            "unreachable from every fire",
+        ),
+    ] {
+        let error = EGraph::default()
+            .parse_and_run_program(None, program)
+            .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error}");
+    }
+}
+
+#[test]
+fn packed_witness_dag_guard_failure_is_atomic() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            None,
+            r#"
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:lit i64 1) (:lit i64 2))
+                    :groups (("copy" (x)))
+                    :fires ((0 0) (0 1))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 0,
+            ..
+        } if rule == "copy"
+    ));
+    egraph
+        .parse_and_run_program(None, "(fail (check (Out 1)))")
+        .unwrap();
+}
+
+#[test]
 fn packed_run_rule_batch_guard_failure_is_atomic() {
     let mut egraph = EGraph::default();
     let error = egraph
@@ -614,4 +859,56 @@ fn packed_run_rule_batch_uses_constructor_views_in_strict_proof_mode() {
         .with_proof_testing()
         .parse_and_run_program(Some("packed-run-rule-proof-view.egg".to_owned()), program)
         .unwrap();
+}
+
+#[test]
+fn packed_witness_dag_uses_constructor_views_in_strict_proof_mode() {
+    let program = r#"
+        (datatype Expr (A) (B))
+        (relation Seed (Expr))
+        (relation Out (Expr))
+        (rule ((Seed x)) ((Out x)) :name "copy")
+        (Seed (A))
+        (union (A) (B))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:call Expr B))
+            :groups (("copy" (x)))
+            :fires ((0 0))))
+        (check (Out (A)))
+        (check (Out (B)))
+    "#;
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("packed-witness-dag-proof-view.egg".to_owned()),
+            program,
+        )
+        .unwrap();
+}
+
+#[test]
+fn packed_witness_dag_rejects_nonglobal_custom_lookup() {
+    let error = EGraph::default()
+        .parse_and_run_program(
+            None,
+            r#"
+                (function F () i64 :no-merge)
+                (relation Seed (i64))
+                (relation Out (i64))
+                (rule ((Seed x)) ((Out x)) :name "copy")
+                (set (F) 1)
+                (Seed 1)
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:call i64 F))
+                    :groups (("copy" (x)))
+                    :fires ((0 0))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(
+        error.to_string().contains("is not a constructor"),
+        "{error}"
+    );
 }

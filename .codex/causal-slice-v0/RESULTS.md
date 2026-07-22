@@ -1,5 +1,99 @@
 # Causal Slice v0 Results
 
+## Projected replay-key and temporal-Vec checkpoint: 2026-07-21
+
+This checkpoint was developed on top of
+`096686177d6fcd44df16fbf746fbb2592a9bf1e9`. The verified PR #23 head and
+merge base remain `4940be37429e7adf16cc43283b38508e692cf045`.
+
+### Implemented and tested fact
+
+Grounded firings continue to retain their complete match-time bindings and
+dependencies internally. Before committing each traced native wave, the
+slicer now chooses one deterministic maximal source-level replay key for each
+rule in that wave. Key selection:
+
+- considers every successful original match, including complete-head no-ops;
+- considers earlier still-live matches because packed replay freshly queries
+  the complete current database;
+- deduplicates repeated occurrences of the same complete logical grounding;
+- admits an equality/container expression only when its source syntax had one
+  raw denotation at that match boundary; and
+- emits only the selected variables while preserving `:expect 1` and executing
+  the complete recovered rule head.
+
+The packed runtime now has direct ordinary and strict-proof canaries for a
+partial key, a zero-variable key, omitted lookup bindings, and atomic rejection
+of an ambiguous projected key. A private planner canary proves that two raw
+equality endpoints with identical syntax are not used as point selectors, that
+a colliding no-op match counts, and that an identical grounding repeated in a
+later wave does not create false ambiguity.
+
+An end-to-end causal canary creates two temporal raw denotations for
+`Pair(A, A)`, traces a `copy(tag, e)` firing, emits only the exact scalar
+`tag` selector, and then recovers `e` to execute the complete `(Out tag e)`
+head. Its ordinary and unchanged strict-proof replays both pass.
+
+The retained stable-ID Vec canary also closes. It creates `vec-of (B)`, advances
+the later observer's timestamp, unifies `A` and `B`, then requires a later rule
+to see the refreshed parent row through `vec-contains ... (A)`. The generated
+slice retains four firings and one reported Prefix fallback and passes ordinary
+replay plus the unchanged strict proof checker. An irrelevant dirty Vec branch
+is discarded. The implementation uses one typed current-support pointer whose
+immutable `DepId` is copied by consumers; after rebuild the pointer is replaced
+with `old support AND complete replayable prefix`. It does not add a historical
+`ContainerVersion` arena.
+
+### Falsified assumption and exact Hardboiled boundary
+
+Point-stable partial bindings are sufficient for several earlier Hardboiled
+waves, but not for the full fixture. The current exact failure is the anonymous
+type-propagation rule at source lines 273-277, registered as
+`__causal_slice_v0_b8339_e8454_c111`. In traced wave 19 it has 84 successful
+logical groundings. Only `t` and `bop` are point-stable source columns, and
+those columns do not uniquely select each captured grounding:
+
+```text
+84 successful groundings of rule `__causal_slice_v0_b8339_e8454_c111` in
+traced wave 19 cannot be uniquely identified by replay-stable source bindings
+["t", "bop"]; packed logical selectors or a stable match-time endpoint handle
+are required
+```
+
+A diagnostic fallback that emitted ordinary structural `run-rule-batch`
+selectors was semantically promising but reproduced the witness-tree expansion
+the packed representation was introduced to avoid. The release Hardboiled
+generation terminated after 44.57 s with maximum RSS 2,884,173,824 bytes
+(about 2.88 GB). That fallback was reverted. The smallest next interface is a
+compact logical selector inside `run-rule-batch-packed` that references the
+existing witness DAG, queries every listed fire against one shared pre-state,
+checks every exact guard atomically, and then executes complete heads. A stable
+match-time endpoint handle would be an alternative.
+
+The final release build with the sound fail-closed planner reaches the same
+diagnostic in 4.26 s at 277,839,872 bytes maximum RSS (about 278 MB). This is a
+boundary measurement, not a successful causal-proof benchmark.
+
+This is now Hardboiled's first retained boundary; it is not a demonstrated
+container-history failure. No new final benchmark cohort was run because the
+four-workload completion command would still reject Hardboiled. The previously
+recorded Eggcc/Pointer/Luminal timing results therefore remain historical and
+must not be attributed to this checkpoint.
+
+### Validation status
+
+Final validation:
+
+- `cargo test -p egglog --test run_rule`: 30 passed;
+- `cargo test -p egglog --test causal_slice`: 154 passed;
+- the focused private replay-key planner test passed;
+- `make proof-tests`: 192 reference plus 8 experimental fixtures passed;
+- `make check`: passed, including Python format/lint/type checks, 179 Python
+  tests, warning-denying Rust Clippy, the complete workspace test suite,
+  doctests, and the DD timing-summary gate;
+- `cargo fmt --all -- --check`: passed; and
+- `git diff --check`: passed.
+
 ## Observation-congruence checkpoint: 2026-07-21
 
 This checkpoint starts from clean, pushed commit
@@ -1596,4 +1690,5 @@ Local reviewable commits:
 The final diff is confined to reference native tracing/commit receipts,
 frontend causal treatment plumbing, the causal-slice module/example/tests, and
 `.codex/causal-slice-v0/`. The proof encoding and checker are unchanged.
-Nothing has been pushed.
+At the time this historical commit list was written, nothing had been pushed;
+the latest checkpoint and final handoff supersede that repository-state note.

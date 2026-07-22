@@ -1,6 +1,7 @@
 # Container provenance in causal-sliced proof replay
 
-Status: current-architecture handoff, not an accepted implementation RFC
+Status: current implementation checkpoint plus historical investigation; not an
+accepted general-container RFC
 
 Date: 2026-07-21
 
@@ -9,6 +10,73 @@ Worktree: `/Users/saul/p/wt/egglog-encoding/causal-slice-arena-v0`
 Branch checkpoint before this handoff: `cb203b5aacc89cc5c1459f332eaa8e89bfa78812`
 
 Verified PR #23 head and merge base: `4940be37429e7adf16cc43283b38508e692cf045`
+
+## Current correction after the retained-container experiment
+
+This section supersedes older claims below that dirty-container rejection is
+program-global or that the next implementation should begin with a
+`ContainerVersion` arena. Those claims accurately describe the earlier
+checkpoint but no longer describe the working tree.
+
+The implemented design follows the smaller current-support architecture:
+
+```rust
+current_container_support[TypedEndpoint] -> DepId
+```
+
+A match-time consumer copies the current immutable dependency into its firing.
+When native rebuild reports that a stable outer container ID changed, the Vec
+path, currently selected by a direct `TypeId::<VecContainer>` check, replaces
+the typed current pointer with:
+
+```text
+old container support AND complete replayable prefix through the rebuild
+```
+
+Earlier consumers retain their old immutable dependency. Later aliases obtain
+the new temporal support. No historical version chain, before/after container
+clone, or final-state reconstruction is used. The code path for other
+transition classes attaches a deferred poison dependency so rejection occurs
+only if backward slicing reaches it. Focused irrelevant/retained non-Vec poison
+canaries have not yet been added, so this part is implemented and code-inspected
+rather than tested.
+
+The decisive retained canary now passes. Wave one constructs and stores
+`Parent(vec-of B)` and advances the later observer's timestamp. A later union
+equates `A` and `B`; native rebuild refreshes the parent row without changing
+the Vec's outer ID; a final rule can match the stored parent only through the
+post-rebuild `vec-contains ... A` state. The emitted slice retains the four
+causal firings, reports one Prefix fallback, and passes ordinary plus unchanged
+strict proof replay. Repeated temporal Vec transitions also have focused
+coverage. The unrelated dirty-sibling canary confirms that an unreachable
+supported Vec transition does not retain its Prefix; it does not exercise a
+non-Vec poison dependency.
+
+This establishes a sound but conservative vertical slice for deterministic,
+direct and repeated stable-ID Vec rebuilding. Nested Vec is accepted by the
+same runtime-type path but does not yet have a retained causal canary and is not
+part of the tested contract. This does not establish exact or general container
+provenance. Prefix retention may be expensive, and the native receipt still
+lacks child remaps, collision causes, nested transition structure, and exact
+parent-row refresh identities. Pair, Set, MultiSet, Map, outer-ID changes,
+collisions, and custom merge reads remain unsupported unless separately
+admitted by focused semantic canaries. Map in particular must not be generalized
+from Vec because key collapse can change order-dependent value selection.
+
+Hardboiled is no longer blocked by the untyped-`Type` edge described in the
+historical sections below, nor has it demonstrated a retained container
+transition failure. Its current first boundary is compact replay selection:
+wave 19 of the Bop type-propagation rule has 84 successful groundings, while
+the only point-stable source columns (`t` and `bop`) are not unique. Expanding
+logical witnesses as ordinary structural selectors was reverted after a
+44.57-second, roughly 2.88-GB-RSS failure. The next patch should add compact
+logical selectors to `run-rule-batch-packed` (or stable match-time handles),
+then rerun Hardboiled. It should not add a general container-version arena.
+The final sound fail-closed release probe reaches this boundary in 4.26 seconds
+at about 278 MB maximum RSS; it does not complete proof replay.
+
+The remaining sections preserve the earlier architecture audit and evidence.
+Where they conflict with this correction, treat them as historical.
 
 ## Audience and purpose
 
@@ -45,22 +113,19 @@ used by scalar primitives when the exact specialization is:
 - equipped with a proof validator; and
 - supplied only replayable operands.
 
-The unsupported case is historical identity across native rebuild. The native
-container registry can change a container's semantic contents while retaining
-the same outer runtime `Value`. The current trace reports only that stable outer
-ID as dirty. It does not report an immutable before/after version, the old and
-new contents, the element remaps, or the equality causes of those remaps.
+The native container registry can change a container's semantic contents while
+retaining the same outer runtime `Value`. The trace still reports only that
+stable outer ID as dirty, not exact child-remap evidence. The admitted Vec path
+therefore snapshots one current typed support dependency and replaces it after
+rebuild with a complete-prefix fallback. Other dirty transition classes attach
+a deferred unsupported dependency. This makes failure retained-slice-local
+without pretending the dirty ID is an exact cause.
 
-The causal slicer therefore rejects any witnessed container whose outer ID is
-reported dirty. This is sound but over-conservative: rejection happens during
-elaboration, before backward reachability, so an irrelevant dirty witnessed
-container can reject an otherwise valid slice.
-
-Hardboiled has moved past its original fresh-`VecExpr` problem. At the current
-working checkpoint it fails on a retained equality of sort `Type` whose raw
-successful-union path contains an untyped edge. That is an equality-provenance
-boundary, not evidence that its retained proof path needs historical container
-versions.
+Hardboiled has moved past its original fresh-`VecExpr`, positive-check,
+untyped-equality, and scalar point-selector boundaries. Its current failure is
+the lack of a compact logical selector for an 84-grounding packed wave. That is
+a replay-naming boundary, not evidence that its retained proof path needs
+historical container versions.
 
 ## 1. End-to-end architecture
 

@@ -1,14 +1,50 @@
 # Causal Slice v0 Design Validation
 
 Status: Bronze, exact single-output `:merge new` state, raw/typed equality
-forests, and positive-check-rooted static proof projection are implemented and
-tested. The exact-plan boundary, general mutable-state sidecar proposal, and
-general sequential-wave claim were actively falsified rather than silently
-generalized.
+forests, positive-check-rooted static proof projection, projected packed replay
+keys, and direct/repeated stable-ID Vec temporal support are implemented and
+tested. General
+logical selectors, mutable containers other than the admitted Vec transition,
+and general sequential-wave semantics remain explicit boundaries.
 
 Date: 2026-07-21.
 
-## Container/witness correction at the current working checkpoint
+## Current replay-key and container validation
+
+The current implementation keeps complete logical groundings internally but
+may emit a deterministic maximal subset of their source bindings. Every packed
+fire still has an exact-one guard and recovers the complete environment before
+executing the complete head. Planning occurs after the native engine has
+reported every match in one shared-prestate wave and before that wave's unions
+are committed.
+
+| Proposed invariant | Status | Evidence or correction |
+|---|---|---|
+| a partial packed key can execute the complete captured head | Confirmed | ordinary and strict-proof tests cover an omitted head variable and an omitted query-lookup variable |
+| a zero-variable packed key is meaningful | Confirmed when exactly one complete match exists | the exact guard observes one match and the complete head executes |
+| an ambiguous projected key is harmless | Falsified | the packed guard observes two matches and applies no head effects |
+| retained/effective events alone are enough to plan a key | Falsified | successful no-op matches are candidates and can make a projected key ambiguous |
+| only matches reported again in the current seminaive wave matter | Falsified | replay queries the full current database, so planning includes earlier still-live matches |
+| repeated occurrences imply distinct replay candidates | Falsified | identical complete logical groundings are deduplicated before projected-key uniqueness is tested |
+| a witness record's endpoint proves that its syntax point-evaluates to that endpoint | Falsified | Hardboiled's `(Int 32 1)` syntax denotes raw endpoints 51 and 271 at one match boundary |
+| maximal point-stable source columns can name every Hardboiled firing | Falsified | wave 19 of `__causal_slice_v0_b8339_e8454_c111` has 84 groundings but only non-unique stable columns `t` and `bop` |
+| expanding structural selectors in ordinary source is a viable fallback | Falsified for this workload | the reverted Hardboiled probe ended after 44.57 s at about 2.88 GB maximum RSS |
+| a historical container-version arena is required for stable-ID Vec replay | Falsified by the admitted fragment | consumers snapshot an immutable support `DepId`; rebuilding replaces one typed current-support pointer |
+| a complete replayable Prefix can soundly support a deterministic stable-ID Vec transition | Confirmed for the retained canary | a later rule observes the refreshed parent row and ordinary plus unchanged strict replay pass |
+| global rejection of every dirty witnessed container is necessary | Implementation changed; non-Vec reachability canaries pending | unsupported transitions are deferred dependencies in code; the current irrelevant-branch canary covers supported Vec and does not yet test deferred poison |
+
+The next semantic patch is compact logical selectors for
+`run-rule-batch-packed`, not a general container-version arena. Map, Set,
+MultiSet, Pair, collisions, outer-ID changes, and custom merge reads remain
+unsupported until focused normalization/transition receipts establish their
+replay contracts. The Vec fallback is deliberately conservative and may retain
+an expensive prefix; exact child-remap receipts remain a later size
+optimization.
+
+## Historical container/witness checkpoint before temporal Vec support
+
+This section records the earlier boundary and is superseded by the current
+validation above.
 
 The generic boundary is the registered primitive capability, not the result
 sort's name. A captured application is replayable as syntax when the exact
@@ -30,7 +66,7 @@ trace now carries exact dirty outer IDs from each rebuild, and v0 rejects if one
 has a captured container witness. No historical version is inferred from the
 final registry.
 
-| Invariant | Current status | Evidence/correction |
+| Invariant | Status at that checkpoint | Evidence/correction |
 |---|---|---|
 | a container-valued primitive always requires special-case slicing code | Falsified | fresh `vec-of` replays through the same explicit deterministic + Pure + validator capability path as scalar primitives |
 | a fresh immutable container result requires an extraction or raw Value serialization | Falsified | exact child witness syntax and the captured registered specialization are sufficient |
@@ -38,11 +74,9 @@ final registry.
 | one outer container Value identifies historical contents across rebuild | Falsified | traced dirty IDs prove same-ID semantic change; v0 rejects rather than reusing current contents |
 | Hardboiled is currently blocked by `VecExpr` | Falsified | it now crosses the fresh `VecExpr`, rewrite-root alias, and positive-check `Call` syntax boundaries; its retained `Type` equality currently crosses an untyped raw union edge |
 
-The next diagnostic should identify the exact raw commit-forest edge on
-Hardboiled's retained `Type` equality path and classify its producer. Only then
-should the smallest missing typed equality receipt be added. Mutable container
-versioning remains deferred until a retained path actually reaches that
-boundary.
+At that checkpoint the next diagnostic was the exact raw commit-forest edge on
+Hardboiled's retained `Type` equality path. Later work crossed that boundary;
+the current replay-selector result above supersedes this recommendation.
 
 ## Current checkpoint at `0d229525`
 

@@ -1546,11 +1546,42 @@ impl EGraph {
         // interning. A missing witness therefore fails before table/head
         // effects, while the registration contract excludes other observable
         // effects ahead of the exact guards.
-        let witness_values = batch
-            .witnesses
-            .iter()
-            .map(|witness| self.eval_replay_witness(witness))
-            .collect::<Result<Vec<_>, _>>()?;
+        let witness_values = match &batch.witnesses {
+            GenericPackedWitnesses::Expressions(witnesses) => witnesses
+                .iter()
+                .map(|witness| self.eval_replay_witness(witness))
+                .collect::<Result<Vec<_>, _>>()?,
+            GenericPackedWitnesses::Dag(witnesses) => {
+                let mut values = Vec::with_capacity(witnesses.len());
+                for (index, witness) in witnesses.iter().enumerate() {
+                    let value = match witness {
+                        GenericPackedWitnessNode::Literal { value, .. } => {
+                            literal_to_value(self.backend.base_values(), value)
+                        }
+                        GenericPackedWitnessNode::Call {
+                            span,
+                            function,
+                            children,
+                            ..
+                        } => {
+                            let children = children
+                                .iter()
+                                .map(|child| {
+                                    values.get(*child as usize).copied().ok_or_else(|| {
+                                        Error::BackendError(format!(
+                                            "{span}\npacked replay witness {index} references unavailable child {child}"
+                                        ))
+                                    })
+                                })
+                                .collect::<Result<Vec<_>, _>>()?;
+                            self.eval_replay_witness_call(span, function, &children)?
+                        }
+                    };
+                    values.push(value);
+                }
+                values
+            }
+        };
 
         let groups = batch
             .groups
@@ -1679,6 +1710,37 @@ impl EGraph {
                 variable.name
             ))),
             ResolvedExpr::Call(span, ResolvedCall::Func(function), children) => {
+                let key = children
+                    .iter()
+                    .map(|child| self.eval_replay_witness(child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.eval_replay_witness_call(span, &ResolvedCall::Func(function.clone()), &key)
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), children) => {
+                let values = children
+                    .iter()
+                    .map(|child| self.eval_replay_witness(child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.eval_replay_witness_call(
+                    span,
+                    &ResolvedCall::Primitive(primitive.clone()),
+                    &values,
+                )
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::BackendError(
+                format!("{span}\npacked replay witnesses do not support tuple expressions"),
+            )),
+        }
+    }
+
+    fn eval_replay_witness_call(
+        &self,
+        span: &Span,
+        function: &ResolvedCall,
+        children: &[Value],
+    ) -> Result<Value, Error> {
+        match function {
+            ResolvedCall::Func(function) => {
                 if function.subtype != FunctionSubtype::Constructor
                     && !(children.is_empty() && self.type_info.is_global(&function.name))
                 {
@@ -1687,10 +1749,6 @@ impl EGraph {
                         function.name
                     )));
                 }
-                let key = children
-                    .iter()
-                    .map(|child| self.eval_replay_witness(child))
-                    .collect::<Result<Vec<_>, _>>()?;
                 // Term/proof encoding retains the original constructor as a
                 // syntax table, while rules match the canonical eclass stored
                 // in its generated view. Use that view when present; ordinary
@@ -1707,19 +1765,18 @@ impl EGraph {
                     .get(lookup_name)
                     .ok_or_else(|| {
                         Error::BackendError(format!(
-                            "{span}\npacked replay witness references unknown function {}",
-                            lookup_name
+                            "{span}\npacked replay witness references unknown function {lookup_name}"
                         ))
                     })?
                     .backend_id;
-                self.backend.lookup_id(function_id, &key).ok_or_else(|| {
+                self.backend.lookup_id(function_id, children).ok_or_else(|| {
                     Error::BackendError(format!(
                         "{span}\npacked replay witness {} is unavailable at this batch boundary",
-                        expr
+                        function.name
                     ))
                 })
             }
-            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), children) => {
+            ResolvedCall::Primitive(primitive) => {
                 if primitive.effect() != PrimitiveEffect::Pure
                     || primitive.validator().is_none()
                     || !primitive.is_replay_safe()
@@ -1729,15 +1786,11 @@ impl EGraph {
                         primitive.name()
                     )));
                 }
-                let values = children
-                    .iter()
-                    .map(|child| self.eval_replay_witness(child))
-                    .collect::<Result<Vec<_>, _>>()?;
                 self.backend
                     .with_execution_state(|state| {
                         state.call_external_func(
                             primitive.external_id(Context::Pure),
-                            values.as_slice(),
+                            children,
                         )
                     })
                     .ok_or_else(|| {
@@ -1747,9 +1800,9 @@ impl EGraph {
                         ))
                     })
             }
-            ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Error::BackendError(
-                format!("{span}\npacked replay witnesses do not support tuple expressions"),
-            )),
+            ResolvedCall::Values(_) => Err(Error::BackendError(format!(
+                "{span}\npacked replay witnesses do not support tuple expressions"
+            ))),
         }
     }
 

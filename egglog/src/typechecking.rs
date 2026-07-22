@@ -1255,7 +1255,11 @@ impl TypeInfo {
             });
         }
 
-        let mut witness_sorts: Vec<Option<ArcSort>> = vec![None; batch.witnesses.len()];
+        let witness_count = match &batch.witnesses {
+            GenericPackedWitnesses::Expressions(witnesses) => witnesses.len(),
+            GenericPackedWitnesses::Dag(witnesses) => witnesses.len(),
+        };
+        let mut witness_sorts: Vec<Option<ArcSort>> = vec![None; witness_count];
         for fire in batch.fires.iter() {
             let group = groups.get(fire.group as usize).ok_or_else(|| {
                 invalid(
@@ -1297,35 +1301,218 @@ impl TypeInfo {
             }
         }
 
-        let mut witnesses = Vec::with_capacity(batch.witnesses.len());
-        for (index, (expr, sort)) in batch.witnesses.iter().zip(witness_sorts).enumerate() {
-            let sort = sort.ok_or_else(|| {
-                invalid(
-                    expr.span(),
-                    format!("witness {index} is never referenced by a fire"),
-                )
-            })?;
-            let mut non_closed = None;
-            expr.visit_vars(&mut |var_span, variable: &String| {
-                if non_closed.is_none() && !self.global_sorts.contains_key(variable) {
-                    non_closed = Some((variable.clone(), var_span.clone()));
+        let witnesses = match &batch.witnesses {
+            GenericPackedWitnesses::Expressions(witnesses) => {
+                let mut resolved_witnesses = Vec::with_capacity(witnesses.len());
+                for (index, (expr, sort)) in witnesses.iter().zip(witness_sorts).enumerate() {
+                    let sort = sort.ok_or_else(|| {
+                        invalid(
+                            expr.span(),
+                            format!("witness {index} is never referenced by a fire"),
+                        )
+                    })?;
+                    let mut non_closed = None;
+                    expr.visit_vars(&mut |var_span, variable: &String| {
+                        if non_closed.is_none() && !self.global_sorts.contains_key(variable) {
+                            non_closed = Some((variable.clone(), var_span.clone()));
+                        }
+                    });
+                    if let Some((variable, span)) = non_closed {
+                        return Err(TypeError::RunRuleBindingNotClosed {
+                            rule: "<packed-batch>".to_owned(),
+                            variable,
+                            span,
+                        });
+                    }
+                    resolved_witnesses.push(self.typecheck_expr_with_output(
+                        symbol_gen,
+                        expr,
+                        &Default::default(),
+                        sort,
+                        Context::Read,
+                    )?);
                 }
-            });
-            if let Some((variable, span)) = non_closed {
-                return Err(TypeError::RunRuleBindingNotClosed {
-                    rule: "<packed-batch>".to_owned(),
-                    variable,
-                    span,
-                });
+                GenericPackedWitnesses::Expressions(resolved_witnesses)
             }
-            witnesses.push(self.typecheck_expr_with_output(
-                symbol_gen,
-                expr,
-                &Default::default(),
-                sort,
-                Context::Read,
-            )?);
-        }
+            GenericPackedWitnesses::Dag(witnesses) => {
+                let mut uses = vec![0usize; witnesses.len()];
+                for fire in batch.fires.iter() {
+                    for witness in &fire.witnesses {
+                        uses[*witness as usize] += 1;
+                    }
+                }
+                for (index, node) in witnesses.iter().enumerate() {
+                    if let GenericPackedWitnessNode::Call { children, .. } = node {
+                        for child in children {
+                            let child = *child as usize;
+                            if child >= index {
+                                return Err(invalid(
+                                    node.span(),
+                                    format!(
+                                        "packed witness node {index} references non-prior child {child}"
+                                    ),
+                                ));
+                            }
+                            uses[child] += 1;
+                        }
+                    }
+                }
+                let mut node_sorts: Vec<ArcSort> = Vec::with_capacity(witnesses.len());
+                let mut resolved_witnesses = Vec::with_capacity(witnesses.len());
+                for (index, node) in witnesses.iter().enumerate() {
+                    if uses[index] == 0 {
+                        return Err(invalid(
+                            node.span(),
+                            format!("packed witness node {index} is unreachable from every fire"),
+                        ));
+                    }
+                    let sort = self.sorts.get(node.sort()).cloned().ok_or_else(|| {
+                        TypeError::UndefinedSort(node.sort().to_owned(), node.span())
+                    })?;
+                    if let Some(expected) = &witness_sorts[index]
+                        && expected.name() != sort.name()
+                    {
+                        return Err(invalid(
+                            node.span(),
+                            format!(
+                                "packed witness node {index} is declared as {} but used as {}",
+                                sort.name(),
+                                expected.name()
+                            ),
+                        ));
+                    }
+                    let resolved = match node {
+                        GenericPackedWitnessNode::Literal { span, value, .. } => {
+                            let expr = Expr::Lit(span.clone(), value.clone());
+                            let resolved = self.typecheck_expr_with_output(
+                                symbol_gen,
+                                &expr,
+                                &Default::default(),
+                                sort.clone(),
+                                Context::Read,
+                            )?;
+                            let ResolvedExpr::Lit(_, value) = resolved else {
+                                unreachable!("literal witness must remain a literal")
+                            };
+                            GenericPackedWitnessNode::Literal {
+                                span: span.clone(),
+                                sort: node.sort().to_owned(),
+                                value,
+                            }
+                        }
+                        GenericPackedWitnessNode::Call {
+                            span,
+                            function,
+                            children,
+                            ..
+                        } => {
+                            let child_names = children
+                                .iter()
+                                .map(|child| format!("__packed_witness_{child}"))
+                                .collect::<Vec<_>>();
+                            let binding = child_names
+                                .iter()
+                                .zip(children.iter())
+                                .map(|(name, child)| {
+                                    (
+                                        name.as_str(),
+                                        (span.clone(), node_sorts[*child as usize].clone()),
+                                    )
+                                })
+                                .collect::<IndexMap<_, _>>();
+                            let resolved_function = if children.is_empty()
+                                && self.global_sorts.contains_key(function)
+                            {
+                                let global_sort = &self.global_sorts[function];
+                                if global_sort.name() != sort.name() {
+                                    return Err(invalid(
+                                        span.clone(),
+                                        format!(
+                                            "packed witness global {function} is declared as {} but has sort {}",
+                                            sort.name(),
+                                            global_sort.name()
+                                        ),
+                                    ));
+                                }
+                                ResolvedCall::Func(FuncType {
+                                    name: function.clone(),
+                                    subtype: FunctionSubtype::Custom,
+                                    input: Vec::new(),
+                                    outputs: vec![sort.clone()],
+                                })
+                            } else {
+                                let expr = Expr::Call(
+                                    span.clone(),
+                                    function.clone(),
+                                    child_names
+                                        .iter()
+                                        .map(|name| Expr::Var(span.clone(), name.clone()))
+                                        .collect(),
+                                );
+                                let resolved = self.typecheck_expr_with_output(
+                                    symbol_gen,
+                                    &expr,
+                                    &binding,
+                                    sort.clone(),
+                                    Context::Read,
+                                )?;
+                                let ResolvedExpr::Call(_, function, resolved_children) = resolved
+                                else {
+                                    unreachable!("call witness must remain a call")
+                                };
+                                debug_assert_eq!(resolved_children.len(), children.len());
+                                function
+                            };
+                            match &resolved_function {
+                                ResolvedCall::Func(function)
+                                    if function.subtype != FunctionSubtype::Constructor
+                                        && !(children.is_empty()
+                                            && self.global_sorts.contains_key(&function.name)) =>
+                                {
+                                    return Err(invalid(
+                                        span.clone(),
+                                        format!(
+                                            "packed witness call {} is not a constructor",
+                                            function.name
+                                        ),
+                                    ));
+                                }
+                                ResolvedCall::Primitive(primitive)
+                                    if primitive.effect() != PrimitiveEffect::Pure
+                                        || primitive.validator().is_none()
+                                        || !primitive.is_replay_safe() =>
+                                {
+                                    return Err(invalid(
+                                        span.clone(),
+                                        format!(
+                                            "packed witness primitive {} lacks the Pure, proof-validating, deterministic replay capability",
+                                            primitive.name()
+                                        ),
+                                    ));
+                                }
+                                ResolvedCall::Values(_) => {
+                                    return Err(invalid(
+                                        span.clone(),
+                                        "packed witnesses do not support tuple expressions"
+                                            .to_owned(),
+                                    ));
+                                }
+                                _ => {}
+                            }
+                            GenericPackedWitnessNode::Call {
+                                span: span.clone(),
+                                sort: node.sort().to_owned(),
+                                function: resolved_function,
+                                children: children.clone(),
+                            }
+                        }
+                    };
+                    node_sorts.push(sort);
+                    resolved_witnesses.push(resolved);
+                }
+                GenericPackedWitnesses::Dag(resolved_witnesses)
+            }
+        };
 
         Ok(GenericPackedRunRuleBatch {
             witnesses,

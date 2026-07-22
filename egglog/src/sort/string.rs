@@ -24,7 +24,7 @@ impl BaseSort for StringSort {
             let result_term = termdag.lit(result_lit);
             Some(result_term)
         };
-        add_primitive_with_validator!(eg, "+" = [xs: S] -> S {{
+        add_replayable_primitive_with_validator!(eg, "+" = [xs: S] -> S {{
             let mut y = String::new();
             xs.for_each(|x| y.push_str(x.as_str()));
             y.into()

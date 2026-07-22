@@ -8,6 +8,7 @@
 use std::{
     cell::RefCell,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -17,10 +18,10 @@ use crate::{
     EGraph, Error as EgglogError, TermDag,
     ast::{
         Action, Actions, Command, Expr, Fact, FunctionSubtype, GenericAction, GenericExpr,
-        GenericFact, GenericPackedRuleGroup, GenericPackedRunRuleBatch, Literal, PackedRuleFire,
-        ResolvedAction, ResolvedExpr, ResolvedExprExt, ResolvedFact, ResolvedNCommand,
-        ResolvedRule, ResolvedVar, Rewrite, Rule, RuleEvalMode, Ruleset, RunRuleConfig, Schedule,
-        Span, Subdatatypes,
+        GenericFact, GenericPackedRuleGroup, GenericPackedRunRuleBatch, GenericPackedWitnessNode,
+        GenericPackedWitnesses, Literal, PackedRuleFire, ResolvedAction, ResolvedExpr,
+        ResolvedExprExt, ResolvedFact, ResolvedNCommand, ResolvedRule, ResolvedVar, Rewrite, Rule,
+        RuleEvalMode, Ruleset, RunRuleConfig, Schedule, Span, Subdatatypes,
     },
     core::{
         GenericAtomTerm, GenericCoreAction, ResolvedCall, ResolvedCoreActions, SpecializedPrimitive,
@@ -181,6 +182,7 @@ struct MutableFunctionDecl {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MutableMergeKind {
+    AssertEq,
     ExactNew,
     BigRatMin,
     BigRatMax,
@@ -279,6 +281,10 @@ enum OpaqueRulePolicy {
     /// an empty exact grounding even though the narrow structured model does
     /// not represent head-local variables.
     EmptyBodyInitializer,
+    /// A rule whose only head action is `panic`. A completed traced run proves
+    /// that no captured pre-filter candidate reached this head, so it has no
+    /// replayable state effect and must not become a prefix event.
+    UnreachedPanicHead,
     /// This particular otherwise-modeled grounding projected a source
     /// variable before the native action boundary. Its complete modeled head
     /// may be observed for reachability, but replay must fail if retained
@@ -480,6 +486,13 @@ enum DepNode {
     /// commit boundary when the native trace exposes an exact equality edge
     /// but not the constructor/merge cause that produced it.
     Prefix(EventId),
+    /// Fail closed only if backward reachability consumes this current-state
+    /// support. This lets an unsupported mutable transition disappear with an
+    /// irrelevant branch instead of rejecting the whole traced execution.
+    Unsupported {
+        location: String,
+        reason: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -515,6 +528,10 @@ impl DepArena {
             Some(event) => self.push(DepNode::Prefix(event)),
             None => Ok(Self::EMPTY),
         }
+    }
+
+    fn unsupported(&mut self, location: String, reason: String) -> Result<DepId, CausalSliceError> {
+        self.push(DepNode::Unsupported { location, reason })
     }
 
     fn and(&mut self, left: DepId, right: DepId) -> Result<DepId, CausalSliceError> {
@@ -586,6 +603,10 @@ struct WitnessArena {
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     endpoint_instances: IndexMap<TypedEndpoint, Vec<WitnessId>>,
     endpoint_sorts: IndexMap<Value, Vec<String>>,
+    /// Current causal support for a typed container endpoint. Firings copy the
+    /// immutable DepId they observe; rebuild replaces only this sidecar
+    /// pointer, so later syntax aliases inherit the new temporal support.
+    current_container_support: IndexMap<TypedEndpoint, DepId>,
     /// Definition-time endpoints retained to explain later canonicalized uses.
     globals: IndexMap<String, TypedEndpoint>,
     global_witnesses: IndexMap<String, WitnessId>,
@@ -596,6 +617,7 @@ struct WitnessArena {
 
 #[derive(Clone, Debug, Default)]
 struct WitnessSnapshot {
+    node_count: usize,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     app_instance_lengths: IndexMap<(String, String), usize>,
 }
@@ -664,6 +686,7 @@ impl WaveAppIndex {
 impl WitnessArena {
     fn snapshot(&self) -> WitnessSnapshot {
         WitnessSnapshot {
+            node_count: self.nodes.len(),
             endpoints: self.endpoints.clone(),
             app_instance_lengths: self
                 .app_instances
@@ -1165,24 +1188,30 @@ impl WitnessArena {
         }
     }
 
-    fn availability(&self, id: WitnessId) -> DepId {
-        self.nodes[id.index()].availability
+    fn current_container_support(&self, endpoint: &TypedEndpoint) -> Option<DepId> {
+        self.current_container_support.get(endpoint).copied()
     }
 
-    fn expr(&self, id: WitnessId, span: &Span) -> Expr {
-        match &self.nodes[id.index()].node {
-            WitnessNode::Literal { value, .. } => Expr::Lit(span.clone(), value.clone()),
-            WitnessNode::App {
-                function, children, ..
-            } => Expr::Call(
-                span.clone(),
-                function.clone(),
-                children
-                    .iter()
-                    .map(|child| self.expr(*child, span))
-                    .collect(),
-            ),
-        }
+    fn replace_current_container_support(&mut self, endpoint: TypedEndpoint, availability: DepId) {
+        self.current_container_support
+            .insert(endpoint, availability);
+    }
+
+    fn availability(&self, id: WitnessId) -> DepId {
+        let record = &self.nodes[id.index()];
+        let Some(value) = record.original_value else {
+            return record.availability;
+        };
+        let sort = match &record.node {
+            WitnessNode::Literal { sort, .. } | WitnessNode::App { sort, .. } => sort,
+        };
+        self.current_container_support
+            .get(&TypedEndpoint {
+                sort: sort.clone(),
+                value,
+            })
+            .copied()
+            .unwrap_or(record.availability)
     }
 
     fn endpoint(&self, id: WitnessId) -> Option<Value> {
@@ -1202,6 +1231,30 @@ struct GroundedFire {
     wave: u32,
     ordinal: u32,
     bindings: IndexMap<String, BindingWitness>,
+    selector: ReplaySelector,
+}
+
+#[derive(Clone, Debug)]
+enum ReplaySelector {
+    /// Filled once every successful grounding for this rule and wave is known.
+    Unplanned,
+    /// The ordered source variables that uniquely identify this grounding.
+    Key(Arc<[String]>),
+    /// Kept on the firing so an irrelevant unsupported group can slice away.
+    Unsupported(Arc<DeferredUnsupported>),
+}
+
+impl GroundedFire {
+    fn selector_variables(&self) -> Result<&Arc<[String]>, CausalSliceError> {
+        match &self.selector {
+            ReplaySelector::Key(variables) => Ok(variables),
+            ReplaySelector::Unsupported(error) => Err((**error).clone().into_error()),
+            ReplaySelector::Unplanned => Err(CausalSliceError::Invariant(format!(
+                "grounded firing of `{}` in wave {} reached emission before replay-key planning",
+                self.rule, self.wave
+            ))),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1285,7 +1338,7 @@ struct Elaboration {
     source_events: usize,
     equality_forest: EqualityForest,
     opaque_equality_error: Option<DeferredUnsupported>,
-    equality_prefix_fallbacks: usize,
+    causal_prefix_fallbacks: usize,
 }
 
 struct PrefixElaboration {
@@ -1308,6 +1361,9 @@ struct CompactReplayFire {
     wave: u32,
     ordinal: u32,
     bindings: Box<[WitnessId]>,
+    /// Prefix-only replay uses the rule model's complete variable list. A
+    /// causal grounding stores its deterministic projected replay key here.
+    selector_variables: Option<Arc<[String]>>,
 }
 
 /// A compact stable grouping from one match origin to indices in a trace
@@ -1512,13 +1568,28 @@ impl EqualityForest {
     fn canonical_endpoint(&self, endpoint: &TypedEndpoint) -> TypedEndpoint {
         TypedEndpoint {
             sort: endpoint.sort.clone(),
-            value: self.canonical_value(endpoint.value),
+            value: self.typed_canonical_value(&endpoint.sort, endpoint.value),
         }
     }
 
     fn are_equal(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> bool {
         left.sort == right.sort
-            && self.canonical_value(left.value) == self.canonical_value(right.value)
+            && self.typed_canonical_value(&left.sort, left.value)
+                == self.typed_canonical_value(&right.sort, right.value)
+    }
+
+    fn typed_canonical_value(&self, sort: &str, value: Value) -> Value {
+        let mut current = value;
+        while let Some(parent) = self.commit_parents.get(&current).copied() {
+            let Some((edge_sort, _)) = self.edge_causes.get(&current) else {
+                break;
+            };
+            if edge_sort != sort {
+                break;
+            }
+            current = parent;
+        }
+        current
     }
 
     fn explain(&self, left: &TypedEndpoint, right: &TypedEndpoint) -> Option<Vec<DepId>> {
@@ -1934,7 +2005,7 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         source_events,
         equality_forest,
         opaque_equality_error,
-        equality_prefix_fallbacks,
+        causal_prefix_fallbacks,
     } = elaborate_events(
         ElaborationInput {
             egraph,
@@ -1966,7 +2037,9 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         &mut dependencies,
         &mut witnesses,
     )?;
-    let retained = backward_slice(&events, &dependencies, &equality_forest, roots)?;
+    let (retained, retained_prefix_fallbacks) =
+        backward_slice(&events, &dependencies, &equality_forest, roots)?;
+    debug_assert!(retained_prefix_fallbacks <= causal_prefix_fallbacks);
     let retained_source_facts = retained
         .iter()
         .filter_map(|event| match events.events[event.index()].kind {
@@ -1998,16 +2071,20 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
     let slicing_time = slicing_start.elapsed();
 
     let emission_start = Instant::now();
-    let full_transcript_commands = include_full_transcript.then(|| {
-        render_replay_commands(
-            commands,
-            &schedule_span,
-            rules,
-            pending_fires.iter().map(|fire| &fire.grounding),
-            &witnesses,
+    let full_transcript_commands = if include_full_transcript {
+        Some(
+            render_replay_commands(
+                commands,
+                &schedule_span,
+                rules,
+                pending_fires.iter().map(|fire| &fire.grounding),
+                &witnesses,
+            )?
+            .0,
         )
-        .0
-    });
+    } else {
+        None
+    };
     let replay_fires = retained
         .iter()
         .filter_map(|event| match &events.events[event.index()].kind {
@@ -2017,9 +2094,9 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         })
         .collect::<Vec<_>>();
     let retained_witness_callables =
-        replay_witness_callables(replay_fires.iter().copied(), rules, &witnesses);
+        replay_witness_callables(replay_fires.iter().copied(), &witnesses)?;
     let (replay_commands, shared_replay_witnesses) =
-        render_replay_commands(commands, &schedule_span, rules, replay_fires, &witnesses);
+        render_replay_commands(commands, &schedule_span, rules, replay_fires, &witnesses)?;
     let emission_time = emission_start.elapsed();
 
     let effective_applications =
@@ -2076,7 +2153,7 @@ fn slice_region(input: RegionSliceInput<'_>) -> Result<RegionProjection, CausalS
         witness_nodes: witnesses.nodes.len(),
         shared_replay_witnesses,
         equality_edges: equality_forest.edge_count(),
-        prefix_fallbacks: equality_prefix_fallbacks,
+        prefix_fallbacks: retained_prefix_fallbacks,
         captured_bindings,
         observation_matches,
         observation_bindings,
@@ -2139,7 +2216,7 @@ fn generate_scoped_causal_slice(
         mut egraph,
         validation_template,
         commands,
-        rules,
+        mut rules,
         checks,
         source_facts,
         source_expansions,
@@ -2208,7 +2285,7 @@ fn generate_scoped_causal_slice(
         } else if let Some(region_index) = pop_regions.get(&command_index).copied() {
             let trace_functions =
                 trace_function_metadata(&egraph, &relations, &constructors, &mutable_functions)?;
-            let rule_primitives = resolve_rule_primitives(&egraph, &rules)?;
+            let rule_primitives = resolve_rule_primitives(&egraph, &mut rules)?;
             let projection = slice_region(RegionSliceInput {
                 egraph: &egraph,
                 commands: &commands,
@@ -2410,7 +2487,7 @@ fn generate_causal_slice(
         }
     };
     let ProgramModel {
-        rules,
+        mut rules,
         checks,
         source_facts,
         constructors,
@@ -2562,7 +2639,7 @@ fn generate_causal_slice(
 
     let trace_functions =
         trace_function_metadata(&egraph, &relations, &constructors, &mutable_functions)?;
-    let rule_primitives = resolve_rule_primitives(&egraph, &rules)?;
+    let rule_primitives = resolve_rule_primitives(&egraph, &mut rules)?;
     let mut witnesses = WitnessArena::default();
     let schedule_span = command_schedule_span(&commands[schedule_index])
         .ok_or_else(|| CausalSliceError::Invariant("schedule command lost its span".to_owned()))?;
@@ -2604,7 +2681,7 @@ fn generate_causal_slice(
             &rules,
             &replay_fires,
             &witnesses,
-        );
+        )?;
         let source = emit_program_with_replay_commands(
             &commands,
             &schedule_indices,
@@ -2675,7 +2752,7 @@ fn generate_causal_slice(
         source_events,
         equality_forest,
         opaque_equality_error,
-        equality_prefix_fallbacks,
+        causal_prefix_fallbacks,
     } = elaborate_events(
         ElaborationInput {
             egraph: &egraph,
@@ -2721,17 +2798,18 @@ fn generate_causal_slice(
                 * check.var_sorts.len()
         })
         .sum();
-    let retained = if prefix_fallbacks > 0 {
+    let (retained, retained_causal_prefix_fallbacks) = if prefix_fallbacks > 0 {
         let mut retained = IndexSet::default();
         for index in 0..events.events.len() {
             retained.insert(EventId(u32::try_from(index).map_err(|_| {
                 CausalSliceError::Invariant("event index exceeded u32 capacity".to_owned())
             })?));
         }
-        retained
+        (retained, 0)
     } else {
         backward_slice(&events, &dependencies, &equality_forest, roots)?
     };
+    debug_assert!(retained_causal_prefix_fallbacks <= causal_prefix_fallbacks);
     if prefix_fallbacks == 0
         && let Some(error) = retained.iter().find_map(|event| {
             events.events[event.index()]
@@ -2767,18 +2845,22 @@ fn generate_causal_slice(
     let slicing_time = slicing_start.elapsed();
 
     let emission_start = Instant::now();
-    let full_transcript_source = include_full_transcript.then(|| {
-        emit_program(
-            &commands,
-            &schedule_indices,
-            &schedule_span,
-            &rules,
-            pending_fires.iter().map(|fire| &fire.grounding),
-            &witnesses,
-            &source_expansions,
+    let full_transcript_source = if include_full_transcript {
+        Some(
+            emit_program(
+                &commands,
+                &schedule_indices,
+                &schedule_span,
+                &rules,
+                pending_fires.iter().map(|fire| &fire.grounding),
+                &witnesses,
+                &source_expansions,
+            )?
+            .0,
         )
-        .0
-    });
+    } else {
+        None
+    };
     let replay_fires = retained
         .iter()
         .filter_map(|event| match &events.events[event.index()].kind {
@@ -2788,9 +2870,9 @@ fn generate_causal_slice(
         })
         .collect::<Vec<_>>();
     let retained_witness_callables =
-        replay_witness_callables(replay_fires.iter().copied(), &rules, &witnesses);
+        replay_witness_callables(replay_fires.iter().copied(), &witnesses)?;
     let (replay_commands, shared_replay_witnesses) =
-        render_replay_commands(&commands, &schedule_span, &rules, replay_fires, &witnesses);
+        render_replay_commands(&commands, &schedule_span, &rules, replay_fires, &witnesses)?;
     let source = match source_projection {
         ReplaySourceProjection::Legacy => emit_program_with_replay_commands(
             &commands,
@@ -2880,7 +2962,7 @@ fn generate_causal_slice(
         witness_nodes: witnesses.nodes.len(),
         shared_replay_witnesses,
         equality_edges: equality_forest.edge_count(),
-        prefix_fallbacks: prefix_fallbacks + equality_prefix_fallbacks,
+        prefix_fallbacks: prefix_fallbacks + retained_causal_prefix_fallbacks,
         captured_bindings,
         observation_matches,
         observation_bindings,
@@ -3217,189 +3299,260 @@ fn validate_registered_replay_aliases(
 
 fn resolve_rule_primitives(
     egraph: &EGraph,
-    rules: &IndexMap<String, RuleModel>,
+    rules: &mut IndexMap<String, RuleModel>,
 ) -> Result<IndexMap<String, ResolvedRulePrimitives>, CausalSliceError> {
     let mut resolved = IndexMap::default();
-    for (rule_name, model) in rules {
-        if model.opaque.is_some() {
-            resolved.insert(rule_name.clone(), ResolvedRulePrimitives::default());
-            continue;
-        }
-        let registered = egraph
-            .rulesets
-            .values()
-            .find_map(|ruleset| match ruleset {
-                Ruleset::Rules(registered) => registered.get(rule_name),
-                Ruleset::Combined(..) => None,
-            })
-            .ok_or_else(|| {
-                CausalSliceError::Invariant(format!(
-                    "modeled rule `{rule_name}` was not registered by the traced program"
-                ))
-            })?;
-        validate_registered_replay_aliases(rule_name, model, &registered.substitutions)?;
-        let registered_body = registered
-            .core
-            .body
-            .atoms
-            .iter()
-            .filter_map(|atom| match &atom.head {
-                ResolvedCall::Primitive(primitive) => Some(primitive),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut body = Vec::with_capacity(registered_body.len());
-        let mut expected = model.body_primitives.iter().peekable();
-        for primitive in registered_body {
-            let exact_logical = expected
-                .peek()
-                .is_some_and(|expected| expected.capability.matches(primitive));
-            let query_auxiliary = resolved_auxiliary_scalar_primitive(primitive);
-            if (!exact_logical && query_auxiliary.is_none())
-                || primitive.validator().is_none()
-                || primitive.effect() != crate::PrimitiveEffect::Pure
-                || !primitive.is_replay_safe()
-            {
-                return unsupported(
-                    &model.span,
-                    format!(
-                        "rule `{rule_name}` query primitive without an exact deterministic proof-validating specialization"
-                    ),
-                );
+    let rule_names = rules.keys().cloned().collect::<Vec<_>>();
+    for rule_name in &rule_names {
+        let resolution = (|| -> Result<ResolvedRulePrimitives, CausalSliceError> {
+            let model = &rules[rule_name];
+            if model.opaque.is_some() {
+                return Ok(ResolvedRulePrimitives::default());
             }
-            if exact_logical {
-                let _ = expected.next();
-            }
-            body.push(RulePrimitiveMeta {
-                function: primitive.external_id(crate::Context::Pure),
-                logical_query: exact_logical,
-                query_auxiliary,
-            });
-        }
-        if expected.next().is_some() {
-            return unsupported(
-                &model.span,
-                format!("rule `{rule_name}` lost a modeled query primitive during lowering"),
-            );
-        }
-
-        let registered_head = registered
-            .core
-            .head
-            .0
-            .iter()
-            .filter_map(|action| match action {
-                GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _)
-                | GenericCoreAction::Set(_, ResolvedCall::Primitive(primitive), _, _)
-                | GenericCoreAction::Change(_, _, ResolvedCall::Primitive(primitive), _) => {
-                    Some(primitive)
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let mut head = Vec::with_capacity(registered_head.len());
-        let mut expected_head = model.head_primitives.iter().peekable();
-        for primitive in registered_head {
-            let exact_source_occurrence = expected_head.peek().is_some_and(|expected| {
-                matches!(
-                    expected,
-                    AtomArg::App {
-                        primitive: Some(capability),
-                        ..
-                    } if capability.matches(primitive)
-                )
-            });
-            if exact_source_occurrence {
-                let _ = expected_head.next();
-                head.push(RulePrimitiveMeta {
-                    function: primitive.external_id(crate::Context::Write),
-                    logical_query: false,
-                    query_auxiliary: None,
-                });
-                continue;
-            }
-            let legacy_bigrat_occurrence = expected_head.peek().is_some_and(|expected| {
-                matches!(
-                    expected,
-                    AtomArg::App {
-                        function,
-                        input_sorts,
-                        output_sort,
-                        primitive: None,
-                        ..
-                    } if primitive.name() == function
-                        && replay_safe_bigrat_primitive_arity(function)
-                            == Some(input_sorts.len())
-                        && primitive.input().len() == input_sorts.len()
-                        && primitive
-                            .input()
-                            .iter()
-                            .zip(input_sorts)
-                            .all(|(actual, expected)| actual.name() == expected)
-                        && primitive.output().name() == output_sort
-                        && primitive.effect() == crate::PrimitiveEffect::Pure
-                        && primitive.validator().is_some()
-                        && primitive.is_replay_safe()
-                )
-            });
-            if legacy_bigrat_occurrence {
-                let _ = expected_head.next();
-                head.push(RulePrimitiveMeta {
-                    function: primitive.external_id(crate::Context::Write),
-                    logical_query: false,
-                    query_auxiliary: None,
-                });
-                continue;
-            }
-            if let Some(query_auxiliary) = resolved_auxiliary_scalar_primitive(primitive) {
-                if primitive.effect() != crate::PrimitiveEffect::Pure
+            let registered = egraph
+                .rulesets
+                .values()
+                .find_map(|ruleset| match ruleset {
+                    Ruleset::Rules(registered) => registered.get(rule_name),
+                    Ruleset::Combined(..) => None,
+                })
+                .ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "modeled rule `{rule_name}` was not registered by the traced program"
+                    ))
+                })?;
+            validate_registered_replay_aliases(rule_name, model, &registered.substitutions)?;
+            let registered_body = registered
+                .core
+                .body
+                .atoms
+                .iter()
+                .filter_map(|atom| match &atom.head {
+                    ResolvedCall::Primitive(primitive) => Some(primitive),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut body = Vec::with_capacity(registered_body.len());
+            let mut expected = model.body_primitives.iter().peekable();
+            for primitive in registered_body {
+                let exact_logical = expected
+                    .peek()
+                    .is_some_and(|expected| expected.capability.matches(primitive));
+                let query_auxiliary = resolved_auxiliary_scalar_primitive(primitive);
+                if (!exact_logical && query_auxiliary.is_none())
                     || primitive.validator().is_none()
+                    || primitive.effect() != crate::PrimitiveEffect::Pure
                     || !primitive.is_replay_safe()
                 {
                     return unsupported(
                         &model.span,
                         format!(
-                            "rule `{rule_name}` auxiliary head primitive without a deterministic proof validator"
+                            "rule `{rule_name}` query primitive without an exact deterministic proof-validating specialization"
                         ),
                     );
                 }
-                head.push(RulePrimitiveMeta {
-                    function: primitive.external_id(crate::Context::Write),
-                    logical_query: false,
-                    query_auxiliary: Some(query_auxiliary),
+                if exact_logical {
+                    let _ = expected.next();
+                }
+                body.push(RulePrimitiveMeta {
+                    function: primitive.external_id(crate::Context::Pure),
+                    logical_query: exact_logical,
+                    query_auxiliary,
                 });
-                continue;
             }
-            return unsupported(
-                &model.span,
-                format!(
-                    "rule `{rule_name}` lowered primitive `{}` ({:?} -> {}) without an exact typed source occurrence",
-                    primitive.name(),
-                    primitive
-                        .input()
-                        .iter()
-                        .map(|sort| sort.name())
-                        .collect::<Vec<_>>(),
-                    primitive.output().name(),
-                ),
-            );
-        }
-        if expected_head.next().is_some() {
-            return Err(CausalSliceError::Invariant(format!(
-                "rule `{rule_name}` lost a modeled head primitive during lowering"
-            )));
-        }
-        resolved.insert(
-            rule_name.clone(),
-            ResolvedRulePrimitives {
+            if let Some(expected) = expected.next() {
+                return unsupported(
+                    &model.span,
+                    format!(
+                        "rule `{rule_name}` lost modeled query primitive `{}` ({:?} -> {}) during lowering",
+                        expected.capability.specialization.name(),
+                        expected
+                            .capability
+                            .specialization
+                            .input()
+                            .iter()
+                            .map(|sort| sort.name())
+                            .collect::<Vec<_>>(),
+                        expected.capability.specialization.output().name(),
+                    ),
+                );
+            }
+
+            let registered_head = registered
+                .core
+                .head
+                .0
+                .iter()
+                .filter_map(|action| match action {
+                    GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _)
+                    | GenericCoreAction::Set(_, ResolvedCall::Primitive(primitive), _, _)
+                    | GenericCoreAction::Change(_, _, ResolvedCall::Primitive(primitive), _) => {
+                        Some(primitive)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut head = Vec::with_capacity(registered_head.len());
+            let mut expected_head = model.head_primitives.iter().peekable();
+            for primitive in registered_head {
+                let exact_source_occurrence = expected_head.peek().is_some_and(|expected| {
+                    matches!(
+                        expected,
+                        AtomArg::App {
+                            primitive: Some(capability),
+                            ..
+                        } if capability.matches(primitive)
+                    )
+                });
+                if exact_source_occurrence {
+                    let _ = expected_head.next();
+                    head.push(RulePrimitiveMeta {
+                        function: primitive.external_id(crate::Context::Write),
+                        logical_query: false,
+                        query_auxiliary: None,
+                    });
+                    continue;
+                }
+                let legacy_bigrat_occurrence = expected_head.peek().is_some_and(|expected| {
+                    matches!(
+                        expected,
+                        AtomArg::App {
+                            function,
+                            input_sorts,
+                            output_sort,
+                            primitive: None,
+                            ..
+                        } if primitive.name() == function
+                            && replay_safe_bigrat_primitive_arity(function)
+                                == Some(input_sorts.len())
+                            && primitive.input().len() == input_sorts.len()
+                            && primitive
+                                .input()
+                                .iter()
+                                .zip(input_sorts)
+                                .all(|(actual, expected)| actual.name() == expected)
+                            && primitive.output().name() == output_sort
+                            && primitive.effect() == crate::PrimitiveEffect::Pure
+                            && primitive.validator().is_some()
+                            && primitive.is_replay_safe()
+                    )
+                });
+                if legacy_bigrat_occurrence {
+                    let _ = expected_head.next();
+                    head.push(RulePrimitiveMeta {
+                        function: primitive.external_id(crate::Context::Write),
+                        logical_query: false,
+                        query_auxiliary: None,
+                    });
+                    continue;
+                }
+                if let Some(query_auxiliary) = resolved_auxiliary_scalar_primitive(primitive) {
+                    if primitive.effect() != crate::PrimitiveEffect::Pure
+                        || primitive.validator().is_none()
+                        || !primitive.is_replay_safe()
+                    {
+                        return unsupported(
+                            &model.span,
+                            format!(
+                                "rule `{rule_name}` auxiliary head primitive without a deterministic proof validator"
+                            ),
+                        );
+                    }
+                    head.push(RulePrimitiveMeta {
+                        function: primitive.external_id(crate::Context::Write),
+                        logical_query: false,
+                        query_auxiliary: Some(query_auxiliary),
+                    });
+                    continue;
+                }
+                return unsupported(
+                    &model.span,
+                    format!(
+                        "rule `{rule_name}` lowered primitive `{}` ({:?} -> {}) without an exact typed source occurrence",
+                        primitive.name(),
+                        primitive
+                            .input()
+                            .iter()
+                            .map(|sort| sort.name())
+                            .collect::<Vec<_>>(),
+                        primitive.output().name(),
+                    ),
+                );
+            }
+            if expected_head.next().is_some() {
+                return Err(CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` lost a modeled head primitive during lowering"
+                )));
+            }
+            Ok(ResolvedRulePrimitives {
                 body,
                 head,
                 core_head: registered.core.head.clone(),
                 substitutions: registered.substitutions.clone(),
-            },
-        );
+            })
+        })();
+        match resolution {
+            Ok(metadata) => {
+                resolved.insert(rule_name.clone(), metadata);
+            }
+            Err(CausalSliceError::Unsupported { location, reason }) => {
+                let model = &rules[rule_name];
+                if !lowering_mismatch_can_be_deferred(egraph, rule_name, model) {
+                    return Err(CausalSliceError::Unsupported { location, reason });
+                }
+                log::debug!(
+                    "causal lowering model deferred rule `{rule_name}` at {location}: {reason}"
+                );
+                rules
+                    .get_mut(rule_name)
+                    .expect("rule name came from this map")
+                    .opaque = Some(OpaqueRulePolicy::Reject(DeferredUnsupported {
+                    location,
+                    reason,
+                }));
+                resolved.insert(rule_name.clone(), ResolvedRulePrimitives::default());
+            }
+            Err(error) => return Err(error),
+        }
     }
     Ok(resolved)
+}
+
+fn lowering_mismatch_can_be_deferred(egraph: &EGraph, rule_name: &str, model: &RuleModel) -> bool {
+    if !model.head_subsumes.is_empty() {
+        return false;
+    }
+    let Some(registered) = egraph.rulesets.values().find_map(|ruleset| match ruleset {
+        Ruleset::Rules(rules) => rules.get(rule_name),
+        Ruleset::Combined(..) => None,
+    }) else {
+        return false;
+    };
+    let body_primitives = registered.core.body.atoms.iter().filter_map(|atom| {
+        if let ResolvedCall::Primitive(primitive) = &atom.head {
+            Some(primitive)
+        } else {
+            None
+        }
+    });
+    let head_primitives = registered
+        .core
+        .head
+        .0
+        .iter()
+        .filter_map(|action| match action {
+            GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _)
+            | GenericCoreAction::Set(_, ResolvedCall::Primitive(primitive), _, _)
+            | GenericCoreAction::Change(_, _, ResolvedCall::Primitive(primitive), _) => {
+                Some(primitive)
+            }
+            _ => None,
+        });
+    body_primitives.chain(head_primitives).all(|primitive| {
+        primitive.effect() == crate::PrimitiveEffect::Pure
+            && primitive.validator().is_some()
+            && primitive.is_replay_safe()
+    })
 }
 
 fn resolved_auxiliary_scalar_primitive(
@@ -3845,7 +3998,7 @@ fn collect_declarations(
                 span,
                 name,
                 schema,
-                merge: Some(merge),
+                merge,
                 hidden,
                 let_binding,
                 term_constructor,
@@ -3854,32 +4007,35 @@ fn collect_declarations(
             } if !hidden
                 && !let_binding
                 && term_constructor.is_none()
-                && identity_vals.is_none()
-                && merge.actions.0.is_empty() =>
+                && identity_vals.is_none() =>
             {
                 let [output] = schema.outputs.as_slice() else {
                     continue;
                 };
-                let merge_kind = match &merge.result {
-                    GenericExpr::Var(_, variable) if variable == "new" => {
-                        MutableMergeKind::ExactNew
-                    }
-                    GenericExpr::Call(_, function, args)
-                        if output == "BigRat"
-                            && matches!(function.as_str(), "min" | "max")
-                            && matches!(
-                                args.as_slice(),
-                                [GenericExpr::Var(_, old), GenericExpr::Var(_, new)]
-                                    if old == "old" && new == "new"
-                            ) =>
-                    {
-                        if function == "min" {
-                            MutableMergeKind::BigRatMin
-                        } else {
-                            MutableMergeKind::BigRatMax
+                let merge_kind = match merge {
+                    None => MutableMergeKind::AssertEq,
+                    Some(merge) if merge.actions.0.is_empty() => match &merge.result {
+                        GenericExpr::Var(_, variable) if variable == "new" => {
+                            MutableMergeKind::ExactNew
                         }
-                    }
-                    _ => continue,
+                        GenericExpr::Call(_, function, args)
+                            if output == "BigRat"
+                                && matches!(function.as_str(), "min" | "max")
+                                && matches!(
+                                    args.as_slice(),
+                                    [GenericExpr::Var(_, old), GenericExpr::Var(_, new)]
+                                        if old == "old" && new == "new"
+                                ) =>
+                        {
+                            if function == "min" {
+                                MutableMergeKind::BigRatMin
+                            } else {
+                                MutableMergeKind::BigRatMax
+                            }
+                        }
+                        _ => continue,
+                    },
+                    Some(_) => continue,
                 };
                 for sort in schema.input.iter().chain(std::iter::once(output)) {
                     if !supported_sort(sort) {
@@ -4677,12 +4833,13 @@ fn opaque_rule_model(
     source_globals: &IndexMap<String, String>,
     error: DeferredUnsupported,
 ) -> RuleModel {
-    let opaque =
-        if empty_body_initializer_is_replayable(rule, relations, constructors, source_globals) {
-            OpaqueRulePolicy::EmptyBodyInitializer
-        } else {
-            OpaqueRulePolicy::Reject(error)
-        };
+    let opaque = if matches!(rule.head.0.as_slice(), [GenericAction::Panic(..)]) {
+        OpaqueRulePolicy::UnreachedPanicHead
+    } else if empty_body_initializer_is_replayable(rule, relations, constructors, source_globals) {
+        OpaqueRulePolicy::EmptyBodyInitializer
+    } else {
+        OpaqueRulePolicy::Reject(error)
+    };
     RuleModel {
         span: rule.span.clone(),
         body: Vec::new(),
@@ -4823,6 +4980,7 @@ fn model_rule(
     let mut var_order = Vec::new();
     let mut var_sorts = IndexMap::default();
     let mut body = Vec::new();
+    let mut body_lookups = Vec::new();
     let mut body_primitive_occurrences = vec![Vec::new(); rule.body.len()];
     for (fact_index, fact) in rule.body.iter().enumerate() {
         let resolved_fact = &resolved_rule.body[fact_index];
@@ -4855,6 +5013,36 @@ fn model_rule(
                         rule.name
                     )));
                 };
+                if let GenericExpr::Call(span, function, _) = expr
+                    && let Some(constructor) = constructors.get(function)
+                {
+                    let application = model_typed_atom_arg(
+                        expr,
+                        resolved_expr,
+                        &constructor.output,
+                        constructors,
+                        source_globals,
+                        &format!("rule `{}` bare constructor body fact", rule.name),
+                    )?;
+                    collect_intermediate_query_primitives(
+                        span,
+                        &application,
+                        &mut body_primitive_occurrences[fact_index],
+                    );
+                    register_arg_vars(
+                        &application,
+                        &constructor.output,
+                        &mut var_order,
+                        &mut var_sorts,
+                    )?;
+                    body_lookups.push(ConstructorLookupTemplate {
+                        span: span.clone(),
+                        application: application.clone(),
+                        output: application,
+                        sort: constructor.output.clone(),
+                    });
+                    continue;
+                }
                 let atom = model_typed_atom(
                     expr,
                     resolved_expr,
@@ -4877,7 +5065,6 @@ fn model_rule(
         }
     }
     let mut body_equalities = Vec::new();
-    let mut body_lookups = Vec::new();
     let mut body_functions = Vec::new();
     for (fact_index, fact) in rule.body.iter().enumerate() {
         let resolved_fact = &resolved_rule.body[fact_index];
@@ -4962,7 +5149,7 @@ fn model_rule(
                 rule.name
             )));
         };
-        let equality = model_typed_body_equality(
+        let equality = model_resolved_equality(
             span,
             left,
             right,
@@ -5120,11 +5307,16 @@ fn model_rule(
             }
             GenericAction::Union(span, left, right) => {
                 saw_non_let_head_action = true;
-                let equality = model_equality(
+                let ResolvedAction::Union(_, resolved_left, resolved_right) = resolved_action
+                else {
+                    unreachable!("head action shapes were checked above")
+                };
+                let equality = model_resolved_equality(
                     span,
                     left,
                     right,
-                    &head_var_sorts,
+                    resolved_left,
+                    resolved_right,
                     constructors,
                     source_globals,
                     &format!("rule `{}` union head", rule.name),
@@ -5139,7 +5331,7 @@ fn model_rule(
                     return unsupported_action(
                         action,
                         format!(
-                            "a non-insert/union head action in rule `{}`: set of function `{function}` without an exact single-output `:merge new` declaration",
+                            "a non-insert/union head action in rule `{}`: set of function `{function}` without a causally modeled single-output merge",
                             rule.name,
                         ),
                     );
@@ -5153,11 +5345,14 @@ fn model_rule(
                         ),
                     );
                 }
-                if declaration.merge != MutableMergeKind::ExactNew {
+                if !matches!(
+                    declaration.merge,
+                    MutableMergeKind::AssertEq | MutableMergeKind::ExactNew
+                ) {
                     return unsupported(
                         span,
                         format!(
-                            "set of function `{function}` with a custom merge in rule `{}`; only source insertions and exact `:merge new` rule writes are currently causal",
+                            "set of function `{function}` with a custom merge in rule `{}`; only assert-equal and exact `:merge new` rule writes are currently causal",
                             rule.name
                         ),
                     );
@@ -5295,16 +5490,10 @@ fn model_rule(
             ),
         );
     }
-    if !head_unions.is_empty()
-        && head_subsumes.is_empty()
-        && (semantic_head_actions != 1 + head_sets.len() || head_unions.len() != 1)
-    {
+    if !head_unions.is_empty() && head_subsumes.is_empty() && head_unions.len() != 1 {
         return unsupported(
             &rule.span,
-            format!(
-                "a union mixed with head actions other than exact `:merge new` sets in rule `{}`",
-                rule.name
-            ),
+            format!("more than one union action in rule `{}`", rule.name),
         );
     }
 
@@ -5626,7 +5815,7 @@ fn model_typed_equality(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn model_typed_body_equality(
+fn model_resolved_equality(
     span: &Span,
     left: &Expr,
     right: &Expr,
@@ -5695,10 +5884,16 @@ fn model_typed_atom_arg(
             GenericExpr::Call(span, function, args),
             ResolvedExpr::Call(_, resolved_call, resolved_args),
         ) => {
-            if resolved_call.name() != function
-                || resolved_call.output().name() != expected_sort
-                || resolved_args.len() != args.len()
-            {
+            if resolved_call.name() != function {
+                return unsupported(
+                    span,
+                    format!(
+                        "source call `{function}` rewritten to `{}` by a command macro in {context}",
+                        resolved_call.name()
+                    ),
+                );
+            }
+            if resolved_call.output().name() != expected_sort || resolved_args.len() != args.len() {
                 return Err(CausalSliceError::Invariant(format!(
                     "typed source call `{function}` diverged in {context}"
                 )));
@@ -7507,6 +7702,16 @@ fn elaborate_prefix_replay(
                     | OpaqueRulePolicy::UnreplayableGrounding(error) => {
                         return Err(error.clone().into_error());
                     }
+                    OpaqueRulePolicy::UnreachedPanicHead => {
+                        if !applications_by_origin.for_origin(ordinal).is_empty()
+                            || !unions_by_origin.for_origin(ordinal).is_empty()
+                        {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "single-panic rule `{rule_name}` reported a successful head effect"
+                            )));
+                        }
+                        continue;
+                    }
                     OpaqueRulePolicy::EmptyBodyInitializer => {
                         let application_indices = applications_by_origin.for_origin(ordinal);
                         if !primitives_by_origin.for_origin(ordinal).is_empty()
@@ -7556,6 +7761,7 @@ fn elaborate_prefix_replay(
                                 )
                             })?,
                             bindings: Box::new([]),
+                            selector_variables: None,
                         });
                         effective_applications += 1;
                         continue;
@@ -7681,6 +7887,7 @@ fn elaborate_prefix_replay(
                     CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
                 })?,
                 bindings: replay_bindings.into_boxed_slice(),
+                selector_variables: None,
             });
             effective_applications += 1;
         }
@@ -7796,6 +8003,282 @@ fn mark_new_source_witnesses(
     }
 }
 
+fn supports_pre_wave_prefix_fallback(reason: &str) -> bool {
+    reason == "syntax that was unavailable at the captured firing"
+        || (reason.starts_with("an equality-canonicalized premise of rule `")
+            && reason.ends_with("without commit-time relation-row rekey provenance"))
+}
+
+fn supports_pre_wave_constructor_hit_fallback(error: &DeferredUnsupported) -> bool {
+    matches!(
+        error.reason.as_str(),
+        "a table hit without a previously captured constructor witness"
+            | "a congruence-created table hit without exact constructor-row provenance"
+    )
+}
+
+fn binding_is_replay_selector_stable(
+    egraph: &EGraph,
+    sort_name: &str,
+    binding: BindingWitness,
+    witnesses: &WitnessArena,
+    prestate_witness_count: usize,
+    current_binding_witnesses: &HashSet<WitnessId>,
+) -> Result<bool, CausalSliceError> {
+    let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
+        CausalSliceError::Invariant(format!(
+            "replay-key planning lost runtime sort `{sort_name}`"
+        ))
+    })?;
+    if !sort.is_eq_sort() && !sort.is_container_sort() {
+        return Ok(true);
+    }
+
+    // Point evaluation is sound only when this syntax had one raw denotation
+    // at the match boundary. Include the pre-wave arena plus witnesses copied
+    // from this shared-prestate match set; exclude witnesses first produced by
+    // current-wave heads. Hardboiled's `(Int 32 1)` has both 51 and 271 here
+    // and is therefore omitted from its packed selector.
+    let syntax = witnesses.nodes[binding.syntax.index()].syntax;
+    let mut endpoints = HashSet::default();
+    for witness in witnesses
+        .syntax_instances
+        .get(&syntax)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if witness.index() >= prestate_witness_count && !current_binding_witnesses.contains(witness)
+        {
+            continue;
+        }
+        if let Some(endpoint) = witnesses.endpoint(*witness) {
+            endpoints.insert(endpoint);
+        }
+    }
+    Ok(endpoints.len() == 1 && endpoints.contains(&binding.endpoint))
+}
+
+fn replay_grounding_key(
+    variables: &[String],
+    index: usize,
+    pending_fires: &[PendingFire],
+    model: &RuleModel,
+    egraph: &EGraph,
+    equality_forest: &EqualityForest,
+) -> Result<Box<[Value]>, CausalSliceError> {
+    let fire = &pending_fires[index].grounding;
+    let mut key = Vec::with_capacity(variables.len());
+    for variable in variables {
+        let binding = fire.bindings.get(variable).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "grounded firing of `{}` omitted replay-key variable `{variable}`",
+                fire.rule
+            ))
+        })?;
+        let sort_name = model.var_sorts.get(variable).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "rule `{}` omitted the type of replay-key variable `{variable}`",
+                fire.rule
+            ))
+        })?;
+        let sort = egraph.get_sort_by_name(sort_name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "replay-key planning lost runtime sort `{sort_name}`"
+            ))
+        })?;
+        key.push(if sort.is_eq_sort() {
+            equality_forest.typed_canonical_value(sort_name, binding.endpoint)
+        } else {
+            binding.endpoint
+        });
+    }
+    Ok(key.into_boxed_slice())
+}
+
+fn replay_selector_identifies_targets(
+    variables: &[String],
+    target_indices: &[usize],
+    candidate_indices: &[usize],
+    pending_fires: &[PendingFire],
+    model: &RuleModel,
+    egraph: &EGraph,
+    equality_forest: &EqualityForest,
+) -> Result<bool, CausalSliceError> {
+    let mut projected_groundings = HashMap::<Box<[Value]>, HashSet<Box<[Value]>>>::default();
+    for index in candidate_indices {
+        let projected = replay_grounding_key(
+            variables,
+            *index,
+            pending_fires,
+            model,
+            egraph,
+            equality_forest,
+        )?;
+        let complete = replay_grounding_key(
+            &model.replay_var_order,
+            *index,
+            pending_fires,
+            model,
+            egraph,
+            equality_forest,
+        )?;
+        projected_groundings
+            .entry(projected)
+            .or_default()
+            .insert(complete);
+    }
+    let mut target_keys = HashSet::default();
+    for index in target_indices {
+        let key = replay_grounding_key(
+            variables,
+            *index,
+            pending_fires,
+            model,
+            egraph,
+            equality_forest,
+        )?;
+        if !target_keys.insert(key.clone())
+            || projected_groundings.get(&key).map(HashSet::len) != Some(1)
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+struct ReplaySelectorPlanningInput<'a> {
+    egraph: &'a EGraph,
+    rules: &'a IndexMap<String, RuleModel>,
+    witnesses: &'a WitnessArena,
+    prestate_witness_count: usize,
+    equality_forest: &'a EqualityForest,
+    wave: usize,
+    pending_fires: &'a mut [PendingFire],
+    current_start: usize,
+    events: &'a mut [ReplayEvent],
+}
+
+fn assign_wave_replay_selectors(
+    input: ReplaySelectorPlanningInput<'_>,
+) -> Result<(), CausalSliceError> {
+    let ReplaySelectorPlanningInput {
+        egraph,
+        rules,
+        witnesses,
+        prestate_witness_count,
+        equality_forest,
+        wave,
+        pending_fires,
+        current_start,
+        events,
+    } = input;
+    let current_binding_witnesses = pending_fires[current_start..]
+        .iter()
+        .flat_map(|pending| pending.grounding.bindings.values())
+        .map(|binding| binding.syntax)
+        .collect::<HashSet<_>>();
+    let mut groups = IndexMap::<String, Vec<usize>>::default();
+    for (index, pending) in pending_fires.iter().enumerate().skip(current_start) {
+        groups
+            .entry(pending.grounding.rule.clone())
+            .or_default()
+            .push(index);
+    }
+
+    let mut plans = IndexMap::<String, ReplaySelector>::default();
+    for (rule_name, target_indices) in groups {
+        let model = rules.get(&rule_name).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "replay-key planning referenced unknown rule `{rule_name}`"
+            ))
+        })?;
+        // Packed replay freshly queries the complete current database. In the
+        // supported monotone fragment, successful matches from earlier waves
+        // remain candidates even though seminaive execution need not report
+        // them again. Plan this wave's key against that cumulative prefix.
+        let candidate_indices = pending_fires
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pending)| (pending.grounding.rule == rule_name).then_some(index))
+            .collect::<Vec<_>>();
+        let mut stable_variables = Vec::new();
+        for variable in &model.replay_var_order {
+            let sort_name = model.var_sorts.get(variable).ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "rule `{rule_name}` omitted the type of replay variable `{variable}`"
+                ))
+            })?;
+            let stable = target_indices.iter().try_fold(true, |stable, index| {
+                let binding = pending_fires[*index]
+                    .grounding
+                    .bindings
+                    .get(variable)
+                    .copied()
+                    .ok_or_else(|| {
+                        CausalSliceError::Invariant(format!(
+                            "grounded firing of `{rule_name}` omitted replay variable `{variable}`"
+                        ))
+                    })?;
+                Ok::<_, CausalSliceError>(
+                    stable
+                        && binding_is_replay_selector_stable(
+                            egraph,
+                            sort_name,
+                            binding,
+                            witnesses,
+                            prestate_witness_count,
+                            &current_binding_witnesses,
+                        )?,
+                )
+            })?;
+            if stable {
+                stable_variables.push(variable.clone());
+            }
+        }
+        let plan = if replay_selector_identifies_targets(
+            &stable_variables,
+            &target_indices,
+            &candidate_indices,
+            pending_fires,
+            model,
+            egraph,
+            equality_forest,
+        )? {
+            // Keep the maximal stable key. If it is not unique, no subset can
+            // become unique; minimizing it would only churn source and tests
+            // without improving the soundness boundary.
+            ReplaySelector::Key(Arc::from(stable_variables))
+        } else {
+            ReplaySelector::Unsupported(Arc::new(DeferredUnsupported {
+                location: model.span.to_string(),
+                reason: format!(
+                    "{} successful groundings of rule `{rule_name}` in traced wave {wave} cannot be uniquely identified by replay-stable source bindings {stable_variables:?}; packed logical selectors or a stable match-time endpoint handle are required",
+                    target_indices.len(),
+                ),
+            }))
+        };
+
+        for index in target_indices {
+            pending_fires[index].grounding.selector = plan.clone();
+        }
+        plans.insert(rule_name, plan);
+    }
+
+    for event in events {
+        let EventKind::Fire(fire) = &mut event.kind else {
+            continue;
+        };
+        let plan = plans.get(&fire.rule).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "promoted firing of `{}` in wave {wave} had no pending replay-key group",
+                fire.rule
+            ))
+        })?;
+        fire.selector = plan.clone();
+    }
+    Ok(())
+}
+
 fn elaborate_events(
     input: ElaborationInput<'_>,
     witnesses: &mut WitnessArena,
@@ -7901,8 +8384,18 @@ fn elaborate_events(
     let mut pending_fires = Vec::new();
     let mut opaque_pending_firings = 0usize;
     let mut opaque_promoted_events = 0usize;
-    let mut equality_prefix_fallbacks = 0usize;
+    let mut causal_prefix_fallbacks = 0usize;
     for (wave, batch) in batches.iter().enumerate() {
+        // Native matches in this batch were all selected from the shared
+        // pre-wave database. A conservative premise fallback must therefore
+        // stop here, before any event from this wave is added.
+        let pre_wave_last_event = events
+            .events
+            .len()
+            .checked_sub(1)
+            .map(|index| EventId(index as u32));
+        let wave_event_start = events.events.len();
+        let wave_pending_start = pending_fires.len();
         for application in &batch.applications {
             let rule = batch
                 .matches
@@ -8034,6 +8527,17 @@ fn elaborate_events(
             if let Some(policy) = policy {
                 log::debug!("causal elaboration deferred firing of rule `{rule_name}`: {policy:?}");
                 let mutation_indices = mutations_by_origin.for_origin(ordinal);
+                if matches!(policy, OpaqueRulePolicy::UnreachedPanicHead) {
+                    if !applications_by_origin[ordinal].is_empty()
+                        || !unions_by_origin[ordinal].is_empty()
+                        || !mutation_indices.is_empty()
+                    {
+                        return Err(CausalSliceError::Invariant(format!(
+                            "single-panic rule `{rule_name}` reported a successful head effect"
+                        )));
+                    }
+                    continue;
+                }
                 let effective_mutation = mutation_indices.iter().any(|index| {
                     matches!(
                         batch.mutations[*index as usize].outcome,
@@ -8060,9 +8564,15 @@ fn elaborate_events(
                         "validated empty-body initializer `{rule_name}` executed an opaque table, primitive, or union effect"
                     )));
                 }
+                // Rule primitive metadata was already restricted to Pure,
+                // proof-validating, replay-safe specializations. If an
+                // unreplayable grounding used one, the traced table/union
+                // receipts below still determine whether it had a persistent
+                // effect. Let complete no-ops be discarded there rather than
+                // rejecting them solely because their primitive syntax cannot
+                // be reconstructed.
                 if deferred_grounding
                     && (known_applications.len() != applications_by_origin[ordinal].len()
-                        || !model.head_primitives.is_empty()
                         || !model.head_subsumes.is_empty())
                 {
                     let detail = match policy {
@@ -8073,7 +8583,7 @@ fn elaborate_events(
                         _ => String::new(),
                     };
                     return Err(CausalSliceError::Invariant(format!(
-                        "unreplayable grounding of modeled rule `{rule_name}` executed an untracked table, head primitive, or subsume effect{detail}"
+                        "unreplayable grounding of modeled rule `{rule_name}` executed an untracked table or subsume effect{detail}"
                     )));
                 }
                 let effects = match elaborate_fire_applications(
@@ -8134,12 +8644,24 @@ fn elaborate_events(
                     .into_iter()
                     .filter(|row| !producers.contains_key(row) && !new_outputs.contains_key(row))
                     .collect::<Vec<_>>();
+                // A native match is captured before action-lane query filters
+                // finish. Reached union instructions always produce a receipt,
+                // including redundant unions, so a deferred grounding with no
+                // table, union, or mutation receipt never executed its stateful
+                // head and has no equality edge to classify.
+                let head_was_filtered = applications_by_origin[ordinal].is_empty()
+                    && unions_by_origin[ordinal].is_empty()
+                    && mutation_indices.is_empty();
                 let deferred_grounding_equality_edges = if deferred_grounding {
-                    classify_prefix_union_receipts(
-                        rule_name,
-                        &model.head_unions,
-                        &unions_by_origin[ordinal],
-                    )?
+                    if head_was_filtered {
+                        Vec::new()
+                    } else {
+                        classify_prefix_union_receipts(
+                            rule_name,
+                            &model.head_unions,
+                            &unions_by_origin[ordinal],
+                        )?
+                    }
                 } else {
                     Vec::new()
                 };
@@ -8174,6 +8696,7 @@ fn elaborate_events(
                                 )
                             })?,
                             bindings: IndexMap::default(),
+                            selector: ReplaySelector::Unplanned,
                         };
                         let _promoted = if has_effect || force_wave_prefix {
                             let event = events.push(ReplayEvent {
@@ -8198,6 +8721,9 @@ fn elaborate_events(
                             grounding,
                             effective: has_effect,
                         });
+                    }
+                    OpaqueRulePolicy::UnreachedPanicHead => {
+                        unreachable!("single-panic candidates were discarded above")
                     }
                     OpaqueRulePolicy::Reject(error)
                     | OpaqueRulePolicy::ProjectedGrounding(error)
@@ -8351,6 +8877,7 @@ fn elaborate_events(
                         }
                     }
                 }
+                let mut non_reflexive_equality_variables = HashSet::default();
                 for equality in &model.body_equalities {
                     let left = ground_arg_at(
                         egraph,
@@ -8375,6 +8902,14 @@ fn elaborate_events(
                         ))
                     })?;
                     if sort.is_eq_sort() {
+                        if left.value != right.value {
+                            non_reflexive_equality_variables.extend(
+                                atom_arg_vars(&equality.left)
+                                    .into_iter()
+                                    .chain(atom_arg_vars(&equality.right))
+                                    .map(|(_, variable)| variable.clone()),
+                            );
+                        }
                         premise_dependencies.insert(dependencies.equality(left, right)?);
                     } else if left.value != right.value {
                         return Err(CausalSliceError::Invariant(format!(
@@ -8416,6 +8951,25 @@ fn elaborate_events(
                 for lookup in &model.body_lookups {
                     let output =
                         ground_arg(egraph, &lookup.output, &lookup.sort, &bindings, witnesses)?;
+                    let application_output = ground_arg_at(
+                        egraph,
+                        &lookup.application,
+                        &lookup.sort,
+                        &bindings,
+                        witnesses,
+                        Some(&prestate_witness_snapshot),
+                    )?;
+                    if application_output.value != output.value
+                        && egraph
+                            .get_sort_by_name(&lookup.sort)
+                            .is_some_and(|sort| sort.is_eq_sort())
+                    {
+                        non_reflexive_equality_variables.extend(
+                            atom_arg_vars(&lookup.output)
+                                .into_iter()
+                                .map(|(_, variable)| variable.clone()),
+                        );
+                    }
                     let application_availability = ground_application_availability(
                         GroundApplicationInput {
                             egraph,
@@ -8439,6 +8993,18 @@ fn elaborate_events(
                     )?);
                 }
                 for lookup in &model.body_functions {
+                    if lookup.keys.iter().any(|key| {
+                        atom_arg_vars(key).iter().any(|(_, variable)| {
+                            non_reflexive_equality_variables.contains(variable.as_str())
+                        })
+                    }) {
+                        return Err(CausalSliceError::Unsupported {
+                            location: lookup.span.to_string(),
+                            reason: format!(
+                                "a mutable function key constrained through a non-reflexive equality in rule `{rule_name}`; the unchanged strict proof extractor rejects the corresponding function fact"
+                            ),
+                        });
+                    }
                     let (_row_dependency, lookup_dependencies) = function_lookup_dependencies(
                         egraph,
                         lookup,
@@ -8462,6 +9028,12 @@ fn elaborate_events(
             })();
             let (mut prerequisites, prerequisite_error) = match prerequisite_result {
                 Ok(prerequisites) => (prerequisites, None),
+                Err(CausalSliceError::Unsupported { reason, .. })
+                    if supports_pre_wave_prefix_fallback(&reason) =>
+                {
+                    causal_prefix_fallbacks += 1;
+                    (dependencies.prefix(pre_wave_last_event)?, None)
+                }
                 Err(CausalSliceError::Unsupported { location, reason }) => (
                     DepArena::EMPTY,
                     Some(DeferredUnsupported {
@@ -8475,24 +9047,54 @@ fn elaborate_events(
             };
             let deferred_prerequisite_error = primitive_error.or(prerequisite_error);
 
-            let effects = if ordered_head {
-                elaborate_resolved_head(
-                    ResolvedHeadInput {
-                        egraph,
-                        rule_name,
-                        model,
-                        core_head: &resolved_rule.core_head,
-                        table_applications: &applications_by_origin[ordinal],
-                        primitive_applications: &head_applications,
-                        bindings: &mut bindings,
-                        trace_functions,
-                        prefix_fallback,
-                        equality_forest: &equality_forest,
-                    },
-                    witnesses,
-                    &mut dependencies,
-                    &mut wave_app_index,
-                )?
+            let mut ordered_head_error = None;
+            let mut effects = if ordered_head {
+                match preflight_resolved_head_receipts(
+                    rule_name,
+                    model,
+                    &resolved_rule.core_head,
+                    &applications_by_origin[ordinal],
+                    &head_applications,
+                    trace_functions,
+                ) {
+                    Ok(receipts) => elaborate_resolved_head(
+                        ResolvedHeadInput {
+                            egraph,
+                            rule_name,
+                            model,
+                            core_head: &resolved_rule.core_head,
+                            receipts,
+                            bindings: &mut bindings,
+                            trace_functions,
+                            prefix_fallback,
+                            equality_forest: &equality_forest,
+                        },
+                        witnesses,
+                        &mut dependencies,
+                        &mut wave_app_index,
+                    )?,
+                    Err(CausalSliceError::Unsupported { location, reason }) => {
+                        ordered_head_error = Some(DeferredUnsupported {
+                            location: model.span.to_string(),
+                            reason: format!(
+                                "{reason} while grounding {location} in the registered head of rule `{rule_name}`"
+                            ),
+                        });
+                        elaborate_fire_applications(
+                            egraph,
+                            applications_by_origin[ordinal].iter().copied(),
+                            trace_functions,
+                            witnesses,
+                            prefix_fallback,
+                            Some(CausalApplicationInput {
+                                equality_forest: &equality_forest,
+                                dependencies: &mut dependencies,
+                                app_index: &mut wave_app_index,
+                            }),
+                        )?
+                    }
+                    Err(error) => return Err(error),
+                }
             } else {
                 let mut effects = elaborate_fire_applications(
                     egraph,
@@ -8522,14 +9124,25 @@ fn elaborate_events(
                 )?;
                 effects
             };
-            let mut opaque_error =
+            if effects
+                .deferred_error
+                .as_ref()
+                .is_some_and(supports_pre_wave_constructor_hit_fallback)
+            {
+                let prefix = dependencies.prefix(pre_wave_last_event)?;
+                prerequisites = dependencies.and(prerequisites, prefix)?;
+                effects.deferred_error = None;
+                causal_prefix_fallbacks += 1;
+            }
+            let mut opaque_error = ordered_head_error.or_else(|| {
                 effects
                     .deferred_error
                     .as_ref()
                     .map(|error| DeferredUnsupported {
                         location: model.span.to_string(),
                         reason: format!("{} in rule `{rule_name}`", error.reason),
-                    });
+                    })
+            });
             let mutation_indices = mutations_by_origin.for_origin(ordinal);
             let mutation_receipts = mutation_indices
                 .iter()
@@ -8697,6 +9310,7 @@ fn elaborate_events(
                     CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
                 })?,
                 bindings: replay_bindings,
+                selector: ReplaySelector::Unplanned,
             };
             let has_effect = !effective_outputs.is_empty()
                 || !effects.new_witnesses.is_empty()
@@ -8730,6 +9344,18 @@ fn elaborate_events(
             });
         }
 
+        assign_wave_replay_selectors(ReplaySelectorPlanningInput {
+            egraph,
+            rules,
+            witnesses,
+            prestate_witness_count: prestate_witness_snapshot.node_count,
+            equality_forest: &equality_forest,
+            wave,
+            pending_fires: &mut pending_fires,
+            current_start: wave_pending_start,
+            events: &mut events.events[wave_event_start..],
+        })?;
+
         // A bounded ruleset iteration searches against one pre-state. Every
         // captured match must be elaborated before publishing its successful
         // unions, but the equality forest must still observe the native UF
@@ -8745,7 +9371,7 @@ fn elaborate_events(
                 match type_unoriginated_equality(egraph, witnesses, receipt, wave) {
                     Ok(equality) => {
                         new_equality_edges.push((equality, prefix));
-                        equality_prefix_fallbacks += 1;
+                        causal_prefix_fallbacks += 1;
                     }
                     Err(error) => {
                         opaque_equality_error.get_or_insert(error);
@@ -8785,7 +9411,18 @@ fn elaborate_events(
         for (row, dependency) in new_outputs {
             producers.insert(row, dependency);
         }
-        reject_rebuilt_container_witnesses(egraph, witnesses, wave, &batch.rebuilt_containers)?;
+        causal_prefix_fallbacks += refresh_rebuilt_container_witnesses(
+            egraph,
+            witnesses,
+            wave,
+            &batch.rebuilt_containers,
+            events
+                .events
+                .len()
+                .checked_sub(1)
+                .map(|index| EventId(index as u32)),
+            &mut dependencies,
+        )?;
     }
     Ok(Elaboration {
         pending_fires,
@@ -8797,36 +9434,81 @@ fn elaborate_events(
         source_events,
         equality_forest,
         opaque_equality_error,
-        equality_prefix_fallbacks,
+        causal_prefix_fallbacks,
     })
 }
 
-fn reject_rebuilt_container_witnesses(
+fn refresh_rebuilt_container_witnesses(
     egraph: &EGraph,
-    witnesses: &WitnessArena,
+    witnesses: &mut WitnessArena,
     wave: usize,
     rebuilt_containers: &[Value],
-) -> Result<(), CausalSliceError> {
+    last_replayable_event: Option<EventId>,
+    dependencies: &mut DepArena,
+) -> Result<usize, CausalSliceError> {
     if rebuilt_containers.is_empty() {
-        return Ok(());
+        return Ok(0);
     }
     let rebuilt = rebuilt_containers.iter().copied().collect::<HashSet<_>>();
-    let changed = witnesses.endpoint_instances.keys().find(|endpoint| {
-        rebuilt.contains(&endpoint.value)
-            && egraph
-                .get_sort_by_name(&endpoint.sort)
-                .is_some_and(|sort| sort.is_container_sort())
-    });
-    let Some(changed) = changed else {
-        return Ok(());
-    };
-    Err(CausalSliceError::Unsupported {
-        location: format!("traced wave {wave}"),
-        reason: format!(
-            "container witness of sort `{}` whose semantic contents changed during rebuild; replay requires a versioned container dependency",
-            changed.sort
-        ),
-    })
+    let changed = witnesses
+        .endpoint_instances
+        .keys()
+        .filter(|endpoint| {
+            rebuilt.contains(&endpoint.value)
+                && egraph
+                    .get_sort_by_name(&endpoint.sort)
+                    .is_some_and(|sort| sort.is_container_sort())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        return Ok(0);
+    }
+
+    let prefix = dependencies.prefix(last_replayable_event)?;
+    for endpoint in &changed {
+        let runtime_sort = egraph.get_sort_by_name(&endpoint.sort).ok_or_else(|| {
+            CausalSliceError::Invariant(format!(
+                "runtime container sort `{}` disappeared",
+                endpoint.sort
+            ))
+        })?;
+        let runtime_type = runtime_sort.value_type();
+        let replayable_stable_transition =
+            runtime_type == Some(std::any::TypeId::of::<crate::sort::VecContainer>());
+        let poison = if replayable_stable_transition {
+            None
+        } else {
+            Some(dependencies.unsupported(
+                format!("traced wave {wave}"),
+                format!(
+                    "container witness of sort `{}` whose semantic contents changed during rebuild; only deterministic stable-ID Vec transitions currently have replay support",
+                    endpoint.sort
+                ),
+            )?)
+        };
+        let previous = witnesses
+            .current_container_support(endpoint)
+            .or_else(|| {
+                witnesses
+                    .by_endpoint(&endpoint.sort, endpoint.value)
+                    .map(|witness| witnesses.availability(witness))
+            })
+            .ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "rebuilt container endpoint {endpoint:?} lost every replay witness"
+                ))
+            })?;
+        let mut support = dependencies.and(previous, prefix)?;
+        if let Some(poison) = poison {
+            support = dependencies.and(support, poison)?;
+        }
+        // Earlier firings already copied `previous`. Replacing one typed
+        // current-support pointer gives every later alias the new temporal
+        // support without an O(aliases) rewrite or a version-history arena.
+        witnesses.replace_current_container_support(endpoint.clone(), support);
+    }
+    Ok(changed.len())
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -9029,7 +9711,7 @@ fn prepare_observation_arg(
                     true,
                 )?;
                 witnesses.prefer_endpoint_witness(sort, value, witness)?;
-                selected_dependencies.insert(availability);
+                selected_dependencies.insert(witnesses.availability(witness));
                 return Ok((
                     TypedEndpoint {
                         sort: sort.to_owned(),
@@ -9776,7 +10458,7 @@ fn validate_rule_mutation_receipts(
 ) -> Result<bool, CausalSliceError> {
     if model.head_sets.len() != receipts.len() {
         return Err(CausalSliceError::Invariant(format!(
-            "rule `{rule_name}` modeled {} exact `:merge new` set action(s) but native commit reported {} rule-attributed mutation receipt(s)",
+            "rule `{rule_name}` modeled {} causal set action(s) but native commit reported {} rule-attributed mutation receipt(s)",
             model.head_sets.len(),
             receipts.len()
         )));
@@ -9801,6 +10483,22 @@ fn validate_rule_mutation_receipts(
             )));
         }
         let location = format!("mutation from rule `{rule_name}` instruction {instruction}");
+        let merge = trace_functions
+            .get(&receipt.table)
+            .and_then(|meta| meta.mutable_merge)
+            .ok_or_else(|| {
+                CausalSliceError::Invariant(format!(
+                    "{location} referenced a mutation table without a modeled merge"
+                ))
+            })?;
+        if !matches!(
+            merge,
+            MutableMergeKind::AssertEq | MutableMergeKind::ExactNew
+        ) {
+            return Err(CausalSliceError::Invariant(format!(
+                "{location} reached causal set validation with an unsupported custom merge"
+            )));
+        }
         let incoming =
             logical_function_row(receipt.table, &receipt.incoming, trace_functions, &location)?;
         let Some(expected_index) = expected
@@ -9827,7 +10525,7 @@ fn validate_rule_mutation_receipts(
         )?;
         if committed != incoming {
             return Err(CausalSliceError::Invariant(format!(
-                "{location} selected {committed:?} instead of its incoming row {incoming:?} for exact `:merge new`"
+                "{location} selected {committed:?} instead of its incoming row {incoming:?} for an incoming-preserving causal merge"
             )));
         }
         let previous = receipt
@@ -9845,7 +10543,7 @@ fn validate_rule_mutation_receipts(
                 effective = true;
             }
             TableMutationOutcome::Replaced => {
-                let Some((previous_key, _)) = previous else {
+                let Some((previous_key, previous_output)) = previous else {
                     return Err(CausalSliceError::Invariant(format!(
                         "{location} reported Replaced without a previous row"
                     )));
@@ -9854,6 +10552,13 @@ fn validate_rule_mutation_receipts(
                     return Err(CausalSliceError::Invariant(format!(
                         "{location} replaced a row at a different logical key"
                     )));
+                }
+                if merge == MutableMergeKind::AssertEq && previous_output != incoming.1 {
+                    return Err(CausalSliceError::Unsupported {
+                        location,
+                        reason: "an assert-equal function write that selected between distinct runtime outputs"
+                            .to_owned(),
+                    });
                 }
                 effective = true;
             }
@@ -9865,7 +10570,7 @@ fn validate_rule_mutation_receipts(
                 };
                 if previous != committed {
                     return Err(CausalSliceError::Invariant(format!(
-                        "{location} reported an exact `:merge new` no-op whose selected row differs from the previous row"
+                        "{location} reported a causal set no-op whose selected row differs from the previous row"
                     )));
                 }
             }
@@ -10127,7 +10832,10 @@ fn apply_wave_mutation_receipts(
                         "{location} changed the logical key while applying its merge"
                     )));
                 }
-                if merge != MutableMergeKind::ExactNew {
+                if matches!(
+                    merge,
+                    MutableMergeKind::BigRatMin | MutableMergeKind::BigRatMax
+                ) {
                     match receipt.outcome {
                         TableMutationOutcome::Inserted => {
                             if receipt.previous.is_some() || committed_output != incoming_output {
@@ -10232,7 +10940,7 @@ fn apply_wave_mutation_receipts(
                 }
                 if committed_output != incoming_output {
                     return Err(CausalSliceError::Invariant(format!(
-                        "{location} did not select its incoming logical row under exact `:merge new`"
+                        "{location} did not select its incoming logical row under an incoming-preserving causal merge"
                     )));
                 }
                 match receipt.outcome {
@@ -10268,7 +10976,7 @@ fn apply_wave_mutation_receipts(
                                 poisoned_function_row(
                                     committed_output,
                                     location,
-                                    "an exact `:merge new` no-op selected a prior row without source or commit-time provenance"
+                                    "a causal set no-op selected a prior row without source or commit-time provenance"
                                         .to_owned(),
                                 ),
                             );
@@ -10300,7 +11008,10 @@ fn apply_wave_mutation_receipts(
                     trace_functions,
                     &location,
                 )?;
-                if merge != MutableMergeKind::ExactNew {
+                if matches!(
+                    merge,
+                    MutableMergeKind::BigRatMin | MutableMergeKind::BigRatMax
+                ) {
                     if committed_key != incoming_key {
                         return Err(CausalSliceError::Invariant(format!(
                             "{location} changed the logical key while rebuilding custom-merge state"
@@ -10390,11 +11101,22 @@ fn apply_wave_mutation_receipts(
                                     source.dependency,
                                     dependencies,
                                 ) {
-                                    Ok(dependency) => FunctionRowState {
-                                        output: incoming_output,
-                                        dependency,
-                                        deferred_error: source.deferred_error,
-                                    },
+                                    Ok(dependency) => {
+                                        let deferred_error = source.deferred_error.or_else(|| {
+                                            (previous_key != incoming_key
+                                                || previous_output != incoming_output)
+                                                .then(|| DeferredUnsupported {
+                                                    location: location.clone(),
+                                                    reason: "a mutable function row was rekeyed or its output was canonicalized; the unchanged strict proof extractor rejects the resulting replay fact"
+                                                        .to_owned(),
+                                                })
+                                        });
+                                        FunctionRowState {
+                                            output: incoming_output,
+                                            dependency,
+                                            deferred_error,
+                                        }
+                                    }
                                     Err(error) => poisoned_function_row(
                                         incoming_output,
                                         error.location,
@@ -10426,7 +11148,7 @@ fn apply_wave_mutation_receipts(
                         let reason = if differing_output {
                             "a mutable function rekey collision selected between differing outputs; sequential replay does not preserve rebuild proposal ordering"
                         } else {
-                            "a mutable function rebuild replacement did not match exact `:merge new` no-op semantics"
+                            "a mutable function rebuild replacement did not match incoming-preserving no-op semantics"
                         };
                         function_rows.insert(
                             committed_key,
@@ -10860,7 +11582,7 @@ fn elaborate_logical_query_application(
                 Some(DeferredUnsupported {
                     location: expected.span.to_string(),
                     reason: format!(
-                        "container-valued primitive `{function}` result without an immutable match-time container version in rule `{rule_name}`"
+                        "container-valued primitive `{function}` result without a match-time replay witness and temporal support in rule `{rule_name}`"
                     ),
                 }),
             )
@@ -11195,6 +11917,7 @@ fn elaborate_fire_primitives(
     Ok((availability, deferred))
 }
 
+#[derive(Clone, Copy)]
 enum HeadCallReceipt<'a> {
     Table(&'a TableApplication),
     Primitive(&'a PrimitiveApplication),
@@ -11209,37 +11932,11 @@ impl HeadCallReceipt<'_> {
     }
 }
 
-struct ResolvedHeadInput<'a> {
-    egraph: &'a EGraph,
-    rule_name: &'a str,
-    model: &'a RuleModel,
-    core_head: &'a ResolvedCoreActions,
-    table_applications: &'a [&'a TableApplication],
-    primitive_applications: &'a [&'a PrimitiveApplication],
-    bindings: &'a mut IndexMap<String, BindingWitness>,
-    trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
-    prefix_fallback: bool,
-    equality_forest: &'a EqualityForest,
-}
-
-fn elaborate_resolved_head(
-    input: ResolvedHeadInput<'_>,
-    witnesses: &mut WitnessArena,
-    dependencies: &mut DepArena,
-    app_index: &mut WaveAppIndex,
-) -> Result<FireApplicationEffects, CausalSliceError> {
-    let ResolvedHeadInput {
-        egraph,
-        rule_name,
-        model,
-        core_head,
-        table_applications,
-        primitive_applications,
-        bindings,
-        trace_functions,
-        prefix_fallback,
-        equality_forest,
-    } = input;
+fn ordered_head_call_receipts<'a>(
+    rule_name: &str,
+    table_applications: &[&'a TableApplication],
+    primitive_applications: &[&'a PrimitiveApplication],
+) -> Result<Vec<HeadCallReceipt<'a>>, CausalSliceError> {
     let mut receipts = table_applications
         .iter()
         .copied()
@@ -11261,6 +11958,184 @@ fn elaborate_resolved_head(
             duplicate[0].instruction()
         )));
     }
+    Ok(receipts)
+}
+
+fn preflight_resolved_head_receipts<'a>(
+    rule_name: &str,
+    model: &RuleModel,
+    core_head: &ResolvedCoreActions,
+    table_applications: &[&'a TableApplication],
+    primitive_applications: &[&'a PrimitiveApplication],
+    trace_functions: &IndexMap<TableId, TraceFunctionMeta>,
+) -> Result<Vec<HeadCallReceipt<'a>>, CausalSliceError> {
+    let receipts =
+        ordered_head_call_receipts(rule_name, table_applications, primitive_applications)?;
+    // This must remain a pure preflight: the caller may choose opaque generic
+    // elaboration on `Unsupported`, so no abandoned structured-head state may
+    // leak into that fallback.
+    let mut pending = receipts.iter().copied();
+    for action in &core_head.0 {
+        let GenericCoreAction::Let(span, output, call, arguments) = action else {
+            continue;
+        };
+        let receipt = pending
+            .next()
+            .ok_or_else(|| CausalSliceError::Unsupported {
+                location: span.to_string(),
+                reason: format!(
+                    "rule `{rule_name}` stopped before registered head call `{}` completed",
+                    call.name()
+                ),
+            })?;
+        match (call, receipt) {
+            (ResolvedCall::Func(function), HeadCallReceipt::Table(application)) => {
+                if function.is_tuple_output() {
+                    return unsupported(
+                        span,
+                        format!(
+                            "tuple-output function `{}` in rule `{rule_name}` head",
+                            function.name
+                        ),
+                    );
+                }
+                let meta = trace_functions.get(&application.table).ok_or_else(|| {
+                    CausalSliceError::Unsupported {
+                        location: span.to_string(),
+                        reason: format!(
+                            "rule `{rule_name}` called unmodeled table {:?}",
+                            application.table
+                        ),
+                    }
+                })?;
+                if meta.name != function.name
+                    || meta.output_sort != function.output().name()
+                    || meta.input_sorts.len() != function.input.len()
+                    || meta
+                        .input_sorts
+                        .iter()
+                        .zip(&function.input)
+                        .any(|(captured, expected)| captured != expected.name())
+                    || arguments.len() != function.input.len()
+                    || application.args.len() != arguments.len()
+                    || output.sort.name() != meta.output_sort
+                {
+                    return unsupported(
+                        span,
+                        format!(
+                            "rule `{rule_name}` registered head call `{}` ({:?} -> {}) has no exact receipt before native instruction {} for `{}` ({:?} -> {}) with {} arguments",
+                            function.name,
+                            function
+                                .input
+                                .iter()
+                                .map(|sort| sort.name())
+                                .collect::<Vec<_>>(),
+                            function.output().name(),
+                            application.instruction,
+                            meta.name,
+                            meta.input_sorts,
+                            meta.output_sort,
+                            application.args.len(),
+                        ),
+                    );
+                }
+            }
+            (ResolvedCall::Primitive(primitive), HeadCallReceipt::Primitive(application)) => {
+                if primitive.effect() != crate::PrimitiveEffect::Pure
+                    || primitive.validator().is_none()
+                    || !primitive.is_replay_safe()
+                {
+                    return unsupported(
+                        span,
+                        format!(
+                            "head primitive `{}` without a Pure proof-validating specialization in rule `{rule_name}`",
+                            primitive.name()
+                        ),
+                    );
+                }
+                if primitive.external_id(crate::Context::Write) != application.function
+                    || primitive.input().len() != arguments.len()
+                    || application.args.len() != arguments.len()
+                    || output.sort.name() != primitive.output().name()
+                {
+                    return unsupported(
+                        span,
+                        format!(
+                            "rule `{rule_name}` registered head primitive `{}` has no exact receipt before native instruction {}",
+                            primitive.name(),
+                            application.instruction
+                        ),
+                    );
+                }
+            }
+            (ResolvedCall::Values(_), _) => {
+                return unsupported(
+                    span,
+                    format!("tuple-values call in rule `{rule_name}` head"),
+                );
+            }
+            (ResolvedCall::Func(function), HeadCallReceipt::Primitive(application)) => {
+                return unsupported(
+                    span,
+                    format!(
+                        "rule `{rule_name}` function `{}` has no exact table receipt before primitive instruction {}",
+                        function.name, application.instruction
+                    ),
+                );
+            }
+            (ResolvedCall::Primitive(primitive), HeadCallReceipt::Table(application)) => {
+                return unsupported(
+                    span,
+                    format!(
+                        "rule `{rule_name}` primitive `{}` has no exact primitive receipt before table instruction {}",
+                        primitive.name(),
+                        application.instruction
+                    ),
+                );
+            }
+        }
+    }
+    if let Some(receipt) = pending.next() {
+        return unsupported(
+            &model.span,
+            format!(
+                "rule `{rule_name}` captured unconsumed native head instruction {}",
+                receipt.instruction()
+            ),
+        );
+    }
+    Ok(receipts)
+}
+
+struct ResolvedHeadInput<'a> {
+    egraph: &'a EGraph,
+    rule_name: &'a str,
+    model: &'a RuleModel,
+    core_head: &'a ResolvedCoreActions,
+    receipts: Vec<HeadCallReceipt<'a>>,
+    bindings: &'a mut IndexMap<String, BindingWitness>,
+    trace_functions: &'a IndexMap<TableId, TraceFunctionMeta>,
+    prefix_fallback: bool,
+    equality_forest: &'a EqualityForest,
+}
+
+fn elaborate_resolved_head(
+    input: ResolvedHeadInput<'_>,
+    witnesses: &mut WitnessArena,
+    dependencies: &mut DepArena,
+    app_index: &mut WaveAppIndex,
+) -> Result<FireApplicationEffects, CausalSliceError> {
+    let ResolvedHeadInput {
+        egraph,
+        rule_name,
+        model,
+        core_head,
+        receipts,
+        bindings,
+        trace_functions,
+        prefix_fallback,
+        equality_forest,
+    } = input;
     let mut receipts = receipts.into_iter();
     let mut effects = FireApplicationEffects::default();
 
@@ -11308,10 +12183,24 @@ fn elaborate_resolved_head(
                             || application.args.len() != arguments.len()
                             || output.sort.name() != meta.output_sort
                         {
-                            return Err(CausalSliceError::Invariant(format!(
-                                "rule `{rule_name}` registered call `{}` diverged from native instruction {}",
-                                function.name, application.instruction
-                            )));
+                            return unsupported(
+                                span,
+                                format!(
+                                    "rule `{rule_name}` registered head call `{}` ({:?} -> {}) has no exact receipt before native instruction {} for `{}` ({:?} -> {}) with {} arguments",
+                                    function.name,
+                                    function
+                                        .input
+                                        .iter()
+                                        .map(|sort| sort.name())
+                                        .collect::<Vec<_>>(),
+                                    function.output().name(),
+                                    application.instruction,
+                                    meta.name,
+                                    meta.input_sorts,
+                                    meta.output_sort,
+                                    application.args.len(),
+                                ),
+                            );
                         }
                         let children = arguments
                             .iter()
@@ -12883,9 +13772,10 @@ fn backward_slice(
     dependencies: &DepArena,
     equality_forest: &EqualityForest,
     root: DepId,
-) -> Result<IndexSet<EventId>, CausalSliceError> {
+) -> Result<(IndexSet<EventId>, usize), CausalSliceError> {
     let mut retained = IndexSet::default();
     let mut visited_dependencies = HashSet::default();
+    let mut retained_prefix_fallbacks = 0usize;
     let mut work = vec![root];
     while let Some(dependency) = work.pop() {
         if !visited_dependencies.insert(dependency) {
@@ -12914,6 +13804,7 @@ fn backward_slice(
                 }
             }
             DepNode::Prefix(last_event) => {
+                retained_prefix_fallbacks += 1;
                 for index in 0..=last_event.index() {
                     let event = EventId(index as u32);
                     if retained.insert(event) {
@@ -12921,10 +13812,16 @@ fn backward_slice(
                     }
                 }
             }
+            DepNode::Unsupported { location, reason } => {
+                return Err(CausalSliceError::Unsupported {
+                    location: location.clone(),
+                    reason: reason.clone(),
+                });
+            }
         }
     }
     retained.sort_unstable();
-    Ok(retained)
+    Ok((retained, retained_prefix_fallbacks))
 }
 
 const SHARED_REPLAY_WITNESS_PREFIX: &str = "$__csw";
@@ -12935,10 +13832,14 @@ fn emit_prefix_replay_commands(
     rules: &IndexMap<String, RuleModel>,
     fires: &[CompactReplayFire],
     witnesses: &WitnessArena,
-) -> (String, usize) {
+) -> Result<(String, usize), CausalSliceError> {
     let mut previous_position = None;
     let mut rendered = String::new();
     let mut shared_witnesses = 0usize;
+    let mut global_names = IndexMap::default();
+    for (name, witness) in &witnesses.global_witnesses {
+        global_names.entry(*witness).or_insert(name.as_str());
+    }
 
     let mut start = 0usize;
     while start < fires.len() {
@@ -12948,9 +13849,10 @@ fn emit_prefix_replay_commands(
             end += 1;
         }
         let wave_fires = &fires[start..end];
-        let mut witness_indices = IndexMap::<WitnessId, u32>::default();
+        let mut root_witnesses = IndexSet::<WitnessId>::default();
         let mut witness_uses = HashMap::<WitnessId, usize>::default();
         let mut group_indices = IndexMap::<u32, u32>::default();
+        let mut group_variables = IndexMap::<u32, Arc<[String]>>::default();
         for fire in wave_fires {
             let position = (fire.wave, fire.ordinal);
             if let Some(previous) = previous_position {
@@ -12960,29 +13862,101 @@ fn emit_prefix_replay_commands(
             let next_group = u32::try_from(group_indices.len())
                 .expect("packed replay group count exceeded u32 capacity");
             group_indices.entry(fire.rule_index).or_insert(next_group);
+            let (_, model) = rules.get_index(fire.rule_index as usize).ok_or_else(|| {
+                CausalSliceError::Invariant(
+                    "captured compact replay referenced an unknown rule index".to_owned(),
+                )
+            })?;
+            let actual_variables = fire
+                .selector_variables
+                .as_deref()
+                .unwrap_or(&model.replay_var_order);
+            if let Some(expected) = group_variables.get(&fire.rule_index) {
+                if expected.as_ref() != actual_variables {
+                    return Err(CausalSliceError::Invariant(format!(
+                        "one packed replay group for rule index {} had inconsistent selector columns",
+                        fire.rule_index
+                    )));
+                }
+            } else {
+                group_variables.insert(
+                    fire.rule_index,
+                    fire.selector_variables
+                        .clone()
+                        .unwrap_or_else(|| Arc::from(model.replay_var_order.clone())),
+                );
+            }
+            if fire.bindings.len() != actual_variables.len() {
+                return Err(CausalSliceError::Invariant(format!(
+                    "packed replay firing for rule index {} has {} witnesses for {} selector columns",
+                    fire.rule_index,
+                    fire.bindings.len(),
+                    actual_variables.len()
+                )));
+            }
             for witness in &fire.bindings {
-                let next_witness = u32::try_from(witness_indices.len())
-                    .expect("packed replay witness count exceeded u32 capacity");
-                witness_indices.entry(*witness).or_insert(next_witness);
+                root_witnesses.insert(*witness);
                 *witness_uses.entry(*witness).or_default() += 1;
             }
         }
 
+        let mut witness_indices = IndexMap::<WitnessId, u32>::default();
+        for witness in root_witnesses {
+            collect_packed_witness_dag(witness, witnesses, &global_names, &mut witness_indices);
+        }
         let packed_witnesses = witness_indices
             .keys()
-            .map(|witness| witnesses.expr(*witness, schedule_span))
+            .map(|witness| {
+                if let Some(name) = global_names.get(witness) {
+                    let record = &witnesses.nodes[witness.index()];
+                    let sort = match &record.node {
+                        WitnessNode::Literal { sort, .. } | WitnessNode::App { sort, .. } => sort,
+                    };
+                    return GenericPackedWitnessNode::Call {
+                        span: schedule_span.clone(),
+                        sort: sort.clone(),
+                        function: (*name).to_owned(),
+                        children: Box::new([]),
+                    };
+                }
+                match &witnesses.nodes[witness.index()].node {
+                    WitnessNode::Literal { sort, value } => GenericPackedWitnessNode::Literal {
+                        span: schedule_span.clone(),
+                        sort: sort.clone(),
+                        value: value.clone(),
+                    },
+                    WitnessNode::App {
+                        sort,
+                        function,
+                        children,
+                    } => GenericPackedWitnessNode::Call {
+                        span: schedule_span.clone(),
+                        sort: sort.clone(),
+                        function: function.clone(),
+                        children: children
+                            .iter()
+                            .map(|child| witness_indices[child])
+                            .collect::<Vec<_>>()
+                            .into_boxed_slice(),
+                    },
+                }
+            })
             .collect();
         shared_witnesses += witness_uses.values().filter(|uses| **uses > 1).count();
         let groups = group_indices
             .keys()
             .map(|rule_index| {
-                let (rule_name, model) = rules
+                let (rule_name, _) = rules
                     .get_index(*rule_index as usize)
                     .expect("captured compact replay rule index must remain valid");
                 GenericPackedRuleGroup {
                     span: schedule_span.clone(),
                     rule: rule_name.clone(),
-                    variables: model.replay_var_order.clone().into_boxed_slice(),
+                    variables: group_variables[rule_index]
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
                 }
             })
             .collect();
@@ -13002,7 +13976,7 @@ fn emit_prefix_replay_commands(
         let replay = Command::RunSchedule(Schedule::RunRuleBatchPacked(
             schedule_span.clone(),
             GenericPackedRunRuleBatch {
-                witnesses: packed_witnesses,
+                witnesses: GenericPackedWitnesses::Dag(packed_witnesses),
                 groups,
                 fires: packed_fires,
             },
@@ -13012,7 +13986,27 @@ fn emit_prefix_replay_commands(
         start = end;
     }
 
-    (rendered, shared_witnesses)
+    Ok((rendered, shared_witnesses))
+}
+
+fn collect_packed_witness_dag(
+    witness: WitnessId,
+    witnesses: &WitnessArena,
+    global_names: &IndexMap<WitnessId, &str>,
+    indices: &mut IndexMap<WitnessId, u32>,
+) {
+    if indices.contains_key(&witness) {
+        return;
+    }
+    if !global_names.contains_key(&witness)
+        && let WitnessNode::App { children, .. } = &witnesses.nodes[witness.index()].node
+    {
+        for child in children {
+            collect_packed_witness_dag(*child, witnesses, global_names, indices);
+        }
+    }
+    let index = u32::try_from(indices.len()).expect("packed witness DAG exceeded u32 capacity");
+    indices.insert(witness, index);
 }
 
 fn emit_program<'a>(
@@ -13023,10 +14017,10 @@ fn emit_program<'a>(
     fires: impl IntoIterator<Item = &'a GroundedFire>,
     witnesses: &WitnessArena,
     source_expansions: &SourceCommandExpansions,
-) -> (String, usize) {
+) -> Result<(String, usize), CausalSliceError> {
     let (replay_commands, shared_replay_witnesses) =
-        render_replay_commands(commands, schedule_span, rules, fires, witnesses);
-    (
+        render_replay_commands(commands, schedule_span, rules, fires, witnesses)?;
+    Ok((
         emit_program_with_replay_commands(
             commands,
             schedule_indices,
@@ -13034,7 +14028,7 @@ fn emit_program<'a>(
             source_expansions,
         ),
         shared_replay_witnesses,
-    )
+    ))
 }
 
 fn render_replay_commands<'a>(
@@ -13043,43 +14037,40 @@ fn render_replay_commands<'a>(
     rules: &IndexMap<String, RuleModel>,
     fires: impl IntoIterator<Item = &'a GroundedFire>,
     witnesses: &WitnessArena,
-) -> (String, usize) {
+) -> Result<(String, usize), CausalSliceError> {
     let compact = fires
         .into_iter()
         .map(|fire| {
             let rule_index = rules
                 .get_index_of(&fire.rule)
                 .expect("grounded replay rule was validated during modeling");
-            let model = &rules[&fire.rule];
-            let bindings = model
-                .replay_var_order
+            let selector_variables = fire.selector_variables()?;
+            let bindings = selector_variables
                 .iter()
                 .map(|variable| fire.bindings[variable].syntax)
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
-            CompactReplayFire {
+            Ok(CompactReplayFire {
                 rule_index: u32::try_from(rule_index)
                     .expect("packed replay rule index exceeded u32 capacity"),
                 wave: fire.wave,
                 ordinal: fire.ordinal,
                 bindings,
-            }
+                selector_variables: Some(Arc::clone(selector_variables)),
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, CausalSliceError>>()?;
     emit_prefix_replay_commands(commands, schedule_span, rules, &compact, witnesses)
 }
 
 fn replay_witness_callables<'a>(
     fires: impl IntoIterator<Item = &'a GroundedFire>,
-    rules: &IndexMap<String, RuleModel>,
     witnesses: &WitnessArena,
-) -> IndexSet<String> {
+) -> Result<IndexSet<String>, CausalSliceError> {
     let mut work = Vec::new();
     for fire in fires {
-        let model = &rules[&fire.rule];
         work.extend(
-            model
-                .replay_var_order
+            fire.selector_variables()?
                 .iter()
                 .map(|variable| fire.bindings[variable].syntax),
         );
@@ -13099,7 +14090,7 @@ fn replay_witness_callables<'a>(
             work.extend(children.iter().copied());
         }
     }
-    callables
+    Ok(callables)
 }
 
 fn emit_program_with_replay_commands(
@@ -13665,10 +14656,10 @@ fn validate_emitted_program(
             Command::Rule { rule } => {
                 emitted_rules.insert(rule.name.as_str(), semantic_rule_definition(rule));
             }
-            Command::Action(Action::Let(span, name, expression))
-                if name.starts_with(SHARED_REPLAY_WITNESS_PREFIX) =>
-            {
-                validate_closed_replay_witness(expression, span, &replay_globals)?;
+            Command::Action(Action::Let(span, name, expression)) => {
+                if name.starts_with(SHARED_REPLAY_WITNESS_PREFIX) {
+                    validate_closed_replay_witness(expression, span, &replay_globals)?;
+                }
                 replay_globals.insert(name.clone());
             }
             Command::Include(span, _) => {
@@ -13764,10 +14755,10 @@ fn validate_replay_run_rule(
         .iter()
         .map(String::as_str)
         .collect::<Vec<_>>();
-    if names != expected {
+    if !is_ordered_subsequence(&names, &expected) {
         return Err(CausalSliceError::Invariant(format!(
-            "replay binding list for `{}` is incomplete or out of order",
-            config.rule
+            "replay binding list for `{}` was {names:?}, which is not an ordered subset of {expected:?}",
+            config.rule,
         )));
     }
     for (_, expr) in &config.bindings {
@@ -13782,9 +14773,46 @@ fn validate_replay_packed_batch(
     rules: &IndexMap<String, RuleModel>,
     replay_globals: &HashSet<String>,
 ) -> Result<(), CausalSliceError> {
-    for witness in &batch.witnesses {
-        validate_closed_replay_witness(witness, span, replay_globals)?;
-    }
+    let witness_count = match &batch.witnesses {
+        GenericPackedWitnesses::Expressions(witnesses) => {
+            for witness in witnesses {
+                validate_closed_replay_witness(witness, span, replay_globals)?;
+            }
+            witnesses.len()
+        }
+        GenericPackedWitnesses::Dag(witnesses) => {
+            let mut uses = vec![0usize; witnesses.len()];
+            for (index, witness) in witnesses.iter().enumerate() {
+                if let GenericPackedWitnessNode::Call { children, .. } = witness {
+                    for child in children {
+                        let child = *child as usize;
+                        if child >= index {
+                            return Err(CausalSliceError::Invariant(format!(
+                                "packed replay witness {index} references non-prior child {child}"
+                            )));
+                        }
+                        uses[child] += 1;
+                    }
+                }
+            }
+            for fire in batch.fires.iter() {
+                for witness in &fire.witnesses {
+                    let Some(uses) = uses.get_mut(*witness as usize) else {
+                        return Err(CausalSliceError::Invariant(
+                            "packed replay fire has invalid witness indices".to_owned(),
+                        ));
+                    };
+                    *uses += 1;
+                }
+            }
+            if let Some(unreachable) = uses.iter().position(|uses| *uses == 0) {
+                return Err(CausalSliceError::Invariant(format!(
+                    "packed replay witness {unreachable} is unreachable from every fire"
+                )));
+            }
+            witnesses.len()
+        }
+    };
     for group in &batch.groups {
         let model = rules.get(&group.rule).ok_or_else(|| {
             CausalSliceError::Invariant(format!(
@@ -13802,9 +14830,9 @@ fn validate_replay_packed_batch(
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        if actual != expected {
+        if !is_ordered_subsequence(&actual, &expected) {
             return Err(CausalSliceError::Invariant(format!(
-                "packed replay variables for `{}` were {actual:?}, expected {expected:?}",
+                "packed replay variables for `{}` were {actual:?}, expected an ordered subset of {expected:?}",
                 group.rule
             )));
         }
@@ -13820,7 +14848,7 @@ fn validate_replay_packed_batch(
             || fire
                 .witnesses
                 .iter()
-                .any(|witness| *witness as usize >= batch.witnesses.len())
+                .any(|witness| *witness as usize >= witness_count)
         {
             return Err(CausalSliceError::Invariant(
                 "packed replay fire has invalid witness indices".to_owned(),
@@ -13828,6 +14856,13 @@ fn validate_replay_packed_batch(
         }
     }
     Ok(())
+}
+
+fn is_ordered_subsequence(actual: &[&str], expected: &[&str]) -> bool {
+    let mut expected = expected.iter();
+    actual
+        .iter()
+        .all(|actual| expected.by_ref().any(|expected| expected == actual))
 }
 
 fn validate_closed_replay_witness(
@@ -14060,6 +15095,7 @@ mod tests {
             wave: 0,
             ordinal: 0,
             bindings,
+            selector: ReplaySelector::Key(Arc::from(["x".to_owned()])),
         };
         let mut rules = IndexMap::default();
         rules.insert(
@@ -14088,11 +15124,189 @@ mod tests {
         );
 
         assert_eq!(
-            replay_witness_callables([&fire], &rules, &witnesses)
+            replay_witness_callables([&fire], &witnesses)
+                .unwrap()
                 .into_iter()
                 .collect::<Vec<_>>(),
             ["Outer", "Inner"]
         );
+    }
+
+    #[test]
+    fn replay_key_planning_projects_ambiguous_syntax_and_counts_no_ops_and_prefix_rows() {
+        let mut egraph = EGraph::default();
+        egraph.parse_and_run_program(None, "(sort Expr)").unwrap();
+        let mut witnesses = WitnessArena::default();
+        let one = witnesses.intern_literal("i64", Literal::Int(1)).unwrap();
+        let two = witnesses.intern_literal("i64", Literal::Int(2)).unwrap();
+        let first_endpoint = egraph.base_to_value(101_i64);
+        let second_endpoint = egraph.base_to_value(102_i64);
+        let first_expr = witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![one],
+                first_endpoint,
+                DepArena::EMPTY,
+                true,
+            )
+            .unwrap();
+        let second_expr = witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![one],
+                second_endpoint,
+                DepArena::EMPTY,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            witnesses.nodes[first_expr.index()].syntax,
+            witnesses.nodes[second_expr.index()].syntax
+        );
+
+        let mut var_sorts = IndexMap::default();
+        var_sorts.insert("x".to_owned(), "i64".to_owned());
+        var_sorts.insert("e".to_owned(), "Expr".to_owned());
+        let mut rules = IndexMap::default();
+        rules.insert(
+            "copy".to_owned(),
+            RuleModel {
+                span: crate::span!(),
+                body: Vec::new(),
+                body_equalities: Vec::new(),
+                body_lookups: Vec::new(),
+                body_functions: Vec::new(),
+                body_primitives: Vec::new(),
+                head_lets: Vec::new(),
+                head: Vec::new(),
+                head_constructors: Vec::new(),
+                head_sets: Vec::new(),
+                head_subsumes: Vec::new(),
+                head_primitives: Vec::new(),
+                head_unions: Vec::new(),
+                var_order: vec!["x".to_owned(), "e".to_owned()],
+                replay_var_order: vec!["x".to_owned(), "e".to_owned()],
+                derived_replay_aliases: IndexMap::default(),
+                var_sorts,
+                global_uses: IndexMap::default(),
+                opaque: None,
+            },
+        );
+
+        let grounding = |x: i64, syntax: WitnessId, endpoint: Value| {
+            let mut bindings = IndexMap::default();
+            bindings.insert(
+                "x".to_owned(),
+                BindingWitness {
+                    syntax: if x == 1 { one } else { two },
+                    endpoint: egraph.base_to_value(x),
+                },
+            );
+            bindings.insert("e".to_owned(), BindingWitness { syntax, endpoint });
+            GroundedFire {
+                rule: "copy".to_owned(),
+                wave: 0,
+                ordinal: 0,
+                bindings,
+                selector: ReplaySelector::Unplanned,
+            }
+        };
+        let prestate_witness_count = witnesses.nodes.len();
+
+        let mut distinct = vec![
+            PendingFire {
+                grounding: grounding(1, first_expr, first_endpoint),
+                effective: true,
+            },
+            PendingFire {
+                grounding: grounding(2, second_expr, second_endpoint),
+                effective: true,
+            },
+        ];
+        assign_wave_replay_selectors(ReplaySelectorPlanningInput {
+            egraph: &egraph,
+            rules: &rules,
+            witnesses: &witnesses,
+            prestate_witness_count,
+            equality_forest: &EqualityForest::default(),
+            wave: 0,
+            pending_fires: &mut distinct,
+            current_start: 0,
+            events: &mut [],
+        })
+        .unwrap();
+        for pending in &distinct {
+            let ReplaySelector::Key(variables) = &pending.grounding.selector else {
+                panic!("distinct scalar bindings should form a packed replay key")
+            };
+            assert_eq!(variables.as_ref(), ["x"]);
+        }
+
+        let mut colliding_no_op = vec![
+            PendingFire {
+                grounding: grounding(1, first_expr, first_endpoint),
+                effective: true,
+            },
+            PendingFire {
+                grounding: grounding(1, second_expr, second_endpoint),
+                effective: false,
+            },
+        ];
+        assign_wave_replay_selectors(ReplaySelectorPlanningInput {
+            egraph: &egraph,
+            rules: &rules,
+            witnesses: &witnesses,
+            prestate_witness_count,
+            equality_forest: &EqualityForest::default(),
+            wave: 0,
+            pending_fires: &mut colliding_no_op,
+            current_start: 0,
+            events: &mut [],
+        })
+        .unwrap();
+        assert!(
+            colliding_no_op.iter().all(|pending| matches!(
+                pending.grounding.selector,
+                ReplaySelector::Unsupported(_)
+            ))
+        );
+
+        let repeated = grounding(1, first_expr, first_endpoint);
+        let mut repeated_prefix = vec![
+            PendingFire {
+                grounding: GroundedFire {
+                    selector: ReplaySelector::Key(Arc::from(["x".to_owned()])),
+                    ..repeated.clone()
+                },
+                effective: true,
+            },
+            PendingFire {
+                grounding: GroundedFire {
+                    wave: 1,
+                    selector: ReplaySelector::Unplanned,
+                    ..repeated
+                },
+                effective: false,
+            },
+        ];
+        assign_wave_replay_selectors(ReplaySelectorPlanningInput {
+            egraph: &egraph,
+            rules: &rules,
+            witnesses: &witnesses,
+            prestate_witness_count,
+            equality_forest: &EqualityForest::default(),
+            wave: 1,
+            pending_fires: &mut repeated_prefix,
+            current_start: 1,
+            events: &mut [],
+        })
+        .unwrap();
+        assert!(matches!(
+            &repeated_prefix[1].grounding.selector,
+            ReplaySelector::Key(variables) if variables.as_ref() == ["x"]
+        ));
     }
 
     #[test]

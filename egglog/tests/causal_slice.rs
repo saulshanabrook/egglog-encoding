@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use egglog::{
     EGraph, Term, TermDag, TermId, add_primitive_with_validator,
     add_replayable_primitive_with_validator,
-    ast::{Command, Literal, Schedule},
+    ast::{Command, GenericPackedWitnessNode, GenericPackedWitnesses, Literal, Schedule},
     causal_slice::{
         causal_slice_program, causal_slice_program_with_fact_directory,
         causal_slice_proof_replay_program, causal_slice_proof_replay_program_with_egraph,
@@ -12,6 +12,32 @@ use egglog::{
 };
 
 fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
+    fn packed_witness(witnesses: &GenericPackedWitnesses<String, String>, index: usize) -> String {
+        fn dag_witness(witnesses: &[GenericPackedWitnessNode<String>], index: usize) -> String {
+            match &witnesses[index] {
+                GenericPackedWitnessNode::Literal { value, .. } => value.to_string(),
+                GenericPackedWitnessNode::Call {
+                    function, children, ..
+                } if children.is_empty() && function.starts_with('$') => function.clone(),
+                GenericPackedWitnessNode::Call {
+                    function, children, ..
+                } => format!(
+                    "({}{})",
+                    function,
+                    children
+                        .iter()
+                        .map(|child| format!(" {}", dag_witness(witnesses, *child as usize)))
+                        .collect::<String>()
+                ),
+            }
+        }
+
+        match witnesses {
+            GenericPackedWitnesses::Expressions(witnesses) => witnesses[index].to_string(),
+            GenericPackedWitnesses::Dag(witnesses) => dag_witness(witnesses, index),
+        }
+    }
+
     fn visit(schedule: &Schedule, firings: &mut Vec<(String, Vec<(String, String)>)>) {
         match schedule {
             Schedule::RunRule(_, config) => firings.push((
@@ -46,7 +72,7 @@ fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
                             .map(|(variable, witness)| {
                                 (
                                     variable.clone(),
-                                    batch.witnesses[*witness as usize].to_string(),
+                                    packed_witness(&batch.witnesses, *witness as usize),
                                 )
                             })
                             .collect(),
@@ -75,14 +101,13 @@ fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
 }
 
 fn has_replay_firing(source: &str, rule: &str, bindings: &[(&str, &str)]) -> bool {
-    replay_firings(source).iter().any(|(candidate, actual)| {
-        candidate == rule
-            && actual
-                == &bindings
-                    .iter()
-                    .map(|(variable, witness)| ((*variable).to_owned(), (*witness).to_owned()))
-                    .collect::<Vec<_>>()
-    })
+    let expected = bindings
+        .iter()
+        .map(|(variable, witness)| ((*variable).to_owned(), (*witness).to_owned()))
+        .collect::<Vec<_>>();
+    replay_firings(source)
+        .iter()
+        .any(|(candidate, actual)| candidate == rule && *actual == expected)
 }
 
 static NEXT_INPUT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
@@ -186,6 +211,41 @@ fn proof_validator_alone_does_not_make_a_custom_primitive_replay_safe() {
 }
 
 #[test]
+fn a_single_panic_rule_discards_candidates_that_never_passed_query_filters() {
+    let source = r#"
+        (datatype Type (A) (B))
+        (relation HasType (Type))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((HasType left)
+               (HasType right)
+               (!= left right))
+              ((panic "type error"))
+              :name "reject-conflicting-types")
+        (rule ((Seed)) ((Goal)) :name "finish")
+        (HasType (A))
+        (Seed)
+        (run 1)
+        (check (Goal))
+    "#;
+
+    let slice = causal_slice_program(Some("filtered-panic.egg".to_owned()), source).unwrap();
+    assert!(!has_replay_firing(
+        &slice.source,
+        "reject-conflicting-types",
+        &[]
+    ));
+    assert!(has_replay_firing(&slice.source, "finish", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("filtered-panic-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
+}
+
+#[test]
 fn arbitrary_named_pure_query_primitive_replays_strictly() {
     let source = r#"
         (relation Seed (i64))
@@ -210,6 +270,39 @@ fn arbitrary_named_pure_query_primitive_replays_strictly() {
             .parse_and_run_program(
                 Some("arbitrary-pure-query-replay.egg".to_owned()),
                 &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn string_concatenation_in_a_head_local_replays_strictly() {
+    let source = r#"
+        (datatype Expr (Label String))
+        (relation Seed (String))
+        (relation Goal (Expr))
+        (rule ((Seed name))
+              ((let label (+ name ".ZERO"))
+               (Goal (Label label)))
+              :name "make-label")
+        (Seed "WMMA")
+        (run 1)
+        (check (Goal (Label "WMMA.ZERO")))
+    "#;
+
+    let slice = causal_slice_program(Some("string-head-local.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "make-label",
+        &[("name", "\"WMMA\"")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("string-head-local-replay.egg".to_owned()),
+                &slice.source,
             )
             .unwrap();
     }
@@ -1017,7 +1110,232 @@ fn nested_body_primitive_feeds_a_constructor_lookup() {
 }
 
 #[test]
-fn rebuilt_container_witness_fails_closed_without_a_content_version() {
+fn nested_replay_safe_primitive_in_union_head_replays_strictly() {
+    let source = r#"
+        (datatype Type (Int i64 i64))
+        (constructor MultipliedLanes (Type i64) Type)
+        (datatype Expr (Use Type))
+        (relation Goal ())
+        (ruleset normalize)
+        (ruleset consume)
+        (rewrite (MultipliedLanes (Int bits lanes) factor)
+                 (Int bits (* lanes factor))
+                 :ruleset normalize)
+        (rule ((= expression (Use (Int 32 1))))
+              ((Goal))
+              :ruleset consume
+              :name "consume")
+        (Use (MultipliedLanes (Int 32 1) 1))
+        (run-schedule (run normalize) (run consume))
+        (check (Goal))
+    "#;
+
+    let first =
+        causal_slice_program(Some("nested-union-primitive.egg".to_owned()), source).unwrap();
+    let second =
+        causal_slice_program(Some("nested-union-primitive.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    let firings = replay_firings(&first.source);
+    assert!(firings.iter().any(|(rule, _)| rule == "consume"));
+    assert!(first.rule_mapping.iter().any(|mapping| {
+        mapping.original_name.is_none()
+            && firings
+                .iter()
+                .any(|(rule, _)| rule == &mapping.registered_name)
+    }));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("nested-union-primitive-replay.egg".to_owned()),
+                &first.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn nested_constructor_premise_uses_the_exact_pre_wave_row_when_scalar_syntax_is_shadowed() {
+    let source = r#"
+        (datatype Type (Float i64 i64))
+        (constructor MultipliedLanes (Type i64) Type)
+        (relation Seen (i64))
+        (ruleset typechecking)
+        (rule () ((Seen (+ 1 1))) :name "compute-two")
+        (rewrite (MultipliedLanes (Float i lanes) factor)
+                 (Float i (* lanes factor))
+                 :ruleset typechecking)
+        (let $root (MultipliedLanes (Float 1 2) 3))
+        (let $target (Float 1 6))
+        (run-schedule (run) (run typechecking))
+        (check (= $root $target))
+    "#;
+
+    let first =
+        causal_slice_program(Some("shadowed-scalar-premise.egg".to_owned()), source).unwrap();
+    let second =
+        causal_slice_program(Some("shadowed-scalar-premise.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    assert!(first.stats.prefix_fallbacks > 0);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("shadowed-scalar-premise-replay.egg".to_owned()),
+                &first.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn irrelevant_unreplayable_grounding_with_a_pure_head_primitive_is_sliced_away() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor Leaf () Expr)
+        (constructor Call (VecExpr) Expr)
+        (constructor Broadcast (Expr i64) Expr)
+        (relation Trigger (Expr i64))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((Trigger x n) (!= n 0))
+              ((let xs (vec-of x))
+               (let call (Call xs))
+               (Broadcast (Broadcast call 1) 1))
+              :name "opaque-producer")
+        (rewrite (Broadcast x 1) x)
+        (rewrite (Broadcast (Broadcast x l0) l1)
+                 (Broadcast x (* l0 l1)))
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (Trigger (Leaf) 1)
+        (Seed)
+        (run 2)
+        (check (Goal))
+    "#;
+
+    let slice =
+        causal_slice_replay_program(Some("irrelevant-pure-head.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "goal", &[]));
+    assert!(
+        !replay_firings(&slice.source).iter().any(
+            |(rule, _)| rule == "opaque-producer" || rule.starts_with("__causal_slice_v0_rw_b")
+        )
+    );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("irrelevant-pure-head-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn duplicate_query_primitive_lowering_is_deferred_until_reachable() {
+    let source = r#"
+        (relation Input (i64))
+        (relation Left (i64))
+        (relation Right (i64))
+        (relation Noise ())
+        (relation Goal ())
+        (rule ((Input k) (Left (+ k 1)) (Right (+ k 1)))
+              ((Noise))
+              :name "deduplicated-query")
+        (rule ((Input 0)) ((Goal)) :name "goal")
+        (Input 0)
+        (Left 1)
+        (Right 1)
+        (run 1)
+        (check (Goal))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("deduplicated-query.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(!has_replay_firing(
+        &replay.source,
+        "deduplicated-query",
+        &[("k", "0")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("deduplicated-query-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+
+    let retained = source.replace("(check (Goal))", "(check (Noise))");
+    let error = causal_slice_program(
+        Some("retained-deduplicated-query.egg".to_owned()),
+        &retained,
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("lost modeled query primitive `+`")
+    );
+}
+
+#[test]
+fn query_filtered_unreplayable_grounding_has_no_union_effect_to_replay() {
+    let source = r#"
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor N (i64) Expr)
+        (constructor Call (VecExpr) Expr)
+        (constructor Broadcast (Expr i64) Expr)
+        (constructor BroadcastPer (i64 Expr i64) Expr)
+        (relation Trigger (Expr i64))
+        (relation Seed ())
+        (relation Goal ())
+        (rule ((Trigger x n) (!= n 0))
+              ((let xs (vec-of x))
+               (let call (Call xs))
+               (BroadcastPer 2 (Broadcast call 1) 1))
+              :name "opaque-producer")
+        (rewrite (BroadcastPer p (Broadcast x l0) l1)
+                 (Broadcast x (* l0 l1))
+                 :when ((< 1 p)
+                        (> (* 1 l0) p)))
+        (rule ((Seed)) ((Goal)) :name "goal")
+        (Trigger (N 1) 1)
+        (Seed)
+        (run 2)
+        (check (Goal))
+    "#;
+
+    let replay =
+        causal_slice_replay_program(Some("query-filtered-unreplayable.egg".to_owned()), source)
+            .unwrap();
+    assert!(has_replay_firing(&replay.source, "goal", &[]));
+    assert!(!has_replay_firing(&replay.source, "opaque-producer", &[]));
+    assert!(
+        !replay_firings(&replay.source)
+            .iter()
+            .any(|(rule, _)| rule.starts_with("__causal_slice_v0_rw_b"))
+    );
+    EGraph::new_with_proofs()
+        .with_proof_testing()
+        .parse_and_run_program(
+            Some("query-filtered-unreplayable-replay.egg".to_owned()),
+            &replay.source,
+        )
+        .unwrap();
+}
+
+#[test]
+fn an_irrelevant_rebuilt_container_transition_is_sliced_away() {
     let source = r#"
         (sort Expr)
         (sort VecExpr (Vec Expr))
@@ -1045,14 +1363,290 @@ fn rebuilt_container_witness_fails_closed_without_a_content_version() {
     EGraph::default()
         .parse_and_run_program(Some("rebuilt-container-native.egg".to_owned()), source)
         .unwrap();
-    let error =
-        causal_slice_program(Some("rebuilt-container-causal.egg".to_owned()), source).unwrap_err();
-    assert!(
-        error.to_string().contains(
-            "container witness of sort `VecExpr` whose semantic contents changed during rebuild"
-        ),
-        "{error}"
+    let slice =
+        causal_slice_program(Some("rebuilt-container-causal.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "make-container",
+        &[("x", "$b")]
+    ));
+    assert!(!has_replay_firing(&slice.source, "merge-elements", &[]));
+    assert_eq!(slice.stats.prefix_fallbacks, 0);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("rebuilt-container-causal-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn retained_vec_rebuild_refresh_uses_temporal_current_support() {
+    let source = r#"
+        (sort Expr)
+        (constructor A () Expr)
+        (constructor B () Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor Parent (VecExpr) Expr)
+
+        (relation Seed (Expr))
+        (relation Target (Expr))
+        (relation Stored (Expr))
+        (relation SeenBefore ())
+        (relation Done ())
+
+        (ruleset initialize)
+        (ruleset observe-before)
+        (ruleset observe-after)
+        (ruleset unify)
+
+        (rule ((Seed value))
+              ((Stored (Parent (vec-of value))))
+              :ruleset initialize
+              :name "make-vector")
+
+        (rule ((Stored (Parent xs))
+               (vec-contains xs (B)))
+              ((SeenBefore))
+              :ruleset observe-before
+              :name "observe-before-rebuild")
+
+        (rule ((Seed value)
+               (Target target))
+              ((union target value))
+              :ruleset unify
+              :name "unify-elements")
+
+        (rule ((SeenBefore)
+               (Stored (Parent xs))
+               (Target target)
+               (vec-contains xs target))
+              ((Done))
+              :ruleset observe-after
+              :name "observe-after-rebuild")
+
+        (Seed (B))
+        (Target (A))
+
+        (run-schedule
+          (run initialize)
+          (run observe-before)
+          (run observe-after)
+          (run unify)
+          (run observe-after))
+
+        (check (Done))
+    "#;
+
+    EGraph::default()
+        .parse_and_run_program(Some("retained-vec-rebuild-native.egg".to_owned()), source)
+        .unwrap();
+
+    let slice =
+        causal_slice_program(Some("retained-vec-rebuild-causal.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.prefix_fallbacks, 1);
+    assert_eq!(slice.stats.retained_applications, 4);
+    assert_eq!(
+        replay_firings(&slice.source)
+            .iter()
+            .map(|(rule, _)| rule.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "make-vector",
+            "observe-before-rebuild",
+            "unify-elements",
+            "observe-after-rebuild",
+        ]
     );
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("retained-vec-rebuild-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn repeated_vec_rebuilds_preserve_temporal_current_support() {
+    let source = r#"
+        (sort Expr)
+        (constructor A () Expr)
+        (constructor B () Expr)
+        (constructor C () Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor Parent (VecExpr) Expr)
+        (relation Seed (Expr))
+        (relation Stored (Expr))
+        (relation SeenC ())
+        (relation SeenB ())
+        (relation Done ())
+        (let $a (A))
+        (let $b (B))
+        (ruleset initialize)
+        (ruleset observe-c)
+        (ruleset unify-bc)
+        (ruleset observe-b)
+        (ruleset unify-ab)
+        (ruleset observe-a)
+        (rule ((Seed value))
+              ((Stored (Parent (vec-of value))))
+              :ruleset initialize
+              :name "make-vector")
+        (rule ((Stored (Parent xs))
+               (= (vec-get xs 0) (C)))
+              ((SeenC))
+              :ruleset observe-c
+              :name "observe-c")
+        (rule ((Seed value))
+              ((union $b value))
+              :ruleset unify-bc
+              :name "unify-b-c")
+        (rule ((SeenC)
+               (Stored (Parent xs))
+               (= (vec-get xs 0) $b))
+              ((SeenB))
+              :ruleset observe-b
+              :name "observe-b")
+        (rule ((SeenB))
+              ((union $a $b))
+              :ruleset unify-ab
+              :name "unify-a-b")
+        (rule ((SeenB)
+               (Stored (Parent xs))
+               (= (vec-get xs 0) $a))
+              ((Done))
+              :ruleset observe-a
+              :name "observe-a")
+        (Seed (C))
+        (run-schedule
+          (run initialize)
+          (run observe-c)
+          (run unify-bc)
+          (run observe-b)
+          (run unify-ab)
+          (run observe-a))
+        (check (Done))
+    "#;
+
+    let slice = causal_slice_program(Some("repeated-rebuilt-vec.egg".to_owned()), source).unwrap();
+    assert_eq!(slice.stats.prefix_fallbacks, 2);
+    assert_eq!(slice.stats.retained_applications, 6);
+    assert_eq!(replay_firings(&slice.source).len(), 6);
+    assert!(has_replay_firing(
+        &slice.source,
+        "make-vector",
+        &[("value", "(C)")]
+    ));
+    assert!(has_replay_firing(
+        &slice.source,
+        "observe-c",
+        &[("xs", "(vec-of (C))")]
+    ));
+    assert!(has_replay_firing(
+        &slice.source,
+        "unify-b-c",
+        &[("value", "(C)")]
+    ));
+    assert!(has_replay_firing(
+        &slice.source,
+        "observe-b",
+        &[("xs", "(vec-of (C))")]
+    ));
+    assert!(has_replay_firing(&slice.source, "unify-a-b", &[]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "observe-a",
+        &[("xs", "(vec-of (C))")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("repeated-rebuilt-vec-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn late_vec_alias_inherits_typed_current_support() {
+    let source = r#"
+        (sort Type)
+        (constructor Int (i64 i64) Type)
+        (sort CallType)
+        (constructor Intrinsic () CallType)
+        (sort Variable)
+        (constructor V (String) Variable)
+        (sort Expr)
+        (sort VecExpr (Vec Expr))
+        (constructor Stable () Expr)
+        (constructor Old () Expr)
+        (constructor New () Expr)
+        (constructor Var (Type Variable) Expr)
+        (constructor Call (String Type VecExpr CallType) Expr)
+        (sort Stmt)
+        (constructor Store (String Expr Expr) Stmt)
+        (constructor Evaluate (Expr) Stmt)
+        (relation Seed (Stmt Expr))
+        (relation Merge (Expr Expr))
+        (ruleset derive)
+        (ruleset unify)
+        (let $new (New))
+        (let $old (Old))
+        (let $store (Store "output" (Stable) (Stable)))
+        (Seed $store $old)
+        (Merge $new $old)
+        (rule ((Seed statement tile))
+              ((let evaluated
+                 (Evaluate
+                   (Call "wmma.store" (Int 32 1)
+                     (vec-of
+                       (Var (Int 32 1) (V "output"))
+                       tile)
+                     (Intrinsic))))
+               (union statement evaluated))
+              :ruleset derive
+              :name "store-to-evaluate")
+        (rule ((Merge canonical previous))
+              ((union canonical previous))
+              :ruleset unify
+              :name "canonicalize-argument")
+        (run-schedule (run derive) (run unify))
+        (check
+          (= $store
+             (Evaluate
+               (Call "wmma.store" (Int 32 1)
+                 (vec-of
+                   (Var (Int 32 1) (V "output"))
+                   $new)
+                 (Intrinsic)))))
+    "#;
+    let slice = causal_slice_program(Some("late-vec-alias.egg".to_owned()), source).unwrap();
+
+    assert_eq!(slice.stats.prefix_fallbacks, 1);
+    assert_eq!(slice.stats.retained_applications, 2);
+    assert!(has_replay_firing(
+        &slice.source,
+        "canonicalize-argument",
+        &[("canonical", "$new"), ("previous", "$old")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("late-vec-alias-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -1138,6 +1732,64 @@ fn collapsed_projected_extensions_are_never_emitted_as_a_partial_selector() {
             .iter()
             .any(|(rule, _)| rule == "projected-copy")
     );
+}
+
+#[test]
+fn projected_equality_key_recovers_omitted_complete_head_binding() {
+    let source = r#"
+        (datatype Expr (A) (B) (Pair Expr Expr))
+        (relation Trigger (i64))
+        (relation Alias (Expr))
+        (relation Out (i64 Expr))
+        (ruleset merge)
+        (ruleset alias)
+        (ruleset derive)
+
+        (Pair (B) (B))
+        (Pair (A) (A))
+        (Trigger 1)
+
+        (rule ((Trigger tag))
+              ((union (A) (B)))
+              :ruleset merge
+              :name "unify")
+        (rule ((Trigger tag))
+              ((Alias (Pair (A) (A))))
+              :ruleset alias
+              :name "touch-alias")
+        (rule ((Trigger tag) (Alias e))
+              ((Out tag e))
+              :ruleset derive
+              :name "copy")
+
+        (run-schedule (run merge) (run alias) (run derive))
+        (check (Out 1 (Pair (B) (B))))
+    "#;
+
+    let replay =
+        causal_slice_proof_replay_program(Some("projected-equality-key.egg".to_owned()), source)
+            .unwrap();
+    assert_eq!(
+        replay_firings(&replay.source)
+            .into_iter()
+            .filter(|(rule, _)| rule == "copy")
+            .collect::<Vec<_>>(),
+        vec![("copy".to_owned(), vec![("tag".to_owned(), "1".to_owned())])],
+        "the unstable equality binding must be omitted from the exact key"
+    );
+
+    // `e` is absent from the emitted selector but remains part of the traced
+    // complete grounding and is required by the complete `(Out tag e)` head.
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("projected-equality-key-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
 }
 
 #[test]
@@ -1369,7 +2021,7 @@ fn print_only_program_uses_a_reported_effective_prefix() {
 }
 
 #[test]
-fn prefix_replay_rejects_an_opaque_state_effect() {
+fn prefix_replay_rejects_mutable_state_receipts() {
     let source = r#"
         (function F (i64) i64 :no-merge)
         (relation Trigger ())
@@ -1386,7 +2038,7 @@ fn prefix_replay_rejects_an_opaque_state_effect() {
     assert!(
         error
             .to_string()
-            .contains("non-insert/union head action in rule `opaque-write`"),
+            .contains("mutable-state commit receipts in conservative Prefix replay"),
         "{error}"
     );
 }
@@ -1490,8 +2142,10 @@ fn prefix_replay_shares_each_closed_witness_once_per_wave() {
         causal_slice_replay_program(Some("shared-witness.egg".to_owned()), &source).unwrap();
     assert_eq!(replay.stats.shared_replay_witnesses, 1);
     let schedule = &replay.source[replay.source.find("(run-schedule").unwrap()..];
-    assert_eq!(schedule.matches(term).count(), 1);
-    assert!(replay.source.contains(":witnesses ("));
+    assert_eq!(schedule.matches(term).count(), 0);
+    assert!(replay.source.contains(":witness-dag ("));
+    assert_eq!(schedule.matches("(:call Expr Pair").count(), 2);
+    assert_eq!(schedule.matches("(:call Expr Leaf").count(), 2);
     assert!(replay.source.contains(":groups ((\"copy\" (i e)))"));
     assert!(!replay.source.contains("(let $__csw"));
 
@@ -1505,6 +2159,39 @@ fn prefix_replay_shares_each_closed_witness_once_per_wave() {
             &replay.source,
         )
         .unwrap();
+}
+
+#[test]
+fn deep_diamond_witness_emission_is_linear_and_deterministic() {
+    let source = r#"
+        (datatype Expr (Leaf) (Pair Expr Expr))
+        (relation Level (i64 Expr))
+        (relation Done (Expr))
+        (rule ((Level i x)
+               (< i 18)
+               (= next (+ i 1)))
+              ((Level next (Pair x x)))
+              :name "grow")
+        (rule ((Level 18 x)) ((Done x)) :name "finish")
+        (Level 0 (Leaf))
+        (run 20)
+        (check (Done x))
+    "#;
+
+    let first = causal_slice_replay_program(Some("deep-diamond.egg".to_owned()), source).unwrap();
+    let second = causal_slice_replay_program(Some("deep-diamond.egg".to_owned()), source).unwrap();
+    assert_eq!(first.source, second.source);
+    assert_eq!(first.stats.retained_applications, 19);
+    assert!(first.source.len() < 100_000, "{} bytes", first.source.len());
+    assert!(first.source.matches("(:call Expr Pair").count() < 200);
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("deep-diamond-replay.egg".to_owned()), &first.source)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -2306,6 +2993,41 @@ fn dynamic_global_references_replay_without_becoming_rule_bindings() {
 }
 
 #[test]
+fn replay_binding_reuses_an_exact_source_global_witness() {
+    let source = r#"
+        (datatype Expr (Leaf String) (Pair Expr Expr))
+        (relation Seed (Expr))
+        (relation Done (Expr))
+        (let $term (Pair (Pair (Leaf "x") (Leaf "y"))
+                         (Pair (Leaf "x") (Leaf "y"))))
+        (Seed $term)
+        (rule ((Seed value)) ((Done value)) :name "copy")
+        (run 1)
+        (check (Done $term))
+    "#;
+
+    let replay =
+        causal_slice_proof_replay_program(Some("source-global-witness.egg".to_owned()), source)
+            .unwrap();
+    assert!(has_replay_firing(
+        &replay.source,
+        "copy",
+        &[("value", "$term")]
+    ));
+    assert_eq!(replay.source.matches("(Pair (Pair").count(), 1);
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("source-global-witness-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn legacy_unprefixed_global_replays_without_becoming_a_rule_binding() {
     let source = r#"
         (datatype Expr (A))
@@ -2862,6 +3584,107 @@ fn custom_function_state_use_remains_an_explicit_boundary() {
 }
 
 #[test]
+fn no_merge_unique_write_and_retained_lookup_union_replay_end_to_end() {
+    let source = r#"
+        (datatype Type (Ty i64))
+        (datatype Expr
+          (Leaf Type)
+          (Broadcast Expr i64)
+          (BroadcastPer i64 Expr i64))
+        (function Lanes (Type) i64 :no-merge)
+        (relation Seed (Type i64))
+        (relation HasType (Expr Type))
+        (ruleset initialize)
+        (ruleset convert)
+        (rule ((Seed t n))
+              ((set (Lanes t) n))
+              :ruleset initialize
+              :name "record-lanes")
+        (rule ((= e (Leaf t)))
+              ((HasType e t))
+              :ruleset initialize
+              :name "type-leaf")
+        (rule ((= bc (Broadcast e lo))
+               (HasType e t)
+               (= p (Lanes t)))
+              ((union bc (BroadcastPer p e lo)))
+              :ruleset convert
+              :name "convert-broadcast")
+        (let $t (Ty 4))
+        (let $e (Leaf $t))
+        (let $bc (Broadcast $e 8))
+        (Seed $t 4)
+        (run-schedule (run initialize) (run convert))
+        (check (= $bc (BroadcastPer 4 $e 8)))
+    "#;
+
+    let slice = causal_slice_program(Some("no-merge-lookup-union.egg".to_owned()), source).unwrap();
+    for rule in ["record-lanes", "type-leaf", "convert-broadcast"] {
+        assert!(
+            replay_firings(&slice.source)
+                .iter()
+                .any(|(retained, _)| retained == rule),
+            "missing retained firing for {rule}"
+        );
+    }
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("no-merge-lookup-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn equality_forest_does_not_canonicalize_colliding_scalar_value_ids() {
+    let source = r#"
+        (datatype Type (A) (B))
+        (function F (i64) i64 :no-merge)
+        (relation Seed ())
+        (relation Goal (i64 i64))
+        (ruleset unify)
+        (ruleset observe)
+        (rule ((Seed))
+              ((union (A) (B)))
+              :ruleset unify
+              :name "unify-types")
+        (rule ((= left (F 2))
+               (= right (F 3)))
+              ((Goal left right))
+              :ruleset observe
+              :name "read-scalars")
+        (set (F 2) 0)
+        (set (F 3) 1)
+        (Seed)
+        (run-schedule (run unify) (run observe))
+        (check (Goal 0 1))
+    "#;
+
+    let slice =
+        causal_slice_program(Some("typed-equality-collision.egg".to_owned()), source).unwrap();
+    assert!(!has_replay_firing(&slice.source, "unify-types", &[]));
+    assert!(has_replay_firing(
+        &slice.source,
+        "read-scalars",
+        &[("left", "0"), ("right", "1")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("typed-equality-collision-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn merge_new_unique_write_and_later_read_replay_end_to_end() {
     let source = r#"
         (function F (i64) i64 :merge new)
@@ -2974,6 +3797,35 @@ fn merge_new_mixed_union_and_set_replays_the_complete_head() {
 }
 
 #[test]
+fn mixed_relation_insert_and_union_replays_the_complete_head() {
+    let source = r#"
+        (datatype Expr (A) (B))
+        (relation Seed ())
+        (relation Seen (Expr))
+        (rule ((Seed))
+              ((Seen (A))
+               (union (A) (B)))
+              :name "observe-and-unify")
+        (Seed)
+        (run 1)
+        (check (Seen (A)) (= (A) (B)))
+    "#;
+
+    let slice = causal_slice_program(Some("mixed-relation-union.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(&slice.source, "observe-and-unify", &[]));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("mixed-relation-union-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn merge_new_union_rekeyed_lookup_fails_closed_at_strict_proof_boundary() {
     let source = r#"
         (datatype Key (A) (B))
@@ -2995,6 +3847,38 @@ fn merge_new_union_rekeyed_lookup_fails_closed_at_strict_proof_boundary() {
     "#;
 
     let error = causal_slice_program(Some("merge-new-rekey.egg".to_owned()), source).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unchanged strict proof extractor rejects"),
+        "{error}"
+    );
+}
+
+#[test]
+fn canonical_variable_lookup_of_rekeyed_function_row_fails_closed() {
+    let source = r#"
+        (datatype Key (A) (B))
+        (function F (Key) i64 :no-merge)
+        (relation Trigger ())
+        (relation Goal (i64))
+        (rule ((Trigger))
+              ((set (F (B)) 7))
+              :name "write-b")
+        (rule ((Trigger))
+              ((union (A) (B)))
+              :name "unify-keys")
+        (rule ((= key (A))
+               (= value (F key)))
+              ((Goal value))
+              :name "read-canonical")
+        (Trigger)
+        (run 2)
+        (check (Goal 7))
+    "#;
+
+    let error =
+        causal_slice_program(Some("canonical-variable-rekey.egg".to_owned()), source).unwrap_err();
     assert!(
         error
             .to_string()
@@ -3049,7 +3933,7 @@ fn merge_new_same_wave_read_replays_in_one_guarded_batch() {
             "missing retained firing for {rule}"
         );
     }
-    assert!(slice.source.contains("(run-rule-batch :witnesses"));
+    assert!(slice.source.contains("(run-rule-batch :witness-dag"));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -3097,7 +3981,7 @@ fn irrelevant_unsupported_rule_is_deferred_past_backward_slicing() {
 #[test]
 fn retained_unsupported_rule_fails_after_backward_slicing() {
     let source = r#"
-        (function F (i64) i64 :no-merge)
+        (function F (i64) i64 :merge (+ old new))
         (relation Trigger ())
         (relation Goal (i64))
         (rule ((Trigger))
@@ -3113,7 +3997,7 @@ fn retained_unsupported_rule_fails_after_backward_slicing() {
     assert!(
         error
             .to_string()
-            .contains("non-insert/union head action in rule `opaque-producer`"),
+            .contains("without a causally modeled single-output merge"),
         "{error}"
     );
 }
@@ -3444,7 +4328,10 @@ fn nested_constructor_input_alias_retains_the_child_equality() {
             .iter()
             .any(|(rule, _)| rule == "use-nested-alias")
     );
-    assert!(!has_replay_firing(&slice.source, "touch-child-alias", &[]));
+    // Exact rekeyed premise-row provenance is not yet traced, so the reported
+    // pre-wave Prefix conservatively retains this otherwise irrelevant event.
+    assert!(slice.stats.prefix_fallbacks > 0);
+    assert!(has_replay_firing(&slice.source, "touch-child-alias", &[]));
     for make_egraph in [EGraph::default, || {
         EGraph::new_with_proofs().with_proof_testing()
     }] {
@@ -3776,7 +4663,7 @@ fn unsupported_custom_merge_union_fails_before_guessing_a_cause() {
     assert!(
         error
             .to_string()
-            .contains("without an exact single-output `:merge new` declaration"),
+            .contains("without a causally modeled single-output merge"),
         "{error}"
     );
 }
@@ -3848,18 +4735,14 @@ fn retained_constructor_subsume_side_effect_replays_in_one_shared_wave() {
     assert_eq!(slice.stats.equality_edges, 1);
     assert_eq!(slice.stats.retained_applications, 2);
     assert!(
-        has_replay_firing(
-            &slice.source,
-            "fold-and-hide",
-            &[("x", "1"), ("e", "(A 1)")]
-        ),
+        has_replay_firing(&slice.source, "fold-and-hide", &[("x", "1"), ("e", "$a")]),
         "{:?}",
         replay_firings(&slice.source)
     );
     assert!(has_replay_firing(
         &slice.source,
         "peer",
-        &[("x", "1"), ("e", "(A 1)")]
+        &[("x", "1"), ("e", "$a")]
     ));
 
     let replay_with_visibility_guard = format!(
@@ -4049,6 +4932,45 @@ fn bare_ground_constructor_initialization_supports_rewrite_replay() {
         make_egraph()
             .parse_and_run_program(
                 Some("bare-constructor-replay.egg".to_owned()),
+                &slice.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn bare_constructor_body_fact_with_projected_output_replays_strictly() {
+    let source = r#"
+        (datatype Expr (E))
+        (datatype Stmt (Store String Expr Expr))
+        (relation Shape (Expr))
+        (relation Allocation (String))
+        (rule ((Shape expression)
+               (Store name expression index))
+              ((Allocation name))
+              :name "recover-allocation")
+        (Shape (E))
+        (Store "buffer" (E) (E))
+        (run 1)
+        (check (Allocation "buffer"))
+    "#;
+
+    let slice = causal_slice_program(Some("bare-constructor-body.egg".to_owned()), source).unwrap();
+    assert!(has_replay_firing(
+        &slice.source,
+        "recover-allocation",
+        &[
+            ("expression", "(E)"),
+            ("name", "\"buffer\""),
+            ("index", "(E)")
+        ]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("bare-constructor-body-replay.egg".to_owned()),
                 &slice.source,
             )
             .unwrap();
@@ -4284,7 +5206,7 @@ fn nested_constructor_union_records_the_complete_source_syntax() {
 }
 
 #[test]
-fn equality_rekeyed_relation_rows_fail_closed_without_commit_provenance() {
+fn equality_rekeyed_relation_rows_use_a_reported_prefix() {
     let source = r#"
         (datatype Expr (A i64))
         (relation Pair (Expr Expr))
@@ -4296,11 +5218,25 @@ fn equality_rekeyed_relation_rows_fail_closed_without_commit_provenance() {
         (check (Goal))
     "#;
 
-    let error = causal_slice_program(Some("relation-rekey.egg".to_owned()), source).unwrap_err();
-    let message = error.to_string();
-    assert!(message.contains("equality-canonicalized premise"));
-    assert!(message.contains("relation-row rekey provenance"));
-    assert!(message.contains("relation-rekey.egg"));
+    let slice = causal_slice_program(Some("relation-rekey.egg".to_owned()), source).unwrap();
+    assert!(slice.stats.prefix_fallbacks > 0);
+    assert!(has_replay_firing(
+        &slice.source,
+        "unify",
+        &[("x", "(A 1)"), ("y", "(A 2)")]
+    ));
+    assert!(has_replay_firing(
+        &slice.source,
+        "observe-rekeyed",
+        &[("x", "(A 1)")]
+    ));
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(Some("relation-rekey-replay.egg".to_owned()), &slice.source)
+            .unwrap();
+    }
 }
 
 #[test]
@@ -5229,10 +6165,7 @@ fn fresh_custom_merge_source_set_supports_a_later_scoped_lookup() {
         has_replay_firing(
             &replay.source,
             "read-lo",
-            &[
-                ("x", "(Var \"x\")"),
-                ("value", "(bigrat (bigint 1) (bigint 1))")
-            ]
+            &[("x", "$x"), ("value", "(bigrat (bigint 1) (bigint 1))")]
         ),
         "{firings:?}"
     );
