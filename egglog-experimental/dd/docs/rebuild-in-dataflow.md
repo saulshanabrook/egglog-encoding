@@ -309,3 +309,53 @@ per-rule match traffic; `EGGLOG_DD_VOLUMES=1` prints per-arrangement input
 volumes; building with `--features egglog-experimental-dd/pprof` and setting
 `EGGLOG_DD_PROFILE=<path>` writes a flamegraph per schedule invocation
 (sampling profiler that works where perf_event_open is blocked).
+
+## Persistent per-spec dataflows (July 22 2026, second commit)
+
+Compiled schedules now keep their dataflow alive across invocations
+(thread-local cache keyed by EGraph instance + spec fingerprint; the engine
+emits its own seeds on first boot, a BOOT marker resets the scheduler PC per
+pass, and a chase loop keeps the input frontier one round ahead until the
+engine's done channel fires). Reuse is guarded by three watermarks —
+row-event counter, fresh-id position, rules version — and any mismatch drops
+the entry and rebuilds, so reuse is exactly as correct as a fresh build.
+
+Measured (all outputs semantically identical to mainline; run9/10/11
+single-invocation outputs bit-identical to prior DD refs):
+
+| workload | persistent | no-persist (env kill-switch) |
+|---|---:|---:|
+| eleven separate `(run 1)` at run-11 scale | **91.6s** | 103.1s |
+| nine separate `(run 1)` at run-9 scale | **1.20s** | 1.58s |
+
+(The single `(run 11)` is 95.4s, so split invocations are now free — slightly
+cheaper, even, since cross-pass fired flags skip already-fired matches.)
+
+**Fired-flag soundness across passes** (found by integer_math, 341 vs 331
+Adds): a fired delete/subsume rule whose row is re-added in the SAME round
+never sees its match retract — the -/+ pair cancels in DD consolidation,
+where the interpreter's physical row timestamps would re-trigger the rule.
+Delete/subsume-capable rules therefore reset their fired flags every pass
+(refiring is idempotent on table state); pure writers keep theirs, matching
+interpreter seminaive exactly (untouched inputs are not re-searched).
+
+**What v2 (foreign-delta feeding) would take and buy.** Today any host-side
+mutation between invocations invalidates. A realistic driver loop (add term,
+`(run 1)`, repeat) shows two things in the invocation trace:
+1. Per-invocation overhead is already milliseconds (prepare 1-9ms, build
+   3-21ms); the remaining rebuild cost is the fresh engine's from-scratch
+   match recompute inside `step` — that is what delta-feeding eliminates.
+2. Term additions ADD RULES (~36/term from the encoding's term-lowering), so
+   a global rules_version invalidates everything; v2 needs per-spec rule
+   LIVENESS (the spec's rule ids all still resolve — bodies are immutable
+   per id) instead.
+The v2 recipe: subscribe the entry's read/write views to the event logs;
+at boot, fold each view's window since the entry's cursor and hand the net
+transitions to the engine through a channel (begin_pass updates its tables
+and re-emits them under the seed LOCs); re-sync the engine's mint counter to
+the host's fresh-id position at boot; refresh the engine's Database clone
+when foreign deltas exist (the interner is append-only, so a fresh clone
+resolves everything). Estimated value: modest at small scale (the driver's
+1.2s is mostly real work + DD per-tuple economics, not invocation overhead),
+real at large scale (a from-scratch rebuild schedule costs ~6s at 5.6M rows;
+the replay cache already covers the exact-no-op case).
