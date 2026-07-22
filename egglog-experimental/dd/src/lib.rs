@@ -500,16 +500,50 @@ impl EGraph {
         self.db.inc_counter(self.id_counter) as u32
     }
 
+    /// The next id `fresh_id_internal` would mint, without minting it. The
+    /// compiled schedule path reserves `[peek, peek + count)` by minting
+    /// in-dataflow and then calling [`Self::advance_fresh_ids`].
+    pub(crate) fn peek_fresh_id(&self) -> u32 {
+        self.db.read_counter(self.id_counter) as u32
+    }
+
+    /// Consume `count` fresh ids minted outside `fresh_id_internal`.
+    pub(crate) fn advance_fresh_ids(&mut self, count: usize) {
+        let current = self.db.read_counter(self.id_counter);
+        self.db.set_counter(self.id_counter, current + count);
+    }
+
     /// Execute a schedule tree over [`Backend::run_rules`], appending one
     /// report per executed `Run` leaf; returns whether any leaf changed the
     /// database. Control flow matches the frontend interpreter exactly:
     /// `Repeat`/`Saturate` stop once a full pass over the inner schedule
     /// makes no change.
+    ///
+    /// Before interpreting a LOOP-BEARING subtree, retry compilation on it:
+    /// the whole-tree attempt in `run_schedule` may have failed on a sibling
+    /// (e.g. the rebuild sequence spliced next to a compilable user run).
+    /// Loop-free leaves stay on the incremental fused-join path, which beats
+    /// a transient compiled dataflow for a single bounded hop.
     fn execute_schedule(
         &mut self,
         schedule: &ScheduleSpec,
         leaves: &mut Vec<ScheduleLeafReport>,
     ) -> Result<bool> {
+        fn contains_loop(spec: &ScheduleSpec) -> bool {
+            match spec {
+                ScheduleSpec::Run { .. } => false,
+                ScheduleSpec::Repeat(..) | ScheduleSpec::Saturate(_) => true,
+                ScheduleSpec::Sequence(inners) => inners.iter().any(contains_loop),
+            }
+        }
+        if contains_loop(schedule) {
+            if let Some(outcome) = schedule_compiler::try_run_compiled(self, schedule) {
+                let compiled = outcome?;
+                let changed = compiled.iter().any(|leaf| leaf.iteration.changed());
+                leaves.extend(compiled);
+                return Ok(changed);
+            }
+        }
         match schedule {
             ScheduleSpec::Run { ruleset, rules } => {
                 let iteration = Backend::run_rules(
@@ -2736,13 +2770,12 @@ impl Backend for EGraph {
         &mut self,
         schedule: &ScheduleSpec,
     ) -> Option<Result<Vec<ScheduleLeafReport>>> {
-        // Take the whole schedule tree: schedules in the compiled subset run
-        // as ONE dataflow with in-scope fixpoints (`schedule_compiler`);
-        // everything else interprets over `run_rules` with the frontend's
-        // exact control flow, so reports are identical either way.
-        if let Some(outcome) = schedule_compiler::try_run_compiled(self, schedule) {
-            return Some(outcome);
-        }
+        // Take the whole schedule tree: loop-bearing (sub)trees in the
+        // compiled subset run as ONE dataflow with in-scope fixpoints
+        // (`schedule_compiler`, attempted per subtree inside
+        // `execute_schedule`); everything else interprets over `run_rules`
+        // with the frontend's exact control flow, so reports are identical
+        // either way.
         let mut leaves = Vec::new();
         Some(self.execute_schedule(schedule, &mut leaves).map(|_| leaves))
     }

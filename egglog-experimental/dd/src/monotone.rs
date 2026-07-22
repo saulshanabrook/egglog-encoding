@@ -30,12 +30,16 @@ where
     let stream = coll.inner.clone().unary_frontier(
         Pipeline,
         "RisingEdge",
-        move |default_cap, _info| {
-            let mut caps = CapabilitySet::from_elem(default_cap);
+        move |_default_cap, _info| {
+            // Capabilities are held ONLY for pending queued data and dropped
+            // when the queue drains: a capability parked at the frontier of a
+            // feedback loop would keep its rounds advancing forever.
+            let mut caps: CapabilitySet<T> = CapabilitySet::new();
             let mut queue: BinaryHeap<Reverse<(T, D, isize)>> = BinaryHeap::new();
             let mut counts: HashMap<D, isize> = HashMap::new();
             move |(input, frontier), output| {
-                input.for_each(|_cap, data| {
+                input.for_each(|cap, data| {
+                    caps.insert(cap.retain(0));
                     for (d, t, r) in data.drain(..) {
                         queue.push(Reverse((t, d, r)));
                     }
@@ -71,7 +75,13 @@ where
                         }
                     }
                 }
-                caps.downgrade(&frontier.frontier());
+                match queue.peek() {
+                    Some(Reverse((t, ..))) => {
+                        let t = t.clone();
+                        caps.downgrade([t]);
+                    }
+                    None => caps.downgrade(Vec::<T>::new()),
+                }
             }
         },
     );
@@ -94,13 +104,15 @@ where
     let stream = demand.inner.clone().unary_frontier(
         Pipeline,
         "MemoizingMint",
-        move |default_cap, _info| {
-            let mut caps = CapabilitySet::from_elem(default_cap);
+        move |_default_cap, _info| {
+            // Pending-data-only capabilities; see `rising_edge`.
+            let mut caps: CapabilitySet<T> = CapabilitySet::new();
             let mut queue: BinaryHeap<Reverse<(T, K, isize)>> = BinaryHeap::new();
             let mut dict: HashMap<K, u32> = HashMap::new();
             let mut counter = first_id;
             move |(input, frontier), output| {
-                input.for_each(|_cap, data| {
+                input.for_each(|cap, data| {
+                    caps.insert(cap.retain(0));
                     for (k, t, r) in data.drain(..) {
                         queue.push(Reverse((t, k, r)));
                     }
@@ -132,10 +144,91 @@ where
                         session.give(((k, id), time.clone(), 1isize));
                     }
                 }
-                caps.downgrade(&frontier.frontier());
+                match queue.peek() {
+                    Some(Reverse((t, ..))) => {
+                        let t = t.clone();
+                        caps.downgrade([t]);
+                    }
+                    None => caps.downgrade(Vec::<T>::new()),
+                }
             }
         },
     );
     stream.as_collection()
 }
 
+
+/// First-writer-wins latch per key: the earliest frontier-complete timestamp
+/// at which a key has net-positive candidates decides it — the minimum value
+/// among that timestamp's candidates is emitted ONCE and the key never emits
+/// again. This is `set-if-empty` in dataflow form: prime a key with a
+/// low-ordering sentinel candidate (e.g. a `(0, ...)` priority prefix) to mark
+/// it pre-existing, and later real candidates (`(1, ...)`) lose to it.
+pub fn first_per_key<'scope, T, K, V>(
+    candidates: &VecCollection<'scope, T, (K, V)>,
+) -> VecCollection<'scope, T, (K, V)>
+where
+    T: Timestamp + Lattice + Ord,
+    K: differential_dataflow::ExchangeData + std::hash::Hash,
+    V: differential_dataflow::ExchangeData + std::hash::Hash + Ord,
+{
+    let stream = candidates.inner.clone().unary_frontier(
+        Pipeline,
+        "FirstPerKey",
+        move |_default_cap, _info| {
+            // Pending-data-only capabilities; see `rising_edge`.
+            let mut caps: CapabilitySet<T> = CapabilitySet::new();
+            let mut queue: BinaryHeap<Reverse<(T, K, V, isize)>> = BinaryHeap::new();
+            let mut decided: std::collections::HashSet<K> = Default::default();
+            move |(input, frontier), output| {
+                input.for_each(|cap, data| {
+                    caps.insert(cap.retain(0));
+                    for ((k, v), t, r) in data.drain(..) {
+                        queue.push(Reverse((t, k, v, r)));
+                    }
+                });
+                while queue
+                    .peek()
+                    .is_some_and(|Reverse((t, _, _, _))| !frontier.frontier().less_equal(t))
+                {
+                    let time = queue.peek().expect("peeked above").0 .0.clone();
+                    let mut net: HashMap<(K, V), isize> = HashMap::new();
+                    while queue.peek().is_some_and(|Reverse((t, _, _, _))| *t == time) {
+                        let Reverse((_, k, v, r)) = queue.pop().expect("peeked above");
+                        *net.entry((k, v)).or_insert(0) += r;
+                    }
+                    // Minimum net-positive candidate per undecided key at this
+                    // timestamp (deterministic winner).
+                    let mut winners: HashMap<K, V> = HashMap::new();
+                    for ((k, v), r) in net {
+                        if r <= 0 || decided.contains(&k) {
+                            continue;
+                        }
+                        match winners.get(&k) {
+                            Some(existing) if *existing <= v => {}
+                            _ => {
+                                winners.insert(k, v);
+                            }
+                        }
+                    }
+                    let cap = caps.delayed(&time);
+                    let mut session = output.session(&cap);
+                    let mut ordered: Vec<(K, V)> = winners.into_iter().collect();
+                    ordered.sort();
+                    for (k, v) in ordered {
+                        decided.insert(k.clone());
+                        session.give(((k, v), time.clone(), 1isize));
+                    }
+                }
+                match queue.peek() {
+                    Some(Reverse((t, ..))) => {
+                        let t = t.clone();
+                        caps.downgrade([t]);
+                    }
+                    None => caps.downgrade(Vec::<T>::new()),
+                }
+            }
+        },
+    );
+    stream.as_collection()
+}
