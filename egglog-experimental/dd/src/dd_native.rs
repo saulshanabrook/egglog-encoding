@@ -161,18 +161,18 @@ impl<const WIDTH: usize> Default for RowN<WIDTH> {
 /// A planned DD join: table atoms plus a bounded live-variable layout.
 pub struct JoinPlan {
     /// Body table atoms in emission order.
-    atoms: Vec<PlanAtom>,
+    pub(crate) atoms: Vec<PlanAtom>,
     /// Per-step column allocation for variables live at each join stage.
-    projection: ProjectionPlan,
+    pub(crate) projection: ProjectionPlan,
     /// Minimum row width this plan needs: the widest atom arity or live
     /// binding-column frontier. [`FusedDdJoin::build`] picks the smallest
     /// [`WIDTH_LADDER`] entry covering every plan in the ruleset.
-    width: usize,
+    pub(crate) width: usize,
 }
 
-struct PlanAtom {
-    read_key: ReadKey,
-    slots: Vec<Slot>,
+pub(crate) struct PlanAtom {
+    pub(crate) read_key: ReadKey,
+    pub(crate) slots: Vec<Slot>,
 }
 
 impl JoinPlan {
@@ -188,7 +188,100 @@ impl JoinPlan {
 /// Supported rules have one or more table atoms, atom arity at most [`W`], and
 /// no more than [`W`] simultaneously live body variables. Body primitives are
 /// evaluated later by the host interpreter, so they do not become DD operators.
+/// Per-read-view statistics for join ordering: `(row_count, per-column
+/// distinct value counts)`.
+pub type ViewStats = (usize, Vec<usize>);
+
 pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
+    plan_join_with(rule, &|_| None)
+}
+
+/// Estimated result cardinality of joining `atom` into a partial join of
+/// estimated size `card` with `bound` variables, under the standard
+/// independence model: multiply by the atom's row count, divide by each
+/// equality constraint's distinct count (bound vars, constants, duplicate
+/// variables within the atom).
+fn join_step_estimate(
+    card: f64,
+    bound: &hashbrown::HashSet<u32>,
+    atom: &PlanAtom,
+    stats: &ViewStats,
+) -> f64 {
+    let (rows, distinct) = stats;
+    let mut est = card * (*rows as f64).max(1.0);
+    let mut seen = hashbrown::HashSet::new();
+    for (col, slot) in atom.slots.iter().enumerate() {
+        let d = distinct.get(col).copied().unwrap_or(1).max(1) as f64;
+        match slot {
+            Slot::Var(v) => {
+                if bound.contains(v) || !seen.insert(*v) {
+                    est /= d;
+                }
+            }
+            Slot::Const(_) => est /= d,
+        }
+    }
+    est
+}
+
+/// Pick the atom order minimizing the estimated sum of intermediate join
+/// sizes. Rules are small (2-4 atoms), so all permutations are scored; ties
+/// keep the earliest (body-order) permutation. Falls back to body order when
+/// any atom's view has no statistics.
+fn order_atoms(atoms: &mut Vec<PlanAtom>, stats: &impl Fn(ReadKey) -> Option<ViewStats>) {
+    const MAX_EXHAUSTIVE: usize = 6;
+    if std::env::var("EGGLOG_DD_NO_ORDER").is_ok() {
+        return;
+    }
+    let n = atoms.len();
+    if !(2..=MAX_EXHAUSTIVE).contains(&n) {
+        return;
+    }
+    let Some(view_stats): Option<Vec<ViewStats>> =
+        atoms.iter().map(|a| stats(a.read_key)).collect()
+    else {
+        return;
+    };
+    let var_sets: Vec<Vec<u32>> = atoms.iter().map(|a| atom_vars(&a.slots)).collect();
+
+    let mut best: Option<(f64, Vec<usize>)> = None;
+    let mut perm: Vec<usize> = (0..n).collect();
+    loop {
+        let mut bound = hashbrown::HashSet::new();
+        let mut card = 1.0;
+        let mut total = 0.0;
+        for &i in &perm {
+            card = join_step_estimate(card, &bound, &atoms[i], &view_stats[i]);
+            total += card;
+            bound.extend(var_sets[i].iter().copied());
+        }
+        if best.as_ref().is_none_or(|(b, _)| total < *b) {
+            best = Some((total, perm.clone()));
+        }
+        // Next lexicographic permutation.
+        let Some(k) = (0..n - 1).rev().find(|&k| perm[k] < perm[k + 1]) else {
+            break;
+        };
+        let j = (k + 1..n)
+            .rev()
+            .find(|&j| perm[j] > perm[k])
+            .expect("k < j");
+        perm.swap(k, j);
+        perm[k + 1..].reverse();
+    }
+    let order = best.expect("at least one permutation").1;
+    let mut reordered: Vec<Option<PlanAtom>> = atoms.drain(..).map(Some).collect();
+    atoms.extend(
+        order
+            .into_iter()
+            .map(|i| reordered[i].take().expect("permutation visits once")),
+    );
+}
+
+pub fn plan_join_with(
+    rule: &RuleSpec,
+    stats: &impl Fn(ReadKey) -> Option<ViewStats>,
+) -> Result<JoinPlan, String> {
     use hashbrown::HashSet;
 
     let mut body_vars = HashSet::new();
@@ -227,7 +320,8 @@ pub fn plan_join(rule: &RuleSpec) -> Result<JoinPlan, String> {
     if atoms.is_empty() {
         return Err("no body table atoms (atom-less rule)".to_string());
     }
-    // Diagnostic: dump the emitted (naive, body-order) join sequence, flagging
+    order_atoms(&mut atoms, stats);
+    // Diagnostic: dump the emitted join sequence, flagging
     // any stage that joins with no shared variable (a cartesian product).
     if std::env::var("EGGLOG_DD_DUMP_PLANS").is_ok() {
         let mut bound: hashbrown::HashSet<u32> = hashbrown::HashSet::new();
@@ -289,16 +383,16 @@ fn plan_width(atoms: &[PlanAtom], projection: &ProjectionPlan) -> usize {
 /// liveness. Reusing dead variables' columns lets some rules with more than
 /// [`W`] total variables fit in a fixed-width [`Row`].
 #[derive(Clone, Debug)]
-struct ProjectionPlan {
+pub(crate) struct ProjectionPlan {
     /// `step_col[i]` maps each variable LIVE during step `i` (atom `i`'s join) to
     /// its binding-row column at that step. A var's column is stable from its
     /// birth step to its death step but may differ across non-overlapping vars.
-    step_col: Vec<HashMap<u32, usize>>,
+    pub(crate) step_col: Vec<HashMap<u32, usize>>,
     /// The surviving (head/body-prim-relevant) variables and their FINAL columns,
     /// in a deterministic order. Drives the reduced head-scatter `var_order`.
-    head_vars: Vec<u32>,
+    pub(crate) head_vars: Vec<u32>,
     /// Final column of each surviving var (parallel to `head_vars`).
-    head_cols: Vec<usize>,
+    pub(crate) head_cols: Vec<usize>,
 }
 
 /// Build a column-reusing layout for the body atoms, or `None` if the reused
@@ -908,7 +1002,7 @@ impl<const WIDTH: usize> FusedDdJoinW<WIDTH> {
 }
 
 /// Pack a slice of column values into a fixed-width row (0-padded).
-fn pack_row<const WIDTH: usize>(vals: &[u32]) -> Result<RowN<WIDTH>> {
+pub(crate) fn pack_row<const WIDTH: usize>(vals: &[u32]) -> Result<RowN<WIDTH>> {
     if vals.len() > WIDTH {
         bail!(
             "DD input row has {} columns, exceeding fixed row width {WIDTH}",
@@ -936,7 +1030,7 @@ fn pack_cols<const WIDTH: usize>(r: &RowN<WIDTH>, cols: &[usize]) -> RowN<WIDTH>
 /// columns plus a fold of the rest into the top lane. A fold collision only
 /// routes extra pairs into `join_core`'s output closure, where the compiled
 /// [`AtomOps::checks`] on every shared variable filter them out.
-fn pack_key128<const WIDTH: usize>(r: &RowN<WIDTH>, cols: &[usize]) -> u128 {
+pub(crate) fn pack_key128<const WIDTH: usize>(r: &RowN<WIDTH>, cols: &[usize]) -> u128 {
     let mut k = 0u128;
     if cols.len() <= 4 {
         for (i, &c) in cols.iter().enumerate() {
@@ -956,7 +1050,7 @@ fn pack_key128<const WIDTH: usize>(r: &RowN<WIDTH>, cols: &[usize]) -> u128 {
 }
 
 /// Distinct variables appearing in an atom (column order).
-fn atom_vars(slots: &[Slot]) -> Vec<u32> {
+pub(crate) fn atom_vars(slots: &[Slot]) -> Vec<u32> {
     let mut out = Vec::new();
     for s in slots {
         if let Slot::Var(v) = s {
@@ -978,7 +1072,7 @@ fn atom_vars(slots: &[Slot]) -> Vec<u32> {
 /// layouts; reusing freed columns is what keeps the frontier within the row
 /// width. `apply` returns `None` when any constraint fails.
 #[derive(Clone, Default)]
-struct AtomOps {
+pub(crate) struct AtomOps {
     /// `row[i]` must equal the constant.
     consts: Vec<(usize, u32)>,
     /// `row[i]` must equal `row[j]` (repeated variable; `j` is its first slot).
@@ -995,17 +1089,25 @@ struct AtomOps {
 
 impl AtomOps {
     /// Compile the first atom: every variable is born here.
-    fn bind_stage(slots: &[Slot], layout: &HashMap<u32, usize>) -> AtomOps {
+    pub(crate) fn bind_stage(slots: &[Slot], layout: &HashMap<u32, usize>) -> AtomOps {
         Self::compile(slots, None, layout)
     }
 
     /// Compile a join stage: `prev` is the left-row layout (step `i-1`), `cur`
     /// the output layout (step `i`).
-    fn join_stage(slots: &[Slot], prev: &HashMap<u32, usize>, cur: &HashMap<u32, usize>) -> AtomOps {
+    pub(crate) fn join_stage(
+        slots: &[Slot],
+        prev: &HashMap<u32, usize>,
+        cur: &HashMap<u32, usize>,
+    ) -> AtomOps {
         Self::compile(slots, Some(prev), cur)
     }
 
-    fn compile(slots: &[Slot], prev: Option<&HashMap<u32, usize>>, cur: &HashMap<u32, usize>) -> AtomOps {
+    fn compile(
+        slots: &[Slot],
+        prev: Option<&HashMap<u32, usize>>,
+        cur: &HashMap<u32, usize>,
+    ) -> AtomOps {
         let mut ops = AtomOps::default();
         if let Some(prev) = prev {
             // Carry over every still-live var (present in `cur`) that the left
@@ -1045,7 +1147,7 @@ impl AtomOps {
     /// Run the compiled program over one (binding, atom-row) pair. Stage 0
     /// passes a zero binding (it has no carries or checks).
     #[inline]
-    fn apply<const WIDTH: usize>(
+    pub(crate) fn apply<const WIDTH: usize>(
         &self,
         b: &RowN<WIDTH>,
         r: &RowN<WIDTH>,

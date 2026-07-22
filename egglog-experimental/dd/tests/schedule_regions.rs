@@ -65,10 +65,7 @@ fn run_region(
                 let step = Product::new(Default::default(), 1);
                 let (var, a) = Variable::new(inner, step);
 
-                let grown = a
-                    .clone()
-                    .map(|x| (x, ()))
-                    .join_map(succ, |_x, &(), &y| y);
+                let grown = a.clone().map(|x| (x, ())).join_map(succ, |_x, &(), &y| y);
                 let next = seed.concat(grown).distinct();
 
                 // Mint an id for every member of the region's growing set —

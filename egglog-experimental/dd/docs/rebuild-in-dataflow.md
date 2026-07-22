@@ -240,3 +240,72 @@ cost buckets at once, which per-phase optimization could not.
    existing term relations, drain canonical views into the host tables.
 3. Benchmark math-microbenchmark run 11 term mode against the ~70s baseline.
 4. Only then tackle proof mode via provenance reconstruction.
+
+## Engine performance work (July 22 2026)
+
+The engine (one stateful `ScheduleEngine` operator driving a PC-based
+scheduler; DD does only incremental joins) went from 20-40x slower than the
+hybrid to parity with it, with bit-identical outputs at every step.
+math-microbenchmark wall times (single thread):
+
+| workload | first working engine | final | hybrid (host-scheduled) | mainline |
+|----------|---------------------:|------:|------------------------:|---------:|
+| run 9    | 16.6s                | ~1.0s | 0.8s                    |          |
+| run 10   | 231s                 | 6.8s  | 5.5s                    |          |
+| run 11   | (not attempted)      | ~103s | 70s                     | 5.9s     |
+
+What mattered, in order of measured impact:
+
+1. **Join ordering** (biggest win: run10 71s -> 11.4s). `plan_join` used body
+   order; the factorization rule `(Add (Mul a b) (Mul a c))` joined
+   `Mul ⋈ Mul` on just `a` — 8.8M intermediate tuples where the final match
+   count was 20K (90% of ALL arrangement traffic). `plan_join_with` now takes
+   per-view stats (row count + sampled per-column distinct counts), scores
+   every permutation (rules have ≤4 atoms) with the standard independence
+   model, and picks the cheapest. `EGGLOG_DD_NO_ORDER=1` disables it.
+2. **Width ladder for the engine dataflow** (run9 16.6->5.5s, run10 231->82s).
+   The engine path ran everything at `RowN<48>` (192-byte rows in every
+   arrangement); it now monomorphizes `run_compiled` over {8,16,32,48} like
+   the fused path and picks the smallest width covering every binding layout
+   and table arity.
+3. **Demux + one concatenate** (run9 1.31->0.92s, run10 7.7->5.9s). Timely's
+   Tee clones each batch per subscriber: ~85 per-view filters on the full
+   engine output stream copied every emission ~85x (20% of the profile in
+   `Message::push`). One `partition` by (func, loc) routes each delta once.
+   Likewise the per-rule match streams now merge through a single
+   `concatenate` instead of ~200 chained binary concats.
+4. **Flat root-scope feedback** (~12%). The engine's `Variable` loop lives in
+   the root `u32` scope (step 1) instead of a `Product<u32,u64>` subscope:
+   4-byte timestamps in every sorted tuple, no nested progress tracking, and
+   completion is `probe.done()` after dropping the seed input handles.
+5. **Shared arrangements** (run9 16.6->12.9s pre-ladder). One arrangement per
+   (view, key-column projection) serves every join site; both sides of each
+   rule's first join are shared raw-view arrangements with the slot programs
+   fused into the join closure.
+6. **Per-timestamp queue buckets in the engine op.** The pending queue held a
+   `BinaryHeap` of individual deltas — 73.5M heap ops of 72-byte payloads on
+   run 11. Buckets keyed by timestamp cut heap traffic to one op per round.
+7. **Quiescent-schedule replay cache.** `print-size`/`print-stats` splice a
+   rebuild schedule per command; at run-11 scale each cost ~6s re-seeding
+   5.6M rows to fire nothing. A run that applied zero deltas and minted
+   nothing is cached keyed on the spec debug string + a global row-event
+   watermark (`mutation_counter` bumped in `record_row_event`) and replays
+   its reports verbatim. Runs that changed anything are never cached
+   (a budget-limited `(run n)` must re-run — caught by the integer_math
+   corpus test).
+
+Remaining gap vs the hybrid (run 11: ~103s vs 70s) is measured, not
+mysterious: 73.5M match deltas flow through the engine (ingest+turn ≈ 32s at
+~0.44µs each, cache-miss-bound), and 56% of that volume is the Add
+associativity rule alone — inherent re-derivation churn under incremental
+semantics, amplified because one dataflow feeds every ruleset's pipelines all
+intermediate waves (the hybrid fed each ruleset folded net windows). The
+architectural answer is the persistent cross-invocation dataflow (epoch =
+continuing round counter, host deltas fed via event-log cursors), which also
+removes the per-invocation reseed entirely.
+
+Profiling: `EGGLOG_DD_ENGINE_DEBUG=1` prints per-phase laps, per-turn gaps and
+per-rule match traffic; `EGGLOG_DD_VOLUMES=1` prints per-arrangement input
+volumes; building with `--features egglog-experimental-dd/pprof` and setting
+`EGGLOG_DD_PROFILE=<path>` writes a flamegraph per schedule invocation
+(sampling profiler that works where perf_event_open is blocked).

@@ -21,6 +21,7 @@ log = "0.4"
 differential-dataflow = "=0.24.0"
 timely = "=0.30.0"
 serde = "1"
+pprof = { version = "0.15.0", features = ["flamegraph"], optional = true }
 
 [[test]]
 # Parity harness over egglog's .egg corpus: checks the DD backend against
@@ -36,3 +37,6 @@ egglog = { path = "../../egglog", default-features = false }
 egglog-experimental = { path = "..", default-features = false }
 insta = "1.40"
 libtest-mimic = "0.8"
+
+[features]
+pprof = ["dep:pprof"]

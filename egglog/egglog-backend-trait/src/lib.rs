@@ -206,7 +206,7 @@ pub enum ScheduleSpec {
 /// schedule run. The frontend folds these exactly as its own interpreter
 /// would (`RunReport::singleton` per leaf, unioned), so reports — including
 /// `(print-stats)` output — are identical either way.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ScheduleLeafReport {
     pub ruleset: String,
     pub iteration: IterationReport,
@@ -373,7 +373,10 @@ pub trait Backend: Send + Sync {
     /// pass reports no change; `Sequence` runs in order. This hook exists so a
     /// backend can execute fixpoints natively (e.g. inside a dataflow) instead
     /// of being clocked one bounded iteration at a time.
-    fn run_schedule(&mut self, _schedule: &ScheduleSpec) -> Option<Result<Vec<ScheduleLeafReport>>> {
+    fn run_schedule(
+        &mut self,
+        _schedule: &ScheduleSpec,
+    ) -> Option<Result<Vec<ScheduleLeafReport>>> {
         None
     }
 

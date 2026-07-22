@@ -27,64 +27,63 @@ where
     T: Timestamp + Lattice + Ord,
     D: differential_dataflow::ExchangeData + std::hash::Hash,
 {
-    let stream = coll.inner.clone().unary_frontier(
-        Pipeline,
-        "RisingEdge",
-        move |_default_cap, _info| {
-            // Capabilities are held ONLY for pending queued data and dropped
-            // when the queue drains: a capability parked at the frontier of a
-            // feedback loop would keep its rounds advancing forever.
-            let mut caps: CapabilitySet<T> = CapabilitySet::new();
-            let mut queue: BinaryHeap<Reverse<(T, D, isize)>> = BinaryHeap::new();
-            let mut counts: HashMap<D, isize> = HashMap::new();
-            move |(input, frontier), output| {
-                input.for_each(|cap, data| {
-                    caps.insert(cap.retain(0));
-                    for (d, t, r) in data.drain(..) {
-                        queue.push(Reverse((t, d, r)));
+    let stream =
+        coll.inner
+            .clone()
+            .unary_frontier(Pipeline, "RisingEdge", move |_default_cap, _info| {
+                // Capabilities are held ONLY for pending queued data and dropped
+                // when the queue drains: a capability parked at the frontier of a
+                // feedback loop would keep its rounds advancing forever.
+                let mut caps: CapabilitySet<T> = CapabilitySet::new();
+                let mut queue: BinaryHeap<Reverse<(T, D, isize)>> = BinaryHeap::new();
+                let mut counts: HashMap<D, isize> = HashMap::new();
+                move |(input, frontier), output| {
+                    input.for_each(|cap, data| {
+                        caps.insert(cap.retain(0));
+                        for (d, t, r) in data.drain(..) {
+                            queue.push(Reverse((t, d, r)));
+                        }
+                    });
+                    // Process each COMPLETE timestamp (frontier has passed it) in
+                    // ascending order: apply the net delta per datum, then emit on
+                    // 0→positive transitions only.
+                    while queue
+                        .peek()
+                        .is_some_and(|Reverse((t, _, _))| !frontier.frontier().less_equal(t))
+                    {
+                        let time = queue.peek().expect("peeked above").0 .0.clone();
+                        let mut net: HashMap<D, isize> = HashMap::new();
+                        while queue.peek().is_some_and(|Reverse((t, _, _))| *t == time) {
+                            let Reverse((_, d, r)) = queue.pop().expect("peeked above");
+                            *net.entry(d).or_insert(0) += r;
+                        }
+                        let cap = caps.delayed(&time);
+                        let mut session = output.session(&cap);
+                        for (d, dr) in net {
+                            if dr == 0 {
+                                continue;
+                            }
+                            let before = counts.get(&d).copied().unwrap_or(0);
+                            let after = before + dr;
+                            if before <= 0 && after > 0 {
+                                session.give((d.clone(), time.clone(), 1isize));
+                            }
+                            if after == 0 {
+                                counts.remove(&d);
+                            } else {
+                                counts.insert(d, after);
+                            }
+                        }
                     }
-                });
-                // Process each COMPLETE timestamp (frontier has passed it) in
-                // ascending order: apply the net delta per datum, then emit on
-                // 0→positive transitions only.
-                while queue
-                    .peek()
-                    .is_some_and(|Reverse((t, _, _))| !frontier.frontier().less_equal(t))
-                {
-                    let time = queue.peek().expect("peeked above").0 .0.clone();
-                    let mut net: HashMap<D, isize> = HashMap::new();
-                    while queue.peek().is_some_and(|Reverse((t, _, _))| *t == time) {
-                        let Reverse((_, d, r)) = queue.pop().expect("peeked above");
-                        *net.entry(d).or_insert(0) += r;
-                    }
-                    let cap = caps.delayed(&time);
-                    let mut session = output.session(&cap);
-                    for (d, dr) in net {
-                        if dr == 0 {
-                            continue;
+                    match queue.peek() {
+                        Some(Reverse((t, ..))) => {
+                            let t = t.clone();
+                            caps.downgrade([t]);
                         }
-                        let before = counts.get(&d).copied().unwrap_or(0);
-                        let after = before + dr;
-                        if before <= 0 && after > 0 {
-                            session.give((d.clone(), time.clone(), 1isize));
-                        }
-                        if after == 0 {
-                            counts.remove(&d);
-                        } else {
-                            counts.insert(d, after);
-                        }
+                        None => caps.downgrade(Vec::<T>::new()),
                     }
                 }
-                match queue.peek() {
-                    Some(Reverse((t, ..))) => {
-                        let t = t.clone();
-                        caps.downgrade([t]);
-                    }
-                    None => caps.downgrade(Vec::<T>::new()),
-                }
-            }
-        },
-    );
+            });
     stream.as_collection()
 }
 
@@ -156,7 +155,6 @@ where
     );
     stream.as_collection()
 }
-
 
 /// First-writer-wins latch per key: the earliest frontier-complete timestamp
 /// at which a key has net-positive candidates decides it — the minimum value

@@ -150,7 +150,10 @@ fn run_fixpoint(
                 .iter()
                 .filter(|(_, &w)| w != 0)
                 .map(|(&(id, label), &w)| {
-                    assert_eq!(w, 1, "labels must be a function: {id} -> {label} has weight {w}");
+                    assert_eq!(
+                        w, 1,
+                        "labels must be a function: {id} -> {label} has weight {w}"
+                    );
                     (id, label)
                 })
                 .collect();
@@ -179,7 +182,10 @@ fn congruence_closure_converges_in_one_epoch() {
         [(0, 0), (1, 1), (2, 1), (3, 3), (4, 3), (5, 5), (6, 5)]
             .into_iter()
             .collect();
-    assert_eq!(epochs[0], expected, "two congruence levels resolve in epoch 0");
+    assert_eq!(
+        epochs[0], expected,
+        "two congruence levels resolve in epoch 0"
+    );
     assert_eq!(epochs[1], expected, "an empty delta epoch changes nothing");
 }
 
@@ -195,15 +201,12 @@ fn incremental_epoch_extends_the_fixpoint() {
     // union a≡b: congruence must cascade through both levels incrementally.
     let epochs = run_fixpoint(
         (ids, terms, vec![]),
-        (
-            vec![5, 6],
-            vec![(G, 3, 0, 5), (G, 4, 0, 6)],
-            vec![(1, 2)],
-        ),
+        (vec![5, 6], vec![(G, 3, 0, 5), (G, 4, 0, 6)], vec![(1, 2)]),
     );
 
-    let expected0: std::collections::BTreeMap<u32, u32> =
-        [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)].into_iter().collect();
+    let expected0: std::collections::BTreeMap<u32, u32> = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4)]
+        .into_iter()
+        .collect();
     let expected1: std::collections::BTreeMap<u32, u32> =
         [(0, 0), (1, 1), (2, 1), (3, 3), (4, 3), (5, 5), (6, 5)]
             .into_iter()

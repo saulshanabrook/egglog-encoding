@@ -38,8 +38,8 @@ use hashbrown::{HashMap, HashSet};
 
 mod compile;
 mod dd_native;
+mod engine;
 mod interpret;
-mod merge_hub;
 pub mod monotone;
 mod schedule_compiler;
 
@@ -219,6 +219,14 @@ pub struct EGraph {
     /// diverge from the host interners, so compiled schedules referencing
     /// them fall back to the interpreter permanently.
     pub(crate) unsafe_prims: HashSet<ExternalFunctionId>,
+    /// Bumped on every row event: a global watermark for "has anything
+    /// changed since". Powers the compiled-schedule replay cache.
+    pub(crate) mutation_counter: u64,
+    /// Compiled-schedule replay cache: spec fingerprint -> (mutation counter
+    /// when that run finished, its leaf reports). A hit means nothing has
+    /// changed since an identical schedule ran to quiescence, so the reports
+    /// replay verbatim and no dataflow is built.
+    pub(crate) schedule_replay: HashMap<String, (u64, Vec<ScheduleLeafReport>)>,
 }
 
 /// A term-encoding view op (`set-if-empty` or view-proof) the DD interpreter
@@ -300,6 +308,8 @@ impl EGraph {
             set_if_empty_ops: HashMap::new(),
             view_proof_ops: HashMap::new(),
             unsafe_prims: HashSet::new(),
+            mutation_counter: 0,
+            schedule_replay: HashMap::new(),
         }
     }
 
@@ -540,6 +550,108 @@ impl EGraph {
         self.info(f).merge_level
     }
 
+    /// The deferred-panic side channel registry/bridge primitives write to.
+    /// Database clones share it, so a compiled run's engine must drain it
+    /// after every primitive invocation, exactly like `eval_prim_internal`.
+    pub(crate) fn panic_channel(&self) -> Arc<Mutex<Option<String>>> {
+        Arc::clone(&self.panic_message)
+    }
+
+    /// Apply a compiled run's net row deltas. Pairs of `-live`/`+subsumed`
+    /// for the same row are classified as subsume MOVES so they produce the
+    /// host's single `(-1, 0, +1)` event (an interpreted worker reading the
+    /// All view must not see a spurious remove+reinsert). Removals apply
+    /// before insertions, mirroring the host write order.
+    pub(crate) fn apply_compiled_deltas(
+        &mut self,
+        deltas: Vec<(FunctionId, u8, Row, isize)>,
+    ) -> Result<()> {
+        const LOC_LIVE: u8 = 0;
+        let mut by_row: HashMap<(FunctionId, Row), (isize, isize)> = HashMap::new();
+        for (f, loc, row, sign) in deltas {
+            let entry = by_row.entry((f, row)).or_insert((0, 0));
+            if loc == LOC_LIVE {
+                entry.0 += sign;
+            } else {
+                entry.1 += sign;
+            }
+        }
+        let mut moves: Vec<(FunctionId, Row, bool)> = Vec::new();
+        let mut removes: Vec<(FunctionId, Row, RowLocation)> = Vec::new();
+        let mut inserts: Vec<(FunctionId, Row, RowLocation)> = Vec::new();
+        for ((f, row), (live, subsumed)) in by_row {
+            match (live.signum(), subsumed.signum()) {
+                (0, 0) => {}
+                (-1, 1) => moves.push((f, row, true)),
+                (1, -1) => moves.push((f, row, false)),
+                (l, s) => {
+                    if l < 0 {
+                        removes.push((f, row.clone(), RowLocation::Live));
+                    }
+                    if s < 0 {
+                        removes.push((f, row.clone(), RowLocation::Subsumed));
+                    }
+                    if l > 0 {
+                        inserts.push((f, row.clone(), RowLocation::Live));
+                    }
+                    if s > 0 {
+                        inserts.push((f, row, RowLocation::Subsumed));
+                    }
+                }
+            }
+        }
+        for (f, row, loc) in removes {
+            let store = match loc {
+                RowLocation::Live => &mut self.mirror,
+                RowLocation::Subsumed => &mut self.subsumed,
+            };
+            if store.get_mut(&f).is_some_and(|rows| rows.remove(&row)) {
+                match loc {
+                    RowLocation::Live => self.record_row_event(f, row, -1, -1, 0),
+                    RowLocation::Subsumed => self.record_row_event(f, row, 0, -1, -1),
+                }
+            } else {
+                return Err(anyhow!(
+                    "compiled schedule retracted a row absent from `{}`",
+                    self.relation_name(f)
+                ));
+            }
+        }
+        for (f, row, to_subsumed) in moves {
+            if to_subsumed {
+                if !self
+                    .mirror
+                    .get_mut(&f)
+                    .is_some_and(|rows| rows.remove(&row))
+                {
+                    return Err(anyhow!(
+                        "compiled schedule subsumed a row absent from `{}`",
+                        self.relation_name(f)
+                    ));
+                }
+                self.subsumed.entry(f).or_default().insert(row.clone());
+                self.record_row_event(f, row, -1, 0, 1);
+            } else {
+                if !self
+                    .subsumed
+                    .get_mut(&f)
+                    .is_some_and(|rows| rows.remove(&row))
+                {
+                    return Err(anyhow!(
+                        "compiled schedule unsubsumed a row absent from `{}`",
+                        self.relation_name(f)
+                    ));
+                }
+                self.mirror.entry(f).or_default().insert(row.clone());
+                self.record_row_event(f, row, 1, 0, -1);
+            }
+        }
+        for (f, row, loc) in inserts {
+            self.insert_located_row(f, loc, row);
+        }
+        Ok(())
+    }
+
     /// Execute a schedule tree over [`Backend::run_rules`], appending one
     /// report per executed `Run` leaf; returns whether any leaf changed the
     /// database. Control flow matches the frontend interpreter exactly:
@@ -763,6 +875,7 @@ impl EGraph {
         all_delta: isize,
         subsumed_delta: isize,
     ) {
+        self.mutation_counter += 1;
         // Maintain the persistent key index. The live/subsumed deltas describe
         // exactly which located entry appears or disappears (the all view is a
         // union, not separate storage).
@@ -933,8 +1046,7 @@ impl<'a> MergeTransaction<'a> {
             return;
         }
         self.state_order.push(function);
-        self.states
-            .insert(function, FunctionMergeState::default());
+        self.states.insert(function, FunctionMergeState::default());
     }
 
     fn current_row(
@@ -2793,10 +2905,7 @@ impl Backend for EGraph {
         Ok(report)
     }
 
-    fn run_schedule(
-        &mut self,
-        schedule: &ScheduleSpec,
-    ) -> Option<Result<Vec<ScheduleLeafReport>>> {
+    fn run_schedule(&mut self, schedule: &ScheduleSpec) -> Option<Result<Vec<ScheduleLeafReport>>> {
         // Take the whole schedule tree: loop-bearing (sub)trees in the
         // compiled subset run as ONE dataflow with in-scope fixpoints
         // (`schedule_compiler`, attempted per subtree inside
@@ -2939,6 +3048,8 @@ impl Backend for EGraph {
             set_if_empty_ops: self.set_if_empty_ops.clone(),
             view_proof_ops: self.view_proof_ops.clone(),
             unsafe_prims: self.unsafe_prims.clone(),
+            mutation_counter: self.mutation_counter,
+            schedule_replay: HashMap::new(),
         })
     }
 
