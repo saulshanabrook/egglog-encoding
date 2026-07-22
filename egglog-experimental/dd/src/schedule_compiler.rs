@@ -45,14 +45,19 @@ use timely::dataflow::operators::probe::Handle as ProbeHandle;
 
 use crate::compile::{ReadKey, Slot};
 use crate::dd_native::{
-    atom_vars, pack_key128, pack_row, plan_join_with, AtomOps, RowN, ViewStats, W, WIDTH_LADDER,
+    atom_vars, pack_key128, plan_join_with, AtomOps, RowN, ViewStats, W, WIDTH_LADDER,
 };
 use crate::engine::{
     engine, EngineChannels, EngineConfig, EngineLeaf, EngineRule, EngineTable, MatchDelta,
-    Schedule, ScheduleNode, SharedLeaf, StateDelta, TableRows, ViewOpSpec, LOC_LIVE, LOC_SUBSUMED,
-    LOC_TICK, TICK,
+    Schedule, ScheduleNode, SharedLeaf, StateDelta, TableRows, ViewOpSpec, BOOT, LOC_LIVE,
+    LOC_SEED_LIVE, LOC_SEED_SUBSUMED, LOC_SUBSUMED, LOC_TICK, TICK,
 };
 use crate::{EGraph, RowLocation};
+use differential_dataflow::input::InputSession;
+use timely::communication::allocator::thread::Thread;
+use timely::communication::allocator::Allocator;
+use timely::worker::Worker;
+use timely::WorkerConfig;
 
 /// Compiled-region rows run at the planner cap width; per-region ladder
 /// selection (as the fused join does) is a later optimization.
@@ -138,6 +143,30 @@ pub(crate) fn try_run_compiled(
             return Some(Ok(reports.clone()));
         }
     }
+    // Persistent dataflow reuse: an engine whose watermarks (rows, fresh
+    // ids, rules) are untouched since its last pass ended still mirrors host
+    // state exactly — boot a new pass on it, paying only for new deltas.
+    let cache_key = (eg.instance_id, replay_key.clone());
+    if std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok() {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        replay_key.hash(&mut h);
+        eprintln!(
+            "[compiled] invoke spec#{:04x} mut={} fresh={} rules={}",
+            h.finish() & 0xffff,
+            eg.mutation_counter,
+            eg.peek_fresh_id(),
+            eg.rules_version
+        );
+    }
+    if let Some(mut entry) = cache_take_reusable(eg, &cache_key) {
+        if std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok() {
+            eprintln!("[compiled] reusing persistent engine");
+        }
+        let result = entry.engine.run(eg);
+        return finish_run(eg, replay_key, cache_key, entry, result);
+    }
+
     let t0 = std::time::Instant::now();
     let prep = prepare(eg, spec)?;
     if std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok() {
@@ -153,23 +182,48 @@ pub(crate) fn try_run_compiled(
     }
     // Monomorphized width ladder: run at the smallest row width that fits
     // (the same ladder as the fused path — row bytes dominate join cost).
-    let result = match WIDTH_LADDER.iter().copied().find(|&w| w >= prep.width) {
-        Some(8) => run_compiled::<8>(eg, prep),
-        Some(16) => run_compiled::<16>(eg, prep),
-        Some(32) => run_compiled::<32>(eg, prep),
-        Some(48) => run_compiled::<48>(eg, prep),
+    let mut engine = match WIDTH_LADDER.iter().copied().find(|&w| w >= prep.width) {
+        Some(8) => PersistentAny::W8(PersistentEngine::<8>::build(eg, prep)),
+        Some(16) => PersistentAny::W16(PersistentEngine::<16>::build(eg, prep)),
+        Some(32) => PersistentAny::W32(PersistentEngine::<32>::build(eg, prep)),
+        Some(48) => PersistentAny::W48(PersistentEngine::<48>::build(eg, prep)),
         _ => return fallback("row width exceeds the ladder cap"),
     };
+    if std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok() {
+        eprintln!("[compiled] build: {:.1?}", t0.elapsed());
+    }
+    let result = engine.run(eg);
+    let entry = CacheEntry {
+        engine,
+        end_mutation_counter: 0,
+        end_fresh_id: 0,
+        end_rules_version: 0,
+        used: 0,
+    };
+    finish_run(eg, replay_key, cache_key, entry, result)
+}
+
+/// Common tail for fresh and reused engines: on success, re-cache the engine
+/// under post-run watermarks and remember quiescent runs for verbatim replay;
+/// on failure or fallback, drop it (its internal state stopped mid-pass).
+fn finish_run(
+    eg: &mut EGraph,
+    replay_key: String,
+    cache_key: (u64, String),
+    entry: CacheEntry,
+    result: Result<Option<(Vec<ScheduleLeafReport>, bool)>>,
+) -> Option<Result<Vec<ScheduleLeafReport>>> {
     match result {
         Ok(Some((leaves, quiescent))) => {
-            // Cache ONLY no-op runs: re-running a schedule that changed state
-            // (e.g. a budget-limited `(run n)`) does further work, so it must
-            // never be short-circuited; a no-op run from an identical state
-            // deterministically no-ops again.
+            // Cache ONLY no-op runs for replay: re-running a schedule that
+            // changed state (e.g. a budget-limited `(run n)`) does further
+            // work, so it must never be short-circuited; a no-op run from an
+            // identical state deterministically no-ops again.
             if quiescent {
                 eg.schedule_replay
                     .insert(replay_key, (eg.mutation_counter, leaves.clone()));
             }
+            cache_store(eg, cache_key, entry);
             Some(Ok(leaves))
         }
         Ok(None) => fallback("a primitive proved unsafe to evaluate off-host (cached)"),
@@ -646,378 +700,528 @@ fn prepare_leaf(
 }
 
 // ---------------------------------------------------------------------------
-// Execution.
+// Execution: persistent per-spec dataflows.
 // ---------------------------------------------------------------------------
 
-/// `Ok(None)` = a primitive proved unsafe off-host: nothing was mutated, the
-/// primitive is cached, and the caller must interpret instead.
-fn run_compiled<const WIDTH: usize>(
-    eg: &mut EGraph,
-    prep: Prep,
-) -> Result<Option<(Vec<ScheduleLeafReport>, bool)>> {
-    use timely::communication::allocator::thread::Thread;
-    use timely::communication::allocator::Allocator;
-    use timely::worker::Worker;
-    use timely::WorkerConfig;
+/// One compiled schedule kept alive across invocations: the worker with its
+/// arrangements, the boot input, and the engine's internal state (tables,
+/// match sets, fired flags) all persist, so re-running the same spec pays only
+/// for NEW deltas. Field order matters: input/probe handles drop before the
+/// worker.
+struct PersistentEngine<const WIDTH: usize> {
+    boot: InputSession<u32, MatchDelta<WIDTH>, isize>,
+    probe: ProbeHandle<u32>,
+    deltas: DeltaSink<WIDTH>,
+    channels: EngineChannels,
+    volumes: Rc<RefCell<HashMap<String, u64>>>,
+    /// The boot session's current time = the next pass's start round.
+    time: u32,
+    leaf_rulesets: Vec<String>,
+    worker: Worker,
+}
 
-    if let Some(message) = eg.take_panic_message() {
-        return Err(anyhow!(message));
-    }
+/// Width-erased [`PersistentEngine`], one variant per `WIDTH_LADDER` entry.
+enum PersistentAny {
+    W8(PersistentEngine<8>),
+    W16(PersistentEngine<16>),
+    W32(PersistentEngine<32>),
+    W48(PersistentEngine<48>),
+}
 
-    let debug = std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok();
-    let mut mark = std::time::Instant::now();
-    let mut lap = move |what: &str| {
-        if debug {
-            eprintln!("[compiled] {what}: {:.1?}", mark.elapsed());
+impl PersistentAny {
+    fn run(&mut self, eg: &mut EGraph) -> Result<Option<(Vec<ScheduleLeafReport>, bool)>> {
+        match self {
+            PersistentAny::W8(e) => e.run(eg),
+            PersistentAny::W16(e) => e.run(eg),
+            PersistentAny::W32(e) => e.run(eg),
+            PersistentAny::W48(e) => e.run(eg),
         }
-        mark = std::time::Instant::now();
-    };
-    let channels = EngineChannels::default();
-    let first_id = eg.peek_fresh_id();
-    let seeds: HashMap<u32, TableRows> = prep
-        .engine_tables
-        .keys()
-        .map(|&frep| {
-            let f = FunctionId::new(frep);
-            let rows = eg
-                .by_key
-                .get(&f)
-                .map(|keys| {
-                    keys.iter()
-                        .map(|(key, entries)| {
-                            let (vals, loc) = &entries[0];
-                            let loc = match loc {
-                                RowLocation::Live => LOC_LIVE,
-                                RowLocation::Subsumed => LOC_SUBSUMED,
-                            };
-                            (key.to_vec(), (vals.to_vec(), loc))
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            (frep, rows)
-        })
-        .collect();
-    let cfg = EngineConfig {
-        schedule: Schedule::build(&prep.tree),
-        leaves: prep.engine_leaves.clone(),
-        tables: prep.engine_tables.clone(),
-        seeds,
-        set_if_empty: prep.set_if_empty.clone(),
-        view_proof: prep.view_proof.clone(),
-        fresh_prims: prep.fresh_prims.clone(),
-        db: eg.db_clone(),
-        panic: eg.panic_channel(),
-        unit_rep: eg.unit_rep(),
-        first_id,
-        channels: channels.clone(),
-    };
+    }
+}
 
-    lap("seed-build");
-    let read_funcs: Vec<FunctionId> = {
-        let mut v: Vec<FunctionId> = prep.read_keys.iter().map(|r| r.func).collect();
-        v.sort_unstable_by_key(|f| f.rep());
-        v.dedup();
-        v
-    };
+/// A cached persistent dataflow plus the watermarks under which reuse is
+/// sound: the engine's internal state matches the host iff NOTHING (rows,
+/// fresh ids, rules) changed since its last run ended.
+struct CacheEntry {
+    engine: PersistentAny,
+    end_mutation_counter: u64,
+    end_fresh_id: u32,
+    end_rules_version: u64,
+    used: u64,
+}
 
-    let alloc = Allocator::Thread(Thread::default());
-    let mut worker = Worker::new(
-        WorkerConfig::default(),
-        alloc,
-        Some(std::time::Instant::now()),
-    );
-    let probe = ProbeHandle::new();
-    let deltas: DeltaSink<WIDTH> = DeltaSink::<WIDTH>::default();
-    let (mut table_sessions, mut boot_session, volumes) = {
-        let probe = probe.clone();
-        let deltas = Rc::clone(&deltas);
-        let prep_ref = &prep;
-        let read_funcs = &read_funcs;
-        worker.dataflow::<u32, _, _>(move |scope| {
-            // One (location, row) input per read table, plus the bootstrap
-            // tick that wakes the engine at round 1 even when nothing
-            // matches initially.
-            let mut sessions = HashMap::new();
-            let mut seeds_by_func: HashMap<FunctionId, VecCollection<'_, u32, (u8, RowN<WIDTH>)>> =
-                HashMap::new();
-            for &f in read_funcs {
-                let (session, coll) = scope.new_collection::<(u8, RowN<WIDTH>), isize>();
-                sessions.insert(f, session);
-                seeds_by_func.insert(f, coll);
-            }
-            let (boot_session, bootstrap) = scope.new_collection::<MatchDelta<WIDTH>, isize>();
+thread_local! {
+    /// Persistent engines keyed by (EGraph instance, spec fingerprint). The
+    /// timely worker is single-threaded (`Rc` throughout), so the cache is
+    /// thread-local; an EGraph used from another thread just misses and
+    /// rebuilds.
+    static ENGINES: RefCell<HashMap<(u64, String), CacheEntry>> = RefCell::default();
+    static ENGINE_USE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
-            // Feedback lives in the ROOT scope: rounds are raw u32 times, so
-            // every batch carries a 4-byte timestamp and there is no nested
-            // subgraph progress-tracking layer.
-            let volumes: Rc<RefCell<HashMap<String, u64>>> = Rc::default();
-            let (var, fed) = Variable::<_, Vec<(MatchDelta<WIDTH>, u32, isize)>>::new(scope, 1);
+/// Cached persistent engines per thread; each holds full arrangements of its
+/// tables, so keep the cap small.
+const ENGINE_CACHE_CAP: usize = 4;
+
+fn cache_take_reusable(eg: &EGraph, key: &(u64, String)) -> Option<CacheEntry> {
+    if std::env::var("EGGLOG_DD_NO_PERSIST").is_ok() {
+        return None;
+    }
+    ENGINES.with(|c| {
+        let mut c = c.borrow_mut();
+        match c.get(key) {
+            Some(e)
+                if e.end_mutation_counter == eg.mutation_counter
+                    && e.end_fresh_id == eg.peek_fresh_id()
+                    && e.end_rules_version == eg.rules_version =>
             {
-                let out = engine(&fed, cfg);
-                let data = out
-                    .clone()
-                    .flat_map(|(f, loc, row)| (loc != LOC_TICK).then_some((f, loc, row)));
-                let ticks = out.flat_map(|(_, loc, _)| {
-                    (loc == LOC_TICK).then_some((TICK, TICK, RowN::<WIDTH>::default()))
-                });
+                c.remove(key)
+            }
+            // Present but stale: the engine's internal state has diverged
+            // from the host — drop it and rebuild.
+            Some(_) => {
+                c.remove(key);
+                None
+            }
+            None => None,
+        }
+    })
+}
 
-                // Demux engine deltas ONCE by (func, loc): timely's Tee clones
-                // every batch per subscriber, so per-view filters on the full
-                // stream would copy each emission ~|views| times.
-                let mut part_index: HashMap<(u32, u8), u64> = HashMap::new();
-                for &read in &prep_ref.read_keys {
-                    let locs: &[u8] = match read.mode {
-                        ReadMode::Live => &[LOC_LIVE],
-                        ReadMode::Subsumed => &[LOC_SUBSUMED],
-                        ReadMode::All => &[LOC_LIVE, LOC_SUBSUMED],
-                    };
-                    for &loc in locs {
-                        let next = part_index.len() as u64;
-                        part_index.entry((read.func.rep(), loc)).or_insert(next);
+fn cache_store(eg: &EGraph, key: (u64, String), mut entry: CacheEntry) {
+    entry.end_mutation_counter = eg.mutation_counter;
+    entry.end_fresh_id = eg.peek_fresh_id();
+    entry.end_rules_version = eg.rules_version;
+    entry.used = ENGINE_USE.with(|u| {
+        let n = u.get() + 1;
+        u.set(n);
+        n
+    });
+    ENGINES.with(|c| {
+        let mut c = c.borrow_mut();
+        c.insert(key, entry);
+        while c.len() > ENGINE_CACHE_CAP {
+            let oldest = c
+                .iter()
+                .min_by_key(|(_, e)| e.used)
+                .map(|(k, _)| k.clone())
+                .expect("nonempty above cap");
+            c.remove(&oldest);
+        }
+    })
+}
+
+impl<const WIDTH: usize> PersistentEngine<WIDTH> {
+    /// Build the dataflow for `prep` over a snapshot of the current tables.
+    /// Nothing runs yet; the first [`Self::run`] boots and seeds it.
+    fn build(eg: &EGraph, prep: Prep) -> PersistentEngine<WIDTH> {
+        let channels = EngineChannels::default();
+        let first_id = eg.peek_fresh_id();
+        let seeds: HashMap<u32, TableRows> = prep
+            .engine_tables
+            .keys()
+            .map(|&frep| {
+                let f = FunctionId::new(frep);
+                let rows = eg
+                    .by_key
+                    .get(&f)
+                    .map(|keys| {
+                        keys.iter()
+                            .map(|(key, entries)| {
+                                let (vals, loc) = &entries[0];
+                                let loc = match loc {
+                                    RowLocation::Live => LOC_LIVE,
+                                    RowLocation::Subsumed => LOC_SUBSUMED,
+                                };
+                                (key.to_vec(), (vals.to_vec(), loc))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                (frep, rows)
+            })
+            .collect();
+        // Read-only tables (never written by this schedule) seed the views
+        // once but are not engine state.
+        let mut extra_seeds: Vec<(u32, u8, Vec<u32>)> = Vec::new();
+        let read_only: HashSet<FunctionId> = prep
+            .read_keys
+            .iter()
+            .map(|r| r.func)
+            .filter(|f| !prep.engine_tables.contains_key(&f.rep()))
+            .collect();
+        for &f in &read_only {
+            for (store, loc) in [(&eg.mirror, LOC_LIVE), (&eg.subsumed, LOC_SUBSUMED)] {
+                if let Some(rows) = store.get(&f) {
+                    for row in rows.iter() {
+                        extra_seeds.push((f.rep(), loc, row.to_vec()));
                     }
                 }
-                // One extra part swallows deltas no view reads.
-                let sink_part = part_index.len() as u64;
-                let route = part_index.clone();
-                let parts: Vec<VecCollection<'_, u32, RowN<WIDTH>>> = {
-                    use differential_dataflow::AsCollection;
-                    use timely::dataflow::operators::vec::Partition;
-                    data.clone()
-                        .inner
-                        .partition(
-                            sink_part + 1,
-                            move |(d, t, r): (StateDelta<WIDTH>, u32, isize)| {
-                                let (f, loc, row) = d;
-                                let part = route.get(&(f, loc)).copied().unwrap_or(sink_part);
-                                (part, (row, t, r))
-                            },
-                        )
-                        .into_iter()
-                        .map(|stream| stream.as_collection())
-                        .collect()
-                };
+            }
+        }
+        let cfg = EngineConfig {
+            schedule: Schedule::build(&prep.tree),
+            leaves: prep.engine_leaves.clone(),
+            tables: prep.engine_tables.clone(),
+            seeds,
+            extra_seeds,
+            set_if_empty: prep.set_if_empty.clone(),
+            view_proof: prep.view_proof.clone(),
+            fresh_prims: prep.fresh_prims.clone(),
+            db: eg.db_clone(),
+            panic: eg.panic_channel(),
+            unit_rep: eg.unit_rep(),
+            first_id,
+            channels: channels.clone(),
+        };
 
-                // Per-read-view state collections: seeds ∪ engine deltas.
-                let mut views: HashMap<ReadKey, Coll<'_, u32, WIDTH>> = HashMap::new();
-                for &read in &prep_ref.read_keys {
-                    let frep = read.func.rep();
-                    let seed = seeds_by_func[&read.func].clone();
-                    let seed_part = |loc: u8| {
-                        seed.clone()
-                            .flat_map(move |(l, row)| (l == loc).then_some(row))
-                    };
-                    let engine_part = |loc: u8| parts[part_index[&(frep, loc)] as usize].clone();
-                    let coll = match read.mode {
-                        ReadMode::Live => seed_part(LOC_LIVE).concat(engine_part(LOC_LIVE)),
-                        ReadMode::Subsumed => {
-                            seed_part(LOC_SUBSUMED).concat(engine_part(LOC_SUBSUMED))
-                        }
-                        ReadMode::All => seed_part(LOC_LIVE)
-                            .concat(engine_part(LOC_LIVE))
-                            .concat(seed_part(LOC_SUBSUMED))
-                            .concat(engine_part(LOC_SUBSUMED)),
-                    };
-                    views.insert(read, coll);
-                }
+        let alloc = Allocator::Thread(Thread::default());
+        let mut worker = Worker::new(
+            WorkerConfig::default(),
+            alloc,
+            Some(std::time::Instant::now()),
+        );
+        let probe = ProbeHandle::new();
+        let deltas: DeltaSink<WIDTH> = DeltaSink::<WIDTH>::default();
+        let (boot, volumes) = {
+            let probe = probe.clone();
+            let deltas = Rc::clone(&deltas);
+            let prep_ref = &prep;
+            worker.dataflow::<u32, _, _>(move |scope| {
+                let (boot_session, bootstrap) = scope.new_collection::<MatchDelta<WIDTH>, isize>();
 
-                // Per-rule join pipelines, tagged with (leaf, rule). One
-                // SHARED arrangement per (view, key-column projection) serves
-                // every join call site: the right side of every stage and
-                // both sides of each rule's first join (bind/remap slot
-                // programs run inside the join closure; bind is injective on
-                // surviving rows, so multiplicities are unchanged).
-                let mut arranged = HashMap::new();
-                let count_volumes = std::env::var("EGGLOG_DD_VOLUMES").is_ok();
-                let mut arrange = |read: ReadKey, cols: Vec<usize>| {
-                    let volumes = Rc::clone(&volumes);
-                    arranged
-                        .entry((read, cols.clone()))
-                        .or_insert_with(|| {
-                            let tag = format!("shared f{}@{:?}", read.func.rep(), cols);
-                            let mut keyed = views[&read]
-                                .clone()
-                                .map(move |r: RowN<WIDTH>| (pack_key128(&r, &cols), r));
-                            if count_volumes {
-                                keyed = keyed.inspect_batch(move |_t, b| {
-                                    *volumes.borrow_mut().entry(tag.clone()).or_default() +=
-                                        b.len() as u64;
-                                });
-                            }
-                            keyed.arrange_by_key()
-                        })
+                // Feedback lives in the ROOT scope: rounds are raw u32 times,
+                // so every batch carries a 4-byte timestamp and there is no
+                // nested subgraph progress-tracking layer.
+                let volumes: Rc<RefCell<HashMap<String, u64>>> = Rc::default();
+                let (var, fed) = Variable::<_, Vec<(MatchDelta<WIDTH>, u32, isize)>>::new(scope, 1);
+                {
+                    let out = engine(&fed, cfg);
+                    // Host-apply sink: real table deltas only (seed re-emissions
+                    // are already host state).
+                    let data = out.clone().flat_map(|(f, loc, row)| {
+                        (loc == LOC_LIVE || loc == LOC_SUBSUMED).then_some((f, loc, row))
+                    });
+                    // Join-view feed: table deltas AND seed rows.
+                    let view_feed = out
                         .clone()
-                };
-                let mut matches: Vec<VecCollection<'_, u32, MatchDelta<WIDTH>>> =
-                    vec![bootstrap, ticks];
-                for (leaf_idx, leaf) in prep_ref.leaves.iter().enumerate() {
-                    for (rule_idx, pipe) in leaf.rules.iter().enumerate() {
-                        let ops0 = pipe.first_ops.clone();
-                        let mut cur = if pipe.stages.is_empty() {
-                            views[&pipe.first].clone().flat_map(move |r: RowN<WIDTH>| {
-                                ops0.apply(&RowN::<WIDTH>::default(), &r)
-                            })
-                        } else {
-                            let first_stage = &pipe.stages[0];
-                            let left = arrange(pipe.first, pipe.first_left_cols.clone());
-                            let right = arrange(first_stage.read, first_stage.right_cols.clone());
-                            let ops1 = first_stage.ops.clone();
-                            left.join_core(
-                                right,
-                                move |_key, r0: &RowN<WIDTH>, r1: &RowN<WIDTH>| {
-                                    ops0.apply(&RowN::<WIDTH>::default(), r0)
-                                        .and_then(|b| ops1.apply(&b, r1))
+                        .flat_map(|(f, loc, row)| (loc != LOC_TICK).then_some((f, loc, row)));
+                    let ticks = out.flat_map(|(_, loc, _)| {
+                        (loc == LOC_TICK).then_some((TICK, TICK, RowN::<WIDTH>::default()))
+                    });
+
+                    // Demux engine deltas ONCE by (func, loc): timely's Tee
+                    // clones every batch per subscriber, so per-view filters
+                    // on the full stream would copy each emission ~|views|
+                    // times.
+                    let mut part_index: HashMap<(u32, u8), u64> = HashMap::new();
+                    let mut next_part = 0u64;
+                    for &read in &prep_ref.read_keys {
+                        let locs: &[u8] = match read.mode {
+                            ReadMode::Live => &[LOC_LIVE],
+                            ReadMode::Subsumed => &[LOC_SUBSUMED],
+                            ReadMode::All => &[LOC_LIVE, LOC_SUBSUMED],
+                        };
+                        for &loc in locs {
+                            let id =
+                                *part_index.entry((read.func.rep(), loc)).or_insert_with(|| {
+                                    let id = next_part;
+                                    next_part += 1;
+                                    id
+                                });
+                            // Seed rows route into the same view partition.
+                            let seed_loc = if loc == LOC_LIVE {
+                                LOC_SEED_LIVE
+                            } else {
+                                LOC_SEED_SUBSUMED
+                            };
+                            part_index.insert((read.func.rep(), seed_loc), id);
+                        }
+                    }
+                    // One extra part swallows deltas no view reads.
+                    let sink_part = next_part;
+                    let route = part_index.clone();
+                    let parts: Vec<VecCollection<'_, u32, RowN<WIDTH>>> = {
+                        use differential_dataflow::AsCollection;
+                        use timely::dataflow::operators::vec::Partition;
+                        view_feed
+                            .inner
+                            .partition(
+                                sink_part + 1,
+                                move |(d, t, r): (StateDelta<WIDTH>, u32, isize)| {
+                                    let (f, loc, row) = d;
+                                    let part = route.get(&(f, loc)).copied().unwrap_or(sink_part);
+                                    (part, (row, t, r))
                                 },
                             )
+                            .into_iter()
+                            .map(|stream| stream.as_collection())
+                            .collect()
+                    };
+
+                    // Per-read-view state collections (seeds arrive through
+                    // the engine's first-boot emissions).
+                    let mut views: HashMap<ReadKey, Coll<'_, u32, WIDTH>> = HashMap::new();
+                    for &read in &prep_ref.read_keys {
+                        let frep = read.func.rep();
+                        let engine_part =
+                            |loc: u8| parts[part_index[&(frep, loc)] as usize].clone();
+                        let coll = match read.mode {
+                            ReadMode::Live => engine_part(LOC_LIVE),
+                            ReadMode::Subsumed => engine_part(LOC_SUBSUMED),
+                            ReadMode::All => {
+                                engine_part(LOC_LIVE).concat(engine_part(LOC_SUBSUMED))
+                            }
                         };
-                        for (si, stage) in pipe.stages.iter().enumerate().skip(1) {
-                            let left_cols = stage.left_cols.clone();
-                            let ops = stage.ops.clone();
-                            let mut left =
-                                cur.map(move |b: RowN<WIDTH>| (pack_key128(&b, &left_cols), b));
+                        views.insert(read, coll);
+                    }
+
+                    // Per-rule join pipelines, tagged with (leaf, rule). One
+                    // SHARED arrangement per (view, key-column projection)
+                    // serves every join call site: the right side of every
+                    // stage and both sides of each rule's first join
+                    // (bind/remap slot programs run inside the join closure;
+                    // bind is injective on surviving rows, so multiplicities
+                    // are unchanged).
+                    let mut arranged = HashMap::new();
+                    let count_volumes = std::env::var("EGGLOG_DD_VOLUMES").is_ok();
+                    let mut arrange = |read: ReadKey, cols: Vec<usize>| {
+                        let volumes = Rc::clone(&volumes);
+                        arranged
+                            .entry((read, cols.clone()))
+                            .or_insert_with(|| {
+                                let tag = format!("shared f{}@{:?}", read.func.rep(), cols);
+                                let mut keyed = views[&read]
+                                    .clone()
+                                    .map(move |r: RowN<WIDTH>| (pack_key128(&r, &cols), r));
+                                if count_volumes {
+                                    keyed = keyed.inspect_batch(move |_t, b| {
+                                        *volumes.borrow_mut().entry(tag.clone()).or_default() +=
+                                            b.len() as u64;
+                                    });
+                                }
+                                keyed.arrange_by_key()
+                            })
+                            .clone()
+                    };
+                    let mut matches: Vec<VecCollection<'_, u32, MatchDelta<WIDTH>>> =
+                        vec![bootstrap, ticks];
+                    for (leaf_idx, leaf) in prep_ref.leaves.iter().enumerate() {
+                        for (rule_idx, pipe) in leaf.rules.iter().enumerate() {
+                            let ops0 = pipe.first_ops.clone();
+                            let mut cur = if pipe.stages.is_empty() {
+                                views[&pipe.first].clone().flat_map(move |r: RowN<WIDTH>| {
+                                    ops0.apply(&RowN::<WIDTH>::default(), &r)
+                                })
+                            } else {
+                                let first_stage = &pipe.stages[0];
+                                let left = arrange(pipe.first, pipe.first_left_cols.clone());
+                                let right =
+                                    arrange(first_stage.read, first_stage.right_cols.clone());
+                                let ops1 = first_stage.ops.clone();
+                                left.join_core(
+                                    right,
+                                    move |_key, r0: &RowN<WIDTH>, r1: &RowN<WIDTH>| {
+                                        ops0.apply(&RowN::<WIDTH>::default(), r0)
+                                            .and_then(|b| ops1.apply(&b, r1))
+                                    },
+                                )
+                            };
+                            for (si, stage) in pipe.stages.iter().enumerate().skip(1) {
+                                let left_cols = stage.left_cols.clone();
+                                let ops = stage.ops.clone();
+                                let mut left =
+                                    cur.map(move |b: RowN<WIDTH>| (pack_key128(&b, &left_cols), b));
+                                if count_volumes {
+                                    let volumes = Rc::clone(&volumes);
+                                    let tag = format!("inter l{leaf_idx}r{rule_idx}s{si}");
+                                    left = left.inspect_batch(move |_t, b| {
+                                        *volumes.borrow_mut().entry(tag.clone()).or_default() +=
+                                            b.len() as u64;
+                                    });
+                                }
+                                let right = arrange(stage.read, stage.right_cols.clone());
+                                cur = left.join_core(right, move |_key, b, r| ops.apply(b, r));
+                            }
+                            let (lt, rt) = (leaf_idx as u32, rule_idx as u32);
+                            let mut tagged = cur.map(move |b: RowN<WIDTH>| (lt, rt, b));
                             if count_volumes {
                                 let volumes = Rc::clone(&volumes);
-                                let tag = format!("inter l{leaf_idx}r{rule_idx}s{si}");
-                                left = left.inspect_batch(move |_t, b| {
+                                let tag = format!("match l{leaf_idx}r{rule_idx}");
+                                tagged = tagged.inspect_batch(move |_t, b| {
                                     *volumes.borrow_mut().entry(tag.clone()).or_default() +=
                                         b.len() as u64;
                                 });
                             }
-                            let right = arrange(stage.read, stage.right_cols.clone());
-                            cur = left.join_core(right, move |_key, b, r| ops.apply(b, r));
+                            matches.push(tagged);
                         }
-                        let (lt, rt) = (leaf_idx as u32, rule_idx as u32);
-                        let mut tagged = cur.map(move |b: RowN<WIDTH>| (lt, rt, b));
-                        if count_volumes {
-                            let volumes = Rc::clone(&volumes);
-                            let tag = format!("match l{leaf_idx}r{rule_idx}");
-                            tagged = tagged.inspect_batch(move |_t, b| {
-                                *volumes.borrow_mut().entry(tag.clone()).or_default() +=
-                                    b.len() as u64;
-                            });
-                        }
-                        matches.push(tagged);
                     }
+
+                    var.set(differential_dataflow::collection::concatenate(
+                        scope, matches,
+                    ));
+                    data.inspect_batch(move |_t, batch| {
+                        deltas
+                            .borrow_mut()
+                            .extend(batch.iter().map(|(d, _t, w)| (*d, *w)));
+                    })
+                    .probe_with(&probe);
                 }
+                (boot_session, volumes)
+            })
+        };
 
-                var.set(differential_dataflow::collection::concatenate(
-                    scope, matches,
-                ));
-                data.inspect_batch(move |_t, batch| {
-                    deltas
-                        .borrow_mut()
-                        .extend(batch.iter().map(|(d, _t, w)| (*d, *w)));
-                })
-                .probe_with(&probe);
+        PersistentEngine {
+            boot,
+            probe,
+            deltas,
+            channels,
+            volumes,
+            time: 0,
+            leaf_rulesets: prep.leaves.iter().map(|l| l.ruleset.clone()).collect(),
+            worker,
+        }
+    }
+
+    /// Run one schedule pass: boot, chase the engine's rounds by keeping the
+    /// input frontier one step ahead, drain, and apply the pass's net deltas.
+    ///
+    /// `Ok(None)` = a primitive proved unsafe off-host: nothing was mutated,
+    /// the primitive is cached, and the caller must interpret instead (and
+    /// drop this engine — its internal state stopped mid-pass).
+    fn run(&mut self, eg: &mut EGraph) -> Result<Option<(Vec<ScheduleLeafReport>, bool)>> {
+        if let Some(message) = eg.take_panic_message() {
+            return Err(anyhow!(message));
+        }
+        let debug = std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok();
+        let mut mark = std::time::Instant::now();
+        let mut lap = move |what: &str| {
+            if debug {
+                eprintln!("[compiled] {what}: {:.1?}", mark.elapsed());
             }
-            (sessions, boot_session, volumes)
-        })
-    };
+            mark = std::time::Instant::now();
+        };
 
-    lap("dataflow-build");
-    for (&f, session) in table_sessions.iter_mut() {
-        for (store, loc) in [(&eg.mirror, LOC_LIVE), (&eg.subsumed, LOC_SUBSUMED)] {
-            if let Some(rows) = store.get(&f) {
-                for row in rows.iter() {
-                    session.insert((loc, pack_row::<WIDTH>(row)?));
+        self.channels.done.set(false);
+        self.boot.insert((TICK, BOOT, RowN::<WIDTH>::default()));
+        let mut horizon = self.time + 1;
+        self.boot.advance_to(horizon);
+        self.boot.flush();
+
+        #[cfg(feature = "pprof")]
+        let guard = std::env::var("EGGLOG_DD_PROFILE").ok().map(|_| {
+            pprof::ProfilerGuardBuilder::default()
+                .frequency(500)
+                .build()
+                .unwrap()
+        });
+        // Chase: each engine round self-schedules the next via a tick at
+        // round+1, which the frontier must release — extend the boot input's
+        // time whenever the dataflow has drained up to it.
+        while !self.channels.done.get() {
+            self.worker.step();
+            if !self.probe.less_than(&horizon) && !self.channels.done.get() {
+                horizon += 1;
+                self.boot.advance_to(horizon);
+                self.boot.flush();
+            }
+        }
+        // Drain the final pass's emissions.
+        while self.probe.less_than(&horizon) {
+            self.worker.step();
+        }
+        self.time = horizon;
+        #[cfg(feature = "pprof")]
+        if let Some(g) = guard {
+            if let Ok(report) = g.report().build() {
+                static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let path = format!("{}.{n}.svg", std::env::var("EGGLOG_DD_PROFILE").unwrap());
+                let file = std::fs::File::create(&path).unwrap();
+                report.flamegraph(file).ok();
+                eprintln!("[profile] wrote {path}");
+            }
+        }
+        lap("step");
+        if std::env::var("EGGLOG_DD_VOLUMES").is_ok() {
+            let volumes = self.volumes.borrow();
+            let mut v: Vec<(&String, &u64)> = volumes.iter().collect();
+            v.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
+            let total: u64 = v.iter().map(|(_, n)| **n).sum();
+            eprintln!("[volumes] total tuples into arrangements: {total}");
+            for (tag, n) in v.iter().take(25) {
+                eprintln!("[volumes]   {n:>10}  {tag}");
+            }
+        }
+
+        // Dynamic outcomes, checked BEFORE any host mutation.
+        if let Some(id) = *self.channels.unsafe_prim.borrow() {
+            eg.unsafe_prims.insert(id);
+            return Ok(None);
+        }
+        if let Some(message) = self.channels.error.borrow_mut().take() {
+            return Err(anyhow!(message));
+        }
+
+        // Consume the fresh ids the engine minted this pass.
+        let minted = *self.channels.minted.borrow() as usize;
+        eg.advance_fresh_ids(minted);
+
+        // Apply the pass's net row deltas to the host tables (sort + fold:
+        // the sink can hold millions of entries, and sorting beats hashing at
+        // that size).
+        let mut sunk = std::mem::take(&mut *self.deltas.borrow_mut());
+        sunk.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        let mut host_deltas: Vec<(FunctionId, u8, Box<[u32]>, isize)> = Vec::new();
+        let mut i = 0;
+        while i < sunk.len() {
+            let key = sunk[i].0;
+            let mut w = 0;
+            while i < sunk.len() && sunk[i].0 == key {
+                w += sunk[i].1;
+                i += 1;
+            }
+            if w == 0 {
+                continue;
+            }
+            let (frep, loc, row) = key;
+            let f = FunctionId::new(frep);
+            let arity = eg.info(f).arity;
+            let full: Box<[u32]> = (0..arity).map(|i| row[i]).collect();
+            host_deltas.push((f, loc, full, w.signum()));
+        }
+        let quiescent = host_deltas.is_empty() && minted == 0;
+        if std::env::var("EGGLOG_DD_DUMP_APPLIES").is_ok() {
+            eprintln!("[apply] {} deltas, {} minted", host_deltas.len(), minted);
+            for (f, loc, row, w) in &host_deltas {
+                eprintln!(
+                    "[apply]   {} loc{} {:?} {:+}",
+                    eg.relation_name(*f),
+                    loc,
+                    row,
+                    w
+                );
+            }
+        }
+        eg.apply_compiled_deltas(host_deltas)?;
+        lap("apply");
+
+        // Reports: one entry per executed leaf turn, in execution order — the
+        // interpreter's exact report stream.
+        let reports = self
+            .channels
+            .turns
+            .borrow_mut()
+            .drain(..)
+            .map(|(leaf, changed)| {
+                let mut iteration = IterationReport::default();
+                iteration.rule_set_report.changed = changed;
+                ScheduleLeafReport {
+                    ruleset: self.leaf_rulesets[leaf].clone(),
+                    iteration,
                 }
-            }
-        }
-        session.advance_to(1);
-        session.flush();
+            })
+            .collect();
+        Ok(Some((reports, quiescent)))
     }
-    boot_session.insert((TICK, TICK, RowN::<WIDTH>::default()));
-    boot_session.advance_to(1);
-    boot_session.flush();
-    drop(table_sessions);
-    drop(boot_session);
-    lap("seed-feed");
-    #[cfg(feature = "pprof")]
-    let guard = std::env::var("EGGLOG_DD_PROFILE").ok().map(|_| {
-        pprof::ProfilerGuardBuilder::default()
-            .frequency(500)
-            .build()
-            .unwrap()
-    });
-    worker.step_while(|| !probe.done());
-    #[cfg(feature = "pprof")]
-    if let Some(g) = guard {
-        if let Ok(report) = g.report().build() {
-            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            let path = format!("{}.{n}.svg", std::env::var("EGGLOG_DD_PROFILE").unwrap());
-            let file = std::fs::File::create(&path).unwrap();
-            report.flamegraph(file).ok();
-            eprintln!("[profile] wrote {path}");
-        }
-    }
-    lap("step");
-    if std::env::var("EGGLOG_DD_VOLUMES").is_ok() {
-        let volumes = volumes.borrow();
-        let mut v: Vec<(&String, &u64)> = volumes.iter().collect();
-        v.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
-        let total: u64 = v.iter().map(|(_, n)| **n).sum();
-        eprintln!("[volumes] total tuples into arrangements: {total}");
-        for (tag, n) in v.iter().take(25) {
-            eprintln!("[volumes]   {n:>10}  {tag}");
-        }
-    }
-    drop(worker);
-    lap("teardown");
-
-    // Dynamic outcomes, checked BEFORE any host mutation.
-    if let Some(id) = *channels.unsafe_prim.borrow() {
-        eg.unsafe_prims.insert(id);
-        return Ok(None);
-    }
-    if let Some(message) = channels.error.borrow_mut().take() {
-        return Err(anyhow!(message));
-    }
-
-    // Consume the fresh ids the engine minted from the reserved range.
-    let minted = *channels.minted.borrow() as usize;
-    eg.advance_fresh_ids(minted);
-
-    // Apply the engine's net row deltas to the host tables (sort + fold: the
-    // sink holds millions of entries, and sorting beats hashing at that size).
-    let mut sunk = std::mem::take(&mut *deltas.borrow_mut());
-    sunk.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-    let mut host_deltas: Vec<(FunctionId, u8, Box<[u32]>, isize)> = Vec::new();
-    let mut i = 0;
-    while i < sunk.len() {
-        let key = sunk[i].0;
-        let mut w = 0;
-        while i < sunk.len() && sunk[i].0 == key {
-            w += sunk[i].1;
-            i += 1;
-        }
-        if w == 0 {
-            continue;
-        }
-        let (frep, loc, row) = key;
-        let f = FunctionId::new(frep);
-        let arity = eg.info(f).arity;
-        let full: Box<[u32]> = (0..arity).map(|i| row[i]).collect();
-        host_deltas.push((f, loc, full, w.signum()));
-    }
-    let quiescent = host_deltas.is_empty() && minted == 0;
-    eg.apply_compiled_deltas(host_deltas)?;
-    lap("apply");
-
-    // Reports: one entry per executed leaf turn, in execution order — the
-    // interpreter's exact report stream.
-    let reports = channels
-        .turns
-        .borrow()
-        .iter()
-        .map(|&(leaf, changed)| {
-            let mut iteration = IterationReport::default();
-            iteration.rule_set_report.changed = changed;
-            ScheduleLeafReport {
-                ruleset: prep.leaves[leaf].ruleset.clone(),
-                iteration,
-            }
-        })
-        .collect();
-    Ok(Some((reports, quiescent)))
 }

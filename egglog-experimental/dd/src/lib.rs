@@ -48,6 +48,11 @@ use compile::{validate_merge, visit_merge_read_dependencies, ReadKey, Row};
 type LocatedValues = (Row, RowLocation);
 type RowReplacement = (Row, LocatedValues);
 
+fn next_instance_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// An append-only signed row event log for one relation read view, with a
 /// drained-prefix offset so cursors stay absolute across truncation.
 #[derive(Default)]
@@ -222,6 +227,12 @@ pub struct EGraph {
     /// Bumped on every row event: a global watermark for "has anything
     /// changed since". Powers the compiled-schedule replay cache.
     pub(crate) mutation_counter: u64,
+    /// Bumped on rule add/free: persistent compiled-schedule dataflows bake
+    /// rule sets in, so any rule change invalidates them.
+    pub(crate) rules_version: u64,
+    /// Unique per EGraph instance; keys the thread-local persistent-dataflow
+    /// cache so clones and unrelated instances never share entries.
+    pub(crate) instance_id: u64,
     /// Compiled-schedule replay cache: spec fingerprint -> (mutation counter
     /// when that run finished, its leaf reports). A hit means nothing has
     /// changed since an identical schedule ran to quiescence, so the reports
@@ -309,6 +320,8 @@ impl EGraph {
             view_proof_ops: HashMap::new(),
             unsafe_prims: HashSet::new(),
             mutation_counter: 0,
+            rules_version: 0,
+            instance_id: next_instance_id(),
             schedule_replay: HashMap::new(),
         }
     }
@@ -2818,6 +2831,7 @@ impl Backend for EGraph {
         self.validate_rule(&rule)?;
         let id = RuleId::new(self.rules.len() as u32);
         self.rules.push(Some(rule));
+        self.rules_version += 1;
         Ok(id)
     }
 
@@ -2850,6 +2864,7 @@ impl Backend for EGraph {
     }
 
     fn free_rule(&mut self, id: RuleId) {
+        self.rules_version += 1;
         if let Some(slot) = self.rules.get_mut(id.rep() as usize) {
             *slot = None;
             let i = id.rep() as usize;
@@ -3049,6 +3064,8 @@ impl Backend for EGraph {
             view_proof_ops: self.view_proof_ops.clone(),
             unsafe_prims: self.unsafe_prims.clone(),
             mutation_counter: self.mutation_counter,
+            rules_version: self.rules_version,
+            instance_id: next_instance_id(),
             schedule_replay: HashMap::new(),
         })
     }

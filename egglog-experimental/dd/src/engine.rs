@@ -51,7 +51,7 @@
 //! any host mutation, which then falls back to the interpreter and caches
 //! the primitive id.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::rc::Rc;
@@ -81,12 +81,21 @@ use crate::TableDefault;
 pub(crate) type MatchDelta<const WIDTH: usize> = (u32, u32, RowN<WIDTH>);
 pub(crate) const TICK: u32 = u32::MAX;
 
+/// Rule-slot marker distinguishing a host BOOT delta `(TICK, BOOT, _)` — which
+/// starts a new schedule pass — from the engine's own self-ticks
+/// `(TICK, TICK, _)`.
+pub(crate) const BOOT: u32 = u32::MAX - 1;
+
 /// Engine output: `(table rep, location, row)` deltas. `LOC_TICK` rows are
 /// control records routed back to the input, not table data.
 pub(crate) type StateDelta<const WIDTH: usize> = (u32, u8, RowN<WIDTH>);
 pub(crate) const LOC_LIVE: u8 = 0;
 pub(crate) const LOC_SUBSUMED: u8 = 1;
 pub(crate) const LOC_TICK: u8 = 2;
+/// Seed-row locations: routed into the join views exactly like live/subsumed
+/// deltas, but filtered from the host-apply sink (the host already has them).
+pub(crate) const LOC_SEED_LIVE: u8 = 3;
+pub(crate) const LOC_SEED_SUBSUMED: u8 = 4;
 
 /// Authoritative rows of one table: `key -> (values, location)`.
 pub(crate) type TableRows = HashMap<Vec<u32>, (Vec<u32>, u8)>;
@@ -306,8 +315,11 @@ pub(crate) struct EngineChannels {
     pub(crate) unsafe_prim: Rc<RefCell<Option<ExternalFunctionId>>>,
     /// `(leaf index, changed)` per executed leaf turn, in execution order.
     pub(crate) turns: Rc<RefCell<Vec<(usize, bool)>>>,
-    /// Ids minted from the reserved counter range.
+    /// Ids minted from the reserved counter range (this pass only).
     pub(crate) minted: Rc<RefCell<u32>>,
+    /// Set when the current pass finishes (schedule done or poisoned); the
+    /// host's stepping loop watches it.
+    pub(crate) done: Rc<Cell<bool>>,
 }
 
 impl EngineChannels {
@@ -321,8 +333,11 @@ pub(crate) struct EngineConfig {
     pub(crate) schedule: Schedule,
     pub(crate) leaves: Vec<SharedLeaf>,
     pub(crate) tables: HashMap<u32, EngineTable>,
-    /// Seed rows per table: `key -> (values, location)`.
+    /// Seed rows per engine-owned table: `key -> (values, location)`.
     pub(crate) seeds: HashMap<u32, TableRows>,
+    /// One-shot seed rows for read-only tables (full row + location): emitted
+    /// into the dataflow on the first pass, never part of engine state.
+    pub(crate) extra_seeds: Vec<(u32, u8, Vec<u32>)>,
     pub(crate) set_if_empty: HashMap<ExternalFunctionId, ViewOpSpec>,
     pub(crate) view_proof: HashMap<ExternalFunctionId, ViewOpSpec>,
     /// Primitive ids that are `get-fresh!` (mint from the reserved range).
@@ -394,10 +409,18 @@ where
                         ));
                     }
                     ingested += net.len() as u64;
+                    let boot = net.keys().any(|(l, r, _)| *l == TICK && *r == BOOT);
                     state.ingest(net);
 
                     let mut emits: Vec<(StateDelta<WIDTH>, isize)> = Vec::new();
-                    state.turn(&mut emits);
+                    if boot {
+                        state.begin_pass(&mut emits);
+                    } else {
+                        state.turn(&mut emits);
+                    }
+                    if state.scheduler.done || state.cfg.channels.poisoned() {
+                        state.cfg.channels.done.set(true);
+                    }
                     turns += 1;
                     emitted += emits.len() as u64;
                     engine_time += started.elapsed();
@@ -476,12 +499,18 @@ struct EngineState<const WIDTH: usize> {
     /// Authoritative rows: table -> key -> (values, location).
     tables: HashMap<u32, TableRows>,
     counter: u32,
+    /// Counter value when the current pass began; `minted` reports the
+    /// difference so each invocation's reservation is exact.
+    pass_start: u32,
+    /// Whether the initial table rows have been emitted into the dataflow
+    /// (first BOOT only; afterwards the views incrementally track state).
+    seeded: bool,
 }
 
 impl<const WIDTH: usize> EngineState<WIDTH> {
-    fn new(cfg: EngineConfig) -> EngineState<WIDTH> {
+    fn new(mut cfg: EngineConfig) -> EngineState<WIDTH> {
         let scheduler = Scheduler::new(&cfg.schedule);
-        let tables = cfg.seeds.clone();
+        let tables = std::mem::take(&mut cfg.seeds);
         let counter = cfg.first_id;
         EngineState {
             debug_traffic: std::env::var("EGGLOG_DD_ENGINE_DEBUG")
@@ -492,6 +521,75 @@ impl<const WIDTH: usize> EngineState<WIDTH> {
             matches: MatchSets::default(),
             tables,
             counter,
+            pass_start: counter,
+            seeded: false,
+        }
+    }
+
+    /// Start a schedule pass: reset the program counter, emit the seed rows
+    /// on the first pass ever, and self-schedule the first turn one round
+    /// later (so it observes matches derived from current state).
+    fn begin_pass(&mut self, emits: &mut Vec<(StateDelta<WIDTH>, isize)>) {
+        if std::env::var("EGGLOG_DD_ENGINE_DEBUG").is_ok() {
+            let pending: usize = self.matches.values().map(|m| m.pending.len()).sum();
+            let unfired: usize = self
+                .matches
+                .values()
+                .flat_map(|m| m.present.values())
+                .filter(|(c, fired)| *c > 0 && !fired)
+                .count();
+            eprintln!("[engine] begin_pass pending={pending} present-unfired={unfired}");
+        }
+        self.scheduler = Scheduler::new(&self.cfg.schedule);
+        self.pass_start = self.counter;
+        *self.cfg.channels.minted.borrow_mut() = 0;
+        // Delete/subsume-capable rules start each pass with a clean slate of
+        // fired flags: a fired delete whose row was re-added in the SAME
+        // round never sees its match retract (the -/+ pair cancels in the
+        // dataflow, where the interpreter's physical row timestamps would
+        // re-trigger it), so its flag can go stale. Refiring such rules is
+        // idempotent on table state. Pure writers keep their flags: their
+        // inputs are untouched, and the interpreter's seminaive would not
+        // re-search them either.
+        for ((leaf, rule), per_rule) in self.matches.iter_mut() {
+            let head = &self.cfg.leaves[*leaf as usize].rules[*rule as usize].head;
+            let undoes = head.iter().any(|a| {
+                matches!(
+                    a,
+                    GenericCoreAction::Change(_, Change::Delete | Change::Subsume, ..)
+                )
+            });
+            if !undoes {
+                continue;
+            }
+            per_rule.pending.clear();
+            for (binding, (count, fired)) in per_rule.present.iter_mut() {
+                *fired = false;
+                if *count > 0 {
+                    per_rule.pending.push(*binding);
+                }
+            }
+        }
+        if !self.seeded {
+            self.seeded = true;
+            let seed_loc = |loc: u8| {
+                if loc == LOC_LIVE {
+                    LOC_SEED_LIVE
+                } else {
+                    LOC_SEED_SUBSUMED
+                }
+            };
+            for (&frep, rows) in &self.tables {
+                for (key, (vals, loc)) in rows {
+                    emits.push(((frep, seed_loc(*loc), pack2(key, vals)), 1));
+                }
+            }
+            for (frep, loc, row) in std::mem::take(&mut self.cfg.extra_seeds) {
+                emits.push(((frep, seed_loc(loc), pack2(&row, &[])), 1));
+            }
+        }
+        if !self.scheduler.done && !self.cfg.channels.poisoned() {
+            emits.push(((TICK, LOC_TICK, RowN::<WIDTH>::default()), 1));
         }
     }
 
@@ -588,7 +686,7 @@ impl<const WIDTH: usize> EngineState<WIDTH> {
 
         changed |= self.apply_staged(staged, emits);
         changed |= self.counter != minted_before;
-        *self.cfg.channels.minted.borrow_mut() = self.counter - self.cfg.first_id;
+        *self.cfg.channels.minted.borrow_mut() = self.counter - self.pass_start;
         self.cfg
             .channels
             .turns
