@@ -28,7 +28,10 @@ pub use ast::{ResolvedExpr, ResolvedFact, ResolvedVar};
 pub use cli::*;
 use constraint::{Constraint, Problem, SimpleTypeConstraint, TypeConstraint};
 pub use core::{Atom, AtomTerm};
-use core::{CoreActionContext, ResolvedAtomTerm, specialize_core_rule};
+use core::{
+    CoreActionContext, HeadOrEq, ResolvedAtomTerm, ResolvedCoreRule, specialize_core_rule,
+    specialize_core_rule_with_query,
+};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 pub use core_relations::{BaseValue, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
@@ -37,6 +40,7 @@ pub use egglog_add_primitive::add_literal_prim;
 pub use egglog_add_primitive::add_primitive;
 pub use egglog_add_primitive::add_primitive_with_validator;
 pub use egglog_add_primitive::add_replayable_primitive_with_validator;
+use egglog_ast::core::{GenericAtom, GenericAtomTerm, Query};
 use egglog_ast::generic_ast::{Change, GenericExpr, Literal};
 use egglog_ast::span::Span;
 use egglog_ast::util::ListDisplay;
@@ -44,9 +48,9 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    GroundedRuleBatchEntry, GroundedRuleBinding, GuardedRuleBatchEntry, GuardedRuleBatchOutcome,
-    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar,
+    GroundedRuleBatchEntry, GroundedRuleBinding, GroundedRuleIdentityColumn, GuardedRuleBatchEntry,
+    GuardedRuleBatchOutcome, GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall,
+    RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -592,7 +596,7 @@ enum PreparedSchedule {
     Run(Span, ResolvedRunConfig),
     RunRule(PreparedRunRule),
     RunRuleBatch(Span, Vec<PreparedRunRule>),
-    RunRuleBatchPacked(Span, ResolvedPackedRunRuleBatch),
+    RunRuleBatchPacked(Span, PreparedPackedRunRuleBatch),
     Sequence(Span, Vec<PreparedSchedule>),
 }
 
@@ -604,6 +608,34 @@ struct PreparedRunRule {
     ruleset: String,
 }
 
+#[derive(Clone)]
+struct PreparedPackedRunRuleBatch {
+    batch: ResolvedPackedRunRuleBatch,
+    fires: Arc<[PreparedPackedRuleFire]>,
+    rulesets: Arc<[String]>,
+}
+
+#[derive(Clone)]
+struct PreparedPackedRuleFire {
+    group: u32,
+    rule: egglog_bridge::RuleId,
+    bindings: Box<[PreparedPackedBinding]>,
+    identity_scope: Arc<str>,
+    identity: Box<[GroundedRuleIdentityColumn]>,
+}
+
+#[derive(Clone)]
+struct PreparedPackedBinding {
+    witness: u32,
+    target: GroundedBindingTarget,
+}
+
+struct PackedLogicalSelectorPlan {
+    atoms: Vec<GenericAtom<HeadOrEq<ResolvedCall>, ResolvedVar>>,
+    parameters: Vec<(ResolvedVar, u32)>,
+}
+
+#[derive(Clone)]
 enum GroundedBindingTarget {
     Variable(ResolvedVar),
     Literal(Literal, ArcSort),
@@ -629,7 +661,7 @@ impl Display for PreparedSchedule {
                     " "
                 )
             ),
-            PreparedSchedule::RunRuleBatchPacked(_, batch) => write!(f, "{batch}"),
+            PreparedSchedule::RunRuleBatchPacked(_, batch) => write!(f, "{}", batch.batch),
             PreparedSchedule::Sequence(_, schedules) => {
                 write!(f, "(seq {})", ListDisplay(schedules, " "))
             }
@@ -1339,9 +1371,10 @@ impl EGraph {
                 }
                 Ok(PreparedSchedule::RunRuleBatch(span.clone(), prepared))
             }
-            ResolvedSchedule::RunRuleBatchPacked(span, batch) => Ok(
-                PreparedSchedule::RunRuleBatchPacked(span.clone(), batch.clone()),
-            ),
+            ResolvedSchedule::RunRuleBatchPacked(span, batch) => {
+                let prepared = self.prepare_packed_rule_batch(span, batch, temporary_rules)?;
+                Ok(PreparedSchedule::RunRuleBatchPacked(span.clone(), prepared))
+            }
             ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
                 span.clone(),
                 *limit,
@@ -1414,6 +1447,408 @@ impl EGraph {
                 Ok(report)
             }
         }
+    }
+
+    fn register_temporary_core_rule(
+        &mut self,
+        name: &str,
+        core: &ResolvedCoreRule,
+        include_subsumed: bool,
+        no_decomp: bool,
+    ) -> Result<egglog_bridge::RuleId, Error> {
+        let mut translator = BackendRule::new(
+            &mut *self.backend,
+            &self.functions,
+            &self.type_info,
+            &mut self.unstable_fn_panic_ids,
+            true,
+        );
+        translator.query(&core.body, include_subsumed)?;
+        translator.actions(&core.head)?;
+        translator.try_build(name, false, self.no_decomp || no_decomp, core.span.clone())
+    }
+
+    fn prepare_packed_rule_batch(
+        &mut self,
+        span: &Span,
+        batch: &ResolvedPackedRunRuleBatch,
+        temporary_rules: &mut Vec<egglog_bridge::RuleId>,
+    ) -> Result<PreparedPackedRunRuleBatch, Error> {
+        let groups = batch
+            .groups
+            .iter()
+            .map(|group| {
+                self.rulesets
+                    .iter()
+                    .find_map(|(ruleset_name, ruleset)| match ruleset {
+                        Ruleset::Rules(rules) => rules
+                            .get(&group.rule)
+                            .map(|registered| (ruleset_name.clone(), registered.clone())),
+                        Ruleset::Combined(_) => None,
+                    })
+                    .ok_or_else(|| Error::NoSuchRule(group.rule.clone(), group.span.clone()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let rulesets = groups
+            .iter()
+            .map(|(ruleset, _)| ruleset.clone())
+            .collect::<Vec<_>>()
+            .into();
+
+        let mut prepared = vec![None; batch.fires.len()];
+        for (group_index, (group, (_, registered))) in
+            batch.groups.iter().zip(groups.iter()).enumerate()
+        {
+            let mut selector_shapes = IndexMap::<
+                (usize, usize),
+                Vec<(
+                    Vec<GenericAtom<HeadOrEq<ResolvedCall>, ResolvedVar>>,
+                    egglog_bridge::RuleId,
+                    Box<[(ResolvedVar, ResolvedAtomTerm)]>,
+                )>,
+            >::default();
+            let mut selector_shape_count = 0usize;
+            let mut identity_sources = if group.logical.is_empty() {
+                // One point-selector shape has one fixed binding-column set,
+                // so its canonical expected-key map already rejects duplicate
+                // fires. Complete identities are needed only to detect the
+                // same original grounding selected through different logical
+                // query shapes.
+                Vec::new()
+            } else {
+                registered
+                    .core
+                    .body
+                    .vars()
+                    .filter(|variable| !variable.name.starts_with(INTERNAL_SYMBOL_PREFIX))
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            };
+            identity_sources.sort_by(|left, right| {
+                left.name
+                    .cmp(&right.name)
+                    .then_with(|| left.sort.name().cmp(right.sort.name()))
+            });
+            for (fire_index, fire) in batch
+                .fires
+                .iter()
+                .enumerate()
+                .filter(|(_, fire)| fire.group as usize == group_index)
+            {
+                let (rule, substitutions, parameters) = if group.logical.is_empty() {
+                    (
+                        registered.backend_id,
+                        registered.substitutions.clone(),
+                        Vec::new(),
+                    )
+                } else {
+                    let GenericPackedWitnesses::Dag(witnesses) = &batch.witnesses else {
+                        return Err(Error::BackendError(format!(
+                            "{span}\npacked logical selectors require :witness-dag"
+                        )));
+                    };
+                    let plan =
+                        self.packed_logical_selector_plan(group_index, group, fire, witnesses)?;
+                    let shape_bucket = (plan.atoms.len(), plan.parameters.len());
+                    let cached = selector_shapes.get(&shape_bucket).and_then(|shapes| {
+                        shapes.iter().find(|(shape, _, _)| shape == &plan.atoms)
+                    });
+                    let (rule, substitutions) = if let Some((_, rule, substitutions)) = cached {
+                        (*rule, substitutions.clone())
+                    } else {
+                        let specialized = specialize_core_rule_with_query(
+                            &registered.core,
+                            Query {
+                                atoms: plan.atoms.clone(),
+                            },
+                            &registered.substitutions,
+                            &self.type_info,
+                        )?;
+                        let mut substitutions = registered.substitutions.to_vec();
+                        substitutions.extend(specialized.substitutions.iter().cloned());
+                        let rule = self.register_temporary_core_rule(
+                            &format!("{}-packed-selector-{selector_shape_count}", group.rule),
+                            &specialized.core,
+                            registered.include_subsumed,
+                            registered.no_decomp,
+                        )?;
+                        temporary_rules.push(rule);
+                        let substitutions = substitutions.into_boxed_slice();
+                        selector_shapes.entry(shape_bucket).or_default().push((
+                            plan.atoms,
+                            rule,
+                            substitutions.clone(),
+                        ));
+                        selector_shape_count += 1;
+                        (rule, substitutions)
+                    };
+                    (rule, substitutions, plan.parameters)
+                };
+
+                let mut bindings = Vec::with_capacity(group.variables.len() + parameters.len());
+                for (variable, witness) in
+                    group.variables.iter().zip(fire.witnesses.iter().copied())
+                {
+                    bindings.push(PreparedPackedBinding {
+                        witness,
+                        target: grounded_binding_target(variable, &substitutions)?,
+                    });
+                }
+                for (variable, witness) in parameters {
+                    bindings.push(PreparedPackedBinding {
+                        witness,
+                        target: grounded_binding_target(&variable, &substitutions)?,
+                    });
+                }
+                let identity = identity_sources
+                    .iter()
+                    .map(|source| match grounded_binding_target(source, &substitutions)? {
+                        GroundedBindingTarget::Variable(variable) => {
+                            Ok(GroundedRuleIdentityColumn {
+                                variable: Arc::from(variable.name.as_str()),
+                                ty: variable.sort.column_ty(self.backend.base_values()),
+                            })
+                        }
+                        GroundedBindingTarget::Literal(..) => Err(Error::BackendError(format!(
+                            "{}\npacked selector identity variable {} resolved to a literal",
+                            fire.span, source.name
+                        ))),
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?
+                    .into_boxed_slice();
+                prepared[fire_index] = Some(PreparedPackedRuleFire {
+                    group: fire.group,
+                    rule,
+                    bindings: bindings.into_boxed_slice(),
+                    identity_scope: Arc::from(group.rule.as_str()),
+                    identity,
+                });
+            }
+        }
+
+        let fires = prepared
+            .into_iter()
+            .enumerate()
+            .map(|(index, fire)| {
+                fire.ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{span}\npacked run-rule fire {index} was not assigned to a group"
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into();
+        Ok(PreparedPackedRunRuleBatch {
+            batch: batch.clone(),
+            fires,
+            rulesets,
+        })
+    }
+
+    fn packed_logical_selector_plan(
+        &self,
+        group_index: usize,
+        group: &GenericPackedRuleGroup<ResolvedVar>,
+        fire: &PackedRuleFire,
+        witnesses: &[GenericPackedWitnessNode<ResolvedCall>],
+    ) -> Result<PackedLogicalSelectorPlan, Error> {
+        let logical_witnesses = &fire.witnesses[group.variables.len()..];
+        for witness in logical_witnesses.iter().copied() {
+            let node = witnesses.get(witness as usize).ok_or_else(|| {
+                Error::BackendError(format!(
+                    "{}\npacked logical selector references unavailable witness {witness}",
+                    fire.span
+                ))
+            })?;
+            match node {
+                GenericPackedWitnessNode::Literal { .. } => {
+                    return Err(Error::BackendError(format!(
+                        "{}\npacked logical selector root {witness} is a literal",
+                        fire.span
+                    )));
+                }
+                GenericPackedWitnessNode::Call { .. } => {}
+            }
+        }
+
+        struct Lowering<'a> {
+            type_info: &'a TypeInfo,
+            view_names: &'a HashMap<String, String>,
+            span: &'a Span,
+            prefix: String,
+            witnesses: &'a [GenericPackedWitnessNode<ResolvedCall>],
+            terms: IndexMap<u32, GenericAtomTerm<ResolvedVar>>,
+            atoms: Vec<GenericAtom<HeadOrEq<ResolvedCall>, ResolvedVar>>,
+            parameters: Vec<(ResolvedVar, u32)>,
+            next_node: usize,
+        }
+
+        impl Lowering<'_> {
+            fn sort(&self, name: &str) -> Result<ArcSort, Error> {
+                self.type_info
+                    .get_sort_by_name(name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "{}\npacked logical selector references unknown sort {name}",
+                            self.span
+                        ))
+                    })
+            }
+
+            fn parameter(&mut self, witness: u32, sort: ArcSort) -> GenericAtomTerm<ResolvedVar> {
+                let variable = ResolvedVar {
+                    name: format!("{}p{}", self.prefix, self.parameters.len()),
+                    sort,
+                    is_global_ref: false,
+                };
+                self.parameters.push((variable.clone(), witness));
+                GenericAtomTerm::Var(self.span.clone(), variable)
+            }
+
+            fn lower(
+                &mut self,
+                witness: u32,
+                root: Option<&ResolvedVar>,
+            ) -> Result<GenericAtomTerm<ResolvedVar>, Error> {
+                if let Some(term) = self.terms.get(&witness) {
+                    return Ok(term.clone());
+                }
+                let node = self.witnesses.get(witness as usize).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{}\npacked logical selector references unavailable witness {witness}",
+                        self.span
+                    ))
+                })?;
+                let term = match node {
+                    GenericPackedWitnessNode::Literal { sort, .. } => {
+                        self.parameter(witness, self.sort(sort)?)
+                    }
+                    GenericPackedWitnessNode::Call {
+                        sort,
+                        function,
+                        children,
+                        ..
+                    } => {
+                        if matches!(function, ResolvedCall::Values(_)) {
+                            return Err(Error::BackendError(format!(
+                                "{}\npacked logical selectors do not support tuple witnesses",
+                                self.span
+                            )));
+                        }
+                        // Replay-safe primitives are deterministic point
+                        // computations, not e-graph rows. Evaluate the whole
+                        // primitive subtree once with the other packed point
+                        // bindings instead of introducing a query atom whose
+                        // literal inputs would be syntactically ungrounded.
+                        if matches!(function, ResolvedCall::Primitive(_)) {
+                            if let Some(variable) = root {
+                                self.parameters.push((variable.clone(), witness));
+                                let term =
+                                    GenericAtomTerm::Var(self.span.clone(), variable.clone());
+                                self.terms.insert(witness, term.clone());
+                                return Ok(term);
+                            }
+                            let term = self.parameter(witness, self.sort(sort)?);
+                            self.terms.insert(witness, term.clone());
+                            return Ok(term);
+                        }
+                        let mut args = children
+                            .iter()
+                            .map(|child| self.lower(*child, None))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        let output = if let Some(variable) = root {
+                            variable.clone()
+                        } else {
+                            let node = self.next_node;
+                            self.next_node += 1;
+                            ResolvedVar {
+                                name: format!("{}n{node}", self.prefix),
+                                sort: self.sort(sort)?,
+                                is_global_ref: false,
+                            }
+                        };
+                        let term = GenericAtomTerm::Var(self.span.clone(), output);
+                        let head = if let ResolvedCall::Func(function) = function
+                            && let Some(view_name) = self.view_names.get(&function.name)
+                        {
+                            let view = self
+                                .type_info
+                                .get_func_type(view_name)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    Error::BackendError(format!(
+                                        "{}\npacked logical selector references missing proof view {view_name}",
+                                        self.span
+                                    ))
+                                })?;
+                            args.push(term.clone());
+                            let proof_sort = view.outputs.last().cloned().ok_or_else(|| {
+                                Error::BackendError(format!(
+                                    "{}\npacked logical selector proof view {view_name} has no output",
+                                    self.span
+                                ))
+                            })?;
+                            args.push(GenericAtomTerm::Var(
+                                self.span.clone(),
+                                ResolvedVar {
+                                    name: format!("{}q{}", self.prefix, self.atoms.len()),
+                                    sort: proof_sort,
+                                    is_global_ref: false,
+                                },
+                            ));
+                            let expected_arity = view.input.len() + view.outputs.len();
+                            if args.len() != expected_arity {
+                                return Err(Error::BackendError(format!(
+                                    "{}\npacked logical selector proof view {view_name} expected {expected_arity} columns but lowering produced {}",
+                                    self.span,
+                                    args.len()
+                                )));
+                            }
+                            ResolvedCall::Func(view)
+                        } else {
+                            args.push(term.clone());
+                            function.clone()
+                        };
+                        self.atoms.push(GenericAtom {
+                            span: self.span.clone(),
+                            head: HeadOrEq::Head(head),
+                            args,
+                        });
+                        term
+                    }
+                };
+                self.terms.insert(witness, term.clone());
+                Ok(term)
+            }
+        }
+
+        let mut lowering = Lowering {
+            type_info: &self.type_info,
+            view_names: &self.proof_state.proof_names.view_name,
+            span: &group.span,
+            prefix: format!("{INTERNAL_SYMBOL_PREFIX}packed_selector_g{group_index}_"),
+            witnesses,
+            terms: IndexMap::default(),
+            atoms: Vec::new(),
+            parameters: Vec::new(),
+            next_node: 0,
+        };
+        for (variable, witness) in group.logical.iter().zip(logical_witnesses) {
+            // Each source variable's witness is an independent descriptor of
+            // its captured equality class. A witness selected for one root may
+            // contain syntax also selected for another root, but that does not
+            // prove the original grounding related those variables through
+            // that particular constructor occurrence. Share the serialized
+            // DAG while keeping query variables local to one logical root.
+            lowering.terms.clear();
+            lowering.lower(*witness, Some(variable))?;
+        }
+        Ok(PackedLogicalSelectorPlan {
+            atoms: lowering.atoms,
+            parameters: lowering.parameters,
+        })
     }
 
     fn prepare_run_rule(
@@ -1538,22 +1973,52 @@ impl EGraph {
     fn run_prepared_packed_rule_batch(
         &mut self,
         span: &Span,
-        batch: &ResolvedPackedRunRuleBatch,
+        prepared: &PreparedPackedRunRuleBatch,
     ) -> Result<RunReport, Error> {
-        // Resolve every closed witness before querying any body or applying
-        // any head. Constructor lookups are read-only; explicitly replay-safe
-        // primitives may perform only deterministic, idempotent base/container
-        // interning. A missing witness therefore fails before table/head
-        // effects, while the registration contract excludes other observable
-        // effects ahead of the exact guards.
-        let witness_values = match &batch.witnesses {
+        let batch = &prepared.batch;
+        // Resolve the point-valued selector leaves before querying any body or
+        // applying any head. Logical selector structure remains normalized
+        // query atoms in the prepared temporary rule, so constructor outputs
+        // used only as logical roots are deliberately not looked up here.
+        // Constructor lookups are read-only; explicitly replay-safe primitives
+        // may perform only deterministic, idempotent base/container interning.
+        // A missing point witness therefore fails before table/head effects,
+        // while the registration contract excludes other observable effects
+        // ahead of the exact guards.
+        let witness_values: Vec<Option<Value>> = match &batch.witnesses {
             GenericPackedWitnesses::Expressions(witnesses) => witnesses
                 .iter()
                 .map(|witness| self.eval_replay_witness(witness))
+                .map(|value| value.map(Some))
                 .collect::<Result<Vec<_>, _>>()?,
             GenericPackedWitnesses::Dag(witnesses) => {
-                let mut values = Vec::with_capacity(witnesses.len());
+                let mut needed = vec![false; witnesses.len()];
+                let mut pending = prepared
+                    .fires
+                    .iter()
+                    .flat_map(|fire| fire.bindings.iter().map(|binding| binding.witness))
+                    .collect::<Vec<_>>();
+                while let Some(witness) = pending.pop() {
+                    let index = witness as usize;
+                    let is_needed = needed.get_mut(index).ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "{span}\npacked replay references unavailable witness {witness}"
+                        ))
+                    })?;
+                    if *is_needed {
+                        continue;
+                    }
+                    *is_needed = true;
+                    if let GenericPackedWitnessNode::Call { children, .. } = &witnesses[index] {
+                        pending.extend(children.iter().copied());
+                    }
+                }
+
+                let mut values = vec![None; witnesses.len()];
                 for (index, witness) in witnesses.iter().enumerate() {
+                    if !needed[index] {
+                        continue;
+                    }
                     let value = match witness {
                         GenericPackedWitnessNode::Literal { value, .. } => {
                             literal_to_value(self.backend.base_values(), value)
@@ -1567,51 +2032,54 @@ impl EGraph {
                             let children = children
                                 .iter()
                                 .map(|child| {
-                                    values.get(*child as usize).copied().ok_or_else(|| {
-                                        Error::BackendError(format!(
-                                            "{span}\npacked replay witness {index} references unavailable child {child}"
-                                        ))
-                                    })
+                                    values
+                                        .get(*child as usize)
+                                        .copied()
+                                        .flatten()
+                                        .ok_or_else(|| {
+                                            Error::BackendError(format!(
+                                                "{span}\npacked replay witness {index} references unavailable child {child}"
+                                            ))
+                                        })
                                 })
                                 .collect::<Result<Vec<_>, _>>()?;
                             self.eval_replay_witness_call(span, function, &children)?
                         }
                     };
-                    values.push(value);
+                    values[index] = Some(value);
                 }
                 values
             }
         };
 
-        let groups = batch
-            .groups
-            .iter()
-            .map(|group| {
-                self.rulesets
-                    .iter()
-                    .find_map(|(ruleset_name, ruleset)| match ruleset {
-                        Ruleset::Rules(rules) => rules.get(&group.rule).map(|registered| {
-                            (
-                                ruleset_name.clone(),
-                                registered.backend_id,
-                                registered.substitutions.clone(),
-                            )
-                        }),
-                        Ruleset::Combined(_) => None,
-                    })
-                    .ok_or_else(|| Error::NoSuchRule(group.rule.clone(), group.span.clone()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
         let mut runs = Vec::with_capacity(batch.fires.len());
-        for fire in batch.fires.iter() {
-            let group_index = fire.group as usize;
+        for (run_index, fire) in batch.fires.iter().enumerate() {
+            let prepared_fire = prepared.fires.get(run_index).ok_or_else(|| {
+                Error::BackendError(format!(
+                    "{span}\npacked replay has no prepared firing at index {run_index}"
+                ))
+            })?;
+            if fire.group != prepared_fire.group {
+                return Err(Error::BackendError(format!(
+                    "{span}\npacked replay prepared firing {run_index} changed group from {} to {}",
+                    fire.group, prepared_fire.group
+                )));
+            }
+            let group_index = prepared_fire.group as usize;
             let group = &batch.groups[group_index];
-            let (_, rule_id, substitutions) = &groups[group_index];
             let mut bindings: IndexMap<String, GroundedRuleBinding> = IndexMap::default();
-            for (variable, witness) in group.variables.iter().zip(fire.witnesses.iter()) {
-                let value = witness_values[*witness as usize];
-                match grounded_binding_target(variable, substitutions)? {
+            for binding in prepared_fire.bindings.iter() {
+                let value = witness_values
+                    .get(binding.witness as usize)
+                    .copied()
+                    .flatten()
+                    .ok_or_else(|| {
+                        Error::BackendError(format!(
+                            "{}\npacked replay firing {run_index} requires unresolved witness {}",
+                            fire.span, binding.witness
+                        ))
+                    })?;
+                match &binding.target {
                     GroundedBindingTarget::Variable(target) => {
                         let ty = target.sort.column_ty(self.backend.base_values());
                         let candidate = GroundedRuleBinding {
@@ -1639,7 +2107,7 @@ impl EGraph {
                     }
                     GroundedBindingTarget::Literal(literal, sort) => {
                         let ty = sort.column_ty(self.backend.base_values());
-                        let expected = literal_to_value(self.backend.base_values(), &literal);
+                        let expected = literal_to_value(self.backend.base_values(), literal);
                         if self.backend.get_canon_repr(value, ty)
                             != self.backend.get_canon_repr(expected, ty)
                         {
@@ -1654,11 +2122,13 @@ impl EGraph {
                 }
             }
             runs.push(GroundedRuleBatchEntry {
-                rule: *rule_id,
+                rule: prepared_fire.rule,
                 bindings: bindings
                     .into_values()
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
+                identity_scope: prepared_fire.identity_scope.clone(),
+                identity: prepared_fire.identity.clone(),
             });
         }
 
@@ -1668,13 +2138,15 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()))?;
         match outcome {
             GuardedRuleBatchOutcome::Applied { report, .. } => {
-                let ruleset = groups
+                let ruleset = prepared
+                    .rulesets
                     .first()
-                    .map(|(ruleset, _, _)| ruleset.as_str())
+                    .map(String::as_str)
                     .filter(|ruleset| {
-                        groups
+                        prepared
+                            .rulesets
                             .iter()
-                            .all(|(candidate, _, _)| candidate.as_str() == *ruleset)
+                            .all(|candidate| candidate.as_str() == *ruleset)
                     })
                     .unwrap_or("<run-rule-batch>");
                 Ok(RunReport::singleton(ruleset, report))
@@ -1689,12 +2161,17 @@ impl EGraph {
                         "packed run-rule-batch returned invalid failed entry index {run_index}"
                     ))
                 })?;
-                let group = &batch.groups[fire.group as usize];
+                let prepared_fire = prepared.fires.get(run_index).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "packed run-rule-batch has no prepared failed entry at index {run_index}"
+                    ))
+                })?;
+                let group = &batch.groups[prepared_fire.group as usize];
                 Err(Error::RunRuleMatchCountMismatch {
                     rule: group.rule.clone(),
                     expected: expected_matches,
                     observed: observed_matches,
-                    span: span.clone(),
+                    span: fire.span.clone(),
                 })
             }
         }

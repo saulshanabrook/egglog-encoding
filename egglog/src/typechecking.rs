@@ -1227,31 +1227,37 @@ impl TypeInfo {
                 .get(&group.rule)
                 .ok_or_else(|| TypeError::NoSuchRule(group.rule.clone(), group.span.clone()))?;
             let mut seen_variables = HashSet::default();
-            let mut variables = Vec::with_capacity(group.variables.len());
-            for variable in &group.variables {
-                if !seen_variables.insert(variable.clone()) {
-                    return Err(TypeError::DuplicateRunRuleBinding {
-                        rule: group.rule.clone(),
-                        variable: variable.clone(),
-                        span: group.span.clone(),
-                    });
-                }
-                let target = rule_info
-                    .input_vars
+            let mut resolve_variables = |source: &[String]| {
+                source
                     .iter()
-                    .find(|input| input.var.name == *variable)
-                    .map(|input| input.var.clone())
-                    .ok_or_else(|| TypeError::UnknownRunRuleBinding {
-                        rule: group.rule.clone(),
-                        variable: variable.clone(),
-                        span: group.span.clone(),
-                    })?;
-                variables.push(target);
-            }
+                    .map(|variable| {
+                        if !seen_variables.insert(variable.clone()) {
+                            return Err(TypeError::DuplicateRunRuleBinding {
+                                rule: group.rule.clone(),
+                                variable: variable.clone(),
+                                span: group.span.clone(),
+                            });
+                        }
+                        rule_info
+                            .input_vars
+                            .iter()
+                            .find(|input| input.var.name == *variable)
+                            .map(|input| input.var.clone())
+                            .ok_or_else(|| TypeError::UnknownRunRuleBinding {
+                                rule: group.rule.clone(),
+                                variable: variable.clone(),
+                                span: group.span.clone(),
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            };
+            let variables = resolve_variables(&group.variables)?;
+            let logical = resolve_variables(&group.logical)?;
             groups.push(GenericPackedRuleGroup {
                 span: group.span.clone(),
                 rule: group.rule.clone(),
                 variables: variables.into_boxed_slice(),
+                logical: logical.into_boxed_slice(),
             });
         }
 
@@ -1267,18 +1273,20 @@ impl TypeInfo {
                     format!("group index {} is out of range", fire.group),
                 )
             })?;
-            if fire.witnesses.len() != group.variables.len() {
+            let group_variables = group.variables.iter().chain(group.logical.iter());
+            let variable_count = group_variables.clone().count();
+            if fire.witnesses.len() != variable_count {
                 return Err(invalid(
                     fire.span.clone(),
                     format!(
                         "group {} requires {} witnesses but the fire supplies {}",
                         fire.group,
-                        group.variables.len(),
+                        variable_count,
                         fire.witnesses.len()
                     ),
                 ));
             }
-            for (witness, variable) in fire.witnesses.iter().zip(group.variables.iter()) {
+            for (witness, variable) in fire.witnesses.iter().zip(group_variables) {
                 let slot = witness_sorts.get_mut(*witness as usize).ok_or_else(|| {
                     invalid(
                         fire.span.clone(),

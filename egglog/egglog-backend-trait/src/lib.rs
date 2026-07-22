@@ -249,12 +249,23 @@ pub struct GroundedRuleBinding {
     pub ty: ColumnTy,
 }
 
+/// One selected-match column used only to reject duplicate complete original
+/// groundings across different temporary selector shapes. An empty identity
+/// column list disables that cross-shape check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleIdentityColumn {
+    pub variable: Arc<str>,
+    pub ty: ColumnTy,
+}
+
 /// One guarded firing in a compact same-prestate batch. Backends may group
 /// entries by `rule`, but must apply selected complete heads in list order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroundedRuleBatchEntry {
     pub rule: RuleId,
     pub bindings: Box<[GroundedRuleBinding]>,
+    pub identity_scope: Arc<str>,
+    pub identity: Box<[GroundedRuleIdentityColumn]>,
 }
 
 /// Backend-selected policy for reconciling two ids that rebuild to the same

@@ -39,11 +39,16 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
     eprintln!(
-        "causal proof projection: {} pending, {} retained; bytes {} -> {}; trace {:?}; elaborate {:?}; slice {:?}; emit {:?}; validate {:?}; total {:?}",
+        "causal proof projection: {} pending, {} promoted, {} retained, {} prefix fallbacks; bytes {} -> {}; arenas: {} source events, {} dependencies, {} witnesses; trace {:?}; elaborate {:?}; slice {:?}; emit {:?}; validate {:?}; total {:?}",
         replay.stats.pending_firings,
+        replay.stats.promoted_events,
         replay.stats.retained_applications,
+        replay.stats.prefix_fallbacks,
         replay.stats.original_bytes,
         replay.stats.sliced_bytes,
+        replay.stats.source_events,
+        replay.stats.dependency_nodes,
+        replay.stats.witness_nodes,
         replay.stats.traced_run_time,
         replay.stats.elaboration_time,
         replay.stats.slicing_time,

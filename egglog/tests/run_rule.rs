@@ -527,6 +527,348 @@ fn packed_run_rule_batch_partial_key_ambiguity_is_atomic() {
 }
 
 #[test]
+fn packed_logical_selector_recovers_one_structural_grounding_strictly() {
+    let program = r#"
+        (datatype Expr (A) (B))
+        (relation Seed (i64 Expr))
+        (relation Fired (Expr))
+        (rule ((Seed key value))
+              ((Fired value))
+              :name "copy")
+        (Seed 0 (A))
+        (Seed 0 (B))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:lit i64 0)
+                          (:call Expr A))
+            :groups (("copy" (key) :logical (value)))
+            :fires ((0 0 1))))
+        (check (Fired (A)))
+        (fail (check (Fired (B))))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-logical-selector.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_grounded_batch_retains_lhs_only_selector_columns() {
+    let program = r#"
+        (relation Seed (i64 i64))
+        (relation Fired ())
+        (rule ((Seed x y)) ((Fired)) :name "copy")
+        (Seed 1 10)
+        (Seed 2 20)
+        (run-schedule
+          (run-rule-batch
+            :witnesses (2 20)
+            :groups (("copy" (x y)))
+            :fires ((0 0 1))))
+        (check (Fired))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-lhs-only-columns.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_grounded_batch_counts_head_unused_projected_extensions_atomically() {
+    let program = r#"
+        (relation Seed (i64 i64))
+        (relation Fired ())
+        (rule ((Seed x y)) ((Fired)) :name "copy")
+        (Seed 1 10)
+        (Seed 1 20)
+        (run-schedule
+          (run-rule-batch
+            :witnesses (1)
+            :groups (("copy" (x)))
+            :fires ((0 0))))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        let error = egraph
+            .parse_and_run_program(
+                Some("packed-head-unused-extensions.egg".to_owned()),
+                program,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::RunRuleMatchCountMismatch {
+                rule,
+                expected: 1,
+                observed: 2,
+                ..
+            } if rule == "copy"
+        ));
+        egraph
+            .parse_and_run_program(None, "(fail (check (Fired)))")
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_retains_aliased_constructor_leaf_strictly() {
+    let program = r#"
+        (datatype Expr (K i64))
+        (relation Seed (Expr))
+        (relation Fired ())
+        (rule ((Seed x)) ((Fired)) :name "copy")
+        (Seed (K 0))
+        (union (K 0) (K 2))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:lit i64 2)
+                          (:call Expr K 0))
+            :groups (("copy" () :logical (x)))
+            :fires ((0 1))))
+        (check (Fired))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-logical-aliased-leaf.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_reuses_duplicate_roots_as_typed_aliases_strictly() {
+    let program = r#"
+        (datatype Expr (A) (B))
+        (relation Seed (Expr Expr))
+        (relation Fired (Expr Expr))
+        (rule ((Seed x y)) ((Fired x y)) :name "copy")
+        (Seed (A) (A))
+        (Seed (A) (B))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:call Expr A))
+            :groups (("copy" () :logical (x y)))
+            :fires ((0 0 0))))
+        (check (Fired (A) (A)))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-logical-alias.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_keeps_aliased_constructor_output_as_a_postfilter() {
+    let program = r#"
+        (datatype BinOp (Add))
+        (datatype Expr (Leaf i64) (Bop BinOp Expr Expr))
+        (datatype Type (T))
+        (relation HasType (Expr Type))
+        (relation Fired (Expr Expr Expr))
+        (rule ((= e (Bop bop e1 e2))
+               (HasType e1 t)
+               (HasType e2 t))
+              ((Fired e1 e2 e))
+              :name "propagate")
+        (HasType (Leaf 1) (T))
+        (HasType (Leaf 2) (T))
+        (union (Bop (Add) (Leaf 1) (Leaf 2)) (Leaf 1))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:call Type T)
+                          (:call BinOp Add)
+                          (:lit i64 1)
+                          (:call Expr Leaf 2)
+                          (:lit i64 2)
+                          (:call Expr Leaf 4)
+                          (:call Expr Bop 1 3 5))
+            :groups (("propagate" (t bop) :logical (e1 e2 e)))
+            :fires ((0 0 1 3 5 6))))
+        (check (Fired (Leaf 1) (Leaf 2) (Leaf 1)))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(
+                Some("packed-logical-aliased-output.egg".to_owned()),
+                program,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_reuses_multiple_shapes_strictly() {
+    let program = r#"
+        (datatype Expr (A) (B) (Wrap Expr))
+        (relation Seed (Expr))
+        (relation Fired (Expr))
+        (rule ((Seed x)) ((Fired x)) :name "copy")
+        (Seed (A))
+        (Seed (B))
+        (Seed (Wrap (A)))
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:call Expr A)
+                          (:call Expr B)
+                          (:call Expr Wrap 0))
+            :groups (("copy" () :logical (x)))
+            :fires ((0 0) (0 1) (0 2))))
+        (check (Fired (A)))
+        (check (Fired (B)))
+        (check (Fired (Wrap (A))))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-logical-shapes.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_collapses_primitive_root_to_point_guard_strictly() {
+    let program = r#"
+        (relation Seed (i64))
+        (relation Fired (i64))
+        (rule ((Seed x)) ((Fired x)) :name "copy")
+        (Seed 2)
+        (run-schedule
+          (run-rule-batch
+            :witness-dag ((:lit i64 1)
+                          (:call i64 + 0 0))
+            :groups (("copy" () :logical (x)))
+            :fires ((0 1))))
+        (check (Fired 2))
+    "#;
+    for mut egraph in [
+        EGraph::default(),
+        EGraph::new_with_proofs().with_proof_testing(),
+    ] {
+        egraph
+            .parse_and_run_program(Some("packed-logical-primitive.egg".to_owned()), program)
+            .unwrap();
+    }
+}
+
+#[test]
+fn packed_logical_selector_rejects_duplicate_original_groundings_atomically() {
+    for (filename, program) in [
+        (
+            "packed-logical-same-shape-duplicate.egg",
+            r#"
+                (datatype Expr (K i64))
+                (relation Seed (Expr))
+                (relation Fired (Expr))
+                (rule ((Seed x)) ((Fired x)) :name "copy")
+                (Seed (K 0))
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:lit i64 0)
+                                  (:call Expr K 0))
+                    :groups (("copy" () :logical (x)))
+                    :fires ((0 1) (0 1))))
+            "#,
+        ),
+        (
+            "packed-logical-cross-shape-duplicate.egg",
+            r#"
+                (datatype Expr (A) (Wrap Expr))
+                (relation Seed (Expr))
+                (relation Fired (Expr))
+                (rule ((Seed x)) ((Fired x)) :name "copy")
+                (Seed (A))
+                (union (A) (Wrap (A)))
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:call Expr A)
+                                  (:call Expr Wrap 0))
+                    :groups (("copy" () :logical (x)))
+                    :fires ((0 0) (0 1))))
+            "#,
+        ),
+    ] {
+        for mut egraph in [
+            EGraph::default(),
+            EGraph::new_with_proofs().with_proof_testing(),
+        ] {
+            let error = egraph
+                .parse_and_run_program(Some(filename.to_owned()), program)
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("select the same canonical grounding"),
+                "{error}"
+            );
+            egraph
+                .parse_and_run_program(None, "(fail (check (Fired x)))")
+                .unwrap();
+        }
+    }
+}
+
+#[test]
+fn packed_batch_without_logical_selector_remains_ambiguous_and_atomic() {
+    let mut egraph = EGraph::default();
+    let error = egraph
+        .parse_and_run_program(
+            Some("packed-without-logical-selector.egg".to_owned()),
+            r#"
+                (datatype Expr (A) (B))
+                (relation Seed (i64 Expr))
+                (relation Fired (Expr))
+                (rule ((Seed key value))
+                      ((Fired value))
+                      :name "copy")
+                (Seed 0 (A))
+                (Seed 0 (B))
+                (run-schedule
+                  (run-rule-batch
+                    :witness-dag ((:lit i64 0))
+                    :groups (("copy" (key)))
+                    :fires ((0 0))))
+            "#,
+        )
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::RunRuleMatchCountMismatch {
+            rule,
+            expected: 1,
+            observed: 2,
+            ..
+        } if rule == "copy"
+    ));
+    egraph
+        .parse_and_run_program(
+            None,
+            "(fail (check (Fired (A)))) (fail (check (Fired (B))))",
+        )
+        .unwrap();
+}
+
+#[test]
 fn packed_witness_dag_replays_empty_zero_binding_fires() {
     for dictionary in [":witnesses ()", ":witness-dag ()"] {
         let program = format!(

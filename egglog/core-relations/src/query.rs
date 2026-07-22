@@ -311,6 +311,16 @@ impl<'outer, 'a> QueryBuilder<'outer, 'a> {
         self.query.no_decomp = no_decomp;
     }
 
+    /// Retain these query variables in each complete match binding.
+    ///
+    /// Rule actions imply this requirement automatically. Runtime consumers
+    /// such as grounded exact-match guards may also need LHS-only variables
+    /// after planning, so they must declare those variables before the plan is
+    /// built instead of recovering an arbitrary supporting row later.
+    pub fn retain_variables<'b>(&mut self, entries: impl IntoIterator<Item = &'b QueryEntry>) {
+        self.mark_used(entries);
+    }
+
     /// Create a new variable of the given type.
     pub fn new_var(&mut self) -> Variable {
         self.query.var_info.push(VarInfo {
@@ -541,6 +551,12 @@ impl RuleBuilder<'_, '_> {
     pub fn finish_query(&mut self) {
         assert!(self.qb.head_start.is_none(), "query boundary set twice");
         self.qb.head_start = Some(self.qb.instrs.len());
+    }
+
+    /// Retain query variables for a runtime consumer after residual-query
+    /// construction has determined which variables are defined there.
+    pub fn retain_variables<'b>(&mut self, entries: impl IntoIterator<Item = &'b QueryEntry>) {
+        self.qb.retain_variables(entries);
     }
 
     fn build_symbol_map(&self) -> SymbolMap {

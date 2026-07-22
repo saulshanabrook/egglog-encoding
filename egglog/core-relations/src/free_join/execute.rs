@@ -1156,9 +1156,64 @@ impl Database {
                     })?;
                 columns.push((variable, *canonicalize, name.clone()));
             }
+            let first_identity = runs[0]
+                .identity
+                .iter()
+                .map(|column| (column.name.clone(), column.canonicalize))
+                .collect::<Vec<_>>();
+            let mut identity_columns = Vec::with_capacity(first_identity.len());
+            for (name, canonicalize) in &first_identity {
+                let variable = symbol_map
+                    .vars
+                    .iter()
+                    .find_map(|(variable, candidate)| {
+                        (candidate.as_ref() == name.as_ref()).then_some(*variable)
+                    })
+                    .ok_or_else(|| GuardedRuleSetRunError::UnknownGroundingVariable {
+                        name: name.clone(),
+                    })?;
+                identity_columns.push((variable, *canonicalize, name.clone()));
+            }
+
+            // Logical selector shapes introduce base-valued leaf parameters.
+            // Those parameters are exact raw values, so cacheable relational
+            // occurrences can safely narrow the native join before capture.
+            // Equality-sort columns remain postfilters because their request
+            // values are UF-canonical while live table storage may still use a
+            // nonleader. Point-only batches keep their one-scan fast path.
+            let pushdown_indices = if identity_columns.is_empty() {
+                Vec::new()
+            } else {
+                columns
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, (variable, canonicalize, _))| {
+                        if *canonicalize {
+                            return None;
+                        }
+                        plan.atoms()
+                            .iter()
+                            .any(|(_, atom)| {
+                                !atom.table.is_dummy()
+                                    && atom.get_col(*variable).is_some_and(|column| {
+                                        !self
+                                            .get_table_info(atom.table)
+                                            .spec()
+                                            .uncacheable_columns
+                                            .get(column)
+                                            .copied()
+                                            .unwrap_or(false)
+                                    })
+                            })
+                            .then_some(index)
+                    })
+                    .collect::<Vec<_>>()
+            };
 
             let union_find_table = self.get_table(union_find);
             let mut expected = HashMap::default();
+            let mut pushdown_keys = Vec::new();
+            let mut seen_pushdown_keys = HashSet::default();
             for run in *runs {
                 let run_columns = run
                     .bindings
@@ -1166,6 +1221,14 @@ impl Database {
                     .map(|binding| (binding.name.clone(), binding.canonicalize))
                     .collect::<Vec<_>>();
                 if run_columns != first_columns {
+                    return Err(GuardedRuleSetRunError::InconsistentGroundingColumns);
+                }
+                let run_identity = run
+                    .identity
+                    .iter()
+                    .map(|column| (column.name.clone(), column.canonicalize))
+                    .collect::<Vec<_>>();
+                if run_identity != first_identity || run.identity_scope != runs[0].identity_scope {
                     return Err(GuardedRuleSetRunError::InconsistentGroundingColumns);
                 }
                 let key = run
@@ -1184,6 +1247,7 @@ impl Database {
                     run_index: run.run_index,
                     observed_matches: 0,
                     captured: None,
+                    identity: None,
                 };
                 if let Some(previous) = expected.insert(key, slot) {
                     return Err(GuardedRuleSetRunError::DuplicateGrounding {
@@ -1191,11 +1255,32 @@ impl Database {
                         duplicate_run_index: run.run_index,
                     });
                 }
+                if !pushdown_indices.is_empty() {
+                    let pushdown_key = pushdown_indices
+                        .iter()
+                        .map(|index| run.bindings[*index].value)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice();
+                    if seen_pushdown_keys.insert(pushdown_key.clone()) {
+                        pushdown_keys.push(pushdown_key);
+                    }
+                }
             }
 
             let search_timer = Instant::now();
             let mut action_buf = InPlaceCaptureBuffer::default();
-            self.query_rule_set_serial(rule_set, &mut action_buf);
+            if pushdown_keys.is_empty() {
+                self.query_rule_set_serial(rule_set, &mut action_buf);
+            } else {
+                for key in pushdown_keys {
+                    let bindings = pushdown_indices
+                        .iter()
+                        .zip(key.iter())
+                        .map(|(index, value)| (columns[*index].0, *value))
+                        .collect::<Vec<_>>();
+                    self.query_rule_set_serial_bounded(rule_set, &bindings, &mut action_buf);
+                }
+            }
             let action = plan.actions();
             let action_info = &rule_set.actions[action];
             if action_info.head_start > action_info.instrs.len() {
@@ -1300,6 +1385,23 @@ impl Database {
                 if let Some(slot) = expected.get_mut(key.as_slice()) {
                     slot.observed_matches += 1;
                     if slot.captured.is_none() {
+                        let mut identity = Vec::with_capacity(identity_columns.len());
+                        for (variable, canonicalize, name) in &identity_columns {
+                            let Some(values) = bindings.get(*variable) else {
+                                return Err(GuardedRuleSetRunError::UnknownGroundingVariable {
+                                    name: name.clone(),
+                                });
+                            };
+                            let [value] = values else {
+                                return Err(GuardedRuleSetRunError::InvalidQueryHeadBoundary);
+                            };
+                            identity.push(canonicalize_grounded_value(
+                                union_find_table,
+                                *value,
+                                *canonicalize,
+                            ));
+                        }
+                        slot.identity = Some(identity.into_boxed_slice());
                         slot.captured = Some(FilteredBinding { action, bindings });
                     }
                 }
@@ -1323,6 +1425,9 @@ impl Database {
             for (_, slot) in expected {
                 selected[slot.run_index] = Some((
                     group_index,
+                    runs[0].identity_scope.clone(),
+                    slot.identity
+                        .expect("one observed grounded match must retain its identity"),
                     slot.captured
                         .expect("one observed grounded match must retain filtered bindings"),
                 ));
@@ -1331,6 +1436,23 @@ impl Database {
 
         if selected.iter().any(Option::is_none) {
             return Err(GuardedRuleSetRunError::InvalidGroundedRunOrder);
+        }
+        let mut selected_identities = HashMap::default();
+        for (run_index, selected) in selected.iter().enumerate() {
+            let (_, scope, identity, _) = selected
+                .as_ref()
+                .expect("grounded run order was checked immediately above");
+            if identity.is_empty() {
+                continue;
+            }
+            if let Some(first_run_index) =
+                selected_identities.insert((scope.clone(), identity.clone()), run_index)
+            {
+                return Err(GuardedRuleSetRunError::DuplicateGrounding {
+                    first_run_index,
+                    duplicate_run_index: run_index,
+                });
+            }
         }
 
         let match_counters = groups
@@ -1341,7 +1463,7 @@ impl Database {
         let mut total_apply_time = Duration::ZERO;
         let mut exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         for selected in selected {
-            let (group_index, mut captured) =
+            let (group_index, _, _, mut captured) =
                 selected.expect("grounded run order was checked immediately above");
             let rule_set = groups[group_index].0;
             let action_info = &rule_set.actions[captured.action];
@@ -1409,13 +1531,26 @@ impl Database {
     where
         B: ActionBuffer<'state, ActionId>,
     {
+        self.query_rule_set_serial_bounded(rule_set, &[], action_buf);
+    }
+
+    fn query_rule_set_serial_bounded<'state, B>(
+        &'state self,
+        rule_set: &'state RuleSet,
+        grounded: &[(Variable, Value)],
+        action_buf: &mut B,
+    ) where
+        B: ActionBuffer<'state, ActionId>,
+    {
         let Some((plan, _, _)) = rule_set.plans.values().next() else {
             return;
         };
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         let join_state = JoinState::new(self, exec_state);
         let mut binding_info = initial_binding_info(&join_state, plan);
-        if !intersect_plan_headers(&join_state, plan, &mut binding_info) {
+        if !intersect_plan_headers(&join_state, plan, &mut binding_info)
+            || !intersect_plan_grounded_bindings(&join_state, plan, &mut binding_info, grounded)
+        {
             return;
         }
         match plan {
@@ -1497,6 +1632,49 @@ fn intersect_plan_headers(
             return false;
         }
         binding_info.move_back_node(*atom, Arc::new(cur));
+    }
+    true
+}
+
+fn intersect_plan_grounded_bindings(
+    join_state: &JoinState<'_>,
+    plan: &Plan,
+    binding_info: &mut BindingInfo,
+    grounded: &[(Variable, Value)],
+) -> bool {
+    for (variable, value) in grounded {
+        for (atom_id, atom) in plan.atoms().iter() {
+            if atom.table.is_dummy() {
+                continue;
+            }
+            let Some(column) = atom.get_col(*variable) else {
+                continue;
+            };
+            let processed = join_state.db.process_constraints(
+                atom.table,
+                &[Constraint::EqConst {
+                    col: column,
+                    val: *value,
+                }],
+            );
+            // Callers select only cacheable columns, but keeping this fallback
+            // here makes the bounded executor an overapproximation if a table
+            // capability changes after planning.
+            if !processed.slow.is_empty() {
+                continue;
+            }
+            if processed.subset.is_empty() {
+                return false;
+            }
+            let mut current = Arc::try_unwrap(binding_info.unwrap_val(atom_id)).unwrap();
+            current
+                .subset
+                .intersect(processed.subset.as_ref(), &join_state.pool);
+            if current.subset.is_empty() {
+                return false;
+            }
+            binding_info.move_back_node(atom_id, Arc::new(current));
+        }
     }
     true
 }
@@ -2700,6 +2878,7 @@ struct GroundedCaptureSlot {
     run_index: usize,
     observed_matches: usize,
     captured: Option<FilteredBinding>,
+    identity: Option<Box<[Value]>>,
 }
 
 struct FilteredBinding {

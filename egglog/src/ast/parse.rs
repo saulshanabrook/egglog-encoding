@@ -1192,13 +1192,28 @@ impl Parser {
                             (":groups", [entries]) if groups.is_none() => {
                                 let mut parsed = Vec::new();
                                 for entry in entries.expect_list("packed run-rule groups")? {
-                                    let [rule, variables] =
-                                        entry.expect_list("packed run-rule group")?
-                                    else {
-                                        return error!(
-                                            entry.span(),
-                                            "packed run-rule group must be (<rule name string> (<variable>*))"
-                                        );
+                                    let fields = entry.expect_list("packed run-rule group")?;
+                                    let (rule, variables, logical) = match fields {
+                                        [rule, variables] => (rule, variables, &[][..]),
+                                        [rule, variables, option, logical]
+                                            if option
+                                                .expect_atom("packed run-rule group option")?
+                                                == ":logical" =>
+                                        {
+                                            (
+                                                rule,
+                                                variables,
+                                                logical.expect_list(
+                                                    "packed logical selector variables",
+                                                )?,
+                                            )
+                                        }
+                                        _ => {
+                                            return error!(
+                                                entry.span(),
+                                                "packed run-rule group must be (<rule name string> (<point variable>*)) or (<rule name string> (<point variable>*) :logical (<logical variable>*))"
+                                            );
+                                        }
                                     };
                                     let variables = variables
                                         .expect_list("packed run-rule group variables")?
@@ -1208,10 +1223,18 @@ impl Parser {
                                         })
                                         .collect::<Result<Vec<_>, _>>()?
                                         .into_boxed_slice();
+                                    let logical = logical
+                                        .iter()
+                                        .map(|variable| {
+                                            variable.expect_atom("packed logical selector variable")
+                                        })
+                                        .collect::<Result<Vec<_>, _>>()?
+                                        .into_boxed_slice();
                                     parsed.push(GenericPackedRuleGroup {
                                         span: entry.span(),
                                         rule: rule.expect_string("packed run-rule name")?,
                                         variables,
+                                        logical,
                                     });
                                 }
                                 groups = Some(parsed);

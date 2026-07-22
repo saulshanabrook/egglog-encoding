@@ -84,9 +84,9 @@ struct Args {
     #[clap(long)]
     proof_testing: bool,
     /// Replace one supported input program's computation schedule with a
-    /// causally sliced sequence of guarded rule applications before strict
-    /// proof testing.
-    #[clap(long, requires = "proof_testing")]
+    /// positive-check-rooted sequence of guarded rule applications before
+    /// proof-enabled replay. Requires `--proofs` or `--proof-testing`.
+    #[clap(long)]
     causal_slice: bool,
 }
 
@@ -117,6 +117,10 @@ where
 
     let args = Args::parse_from(args);
 
+    if args.causal_slice && !args.proofs && !args.proof_testing {
+        log::error!("--causal-slice requires --proofs or --proof-testing");
+        std::process::exit(2);
+    }
     if args.timing_summary.is_some() && args.threads != 1 {
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");
         std::process::exit(2);
@@ -184,7 +188,7 @@ where
                 let template = causal_slice_egraph
                     .take()
                     .expect("causal slicing validated exactly one input");
-                let replay = if args.proof_testing {
+                let replay = if args.proofs || args.proof_testing {
                     causal_slice::causal_slice_proof_replay_program_with_egraph(
                         filename,
                         &original_program,

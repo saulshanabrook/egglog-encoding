@@ -1322,7 +1322,11 @@ pub(crate) type ResolvedPackedRunRuleBatch = GenericPackedRunRuleBatch<ResolvedC
 pub struct GenericPackedRuleGroup<Leaf> {
     pub span: Span,
     pub rule: String,
+    /// Columns selected by point-evaluating their closed witnesses.
     pub variables: Box<[Leaf]>,
+    /// Columns selected by lowering their witness-DAG roots as logical query
+    /// structure. Fire witness indices list point columns first, then these.
+    pub logical: Box<[Leaf]>,
 }
 
 /// One chronologically ordered firing. The first index selects a rule group;
@@ -1471,6 +1475,13 @@ where
                         .map(&mut *leaf)
                         .collect::<Vec<_>>()
                         .into_boxed_slice(),
+                    logical: group
+                        .logical
+                        .into_vec()
+                        .into_iter()
+                        .map(&mut *leaf)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
                 })
                 .collect(),
             fires: self.fires,
@@ -1535,10 +1546,14 @@ impl<Head: Display, Leaf: Display> Display for GenericPackedRunRuleBatch<Head, L
             }
             write!(
                 f,
-                "({} ({}))",
+                "({} ({})",
                 Literal::String(group.rule.clone()),
                 ListDisplay(&group.variables, " ")
             )?;
+            if !group.logical.is_empty() {
+                write!(f, " :logical ({})", ListDisplay(&group.logical, " "))?;
+            }
+            write!(f, ")")?;
         }
         write!(f, ") :fires (")?;
         for (index, fire) in self.fires.iter().enumerate() {

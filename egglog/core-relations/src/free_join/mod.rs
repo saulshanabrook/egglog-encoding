@@ -110,13 +110,22 @@ pub struct GroundedBinding {
     pub canonicalize: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedIdentityColumn {
+    pub name: Arc<str>,
+    pub canonicalize: bool,
+}
+
 /// One expected grounding within a same-prestate batch. `run_index` preserves
 /// the original cross-rule firing order after each distinct rule has been
-/// queried once.
+/// queried once. An empty `identity` disables cross-rule duplicate detection;
+/// the per-rule expected-key map still rejects duplicate selector keys.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroundedRuleSetRun {
     pub run_index: usize,
     pub bindings: Box<[GroundedBinding]>,
+    pub identity_scope: Arc<str>,
+    pub identity: Box<[GroundedIdentityColumn]>,
 }
 
 /// Invalid input to guarded single-rule execution.
@@ -300,8 +309,8 @@ impl SubAtom {
 #[derive(Debug, Clone)]
 pub(crate) struct VarInfo {
     pub(crate) occurrences: Vec<SubAtom>,
-    /// Whether or not this variable shows up in the "actions" portion of a
-    /// rule.
+    /// Whether this variable must survive relational query evaluation for the
+    /// action tape or another match-time consumer such as a grounded guard.
     pub(crate) used_in_rhs: bool,
     pub(crate) defined_in_rhs: bool,
     pub(crate) name: Option<Arc<str>>,

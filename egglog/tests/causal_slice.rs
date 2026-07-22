@@ -68,6 +68,7 @@ fn replay_firings(source: &str) -> Vec<(String, Vec<(String, String)>)> {
                         group
                             .variables
                             .iter()
+                            .chain(group.logical.iter())
                             .zip(fire.witnesses.iter())
                             .map(|(variable, witness)| {
                                 (
@@ -1793,6 +1794,69 @@ fn projected_equality_key_recovers_omitted_complete_head_binding() {
 }
 
 #[test]
+fn temporal_constructor_aliases_emit_compact_logical_selectors_strictly() {
+    let source = r#"
+        (datatype Type (A) (B))
+        (datatype Expr (Box Type i64))
+        (relation Trigger ())
+        (relation Alias (i64 Expr))
+        (relation Out (i64 Expr))
+        (ruleset merge)
+        (ruleset alias)
+        (ruleset derive)
+
+        (Box (B) 0)
+        (Box (A) 0)
+        (Box (B) 1)
+        (Box (A) 1)
+        (Trigger)
+
+        (rule ((Trigger))
+              ((union (A) (B)))
+              :ruleset merge
+              :name "unify")
+        (rule ((Trigger))
+              ((Alias 1 (Box (A) 0))
+               (Alias 1 (Box (A) 1)))
+              :ruleset alias
+              :name "seed-aliases")
+        (rule ((Alias tag e))
+              ((Out tag e))
+              :ruleset derive
+              :name "copy")
+
+        (run-schedule (run merge) (run alias) (run derive))
+        (check (Out 1 (Box (A) 0)))
+        (check (Out 1 (Box (A) 1)))
+    "#;
+
+    let replay =
+        causal_slice_proof_replay_program(Some("temporal-logical-selector.egg".to_owned()), source)
+            .unwrap();
+    let copies = replay_firings(&replay.source)
+        .into_iter()
+        .filter(|(rule, _)| rule == "copy")
+        .collect::<Vec<_>>();
+    assert_eq!(copies.len(), 2);
+    assert!(copies.iter().all(|(_, bindings)| {
+        bindings.first() == Some(&("tag".to_owned(), "1".to_owned()))
+            && bindings.get(1).is_some_and(|(variable, _)| variable == "e")
+    }));
+    assert!(replay.source.contains(":logical (e)"), "{}", replay.source);
+
+    for make_egraph in [EGraph::default, || {
+        EGraph::new_with_proofs().with_proof_testing()
+    }] {
+        make_egraph()
+            .parse_and_run_program(
+                Some("temporal-logical-selector-replay.egg".to_owned()),
+                &replay.source,
+            )
+            .unwrap();
+    }
+}
+
+#[test]
 fn decomposed_opaque_rule_can_be_traced_and_sliced_away() {
     let source = r#"
         (datatype Expr (Node i64) (Free Expr Expr))
@@ -2105,21 +2169,75 @@ fn prefix_replay_keeps_a_closed_zero_binding_initializer() {
 }
 
 #[test]
-fn one_wave_math_fixture_prefix_replays_ordinary_and_strictly() {
-    let source = include_str!("math-microbenchmark.egg").replace("(run 11)", "(run 1)");
-    let slice = causal_slice_program(Some("math-one-wave.egg".to_owned()), &source).unwrap();
+fn one_wave_math_fixture_prefix_fallbacks_still_replay_ordinary_and_strictly() {
+    let source = include_str!("math-microbenchmark.egg")
+        .replace("(run 11)", "(run 1)")
+        .replace(
+            "(check\n  (= (Pow (Var \"x\") (Const 2))\n     (Mul (Var \"x\") (Var \"x\"))))\n",
+            "",
+        );
+    let slice = causal_slice_program(Some("math-one-wave-prefix.egg".to_owned()), &source).unwrap();
     assert_eq!(slice.stats.prefix_fallbacks, 3);
     assert_eq!(slice.rule_mapping.len(), 24);
     assert!(!slice.source.contains("(run 1)"));
     assert!(slice.source.contains("run-rule"));
 
     EGraph::default()
-        .parse_and_run_program(Some("math-one-wave-replay.egg".to_owned()), &slice.source)
+        .parse_and_run_program(
+            Some("math-one-wave-prefix-replay.egg".to_owned()),
+            &slice.source,
+        )
         .unwrap();
     EGraph::new_with_proofs()
         .with_proof_testing()
-        .parse_and_run_program(Some("math-one-wave-strict.egg".to_owned()), &slice.source)
+        .parse_and_run_program(
+            Some("math-one-wave-prefix-strict.egg".to_owned()),
+            &slice.source,
+        )
         .unwrap();
+}
+
+#[test]
+fn one_wave_math_fixture_positive_check_replays_ordinary_and_strictly() {
+    let source = include_str!("math-microbenchmark.egg").replace("(run 11)", "(run 1)");
+    let replay =
+        causal_slice_proof_replay_program(Some("math-one-wave.egg".to_owned()), &source).unwrap();
+    assert_eq!(replay.stats.prefix_fallbacks, 0);
+    assert_eq!(replay.rule_mapping.len(), 1);
+    assert!(!replay.source.contains("(run 1)"));
+    assert!(replay.source.contains("run-rule"));
+
+    let pow_square = replay
+        .rule_mapping
+        .iter()
+        .find(|mapping| mapping.source_command_index == 14)
+        .expect("the Pow-square rewrite should remain mapped");
+    assert!(has_replay_firing(
+        &replay.source,
+        &pow_square.registered_name,
+        &[("x", r#"(Var "x")"#)],
+    ));
+
+    EGraph::default()
+        .parse_and_run_program(Some("math-one-wave-replay.egg".to_owned()), &replay.source)
+        .unwrap();
+
+    for (filename, program) in [
+        ("math-one-wave-original-strict.egg", source.as_str()),
+        ("math-one-wave-causal-strict.egg", replay.source.as_str()),
+    ] {
+        let outputs = EGraph::new_with_proofs()
+            .with_proof_testing()
+            .parse_and_run_program(Some(filename.to_owned()), program)
+            .unwrap();
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, egglog::CommandOutput::ProveExists { .. }))
+                .count(),
+            1,
+        );
+    }
 }
 
 #[test]

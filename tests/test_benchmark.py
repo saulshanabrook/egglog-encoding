@@ -100,6 +100,24 @@ def test_pair_cli_accepts_strict_and_causal_proof_treatments() -> None:
         models.EndpointRequest(targets.parse_target("."), "dd", "causal-proof-testing")
 
 
+def test_pair_cli_accepts_nonextracting_causal_proof_treatment() -> None:
+    args = benchmark.parse_benchmark_args(
+        [
+            "--compare-treatment",
+            "proofs",
+            "--treatment",
+            "causal-proofs",
+        ]
+    )
+    baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert baseline.treatment == "proofs"
+    assert candidate.treatment == "causal-proofs"
+
+    with pytest.raises(ValueError, match="backend dd does not support treatment causal-proofs"):
+        models.EndpointRequest(targets.parse_target("."), "dd", "causal-proofs")
+
+
 def test_pair_cli_accepts_named_default_workloads() -> None:
     args = benchmark.parse_benchmark_args(
         [

@@ -143,11 +143,19 @@ pub struct GroundedRuleBinding {
     pub canonicalize: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroundedRuleIdentityColumn {
+    pub variable: Arc<str>,
+    pub canonicalize: bool,
+}
+
 /// One complete source-level grounding, with an implicit exact-one guard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GroundedRuleBatchEntry {
     pub rule: RuleId,
     pub bindings: Box<[GroundedRuleBinding]>,
+    pub identity_scope: Arc<str>,
+    pub identity: Box<[GroundedRuleIdentityColumn]>,
 }
 
 impl Timestamp {
@@ -1553,6 +1561,9 @@ struct RuleInfo {
     query: rule::Query,
     owned_external_funcs: Vec<ExternalFunctionId>,
     cached_plan: Option<CachedPlanInfo>,
+    /// Grounded guards must retain every named LHS column so projected
+    /// extensions still contribute to exact match multiplicity.
+    grounded_cached_plan: Option<CachedPlanInfo>,
     desc: Arc<str>,
 }
 
@@ -2599,16 +2610,27 @@ fn run_grounded_rule_batch_impl(
                     })
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),
+                identity_scope: run.identity_scope.clone(),
+                identity: run
+                    .identity
+                    .iter()
+                    .map(|column| core_relations::GroundedIdentityColumn {
+                        name: column.variable.clone(),
+                        canonicalize: column.canonicalize,
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
             });
     }
 
     let mut rule_sets = Vec::with_capacity(grouped.len());
     for (rule, _) in &grouped {
         let info = &mut rule_info[*rule];
-        if info.cached_plan.is_none() {
-            info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
+        if info.grounded_cached_plan.is_none() {
+            info.grounded_cached_plan =
+                Some(info.query.build_grounded_cached_plan(db, &info.desc)?);
         }
-        let cached_plan = info.cached_plan.as_ref().unwrap().plan.clone();
+        let cached_plan = info.grounded_cached_plan.as_ref().unwrap().plan.clone();
         let mut builder = db.new_rule_set();
         let _ = builder.add_rule_from_cached_plan(&cached_plan, &[]);
         rule_sets.push(builder.build());

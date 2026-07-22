@@ -1,5 +1,185 @@
 # Causal Slice v0 Results
 
+## Final five-workload checkpoint: 2026-07-22
+
+This section supersedes every older status and recommendation below. The
+branch was fetched before work began. Local `HEAD` and
+`origin/agent/causal-slice-arena-v0` were both
+`ef15a734a6b0cf2dd22ad5ce7d4945fd68f752a4`; that exact clean commit is the
+pinned starting endpoint for the diff and native benchmarks.
+
+The final checkpoint admits all five requested workloads through one ordinary
+native execution with causal recording, one backward slice, generated ordinary
+replay, and unchanged strict proof replay. The Math fixture keeps `(run 11)`
+and adds the non-reflexive post-run observation
+`Pow(x, 2) = Mul(x, x)`. It retains one causal firing and introduces no
+`(prove ...)` command.
+
+Implementation decision: keep point-stable bindings as the compact fast path;
+when they are insufficient, lower a logical selector from Egglog's existing
+normalized typed query and the shared witness DAG. Resolve all fires in one
+original-rule group against one shared pre-state, require every exact-one guard
+before executing any effect, and then run each unchanged complete head once in
+ordinal order. This reuses native query planning and execution. It adds no
+second evaluator, final-state search, source-tree expansion, raw runtime ID,
+repeated execution, delta debugging, or general container-version arena.
+
+### Admission matrix
+
+| Workload | Native | Causal generation | Ordinary replay | Unchanged strict replay |
+|---|---:|---:|---:|---:|
+| Math | pass | pass | pass | pass |
+| Eggcc | pass | pass | pass | pass |
+| Pointer | pass | pass | pass | pass |
+| Hardboiled | pass | pass | pass | pass |
+| Luminal | pass | pass | pass | pass |
+
+Generated proof replays are schedule-free and guarded; no workload is skipped
+or selected by name. The public `causal-proof-testing` treatment covers
+generation plus strict replay. Each emitted file was also executed directly in
+ordinary mode. The original positive observations remain in the emitted
+programs and therefore remain the replay acceptance boundary.
+
+### Generation phases and slice volume
+
+These are serialized release runs. `Trace` is the single instrumented native
+execution; `elaborate` builds replay evidence; `slice` is the backward graph
+walk. RSS is the process peak for generation, before the separately measured
+strict replay.
+
+| Workload | Trace | Elaborate | Slice | Validate | Generator total | Peak RSS | Retained / Prefix | Source bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Math | 0.868 s | 11.277 s | 75.3 ms | 4.5 ms | 12.242 s | 4.77 GiB | 1 / 0 | 2,349 -> 800 |
+| Eggcc | 1.436 s | 13.486 s | 14.9 ms | 18.0 ms | 15.070 s | 723 MiB | 1 / 0 | 254,062 -> 149,103 |
+| Pointer | 21.6 ms | 9.7 ms | 0.1 ms | 0.3 ms | 42.7 ms | 27.2 MiB | 1 / 0 | 5,958 -> 883 |
+| Hardboiled | 0.199 s | 1.223 s | 0.827 s | 0.576 s | 2.871 s | 369 MiB | 30,465 / 26,592 | 79,736 -> 2,551,944 |
+| Luminal | 0.368 s | 1.451 s | 1.4 ms | 0.7 ms | 1.993 s | 345 MiB | 1 / 0 | 455,788 -> 4,274 |
+
+| Workload | Pending / promoted | Source events | Dependencies | Witnesses |
+|---|---:|---:|---:|---:|
+| Math | 944,432 / 944,395 | 7 | 12,786,352 | 3,117,894 |
+| Eggcc | 290,502 / 204,558 | 87 | 1,152,191 | 119,444 |
+| Pointer | 706 / 706 | 2,255 | 5,076 | 2,903 |
+| Hardboiled | 36,376 / 35,558 | 39 | 632,987 | 103,623 |
+| Luminal | 12,566 / 11,825 | 1,512 | 128,327 | 5,897 |
+
+Math's former 15-minute elaboration blocker was removed by indexing witness
+syntax instances and using constant-time application-instance membership.
+Hardboiled generation is only 3.23 s wall time. Its end-to-end cost is instead
+strict replay of a conservative 30,465-fire proof: 26,592 Prefix dependencies
+expand the source to 2.55 MB, and each retained logical obligation must be
+prepared and queried. A collision-safe selector-shape cache removed repeated
+full-tree hashing and improved the preceding 83.6--86.9 s cohort to the final
+30.8--32.0 s cohort, but did not remove those obligations.
+
+### Serialized release benchmark
+
+The report `/tmp/causal-five-current-20260722.jsonl` contains six successful
+rounds per endpoint and workload. `Native` is the clean pinned starting commit;
+`strict` is full proof-testing on the final binary; `causal` is generation plus
+the unchanged strict replay on the final binary. Values below are observed
+ranges. Ratio columns are bootstrap 95% confidence intervals.
+
+| Workload | Pinned native wall / RSS | Full strict wall / RSS | Causal end-to-end wall / RSS | Causal/native | Causal/strict |
+|---|---:|---:|---:|---:|---:|
+| Math | 0.558--0.581 s / 257--259 MiB | 9.79--10.75 s / 3.30--3.76 GiB | 12.62--13.86 s / 5.39--5.88 GiB | 22.0--24.2x | 1.23--1.38x |
+| Eggcc | 1.225--1.265 s / 125--127 MiB | 5.91--6.12 s / 778--784 MiB | 14.53--15.70 s / 661--665 MiB | 11.6--12.4x | 2.40--2.57x |
+| Pointer | 7.78--11.21 ms / 10.3--10.5 MiB | 394--408 ms / 115.4--115.8 MiB | 37.6--42.2 ms / 24.0--24.2 MiB | 3.99--5.55x | 0.0958--0.107x |
+| Hardboiled | 145--148 ms / 43.3--43.7 MiB | 1.238--1.251 s / 213.4--213.9 MiB | 30.78--32.05 s / 812--829 MiB | 208--217x | 24.7--25.6x |
+| Luminal | 0.453--0.466 s / 118.6--119.2 MiB | 22.03--23.53 s / 1.79--1.80 GiB | 1.96--2.51 s / 249.5--254.2 MiB | 4.01--4.99x | 0.082--0.103x |
+
+The aggregate causal/native confidence interval is 24.9--25.7x, so the target
+upper bound below 2x native is not met. Coverage and sound fail-closed behavior
+were preserved rather than reducing measured work. Current ordinary native is
+statistically unchanged from the pinned native endpoint (aggregate ratio
+0.958--1.03x), so the ratio was not improved by slowing native execution. The
+aggregate causal/strict interval is 1.49--1.57x; this does not substitute for
+the missed native target.
+
+### Current proof-maintenance comparison without extraction
+
+The strict comparison above intentionally turns checks into proof obligations.
+For the separate no-extraction question, the final CLI and public runner expose
+two distinct treatments on the same binary:
+
+- `proofs`: run the complete original workload with proof maintenance enabled;
+  ordinary `(check ...)` commands remain checks; and
+- `causal-proofs`: trace one ordinary execution, use positive checks as slice
+  roots, then run only the emitted replay with proof maintenance enabled. The
+  emitted checks remain checks and no `ProveExists` extraction runs.
+
+The treatment is not an alias for `causal-proof-testing` and has its own report
+cache identity. Six serialized rounds per endpoint and workload were collected
+through the normal append-only `.reports.jsonl`; all 60 runs succeeded. Both
+endpoints use binary SHA-256
+`611badf653c91b79ba479fcd658db901bc6f296e2a16b0d4438781318976deac`,
+so this isolates the treatment rather than a source revision.
+
+| Workload | Full proofs wall / RSS | Causal proofs wall / RSS | Wall ratio | RSS ratio |
+|---|---:|---:|---:|---:|
+| Math | 8.63--9.22 s / 3.3--3.7 GiB | 12.1--13.9 s / 4.9--6.2 GiB | 1.35--1.57x | 1.37--1.80x |
+| Eggcc | 5.36--6.39 s / 757--765 MiB | 14.2--14.8 s / 659--666 MiB | 2.26--2.71x | 0.865--0.877x |
+| Pointer | 382--396 ms / 114.4--114.7 MiB | 36.4--40.5 ms / 23.6--23.7 MiB | 0.0933--0.105x | 0.206--0.207x |
+| Hardboiled | 637--644 ms / 210 MiB | 29.9--30.5 s / 804--828 MiB | 46.5--47.7x | 3.82--3.94x |
+| Luminal | 21.0--22.9 s / 1.8 GiB | 1.93--1.98 s / 247--250 MiB | 0.0853--0.0932x | 0.136--0.139x |
+
+The mean five-workload serial total is 37.755 s for full proofs and 59.650 s
+for causal proofs, an added 21.895 s; the suite ratio 95% confidence interval is
+1.53--1.63x. Pointer and Luminal are about 10x faster, while Math and Eggcc are
+slower. Hardboiled remains approximately 30 s even when proof extraction is
+absent. This falsifies extraction as its dominant cause: conservative
+provenance makes the slice retain 30,465 firings, and replay preparation plus
+native selector searches dominate.
+
+The cached command was:
+
+```text
+./bench.py --workload math --workload eggcc --workload pointer \
+  --workload hardboiled --workload luminal \
+  --target causal=. --treatment causal-proofs \
+  --compare-target full-proofs=. --compare-treatment proofs \
+  --detail files --rounds 6 --timeout-sec 1200 --format markdown
+```
+
+The benchmark commands used the public runner with all five repeated
+`--workload` selectors, `--rounds 6`, `--timeout-sec 1200`, `--force-run`, and
+the temporary report above. The two comparisons were:
+
+```text
+current-final=. / causal-proof-testing  versus
+start=@ef15a734a6b0cf2dd22ad5ce7d4945fd68f752a4 / off
+
+current-final=. / causal-proof-testing  versus
+strict-final=. / proof-testing
+```
+
+### Validation, diff size, and remaining step
+
+Final gates pass on the final implementation:
+
+- `make proof-tests`;
+- `make nits`;
+- `make check`, including the complete Python/Rust workspace suite, Clippy,
+  doctests, snapshots, and DD timing-summary gate;
+- `cargo fmt --all -- --check`; and
+- `git diff --check`.
+
+Focused coverage includes 156 causal-slice tests and 40 packed-rule tests. New
+ordinary/strict canaries cover missing and projected logical leaves, duplicate
+logical roots, primitive roots, same- and cross-shape duplicates, multiple
+selector shapes with equal atom counts, shared-prestate atomicity, aliasing,
+and the Math proof snapshot. Proof instrumentation is byte-for-byte unchanged.
+
+The requested production-LoC reduction was not compatible with reaching this
+checkpoint: production Rust libraries plus the benchmark runner add 1,305
+lines and delete 214, net `+1,091`. `egglog/src/causal_slice.rs` grows from
+15,641 to 15,911 lines, net
+`+270`. The next smallest performance and complexity step is to transport exact
+premise support from native joins and batch the remaining strict logical
+obligations. For Hardboiled, that should replace conservative Prefix retention
+and repeated selector queries; optimizing the already-small backward graph walk
+would not address the measured bottleneck.
+
 ## Projected replay-key and temporal-Vec checkpoint: 2026-07-21
 
 This checkpoint was developed on top of

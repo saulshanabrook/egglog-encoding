@@ -347,6 +347,7 @@ impl RuleBuilder<'_> {
             query: self.query,
             owned_external_funcs: std::mem::take(&mut self.resources.external_funcs),
             cached_plan: None,
+            grounded_cached_plan: None,
             desc: self.desc,
         };
         debug!("created rule {res:?} / {}", info.desc);
@@ -793,12 +794,19 @@ impl Query {
         qb: QueryBuilder,
         mut inner: Bindings,
         desc: &str,
+        retain_all_named: bool,
     ) -> Result<core_relations::RuleId> {
         let mut rb = qb.build();
         inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
         self.add_rule
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
+        if retain_all_named {
+            for (variable, _) in self.vars.iter().filter(|(_, info)| info.name.is_some()) {
+                let entry = inner.mapping[variable];
+                rb.retain_variables([&entry]);
+            }
+        }
         Ok(rb.build_with_description(desc))
     }
 
@@ -807,13 +815,33 @@ impl Query {
         db: &mut core_relations::Database,
         desc: &str,
     ) -> Result<CachedPlanInfo> {
+        self.build_cached_plan_with_retention(db, desc, false)
+    }
+
+    /// Build a grounded exact-match plan that retains every named LHS
+    /// variable, including head-unused extensions that still contribute to
+    /// logical match multiplicity.
+    pub(crate) fn build_grounded_cached_plan(
+        &self,
+        db: &mut core_relations::Database,
+        desc: &str,
+    ) -> Result<CachedPlanInfo> {
+        self.build_cached_plan_with_retention(db, desc, true)
+    }
+
+    fn build_cached_plan_with_retention(
+        &self,
+        db: &mut core_relations::Database,
+        desc: &str,
+        retain_all_named: bool,
+    ) -> Result<CachedPlanInfo> {
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
         let mut atom_mapping = Vec::with_capacity(self.atoms.len());
         for (table, entries, _schema_info) in &self.atoms {
             atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
         }
-        let rule_id = self.run_rules_and_build(qb, inner, desc)?;
+        let rule_id = self.run_rules_and_build(qb, inner, desc, retain_all_named)?;
         let rs = rsb.build();
         let plan = Arc::new(rs.build_cached_plan(rule_id));
         Ok(CachedPlanInfo { plan, atom_mapping })

@@ -12,7 +12,8 @@ use std::sync::{Arc, RwLock};
 use anyhow::{Result, bail};
 use egglog_bridge::{
     ActionRegistry, EGraph, GroundedRuleBatchEntry as BridgeGroundedRuleBatchEntry,
-    GroundedRuleBinding as BridgeGroundedRuleBinding, GuardedRuleBatchRunResult,
+    GroundedRuleBinding as BridgeGroundedRuleBinding,
+    GroundedRuleIdentityColumn as BridgeGroundedRuleIdentityColumn, GuardedRuleBatchRunResult,
     GuardedRuleRunResult, QueryEntry, RuleBuilder,
 };
 
@@ -279,6 +280,16 @@ impl Backend for EGraph {
                         variable: binding.variable.clone(),
                         value: binding.value,
                         canonicalize: matches!(binding.ty, ColumnTy::Id),
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                identity_scope: run.identity_scope.clone(),
+                identity: run
+                    .identity
+                    .iter()
+                    .map(|column| BridgeGroundedRuleIdentityColumn {
+                        variable: column.variable.clone(),
+                        canonicalize: matches!(column.ty, ColumnTy::Id),
                     })
                     .collect::<Vec<_>>()
                     .into_boxed_slice(),

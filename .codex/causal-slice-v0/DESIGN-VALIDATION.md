@@ -1,45 +1,88 @@
 # Causal Slice v0 Design Validation
 
-Status: Bronze, exact single-output `:merge new` state, raw/typed equality
-forests, positive-check-rooted static proof projection, projected packed replay
-keys, and direct/repeated stable-ID Vec temporal support are implemented and
-tested. General
-logical selectors, mutable containers other than the admitted Vec transition,
-and general sequential-wave semantics remain explicit boundaries.
+Status: final five-workload checkpoint. Math, Eggcc, Pointer, Hardboiled, and
+Luminal pass native execution, causal generation, generated ordinary replay,
+and unchanged strict proof replay. Unsupported paths remain fail-closed.
 
-Date: 2026-07-21.
+Date: 2026-07-22.
 
-## Current replay-key and container validation
+## Final architecture and validation
 
-The current implementation keeps complete logical groundings internally but
-may emit a deterministic maximal subset of their source bindings. Every packed
-fire still has an exact-one guard and recovers the complete environment before
-executing the complete head. Planning occurs after the native engine has
-reported every match in one shared-prestate wave and before that wave's unions
-are committed.
+This section supersedes the dated design states below. The production invariant
+remains one ordinary native execution with lightweight causal recording,
+followed by one backward slice and one unchanged strict replay. The system
+retains one sound observed derivation; it does not search for every derivation
+or a globally minimum slice.
 
-| Proposed invariant | Status | Evidence or correction |
+The accepted implementation decision is deliberately narrow: point-stable
+source bindings remain the replay-selector fast path. When they cannot uniquely
+identify a firing, `run-rule-batch-packed` carries a compact logical group
+lowered from the existing normalized typed query and shared witness DAG. Each
+logical root is independently bound to its captured source variable. The
+runtime prepares the selector through the existing native query stack, queries
+every requested fire against one common pre-state, checks all exact-one guards
+before any head effect, and then executes each complete captured head once in
+original ordinal order.
+
+Base-valued logical parameters are pushed down only when their exact raw,
+noncanonical columns are replay-stable. Canonical identities are never
+serialized or pre-seeded. Residual typed atoms, canonical equality checks,
+exact-one guards, complete-grounding identity, and delayed heads remain the
+authoritative postfilter. A collision-safe cache buckets selector shapes by
+atom and parameter counts and then compares complete atoms for equality, so it
+avoids repeated witness-tree hashing without conflating equal-sized shapes.
+
+| Invariant or hypothesis | Final status | Evidence or correction |
 |---|---|---|
-| a partial packed key can execute the complete captured head | Confirmed | ordinary and strict-proof tests cover an omitted head variable and an omitted query-lookup variable |
-| a zero-variable packed key is meaningful | Confirmed when exactly one complete match exists | the exact guard observes one match and the complete head executes |
-| an ambiguous projected key is harmless | Falsified | the packed guard observes two matches and applies no head effects |
-| retained/effective events alone are enough to plan a key | Falsified | successful no-op matches are candidates and can make a projected key ambiguous |
-| only matches reported again in the current seminaive wave matter | Falsified | replay queries the full current database, so planning includes earlier still-live matches |
-| repeated occurrences imply distinct replay candidates | Falsified | identical complete logical groundings are deduplicated before projected-key uniqueness is tested |
-| a witness record's endpoint proves that its syntax point-evaluates to that endpoint | Falsified | Hardboiled's `(Int 32 1)` syntax denotes raw endpoints 51 and 271 at one match boundary |
-| maximal point-stable source columns can name every Hardboiled firing | Falsified | wave 19 of `__causal_slice_v0_b8339_e8454_c111` has 84 groundings but only non-unique stable columns `t` and `bop` |
-| expanding structural selectors in ordinary source is a viable fallback | Falsified for this workload | the reverted Hardboiled probe ended after 44.57 s at about 2.88 GB maximum RSS |
-| a historical container-version arena is required for stable-ID Vec replay | Falsified by the admitted fragment | consumers snapshot an immutable support `DepId`; rebuilding replaces one typed current-support pointer |
-| a complete replayable Prefix can soundly support a deterministic stable-ID Vec transition | Confirmed for the retained canary | a later rule observes the refreshed parent row and ordinary plus unchanged strict replay pass |
-| global rejection of every dirty witnessed container is necessary | Implementation changed; non-Vec reachability canaries pending | unsupported transitions are deferred dependencies in code; the current irrelevant-branch canary covers supported Vec and does not yet test deferred poison |
+| a partial point key can recover and execute the complete head | Confirmed | ordinary and strict canaries cover omitted head and query variables |
+| a zero-variable point key is meaningful | Confirmed only for exactly one complete grounding | the exact-one guard rejects zero or multiple matches atomically |
+| logical roots may share projected leaves | Confirmed | the typed DAG is normalized once while roots remain independently bound |
+| an incomplete logical atom may be ignored | Falsified | missing-leaf and missing-atomic-root canaries fail closed |
+| duplicate source groundings are harmless | Falsified | same-shape and cross-shape canaries reject before any head; complete identity is shape-aware |
+| equal atom counts identify one selector shape | Falsified | the cache performs exact atom equality; a same-count collision canary passes strictly |
+| each packed fire may observe prior heads in its group | Falsified | a shared-prestate canary proves all guards resolve before delayed heads execute |
+| canonical runtime IDs are replay-stable parameters | Falsified | only exact raw base-valued columns are pushed down; canonical IDs stay inside native execution |
+| expanding witness DAGs into ordinary selector trees is viable | Falsified | the reverted Hardboiled experiment took 44.57 s and 2.88 GB before completing generation |
+| a general container-version arena is required for the retained workload set | Falsified | one immutable current-support pointer plus conservative Prefix dependencies admits the required stable-ID Vec transition |
+| backward traversal is the main cost | Falsified | the largest slice walk is 0.827 s; Math witness elaboration and Hardboiled strict selector replay dominate |
 
-The next semantic patch is compact logical selectors for
-`run-rule-batch-packed`, not a general container-version arena. Map, Set,
-MultiSet, Pair, collisions, outer-ID changes, and custom merge reads remain
-unsupported until focused normalization/transition receipts establish their
-replay contracts. The Vec fallback is deliberately conservative and may retain
-an expensive prefix; exact child-remap receipts remain a later size
-optimization.
+The logical selector is generic syntax, parser, typechecker, bridge, and native
+runtime behavior; it is not a causal-slicer-only evaluator. Grounded native
+plans can explicitly retain named LHS variables, and temporary replay rules use
+the same backend query builder. The causal planner merely chooses stable point
+variables, then logical application roots, and fails closed if neither can
+prove complete identity.
+
+The CLI selects the positive-check-rooted projection for either proof mode.
+`causal-proofs` performs ordinary trace, check-rooted slicing, and replay with
+proof maintenance while leaving checks unchanged; `causal-proof-testing`
+separately turns checks into proof obligations. Their benchmark identities are
+distinct. On the same final binary, six-round no-extraction measurement is
+1.53--1.63x full proofs across the five-workload suite. Hardboiled remains
+46.5--47.7x slower, proving that proof extraction is not its dominant cost.
+
+Math's witness arena now records syntax-instance ranges at snapshot boundaries
+and keeps ordered instances plus constant-time membership. Snapshot grounding
+therefore narrows to instances visible in the relevant pre-state before exact
+endpoint checks. This changes 11-wave Math generation from a run that exceeded
+912 s to 13.29 s wall time while preserving the native trace and strict replay.
+
+Hardboiled directly demonstrates the remaining limitation. Generation takes
+3.23 s, including 0.199 s trace, 1.223 s elaboration, 0.827 s slice, and
+0.576 s validation. Provenance is indirectly responsible for proof size:
+26,592 conservative Prefix dependencies retain 30,465 firings and expand the
+source from 79,736 to 2,551,944 bytes. The direct end-to-end time is unchanged
+strict replay preparation and native queries for those obligations. Shape
+caching reduces the final six-round cohort to 30.78--32.05 s, but this is still
+208--217x pinned native, 24.7--25.6x full strict proof replay, and
+46.5--47.7x full proof maintenance without extraction.
+
+The next smallest step is exact premise-support transport from native joins,
+followed by batching of identical logical selector plans. That should remove
+Hardboiled Prefix retention and repeated strict queries while deleting
+post-hoc recovery. Map, Set, MultiSet, delete, subsume, custom merge, and
+general mutable-container histories remain outside the admitted fragment until
+a retained target path and focused receipt contract require them.
 
 ## Historical container/witness checkpoint before temporal Vec support
 

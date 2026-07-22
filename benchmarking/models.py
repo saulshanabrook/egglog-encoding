@@ -14,13 +14,21 @@ from typing import Literal
 
 Status = Literal["success", "timed-out", "failure"]
 Backend = str
-Treatment = Literal["off", "term", "proofs", "proof-testing", "causal-proof-testing"]
+Treatment = Literal[
+    "off",
+    "term",
+    "proofs",
+    "causal-proofs",
+    "proof-testing",
+    "causal-proof-testing",
+]
 DetailLevel = Literal["summary", "files", "phases", "rulesets"]
 
 TREATMENTS: tuple[Treatment, ...] = (
     "off",
     "term",
     "proofs",
+    "causal-proofs",
     "proof-testing",
     "causal-proof-testing",
 )

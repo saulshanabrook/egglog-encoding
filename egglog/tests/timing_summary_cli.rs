@@ -289,3 +289,44 @@ fn causal_slice_runs_the_emitted_program_under_strict_proof_testing() {
     assert_eq!(summary["schema_version"], 2);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn causal_slice_runs_the_check_rooted_replay_with_proofs_without_testing() {
+    let directory = temporary_directory("causal-proofs");
+    let program_path = directory.join("program.egg");
+    let summary_path = directory.join("summary.json");
+    std::fs::write(
+        &program_path,
+        r#"
+        (relation Seed (i64))
+        (relation Goal (i64))
+        (relation Irrelevant (i64))
+
+        (rule ((Seed x)) ((Goal x)) :name "seed-goal")
+        (rule ((Seed x)) ((Irrelevant x)) :name "irrelevant")
+
+        (Seed 1)
+        (run 1)
+        (check (Goal 1))
+        "#,
+    )
+    .unwrap();
+
+    let output = run_egglog(&[
+        Path::new("--causal-slice"),
+        Path::new("--proofs"),
+        Path::new("--mode"),
+        Path::new("no-messages"),
+        Path::new("--timing-summary"),
+        &summary_path,
+        &program_path,
+    ]);
+
+    assert!(
+        output.status.success(),
+        "causal proof replay failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(summary_path.is_file());
+    std::fs::remove_dir_all(directory).unwrap();
+}

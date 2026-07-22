@@ -593,13 +593,35 @@ struct WitnessRecord {
 }
 
 #[derive(Clone, Debug, Default)]
+struct AppInstances {
+    ordered: Vec<WitnessId>,
+    members: HashSet<WitnessId>,
+}
+
+impl AppInstances {
+    fn insert(&mut self, witness: WitnessId) {
+        if self.members.insert(witness) {
+            self.ordered.push(witness);
+        }
+    }
+
+    fn as_slice(&self) -> &[WitnessId] {
+        &self.ordered
+    }
+
+    fn len(&self) -> usize {
+        self.ordered.len()
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 struct WitnessArena {
     nodes: Vec<WitnessRecord>,
     ids: IndexMap<WitnessNode, WitnessId>,
     syntax_nodes: Vec<WitnessSyntaxNode>,
     syntax_ids: IndexMap<WitnessSyntaxNode, SyntaxId>,
     syntax_instances: IndexMap<SyntaxId, Vec<WitnessId>>,
-    app_instances: IndexMap<(String, String), Vec<WitnessId>>,
+    app_instances: IndexMap<(String, String), AppInstances>,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     endpoint_instances: IndexMap<TypedEndpoint, Vec<WitnessId>>,
     endpoint_sorts: IndexMap<Value, Vec<String>>,
@@ -620,6 +642,7 @@ struct WitnessSnapshot {
     node_count: usize,
     endpoints: IndexMap<TypedEndpoint, WitnessId>,
     app_instance_lengths: IndexMap<(String, String), usize>,
+    syntax_instance_lengths: IndexMap<SyntaxId, usize>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -650,7 +673,7 @@ impl WaveAppIndex {
         let instances = witnesses
             .app_instances
             .get(key)
-            .map(Vec::as_slice)
+            .map(AppInstances::as_slice)
             .unwrap_or_default();
         let group = self.groups.entry(key.clone()).or_default();
         if group.synced_len > instances.len() {
@@ -693,7 +716,34 @@ impl WitnessArena {
                 .iter()
                 .map(|(application, instances)| (application.clone(), instances.len()))
                 .collect(),
+            syntax_instance_lengths: self
+                .syntax_instances
+                .iter()
+                .map(|(syntax, instances)| (*syntax, instances.len()))
+                .collect(),
         }
+    }
+
+    fn syntax_id_for_node(&self, node: &WitnessNode) -> Option<SyntaxId> {
+        let syntax = match node {
+            WitnessNode::Literal { sort, value } => WitnessSyntaxNode::Literal {
+                sort: sort.clone(),
+                value: value.clone(),
+            },
+            WitnessNode::App {
+                sort,
+                function,
+                children,
+            } => WitnessSyntaxNode::App {
+                sort: sort.clone(),
+                function: function.clone(),
+                children: children
+                    .iter()
+                    .map(|child| self.nodes[child.index()].syntax)
+                    .collect(),
+            },
+        };
+        self.syntax_ids.get(&syntax).copied()
     }
 
     fn intern_syntax(&mut self, node: &WitnessNode) -> Result<SyntaxId, CausalSliceError> {
@@ -1015,9 +1065,7 @@ impl WitnessArena {
                 .app_instances
                 .entry((sort.clone(), function.clone()))
                 .or_default();
-            if !instances.contains(&id) {
-                instances.push(id);
-            }
+            instances.insert(id);
         }
     }
 
@@ -1238,16 +1286,24 @@ struct GroundedFire {
 enum ReplaySelector {
     /// Filled once every successful grounding for this rule and wave is known.
     Unplanned,
-    /// The ordered source variables that uniquely identify this grounding.
-    Key(Arc<[String]>),
+    /// Source columns that identify this grounding. Point columns are looked
+    /// up as closed values; logical columns retain their witness structure as
+    /// normalized query atoms tied to the original source variables.
+    Key(ReplaySelectorColumns),
     /// Kept on the firing so an irrelevant unsupported group can slice away.
     Unsupported(Arc<DeferredUnsupported>),
 }
 
+#[derive(Clone, Debug)]
+struct ReplaySelectorColumns {
+    point: Arc<[String]>,
+    logical: Arc<[String]>,
+}
+
 impl GroundedFire {
-    fn selector_variables(&self) -> Result<&Arc<[String]>, CausalSliceError> {
+    fn selector_columns(&self) -> Result<&ReplaySelectorColumns, CausalSliceError> {
         match &self.selector {
-            ReplaySelector::Key(variables) => Ok(variables),
+            ReplaySelector::Key(columns) => Ok(columns),
             ReplaySelector::Unsupported(error) => Err((**error).clone().into_error()),
             ReplaySelector::Unplanned => Err(CausalSliceError::Invariant(format!(
                 "grounded firing of `{}` in wave {} reached emission before replay-key planning",
@@ -1362,8 +1418,8 @@ struct CompactReplayFire {
     ordinal: u32,
     bindings: Box<[WitnessId]>,
     /// Prefix-only replay uses the rule model's complete variable list. A
-    /// causal grounding stores its deterministic projected replay key here.
-    selector_variables: Option<Arc<[String]>>,
+    /// causal grounding stores its deterministic point/logical replay key.
+    selector_columns: Option<ReplaySelectorColumns>,
 }
 
 /// A compact stable grouping from one match origin to indices in a trace
@@ -7761,7 +7817,7 @@ fn elaborate_prefix_replay(
                                 )
                             })?,
                             bindings: Box::new([]),
-                            selector_variables: None,
+                            selector_columns: None,
                         });
                         effective_applications += 1;
                         continue;
@@ -7887,7 +7943,7 @@ fn elaborate_prefix_replay(
                     CausalSliceError::Invariant("wave ordinal exceeded u32 capacity".to_owned())
                 })?,
                 bindings: replay_bindings.into_boxed_slice(),
-                selector_variables: None,
+                selector_columns: None,
             });
             effective_applications += 1;
         }
@@ -8058,7 +8114,7 @@ fn binding_is_replay_selector_stable(
     Ok(endpoints.len() == 1 && endpoints.contains(&binding.endpoint))
 }
 
-fn replay_grounding_key(
+fn replay_point_key(
     variables: &[String],
     index: usize,
     pending_fires: &[PendingFire],
@@ -8095,26 +8151,70 @@ fn replay_grounding_key(
     Ok(key.into_boxed_slice())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ProjectedReplayKey {
+    point: Box<[Value]>,
+    logical: Box<[SyntaxId]>,
+}
+
+struct ReplaySelectorIdentityInput<'a> {
+    point_variables: &'a [String],
+    logical_variables: &'a [String],
+    target_indices: &'a [usize],
+    candidate_indices: &'a [usize],
+    pending_fires: &'a [PendingFire],
+    model: &'a RuleModel,
+    egraph: &'a EGraph,
+    equality_forest: &'a EqualityForest,
+    witnesses: &'a WitnessArena,
+}
+
 fn replay_selector_identifies_targets(
-    variables: &[String],
-    target_indices: &[usize],
-    candidate_indices: &[usize],
-    pending_fires: &[PendingFire],
-    model: &RuleModel,
-    egraph: &EGraph,
-    equality_forest: &EqualityForest,
+    input: ReplaySelectorIdentityInput<'_>,
 ) -> Result<bool, CausalSliceError> {
-    let mut projected_groundings = HashMap::<Box<[Value]>, HashSet<Box<[Value]>>>::default();
+    let ReplaySelectorIdentityInput {
+        point_variables,
+        logical_variables,
+        target_indices,
+        candidate_indices,
+        pending_fires,
+        model,
+        egraph,
+        equality_forest,
+        witnesses,
+    } = input;
+    let projected_key = |index: usize| -> Result<ProjectedReplayKey, CausalSliceError> {
+        let fire = &pending_fires[index].grounding;
+        let logical = logical_variables
+            .iter()
+            .map(|variable| {
+                let binding = fire.bindings.get(variable).ok_or_else(|| {
+                    CausalSliceError::Invariant(format!(
+                        "grounded firing of `{}` omitted logical replay variable `{variable}`",
+                        fire.rule
+                    ))
+                })?;
+                Ok(witnesses.nodes[binding.syntax.index()].syntax)
+            })
+            .collect::<Result<Vec<_>, CausalSliceError>>()?
+            .into_boxed_slice();
+        Ok(ProjectedReplayKey {
+            point: replay_point_key(
+                point_variables,
+                index,
+                pending_fires,
+                model,
+                egraph,
+                equality_forest,
+            )?,
+            logical,
+        })
+    };
+
+    let mut projected_groundings = HashMap::<ProjectedReplayKey, HashSet<Box<[Value]>>>::default();
     for index in candidate_indices {
-        let projected = replay_grounding_key(
-            variables,
-            *index,
-            pending_fires,
-            model,
-            egraph,
-            equality_forest,
-        )?;
-        let complete = replay_grounding_key(
+        let projected = projected_key(*index)?;
+        let complete = replay_point_key(
             &model.replay_var_order,
             *index,
             pending_fires,
@@ -8128,9 +8228,11 @@ fn replay_selector_identifies_targets(
             .insert(complete);
     }
     let mut target_keys = HashSet::default();
+    let mut target_complete_keys = HashSet::default();
     for index in target_indices {
-        let key = replay_grounding_key(
-            variables,
+        let key = projected_key(*index)?;
+        let complete = replay_point_key(
+            &model.replay_var_order,
             *index,
             pending_fires,
             model,
@@ -8138,6 +8240,7 @@ fn replay_selector_identifies_targets(
             equality_forest,
         )?;
         if !target_keys.insert(key.clone())
+            || !target_complete_keys.insert(complete)
             || projected_groundings.get(&key).map(HashSet::len) != Some(1)
         {
             return Ok(false);
@@ -8235,24 +8338,90 @@ fn assign_wave_replay_selectors(
                 stable_variables.push(variable.clone());
             }
         }
-        let plan = if replay_selector_identifies_targets(
-            &stable_variables,
-            &target_indices,
-            &candidate_indices,
-            pending_fires,
-            model,
-            egraph,
-            equality_forest,
-        )? {
-            // Keep the maximal stable key. If it is not unique, no subset can
-            // become unique; minimizing it would only churn source and tests
-            // without improving the soundness boundary.
-            ReplaySelector::Key(Arc::from(stable_variables))
+        let mut logical_variables = model
+            .replay_var_order
+            .iter()
+            .filter(|variable| !stable_variables.contains(variable))
+            .filter(|variable| {
+                target_indices.iter().all(|index| {
+                    pending_fires[*index]
+                        .grounding
+                        .bindings
+                        .get(*variable)
+                        .is_some_and(|binding| {
+                            matches!(
+                                witnesses.nodes[binding.syntax.index()].node,
+                                WitnessNode::App { .. }
+                            )
+                        })
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let complete_targets_are_unique = {
+            let mut complete = HashSet::default();
+            target_indices.iter().try_fold(true, |unique, index| {
+                Ok::<_, CausalSliceError>(
+                    unique
+                        && complete.insert(replay_point_key(
+                            &model.replay_var_order,
+                            *index,
+                            pending_fires,
+                            model,
+                            egraph,
+                            equality_forest,
+                        )?),
+                )
+            })?
+        };
+        let point_identifies_targets = complete_targets_are_unique
+            && replay_selector_identifies_targets(ReplaySelectorIdentityInput {
+                point_variables: &stable_variables,
+                logical_variables: &[],
+                target_indices: &target_indices,
+                candidate_indices: &candidate_indices,
+                pending_fires,
+                model,
+                egraph,
+                equality_forest,
+                witnesses,
+            })?;
+        let logical_target_keys_are_unique = complete_targets_are_unique
+            && replay_selector_identifies_targets(ReplaySelectorIdentityInput {
+                point_variables: &stable_variables,
+                logical_variables: &logical_variables,
+                target_indices: &target_indices,
+                candidate_indices: &target_indices,
+                pending_fires,
+                model,
+                egraph,
+                equality_forest,
+                witnesses,
+            })?;
+        let plan = if point_identifies_targets {
+            logical_variables.clear();
+            ReplaySelector::Key(ReplaySelectorColumns {
+                point: Arc::from(stable_variables),
+                logical: Arc::from(logical_variables),
+            })
+        } else if complete_targets_are_unique
+            && logical_target_keys_are_unique
+            && !logical_variables.is_empty()
+        {
+            // Static syntax identity is intentionally not an admission gate:
+            // one witness syntax may have several temporal raw denotations.
+            // Preserve every unstable source column as correlated query
+            // structure and let the unchanged exact-one batch guard decide
+            // against the replay pre-state before any head effect.
+            ReplaySelector::Key(ReplaySelectorColumns {
+                point: Arc::from(stable_variables),
+                logical: Arc::from(logical_variables),
+            })
         } else {
             ReplaySelector::Unsupported(Arc::new(DeferredUnsupported {
                 location: model.span.to_string(),
                 reason: format!(
-                    "{} successful groundings of rule `{rule_name}` in traced wave {wave} cannot be uniquely identified by replay-stable source bindings {stable_variables:?}; packed logical selectors or a stable match-time endpoint handle are required",
+                    "{} successful groundings of rule `{rule_name}` in traced wave {wave} cannot form a sound packed selector from replay-stable point bindings {stable_variables:?} and structural logical bindings {logical_variables:?} (complete targets unique: {complete_targets_are_unique}, logical target keys unique: {logical_target_keys_are_unique}); a stable match-time endpoint handle is required",
                     target_indices.len(),
                 ),
             }))
@@ -13166,7 +13335,7 @@ fn congruent_app_availability_with_mode(
         output,
         equality_forest,
         dependencies,
-        candidates,
+        candidates.as_slice(),
         positions
             .iter()
             .rev()
@@ -13358,7 +13527,7 @@ fn congruent_app_availability_linear(
         output,
         equality_forest,
         dependencies,
-        candidates,
+        candidates.as_slice(),
         (0..visible).rev(),
         CongruenceEqualityMode::Deferred,
     )
@@ -13686,10 +13855,10 @@ fn ground_arg_with_witness_at(
                     .copied()
                     .filter(|witness| matches_inputs(*witness))
             } else if let Some(snapshot) = snapshot {
-                let key = (sort.to_owned(), function.clone());
-                let instances = witnesses.app_instances.get(&key);
-                let visible = instances
-                    .and_then(|_| snapshot.app_instance_lengths.get(&key).copied())
+                let syntax = witnesses.syntax_id_for_node(&node);
+                let instances = syntax.and_then(|syntax| witnesses.syntax_instances.get(&syntax));
+                let visible = syntax
+                    .and_then(|syntax| snapshot.syntax_instance_lengths.get(&syntax).copied())
                     .unwrap_or(0);
                 instances.and_then(|instances| {
                     instances[..visible.min(instances.len())]
@@ -13852,7 +14021,7 @@ fn emit_prefix_replay_commands(
         let mut root_witnesses = IndexSet::<WitnessId>::default();
         let mut witness_uses = HashMap::<WitnessId, usize>::default();
         let mut group_indices = IndexMap::<u32, u32>::default();
-        let mut group_variables = IndexMap::<u32, Arc<[String]>>::default();
+        let mut group_columns = IndexMap::<u32, ReplaySelectorColumns>::default();
         for fire in wave_fires {
             let position = (fire.wave, fire.ordinal);
             if let Some(previous) = previous_position {
@@ -13867,31 +14036,37 @@ fn emit_prefix_replay_commands(
                     "captured compact replay referenced an unknown rule index".to_owned(),
                 )
             })?;
-            let actual_variables = fire
-                .selector_variables
-                .as_deref()
-                .unwrap_or(&model.replay_var_order);
-            if let Some(expected) = group_variables.get(&fire.rule_index) {
-                if expected.as_ref() != actual_variables {
+            let (point_variables, logical_variables) = match &fire.selector_columns {
+                Some(columns) => (columns.point.as_ref(), columns.logical.as_ref()),
+                None => (model.replay_var_order.as_slice(), &[][..]),
+            };
+            if let Some(expected) = group_columns.get(&fire.rule_index) {
+                if expected.point.as_ref() != point_variables
+                    || expected.logical.as_ref() != logical_variables
+                {
                     return Err(CausalSliceError::Invariant(format!(
                         "one packed replay group for rule index {} had inconsistent selector columns",
                         fire.rule_index
                     )));
                 }
             } else {
-                group_variables.insert(
+                group_columns.insert(
                     fire.rule_index,
-                    fire.selector_variables
+                    fire.selector_columns
                         .clone()
-                        .unwrap_or_else(|| Arc::from(model.replay_var_order.clone())),
+                        .unwrap_or_else(|| ReplaySelectorColumns {
+                            point: Arc::from(model.replay_var_order.clone()),
+                            logical: Arc::from([]),
+                        }),
                 );
             }
-            if fire.bindings.len() != actual_variables.len() {
+            let variable_count = point_variables.len() + logical_variables.len();
+            if fire.bindings.len() != variable_count {
                 return Err(CausalSliceError::Invariant(format!(
                     "packed replay firing for rule index {} has {} witnesses for {} selector columns",
                     fire.rule_index,
                     fire.bindings.len(),
-                    actual_variables.len()
+                    variable_count
                 )));
             }
             for witness in &fire.bindings {
@@ -13952,7 +14127,14 @@ fn emit_prefix_replay_commands(
                 GenericPackedRuleGroup {
                     span: schedule_span.clone(),
                     rule: rule_name.clone(),
-                    variables: group_variables[rule_index]
+                    variables: group_columns[rule_index]
+                        .point
+                        .iter()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                    logical: group_columns[rule_index]
+                        .logical
                         .iter()
                         .cloned()
                         .collect::<Vec<_>>()
@@ -14044,9 +14226,11 @@ fn render_replay_commands<'a>(
             let rule_index = rules
                 .get_index_of(&fire.rule)
                 .expect("grounded replay rule was validated during modeling");
-            let selector_variables = fire.selector_variables()?;
-            let bindings = selector_variables
+            let selector_columns = fire.selector_columns()?;
+            let bindings = selector_columns
+                .point
                 .iter()
+                .chain(selector_columns.logical.iter())
                 .map(|variable| fire.bindings[variable].syntax)
                 .collect::<Vec<_>>()
                 .into_boxed_slice();
@@ -14056,7 +14240,7 @@ fn render_replay_commands<'a>(
                 wave: fire.wave,
                 ordinal: fire.ordinal,
                 bindings,
-                selector_variables: Some(Arc::clone(selector_variables)),
+                selector_columns: Some(selector_columns.clone()),
             })
         })
         .collect::<Result<Vec<_>, CausalSliceError>>()?;
@@ -14069,9 +14253,12 @@ fn replay_witness_callables<'a>(
 ) -> Result<IndexSet<String>, CausalSliceError> {
     let mut work = Vec::new();
     for fire in fires {
+        let columns = fire.selector_columns()?;
         work.extend(
-            fire.selector_variables()?
+            columns
+                .point
                 .iter()
+                .chain(columns.logical.iter())
                 .map(|variable| fire.bindings[variable].syntax),
         );
     }
@@ -14773,6 +14960,7 @@ fn validate_replay_packed_batch(
     rules: &IndexMap<String, RuleModel>,
     replay_globals: &HashSet<String>,
 ) -> Result<(), CausalSliceError> {
+    let has_witness_dag = matches!(&batch.witnesses, GenericPackedWitnesses::Dag(_));
     let witness_count = match &batch.witnesses {
         GenericPackedWitnesses::Expressions(witnesses) => {
             for witness in witnesses {
@@ -14820,19 +15008,33 @@ fn validate_replay_packed_batch(
                 group.rule
             ))
         })?;
-        let actual = group
+        if !group.logical.is_empty() && !has_witness_dag {
+            return Err(CausalSliceError::Invariant(format!(
+                "packed replay logical variables for `{}` require a witness DAG",
+                group.rule
+            )));
+        }
+        let point = group
             .variables
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
+        let logical = group.logical.iter().map(String::as_str).collect::<Vec<_>>();
         let expected = model
             .replay_var_order
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        if !is_ordered_subsequence(&actual, &expected) {
+        let mut seen = HashSet::default();
+        if !is_ordered_subsequence(&point, &expected)
+            || !is_ordered_subsequence(&logical, &expected)
+            || point
+                .iter()
+                .chain(logical.iter())
+                .any(|variable| !seen.insert(*variable))
+        {
             return Err(CausalSliceError::Invariant(format!(
-                "packed replay variables for `{}` were {actual:?}, expected an ordered subset of {expected:?}",
+                "packed replay point/logical variables for `{}` were {point:?}/{logical:?}, expected disjoint ordered subsets of {expected:?}",
                 group.rule
             )));
         }
@@ -14844,7 +15046,7 @@ fn validate_replay_packed_batch(
                 fire.group
             )));
         };
-        if fire.witnesses.len() != group.variables.len()
+        if fire.witnesses.len() != group.variables.len() + group.logical.len()
             || fire
                 .witnesses
                 .iter()
@@ -15095,7 +15297,10 @@ mod tests {
             wave: 0,
             ordinal: 0,
             bindings,
-            selector: ReplaySelector::Key(Arc::from(["x".to_owned()])),
+            selector: ReplaySelector::Key(ReplaySelectorColumns {
+                point: Arc::from(["x".to_owned()]),
+                logical: Arc::from([]),
+            }),
         };
         let mut rules = IndexMap::default();
         rules.insert(
@@ -15141,6 +15346,8 @@ mod tests {
         let two = witnesses.intern_literal("i64", Literal::Int(2)).unwrap();
         let first_endpoint = egraph.base_to_value(101_i64);
         let second_endpoint = egraph.base_to_value(102_i64);
+        let third_endpoint = egraph.base_to_value(103_i64);
+        let fourth_endpoint = egraph.base_to_value(104_i64);
         let first_expr = witnesses
             .intern_app(
                 "Expr",
@@ -15164,6 +15371,34 @@ mod tests {
         assert_eq!(
             witnesses.nodes[first_expr.index()].syntax,
             witnesses.nodes[second_expr.index()].syntax
+        );
+        let third_expr = witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![two],
+                third_endpoint,
+                DepArena::EMPTY,
+                true,
+            )
+            .unwrap();
+        let fourth_expr = witnesses
+            .intern_app(
+                "Expr",
+                "A",
+                vec![two],
+                fourth_endpoint,
+                DepArena::EMPTY,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            witnesses.nodes[third_expr.index()].syntax,
+            witnesses.nodes[fourth_expr.index()].syntax
+        );
+        assert_ne!(
+            witnesses.nodes[first_expr.index()].syntax,
+            witnesses.nodes[third_expr.index()].syntax
         );
 
         let mut var_sorts = IndexMap::default();
@@ -15238,10 +15473,11 @@ mod tests {
         })
         .unwrap();
         for pending in &distinct {
-            let ReplaySelector::Key(variables) = &pending.grounding.selector else {
+            let ReplaySelector::Key(columns) = &pending.grounding.selector else {
                 panic!("distinct scalar bindings should form a packed replay key")
             };
-            assert_eq!(variables.as_ref(), ["x"]);
+            assert_eq!(columns.point.as_ref(), ["x"]);
+            assert!(columns.logical.is_empty());
         }
 
         let mut colliding_no_op = vec![
@@ -15273,11 +15509,44 @@ mod tests {
             ))
         );
 
+        let mut structurally_distinct = vec![
+            PendingFire {
+                grounding: grounding(1, first_expr, first_endpoint),
+                effective: true,
+            },
+            PendingFire {
+                grounding: grounding(1, third_expr, third_endpoint),
+                effective: true,
+            },
+        ];
+        assign_wave_replay_selectors(ReplaySelectorPlanningInput {
+            egraph: &egraph,
+            rules: &rules,
+            witnesses: &witnesses,
+            prestate_witness_count,
+            equality_forest: &EqualityForest::default(),
+            wave: 0,
+            pending_fires: &mut structurally_distinct,
+            current_start: 0,
+            events: &mut [],
+        })
+        .unwrap();
+        for pending in &structurally_distinct {
+            let ReplaySelector::Key(columns) = &pending.grounding.selector else {
+                panic!("distinct structural bindings should form a logical selector")
+            };
+            assert_eq!(columns.point.as_ref(), ["x"]);
+            assert_eq!(columns.logical.as_ref(), ["e"]);
+        }
+
         let repeated = grounding(1, first_expr, first_endpoint);
         let mut repeated_prefix = vec![
             PendingFire {
                 grounding: GroundedFire {
-                    selector: ReplaySelector::Key(Arc::from(["x".to_owned()])),
+                    selector: ReplaySelector::Key(ReplaySelectorColumns {
+                        point: Arc::from(["x".to_owned()]),
+                        logical: Arc::from([]),
+                    }),
                     ..repeated.clone()
                 },
                 effective: true,
@@ -15305,7 +15574,8 @@ mod tests {
         .unwrap();
         assert!(matches!(
             &repeated_prefix[1].grounding.selector,
-            ReplaySelector::Key(variables) if variables.as_ref() == ["x"]
+            ReplaySelector::Key(columns)
+                if columns.point.as_ref() == ["x"] && columns.logical.is_empty()
         ));
     }
 

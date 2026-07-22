@@ -181,6 +181,16 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "--proof-testing",
         str(file_spec.absolute_path),
     ]
+    assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "causal-proofs") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--causal-slice",
+        "--proofs",
+        str(file_spec.absolute_path),
+    ]
     assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "causal-proof-testing") == [
         str(ROOT / "egglog-experimental"),
         "--mode",

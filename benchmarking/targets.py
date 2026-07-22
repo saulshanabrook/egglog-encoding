@@ -29,6 +29,7 @@ def treatment_flags(treatment: Treatment) -> list[str]:
         "off": [],
         "term": ["--term-encoding"],
         "proofs": ["--proofs"],
+        "causal-proofs": ["--causal-slice", "--proofs"],
         "proof-testing": ["--proof-testing"],
         "causal-proof-testing": ["--causal-slice", "--proof-testing"],
     }[treatment]

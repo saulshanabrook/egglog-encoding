@@ -24,7 +24,7 @@ use egglog_ast::generic_ast::{GenericAction, GenericActions, GenericExpr};
 use egglog_ast::span::Span;
 use typechecking::{FuncType, PrimitiveEffect, PrimitiveValidator, PrimitiveWithId, TypeError};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum HeadOrEq<Head> {
     Head(Head),
     Eq,
@@ -734,17 +734,6 @@ where
 }
 
 trait CanonicalizeCoreRule<Head, Leaf> {
-    fn canonicalize(
-        self,
-        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
-    ) -> GenericCoreRule<Head, Head, Leaf>
-    where
-        Self: Sized,
-    {
-        let mut substitutions = Vec::new();
-        self.canonicalize_tracking(&value_eq, &mut substitutions)
-    }
-
     fn canonicalize_tracking(
         self,
         value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
@@ -862,6 +851,7 @@ where
 }
 
 trait RemoveDuplicateVars<Head, Leaf> {
+    #[cfg(test)]
     fn remove_dup_vars(
         self,
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
@@ -996,6 +986,15 @@ pub(crate) struct CanonicalizedRule {
     pub(crate) substitutions: Box<[(ResolvedVar, ResolvedAtomTerm)]>,
 }
 
+pub(crate) fn value_eq_call(typeinfo: &TypeInfo, left: ArcSort, right: ArcSort) -> ResolvedCall {
+    let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
+    ResolvedCall::Primitive(SpecializedPrimitive {
+        prim_with_id: value_eq.clone(),
+        input: vec![left, right],
+        output: UnitSort.to_arcsort(),
+    })
+}
+
 impl ResolvedRuleExt for ResolvedRule {
     fn to_canonicalized_core_rule(
         &self,
@@ -1018,13 +1017,8 @@ impl ResolvedRuleExt for ResolvedRule {
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
     ) -> Result<CanonicalizedRule, TypeError> {
-        let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
-            ResolvedCall::Primitive(SpecializedPrimitive {
-                prim_with_id: value_eq.clone(),
-                input: vec![atom_term_sort(at1), atom_term_sort(at2)],
-                output: UnitSort.to_arcsort(),
-            })
+            value_eq_call(typeinfo, atom_term_sort(at1), atom_term_sort(at2))
         };
 
         let rule = self.to_core_rule(typeinfo, fresh_gen, union_to_set_optimization)?;
@@ -1053,7 +1047,21 @@ pub(crate) fn specialize_core_rule(
     typeinfo: &TypeInfo,
     fresh_gen: &mut SymbolGen,
 ) -> Result<ResolvedCoreRule, TypeError> {
-    let (mut selector_query, _) = Facts(selectors.to_vec()).to_query(typeinfo, fresh_gen);
+    let (selector_query, _) = Facts(selectors.to_vec()).to_query(typeinfo, fresh_gen);
+    Ok(specialize_core_rule_with_query(core, selector_query, substitutions, typeinfo)?.core)
+}
+
+/// Attach an already-normalized typed selector query to a registered rule.
+///
+/// Packed causal replay uses this seam to lower a shared witness DAG directly
+/// into query atoms. Ordinary `run-rule` reaches the same path after lowering
+/// its source-shaped selector facts.
+pub(crate) fn specialize_core_rule_with_query(
+    core: &ResolvedCoreRule,
+    mut selector_query: Query<HeadOrEq<ResolvedCall>, ResolvedVar>,
+    substitutions: &[(ResolvedVar, ResolvedAtomTerm)],
+    typeinfo: &TypeInfo,
+) -> Result<CanonicalizedRule, TypeError> {
     // A source variable may have been eliminated from the stored core rule.
     // Chase its canonicalization aliases before attaching the new selector.
     for atom in &mut selector_query.atoms {
@@ -1113,15 +1121,16 @@ pub(crate) fn specialize_core_rule(
     };
     grounded_check(&rule)?;
 
-    let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
     let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
-        ResolvedCall::Primitive(SpecializedPrimitive {
-            prim_with_id: value_eq.clone(),
-            input: vec![atom_term_sort(at1), atom_term_sort(at2)],
-            output: UnitSort.to_arcsort(),
-        })
+        value_eq_call(typeinfo, atom_term_sort(at1), atom_term_sort(at2))
     };
-    Ok(rule.canonicalize(&value_eq).remove_dup_vars(value_eq))
+    let mut specialized_substitutions = Vec::new();
+    let rule = rule.canonicalize_tracking(&value_eq, &mut specialized_substitutions);
+    let rule = rule.remove_dup_vars_tracking(&value_eq, &mut specialized_substitutions);
+    Ok(CanonicalizedRule {
+        core: rule,
+        substitutions: specialized_substitutions.into_boxed_slice(),
+    })
 }
 
 #[cfg(test)]
