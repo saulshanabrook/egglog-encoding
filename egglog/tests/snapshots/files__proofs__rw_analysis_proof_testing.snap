@@ -155,7 +155,7 @@ expression: proof_snapshot
                                                             prf12)
                                                           1))
 (let prf14 (Fiat (= (TopConst) (TopConst))))
-(let prf15 (Fiat (= () ())))
+(let prf15 (Computed (= () ())))
 (let t26 (e (Const (I 10))))
 (let prf16
   (Congr

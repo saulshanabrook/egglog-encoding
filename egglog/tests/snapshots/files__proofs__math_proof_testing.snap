@@ -647,7 +647,7 @@ expression: proof_snapshot
                                                       (x (Const 1.0))))))
 (let t29 (a t0))
 (let t30 (substitution t29))
-(let prf1 (Fiat (= () ())))
+(let prf1 (Computed (= () ())))
 (let prf2
   (Rule
                                             (=
@@ -2084,7 +2084,7 @@ expression: proof_snapshot
          )")
           (premises prf0)
           (substitution (x "x") (c (Var "y"))))
-        (Fiat (= () ())))
+        (Computed (= () ())))
       (substitution (v "x") (w "y"))))
   (substitution (c (Var "y")) (@rewrite_var__24 t0) (x "x")))
 (let t0 (Mul (Const 2.0) (Var "x")))
@@ -3227,7 +3227,7 @@ expression: proof_snapshot
          )")
                       (premises prf10)
                       (substitution (x "x") (c (Var "y"))))
-                    (Fiat (= () ())))
+                    (Computed (= () ())))
                   (substitution (v "x") (w "y"))))
               (substitution (c (Var "y")) (@rewrite_var__24 t7) (x "x")))
             prf8)
@@ -3300,7 +3300,7 @@ expression: proof_snapshot
               (premises prf0)
               (substitution (y (Ln (Var "x"))) (e t0) (x (Var "x")))))
           (substitution (a t0)))
-        (Fiat (= () ())))
+        (Computed (= () ())))
       (substitution (@v776 (Const 0.0)) (x (Var "x")))))
   (substitution (@rewrite_var__29 t0) (x (Var "x"))))
 (let t0 (Pow (Var "x") (Const 3.0)))
@@ -3358,7 +3358,7 @@ expression: proof_snapshot
            )")
                                       t19
                                       t21))
-(let prf3 (Fiat (= () ())))
+(let prf3 (Computed (= () ())))
 (let prf4
   (Rule
                                   (=
@@ -4547,7 +4547,7 @@ expression: proof_snapshot
                                                         (e t4)
                                                         (x (Var "x")))))
                                                   (substitution (a t4))))
-(let prf17 (Fiat (= () ())))
+(let prf17 (Computed (= () ())))
 (let prf18
   (Rule
                                               (=
@@ -6408,7 +6408,7 @@ expression: proof_snapshot
                                 (e t0)
                                 (x (Ln (Var "x"))))))
                           (substitution (a t0)))
-                        (Fiat (= () ())))
+                        (Computed (= () ())))
                       (substitution (@v776 (Const 0.0)) (x (Var "x")))))
 (Congr
   (= t0 (Sub t1 (Var "x")))

@@ -429,6 +429,15 @@ pub enum ProofCheckErrorKind {
         lhs: TermId,
         rhs: TermId,
     },
+    /// Computed proof is not a reflexive primitive computation
+    #[error(
+        "Proof {proof_id}: Computed proof claims {lhs:?} = {rhs:?}, which is not a reflexive primitive computation"
+    )]
+    InvalidComputed {
+        proof_id: ProofId,
+        lhs: TermId,
+        rhs: TermId,
+    },
     /// MergeFn proof: old and new proofs are for different functions
     #[error(
         "Proof {proof_id}: MergeFn error - old and new proofs should be for the same function, but got {old_func} and {new_func}"
@@ -599,12 +608,8 @@ impl ProofStore {
         let proof = self.id_to_proof[proof_id].clone();
         let result = match &proof.justification {
             Justification::Fiat => {
-                // Accept a reflexive equality over a literal or a
-                // primitive-closed term (re-evaluated from the term alone), or
-                // any equality established by the global actions.
-                if (proof.lhs() == proof.rhs() && self.reflexive_value_term(proof.lhs()))
-                    || ctx.in_globals(proof.lhs(), proof.rhs())
-                {
+                // Accept any equality established by the global actions.
+                if ctx.in_globals(proof.lhs(), proof.rhs()) {
                     Ok(Proposition::new(proof.lhs(), proof.rhs()))
                 } else {
                     log::debug!(
@@ -613,6 +618,23 @@ impl ProofStore {
                         format_term(&self.term_dag, proof.rhs())
                     );
                     Err(ProofCheckErrorKind::InvalidFiat {
+                        proof_id,
+                        lhs: proof.lhs(),
+                        rhs: proof.rhs(),
+                    }
+                    .into())
+                }
+            }
+
+            Justification::Computed => {
+                // A reflexive equality over a primitive computation: accept when
+                // the term is a chain of primitive applications over
+                // literals/variables. Constructor or function heads never
+                // qualify, so no term-existence claim can be smuggled in.
+                if proof.lhs() == proof.rhs() && self.computable_term(proof.lhs()) {
+                    Ok(Proposition::new(proof.lhs(), proof.rhs()))
+                } else {
+                    Err(ProofCheckErrorKind::InvalidComputed {
                         proof_id,
                         lhs: proof.lhs(),
                         rhs: proof.rhs(),
@@ -956,6 +978,20 @@ impl ProofStore {
         }
 
         result
+    }
+
+    /// Whether `term` is a primitive computation: a literal, a variable, or an
+    /// application of a base-value primitive (by name; the presort/container
+    /// families are excluded) to primitive computations. The term the
+    /// [`Justification::Computed`] rule accepts reflexively.
+    fn computable_term(&self, term: TermId) -> bool {
+        match self.term_dag.get(term) {
+            Term::Lit(_) | Term::Var(_) => true,
+            Term::App(head, args) => {
+                self.computable_prims.contains(head)
+                    && args.iter().all(|a| self.computable_term(*a))
+            }
+        }
     }
 
     /// Check a container side condition by re-evaluating it against the rule

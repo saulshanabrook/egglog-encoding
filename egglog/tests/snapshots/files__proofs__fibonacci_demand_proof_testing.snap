@@ -2,7 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t0 (premises (Fiat (= (Fib 7) (Fib 7))) prf0))
 (let t1 (substitution (@rewrite_var__1 (Fib 7)) (x 7)))
 (let t2

@@ -2,7 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Fiat (= () ()))
+(Computed (= () ()))
 (let t0 (myor (negate (p 0)) (FalseConst)))
 (let prf0
   (Rule

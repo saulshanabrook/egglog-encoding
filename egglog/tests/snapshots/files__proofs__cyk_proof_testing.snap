@@ -18,7 +18,7 @@ expression: proof_snapshot
 (let t12 (P 1 3 (NonTerm "DET")))
 (let t13 (End (NonTerm "DET") "a"))
 (let prf1 (Fiat (= t13 t13)))
-(let prf2 (Fiat (= "a" "a")))
+(let prf2 (Computed (= "a" "a")))
 (let t14 (P 1 4 (NonTerm "N")))
 (let t15 (End (NonTerm "N") "fish"))
 (let t16 (P 3 5 (NonTerm "PP")))
@@ -50,7 +50,7 @@ expression: proof_snapshot
       (premises
         (Fiat (= t3 t3))
         (Fiat (= (getString 1 "she") (getString 1 "she")))
-        (Fiat (= "she" "she")))
+        (Computed (= "she" "she")))
       (substitution (pos 1) (s "she") (a "NP") (@n "she")))
     (Rule
       (= t4 t4)
@@ -83,7 +83,7 @@ expression: proof_snapshot
               (premises
                 (Fiat (= t9 t9))
                 (Fiat (= (getString 2 "eats") (getString 2 "eats")))
-                (Fiat (= "eats" "eats")))
+                (Computed (= "eats" "eats")))
               (substitution (pos 2) (s "eats") (a "V") (@n "eats")))
             (Rule
               (= t10 t10)
@@ -119,7 +119,7 @@ expression: proof_snapshot
                   (premises
                     (Fiat (= t15 t15))
                     (Fiat (= (getString 4 "fish") (getString 4 "fish")))
-                    (Fiat (= "fish" "fish")))
+                    (Computed (= "fish" "fish")))
                   (substitution (pos 4) (s "fish") (a "N") (@n "fish"))))
               (substitution (p2 1) (s 3) (a "NP") (p1 1) (b "DET") (c "N"))))
           (substitution (p2 2) (s 2) (a "VP") (p1 1) (b "V") (c "NP")))
@@ -144,7 +144,7 @@ expression: proof_snapshot
               (premises
                 (Fiat (= t19 t19))
                 (Fiat (= (getString 5 "with") (getString 5 "with")))
-                (Fiat (= "with" "with")))
+                (Computed (= "with" "with")))
               (substitution (pos 5) (s "with") (a "P") (@n "with")))
             (Rule
               (= t20 t20)
@@ -180,7 +180,7 @@ expression: proof_snapshot
                   (premises
                     (Fiat (= t23 t23))
                     (Fiat (= (getString 7 "fork") (getString 7 "fork")))
-                    (Fiat (= "fork" "fork")))
+                    (Computed (= "fork" "fork")))
                   (substitution (pos 7) (s "fork") (a "N") (@n "fork"))))
               (substitution (p2 1) (s 6) (a "NP") (p1 1) (b "DET") (c "N"))))
           (substitution (p2 2) (s 5) (a "PP") (p1 1) (b "P") (c "NP"))))
@@ -196,11 +196,11 @@ expression: proof_snapshot
 (let t6 (P 1 1 (NonTerm "A")))
 (let t7 (End (NonTerm "A") "a"))
 (let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= "a" "a")))
+(let prf2 (Computed (= "a" "a")))
 (let t8 (P 1 2 (NonTerm "B")))
 (let t9 (End (NonTerm "B") "b"))
 (let prf3 (Fiat (= t9 t9)))
-(let prf4 (Fiat (= "b" "b")))
+(let prf4 (Computed (= "b" "b")))
 (let t10 (P 1 3 (NonTerm "C")))
 (let t11 (End (NonTerm "C") "a"))
 (let t12 (P 2 4 (NonTerm "C")))
@@ -319,7 +319,7 @@ expression: proof_snapshot
 (let t6 (P 1 1 (NonTerm "C")))
 (let t7 (End (NonTerm "C") "a"))
 (let prf1 (Fiat (= t7 t7)))
-(let prf2 (Fiat (= "a" "a")))
+(let prf2 (Computed (= "a" "a")))
 (let t8 (P 1 2 (NonTerm "C")))
 (let t9 (P 1 3 (NonTerm "A")))
 (let t10 (End (NonTerm "A") "a"))
@@ -438,7 +438,7 @@ expression: proof_snapshot
 (let t4 (P 1 1 (NonTerm "C")))
 (let t5 (End (NonTerm "C") "a"))
 (let prf2 (Fiat (= t5 t5)))
-(let prf3 (Fiat (= "a" "a")))
+(let prf3 (Computed (= "a" "a")))
 (let t6 (P 1 2 (NonTerm "C")))
 (let t7 (P 3 3 (NonTerm "A")))
 (let t8 (P 2 3 (NonTerm "B")))

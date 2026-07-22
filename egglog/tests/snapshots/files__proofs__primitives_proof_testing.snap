@@ -2,8 +2,8 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Fiat (= 4 4))
-(Fiat (= 1 1))
-(Fiat (= -1 -1))
-(Fiat (= () ()))
-(Fiat (= () ()))
+(Computed (= 4 4))
+(Computed (= 1 1))
+(Computed (= -1 -1))
+(Computed (= () ()))
+(Computed (= () ()))

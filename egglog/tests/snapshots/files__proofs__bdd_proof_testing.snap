@@ -807,7 +807,7 @@ expression: proof_snapshot
 (let t6 (bddor (TrueConst) t1))
 (let t7 (bddand t6 t1))
 (let t8 (ITE 1 t6 t4))
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t9 (premises (Fiat (= t2 t2)) prf0))
 (let t10
   (substitution
@@ -1013,7 +1013,7 @@ expression: proof_snapshot
                   (@rewrite_var__13 t1)
                   (a1 (TrueConst))
                   (a2 (FalseConst))))
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t12
   (premises
             (Congr
@@ -1322,7 +1322,7 @@ expression: proof_snapshot
                   (@rewrite_var__13 t1)
                   (a1 (TrueConst))
                   (a2 (FalseConst))))
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t13
   (premises
             (Congr
@@ -1552,7 +1552,7 @@ expression: proof_snapshot
 (let t1 (bddand (ITE 1 (TrueConst) (FalseConst)) t0))
 (let t2 (bddand (TrueConst) t0))
 (let t3 (bddand (FalseConst) t0))
-(let t4 (premises (Fiat (= t1 t1)) (Fiat (= () ()))))
+(let t4 (premises (Fiat (= t1 t1)) (Computed (= () ()))))
 (let t5
   (substitution
           (m 2)
@@ -1632,7 +1632,7 @@ expression: proof_snapshot
                               "(rewrite (bddnot (ITE n a1 a2)) (ITE n (bddnot a1) (bddnot a2)))")
                             t22
                             t23))
-(let prf1 (Fiat (= () ())))
+(let prf1 (Computed (= () ())))
 (let t24 (premises (Fiat (= t4 t4)) prf1))
 (let t25
   (substitution
@@ -2134,7 +2134,7 @@ expression: proof_snapshot
                                     (@rewrite_var__13 t1)
                                     (a1 (TrueConst))
                                     (a2 (FalseConst)))))
-(let prf4 (Fiat (= () ())))
+(let prf4 (Computed (= () ())))
 (let t30
   (premises
                               (Congr

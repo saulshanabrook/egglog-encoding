@@ -1377,6 +1377,18 @@ impl TypeInfo {
         self.global_sorts.get(sym)
     }
 
+    /// The names of base-value primitives: every registered primitive except
+    /// the presort (container / unstable-fn) families, whose results carry
+    /// term-existence claims. Used by the proof checker to recognize
+    /// `Computed` terms structurally.
+    pub(crate) fn computable_primitive_names(&self) -> HashSet<String> {
+        self.primitives
+            .keys()
+            .filter(|name| !self.reserved_primitives.contains(name.as_str()))
+            .cloned()
+            .collect()
+    }
+
     pub fn is_global(&self, sym: &str) -> bool {
         self.global_sorts.contains_key(sym)
     }

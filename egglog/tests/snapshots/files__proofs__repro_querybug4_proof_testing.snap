@@ -2,7 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(let prf0 (Fiat (= 2 2)))
+(let prf0 (Computed (= 2 2)))
 (Rule
   (= (OtherNum 2) (Num 2))
   (name

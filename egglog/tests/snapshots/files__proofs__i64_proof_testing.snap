@@ -2,4 +2,4 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(Fiat (= "20" "20"))
+(Computed (= "20" "20"))

@@ -29,5 +29,5 @@ expression: proof_snapshot
       prf0
       0))
   (substitution (@rewrite_var__2 t1) (a (IConst))))
-(Fiat (= () ()))
-(Fiat (= () ()))
+(Computed (= () ()))
+(Computed (= () ()))

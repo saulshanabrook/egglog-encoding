@@ -31,7 +31,7 @@ expression: proof_snapshot
        (!= i 0))
       ((neq e x))
          )")
-      (premises (Fiat (= t0 t0)) (Fiat (= () ())))
+      (premises (Fiat (= t0 t0)) (Computed (= () ())))
       (substitution (e t0) (x (Var "r1")) (i 17))))
   (substitution (x t0) (y (Var "r1"))))
 (let t0 (add (Var "r1") (Num 17)))
@@ -64,7 +64,7 @@ expression: proof_snapshot
        (!= i 0))
       ((neq e x))
          )")
-            (premises (Fiat (= t0 t0)) (Fiat (= () ())))
+            (premises (Fiat (= t0 t0)) (Computed (= () ())))
             (substitution (e t0) (x (Var "r1")) (i 17))))
         (substitution (x t0) (y (Var "r1")))))
     (substitution

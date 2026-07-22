@@ -8,7 +8,7 @@ expression: proof_snapshot
 (let t3 (Forall (set-of) t2))
 (let t4 (Cons (V "x") t3 (Nil)))
 (let t5 (typeof t4 (Var (V "x")) 1))
-(let t6 (premises (Fiat (= t0 t0)) (Fiat (= 1 1))))
+(let t6 (premises (Fiat (= t0 t0)) (Computed (= 1 1))))
 (let t7
   (substitution
         (cc 1)
@@ -68,7 +68,7 @@ expression: proof_snapshot
               (substitution (tl (Nil)) (s t3) (x (V "x")) (@rewrite_var__ t8)))
             0))
         (substitution (c 1) (t t2) (@rewrite_var__6 t5) (vs (set-of))))
-      (Fiat (= () ())))
+      (Computed (= () ())))
     (substitution (otype t5) (s t1) (c 1) (vs (set-of))))
   1)
 (let t0 (Abs (V "x") (Var (V "x"))))
@@ -93,7 +93,7 @@ expression: proof_snapshot
 (let t19
   (premises
                         (Fiat (= t4 t4))
-                        (Fiat (= 1 1))
+                        (Computed (= 1 1))
                         (Rule
                           (= t16 t16)
                           (name
@@ -116,7 +116,7 @@ expression: proof_snapshot
                             (e t0)
                             (s1 1)
                             (x (V "x"))))
-                        (Fiat (= 3 3))))
+                        (Computed (= 3 3))))
 (let t20
   (substitution
                         (@rewrite_var__13 t4)
@@ -149,7 +149,7 @@ expression: proof_snapshot
                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                       t19
                       t20)
-                    (Fiat (= 4 4))
+                    (Computed (= 4 4))
                     (Rule
                       (= t21 t21)
                       (name
@@ -160,7 +160,7 @@ expression: proof_snapshot
            )")
                       (premises (Fiat (= t1 t1)) prf0 prf0)
                       (substitution t23 t24 (e t1) (s2 1) (s1 1)))
-                    (Fiat (= 7 7))))
+                    (Computed (= 7 7))))
 (let t26 (ctx t13))
 (let t27
   (substitution
@@ -192,9 +192,9 @@ expression: proof_snapshot
            )")
                                                     t25
                                                     t27)
-                                                  (Fiat (= 8 8))
+                                                  (Computed (= 8 8))
                                                   prf0
-                                                  (Fiat (= 9 9))))
+                                                  (Computed (= 9 9))))
 (let t36
   (substitution
                                                   (c 7)
@@ -223,9 +223,9 @@ expression: proof_snapshot
            )")
                                                         t25
                                                         t27)
-                                                      (Fiat (= 5 5))
+                                                      (Computed (= 5 5))
                                                       prf0
-                                                      (Fiat (= 6 6))))
+                                                      (Computed (= 6 6))))
 (let t39
   (substitution
                                                       (c 4)
@@ -321,7 +321,7 @@ expression: proof_snapshot
                                                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                                 t19
                                                                 t20)
-                                                              (Fiat (= 2 2))))
+                                                              (Computed (= 2 2))))
 (let t51
   (substitution
                                                               (cc 2)
@@ -361,7 +361,7 @@ expression: proof_snapshot
                                                                           (V "x"))
                                                                         (@rewrite_var__11
                                                                           t48)))
-(let prf5 (Fiat (= () ())))
+(let prf5 (Computed (= () ())))
 (let prf6
   (Congr
                                                           (= t11 t32)
@@ -851,7 +851,7 @@ expression: proof_snapshot
 (let t24
   (premises
                                           (Fiat (= t2 t2))
-                                          (Fiat (= 1 1))
+                                          (Computed (= 1 1))
                                           (Rule
                                             (= t21 t21)
                                             (name
@@ -878,7 +878,7 @@ expression: proof_snapshot
                                               (e t0)
                                               (s1 1)
                                               (x (V "x"))))
-                                          (Fiat (= 3 3))))
+                                          (Computed (= 3 3))))
 (let t25
   (substitution
                                           (c 0)
@@ -902,7 +902,7 @@ expression: proof_snapshot
            )")
                                         t24
                                         t25)
-                                      (Fiat (= 2 2))))
+                                      (Computed (= 2 2))))
 (let t27
   (substitution
                                       (cc 2)
@@ -959,7 +959,7 @@ expression: proof_snapshot
            )")
                         t28
                         t29))
-(let prf1 (Fiat (= () ())))
+(let prf1 (Computed (= () ())))
 (let t32
   (premises
           (Rule
@@ -973,7 +973,7 @@ expression: proof_snapshot
            )")
             t24
             t25)
-          (Fiat (= 4 4))))
+          (Computed (= 4 4))))
 (let t33
   (substitution
           (cc 4)
@@ -1123,7 +1123,7 @@ expression: proof_snapshot
         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
       (premises
         (Fiat (= t0 t0))
-        (Fiat (= 1 1))
+        (Computed (= 1 1))
         (Rule
           (= (expr-size (True) 1) (expr-size (True) 1))
           (name
@@ -1132,7 +1132,7 @@ expression: proof_snapshot
          )")
           (premises (Fiat (= (True) (True))))
           (substitution (e (True))))
-        (Fiat (= 2 2)))
+        (Computed (= 2 2)))
       (substitution
         (@rewrite_var__13 t0)
         (c1 1)
@@ -1152,7 +1152,7 @@ expression: proof_snapshot
 (let t5
   (premises
                       (Fiat (= t0 t0))
-                      (Fiat (= 1 1))
+                      (Computed (= 1 1))
                       (Rule
                         (= (expr-size (True) 1) (expr-size (True) 1))
                         (name
@@ -1161,7 +1161,7 @@ expression: proof_snapshot
            )")
                         (premises (Fiat (= (True) (True))))
                         (substitution (e (True))))
-                      (Fiat (= 2 2))))
+                      (Computed (= 2 2))))
 (let t6
   (substitution
                       (@rewrite_var__13 t0)
@@ -1278,7 +1278,7 @@ expression: proof_snapshot
 (let t8 (Forall (set-of) t4))
 (let t9 (Cons (V "x") t8 (Nil)))
 (let t10 (typeof t9 t1 1))
-(let t11 (premises (Fiat (= t2 t2)) (Fiat (= 1 1))))
+(let t11 (premises (Fiat (= t2 t2)) (Computed (= 1 1))))
 (let t12
   (substitution
         (cc 1)
@@ -1307,7 +1307,7 @@ expression: proof_snapshot
                                   "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                 t11
                                 t12)
-                              (Fiat (= 2 2))
+                              (Computed (= 2 2))
                               (Rule
                                 (= t22 t22)
                                 (name
@@ -1331,7 +1331,7 @@ expression: proof_snapshot
                                   (e t0)
                                   (s1 1)
                                   (x (V "z"))))
-                              (Fiat (= 4 4))))
+                              (Computed (= 4 4))))
 (let t26 (ctx t9))
 (let t27
   (substitution
@@ -1391,7 +1391,7 @@ expression: proof_snapshot
                                               "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                             t25
                                             t27)
-                                          (Fiat (= 3 3))))
+                                          (Computed (= 3 3))))
 (let t40
   (substitution
                                           (cc 3)
@@ -1422,7 +1422,7 @@ expression: proof_snapshot
                                                     (ctx t36)
                                                     (x (V "z"))
                                                     (@rewrite_var__11 t37)))
-(let prf3 (Fiat (= () ())))
+(let prf3 (Computed (= () ())))
 (let t44 (s t5))
 (let prf4
   (Congr
@@ -1715,7 +1715,7 @@ expression: proof_snapshot
 (let t24
   (premises
                                                 (Fiat (= t4 t4))
-                                                (Fiat (= 1 1))
+                                                (Computed (= 1 1))
                                                 (Rule
                                                   (=
                                                     (expr-size (True) 1)
@@ -1727,7 +1727,7 @@ expression: proof_snapshot
                                                   (premises
                                                     (Fiat (= (True) (True))))
                                                   (substitution (e (True))))
-                                                (Fiat (= 2 2))))
+                                                (Computed (= 2 2))))
 (let t25 (@rewrite_var__13 t4))
 (let t26
   (substitution
@@ -1751,7 +1751,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t24
                                               t26)
-                                            (Fiat (= 3 3))
+                                            (Computed (= 3 3))
                                             (Rule
                                               (= t27 t27)
                                               (name
@@ -1778,7 +1778,7 @@ expression: proof_snapshot
                                                 (e t0)
                                                 (s1 1)
                                                 (x (V "a"))))
-                                            (Fiat (= 5 5))))
+                                            (Computed (= 5 5))))
 (let t31 (ctx t13))
 (let t32
   (substitution
@@ -1799,7 +1799,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t30
                                           t32)
-                                        (Fiat (= 6 6))
+                                        (Computed (= 6 6))
                                         (Rule
                                           (=
                                             (expr-size (MyUnit) 1)
@@ -1810,7 +1810,7 @@ expression: proof_snapshot
            )")
                                           (premises (Fiat (= (MyUnit) (MyUnit))))
                                           (substitution (e (MyUnit))))
-                                        (Fiat (= 7 7))))
+                                        (Computed (= 7 7))))
 (let t34 (ctx t16))
 (let t35
   (substitution
@@ -1832,7 +1832,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t33
                                       t35)
-                                    (Fiat (= 8 8))
+                                    (Computed (= 8 8))
                                     (Rule
                                       (= t36 t36)
                                       (name
@@ -1842,7 +1842,7 @@ expression: proof_snapshot
                                       (premises
                                         (Fiat (= (Var (V "f")) (Var (V "f")))))
                                       (substitution (e (Var (V "f"))) (x (V "f"))))
-                                    (Fiat (= 9 9))))
+                                    (Computed (= 9 9))))
 (let t38 (ctx t19))
 (let t39
   (substitution
@@ -1873,7 +1873,7 @@ expression: proof_snapshot
                                 t38
                                 (x (V "f"))
                                 (@rewrite_var__11 t20)))
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t42 (tl t16))
 (let t43 (s t18))
 (let t44 (tl t13))
@@ -1909,7 +1909,7 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t30
                                                   t32)
-                                                (Fiat (= 4 4))))
+                                                (Computed (= 4 4))))
 (let t54
   (substitution
                                                 (cc 4)
@@ -2447,7 +2447,7 @@ expression: proof_snapshot
 (let t25
   (premises
                                                 (Fiat (= t4 t4))
-                                                (Fiat (= 1 1))
+                                                (Computed (= 1 1))
                                                 (Rule
                                                   (=
                                                     (expr-size (MyUnit) 1)
@@ -2459,7 +2459,7 @@ expression: proof_snapshot
                                                   (premises
                                                     (Fiat (= (MyUnit) (MyUnit))))
                                                   (substitution (e (MyUnit))))
-                                                (Fiat (= 2 2))))
+                                                (Computed (= 2 2))))
 (let t26 (@rewrite_var__13 t4))
 (let t27
   (substitution
@@ -2483,7 +2483,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t25
                                               t27)
-                                            (Fiat (= 3 3))
+                                            (Computed (= 3 3))
                                             (Rule
                                               (= t28 t28)
                                               (name
@@ -2510,7 +2510,7 @@ expression: proof_snapshot
                                                 (e t0)
                                                 (s1 1)
                                                 (x (V "y"))))
-                                            (Fiat (= 5 5))))
+                                            (Computed (= 5 5))))
 (let t32 (ctx t14))
 (let t33
   (substitution
@@ -2531,7 +2531,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t31
                                           t33)
-                                        (Fiat (= 6 6))
+                                        (Computed (= 6 6))
                                         (Rule
                                           (=
                                             (expr-size (True) 1)
@@ -2542,7 +2542,7 @@ expression: proof_snapshot
            )")
                                           (premises (Fiat (= (True) (True))))
                                           (substitution (e (True))))
-                                        (Fiat (= 7 7))))
+                                        (Computed (= 7 7))))
 (let t35 (ctx t17))
 (let t36
   (substitution
@@ -2564,7 +2564,7 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t34
                                       t36)
-                                    (Fiat (= 8 8))
+                                    (Computed (= 8 8))
                                     (Rule
                                       (= t37 t37)
                                       (name
@@ -2574,7 +2574,7 @@ expression: proof_snapshot
                                       (premises
                                         (Fiat (= (Var (V "f")) (Var (V "f")))))
                                       (substitution (e (Var (V "f"))) (x (V "f"))))
-                                    (Fiat (= 9 9))))
+                                    (Computed (= 9 9))))
 (let t39 (ctx t20))
 (let t40
   (substitution
@@ -2605,7 +2605,7 @@ expression: proof_snapshot
                                 t39
                                 (x (V "f"))
                                 (@rewrite_var__11 t21)))
-(let prf0 (Fiat (= () ())))
+(let prf0 (Computed (= () ())))
 (let t43 (tl t17))
 (let t44 (s t19))
 (let t45 (tl t14))
@@ -2641,7 +2641,7 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t31
                                                   t33)
-                                                (Fiat (= 4 4))))
+                                                (Computed (= 4 4))))
 (let t55
   (substitution
                                                 (cc 4)
@@ -3384,7 +3384,7 @@ expression: proof_snapshot
 (let t46
   (premises
                                                           (Fiat (= t5 t5))
-                                                          (Fiat (= 1 1))
+                                                          (Computed (= 1 1))
                                                           (Rule
                                                             (= t32 t32)
                                                             (name
@@ -3459,7 +3459,7 @@ expression: proof_snapshot
                                                               (e t4)
                                                               (s1 8)
                                                               (x (V "x"))))
-                                                          (Fiat (= 10 10))))
+                                                          (Computed (= 10 10))))
 (let t47 (to t5))
 (let t48
   (substitution
@@ -3484,7 +3484,7 @@ expression: proof_snapshot
            )")
                                                         t46
                                                         t48)
-                                                      (Fiat (= 2 2))))
+                                                      (Computed (= 2 2))))
 (let t50
   (substitution
                                                       (cc 2)
@@ -3553,9 +3553,9 @@ expression: proof_snapshot
                                                   "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                                 t49
                                                 t50)
-                                              (Fiat (= 3 3))
+                                              (Computed (= 3 3))
                                               prf1
-                                              (Fiat (= 5 5))))
+                                              (Computed (= 5 5))))
 (let t54 (ctx t15))
 (let t55
   (substitution
@@ -3589,9 +3589,9 @@ expression: proof_snapshot
                                               "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                             t53
                                             t55))
-                                        (Fiat (= 6 6))
+                                        (Computed (= 6 6))
                                         prf2
-                                        (Fiat (= 7 7))))
+                                        (Computed (= 7 7))))
 (let t57 (ctx t18))
 (let t58
   (substitution
@@ -3612,9 +3612,9 @@ expression: proof_snapshot
                                         "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                       t56
                                       t58)
-                                    (Fiat (= 8 8))
+                                    (Computed (= 8 8))
                                     prf3
-                                    (Fiat (= 9 9))))
+                                    (Computed (= 9 9))))
 (let t60 (ctx t21))
 (let t61
   (substitution
@@ -3645,7 +3645,7 @@ expression: proof_snapshot
                                 t60
                                 (x (V "f"))
                                 (@rewrite_var__11 t22)))
-(let prf4 (Fiat (= () ())))
+(let prf4 (Computed (= () ())))
 (let t64 (tl t18))
 (let t65 (s t20))
 (let t66 (tl t15))
@@ -3681,7 +3681,7 @@ expression: proof_snapshot
                                                     "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                   t53
                                                   t55)
-                                                (Fiat (= 4 4))))
+                                                (Computed (= 4 4))))
 (let t76
   (substitution
                                                 (cc 4)
@@ -4347,7 +4347,7 @@ expression: proof_snapshot
 (let t43
   (premises
                                     (Fiat (= t7 t7))
-                                    (Fiat (= 1 1))
+                                    (Computed (= 1 1))
                                     (Rule
                                       (= t25 t25)
                                       (name
@@ -4387,7 +4387,7 @@ expression: proof_snapshot
                                         (e t6)
                                         (s1 10)
                                         (x (V "x"))))
-                                    (Fiat (= 12 12))))
+                                    (Computed (= 12 12))))
 (let t44
   (substitution
                                     (c 0)
@@ -4411,7 +4411,7 @@ expression: proof_snapshot
            )")
                                   t43
                                   t44)
-                                (Fiat (= 2 2))))
+                                (Computed (= 2 2))))
 (let t46
   (substitution
                                 (cc 2)
@@ -4428,9 +4428,9 @@ expression: proof_snapshot
                                 "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                               t45
                               t46)
-                            (Fiat (= 3 3))
+                            (Computed (= 3 3))
                             prf3
-                            (Fiat (= 10 10))))
+                            (Computed (= 10 10))))
 (let t48 (ctx t13))
 (let t49
   (substitution
@@ -4455,7 +4455,7 @@ expression: proof_snapshot
            )")
                           t47
                           t49)
-                        (Fiat (= 4 4))))
+                        (Computed (= 4 4))))
 (let t51
   (substitution
                         (cc 4)
@@ -4472,9 +4472,9 @@ expression: proof_snapshot
                         "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                       t50
                       t51)
-                    (Fiat (= 5 5))
+                    (Computed (= 5 5))
                     prf2
-                    (Fiat (= 9 9))))
+                    (Computed (= 9 9))))
 (let t53 (ctx t18))
 (let t54
   (substitution
@@ -4639,7 +4639,7 @@ expression: proof_snapshot
            )")
                                       t52
                                       t54)
-                                    (Fiat (= 6 6))))
+                                    (Computed (= 6 6))))
 (let t73
   (substitution
                                     (cc 6)
@@ -4656,9 +4656,9 @@ expression: proof_snapshot
                                     "(rewrite (typeof ctx (Abs x e) c) (TArr (TVar (Fresh x c)) (typeof (Cons x (Forall (set-empty) (TVar (Fresh x c))) ctx) e cc)) :when ((= cc (+ c 1))))")
                                   t72
                                   t73)
-                                (Fiat (= 7 7))
+                                (Computed (= 7 7))
                                 prf0
-                                (Fiat (= 8 8))))
+                                (Computed (= 8 8))))
 (let t75 (ctx t68))
 (let t76
   (substitution
@@ -4726,7 +4726,7 @@ expression: proof_snapshot
                                 t75
                                 (x (V "f"))
                                 (@rewrite_var__11 t69)))
-(let prf6 (Fiat (= () ())))
+(let prf6 (Computed (= () ())))
 (let t89 (tl t13))
 (let prf7
   (Rule
@@ -4754,7 +4754,7 @@ expression: proof_snapshot
            )")
                 t47
                 t49)
-              (Fiat (= 11 11))))
+              (Computed (= 11 11))))
 (let t94
   (substitution
               (cc 11)
@@ -5097,7 +5097,7 @@ expression: proof_snapshot
 (let t37
   (premises
                                                 (Fiat (= t5 t5))
-                                                (Fiat (= 1 1))
+                                                (Computed (= 1 1))
                                                 (Rule
                                                   (= t34 t34)
                                                   (name
@@ -5126,7 +5126,7 @@ expression: proof_snapshot
                                                     (e t0)
                                                     (s1 1)
                                                     (x (V "x"))))
-                                                (Fiat (= 3 3))))
+                                                (Computed (= 3 3))))
 (let t38 (@rewrite_var__13 t5))
 (let t39
   (substitution
@@ -5164,7 +5164,7 @@ expression: proof_snapshot
                                                 "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                               t37
                                               t39)
-                                            (Fiat (= 4 4))
+                                            (Computed (= 4 4))
                                             (Rule
                                               (= t40 t40)
                                               (name
@@ -5178,7 +5178,7 @@ expression: proof_snapshot
                                                 (e t1)
                                                 (s1 1)
                                                 (x (V "y"))))
-                                            (Fiat (= 6 6))))
+                                            (Computed (= 6 6))))
 (let t45 (ctx t20))
 (let t46
   (substitution
@@ -5200,7 +5200,7 @@ expression: proof_snapshot
                                             "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                           t44
                                           t46)
-                                        (Fiat (= 7 7))
+                                        (Computed (= 7 7))
                                         (Rule
                                           (= t47 t47)
                                           (name
@@ -5213,7 +5213,7 @@ expression: proof_snapshot
                                           (substitution
                                             (e (Var (V "iid")))
                                             (x (V "iid"))))
-                                        (Fiat (= 8 8))))
+                                        (Computed (= 8 8))))
 (let t49 (ctx t29))
 (let t50
   (substitution
@@ -5265,7 +5265,7 @@ expression: proof_snapshot
                                                       "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                     t44
                                                     t46)
-                                                  (Fiat (= 5 5))))
+                                                  (Computed (= 5 5))))
 (let t60
   (substitution
                                                   (cc 5)
@@ -5389,7 +5389,7 @@ expression: proof_snapshot
                                                                                   "(rewrite (typeof ctx (Let x e1 e2) c) (typeof (Cons x (generalize ctx (typeof ctx e1 c1)) ctx) e2 c2) :when ((= c1 (+ c 1)) (expr-size e1 sz) (= c2 (+ c (+ sz 1)))))")
                                                                                 t37
                                                                                 t39)
-                                                                              (Fiat
+                                                                              (Computed
                                                                                 (=
                                                                                   2
                                                                                   2))))
@@ -5443,7 +5443,7 @@ expression: proof_snapshot
                                                                                         (@rewrite_var__11
                                                                                           t78)))
 (let prf8
-  (Fiat
+  (Computed
                                                                                 (=
                                                                                   ()
                                                                                   ())))
@@ -6118,9 +6118,9 @@ expression: proof_snapshot
            )")
                                                       t48
                                                       t50)
-                                                    (Fiat (= 9 9))
+                                                    (Computed (= 9 9))
                                                     prf0
-                                                    (Fiat (= 10 10))))
+                                                    (Computed (= 10 10))))
 (let t124
   (substitution
                                                     (c 8)

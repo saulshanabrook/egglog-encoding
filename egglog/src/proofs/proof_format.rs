@@ -112,7 +112,7 @@ pub(crate) fn proof_store_from_term(
     proof_term: TermId,
     prog: &Vec<ResolvedNCommand>,
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    value_term_validators: HashMap<String, PrimitiveValidator>,
+    computable_prims: HashSet<String>,
 ) -> (ProofStore, ProofId) {
     let (raw_store, raw_proof_id) =
         RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
@@ -121,7 +121,7 @@ pub(crate) fn proof_store_from_term(
         raw_store,
         raw_proof_id,
         container_normalizers,
-        value_term_validators,
+        computable_prims,
     )
 }
 
@@ -134,6 +134,10 @@ pub(crate) fn proof_store_from_term(
 enum RawProof {
     /// Equalities added at the top level are justified by fiat.
     Fiat(TermId, TermId),
+    /// A reflexive equality `t = t` over a primitive computation: `t` is a
+    /// chain of primitive applications over literals/variables (no
+    /// constructors or functions), which the checker re-checks structurally.
+    Computed(TermId, TermId),
     /// Given a rule name and proofs for each premise, produces a proof of a grounded equality t1 = t2 from the body of the rule.
     /// The subsitution is implicit- in [`ProofTerm`] they are explicit.
     Rule(String, Vec<RawProofId>, TermId, TermId),
@@ -186,11 +190,10 @@ pub struct ProofStore {
     /// Container constructor head -> its validator (the container's term
     /// normalizer), used by [`ProofStore::normalize_container`].
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    /// Canonical value-term head -> its sort's recognizer, for base sorts whose
-    /// values termify as applications (see `Sort::value_term_validator`). Used
-    /// to accept a reflexive `Fiat` over a termified base value
-    /// ([`ProofStore::reflexive_value_term`]).
-    value_term_validators: HashMap<String, PrimitiveValidator>,
+    /// The names of base-value primitives (registered primitives minus the
+    /// presort/container families), used by the checker to recognize a
+    /// [`Justification::Computed`] term structurally.
+    pub(super) computable_prims: HashSet<String>,
 }
 
 impl fmt::Debug for ProofStore {
@@ -253,9 +256,13 @@ pub struct Proof {
 #[derive(Clone, Debug)]
 pub enum Justification {
     /// Equalities added at the top level are justified by fiat.
-    /// Primitive reflexive equalities like 2 = 2 are also justified by Fiat.
     /// Reflexivity of equality is not assumed: a proof of `t = t`` must correspond to some `t` added at the top level.
     Fiat,
+    /// A reflexive equality `t = t` over a primitive computation (a chain of
+    /// primitive applications over literals/variables). Checked structurally:
+    /// primitive heads only — no constructors or functions, so no existence
+    /// claim is smuggled in.
+    Computed,
     /// Proves a grounded equality `t1 = t2` which appears
     /// in the body of a rule given a substitution given proofs
     /// for each premise ([`Fact`]) of the rule.
@@ -352,6 +359,9 @@ impl RawProofStore {
         let proof = if head == self.names.fiat_constructor {
             assert!(args.len() == 2, "fiat constructor should have 2 args");
             RawProof::Fiat(args[0], args[1])
+        } else if head == self.names.computed_constructor {
+            assert!(args.len() == 2, "computed constructor should have 2 args");
+            RawProof::Computed(args[0], args[1])
         } else if head == self.names.rule_constructor {
             assert!(args.len() == 4, "rule constructor should have 4 args");
             let name = self.parse_string(args[0]);
@@ -505,28 +515,6 @@ impl ProofStore {
         validator(&mut self.term_dag, &args).unwrap_or(term_id)
     }
 
-    /// Whether `term` is a termified base value the checker can re-evaluate
-    /// from the term alone: a literal, or a sort's canonical value term form
-    /// (`Sort::value_term_validator`) over such arguments, reproducing exactly
-    /// this term. A reflexive `Fiat` over such a term is self-evident. Terms
-    /// carrying an existence claim never qualify: eq-sort and container heads
-    /// are not value-term heads.
-    pub(super) fn reflexive_value_term(&mut self, term: TermId) -> bool {
-        match self.term_dag.get(term).clone() {
-            Term::Lit(_) => true,
-            Term::Var(_) => false,
-            Term::App(head, args) => {
-                let Some(validator) = self.value_term_validators.get(&head).cloned() else {
-                    return false;
-                };
-                if !args.iter().all(|a| self.reflexive_value_term(*a)) {
-                    return false;
-                }
-                validator(&mut self.term_dag, &args) == Some(term)
-            }
-        }
-    }
-
     /// Get the [`Proof`] with the given id.
     /// Panics if the id is invalid (if it came from another proof store, for example).
     pub fn get(&self, proof_id: ProofId) -> &Proof {
@@ -550,14 +538,14 @@ impl ProofStore {
         raw_store: RawProofStore,
         raw_proof_id: RawProofId,
         container_normalizers: HashMap<String, PrimitiveValidator>,
-        value_term_validators: HashMap<String, PrimitiveValidator>,
+        computable_prims: HashSet<String>,
     ) -> (ProofStore, ProofId) {
         let mut store = ProofStore {
             term_dag: raw_store.term_dag.clone(),
             proof_id: HashMap::default(),
             id_to_proof: DenseIdMap::new(),
             container_normalizers,
-            value_term_validators,
+            computable_prims,
         };
         let globals = gather_globals(prog, &mut store.term_dag)
             .unwrap_or_else(|_| panic!("failed to gather globals from program"));
@@ -662,6 +650,13 @@ impl ProofStore {
                     raw_store.unwrap_ast(*rhs),
                 ),
                 justification: Justification::Fiat,
+            },
+            RawProof::Computed(lhs, rhs) => Proof {
+                proposition: Proposition::new(
+                    raw_store.unwrap_ast(*lhs),
+                    raw_store.unwrap_ast(*rhs),
+                ),
+                justification: Justification::Computed,
             },
             RawProof::Rule(name, premise_proofs, lhs, rhs) => {
                 let converted_premises: Vec<ProofId> = premise_proofs
@@ -1071,8 +1066,8 @@ impl ProofStore {
         dag.to_string_with_let_internal(symbol_gen, proof_term_id, buffer, |constructor| {
             match constructor {
                 "=" => "prop".to_string(),
-                "Fiat" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr" | "ContainerNormalize"
-                | "Eval" => "prf".to_string(),
+                "Fiat" | "Computed" | "Rule" | "Merge" | "Trans" | "Sym" | "Congr"
+                | "ContainerNormalize" | "Eval" => "prf".to_string(),
                 _ => "t".to_string(),
             }
         })
@@ -1099,6 +1094,10 @@ impl ProofStore {
             Justification::Fiat => {
                 let equality = make_equality(dag, proof.lhs(), proof.rhs());
                 dag.app("Fiat".to_string(), vec![equality])
+            }
+            Justification::Computed => {
+                let equality = make_equality(dag, proof.lhs(), proof.rhs());
+                dag.app("Computed".to_string(), vec![equality])
             }
             Justification::Rule {
                 name,

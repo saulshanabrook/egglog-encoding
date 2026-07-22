@@ -254,7 +254,7 @@ impl ProofStore {
         let mut changed = false;
 
         match &mut proof.justification {
-            Justification::Fiat => return proof_id,
+            Justification::Fiat | Justification::Computed => return proof_id,
             Justification::Rule { premise_proofs, .. } => {
                 for pid in premise_proofs.iter_mut() {
                     let mapped = f(self, *pid);
@@ -361,7 +361,7 @@ impl Proof {
         self.proposition.lhs = f(self.proposition.lhs);
         self.proposition.rhs = f(self.proposition.rhs);
         match &mut self.justification {
-            Justification::Fiat => {}
+            Justification::Fiat | Justification::Computed => {}
             Justification::Rule {
                 name: _,
                 premise_proofs: _,

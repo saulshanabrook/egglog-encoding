@@ -4,7 +4,6 @@
 
 use super::proof_checker::is_container_side_condition;
 use super::proof_encoding::ProofInstrumentor;
-use crate::proofs::proof_encoding_helpers::Justification;
 use crate::typechecking::FuncType;
 use crate::*;
 
@@ -138,7 +137,7 @@ impl ProofInstrumentor<'_> {
                 let proof_code = if self.egraph.proof_state.proofs_enabled {
                     let lit_sort = literal_sort(lit);
                     let lit_str = format!("{lit}");
-                    self.reflexive_fiat_proof(action_lookups, lit_sort.name(), &lit_str)
+                    self.computed_proof(action_lookups, lit_sort.name(), &lit_str)
                 } else {
                     "()".to_string()
                 };
@@ -167,7 +166,7 @@ impl ProofInstrumentor<'_> {
                             .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
                         fresh_proof
                     } else {
-                        self.reflexive_fiat_proof(action_lookups, resolved_var.sort.name(), var)
+                        self.computed_proof(action_lookups, resolved_var.sort.name(), var)
                     },
                 )
             }
@@ -259,7 +258,7 @@ impl ProofInstrumentor<'_> {
                         } else {
                             // Base primitives produce a literal result; a
                             // reflexive `Fiat` over a literal is checker-valid.
-                            self.reflexive_fiat_proof(
+                            self.computed_proof(
                                 action_lookups,
                                 specialized_primitive.output().name(),
                                 &fv,
@@ -307,20 +306,21 @@ impl ProofInstrumentor<'_> {
         (res, action_lookups, proof_list)
     }
 
-    /// Mint a reflexive `Fiat` proof `value = value` for a term of `sort_name`
-    /// (two identical ASTs under a `Fiat`), appending the mints to `stmts`.
-    fn reflexive_fiat_proof(
-        &mut self,
-        stmts: &mut Vec<String>,
-        sort_name: &str,
-        value: &str,
-    ) -> String {
+    /// Mint a reflexive `Computed` proof `value = value` for a primitive
+    /// computation of `sort_name` (two identical ASTs under a `Computed`),
+    /// appending the mints to `stmts`.
+    fn computed_proof(&mut self, stmts: &mut Vec<String>, sort_name: &str, value: &str) -> String {
         let to_ast = self
             .proof_names()
             .sort_to_ast_constructor
             .get(sort_name)
             .unwrap()
             .clone();
-        self.term_proof_for_justification(stmts, value, &to_ast, &Justification::Fiat)
+        let ast_sort = self.proof_names().ast_sort.clone();
+        let proof_sort = self.proof_sort();
+        let computed = self.proof_names().computed_constructor.clone();
+        let a1 = self.mint(stmts, &to_ast, value, &ast_sort);
+        let a2 = self.mint(stmts, &to_ast, value, &ast_sort);
+        self.mint(stmts, &computed, &format!("{a1} {a2}"), &proof_sort)
     }
 }

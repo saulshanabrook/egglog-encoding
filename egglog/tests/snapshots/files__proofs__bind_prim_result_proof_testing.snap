@@ -7,5 +7,5 @@ expression: proof_snapshot
   (name "r1")
   (premises
     (Fiat (= (Strings "hello" "world") (Strings "hello" "world")))
-    (Fiat (= "hello world" "hello world")))
+    (Computed (= "hello world" "hello world")))
   (substitution (a "hello") (res "hello world") (b "world")))

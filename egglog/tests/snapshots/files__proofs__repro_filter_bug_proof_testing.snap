@@ -9,5 +9,5 @@ expression: proof_snapshot
     (Fiat (= (View (E) (S1)) (View (E) (S1))))
     (Fiat (= (UF_Exp (E) (E)) (UF_Exp (E) (E))))
     (Fiat (= (UF_Stmt (S1) (S2)) (UF_Stmt (S1) (S2))))
-    (Fiat (= () ())))
+    (Computed (= () ())))
   (substitution (c1_leader (E)) (c2 (S1)) (c2_leader (S2)) (c1 (E))))
