@@ -2373,9 +2373,8 @@ pub(crate) struct ReceiptBatch {
     draft_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     facts: Vec<(FactId, PendingFact)>,
     fact_terms: Vec<ReplayTermId>,
-    /// Prior fact-owned terms for direct rebuild causes encountered by this
-    /// native input batch. Populated under the existing one-lock preload, then
-    /// consulted lock-free at each effective commit.
+    /// Prior fact-owned terms copied only when a direct rebuild/container
+    /// refresh or effective constructor merge commits a new fact.
     rebuild_term_ranges: HashMap<CauseDraftId, (TableId, FlatRange)>,
     rebuild_terms: Vec<ReplayTermId>,
     equalities: Vec<(EqNodeId, PendingEquality)>,
@@ -2443,8 +2442,26 @@ impl ReceiptBatch {
         {
             return;
         }
-        if self.rebuild_term_ranges.contains_key(&cause) {
+        let copied = self.cache_prior_fact_terms(cause, prior_fact, table);
+        if copied == 0 {
             return;
+        }
+        let mut arena = self.shared.arena.lock().unwrap();
+        arena.counters.merge_prior_term_copies += copied as u64;
+    }
+
+    /// Cache one prior fact's immutable syntax for a single effective commit.
+    /// Callers decide whether the cause requires inheritance; this helper does
+    /// no candidate-wide preload and copies from either the current fragment or
+    /// the durable/provisional shared fact arena.
+    fn cache_prior_fact_terms(
+        &mut self,
+        cause: CauseDraftId,
+        prior_fact: FactId,
+        table: TableId,
+    ) -> usize {
+        if self.rebuild_term_ranges.contains_key(&cause) {
+            return 0;
         }
         let local = self
             .facts
@@ -2467,10 +2484,9 @@ impl ReceiptBatch {
             self.rebuild_term_ranges
                 .insert(cause, (table, range))
                 .is_none(),
-            "duplicate constructor merge-term preload"
+            "duplicate effective-commit prior-term cache"
         );
-        let mut arena = self.shared.arena.lock().unwrap();
-        arena.counters.merge_prior_term_copies += terms.len() as u64;
+        terms.len()
     }
 
     #[cfg(test)]
@@ -2534,24 +2550,6 @@ impl ReceiptBatch {
                 match arena.cause_summary(*cause) {
                     Ok(summary) => {
                         self.draft_summaries.insert(*cause, summary);
-                        if let Ok(
-                            CauseDraft::Rebuild { prior_fact, .. }
-                            | CauseDraft::ContainerRefresh { prior_fact, .. },
-                        ) = arena.cause_draft(*cause)
-                        {
-                            let Some((table, terms)) = arena.fact_terms(*prior_fact) else {
-                                error = Some("rebuild cause references a missing prior FactId");
-                                break;
-                            };
-                            let range = FlatRange::new(self.rebuild_terms.len(), terms.len());
-                            self.rebuild_terms.extend_from_slice(terms);
-                            assert!(
-                                self.rebuild_term_ranges
-                                    .insert(*cause, (table, range))
-                                    .is_none(),
-                                "duplicate rebuild-term preload"
-                            );
-                        }
                     }
                     Err(cause_error) => {
                         error = Some(cause_error);
@@ -2592,6 +2590,28 @@ impl ReceiptBatch {
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
         );
+        if explicit_terms.is_none() && !self.rebuild_term_ranges.contains_key(&cause) {
+            let local_prior = self.drafts.iter().find_map(|(id, draft)| {
+                (*id == cause)
+                    .then_some(draft)
+                    .and_then(|draft| match draft {
+                        CauseDraft::Rebuild { prior_fact, .. }
+                        | CauseDraft::ContainerRefresh { prior_fact, .. } => Some(*prior_fact),
+                        _ => None,
+                    })
+            });
+            let prior_fact = local_prior.or_else(|| {
+                let arena = self.shared.arena.lock().unwrap();
+                match arena.cause_draft(cause).ok()? {
+                    CauseDraft::Rebuild { prior_fact, .. }
+                    | CauseDraft::ContainerRefresh { prior_fact, .. } => Some(*prior_fact),
+                    _ => None,
+                }
+            });
+            if let Some(prior_fact) = prior_fact {
+                self.cache_prior_fact_terms(cause, prior_fact, table);
+            }
+        }
         // A semantic rekey creates a new immutable fact version, but its
         // syntax remains the syntax owned by the prior fact. The rebuild cause
         // records the old/new raw equality endpoints separately. Looking the

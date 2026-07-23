@@ -1264,6 +1264,105 @@ fn causal_receipt_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
 }
 
 #[test]
+fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let constructor = db.add_table(
+        SortedWritesTable::new(
+            1,
+            3,
+            Some(ColumnId::new(2)),
+            vec![ColumnId::new(0)],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "constructor rebuild must not collide");
+                false
+            }),
+        ),
+        iter::once(uf),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let child_sort = ReplaySortId::new(791);
+    let result_sort = ReplaySortId::new(792);
+    let op = ReplayOpId::new(791);
+    receipts
+        .register_table_layout(constructor, &[Some(child_sort), Some(result_sort), None])
+        .unwrap();
+    receipts
+        .register_table_constructor(
+            constructor,
+            ReplayConstructorSpec::new(result_sort, op, [child_sort]),
+        )
+        .unwrap();
+
+    let wrong_child = Value::new(7910);
+    let exact_child = Value::new(7911);
+    let canonical_child = Value::new(7909);
+    let output = Value::new(7920);
+    let wrong_child_term =
+        receipts.intern_literal(child_sort, ReplayLiteral::Internal(7910), wrong_child);
+    let exact_child_term =
+        receipts.intern_literal(child_sort, ReplayLiteral::Internal(7911), exact_child);
+    receipts.intern_literal(child_sort, ReplayLiteral::Internal(7909), canonical_child);
+    let wrong_call = receipts
+        .intern_call(result_sort, op, &[wrong_child_term], output)
+        .unwrap();
+    let exact_call = receipts
+        .intern_call(result_sort, op, &[exact_child_term], output)
+        .unwrap();
+    assert_ne!(wrong_call, exact_call);
+    assert_eq!(
+        receipts.lookup_term(result_sort, output),
+        Some(wrong_call),
+        "the global reverse map must retain the deliberately competing alias"
+    );
+
+    let exact_terms = [exact_child_term, exact_call, crate::ReplayTermId::MISSING];
+    db.stage_source_row(
+        constructor,
+        &[exact_child, output, Value::new(0)],
+        &exact_terms,
+        SourceRef::Synthetic(791),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let prior_fact = committed_fact_id(&db, constructor, exact_child);
+
+    db.set_causal_wave(CausalWave::new(1));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 791, CausalWave::new(1)),
+        child_sort,
+        exact_child,
+        canonical_child,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+    db.set_causal_wave(CausalWave::new(2));
+    assert!(db.apply_rebuild(uf, &[constructor], Value::new(2)));
+    db.finalize_causal_wave();
+
+    let rebuilt_fact = committed_fact_id(&db, constructor, canonical_child);
+    assert_ne!(rebuilt_fact, prior_fact);
+    let rebuilt = receipts.fact_record(rebuilt_fact).unwrap();
+    assert_eq!(rebuilt.terms.as_ref(), exact_terms.as_slice());
+    assert!(matches!(
+        rebuilt.cause,
+        crate::FactCause::Rebuild {
+            prior_fact: recorded,
+            ..
+        } if recorded == prior_fact
+    ));
+    assert_eq!(
+        receipts.snapshot().counters.merge_prior_term_copies,
+        0,
+        "effective rebuild inheritance is not candidate merge-copy work"
+    );
+}
+
+#[test]
 fn causal_receipt_rebuild_collision_records_exact_congruence() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());

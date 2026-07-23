@@ -1259,3 +1259,44 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   native lease canary to a removal-only transaction once causal delete
   recording exists; the current language boundary still rejects that path, so
   it is a deletion handoff rather than a checkpoint-1 table-lease omission.
+
+### 2026-07-23 — checkpoint-1 release integration: rebuild term inheritance
+
+- Falsifying release probe from committed checkpoint
+  `10342bb9dc7393fc5563e64cdc034a8594704e3f`: Math panicked during rebuild at
+  `record_fact_with_terms` with `constructor row result has incompatible
+  structural Call metadata`. The lazy-promotion refactor had removed the old
+  batch-wide cause preload, but an effective direct rebuild with no explicit
+  producer terms then fell through to the global reverse term map. A competing
+  current alias for the same e-class value could therefore replace the prior
+  fact's immutable match-time syntax.
+- The repair remains proportional to effective events. A direct
+  `Rebuild`/`ContainerRefresh` cause copies only its referenced prior FactId's
+  immutable term slice when `record_fact_with_terms` is committing the new
+  fact. Constructor merge inheritance uses the same helper, while the
+  candidate/batch-wide rebuild-term preload stays deleted. Cause-arena and
+  fact-arena locks are released before replay-term lookup, and rebuild
+  inheritance does not increment the candidate merge-copy counter.
+- The competing-alias canary installs two structural `Call` terms for one raw
+  constructor output, makes the wrong alias win the global reverse map, then
+  rekeys the exact source row through a deferred rebuild cause. The new FactId
+  retains the prior fact's exact term slice and `FactCause::Rebuild`, while
+  `merge_prior_term_copies` remains zero.
+- Validation on the repaired source:
+  - `cargo build --release -p egglog-experimental`: passed.
+  - `RUST_BACKTRACE=1 target/release/egglog-experimental -j 1
+    --causal-receipts egglog/tests/math-microbenchmark.egg`: exited 0; the
+    former release panic is absent.
+  - `RUST_BACKTRACE=1 target/release/egglog-experimental -j 1
+    --causal-receipts
+    egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg`: exited 0.
+  - `cargo test -p egglog-core-relations
+    effective_constructor_rebuild_inherits_prior_terms_over_competing_alias
+    --lib -q`: 1 passed, 0 failed.
+  - `cargo test -p egglog-core-relations rebuild_ --lib -q`: 14 passed, 0
+    failed.
+  - `cargo test -p egglog-core-relations --lib -q`: 143 passed, 0 failed.
+  - `cargo check -p egglog-core-relations`: passed with no warnings.
+- These are integration and regression checks, not receipt-overhead benchmark
+  measurements. Deletion/timeline recording and all later checkpoints remain
+  untouched.
