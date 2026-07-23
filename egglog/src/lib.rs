@@ -1554,7 +1554,10 @@ impl EGraph {
                 .ok_or_else(|| crate::api::ApiError::MissingTable {
                     name: name.to_owned(),
                 })?;
-        if function.subtype() != FunctionSubtype::Custom {
+        // An internal term relation (under term encoding) has `Custom` subtype but
+        // is not a user-facing function table — it reads as enodes via
+        // `constructor_enodes`, so reject it here.
+        if function.subtype() != FunctionSubtype::Custom || function.is_relation_term() {
             return Err(crate::api::ApiError::WrongSubtype {
                 name: name.to_owned(),
                 expected: "function",
@@ -1609,7 +1612,12 @@ impl EGraph {
                 .ok_or_else(|| crate::api::ApiError::MissingTable {
                     name: name.to_owned(),
                 })?;
-        if function.subtype() != FunctionSubtype::Constructor {
+        // A real constructor, or (under term encoding) an internal term relation,
+        // reads as enodes. The eclass id is the row's output column for a real
+        // constructor, or the last input column for a term relation (whose trailing
+        // `Unit` output is then ignored) — `extraction_output_index` picks the right
+        // one and `extraction_num_children` the matching children count.
+        if function.subtype() != FunctionSubtype::Constructor && !function.is_relation_term() {
             return Err(crate::api::ApiError::WrongSubtype {
                 name: name.to_owned(),
                 expected: "constructor",
@@ -1617,14 +1625,12 @@ impl EGraph {
             }
             .into());
         }
+        let num_children = function.extraction_num_children();
+        let eclass_idx = function.extraction_output_index();
         self.backend.for_each_while(function.backend_id, |row| {
-            let (eclass, children) = row
-                .vals
-                .split_last()
-                .expect("constructor row has at least an eclass column");
             f(Enode {
-                children,
-                eclass: *eclass,
+                children: &row.vals[..num_children],
+                eclass: row.vals[eclass_idx],
                 subsumed: row.subsumed,
             })
         });
