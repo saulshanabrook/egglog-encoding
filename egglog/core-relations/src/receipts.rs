@@ -10,7 +10,7 @@ use std::{
     any::TypeId,
     mem,
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex, OnceLock, RwLock,
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
 };
@@ -184,11 +184,11 @@ pub struct ReplayTermCounters {
 
 #[derive(Default)]
 struct ReplayTermStore {
-    by_node: DashMap<ReplayTerm, ReplayTermId>,
-    nodes: DashMap<ReplayTermId, ReplayTerm>,
-    by_value: DashMap<(ReplaySortId, Value), ReplayTermId>,
-    sorts_by_value: DashMap<Value, SmallVec<[ReplaySortId; 2]>>,
-    original_value_by_term: DashMap<(ReplaySortId, ReplayTermId), Value>,
+    by_node: RwLock<HashMap<ReplayTerm, ReplayTermId>>,
+    nodes: RwLock<HashMap<ReplayTermId, ReplayTerm>>,
+    by_value: RwLock<HashMap<(ReplaySortId, Value), ReplayTermId>>,
+    sorts_by_value: RwLock<HashMap<Value, SmallVec<[ReplaySortId; 2]>>>,
+    original_value_by_term: RwLock<HashMap<(ReplaySortId, ReplayTermId), Value>>,
     table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
     table_constructors: DashMap<TableId, ReplayConstructorSpec>,
     container_type_by_sort: DashMap<ReplaySortId, TypeId>,
@@ -197,26 +197,33 @@ struct ReplayTermStore {
 
 impl ReplayTermStore {
     fn intern(&self, next_term: &AtomicU32, node: ReplayTerm) -> ReplayTermId {
-        match self.by_node.entry(node.clone()) {
-            Entry::Occupied(entry) => *entry.get(),
-            Entry::Vacant(entry) => {
-                let id = ReplayTermId::new(next_term.fetch_add(1, Ordering::Relaxed) + 1);
-                assert!(
-                    self.nodes.insert(id, node).is_none(),
-                    "duplicate ReplayTermId"
-                );
-                entry.insert(id);
-                id
-            }
+        let mut by_node = self.by_node.write().unwrap();
+        if let Some(id) = by_node.get(&node).copied() {
+            return id;
         }
+        let id = ReplayTermId::new(next_term.fetch_add(1, Ordering::Relaxed) + 1);
+        // This is the only operation that holds two structural-identity locks.
+        // The order is always by_node -> nodes; no nodes reader calls another
+        // store method while its guard is live. Publishing the reverse entry
+        // last prevents another interner from observing a half-installed id.
+        let mut nodes = self.nodes.write().unwrap();
+        assert!(
+            nodes.insert(id, node.clone()).is_none(),
+            "duplicate ReplayTermId"
+        );
+        assert!(
+            by_node.insert(node, id).is_none(),
+            "duplicate ReplayTerm node"
+        );
+        id
     }
 
     fn node(&self, id: ReplayTermId) -> Option<ReplayTerm> {
-        self.nodes.get(&id).map(|node| node.clone())
+        self.nodes.read().unwrap().get(&id).cloned()
     }
 
     fn lookup_node(&self, node: &ReplayTerm) -> Option<ReplayTermId> {
-        self.by_node.get(node).map(|term| *term)
+        self.by_node.read().unwrap().get(node).copied()
     }
 
     fn install_value(
@@ -225,32 +232,33 @@ impl ReplayTermStore {
         value: Value,
         term: ReplayTermId,
     ) -> Result<ReplayTermId, &'static str> {
-        let Some(node) = self.nodes.get(&term) else {
+        let Some(node_sort) = self.nodes.read().unwrap().get(&term).map(ReplayTerm::sort) else {
             return Err("ReplayTermId is not installed");
         };
-        if node.sort() != sort {
+        if node_sort != sort {
             return Err("ReplayTermId sort does not match its value sort");
         }
-        drop(node);
-        let installed = match self.by_value.entry((sort, value)) {
-            Entry::Occupied(entry) => Ok(*entry.get()),
-            Entry::Vacant(entry) => {
-                entry.insert(term);
-                Ok(term)
-            }
-        }?;
-        let mut sorts = self.sorts_by_value.entry(value).or_default();
-        if !sorts.contains(&sort) {
-            sorts.push(sort);
-        }
+        let installed = {
+            let mut by_value = self.by_value.write().unwrap();
+            *by_value.entry((sort, value)).or_insert(term)
+        };
         self.original_value_by_term
+            .write()
+            .unwrap()
             .entry((sort, term))
             .or_insert(value);
+        {
+            let mut sorts_by_value = self.sorts_by_value.write().unwrap();
+            let sorts = sorts_by_value.entry(value).or_default();
+            if !sorts.contains(&sort) {
+                sorts.push(sort);
+            }
+        }
         Ok(installed)
     }
 
     fn lookup(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
-        self.by_value.get(&(sort, value)).map(|term| *term)
+        self.by_value.read().unwrap().get(&(sort, value)).copied()
     }
 
     fn common_compatible_call_sorts(
@@ -258,11 +266,15 @@ impl ReplayTermStore {
         left: Value,
         right: Value,
     ) -> Result<SmallVec<[ReplaySortId; 2]>, &'static str> {
-        let Some(left_sorts) = self.sorts_by_value.get(&left) else {
-            return Err("left container id has no installed replay sort");
-        };
-        let Some(right_sorts) = self.sorts_by_value.get(&right) else {
-            return Err("right container id has no installed replay sort");
+        let (left_sorts, right_sorts) = {
+            let sorts_by_value = self.sorts_by_value.read().unwrap();
+            let Some(left_sorts) = sorts_by_value.get(&left).cloned() else {
+                return Err("left container id has no installed replay sort");
+            };
+            let Some(right_sorts) = sorts_by_value.get(&right).cloned() else {
+                return Err("right container id has no installed replay sort");
+            };
+            (left_sorts, right_sorts)
         };
         let common = left_sorts
             .iter()
@@ -297,8 +309,10 @@ impl ReplayTermStore {
 
     fn original_value(&self, sort: ReplaySortId, term: ReplayTermId) -> Option<Value> {
         self.original_value_by_term
+            .read()
+            .unwrap()
             .get(&(sort, term))
-            .map(|value| *value)
+            .copied()
     }
 
     fn table_layout(&self, table: TableId) -> Option<Arc<[Option<ReplaySortId>]>> {
@@ -385,7 +399,7 @@ impl ReplayTermStore {
         row: &[Value],
         terms: &[ReplayTermId],
     ) -> Result<(), &'static str> {
-        let Some(layout) = self.table_layouts.get(&table) else {
+        let Some(layout) = self.table_layout(table) else {
             return Err("table has no replay-term layout");
         };
         if layout.len() != row.len() || row.len() != terms.len() {
@@ -398,7 +412,7 @@ impl ReplayTermStore {
                 }
                 continue;
             };
-            let Some(node) = self.nodes.get(term) else {
+            let Some(node) = self.node(*term) else {
                 return Err("ReplayTermId is not installed");
             };
             if node.sort() != sort {
@@ -419,7 +433,7 @@ impl ReplayTermStore {
         row: &[Value],
         terms: &[ReplayTermId],
     ) -> Result<(), &'static str> {
-        let Some(layout) = self.table_layouts.get(&table) else {
+        let Some(layout) = self.table_layout(table) else {
             return Err("table has no replay-term layout");
         };
         if layout.len() != row.len() || row.len() != terms.len() {
@@ -429,8 +443,7 @@ impl ReplayTermStore {
             match sort {
                 Some(sort) => {
                     let node = self
-                        .nodes
-                        .get(term)
+                        .node(*term)
                         .ok_or("committed row owns an unknown ReplayTermId")?;
                     if node.sort() != sort {
                         return Err("committed row term has the wrong logical sort");
@@ -442,7 +455,11 @@ impl ReplayTermStore {
                 None => {}
             }
         }
-        if let Some(constructor) = self.table_constructors.get(&table) {
+        if let Some(constructor) = self
+            .table_constructors
+            .get(&table)
+            .map(|constructor| constructor.clone())
+        {
             let output_column = constructor.child_sorts.len();
             let output_term = *terms
                 .get(output_column)
@@ -466,7 +483,7 @@ impl ReplayTermStore {
         row: &[Value],
         out: &mut Vec<ReplayTermId>,
     ) -> Result<FlatRange, &'static str> {
-        let Some(layout) = self.table_layouts.get(&table) else {
+        let Some(layout) = self.table_layout(table) else {
             return Err("table has no replay-term layout");
         };
         if layout.len() != row.len() {
@@ -484,7 +501,11 @@ impl ReplayTermStore {
                 out.push(ReplayTermId::MISSING);
             }
         }
-        if let Some(constructor) = self.table_constructors.get(&table) {
+        if let Some(constructor) = self
+            .table_constructors
+            .get(&table)
+            .map(|constructor| constructor.clone())
+        {
             let output_column = constructor.child_sorts.len();
             let output = *row
                 .get(output_column)
@@ -525,8 +546,8 @@ impl ReplayTermStore {
 
     fn counters(&self) -> ReplayTermCounters {
         ReplayTermCounters {
-            interned_nodes: self.nodes.len() as u64,
-            installed_values: self.by_value.len() as u64,
+            interned_nodes: self.nodes.read().unwrap().len() as u64,
+            installed_values: self.by_value.read().unwrap().len() as u64,
             table_layouts: self.table_layouts.len() as u64,
         }
     }
@@ -5040,5 +5061,28 @@ mod tests {
         assert_ne!(left, right);
         assert_eq!(receipts.lookup_term(left_sort, value), Some(left));
         assert_eq!(receipts.lookup_term(right_sort, value), Some(right));
+    }
+
+    #[test]
+    fn concurrent_replay_term_interning_deduplicates_identical_nodes() {
+        let receipts = CausalReceipts::default();
+        let sort = ReplaySortId::new(42);
+        let value = Value::new_const(42);
+        let terms = std::thread::scope(|scope| {
+            (0..4)
+                .map(|_| {
+                    scope.spawn(|| receipts.intern_literal(sort, ReplayLiteral::I64(42), value))
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+
+        assert!(terms.iter().all(|term| *term == terms[0]));
+        assert_eq!(receipts.lookup_term(sort, value), Some(terms[0]));
+        let counters = receipts.replay_term_counters();
+        assert_eq!(counters.interned_nodes, 1);
+        assert_eq!(counters.installed_values, 1);
     }
 }

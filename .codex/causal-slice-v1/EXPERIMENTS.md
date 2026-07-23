@@ -1337,3 +1337,45 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
     measurement.
 - Scope remains frozen: no deletion/timeline, slicing, replay, workload cases,
   or benchmark-runner changes.
+
+### 2026-07-23 — checkpoint-1 optimization 2: serial structural maps
+
+- Falsifying profile at clean
+  `f18797058aac4c8fc4ac7744c834768c229e20dc`: controlled Math causal receipts
+  measured 2.231s versus 0.426s native, with causal phase split
+  search/apply/merge/rebuild = 0.170s/0.890s/0.587s/0.389s. No second
+  algorithmic hotspot remained; the bounded cluster was structural term
+  identity lookup/interning in sharded `DashMap` operations plus hashing and
+  library overhead.
+- One variable changed: only `ReplayTermStore`'s five hot identity maps
+  (`by_node`, `nodes`, `by_value`, `sorts_by_value`, and
+  `original_value_by_term`) became separately locked plain Fx hash maps.
+  Table layouts, constructor metadata, and container metadata remain DashMaps;
+  the atomic ReplayTermId allocator is unchanged.
+- Locking stays narrow. Interning is the sole dual-lock operation and always
+  acquires `by_node` before `nodes`, publishing the forward node before making
+  its reverse identity visible. All other paths copy or clone their result and
+  release one guard before touching another map or calling a store method.
+  Current-value installation preserves first-wins lookup while still recording
+  every structural term's original value and sort membership.
+- Existing canaries continue to cover typed sort scoping and competing
+  structural aliases. A new four-thread duplicate-intern canary verifies that
+  one structural node, one value mapping, and one stable ReplayTermId are
+  published under contention; it also exercises the only nested lock order.
+- Validation:
+  - `cargo test -p egglog-core-relations
+    concurrent_replay_term_interning_deduplicates_identical_nodes --lib -q`:
+    1 passed, 0 failed.
+  - `cargo test -p egglog-core-relations --lib -q`: 145 passed, 0 failed.
+  - `cargo test -p egglog causal_receipt --lib -q`: 22 passed, 0 failed.
+  - `cargo test -p egglog-experimental causal_receipt --lib -q`: 1 passed, 0
+    failed.
+  - `cargo check -p egglog-experimental`: passed with no warnings.
+  - `cargo build --release -p egglog-experimental`: passed.
+  - direct release Math and Eggcc `-j 1 --causal-receipts` probes both exited
+    0. The concurrent directional Math probe completed in 2.65s; this is not
+    evidence against the controlled 2.231s baseline and is not a benchmark
+    claim. The coordinator owns the exact `./bench.py` gate.
+  - `cargo fmt --all -- --check`: passed.
+- Scope remains frozen: no non-identity map conversion, non-atomic ID
+  allocation, deletion/timeline, slicing, replay, or benchmark-runner change.
