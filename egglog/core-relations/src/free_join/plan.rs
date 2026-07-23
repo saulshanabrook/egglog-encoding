@@ -256,6 +256,42 @@ pub(crate) struct SinglePlan {
 #[derive(Debug, Clone)]
 pub(crate) struct JoinStages {
     pub instrs: Arc<Vec<JoinStage>>,
+    /// Variables whose values this block establishes or consumes. Receipt
+    /// validation must ignore stale slots left in the shared binding map for
+    /// variables projected out of a decomposed bag.
+    pub live_vars: Arc<[Variable]>,
+}
+
+impl JoinStages {
+    fn new(instrs: Vec<JoinStage>) -> Self {
+        let mut live_vars = SmallVec::<[Variable; 16]>::new();
+        let mut add = |variable| {
+            if !live_vars.contains(&variable) {
+                live_vars.push(variable);
+            }
+        };
+        for stage in &instrs {
+            match stage {
+                JoinStage::Intersect { var, .. } => add(*var),
+                JoinStage::FusedIntersect { bind, .. } => {
+                    bind.iter().for_each(|(_, variable)| add(*variable));
+                }
+                JoinStage::FusedIntersectMat { mode, bind, .. } => {
+                    bind.iter().for_each(|(_, variable)| add(*variable));
+                    match mode {
+                        MatScanMode::Value(variables) | MatScanMode::Lookup(variables) => {
+                            variables.iter().copied().for_each(&mut add);
+                        }
+                        MatScanMode::Full | MatScanMode::KeyOnly => {}
+                    }
+                }
+            }
+        }
+        Self {
+            instrs: Arc::new(instrs),
+            live_vars: Arc::from(live_vars.into_vec().into_boxed_slice()),
+        }
+    }
 }
 
 /// Specification of the materialization of the intermediate results, as required by tree decomposition.
@@ -268,6 +304,9 @@ pub(crate) struct JoinStages {
 /// independent parts of a query and make sure they are evaluated independently.
 #[derive(Debug, Clone)]
 pub(crate) struct MatSpec {
+    // Native query atoms evaluated by this bag. Receipt witnesses use this to
+    // avoid attributing singleton rows from later bags to an intermediate.
+    pub premise_atoms: SmallVec<[AtomId; 8]>,
     // Variables that are used by later stages
     pub msg_vars: SmallVec<[Variable; 16]>,
     // Variables that are not used by later stages.
@@ -858,6 +897,14 @@ fn plan_single_bag(
     n_used_in_bag: &mut DenseIdMap<Variable, usize>,
     strat: PlanStrategy,
 ) -> (Vec<JoinHeader>, JoinStages, MatSpec) {
+    let premise_atoms = bag
+        .atoms
+        .iter()
+        .filter_map(|(atom, info)| {
+            (!info.table.is_dummy() && info.vars().all(|variable| bag.vars.contains_key(variable)))
+                .then_some(atom)
+        })
+        .collect();
     let mut msg_vars = smallvec![];
     let mut val_vars = smallvec![];
 
@@ -965,11 +1012,17 @@ fn plan_single_bag(
     instrs.splice(0..0, prologue);
     instrs.extend(epilogue);
 
-    let stages = JoinStages {
-        instrs: Arc::new(instrs),
-    };
+    let stages = JoinStages::new(instrs);
 
-    (header, stages, MatSpec { msg_vars, val_vars })
+    (
+        header,
+        stages,
+        MatSpec {
+            premise_atoms,
+            msg_vars,
+            val_vars,
+        },
+    )
 }
 
 /// Builds the final result block that collects results from all materialized bags.
@@ -1010,9 +1063,7 @@ fn build_result_block(blocks: &[(JoinStages, MatSpec)]) -> JoinStages {
         });
     }
 
-    JoinStages {
-        instrs: Arc::new(result_block),
-    }
+    JoinStages::new(result_block)
 }
 
 /// The last stage and the result block have the following structure:
@@ -1053,7 +1104,7 @@ fn fuse_last_stage(
     let mut last_block = last_block.0;
     let mut instrs = Arc::unwrap_or_clone(last_block.instrs);
     instrs.extend(result_block.instrs[1..].iter().cloned());
-    last_block.instrs = Arc::new(instrs);
+    last_block = JoinStages::new(instrs);
 
     (blocks, last_block)
 }
@@ -1094,9 +1145,7 @@ fn loop_lifting(stages: JoinStages) -> JoinStages {
             }
         }
     }
-    JoinStages {
-        instrs: Arc::new(instrs),
-    }
+    JoinStages::new(instrs)
 }
 
 /// This is the main entry point for query optimization using tree decomposition.
@@ -1109,9 +1158,7 @@ pub(crate) fn tree_decompose_and_plan(
     macro_rules! fast_path {
         () => {{
             let (header, instrs) = plan_stages(&ctx, strat);
-            let stages = JoinStages {
-                instrs: Arc::new(instrs),
-            };
+            let stages = JoinStages::new(instrs);
 
             Plan::SinglePlan(SinglePlan {
                 atoms: Arc::new(ctx.atoms),
@@ -1138,6 +1185,15 @@ pub(crate) fn tree_decompose_and_plan(
     if bags.len() <= 1 {
         return fast_path!();
     }
+
+    debug_assert!(ctx.atoms.iter().all(|(atom, info)| {
+        info.table.is_dummy()
+            || info.var_columns.is_empty()
+            || bags.iter().any(|bag| {
+                bag.atoms.contains_key(atom)
+                    && info.vars().all(|variable| bag.vars.contains_key(variable))
+            })
+    }));
 
     // Step 3: Count variable usage across bags. Used for deciding if a variable is public (i.e., message variables) or private.
     let mut n_used_in_bag = count_variable_usage_per_bag(&bags);

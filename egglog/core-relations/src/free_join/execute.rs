@@ -1573,6 +1573,7 @@ impl<'a> JoinState<'a> {
             action_buf.push_bindings_factorized(
                 action,
                 &mut binding_info.bindings,
+                &stages.live_vars,
                 &binding_info.binding_sets,
                 atoms,
                 &binding_info.subsets,
@@ -1625,6 +1626,7 @@ impl<'a> JoinState<'a> {
                                 action_buf.push_bindings_factorized(
                                     action,
                                     &mut binding_info.bindings,
+                                    &stages.live_vars,
                                     &binding_info.binding_sets,
                                     atoms,
                                     &binding_info.subsets,
@@ -2536,6 +2538,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         &mut self,
         action: A,
         bindings: &mut DenseIdMap<Variable, Value>,
+        live_vars: &[Variable],
         binding_sets: &BindingSet,
         atoms: &DenseIdMap<AtomId, Atom>,
         subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
@@ -2551,6 +2554,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
             self,
             action,
             bindings,
+            live_vars,
             binding_sets,
             atoms,
             subsets,
@@ -2997,6 +3001,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     action_buf: &mut BUF,
     action: A,
     bindings: &mut DenseIdMap<Variable, Value>,
+    live_vars: &[Variable],
     binding_sets: &BindingSet,
     atoms: &DenseIdMap<AtomId, Atom>,
     subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
@@ -3026,7 +3031,16 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                     continue;
                 }
                 let row = subset.first().expect("singleton subset has one row");
-                let fact = validated_atom_fact(info, row, bindings, exec_state);
+                let fact = validated_atom_fact(
+                    action,
+                    atom,
+                    "singleton",
+                    info,
+                    row,
+                    bindings,
+                    live_vars,
+                    exec_state,
+                );
                 witness.facts.push((slot, fact));
             }
         }
@@ -3059,7 +3073,16 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
             if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
                 && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
             {
-                let fact = validated_atom_fact(&atoms[atom], row_id, bindings, exec_state);
+                let fact = validated_atom_fact(
+                    action,
+                    atom,
+                    "selected",
+                    &atoms[atom],
+                    row_id,
+                    bindings,
+                    live_vars,
+                    exec_state,
+                );
                 witness.facts.push((slot, fact));
             }
             if let (Some(witness), Some(materialized)) =
@@ -3071,6 +3094,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                 action_buf,
                 action,
                 bindings,
+                live_vars,
                 binding_sets,
                 atoms,
                 subsets,
@@ -3098,7 +3122,16 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
         if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
             && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
         {
-            let fact = validated_atom_fact(&atoms[atom], row_id, bindings, exec_state);
+            let fact = validated_atom_fact(
+                action,
+                atom,
+                "selected",
+                &atoms[atom],
+                row_id,
+                bindings,
+                live_vars,
+                exec_state,
+            );
             witness.facts.push((slot, fact));
         }
         if let (Some(witness), Some(materialized)) =
@@ -3110,6 +3143,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
             action_buf,
             action,
             bindings,
+            live_vars,
             binding_sets,
             atoms,
             subsets,
@@ -3125,10 +3159,14 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     }
 }
 
-fn validated_atom_fact(
+fn validated_atom_fact<A: NumericId>(
+    action: A,
+    atom_id: AtomId,
+    source: &'static str,
     atom: &Atom,
     row_id: RowId,
     bindings: &DenseIdMap<Variable, Value>,
+    live_vars: &[Variable],
     exec_state: &ExecutionState<'_>,
 ) -> crate::FactId {
     let table = &exec_state.db.table_info[atom.table].table;
@@ -3136,11 +3174,17 @@ fn validated_atom_fact(
         .row_at(row_id)
         .unwrap_or_else(|| panic!("receipt witness row {row_id:?} is not live"));
     for (column, variable) in atom.var_columns.iter() {
-        if let Some(bound) = bindings.get(variable) {
+        if live_vars.contains(&variable)
+            && let Some(bound) = bindings.get(variable)
+        {
+            let actual = row.vals[column.index()];
             assert_eq!(
-                row.vals[column.index()],
+                actual,
                 *bound,
-                "receipt singleton witness is inconsistent with the current binding"
+                "receipt {source} witness is inconsistent with the current binding: action={}, atom={atom_id:?}, table={:?} ({:?}), row={row_id:?}, column={column:?}, variable={variable:?}",
+                action.index(),
+                atom.table,
+                exec_state.table_name(atom.table)
             );
         }
     }
@@ -3206,7 +3250,10 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
         self.capture_witness
     }
 
-    fn receipt_premise_slot(&self, _mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+    fn receipt_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+        if !self.specs[mat_id].premise_atoms.contains(&atom) {
+            return None;
+        }
         self.premise_slots.as_ref()?.get(atom).copied()
     }
 
@@ -3291,7 +3338,10 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
         self.capture_witness
     }
 
-    fn receipt_premise_slot(&self, _mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+    fn receipt_premise_slot(&self, mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+        if !self.specs[mat_id].premise_atoms.contains(&atom) {
+            return None;
+        }
         self.premise_slots.as_ref()?.get(atom).copied()
     }
 
@@ -3800,18 +3850,81 @@ mod tests {
         bindings.insert(variable, Value::new(2));
         let exec_state = ExecutionState::new(db.read_only_view(), Default::default());
 
-        let selected_fact =
-            validated_atom_fact(&selected_atom, RowId::new(0), &bindings, &exec_state);
+        let action = ActionId::new(0);
+        let atom = AtomId::new(0);
+        let selected_fact = validated_atom_fact(
+            action,
+            atom,
+            "test",
+            &selected_atom,
+            RowId::new(0),
+            &bindings,
+            &[variable],
+            &exec_state,
+        );
         assert!(!selected_fact.is_missing());
         let decoy = catch_unwind(AssertUnwindSafe(|| {
-            validated_atom_fact(&candidate_atom, RowId::new(0), &bindings, &exec_state)
+            validated_atom_fact(
+                action,
+                atom,
+                "test",
+                &candidate_atom,
+                RowId::new(0),
+                &bindings,
+                &[variable],
+                &exec_state,
+            )
         }));
         assert!(
             decoy.is_err(),
             "a non-selected atom's first row must not be accepted when it contradicts bindings"
         );
-        let actual = validated_atom_fact(&candidate_atom, RowId::new(1), &bindings, &exec_state);
+        let actual = validated_atom_fact(
+            action,
+            atom,
+            "test",
+            &candidate_atom,
+            RowId::new(1),
+            &bindings,
+            &[variable],
+            &exec_state,
+        );
         assert!(!actual.is_missing());
         assert_ne!(selected_fact, actual);
+
+        let omitted = Variable::new(1);
+        let mut projected_atom = candidate_atom.clone();
+        projected_atom.var_columns.insert(omitted, ColumnId::new(1));
+        bindings.insert(omitted, Value::new(99));
+        assert_eq!(
+            validated_atom_fact(
+                action,
+                atom,
+                "projected",
+                &projected_atom,
+                RowId::new(1),
+                &bindings,
+                &[variable],
+                &exec_state,
+            ),
+            actual,
+            "a projected-out variable must ignore a stale shared-map binding"
+        );
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| {
+                validated_atom_fact(
+                    action,
+                    atom,
+                    "projected",
+                    &projected_atom,
+                    RowId::new(1),
+                    &bindings,
+                    &[variable, omitted],
+                    &exec_state,
+                )
+            }))
+            .is_err(),
+            "the same variable must be checked when the native block reads it"
+        );
     }
 }

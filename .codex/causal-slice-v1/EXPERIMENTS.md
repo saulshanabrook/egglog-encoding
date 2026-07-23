@@ -801,6 +801,33 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   rule nodes. This calibrates Hardboiled only as evidence that Prefix breadth
   can collapse; it is not an expected exact firing count for the new slice.
 
+### 2026-07-23 — checkpoint 4b2j scoped decomposed witnesses
+
+- Hypothesis: Eggcc's `Bop` witness mismatch came from treating every atom in
+  the source query as an owner in every intermediate materialization. The
+  first atom-only bag filter did not flip the failure; the same `Bop` was a
+  projected semijoin atom in the active bag. This falsification narrowed the
+  bug to the planner's projected-variable boundary.
+- A decomposed bag now owns a premise only when the bag contains every source
+  variable of that real atom. Projected `R(x, -)`-style atoms still constrain
+  native execution, but cannot contribute an arbitrary existential row as the
+  eventual source premise. A planner invariant checks that every non-ground
+  real atom has at least one fully covering bag.
+- Each join block also retains its compact set of variables actually
+  established or consumed. Exact row validation compares only those variables
+  against the shared binding map, whose other slots intentionally contain
+  stale values across materialized bags. Local existentials omitted by the
+  native planner come from the selected fact's immutable row instead.
+- The first-row decoy guard remains: a singleton support must still be the
+  native current subset, satisfy its atom constraints, and agree on every live
+  variable. A focused canary now distinguishes a stale projected-out binding
+  from a contradictory live binding.
+- Eggcc advanced from the `Bop` binding assertion to the next independent
+  producer gap: an effective fact contains a value with no installed replay
+  term. There was no Prefix or witness search.
+- Validation: all 119 core-relations tests and all 12 frontend causal canaries
+  passed; `cargo check --workspace`, formatting, and `git diff --check` passed.
+
 ### 2026-07-23 — checkpoint 4b2i exact equality check roots
 
 - Status: focused semantic checkpoint. All five checks now have an exact root
