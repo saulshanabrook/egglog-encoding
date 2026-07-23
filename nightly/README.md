@@ -50,8 +50,9 @@ python3 -m webbrowser nightly/output/index.html   # or just open the file in a b
 
 Edit the constants at the top of `scripts/nightly_bench.py` — `TARGETS` and
 `ENDPOINTS` control which checkouts and backend/treatment combinations are
-measured, and `HEADLINE` picks the comparison the page opens on. Everything else
-uses `bench.py`'s own defaults (rounds, timeout, and the representative suite).
+measured, and `HEADLINE_CANDIDATE` plus `HEADLINE_BASELINES` pick the comparison
+the page opens on. Everything else uses `bench.py`'s own defaults (rounds,
+timeout, and the representative suite).
 
 Pass an alternate output directory as a single positional argument:
 
