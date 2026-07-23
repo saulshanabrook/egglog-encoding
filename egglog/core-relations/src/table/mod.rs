@@ -25,13 +25,15 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    CauseDraftId, EqualityEdgeCount, FactId, Pooled, ReplayTermId, TableChange, TableId,
+    CauseDraftId, DeferredEqualityCause, EqualityEdgeCount, FactId, Pooled, ReplayTermId,
+    TableChange, TableId,
     action::ExecutionState,
     common::{HashMap, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
     offsets::{OffsetRange, Offsets, RowId, Subset, SubsetRef},
     parallel_heuristics::parallelize_table_op,
     pool::with_pool_set,
+    receipts::PendingNativeLease,
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
         ColumnId, Constraint, Generation, MutationBuffer, MutationTransaction, Offset, Row, Table,
@@ -309,7 +311,7 @@ struct Buffer {
 }
 
 struct ReceiptBuffer {
-    causes: DenseIdMap<ShardId, Vec<CauseDraftId>>,
+    causes: DenseIdMap<ShardId, Vec<DeferredEqualityCause>>,
     row_terms: DenseIdMap<ShardId, Vec<Option<Box<[ReplayTermId]>>>>,
     transaction: Option<MutationTransaction>,
 }
@@ -344,6 +346,9 @@ impl MutationBuffer for Buffer {
             .add_row(row);
     }
     fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId) {
+        self.stage_insert_deferred(row, DeferredEqualityCause::ready(cause));
+    }
+    fn stage_insert_deferred(&mut self, row: &[Value], cause: DeferredEqualityCause) {
         let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
         let rows = self
             .pending_rows
@@ -356,9 +361,10 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt
-            .causes
-            .get_or_insert(shard, || vec![CauseDraftId::UNATTRIBUTED; rows]);
+        let causes = receipt.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+            Vec::new()
+        });
         let row_terms = receipt.row_terms.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_terms.len(), rows);
@@ -370,6 +376,14 @@ impl MutationBuffer for Buffer {
         &mut self,
         row: &[Value],
         cause: CauseDraftId,
+        terms: &[ReplayTermId],
+    ) {
+        self.stage_insert_deferred_with_terms(row, DeferredEqualityCause::ready(cause), terms);
+    }
+    fn stage_insert_deferred_with_terms(
+        &mut self,
+        row: &[Value],
+        cause: DeferredEqualityCause,
         terms: &[ReplayTermId],
     ) {
         let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
@@ -384,9 +398,10 @@ impl MutationBuffer for Buffer {
                 transaction: None,
             })
         });
-        let causes = receipt
-            .causes
-            .get_or_insert(shard, || vec![CauseDraftId::UNATTRIBUTED; rows]);
+        let causes = receipt.causes.get_or_insert(shard, || {
+            assert_eq!(rows, 0, "receipt causes were enabled after ordinary rows");
+            Vec::new()
+        });
         let row_terms = receipt.row_terms.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
         debug_assert_eq!(row_terms.len(), rows);
@@ -430,6 +445,7 @@ impl Drop for Buffer {
                 .and_then(|receipt| receipt.transaction.clone())
             {
                 let mut pending_rows = Vec::new();
+                let native_lease = transaction.native_lease();
                 let mut row_count = 0;
                 for shard_id in 0..self.pending_rows.n_ids() {
                     let shard = ShardId::from_usize(shard_id);
@@ -451,6 +467,7 @@ impl Drop for Buffer {
                             rows,
                             causes,
                             row_terms,
+                            _native_lease: native_lease.clone(),
                         },
                     ));
                 }
@@ -501,6 +518,7 @@ impl Drop for Buffer {
                     rows: buf,
                     causes,
                     row_terms,
+                    _native_lease: None,
                 });
             }
             state.total_rows.fetch_add(rows, Ordering::Relaxed);
@@ -959,7 +977,7 @@ impl SortedWritesTable {
     fn do_delete(&mut self) -> bool {
         let total = self.pending_state.total_removals.swap(0, Ordering::Relaxed);
 
-        if parallelize_table_op(total) {
+        if self.data.fact_ids.is_none() && parallelize_table_op(total) {
             self.parallel_delete()
         } else {
             self.serial_delete()
@@ -969,10 +987,11 @@ impl SortedWritesTable {
     fn do_insert(&mut self, exec_state: &mut ExecutionState) -> bool {
         let total = self.pending_state.total_rows.swap(0, Ordering::Relaxed);
         self.data.data.reserve(total);
-        let requires_coherent_constructor_terms = exec_state
-            .causal_receipts()
-            .is_some_and(|receipts| receipts.table_has_constructor_terms(self.table_id));
-        if parallelize_table_op(total) && !requires_coherent_constructor_terms {
+        // Causal capture is a serial-only contract. Keep the already-landed
+        // parallel implementation dormant so direct core activation inside a
+        // larger Rayon pool cannot accidentally promote candidate-scale
+        // receipt causes.
+        if exec_state.causal_receipts().is_none() && parallelize_table_op(total) {
             if let Some(col) = self.sort_by {
                 self.parallel_insert(
                     exec_state,
@@ -1018,20 +1037,14 @@ impl SortedWritesTable {
         for (_outer_shard, queue) in self.pending_state.pending_rows.iter() {
             if let Some(sort_by) = self.sort_by {
                 while let Some(buf) = queue.pop() {
-                    if RECEIPTS {
-                        receipt_batch
-                            .as_mut()
-                            .expect("receipt mode requires an open batch")
-                            .preload_cause_summaries(buf.receipt_causes());
-                    }
                     for (proposal_index, query) in buf.rows.iter().enumerate() {
                         if query.first().is_some_and(|value| value.is_stale()) {
                             continue;
                         }
                         let incoming_cause = if RECEIPTS {
-                            buf.receipt_cause(proposal_index)
+                            Some(buf.receipt_cause(proposal_index))
                         } else {
-                            CauseDraftId::UNATTRIBUTED
+                            None
                         };
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
@@ -1054,34 +1067,34 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            let previous_cause = RECEIPTS
-                                .then(|| exec_state.active_cause_capability())
-                                .flatten();
-                            let merge_cause = receipt_batch.as_mut().map(|batch| {
-                                batch.merge_draft_capability_for_table(
-                                    incoming_cause,
-                                    prior_fact,
-                                    self.table_id,
-                                )
+                            if let Some(cause) = &incoming_cause {
+                                cause.record_merge_read(prior_fact);
+                            }
+                            let previous_cause = incoming_cause.clone().map(|cause| {
+                                exec_state.begin_deferred_merge_cause(cause, prior_fact)
                             });
-                            if RECEIPTS {
-                                exec_state.set_active_cause_capability(Some(
-                                    merge_cause.expect("receipt merge is missing its capability"),
-                                ));
-                            }
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
-                            if RECEIPTS {
-                                exec_state.set_active_cause_capability(previous_cause);
-                            }
+                            let merge_cause = previous_cause.map(|previous| {
+                                exec_state
+                                    .end_deferred_merge_cause(previous, merged)
+                                    .filter(|_| merged)
+                            });
                             if merged {
+                                let merge_cause = merge_cause
+                                    .flatten()
+                                    .map(|cause| cause.promote())
+                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
                                 let sort_val = query[sort_by.index()];
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                        batch.inherit_prior_fact_terms(
+                                            merge_cause,
+                                            prior_fact,
+                                            self.table_id,
+                                        );
                                         batch.record_fact_with_terms(
                                             self.table_id,
-                                            merge_cause
-                                                .expect("receipt merge is missing its capability")
-                                                .id(),
+                                            merge_cause,
                                             &scratch,
                                             buf.receipt_terms(proposal_index),
                                         )
@@ -1110,6 +1123,10 @@ impl SortedWritesTable {
                         } else {
                             let sort_val = query[sort_by.index()];
                             // New value: update invariants.
+                            let incoming_cause = incoming_cause
+                                .as_ref()
+                                .map(DeferredEqualityCause::promote)
+                                .unwrap_or(CauseDraftId::UNATTRIBUTED);
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                 batch.record_fact_with_terms(
                                     self.table_id,
@@ -1151,20 +1168,14 @@ impl SortedWritesTable {
             } else {
                 // Simplified variant without the sorting constraint.
                 while let Some(buf) = queue.pop() {
-                    if RECEIPTS {
-                        receipt_batch
-                            .as_mut()
-                            .expect("receipt mode requires an open batch")
-                            .preload_cause_summaries(buf.receipt_causes());
-                    }
                     for (proposal_index, query) in buf.rows.iter().enumerate() {
                         if query.first().is_some_and(|value| value.is_stale()) {
                             continue;
                         }
                         let incoming_cause = if RECEIPTS {
-                            buf.receipt_cause(proposal_index)
+                            Some(buf.receipt_cause(proposal_index))
                         } else {
-                            CauseDraftId::UNATTRIBUTED
+                            None
                         };
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
@@ -1184,33 +1195,33 @@ impl SortedWritesTable {
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            let previous_cause = RECEIPTS
-                                .then(|| exec_state.active_cause_capability())
-                                .flatten();
-                            let merge_cause = receipt_batch.as_mut().map(|batch| {
-                                batch.merge_draft_capability_for_table(
-                                    incoming_cause,
-                                    prior_fact,
-                                    self.table_id,
-                                )
+                            if let Some(cause) = &incoming_cause {
+                                cause.record_merge_read(prior_fact);
+                            }
+                            let previous_cause = incoming_cause.clone().map(|cause| {
+                                exec_state.begin_deferred_merge_cause(cause, prior_fact)
                             });
-                            if RECEIPTS {
-                                exec_state.set_active_cause_capability(Some(
-                                    merge_cause.expect("receipt merge is missing its capability"),
-                                ));
-                            }
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
-                            if RECEIPTS {
-                                exec_state.set_active_cause_capability(previous_cause);
-                            }
+                            let merge_cause = previous_cause.map(|previous| {
+                                exec_state
+                                    .end_deferred_merge_cause(previous, merged)
+                                    .filter(|_| merged)
+                            });
                             if merged {
+                                let merge_cause = merge_cause
+                                    .flatten()
+                                    .map(|cause| cause.promote())
+                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                        batch.inherit_prior_fact_terms(
+                                            merge_cause,
+                                            prior_fact,
+                                            self.table_id,
+                                        );
                                         batch.record_fact_with_terms(
                                             self.table_id,
-                                            merge_cause
-                                                .expect("receipt merge is missing its capability")
-                                                .id(),
+                                            merge_cause,
                                             &scratch,
                                             buf.receipt_terms(proposal_index),
                                         )
@@ -1227,6 +1238,10 @@ impl SortedWritesTable {
                             scratch.clear();
                         } else {
                             // New value: update invariants.
+                            let incoming_cause = incoming_cause
+                                .as_ref()
+                                .map(DeferredEqualityCause::promote)
+                                .unwrap_or(CauseDraftId::UNATTRIBUTED);
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                 batch.record_fact_with_terms(
                                     self.table_id,
@@ -1465,12 +1480,16 @@ impl SortedWritesTable {
                 // * Removing entries in `shard` and mark them as stale in
                 // `data` if they will be overwritten.
                 while let Some(buf) = queue.pop() {
-                    if RECEIPTS {
+                    let ready_causes = if RECEIPTS {
+                        let causes = buf.promoted_receipt_causes();
                         receipt_batch
                             .as_mut()
                             .expect("receipt mode requires an open batch")
-                            .preload_cause_summaries(buf.receipt_causes());
-                    }
+                            .preload_cause_summaries(&causes);
+                        Some(causes)
+                    } else {
+                        None
+                    };
                     // We create a read_handle once per batch to avoid blocking
                     // too many threads if someone needs to resize the row
                     // writer.
@@ -1479,7 +1498,7 @@ impl SortedWritesTable {
                             continue;
                         }
                         let cause = if RECEIPTS {
-                            buf.receipt_cause(proposal_index)
+                            ready_causes.as_ref().unwrap()[proposal_index]
                         } else {
                             CauseDraftId::UNATTRIBUTED
                         };
@@ -1624,7 +1643,7 @@ impl SortedWritesTable {
             return;
         }
 
-        if parallelize_table_op(self.data.data.len()) {
+        if self.data.fact_ids.is_none() && parallelize_table_op(self.data.data.len()) {
             self.parallel_rehash();
         } else {
             self.rehash();
@@ -1934,12 +1953,13 @@ struct PendingState {
 #[derive(Clone)]
 struct PendingRowBatch {
     rows: RowBuffer,
-    causes: Option<Vec<CauseDraftId>>,
+    causes: Option<Vec<DeferredEqualityCause>>,
     row_terms: Option<Vec<Option<Box<[ReplayTermId]>>>>,
+    _native_lease: Option<PendingNativeLease>,
 }
 
 impl PendingRowBatch {
-    fn receipt_causes(&self) -> &[CauseDraftId] {
+    fn receipt_causes(&self) -> &[DeferredEqualityCause] {
         let causes = self
             .causes
             .as_deref()
@@ -1952,13 +1972,15 @@ impl PendingRowBatch {
         causes
     }
 
-    fn receipt_cause(&self, index: usize) -> CauseDraftId {
-        let cause = self.receipt_causes()[index];
-        assert!(
-            !cause.is_unattributed(),
-            "receipt-enabled table proposal has no exact cause"
-        );
-        cause
+    fn receipt_cause(&self, index: usize) -> DeferredEqualityCause {
+        self.receipt_causes()[index].clone()
+    }
+
+    fn promoted_receipt_causes(&self) -> Vec<CauseDraftId> {
+        self.receipt_causes()
+            .iter()
+            .map(DeferredEqualityCause::promote)
+            .collect()
     }
 
     fn receipt_terms(&self, index: usize) -> Option<&[ReplayTermId]> {

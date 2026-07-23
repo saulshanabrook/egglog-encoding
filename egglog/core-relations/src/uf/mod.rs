@@ -15,7 +15,9 @@ use crate::{
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
     pool::with_pool_set,
-    receipts::{AppliedEqualityProposal, TypedEqualityProposal},
+    receipts::{
+        AppliedEqualityProposal, DeferredEqualityCause, PendingNativeLease, TypedEqualityProposal,
+    },
     row_buffer::RowBuffer,
     table_spec::{
         ColumnId, Constraint, Generation, MutationBuffer, Offset, Rebuilder, Row, Table, TableSpec,
@@ -240,9 +242,9 @@ struct UfBuffer {
     transaction: Option<crate::table_spec::MutationTransaction>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct UfProposalReceipt {
-    cause: CauseDraftId,
+    cause: DeferredEqualityCause,
     sort: crate::ReplaySortId,
     left_term: crate::ReplayTermId,
     right_term: crate::ReplayTermId,
@@ -462,6 +464,7 @@ struct UfPendingBatch {
     rows: RowBuffer,
     receipts: Option<Vec<UfProposalReceipt>>,
     wave: Option<crate::CausalWave>,
+    _native_lease: Option<PendingNativeLease>,
 }
 
 impl Drop for UfBuffer {
@@ -487,6 +490,10 @@ impl Drop for UfBuffer {
             rows: to_insert,
             receipts,
             wave: self.wave,
+            _native_lease: self
+                .transaction
+                .as_ref()
+                .and_then(|transaction| transaction.native_lease()),
         };
         if let Some(transaction) = self.transaction.take() {
             transaction.defer_publication(move || buffered_writes.push(pending));
@@ -527,6 +534,14 @@ impl MutationBuffer for UfBuffer {
         &mut self,
         row: &[Value],
         cause: CauseDraftId,
+        proposal: TypedEqualityProposal,
+    ) {
+        self.stage_typed_union_deferred(row, DeferredEqualityCause::ready(cause), proposal);
+    }
+    fn stage_typed_union_deferred(
+        &mut self,
+        row: &[Value],
+        cause: DeferredEqualityCause,
         proposal: TypedEqualityProposal,
     ) {
         let receipts = self
@@ -808,7 +823,7 @@ impl Table for DisplacedTable {
                     batches.push(batch);
                 }
             }
-            self.preflight_receipt_batches(&batches, receipts, exec_state.causal_wave());
+            self.preflight_receipt_batches(&mut batches, receipts, exec_state.causal_wave());
 
             let mut receipt_batch = receipts.new_batch();
             for batch in batches {
@@ -831,15 +846,11 @@ impl Table for DisplacedTable {
                 );
                 for (index, row) in batch.rows.iter().enumerate() {
                     let UfProposalReceipt {
-                        cause,
+                        ref cause,
                         sort,
                         left_term,
                         right_term,
                     } = proposal_receipts[index];
-                    assert!(
-                        !cause.is_unattributed(),
-                        "receipt-enabled union proposal has no exact cause"
-                    );
                     assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
                     let left_root = self.uf.find_naive(row[0]);
                     let right_root = self.uf.find_naive(row[1]);
@@ -852,6 +863,9 @@ impl Table for DisplacedTable {
                         receipt_batch.record_redundant_union();
                         continue;
                     }
+                    let cause = cause
+                        .ready_id()
+                        .expect("union preflight did not promote an effective cause");
                     let proposal = AppliedEqualityProposal {
                         wave,
                         left: crate::EqualityEndpoint {
@@ -990,16 +1004,17 @@ impl DisplacedTable {
 
     fn preflight_receipt_batches(
         &self,
-        batches: &[UfPendingBatch],
+        batches: &mut [UfPendingBatch],
         receipts: &crate::CausalReceipts,
         current_wave: crate::CausalWave,
     ) {
+        let mut effective = Vec::<(usize, usize)>::new();
         let mut effective_causes = Vec::new();
         let mut overlay = UnionPreflight {
             highest_timestamp: self.displaced.last().map(|(_, timestamp)| *timestamp),
             ..Default::default()
         };
-        for batch in batches {
+        for (batch_index, batch) in batches.iter().enumerate() {
             let proposal_receipts = batch
                 .receipts
                 .as_ref()
@@ -1019,11 +1034,7 @@ impl DisplacedTable {
 
             for (index, row) in batch.rows.iter().enumerate() {
                 assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
-                let proposal = proposal_receipts[index];
-                assert!(
-                    !proposal.cause.is_unattributed(),
-                    "receipt-enabled union proposal has no exact cause"
-                );
+                let proposal = &proposal_receipts[index];
                 let left_root = overlay.find(self.uf.find_naive(row[0]));
                 let right_root = overlay.find(self.uf.find_naive(row[1]));
                 if left_root == right_root {
@@ -1041,7 +1052,8 @@ impl DisplacedTable {
                         "must insert rows with increasing timestamps"
                     );
                 }
-                effective_causes.push(proposal.cause);
+                effective.push((batch_index, index));
+                effective_causes.push(proposal.cause.clone());
                 let left_owner_root = overlay.logical_owner_root(
                     self.equality_term_owners.as_deref(),
                     &self.uf,
@@ -1087,7 +1099,23 @@ impl DisplacedTable {
                 overlay.highest_timestamp = Some(row[2]);
             }
         }
-        receipts.validate_equality_causes(&effective_causes);
+        // Validate every effective cause, including deferred merge summaries,
+        // before publishing any draft or touching native state.
+        for cause in &effective_causes {
+            if let Err(error) = cause.prepare(receipts) {
+                panic!("{error}");
+            }
+        }
+        for (batch_index, proposal_index) in effective {
+            let proposal = batches[batch_index]
+                .receipts
+                .as_mut()
+                .expect("receipt-enabled union batch has no typed proposal sidecar")
+                .get_mut(proposal_index)
+                .expect("effective union proposal disappeared after preflight");
+            let cause = proposal.cause.promote();
+            proposal.cause = DeferredEqualityCause::ready(cause);
+        }
     }
 
     fn logical_owner_root(

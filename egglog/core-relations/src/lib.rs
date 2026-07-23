@@ -41,13 +41,14 @@ pub use query::{
 };
 pub use receipts::{
     CausalReceipts, CausalWave, CauseDraftId, CheckEndpointSource, CheckReceiptSpec, CheckRoot,
-    ContainerDependency, EqComponentRef, EqNodeId, EqNodeRecord, EqualityEdgeCount, EqualityEdgeId,
-    EqualityEndpoint, EqualityLandmark, EqualityReason, EqualityRecord, FactCause, FactId,
-    FactRecord, MatchRecord, NativeAliasRecord, RebuildDependency, ReceiptCauseDependencies,
-    ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters,
-    ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm,
-    ReplayTermCounters, ReplayTermId, RuleBindingSpec, RuleMatchId, RuleReceiptSpec,
-    SourceReceiptSpec, SourceRef, TypedCellEquality, TypedEqualityProposal,
+    ContainerDependency, DeferredEqualityCause, EqComponentRef, EqNodeId, EqNodeRecord,
+    EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint, EqualityLandmark, EqualityReason,
+    EqualityRecord, FactCause, FactId, FactRecord, MatchRecord, NativeAliasRecord,
+    RebuildDependency, ReceiptCauseDependencies, ReceiptCauseDependency, ReceiptCauseId,
+    ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
+    TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

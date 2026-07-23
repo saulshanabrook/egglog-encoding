@@ -144,7 +144,7 @@ impl SortedWritesTable {
             let changed = if incremental_rebuild(
                 to_scan.size(),
                 self.data.next_row().index(),
-                parallelize_rebuild(to_scan.size()),
+                !RECEIPTS && parallelize_rebuild(to_scan.size()),
             ) {
                 self.rebuild_incremental::<RECEIPTS>(
                     table,
@@ -317,7 +317,7 @@ impl SortedWritesTable {
             &mut buf,
         );
 
-        if parallelize_rebuild(to_scan.size()) {
+        if !RECEIPTS && parallelize_rebuild(to_scan.size()) {
             WrappedTableRef::with_wrapper(self, |wrapped| {
                 buf.par_iter()
                     .fold(
@@ -394,7 +394,7 @@ impl SortedWritesTable {
         transaction: Option<&MutationTransaction>,
     ) -> bool {
         const STEP_SIZE: usize = 2048;
-        if parallelize_rebuild(self.data.next_row().index()) {
+        if !RECEIPTS && parallelize_rebuild(self.data.next_row().index()) {
             (0..self.data.next_row().index())
                 .into_par_iter()
                 .step_by(STEP_SIZE)

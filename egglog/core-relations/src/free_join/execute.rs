@@ -24,6 +24,7 @@ use web_time::{Duration, Instant};
 thread_local! {
     static MATERIALIZED_WITNESS_TEST_COUNTS: std::cell::Cell<(usize, usize)> =
         const { std::cell::Cell::new((0, 0)) };
+    static PENDING_WITNESS_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]
@@ -34,6 +35,16 @@ pub(crate) fn reset_materialized_witness_test_counts() {
 #[cfg(test)]
 pub(crate) fn materialized_witness_test_counts() -> (usize, usize) {
     MATERIALIZED_WITNESS_TEST_COUNTS.get()
+}
+
+#[cfg(test)]
+pub(crate) fn reset_pending_witness_resolution_count() {
+    PENDING_WITNESS_RESOLUTIONS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn pending_witness_resolution_count() -> usize {
+    PENDING_WITNESS_RESOLUTIONS.get()
 }
 
 use crate::{
@@ -49,7 +60,7 @@ use crate::{
     parallel_heuristics::parallelize_db_level_op,
     pool::Pooled,
     query::RuleSet,
-    receipts::PremiseSlot,
+    receipts::{PendingPremiseResolver, PremiseSlot},
     row_buffer::TaggedRowBuffer,
     table_spec::{ColumnId, Offset, WrappedTableRef},
 };
@@ -378,7 +389,8 @@ impl Database {
         let pre_merge_timer = Instant::now();
         // let mut rule_reports: HashMap<String, Vec<RuleReport>>;
         let mut rule_reports: HashMap<Arc<str>, Vec<RuleReport>>;
-        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let run_in_parallel =
+            self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut split_time = None;
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
         if run_in_parallel {
@@ -722,7 +734,8 @@ impl Database {
         }
 
         let pre_merge_timer = Instant::now();
-        let run_in_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let run_in_parallel =
+            self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let search_timer = Instant::now();
         let captured = match rule_set.plans.values().next() {
             None => Vec::new(),
@@ -1023,6 +1036,7 @@ struct ActionState {
     n_runs: usize,
     len: usize,
     bindings: Bindings,
+    receipt_witnesses: Option<Arc<PendingWitnessBatch>>,
 }
 
 impl Default for ActionState {
@@ -1031,6 +1045,7 @@ impl Default for ActionState {
             n_runs: 0,
             len: 0,
             bindings: Bindings::new(VAR_BATCH_SIZE),
+            receipt_witnesses: None,
         }
     }
 }
@@ -1327,10 +1342,119 @@ struct BindingSetEntry {
 
 type BindingSet = Vec<BindingSetEntry>;
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct MatchWitness {
     facts: SmallVec<[(PremiseSlot, crate::FactId); 4]>,
     ancestors: SmallVec<[MaterializedWitnessRef; 2]>,
+}
+
+struct PendingWitnessBatch {
+    premise_count: usize,
+    materializations: DenseIdMap<MatId, Arc<Materialization>>,
+    witnesses: Mutex<Vec<MatchWitness>>,
+}
+
+impl PendingWitnessBatch {
+    fn new(
+        premise_count: usize,
+        materializations: &DenseIdMap<MatId, Arc<Materialization>>,
+    ) -> Self {
+        Self {
+            premise_count,
+            materializations: materializations.clone(),
+            witnesses: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn push(&self, witness: &MatchWitness) -> u32 {
+        let mut witnesses = self.witnesses.lock().unwrap();
+        let lane = witnesses
+            .len()
+            .try_into()
+            .expect("receipt witness batch exceeds u32");
+        witnesses.push(witness.clone());
+        lane
+    }
+
+    fn resolve_witness(&self, witness: &MatchWitness) -> SmallVec<[crate::FactId; 4]> {
+        let mut premises = SmallVec::<[Option<crate::FactId>; 4]>::new();
+        premises.resize(self.premise_count, None);
+        let mut record = |slot: PremiseSlot, fact: crate::FactId| {
+            let cell = &mut premises[slot.index()];
+            if let Some(previous) = cell {
+                assert_eq!(
+                    *previous,
+                    fact,
+                    "decomposed witnesses disagree for premise slot {}",
+                    slot.index()
+                );
+            } else {
+                *cell = Some(fact);
+            }
+        };
+        for &(slot, fact) in &witness.facts {
+            record(slot, fact);
+        }
+        let has_direct_exact_owner = |candidate: MaterializedWitnessRef| {
+            witness.ancestors.iter().any(|ancestor| {
+                ancestor.materialization == candidate.materialization
+                    && ancestor.group == candidate.group
+                    && ancestor.is_exact()
+            })
+        };
+        let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
+        while let Some(ancestor) = ancestors.pop() {
+            let materialization = self
+                .materializations
+                .get(ancestor.materialization)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "missing materialization resolver entry {:?}",
+                        ancestor.materialization
+                    )
+                });
+            let group = materialization
+                .get_index(ancestor.group as usize)
+                .unwrap_or_else(|| panic!("missing materialized witness group {}", ancestor.group))
+                .1;
+            let stored = group
+                .witnesses
+                .as_ref()
+                .expect("receipt materialization is missing its witness sidecar");
+            let (facts, nested) = stored.get(ancestor.row());
+            for &(slot, fact) in facts {
+                record(slot, fact);
+            }
+            ancestors.extend(
+                nested
+                    .iter()
+                    .copied()
+                    .filter(|nested| !(nested.is_projected() && has_direct_exact_owner(*nested))),
+            );
+        }
+        premises
+            .into_iter()
+            .enumerate()
+            .map(|(slot, fact)| {
+                fact.unwrap_or_else(|| panic!("missing exact premise FactId for slot {slot}"))
+            })
+            .collect()
+    }
+}
+
+impl PendingPremiseResolver for PendingWitnessBatch {
+    fn resolve(&self, lane: u32) -> SmallVec<[crate::FactId; 4]> {
+        #[cfg(test)]
+        PENDING_WITNESS_RESOLUTIONS.set(PENDING_WITNESS_RESOLUTIONS.get() + 1);
+        let witness = self
+            .witnesses
+            .lock()
+            .unwrap()
+            .get(lane as usize)
+            .unwrap_or_else(|| panic!("missing pending receipt witness lane {lane}"))
+            .clone();
+        self.resolve_witness(&witness)
+    }
 }
 
 fn push_receipt_witness(
@@ -1338,77 +1462,26 @@ fn push_receipt_witness(
     witness: &MatchWitness,
     materializations: &DenseIdMap<MatId, Arc<Materialization>>,
     exec_state: &ExecutionState<'_>,
-    bindings: &mut Bindings,
+    action_state: &mut ActionState,
 ) {
     let Some(layout) = &action.receipt else {
         return;
     };
-    let mut premises = SmallVec::<[Option<crate::FactId>; 4]>::new();
-    premises.resize(layout.premise_count, None);
-    let mut record = |slot: PremiseSlot, fact: crate::FactId| {
-        let cell = &mut premises[slot.index()];
-        if let Some(previous) = cell {
-            assert_eq!(
-                *previous,
-                fact,
-                "decomposed witnesses disagree for premise slot {}",
-                slot.index()
-            );
-        } else {
-            *cell = Some(fact);
-        }
-    };
-    for &(slot, fact) in &witness.facts {
-        record(slot, fact);
-    }
-    let has_direct_exact_owner = |candidate: MaterializedWitnessRef| {
-        witness.ancestors.iter().any(|ancestor| {
-            ancestor.materialization == candidate.materialization
-                && ancestor.group == candidate.group
-                && ancestor.is_exact()
-        })
-    };
-    let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
-    while let Some(ancestor) = ancestors.pop() {
-        let materialization = materializations
-            .get(ancestor.materialization)
-            .unwrap_or_else(|| {
-                panic!(
-                    "missing materialization resolver entry {:?}",
-                    ancestor.materialization
-                )
-            });
-        let group = materialization
-            .get_index(ancestor.group as usize)
-            .unwrap_or_else(|| panic!("missing materialized witness group {}", ancestor.group))
-            .1;
-        let stored = group
-            .witnesses
-            .as_ref()
-            .expect("receipt materialization is missing its witness sidecar");
-        let (facts, nested) = stored.get(ancestor.row());
-        for &(slot, fact) in facts {
-            record(slot, fact);
-        }
-        ancestors.extend(
-            nested
-                .iter()
-                .copied()
-                .filter(|nested| !(nested.is_projected() && has_direct_exact_owner(*nested))),
-        );
-    }
-    let premises = premises
-        .into_iter()
-        .enumerate()
-        .map(|(slot, fact)| {
-            fact.unwrap_or_else(|| panic!("missing exact premise FactId for slot {slot}"))
-        })
-        .collect::<SmallVec<[crate::FactId; 4]>>();
-    bindings.push_receipt(
+    let resolver = action_state.receipt_witnesses.get_or_insert_with(|| {
+        Arc::new(PendingWitnessBatch::new(
+            layout.premise_count,
+            materializations,
+        ))
+    });
+    let witness_lane = resolver.push(witness);
+    let resolver: Arc<dyn PendingPremiseResolver> = resolver.clone();
+    action_state.bindings.push_lazy_receipt(
         &layout.kind,
         exec_state.causal_wave(),
-        &premises,
+        layout.premise_count,
         &layout.binding_sources,
+        resolver,
+        witness_lane,
     );
 }
 
@@ -2837,7 +2910,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
                     witness,
                     materializations,
                     exec_state,
-                    &mut action_state.bindings,
+                    action_state,
                 );
             } else {
                 debug_assert!(witness.is_none());
@@ -2860,6 +2933,7 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
             let succeeded = state.run_instrs(&action_info.instrs, &mut action_state.bindings);
             self.apply_time += apply_timer.elapsed();
             action_state.bindings.clear();
+            action_state.receipt_witnesses = None;
             self.match_counter.inc_matches(action, succeeded);
             action_state.len = 0;
         }
@@ -2958,7 +3032,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
                     witness,
                     materializations,
                     exec_state,
-                    &mut action_state.bindings,
+                    action_state,
                 );
             } else {
                 debug_assert!(witness.is_none());
@@ -2979,6 +3053,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
             let mut state = to_exec_state();
             let mut bindings =
                 mem::replace(&mut action_state.bindings, Bindings::new(VAR_BATCH_SIZE));
+            action_state.receipt_witnesses = None;
             action_state.len = 0;
             let match_counter = self.match_counter.clone();
             self.scope.spawn(move |_| {
@@ -3261,7 +3336,16 @@ fn flush_action_states(
     match_counter: &MatchCounter,
     mut apply_time: Option<&mut Duration>,
 ) {
-    for (action, ActionState { bindings, len, .. }) in actions.iter_mut() {
+    for (
+        action,
+        ActionState {
+            bindings,
+            len,
+            receipt_witnesses,
+            ..
+        },
+    ) in actions.iter_mut()
+    {
         if *len > 0 {
             let apply_timer = apply_time.is_some().then(Instant::now);
             let succeeded = exec_state.run_instrs(&rule_set.actions[action].instrs, bindings);
@@ -3269,6 +3353,7 @@ fn flush_action_states(
                 *total += timer.elapsed();
             }
             bindings.clear();
+            *receipt_witnesses = None;
             match_counter.inc_matches(action, succeeded);
             *len = 0;
         }

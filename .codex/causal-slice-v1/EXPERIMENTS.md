@@ -1169,3 +1169,93 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   The five-workload receipt gate remains intentionally blocked on Luminal's
   separate removal boundary, and no delete/subsume implementation or slicer
   retention policy is part of this checkpoint.
+
+### 2026-07-23 — finish-plan checkpoint 1: lazy effective-event promotion
+
+- Falsifying hypothesis: Math's 48.5x receipt cost and Eggcc's 1.52x cost were
+  driven by candidate-scale construction of durable matches, unfolded premise
+  witnesses, and copied merge predecessors rather than by the compact term DAG
+  itself. This checkpoint changes only those costs; the recording benchmark
+  gate remains deliberately unmeasured until independent review.
+- Rule candidates now live in a wave-local `PendingMatchBatch`. A pending lane
+  owns compact current-value `ReplayTermId`s, an `Arc<Materialization>` witness
+  resolver, merge predecessor links, and a native execution ordinal. Ordered
+  premise `FactId`s and durable match terms are resolved only when an effective
+  table write, changed merge result, applied/native-alias union, or selected
+  check promotes the lane. Multiple effective effects memoize and share the
+  same promoted match.
+- Producer-created values carry exact term sidecars through constructor hits,
+  misses, pure replay-call primitives, and counters. A deliberately competing
+  global structural alias canary confirms that an effective RHS commit records
+  the actual producer term rather than a first-wins reverse-map alias.
+- Deferred UF publication is prepare-then-publish. All effective causes are
+  validated and lazily resolved before either the native UF or durable receipt
+  arenas mutate. A later-invalid cause therefore leaves both snapshots
+  unchanged. Nested merge/rebuild causes validate their enclosing root and
+  prepare dependencies without incorrectly requiring a direct rebuild child to
+  be independently publishable.
+- Pending native work owns an explicit lease from transaction creation through
+  row/UF queue drain or drop. Wave finalization and receipt snapshots reject an
+  open lease. Pending witnesses contain no borrowed table `RowId`; immutable
+  `FactId`s and owned materialization resolvers make physical compaction safe.
+  Queue drain and the existing rebuild/wave-finalization boundaries discharge
+  or reject unresolved work; there is no new global compaction barrier.
+- Dense `RuleMatchId` order derives from the native ordinal reserved when a
+  batch actually begins executing. The full-batch-then-tail canary proves that
+  discovery order does not invert replay order, including a 128-lane batch
+  whose 127 redundant effects remain unpromoted.
+- Candidate-scale durable match/premise/term allocations and eager merge-term
+  copies were removed from the serial hot path. Compact pending cause refs,
+  current-term arrays, and check-candidate premise IDs remain deliberately
+  candidate-shaped. Canaries prove that 100,000 redundant union proposals
+  promote zero durable matches, 100,000 no-op constructor collisions copy zero
+  prior term vectors, one effective merge-union promotes exactly one shared
+  match and predecessor, an unchanged-merge-only firing remains absent, and a
+  decomposed rule unfolds only its promoted witness. Positive checks preserve
+  their established lexicographic winner semantics: candidate premise IDs and
+  witnesses are resolved transiently for comparison, while only the winning
+  root and durable terms are published.
+- Every serial table merge callback attaches its immutable predecessor
+  `FactId` to a compact batch-local lane sidecar before invoking the merge,
+  including unchanged `:merge old/new` results. A merge read alone never
+  promotes. Reachable matches copy ordered `merge_reads` at wave finalization,
+  after every sibling table has drained, so a later no-op merge is retained
+  even when an earlier effective sibling provisionally promoted the match.
+- Receipt-enabled rule execution, dependency-stratified table merging, table
+  insertion/deletion, rebuild scanning, and physical rehash selection are
+  serial even under a larger direct-core Rayon pool. Existing parallel
+  implementations remain compiled and ordinary-mode coverage remains
+  unchanged; causal activation no longer enters a candidate-promoting parallel
+  table or rebuild path. The four-thread 20,001-row threshold canary covers
+  both rebuild and publication while retaining the exact applied two-leaf
+  equality cone.
+- Rejected alternatives and corrected assumptions:
+  - eagerly rendering structural terms was not needed; compact producer-term
+    handles plus promotion-time witness resolution preserve match-time identity;
+  - forcing ordinary and causal table insertion through one global serial path
+    broke ordinary parallel expectations and was rejected; dispatch now selects
+    serial only when receipts are enabled, leaving ordinary and dormant parallel
+    implementations intact;
+  - recursively validating every nested equality reason as a standalone root
+    rejected valid rebuild/congruence histories; only the published root owns
+    that precondition, while nested reasons prepare their dependencies.
+- Validation from clean checkpoint
+  `1872563051efe819959f90d94f9b6e2448ddbe7c`:
+  - `cargo test -p egglog-core-relations merge_ --lib -q`: 11 passed, 0 failed.
+  - `cargo test -p egglog-core-relations
+    causal_receipt_serial_rebuild_congruence_keeps_only_applied_leaves --lib
+    -q`: 1 passed, 0 failed.
+  - `cargo test -p egglog-core-relations transactional_ --lib -q`: 2 passed,
+    0 failed.
+  - `cargo test -p egglog-core-relations rebuild_ --lib -q`: 13 passed, 0
+    failed.
+  - `cargo test -p egglog-core-relations --lib -q`: 142 passed, 0 failed.
+  - `cargo check -p egglog-core-relations`: passed with no warnings.
+  - `cargo fmt --all -- --check`: passed.
+  - `git diff --check`: passed.
+- Scope freeze: no deletion/timeline recording, slicer, replay, benchmark, or
+  performance claim is included. The worktree remains intentionally
+  uncommitted for independent checkpoint review. Checkpoint 2 must extend the
+  native lease canary to a removal-only transaction once causal delete
+  recording exists; the current language boundary still rejects that path, so
+  it is a deletion handoff rather than a checkpoint-1 table-lease omission.

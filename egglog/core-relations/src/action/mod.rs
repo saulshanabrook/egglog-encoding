@@ -27,7 +27,8 @@ use crate::{
     pool::{Clear, Pooled, with_pool_set},
     receipts::{
         ActionReceiptKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
-        ReplayBindingSource, TypedEqualityProposal,
+        DeferredEqualityCause, PendingMatchBatch, PendingPremiseResolver, ReplayBindingSource,
+        TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -129,10 +130,50 @@ pub(crate) struct Bindings {
 struct ReceiptBindings {
     kind: ActionReceiptKind,
     wave: CausalWave,
-    premise_arity: usize,
     binding_sources: Box<[ReplayBindingSource]>,
-    premises: Vec<FactId>,
+    premises: ReceiptPremises,
     causes: Vec<Option<CauseDraftId>>,
+    pending_rule_batch: Option<Arc<PendingMatchBatch>>,
+    first_native_ordinal: Option<u64>,
+    produced_terms: DenseIdMap<Variable, Vec<ReplayTermId>>,
+}
+
+enum ReceiptPremises {
+    Flat {
+        arity: usize,
+        facts: Vec<FactId>,
+    },
+    Lazy {
+        arity: usize,
+        resolver: Arc<dyn PendingPremiseResolver>,
+        lanes: Vec<u32>,
+    },
+}
+
+impl ReceiptPremises {
+    fn arity(&self) -> usize {
+        match self {
+            Self::Flat { arity, .. } | Self::Lazy { arity, .. } => *arity,
+        }
+    }
+
+    fn resolve(&self, lane: usize) -> SmallVec<[FactId; 4]> {
+        match self {
+            Self::Flat { arity, facts } => {
+                let start = lane * *arity;
+                SmallVec::from_slice(&facts[start..start + *arity])
+            }
+            Self::Lazy {
+                arity,
+                resolver,
+                lanes,
+            } => {
+                let result = resolver.resolve(lanes[lane]);
+                assert_eq!(result.len(), *arity, "receipt witness has wrong arity");
+                result
+            }
+        }
+    }
 }
 
 impl std::ops::Index<Variable> for Bindings {
@@ -273,20 +314,241 @@ impl Bindings {
         if let Some(existing) = &mut self.receipt {
             assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
-            assert_eq!(existing.premise_arity, premises.len());
             assert_eq!(existing.binding_sources.as_ref(), binding_sources);
-            existing.premises.extend_from_slice(premises);
+            let ReceiptPremises::Flat { arity, facts } = &mut existing.premises else {
+                panic!("cannot mix eager and lazy receipt witnesses in one action batch")
+            };
+            assert_eq!(*arity, premises.len());
+            facts.extend_from_slice(premises);
             existing.causes.push(None);
         } else {
             self.receipt = Some(Box::new(ReceiptBindings {
                 kind: kind.clone(),
                 wave,
-                premise_arity: premises.len(),
                 binding_sources: binding_sources.into(),
-                premises: premises.into(),
+                premises: ReceiptPremises::Flat {
+                    arity: premises.len(),
+                    facts: premises.into(),
+                },
                 causes: vec![None],
+                pending_rule_batch: None,
+                first_native_ordinal: None,
+                produced_terms: DenseIdMap::new(),
             }));
         }
+    }
+
+    pub(crate) fn push_lazy_receipt(
+        &mut self,
+        kind: &ActionReceiptKind,
+        wave: CausalWave,
+        premise_arity: usize,
+        binding_sources: &[ReplayBindingSource],
+        resolver: Arc<dyn PendingPremiseResolver>,
+        witness_lane: u32,
+    ) {
+        if let Some(existing) = &mut self.receipt {
+            assert_eq!(&existing.kind, kind);
+            assert_eq!(existing.wave, wave);
+            assert_eq!(existing.binding_sources.as_ref(), binding_sources);
+            let ReceiptPremises::Lazy {
+                arity,
+                resolver: existing_resolver,
+                lanes,
+            } = &mut existing.premises
+            else {
+                panic!("cannot mix eager and lazy receipt witnesses in one action batch")
+            };
+            assert_eq!(*arity, premise_arity);
+            assert!(
+                Arc::ptr_eq(existing_resolver, &resolver),
+                "one action batch must share one witness resolver"
+            );
+            lanes.push(witness_lane);
+            existing.causes.push(None);
+        } else {
+            self.receipt = Some(Box::new(ReceiptBindings {
+                kind: kind.clone(),
+                wave,
+                binding_sources: binding_sources.into(),
+                premises: ReceiptPremises::Lazy {
+                    arity: premise_arity,
+                    resolver,
+                    lanes: vec![witness_lane],
+                },
+                causes: vec![None],
+                pending_rule_batch: None,
+                first_native_ordinal: None,
+                produced_terms: DenseIdMap::new(),
+            }));
+        }
+    }
+
+    fn ensure_pending_rule_batch(&mut self, receipts: &CausalReceipts) {
+        let state = self
+            .receipt
+            .as_ref()
+            .expect("receipt-enabled action requires exact match witnesses");
+        if state.pending_rule_batch.is_some() {
+            return;
+        }
+        let ActionReceiptKind::Rule(rule) = &state.kind else {
+            panic!("only rule matches may defer equality cause promotion")
+        };
+        let rule = *rule;
+        let wave = state.wave;
+        let premise_arity = state.premises.arity();
+        let binding_sources = state.binding_sources.clone();
+        let first_native_ordinal = state
+            .first_native_ordinal
+            .expect("native match ordinals must be reserved when head execution starts");
+        let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
+        for lane in 0..self.matches {
+            for source in binding_sources.iter().copied() {
+                if let ReplayBindingSource::Current { variable, sort } = source {
+                    let _ = sort;
+                    let term = state
+                        .produced_terms
+                        .get(variable)
+                        .and_then(|terms| terms.get(lane))
+                        .copied()
+                        .filter(|term| !term.is_missing())
+                        .unwrap_or(ReplayTermId::MISSING);
+                    current_terms.push(term);
+                }
+            }
+        }
+        let batch = match &state.premises {
+            ReceiptPremises::Flat { facts, .. } => receipts.pending_rule_batch_at(
+                rule,
+                wave,
+                first_native_ordinal,
+                premise_arity,
+                &binding_sources,
+                facts,
+                &current_terms,
+                self.matches,
+            ),
+            ReceiptPremises::Lazy {
+                resolver, lanes, ..
+            } => receipts.pending_rule_batch_lazy(
+                rule,
+                wave,
+                first_native_ordinal,
+                premise_arity,
+                &binding_sources,
+                Arc::clone(resolver),
+                lanes,
+                &current_terms,
+            ),
+        };
+        self.receipt.as_mut().unwrap().pending_rule_batch = Some(batch);
+    }
+
+    fn begin_receipt_execution(&mut self, receipts: &CausalReceipts) {
+        let Some(state) = self.receipt.as_mut() else {
+            return;
+        };
+        if !matches!(state.kind, ActionReceiptKind::Rule(_)) {
+            return;
+        }
+        assert!(
+            state.first_native_ordinal.is_none(),
+            "one receipt binding batch executed more than once"
+        );
+        state.first_native_ordinal = Some(receipts.reserve_native_match_ordinals(self.matches));
+    }
+
+    fn record_produced_term(&mut self, variable: Variable, lane: usize, term: ReplayTermId) {
+        if self.receipt.is_none() {
+            return;
+        }
+        assert!(
+            !term.is_missing(),
+            "producer captured a missing replay term"
+        );
+        let state = self.receipt.as_mut().unwrap();
+        let terms = state.produced_terms.get_or_default(variable);
+        if terms.is_empty() {
+            terms.resize(self.matches, ReplayTermId::MISSING);
+        }
+        assert_eq!(terms.len(), self.matches);
+        let slot = &mut terms[lane];
+        assert!(
+            slot.is_missing() || *slot == term,
+            "one current variable lane acquired conflicting producer terms"
+        );
+        *slot = term;
+    }
+
+    fn current_binding_sort(&self, variable: Variable) -> Option<ReplaySortId> {
+        self.receipt
+            .as_ref()?
+            .binding_sources
+            .iter()
+            .find_map(|source| match *source {
+                ReplayBindingSource::Current {
+                    variable: current,
+                    sort,
+                } if current == variable => Some(sort),
+                _ => None,
+            })
+    }
+
+    fn replay_term_for_entry(
+        &self,
+        entry: QueryEntry,
+        sort: ReplaySortId,
+        lane: usize,
+        receipts: &CausalReceipts,
+    ) -> ReplayTermId {
+        if let QueryEntry::Var(variable) = entry
+            && let Some(term) = self
+                .receipt
+                .as_ref()
+                .and_then(|state| state.produced_terms.get(variable))
+                .and_then(|terms| terms.get(lane))
+                .copied()
+                .filter(|term| !term.is_missing())
+        {
+            return term;
+        }
+        let value = match entry {
+            QueryEntry::Const(value) => value,
+            QueryEntry::Var(variable) => self[variable][lane],
+        };
+        receipts.lookup_term(sort, value).unwrap_or_else(|| {
+            panic!("value {value:?} has no producer-installed ReplayTermId for sort {sort:?}")
+        })
+    }
+
+    fn deferred_equality_cause(
+        &mut self,
+        lane: usize,
+        receipts: &CausalReceipts,
+    ) -> DeferredEqualityCause {
+        if let Some(cause) = self.receipt_cause(lane) {
+            return DeferredEqualityCause::ready(cause);
+        }
+        if matches!(
+            self.receipt.as_ref().map(|state| &state.kind),
+            Some(ActionReceiptKind::Source(_))
+        ) {
+            self.ensure_receipt_causes(&[lane], receipts);
+            return DeferredEqualityCause::ready(
+                self.receipt_cause(lane)
+                    .expect("source effect is missing its exact receipt cause"),
+            );
+        }
+        self.ensure_pending_rule_batch(receipts);
+        let batch = self
+            .receipt
+            .as_ref()
+            .unwrap()
+            .pending_rule_batch
+            .as_ref()
+            .unwrap();
+        DeferredEqualityCause::pending(receipts.pending_rule_cause(batch, lane))
     }
 
     fn ensure_receipt_causes(&mut self, lanes: &[usize], receipts: &CausalReceipts) {
@@ -304,6 +566,18 @@ impl Bindings {
         if missing.is_empty() {
             return;
         }
+        if let Some(batch) = state.pending_rule_batch.clone() {
+            let registered = missing
+                .iter()
+                .copied()
+                .map(|lane| (lane, receipts.pending_rule_cause(&batch, lane).promote()))
+                .collect::<SmallVec<[(usize, CauseDraftId); 16]>>();
+            let state = self.receipt.as_mut().unwrap();
+            for (lane, cause) in registered {
+                state.causes[lane] = Some(cause);
+            }
+            return;
+        }
         if let ActionReceiptKind::Source(source) = &state.kind {
             let registered = receipts.register_source_actions(source, &missing);
             let state = self.receipt.as_mut().unwrap();
@@ -312,71 +586,17 @@ impl Bindings {
             }
             return;
         }
-        let ActionReceiptKind::Rule(rule) = &state.kind else {
+        let ActionReceiptKind::Rule(_) = &state.kind else {
             panic!("check receipt action cannot stage native effects");
         };
-        let rule = *rule;
-        let current_arity = state
-            .binding_sources
-            .iter()
-            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
-            .count();
-        let registered = if current_arity == 0 {
-            receipts.register_rule_matches(
-                rule,
-                state.wave,
-                state.premise_arity,
-                &state.binding_sources,
-                &state.premises,
-                &[],
-                &missing,
-            )
-        } else {
-            let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
-            current_terms.reserve(missing.len() * current_arity);
-            for lane in missing.iter().copied() {
-                for source in state.binding_sources.iter().copied() {
-                    if let ReplayBindingSource::Current { variable, sort } = source {
-                        let value = self[variable][lane];
-                        current_terms.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
-                            panic!(
-                                "missing typed current-value ReplayTermId for {variable:?}={value:?}"
-                            )
-                        }));
-                    }
-                }
-            }
-            receipts.register_rule_matches(
-                rule,
-                state.wave,
-                state.premise_arity,
-                &state.binding_sources,
-                &state.premises,
-                &current_terms,
-                &missing,
-            )
-        };
-        let state = self.receipt.as_mut().unwrap();
-        for (lane, cause) in registered {
-            state.causes[lane] = Some(cause);
-        }
+        panic!("rule causes must be promoted through their pending match batch")
     }
 
     fn receipt_cause(&self, lane: usize) -> Option<CauseDraftId> {
         self.receipt.as_ref()?.causes[lane]
     }
 
-    fn receipt_cause_capability(&self, lane: usize) -> Option<CauseCapability> {
-        let state = self.receipt.as_ref()?;
-        let cause = state.causes[lane]?;
-        match &state.kind {
-            ActionReceiptKind::Rule(_) => Some(CauseCapability::rule(cause)),
-            ActionReceiptKind::Source(_) => Some(CauseCapability::source(cause)),
-            ActionReceiptKind::Check => None,
-        }
-    }
-
-    fn check_receipt(&self, lane: usize) -> (CausalWave, &[FactId]) {
+    fn check_receipt(&self, lane: usize) -> (CausalWave, SmallVec<[FactId; 4]>) {
         let state = self
             .receipt
             .as_ref()
@@ -386,11 +606,7 @@ impl Bindings {
             ActionReceiptKind::Check,
             "check recorder reached non-check receipt metadata"
         );
-        let start = lane * state.premise_arity;
-        (
-            state.wave,
-            &state.premises[start..start + state.premise_arity],
-        )
+        (state.wave, state.premises.resolve(lane))
     }
 
     /// A method that removes the bindings for the given variable and allows for its values to be
@@ -472,6 +688,40 @@ impl PredictedVals {
     }
 }
 
+#[derive(Clone)]
+pub(crate) enum ActiveCause {
+    Ready(CauseCapability),
+    Deferred(DeferredEqualityCause),
+    DeferredMerge {
+        incoming: DeferredEqualityCause,
+        prior_fact: FactId,
+        shared: Option<DeferredEqualityCause>,
+    },
+}
+
+impl ActiveCause {
+    fn deferred(&mut self, receipts: &CausalReceipts) -> DeferredEqualityCause {
+        match self {
+            Self::Ready(cause) => DeferredEqualityCause::capability(*cause),
+            Self::Deferred(cause) => cause.clone(),
+            Self::DeferredMerge {
+                incoming,
+                prior_fact,
+                shared,
+            } => shared
+                .get_or_insert_with(|| receipts.pending_merge_cause(incoming.clone(), *prior_fact))
+                .clone(),
+        }
+    }
+
+    fn ready_capability(&self) -> Option<CauseCapability> {
+        match self {
+            Self::Ready(cause) => Some(*cause),
+            Self::Deferred(_) | Self::DeferredMerge { .. } => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub(crate) struct DbView<'a> {
     pub(crate) table_info: &'a DenseIdMap<TableId, TableInfo>,
@@ -521,7 +771,7 @@ pub struct ExecutionState<'a> {
     /// Cause inherited by every native write performed in the current action
     /// lane or merge callback. It is state-local so parallel execution cannot
     /// cross-attribute proposals.
-    active_cause: Option<CauseCapability>,
+    active_cause: Option<ActiveCause>,
     /// Logical sort selected for a prepared container-registry union.
     active_container_union_sort: Option<ReplaySortId>,
 }
@@ -596,42 +846,35 @@ impl<'a> MutationBuffers<'a> {
         self.note_changed(table_id);
     }
 
-    fn stage_insert_with_cause(&mut self, table_id: TableId, row: &[Value], cause: CauseDraftId) {
-        assert!(
-            !cause.is_unattributed(),
-            "receipt-enabled insertion is missing an exact cause"
-        );
-        self.buffers[table_id].stage_insert_with_cause(row, cause);
-        self.note_changed(table_id);
-    }
-
-    fn stage_insert_with_cause_and_terms(
+    fn stage_insert_deferred(
         &mut self,
         table_id: TableId,
         row: &[Value],
-        cause: CauseDraftId,
+        cause: DeferredEqualityCause,
+    ) {
+        self.buffers[table_id].stage_insert_deferred(row, cause);
+        self.note_changed(table_id);
+    }
+
+    fn stage_insert_deferred_with_terms(
+        &mut self,
+        table_id: TableId,
+        row: &[Value],
+        cause: DeferredEqualityCause,
         terms: &[ReplayTermId],
     ) {
-        assert!(
-            !cause.is_unattributed(),
-            "receipt-enabled insertion is missing an exact cause"
-        );
-        self.buffers[table_id].stage_insert_with_cause_and_terms(row, cause, terms);
+        self.buffers[table_id].stage_insert_deferred_with_terms(row, cause, terms);
         self.note_changed(table_id);
     }
 
-    fn stage_typed_union(
+    fn stage_typed_union_deferred(
         &mut self,
         table_id: TableId,
         row: &[Value],
-        cause: CauseDraftId,
+        cause: DeferredEqualityCause,
         proposal: TypedEqualityProposal,
     ) {
-        assert!(
-            !cause.is_unattributed(),
-            "receipt-enabled union is missing an exact cause"
-        );
-        self.buffers[table_id].stage_typed_union(row, cause, proposal);
+        self.buffers[table_id].stage_typed_union_deferred(row, cause, proposal);
         self.note_changed(table_id);
     }
 
@@ -649,7 +892,7 @@ impl Clone for ExecutionState<'_> {
             buffers: self.buffers.clone(),
             changed: false,
             stop_match: Arc::clone(&self.stop_match),
-            active_cause: self.active_cause,
+            active_cause: self.active_cause.clone(),
             active_container_union_sort: self.active_container_union_sort,
         }
     }
@@ -677,6 +920,9 @@ impl<'a> ExecutionState<'a> {
         &mut self,
         transaction: crate::table_spec::MutationTransaction,
     ) {
+        if let Some(receipts) = self.db.causal_receipts {
+            transaction.validate_causal_scope(receipts, self.db.causal_wave);
+        }
         self.buffers.defer_until(transaction);
     }
 
@@ -689,16 +935,17 @@ impl<'a> ExecutionState<'a> {
         if let Some(receipts) = self.db.causal_receipts {
             let cause = self
                 .active_cause
+                .as_mut()
                 .expect("receipt-enabled native insertion reached an uninstrumented action")
-                .id();
+                .deferred(receipts);
             match receipts
                 .constructor_row_terms(table, row)
                 .unwrap_or_else(|error| panic!("cannot stage exact constructor row terms: {error}"))
             {
                 Some(terms) => self
                     .buffers
-                    .stage_insert_with_cause_and_terms(table, row, cause, &terms),
-                None => self.buffers.stage_insert_with_cause(table, row, cause),
+                    .stage_insert_deferred_with_terms(table, row, cause, &terms),
+                None => self.buffers.stage_insert_deferred(table, row, cause),
             }
         } else {
             self.buffers.stage_insert(table, row);
@@ -722,9 +969,27 @@ impl<'a> ExecutionState<'a> {
             .expect("typed union staging requires causal receipts");
         let cause = self
             .active_cause
-            .expect("receipt-enabled union reached an uninstrumented action");
-        cause
-            .validate_equality()
+            .as_mut()
+            .expect("receipt-enabled union reached an uninstrumented action")
+            .deferred(receipts);
+        self.stage_union_with_deferred_cause(table, left, right, timestamp, sort, cause);
+    }
+
+    fn stage_union_with_deferred_cause(
+        &mut self,
+        table: TableId,
+        left: Value,
+        right: Value,
+        timestamp: Value,
+        sort: ReplaySortId,
+        cause: DeferredEqualityCause,
+    ) {
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("typed union staging requires causal receipts");
+        receipts
+            .validate_deferred_equality_cause(&cause)
             .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
         receipts
             .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
@@ -736,7 +1001,7 @@ impl<'a> ExecutionState<'a> {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
         self.buffers
-            .stage_typed_union(table, &row, cause.id(), proposal);
+            .stage_typed_union_deferred(table, &row, cause, proposal);
         self.changed = true;
     }
 
@@ -754,19 +1019,59 @@ impl<'a> ExecutionState<'a> {
 
     pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
         self.active_cause = cause.map(|cause| {
-            self.db
-                .causal_receipts
-                .expect("active receipt cause requires causal receipts")
-                .cause_capability(cause)
+            ActiveCause::Ready(
+                self.db
+                    .causal_receipts
+                    .expect("active receipt cause requires causal receipts")
+                    .cause_capability(cause),
+            )
         });
     }
 
     pub(crate) fn set_active_cause_capability(&mut self, cause: Option<CauseCapability>) {
-        self.active_cause = cause;
+        self.active_cause = cause.map(ActiveCause::Ready);
+    }
+
+    fn set_active_deferred_cause(&mut self, cause: Option<DeferredEqualityCause>) {
+        self.active_cause = cause.map(ActiveCause::Deferred);
     }
 
     pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {
         self.active_cause
+            .as_ref()
+            .and_then(ActiveCause::ready_capability)
+    }
+
+    pub(crate) fn begin_deferred_merge_cause(
+        &mut self,
+        incoming: DeferredEqualityCause,
+        prior_fact: FactId,
+    ) -> Option<ActiveCause> {
+        self.active_cause.replace(ActiveCause::DeferredMerge {
+            incoming,
+            prior_fact,
+            shared: None,
+        })
+    }
+
+    pub(crate) fn end_deferred_merge_cause(
+        &mut self,
+        previous: Option<ActiveCause>,
+        require_cause: bool,
+    ) -> Option<DeferredEqualityCause> {
+        let mut active = self
+            .active_cause
+            .take()
+            .expect("deferred merge lost its active cause");
+        let result = require_cause.then(|| {
+            let receipts = self
+                .db
+                .causal_receipts
+                .expect("deferred merge cause requires causal receipts");
+            active.deferred(receipts)
+        });
+        self.active_cause = previous;
+        result
     }
 
     pub(crate) fn set_active_container_canonicalization(
@@ -775,7 +1080,7 @@ impl<'a> ExecutionState<'a> {
     ) {
         match cause {
             Some((cause, sort)) => {
-                self.active_cause = Some(cause);
+                self.active_cause = Some(ActiveCause::Ready(cause));
                 self.active_container_union_sort = Some(sort);
             }
             None => {
@@ -881,6 +1186,12 @@ impl<'a> ExecutionState<'a> {
         if let Some(row) = self.db.table_info[table].table.get_row(key) {
             return row.vals;
         }
+        let cause = self.db.causal_receipts.map(|receipts| {
+            self.active_cause
+                .as_mut()
+                .expect("receipt-enabled predicted insertion is missing its match cause")
+                .deferred(receipts)
+        });
         Pooled::cloned(
             self.predicted
                 .get_val(table, key, || {
@@ -891,7 +1202,7 @@ impl<'a> ExecutionState<'a> {
                         table,
                         key,
                         vals,
-                        self.active_cause.map(CauseCapability::id),
+                        cause,
                     )
                 })
                 .deref(),
@@ -905,7 +1216,7 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         key: &[Value],
         vals: impl ExactSizeIterator<Item = MergeVal>,
-        cause: Option<CauseDraftId>,
+        cause: Option<DeferredEqualityCause>,
     ) -> Pooled<Vec<Value>> {
         with_pool_set(|ps| {
             let mut new = ps.get::<Vec<Value>>();
@@ -927,9 +1238,9 @@ impl<'a> ExecutionState<'a> {
                         panic!("cannot stage exact constructor row terms: {error}")
                     }) {
                     Some(terms) => {
-                        buffers.stage_insert_with_cause_and_terms(table, &new, cause, &terms)
+                        buffers.stage_insert_deferred_with_terms(table, &new, cause, &terms)
                     }
-                    None => buffers.stage_insert_with_cause(table, &new, cause),
+                    None => buffers.stage_insert_deferred(table, &new, cause),
                 }
             } else {
                 buffers.stage_insert(table, &new);
@@ -951,6 +1262,12 @@ impl<'a> ExecutionState<'a> {
         if let Some(val) = self.db.table_info[table].table.get_row_column(key, col) {
             return val;
         }
+        let cause = self.db.causal_receipts.map(|receipts| {
+            self.active_cause
+                .as_mut()
+                .expect("receipt-enabled predicted insertion is missing its match cause")
+                .deferred(receipts)
+        });
         self.predicted.get_val(table, key, || {
             Self::construct_new_row(
                 &self.db,
@@ -959,7 +1276,7 @@ impl<'a> ExecutionState<'a> {
                 table,
                 key,
                 vals,
-                self.active_cause.map(CauseCapability::id),
+                cause,
             )
         })[col.index()]
     }
@@ -986,6 +1303,9 @@ impl ExecutionState<'_> {
         if bindings.var_offsets.next_id().rep() == 0 {
             // If we have no variables, we want to run the rules once.
             bindings.matches = 1;
+        }
+        if let Some(receipts) = self.db.causal_receipts {
+            bindings.begin_receipt_execution(receipts);
         }
 
         // Vectorized execution for larger batch sizes
@@ -1045,18 +1365,13 @@ impl ExecutionState<'_> {
                 if mask_copy.is_empty() {
                     return;
                 }
-                let receipt_causes = if let Some(receipts) = self.db.causal_receipts {
-                    let mut lanes = Vec::new();
+                let deferred_causes = if let Some(receipts) = self.db.causal_receipts {
+                    let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask_copy.clone();
                     cause_mask.empty_iter().for_each_indexed(|offset, ()| {
-                        lanes.push(offset);
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
                     });
-                    bindings.ensure_receipt_causes(&lanes, receipts);
-                    Some(
-                        (0..bindings.matches)
-                            .map(|lane| bindings.receipt_cause(lane))
-                            .collect::<Vec<_>>(),
-                    )
+                    Some(causes)
                 } else {
                     None
                 };
@@ -1103,11 +1418,11 @@ impl ExecutionState<'_> {
                                     };
                                     row.push(val)
                                 }
-                                if let Some(causes) = &receipt_causes {
-                                    buffers.stage_insert_with_cause(
+                                if let Some(causes) = &deferred_causes {
+                                    buffers.stage_insert_deferred(
                                         *table_id,
                                         &row,
-                                        causes[offset].expect(
+                                        causes[offset].clone().expect(
                                             "constructor lane is missing its exact receipt cause",
                                         ),
                                     );
@@ -1183,13 +1498,34 @@ impl ExecutionState<'_> {
                     bindings.replace(out);
                 }
 
+                // Snapshot the exact producer term for every active lane,
+                // including lookup hits. A native value may already have a
+                // different structural alias in the global current map.
+                let active_lanes = {
+                    let mut lanes = Vec::new();
+                    let mut active = mask.clone();
+                    active
+                        .empty_iter()
+                        .for_each_indexed(|lane, ()| lanes.push(lane));
+                    lanes
+                };
+                for lane in active_lanes {
+                    let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+                    for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
+                        children.push(bindings.replay_term_for_entry(*arg, sort, lane, receipts));
+                    }
+                    let output = bindings[*dst_var][lane];
+                    let call = receipts
+                        .intern_spec_call(replay, &children, output)
+                        .expect("constructor producer must install a typed output");
+                    bindings.record_produced_term(*dst_var, lane, call);
+                }
+
                 // Phase 2: only distinct missing rows are effects. Preserve
                 // the exact Call node assembled for each owner beside its
                 // staged row; a global current-value lookup can select a
                 // different structural alias by commit time.
                 if !owners.is_empty() {
-                    let owner_lanes = owners.iter().map(|(_, lane)| *lane).collect::<Vec<_>>();
-                    bindings.ensure_receipt_causes(&owner_lanes, receipts);
                     let predicted = &self.predicted.data;
                     let buffers = &mut self.buffers;
                     for (key, lane) in owners {
@@ -1199,26 +1535,23 @@ impl ExecutionState<'_> {
                         let mut terms = vec![ReplayTermId::MISSING; row.len()];
                         let mut children = SmallVec::<[ReplayTermId; 4]>::new();
                         for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
-                            let value = match arg {
-                                QueryEntry::Const(value) => *value,
-                                QueryEntry::Var(variable) => bindings[*variable][lane],
-                            };
-                            children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
-                                panic!("constructor child has no producer-installed ReplayTermId")
-                            }));
+                            children
+                                .push(bindings.replay_term_for_entry(*arg, sort, lane, receipts));
                         }
-                        let output = bindings[*dst_var][lane];
-                        let call = receipts
-                            .intern_spec_call(replay, &children, output)
-                            .expect("constructor call must install a typed output");
+                        let call = bindings
+                            .receipt
+                            .as_ref()
+                            .and_then(|state| state.produced_terms.get(*dst_var))
+                            .and_then(|terms| terms.get(lane))
+                            .copied()
+                            .filter(|term| !term.is_missing())
+                            .expect("constructor output is missing its producer term");
                         terms[..children.len()].copy_from_slice(&children);
                         terms[children.len()] = call;
-                        buffers.stage_insert_with_cause_and_terms(
+                        buffers.stage_insert_deferred_with_terms(
                             *table_id,
                             row,
-                            bindings
-                                .receipt_cause(lane)
-                                .expect("constructor owner lane is missing its exact cause"),
+                            bindings.deferred_equality_cause(lane, receipts),
                             &terms,
                         );
                     }
@@ -1285,24 +1618,18 @@ impl ExecutionState<'_> {
             }
             Instr::Insert { table, vals } => {
                 if let Some(receipts) = self.db.causal_receipts {
-                    let mut lanes = Vec::new();
+                    let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask.clone();
                     cause_mask.empty_iter().for_each_indexed(|offset, ()| {
-                        lanes.push(offset);
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
                     });
-                    bindings.ensure_receipt_causes(&lanes, receipts);
-                    let causes = (0..bindings.matches)
-                        .map(|lane| bindings.receipt_cause_capability(lane))
-                        .collect::<Vec<_>>();
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, vals| {
-                            self.set_active_cause_capability(Some(causes[offset].expect(
-                                "effective action lane is missing its exact receipt cause",
-                            )));
+                            self.set_active_deferred_cause(causes[offset].clone());
                             self.stage_insert(*table, vals.as_slice());
                         })
                     });
-                    self.set_active_cause_capability(None);
+                    self.set_active_deferred_cause(None);
                 } else {
                     // Keep the ordinary loop byte-for-byte equivalent to the
                     // pre-receipt action path.
@@ -1324,31 +1651,19 @@ impl ExecutionState<'_> {
                     .db
                     .causal_receipts
                     .expect("typed union instruction requires causal receipts");
-                let mut lanes = Vec::new();
-                let mut cause_mask = mask.clone();
-                cause_mask
-                    .empty_iter()
-                    .for_each_indexed(|offset, ()| lanes.push(offset));
-                bindings.ensure_receipt_causes(&lanes, receipts);
                 mask.empty_iter().for_each_indexed(|offset, ()| {
                     let get = |entry| match entry {
                         QueryEntry::Const(value) => value,
                         QueryEntry::Var(variable) => bindings[variable][offset],
                     };
-                    self.set_active_cause_capability(Some(
-                        bindings
-                            .receipt_cause_capability(offset)
-                            .expect("typed union lane is missing its exact receipt cause"),
-                    ));
-                    self.stage_union_with_replay(
-                        *table,
-                        get(*left),
-                        get(*right),
-                        get(*timestamp),
-                        *sort,
+                    let left = get(*left);
+                    let right = get(*right);
+                    let timestamp = get(*timestamp);
+                    let cause = bindings.deferred_equality_cause(offset, receipts);
+                    self.stage_union_with_deferred_cause(
+                        *table, left, right, timestamp, *sort, cause,
                     );
                 });
-                self.set_active_cause_capability(None);
             }
             Instr::InsertIfEq { table, l, r, vals } => {
                 if let Some(receipts) = self.db.causal_receipts {
@@ -1366,22 +1681,21 @@ impl ExecutionState<'_> {
                         }
                     });
                     if !lanes.is_empty() {
-                        bindings.ensure_receipt_causes(&lanes, receipts);
-                        let causes = (0..bindings.matches)
-                            .map(|lane| bindings.receipt_cause_capability(lane))
-                            .collect::<Vec<_>>();
+                        let mut causes = vec![None; bindings.matches];
+                        for offset in lanes {
+                            causes[offset] =
+                                Some(bindings.deferred_equality_cause(offset, receipts));
+                        }
                         for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                             iter.for_each_indexed(|offset, vals| {
                                 if get(bindings, *l, offset) == get(bindings, *r, offset) {
-                                    self.set_active_cause_capability(Some(causes[offset].expect(
-                                        "effective conditional action lane is missing its exact receipt cause",
-                                    )));
+                                    self.set_active_deferred_cause(causes[offset].clone());
                                     self.stage_insert(*table, vals.as_slice());
                                 }
                             })
                         });
                     }
-                    self.set_active_cause_capability(None);
+                    self.set_active_deferred_cause(None);
                 } else {
                     match (l, r) {
                         (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
@@ -1557,8 +1871,7 @@ impl ExecutionState<'_> {
                     SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>,
                 )>;
                 mask.empty_iter().for_each_indexed(|offset, ()| {
-                    let (wave, premise_slice) = bindings.check_receipt(offset);
-                    let premises = SmallVec::<[FactId; 4]>::from_slice(premise_slice);
+                    let (wave, premises) = bindings.check_receipt(offset);
                     let premise_terms = receipts
                         .check_premise_terms(&premises, &premise_requests)
                         .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
@@ -1611,6 +1924,16 @@ impl ExecutionState<'_> {
                 let ctr_val = Value::from_usize(self.read_counter(*counter));
                 vals.resize(bindings.matches, ctr_val);
                 bindings.insert(*dst, &vals);
+                if let (Some(receipts), Some(sort)) =
+                    (self.db.causal_receipts, bindings.current_binding_sort(*dst))
+                {
+                    let term = receipts.lookup_term(sort, ctr_val).unwrap_or_else(|| {
+                        panic!("counter value has no producer-installed ReplayTermId")
+                    });
+                    for lane in 0..bindings.matches {
+                        bindings.record_produced_term(*dst, lane, term);
+                    }
+                }
             }
         }
     }
@@ -1619,7 +1942,7 @@ impl ExecutionState<'_> {
 fn promote_replay_call(
     receipts: &CausalReceipts,
     mask: &mut Mask,
-    bindings: &Bindings,
+    bindings: &mut Bindings,
     args: &[QueryEntry],
     dst: Variable,
     replay: &ReplayConstructorSpec,
@@ -1632,30 +1955,17 @@ fn promote_replay_call(
     receipts
         .register_spec_container_type(replay)
         .expect("pure primitive replay sort has conflicting container metadata");
-    mask.iter(&bindings[dst])
-        .for_each_indexed(|offset, output| {
-            if receipts.lookup_term(replay.result_sort, *output).is_some() {
-                return;
-            }
-            let mut children = SmallVec::<[ReplayTermId; 4]>::new();
-            for (argument, (sort, arg)) in
-                replay.child_sorts.iter().copied().zip(args).enumerate()
-            {
-                let value = match arg {
-                    QueryEntry::Const(value) => *value,
-                    QueryEntry::Var(variable) => bindings[*variable][offset],
-                };
-                children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
-                    panic!(
-                        "pure primitive {:?} argument {argument} has no producer-installed ReplayTermId for sort {:?}, value {value:?}, output {:?}",
-                        replay.op, sort, output
-                    )
-                }));
-            }
-            receipts
-                .intern_spec_call(replay, &children, *output)
-                .expect("pure primitive call must install a typed output");
-        });
+    let outputs = bindings[dst].to_vec();
+    mask.iter(&outputs).for_each_indexed(|offset, output| {
+        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
+            children.push(bindings.replay_term_for_entry(*arg, sort, offset, receipts));
+        }
+        let term = receipts
+            .intern_spec_call(replay, &children, *output)
+            .expect("pure primitive call must install a typed output");
+        bindings.record_produced_term(dst, offset, term);
+    });
 }
 
 #[derive(Debug, Clone)]

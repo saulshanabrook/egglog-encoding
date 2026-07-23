@@ -18,7 +18,8 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CauseDraftId, EqualityEdgeCount, FactId, QueryEntry, TableId, TypedEqualityProposal, Variable,
+    CausalReceipts, CausalWave, CauseDraftId, EqualityEdgeCount, FactId, QueryEntry, TableId,
+    TypedEqualityProposal, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -27,6 +28,7 @@ use crate::{
     hash_index::{ColumnIndex, IndexBase, TupleIndex},
     offsets::{RowId, Subset, SubsetRef},
     pool::{PoolSet, Pooled, with_pool_set},
+    receipts::{DeferredEqualityCause, PendingNativeLease},
     row_buffer::{RowBuffer, RowSink, TaggedRowBuffer},
 };
 
@@ -46,6 +48,7 @@ pub struct MutationTransaction(Arc<MutationTransactionState>);
 struct MutationTransactionState {
     decision: AtomicU8,
     pending: Mutex<PendingMutationTransaction>,
+    native_lease: Option<PendingNativeLease>,
 }
 
 #[derive(Default)]
@@ -67,11 +70,35 @@ pub(crate) struct MutationCommit {
 }
 
 impl MutationTransaction {
+    #[cfg(test)]
     pub(crate) fn pending() -> Self {
         Self(Arc::new(MutationTransactionState {
             decision: AtomicU8::new(MUTATION_PENDING),
             pending: Mutex::new(PendingMutationTransaction::default()),
+            native_lease: None,
         }))
+    }
+
+    pub(crate) fn pending_causal(receipts: &CausalReceipts, wave: CausalWave) -> Self {
+        Self(Arc::new(MutationTransactionState {
+            decision: AtomicU8::new(MUTATION_PENDING),
+            pending: Mutex::new(PendingMutationTransaction::default()),
+            native_lease: Some(receipts.pending_native_lease(wave)),
+        }))
+    }
+
+    pub(crate) fn native_lease(&self) -> Option<PendingNativeLease> {
+        self.0.native_lease.clone()
+    }
+
+    pub(crate) fn validate_causal_scope(&self, receipts: &CausalReceipts, wave: CausalWave) {
+        assert!(
+            self.0
+                .native_lease
+                .as_ref()
+                .is_some_and(|lease| lease.matches(receipts, wave)),
+            "causal mutation transaction belongs to a different arena or wave"
+        );
     }
 
     pub(crate) fn commit(&self) -> MutationCommit {
@@ -572,6 +599,21 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// the current execution lane.
     fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId);
 
+    /// Stage an insertion whose rule/merge cause is promoted only if the
+    /// table publishes an effective fact or another effective side effect.
+    fn stage_insert_deferred(&mut self, _row: &[Value], _cause: DeferredEqualityCause) {
+        panic!("deferred receipt insertion staged into a table without receipt support")
+    }
+
+    fn stage_insert_deferred_with_terms(
+        &mut self,
+        _row: &[Value],
+        _cause: DeferredEqualityCause,
+        _terms: &[crate::ReplayTermId],
+    ) {
+        panic!("deferred structural insertion staged into a table without receipt support")
+    }
+
     /// Stage an insertion together with the coherent structural terms that
     /// produced this exact row. Constructor actions use this when a current
     /// e-class value already has other structural aliases.
@@ -593,6 +635,17 @@ pub trait MutationBuffer: Any + Send + Sync {
         _proposal: TypedEqualityProposal,
     ) {
         panic!("typed union staged into a non-equality table")
+    }
+
+    /// Stage a typed equality whose rule match stays compact until union
+    /// preflight proves that the proposal is effective.
+    fn stage_typed_union_deferred(
+        &mut self,
+        _row: &[Value],
+        _cause: DeferredEqualityCause,
+        _proposal: TypedEqualityProposal,
+    ) {
+        panic!("deferred typed union staged into a non-equality table")
     }
 
     /// Stage the keyed entries for removal. Changes may not be visible until

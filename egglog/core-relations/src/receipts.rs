@@ -10,7 +10,7 @@ use std::{
     any::TypeId,
     mem,
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
 };
@@ -782,6 +782,10 @@ pub struct MatchRecord {
     pub wave: CausalWave,
     pub premises: Box<[FactId]>,
     pub terms: Box<[ReplayTermId]>,
+    /// Immutable prior facts read by table merge callbacks for this firing,
+    /// in native callback order. A read is retained only when another effect
+    /// promotes the firing.
+    pub merge_reads: Box<[FactId]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1087,6 +1091,9 @@ pub struct ReceiptCounters {
     pub promoted_matches: u64,
     pub premise_handles: u64,
     pub term_handles: u64,
+    /// Fact-owned constructor terms copied while preparing merge causes.
+    /// This must scale with effective merged facts, not attempted collisions.
+    pub merge_prior_term_copies: u64,
     pub peak_provisional_bytes: u64,
     pub live_provisional_bytes: u64,
     pub promotion_misses: u64,
@@ -1496,8 +1503,290 @@ impl FlatRange {
 struct MatchDraft {
     rule: u32,
     wave: CausalWave,
+    native_ordinal: u64,
     premises: FlatRange,
     terms: FlatRange,
+    merge_reads: Option<PendingMergeReadRef>,
+}
+
+/// One compact sidecar shared by every lane in an action batch. Only lanes
+/// that actually invoke a merge callback allocate map entries; ordinary
+/// candidates and unchanged-merge-only firings allocate no durable data.
+#[derive(Debug, Default)]
+struct PendingMergeReads {
+    by_lane: Mutex<HashMap<u32, SmallVec<[FactId; 2]>>>,
+}
+
+impl PendingMergeReads {
+    fn record(&self, lane: u32, prior_fact: FactId) {
+        assert!(
+            !prior_fact.is_missing(),
+            "receipt-enabled table merge read a row without an immutable FactId"
+        );
+        self.by_lane
+            .lock()
+            .unwrap()
+            .entry(lane)
+            .or_default()
+            .push(prior_fact);
+    }
+
+    fn lane(&self, lane: u32) -> SmallVec<[FactId; 2]> {
+        self.by_lane
+            .lock()
+            .unwrap()
+            .get(&lane)
+            .cloned()
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingMergeReadRef {
+    batch: Arc<PendingMergeReads>,
+    lane: u32,
+}
+
+/// An action-batch-owned resolver for compact join witnesses. Implementations
+/// retain the immutable materialization DAGs needed by their lanes; the
+/// receipt arena asks for ordered premise ids only when a lane is promoted.
+pub(crate) trait PendingPremiseResolver: Send + Sync {
+    fn resolve(&self, lane: u32) -> SmallVec<[FactId; 4]>;
+}
+
+enum PendingPremises {
+    Flat(Box<[FactId]>),
+    Lazy {
+        resolver: Arc<dyn PendingPremiseResolver>,
+        lanes: Box<[u32]>,
+    },
+}
+
+impl PendingPremises {
+    fn resolve(&self, lane: usize, premise_arity: usize) -> SmallVec<[FactId; 4]> {
+        match self {
+            Self::Flat(premises) => {
+                let start = lane * premise_arity;
+                SmallVec::from_slice(&premises[start..start + premise_arity])
+            }
+            Self::Lazy { resolver, lanes } => {
+                let premises = resolver.resolve(lanes[lane]);
+                assert_eq!(
+                    premises.len(),
+                    premise_arity,
+                    "pending witness resolved with the wrong premise arity"
+                );
+                premises
+            }
+        }
+    }
+}
+
+/// One action-batch-local set of exact native match witnesses. Equality
+/// proposals retain only an `Arc` plus a lane index until union preflight has
+/// proved that the proposal is effective. Redundant proposals therefore never
+/// allocate provisional match/cause nodes or expand premise-owned terms.
+pub(crate) struct PendingMatchBatch {
+    receipts: CausalReceipts,
+    rule: u32,
+    wave: CausalWave,
+    first_native_ordinal: u64,
+    premise_arity: usize,
+    binding_sources: Box<[ReplayBindingSource]>,
+    premises: PendingPremises,
+    current_terms: Box<[ReplayTermId]>,
+    merge_reads: Arc<PendingMergeReads>,
+    prepared: Box<[OnceLock<PreparedMatch>]>,
+    causes: Box<[OnceLock<CauseDraftId>]>,
+}
+
+struct PreparedMatch {
+    premises: Box<[FactId]>,
+    terms: Box<[ReplayTermId]>,
+}
+
+impl Drop for PendingMatchBatch {
+    fn drop(&mut self) {
+        self.receipts
+            .0
+            .open_pending_batches
+            .fetch_sub(1, Ordering::Release);
+    }
+}
+
+/// A compact, cloneable cause handle carried by one staged equality proposal.
+/// Promotion is memoized in the owning batch, so several effects from one
+/// native firing share exactly one match and cause draft.
+#[derive(Clone)]
+pub(crate) struct PendingRuleCause {
+    batch: Arc<PendingMatchBatch>,
+    lane: u32,
+}
+
+#[derive(Clone)]
+pub(crate) struct PendingNativeLease(Arc<PendingNativeLeaseInner>);
+
+struct PendingNativeLeaseInner {
+    receipts: CausalReceipts,
+    wave: CausalWave,
+}
+
+impl Drop for PendingNativeLeaseInner {
+    fn drop(&mut self) {
+        self.receipts
+            .0
+            .open_native_leases
+            .fetch_sub(1, Ordering::Release);
+    }
+}
+
+impl PendingNativeLease {
+    pub(crate) fn matches(&self, receipts: &CausalReceipts, wave: CausalWave) -> bool {
+        Arc::ptr_eq(&self.0.receipts.0, &receipts.0) && self.0.wave == wave
+    }
+}
+
+impl PendingRuleCause {
+    fn lane(&self) -> usize {
+        self.lane as usize
+    }
+
+    pub(crate) fn promote(&self) -> CauseDraftId {
+        let lane = self.lane();
+        *self.batch.causes[lane].get_or_init(|| {
+            self.batch
+                .receipts
+                .promote_pending_rule_match(&self.batch, lane)
+        })
+    }
+
+    fn prepare(&self) -> Result<(), String> {
+        self.batch
+            .receipts
+            .prepare_pending_rule_match(&self.batch, self.lane())
+            .map(|_| ())
+    }
+
+    fn record_merge_read(&self, prior_fact: FactId) {
+        self.batch.merge_reads.record(self.lane, prior_fact);
+    }
+}
+
+/// Cause representation accepted by the equality staging path. Existing
+/// rebuild/container callers keep their ready draft; ordinary rule unions use
+/// the pending form until preflight proves them effective.
+#[derive(Clone)]
+enum DeferredEqualityCauseKind {
+    Ready {
+        cause: CauseDraftId,
+        equality: Option<EqualityCauseSummary>,
+    },
+    Pending(PendingRuleCause),
+    Merge(Arc<PendingMergeCause>),
+}
+
+struct PendingMergeCause {
+    receipts: CausalReceipts,
+    incoming: DeferredEqualityCause,
+    prior_fact: FactId,
+    equality: EqualityCauseSummary,
+    cause: OnceLock<CauseDraftId>,
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct DeferredEqualityCause(DeferredEqualityCauseKind);
+
+impl DeferredEqualityCause {
+    pub(crate) fn ready(cause: CauseDraftId) -> Self {
+        assert!(
+            !cause.is_unattributed(),
+            "typed equality proposal is missing its exact cause"
+        );
+        Self(DeferredEqualityCauseKind::Ready {
+            cause,
+            equality: None,
+        })
+    }
+
+    pub(crate) fn capability(cause: CauseCapability) -> Self {
+        Self(DeferredEqualityCauseKind::Ready {
+            cause: cause.id,
+            equality: Some(cause.equality),
+        })
+    }
+
+    pub(crate) fn promote(&self) -> CauseDraftId {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready { cause, .. } => *cause,
+            DeferredEqualityCauseKind::Pending(cause) => cause.promote(),
+            DeferredEqualityCauseKind::Merge(cause) => *cause
+                .cause
+                .get_or_init(|| cause.receipts.promote_pending_merge_cause(cause)),
+        }
+    }
+
+    pub(crate) fn ready_id(&self) -> Option<CauseDraftId> {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready { cause, .. } => Some(*cause),
+            DeferredEqualityCauseKind::Pending(_) | DeferredEqualityCauseKind::Merge(_) => None,
+        }
+    }
+
+    pub(crate) fn pending(cause: PendingRuleCause) -> Self {
+        Self(DeferredEqualityCauseKind::Pending(cause))
+    }
+
+    /// Attach a table merge callback's immutable predecessor to the incoming
+    /// rule lane without promoting it. Nested merge causes preserve the
+    /// original incoming firing as their attribution owner.
+    pub(crate) fn record_merge_read(&self, prior_fact: FactId) {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready { .. } => {}
+            DeferredEqualityCauseKind::Pending(cause) => cause.record_merge_read(prior_fact),
+            DeferredEqualityCauseKind::Merge(cause) => cause.incoming.record_merge_read(prior_fact),
+        }
+    }
+
+    fn equality_summary(&self, receipts: &CausalReceipts) -> EqualityCauseSummary {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready {
+                cause: _,
+                equality: Some(equality),
+            } => *equality,
+            DeferredEqualityCauseKind::Ready {
+                cause,
+                equality: None,
+            } => {
+                let arena = receipts.0.arena.lock().unwrap();
+                arena
+                    .cause_summary(*cause)
+                    .unwrap_or_else(|error| panic!("cannot classify deferred cause: {error}"))
+            }
+            DeferredEqualityCauseKind::Pending(_) => EqualityCauseSummary::Rule,
+            DeferredEqualityCauseKind::Merge(cause) => cause.equality,
+        }
+    }
+
+    pub(crate) fn prepare(&self, receipts: &CausalReceipts) -> Result<(), String> {
+        self.equality_summary(receipts)
+            .validate()
+            .map_err(str::to_owned)?;
+        self.prepare_dependencies(receipts)
+    }
+
+    fn prepare_dependencies(&self, receipts: &CausalReceipts) -> Result<(), String> {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready { .. } => Ok(()),
+            DeferredEqualityCauseKind::Pending(cause) => cause.prepare(),
+            // A direct rebuild is invalid as a root equality cause but valid
+            // beneath a merge that supplies its prior fact. Prepare its lazy
+            // payload without re-validating the child as a standalone root.
+            DeferredEqualityCauseKind::Merge(cause) => {
+                cause.incoming.prepare_dependencies(receipts)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1676,34 +1965,8 @@ pub(crate) struct CauseCapability {
 }
 
 impl CauseCapability {
-    pub(crate) fn rule(id: CauseDraftId) -> Self {
-        assert!(
-            !id.is_unattributed(),
-            "rule cause capability is missing its exact cause"
-        );
-        Self {
-            id,
-            equality: EqualityCauseSummary::Rule,
-        }
-    }
-
-    pub(crate) fn source(id: CauseDraftId) -> Self {
-        assert!(
-            !id.is_unattributed(),
-            "source cause capability is missing its exact cause"
-        );
-        Self {
-            id,
-            equality: EqualityCauseSummary::Source,
-        }
-    }
-
     pub(crate) fn id(self) -> CauseDraftId {
         self.id
-    }
-
-    pub(crate) fn validate_equality(self) -> Result<(), &'static str> {
-        self.equality.validate()
     }
 }
 
@@ -1890,6 +2153,7 @@ struct DurableMatch {
     wave: CausalWave,
     premises: FlatRange,
     terms: FlatRange,
+    merge_reads: FlatRange,
 }
 
 #[derive(Default)]
@@ -1899,6 +2163,7 @@ struct ReceiptArena {
     durable_matches: Vec<DurableMatch>,
     durable_premises: Vec<FactId>,
     durable_terms: Vec<ReplayTermId>,
+    durable_merge_reads: Vec<FactId>,
     durable_fact_terms: Vec<ReplayTermId>,
     durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<DurableCause>,
@@ -2056,11 +2321,14 @@ impl ReceiptArena {
 struct ReceiptShared {
     next_fact: AtomicU64,
     next_match_draft: AtomicU64,
+    next_native_match: AtomicU64,
     next_rule_match: AtomicU64,
     next_term: AtomicU32,
     next_equality: AtomicU64,
     next_cause_draft: AtomicU64,
     open_fragments: AtomicUsize,
+    open_pending_batches: AtomicUsize,
+    open_native_leases: AtomicUsize,
     abandoned_fragments: AtomicU64,
     replay_terms: ReplayTermStore,
     equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
@@ -2073,11 +2341,14 @@ impl Default for ReceiptShared {
         Self {
             next_fact: AtomicU64::new(0),
             next_match_draft: AtomicU64::new(0),
+            next_native_match: AtomicU64::new(0),
             next_rule_match: AtomicU64::new(0),
             next_term: AtomicU32::new(0),
             next_equality: AtomicU64::new(0),
             next_cause_draft: AtomicU64::new(0),
             open_fragments: AtomicUsize::new(0),
+            open_pending_batches: AtomicUsize::new(0),
+            open_native_leases: AtomicUsize::new(0),
             abandoned_fragments: AtomicU64::new(0),
             replay_terms: ReplayTermStore::default(),
             equality_value_sorts: Mutex::new(HashMap::default()),
@@ -2156,45 +2427,50 @@ impl ReceiptBatch {
         )
     }
 
-    pub(crate) fn merge_draft_capability_for_table(
+    /// Copy coherent constructor terms only after the native merge reports an
+    /// effective replacement. No-op collisions never call this method.
+    pub(crate) fn inherit_prior_fact_terms(
         &mut self,
-        incoming: CauseDraftId,
+        cause: CauseDraftId,
         prior_fact: FactId,
         table: TableId,
-    ) -> CauseCapability {
-        let capability = self.merge_draft_capability(incoming, prior_fact);
-        if self
+    ) {
+        if !self
             .shared
             .replay_terms
             .table_constructors
             .contains_key(&table)
         {
-            let local = self
-                .facts
-                .iter()
-                .find(|(fact, _)| *fact == prior_fact)
-                .map(|(_, fact)| (fact.table, self.fact_terms[fact.terms.as_range()].to_vec()));
-            let (prior_table, terms) = if let Some(local) = local {
-                local
-            } else {
-                let shared = Arc::clone(&self.shared);
-                let arena = shared.arena.lock().unwrap();
-                let (prior_table, terms) = arena
-                    .fact_terms(prior_fact)
-                    .expect("constructor merge references a missing prior FactId");
-                (prior_table, terms.to_vec())
-            };
-            assert_eq!(prior_table, table, "constructor merge changed tables");
-            let range = FlatRange::new(self.rebuild_terms.len(), terms.len());
-            self.rebuild_terms.extend_from_slice(&terms);
-            assert!(
-                self.rebuild_term_ranges
-                    .insert(capability.id(), (table, range))
-                    .is_none(),
-                "duplicate constructor merge-term preload"
-            );
+            return;
         }
-        capability
+        if self.rebuild_term_ranges.contains_key(&cause) {
+            return;
+        }
+        let local = self
+            .facts
+            .iter()
+            .find(|(fact, _)| *fact == prior_fact)
+            .map(|(_, fact)| (fact.table, self.fact_terms[fact.terms.as_range()].to_vec()));
+        let (prior_table, terms) = if let Some(local) = local {
+            local
+        } else {
+            let arena = self.shared.arena.lock().unwrap();
+            let (prior_table, terms) = arena
+                .fact_terms(prior_fact)
+                .expect("constructor merge references a missing prior FactId");
+            (prior_table, terms.to_vec())
+        };
+        assert_eq!(prior_table, table, "constructor merge changed tables");
+        let range = FlatRange::new(self.rebuild_terms.len(), terms.len());
+        self.rebuild_terms.extend_from_slice(&terms);
+        assert!(
+            self.rebuild_term_ranges
+                .insert(cause, (table, range))
+                .is_none(),
+            "duplicate constructor merge-term preload"
+        );
+        let mut arena = self.shared.arena.lock().unwrap();
+        arena.counters.merge_prior_term_copies += terms.len() as u64;
     }
 
     #[cfg(test)]
@@ -2506,6 +2782,13 @@ impl Drop for ReceiptBatch {
 pub struct CausalReceipts(Arc<ReceiptShared>);
 
 impl CausalReceipts {
+    pub(crate) fn pending_native_lease(&self, wave: CausalWave) -> PendingNativeLease {
+        self.0.open_native_leases.fetch_add(1, Ordering::Relaxed);
+        PendingNativeLease(Arc::new(PendingNativeLeaseInner {
+            receipts: self.clone(),
+            wave,
+        }))
+    }
     pub fn register_container_sort(
         &self,
         sort: ReplaySortId,
@@ -2545,16 +2828,15 @@ impl CausalReceipts {
             .flatten()
     }
 
-    pub(crate) fn table_has_constructor_terms(&self, table: TableId) -> bool {
-        self.0.replay_terms.table_constructors.contains_key(&table)
-    }
-
     /// Capture one complete applied-edge prefix at the native rebuild
     /// barrier. A bare counter read is insufficient: every allocated edge up
     /// to the cutoff must already have been published without holes.
     pub(crate) fn equality_edge_count(&self) -> Result<EqualityEdgeCount, &'static str> {
         if self.0.open_fragments.load(Ordering::Acquire) != 0 {
             return Err("cannot start rebuild with open receipt fragments");
+        }
+        if self.0.open_pending_batches.load(Ordering::Acquire) != 0 {
+            return Err("cannot start rebuild with unresolved pending match batches");
         }
         if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
             return Err("cannot start rebuild after an abandoned receipt fragment");
@@ -2586,20 +2868,60 @@ impl CausalReceipts {
         Ok(EqualityEdgeCount::new(count))
     }
 
-    /// Classify one effective union cause before the native union-find is
-    /// mutated. Finalization repeats the assertion as an arena-integrity
-    /// check, but unsupported receipt shapes must fail at this boundary rather
-    /// than after an equality has already become observable.
-    pub(crate) fn validate_equality_causes(&self, causes: &[CauseDraftId]) {
-        let error = {
-            let arena = self.0.arena.lock().unwrap();
-            causes
-                .iter()
-                .find_map(|cause| arena.validate_equality_cause_draft(*cause).err())
-        };
-        if let Some(error) = error {
-            panic!("{error}");
-        }
+    pub(crate) fn validate_deferred_equality_cause(
+        &self,
+        cause: &DeferredEqualityCause,
+    ) -> Result<(), &'static str> {
+        cause.equality_summary(self).validate()
+    }
+
+    pub(crate) fn pending_merge_cause(
+        &self,
+        incoming: DeferredEqualityCause,
+        prior_fact: FactId,
+    ) -> DeferredEqualityCause {
+        assert!(
+            !prior_fact.is_missing(),
+            "deferred merge receipt is missing its prior FactId"
+        );
+        let equality = incoming.equality_summary(self).with_prior_fact(prior_fact);
+        DeferredEqualityCause(DeferredEqualityCauseKind::Merge(Arc::new(
+            PendingMergeCause {
+                receipts: self.clone(),
+                incoming,
+                prior_fact,
+                equality,
+                cause: OnceLock::new(),
+            },
+        )))
+    }
+
+    fn promote_pending_merge_cause(&self, cause: &PendingMergeCause) -> CauseDraftId {
+        assert!(Arc::ptr_eq(&self.0, &cause.receipts.0));
+        let incoming = cause.incoming.promote();
+        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let mut arena = self.0.arena.lock().unwrap();
+        arena.provisional.causes.install(
+            id.get(),
+            CauseDraft::Merge {
+                incoming,
+                prior: PriorVersion::Fact(cause.prior_fact),
+            },
+        );
+        assert!(
+            arena
+                .provisional
+                .equality_summaries
+                .insert(id, cause.equality)
+                .is_none(),
+            "duplicate pending merge-cause classification"
+        );
+        arena.add_live_bytes(
+            mem::size_of::<CauseDraft>()
+                + mem::size_of::<CauseDraftId>()
+                + mem::size_of::<EqualityCauseSummary>(),
+        );
+        id
     }
 
     pub(crate) fn cause_capability(&self, cause: CauseDraftId) -> CauseCapability {
@@ -3543,9 +3865,245 @@ impl CausalReceipts {
         result
     }
 
-    /// Register all previously-unregistered action lanes with one arena lock.
-    /// FactId lookups are dense and all term cells are resolved in this same
-    /// bulk access.
+    /// Freeze one action batch's compact match metadata. This does not touch
+    /// the provisional receipt arena: only equality proposals that survive UF
+    /// preflight call [`PendingRuleCause::promote`].
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pending_rule_batch(
+        &self,
+        rule: u32,
+        wave: CausalWave,
+        premise_arity: usize,
+        binding_sources: &[ReplayBindingSource],
+        flat_premises: &[FactId],
+        flat_current_terms: &[ReplayTermId],
+        lanes: usize,
+    ) -> Arc<PendingMatchBatch> {
+        assert!(lanes > 0, "pending match batch cannot be empty");
+        assert_eq!(
+            flat_premises.len(),
+            lanes * premise_arity,
+            "pending match premises must be dense and lane-aligned"
+        );
+        let current_arity = binding_sources
+            .iter()
+            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+            .count();
+        assert_eq!(
+            flat_current_terms.len(),
+            lanes * current_arity,
+            "pending current terms must be dense and lane-aligned"
+        );
+        let first_native_ordinal = self.reserve_native_match_ordinals(lanes);
+        self.pending_rule_batch_at(
+            rule,
+            wave,
+            first_native_ordinal,
+            premise_arity,
+            binding_sources,
+            flat_premises,
+            flat_current_terms,
+            lanes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pending_rule_batch_at(
+        &self,
+        rule: u32,
+        wave: CausalWave,
+        first_native_ordinal: u64,
+        premise_arity: usize,
+        binding_sources: &[ReplayBindingSource],
+        flat_premises: &[FactId],
+        flat_current_terms: &[ReplayTermId],
+        lanes: usize,
+    ) -> Arc<PendingMatchBatch> {
+        assert!(first_native_ordinal > 0);
+        self.0.open_pending_batches.fetch_add(1, Ordering::Relaxed);
+        Arc::new(PendingMatchBatch {
+            receipts: self.clone(),
+            rule,
+            wave,
+            first_native_ordinal,
+            premise_arity,
+            binding_sources: binding_sources.into(),
+            premises: PendingPremises::Flat(flat_premises.into()),
+            current_terms: flat_current_terms.into(),
+            merge_reads: Arc::new(PendingMergeReads::default()),
+            prepared: (0..lanes).map(|_| OnceLock::new()).collect(),
+            causes: (0..lanes).map(|_| OnceLock::new()).collect(),
+        })
+    }
+
+    /// Construct a pending batch over compact join witnesses. The resolver is
+    /// owned once by the batch; individual lanes carry only a packed index.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn pending_rule_batch_lazy(
+        &self,
+        rule: u32,
+        wave: CausalWave,
+        first_native_ordinal: u64,
+        premise_arity: usize,
+        binding_sources: &[ReplayBindingSource],
+        resolver: Arc<dyn PendingPremiseResolver>,
+        witness_lanes: &[u32],
+        flat_current_terms: &[ReplayTermId],
+    ) -> Arc<PendingMatchBatch> {
+        let lanes = witness_lanes.len();
+        assert!(lanes > 0, "pending match batch cannot be empty");
+        let current_arity = binding_sources
+            .iter()
+            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+            .count();
+        assert_eq!(
+            flat_current_terms.len(),
+            lanes * current_arity,
+            "pending current terms must be dense and lane-aligned"
+        );
+        assert!(first_native_ordinal > 0);
+        self.0.open_pending_batches.fetch_add(1, Ordering::Relaxed);
+        Arc::new(PendingMatchBatch {
+            receipts: self.clone(),
+            rule,
+            wave,
+            first_native_ordinal,
+            premise_arity,
+            binding_sources: binding_sources.into(),
+            premises: PendingPremises::Lazy {
+                resolver,
+                lanes: witness_lanes.into(),
+            },
+            current_terms: flat_current_terms.into(),
+            merge_reads: Arc::new(PendingMergeReads::default()),
+            prepared: (0..lanes).map(|_| OnceLock::new()).collect(),
+            causes: (0..lanes).map(|_| OnceLock::new()).collect(),
+        })
+    }
+
+    pub(crate) fn reserve_native_match_ordinals(&self, lanes: usize) -> u64 {
+        ReceiptShared::alloc_u64(&self.0.next_native_match, lanes)
+    }
+
+    pub(crate) fn pending_rule_cause(
+        &self,
+        batch: &Arc<PendingMatchBatch>,
+        lane: usize,
+    ) -> PendingRuleCause {
+        assert!(Arc::ptr_eq(&self.0, &batch.receipts.0));
+        assert!(
+            lane < batch.causes.len(),
+            "pending match lane is out of range"
+        );
+        PendingRuleCause {
+            batch: Arc::clone(batch),
+            lane: lane.try_into().expect("pending match batch exceeds u32"),
+        }
+    }
+
+    fn promote_pending_rule_match(&self, batch: &PendingMatchBatch, lane: usize) -> CauseDraftId {
+        assert!(Arc::ptr_eq(&self.0, &batch.receipts.0));
+        let prepared = self
+            .prepare_pending_rule_match(batch, lane)
+            .unwrap_or_else(|error| panic!("cannot promote pending rule match: {error}"));
+        let premises = &prepared.premises;
+
+        let match_id = MatchDraftId::new(ReceiptShared::alloc_u64(&self.0.next_match_draft, 1));
+        let cause_id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let mut arena = self.0.arena.lock().unwrap();
+        let premise_range = FlatRange::new(arena.provisional.premises.len(), premises.len());
+        arena.provisional.premises.extend_from_slice(&premises);
+        let term_start = arena.provisional.terms.len();
+        arena.provisional.terms.extend_from_slice(&prepared.terms);
+        let term_range = FlatRange::new(term_start, batch.binding_sources.len());
+        arena.provisional.matches.install(
+            match_id.get(),
+            MatchDraft {
+                rule: batch.rule,
+                wave: batch.wave,
+                native_ordinal: batch.first_native_ordinal + lane as u64,
+                premises: premise_range,
+                terms: term_range,
+                merge_reads: Some(PendingMergeReadRef {
+                    batch: Arc::clone(&batch.merge_reads),
+                    lane: lane.try_into().expect("pending match batch exceeds u32"),
+                }),
+            },
+        );
+        arena
+            .provisional
+            .causes
+            .install(cause_id.get(), CauseDraft::Rule(match_id));
+        arena.counters.premise_handles += premises.len() as u64;
+        arena.counters.term_handles += batch.binding_sources.len() as u64;
+        arena.counters.provisional_matches += 1;
+        arena.add_live_bytes(
+            mem::size_of::<MatchDraft>()
+                + mem::size_of::<CauseDraft>()
+                + premises.len() * mem::size_of::<FactId>()
+                + batch.binding_sources.len() * mem::size_of::<ReplayTermId>(),
+        );
+        cause_id
+    }
+
+    fn prepare_pending_rule_match<'a>(
+        &self,
+        batch: &'a PendingMatchBatch,
+        lane: usize,
+    ) -> Result<&'a PreparedMatch, String> {
+        assert!(
+            lane < batch.prepared.len(),
+            "pending match lane is out of range"
+        );
+        if batch.prepared[lane].get().is_none() {
+            let premises = batch.premises.resolve(lane, batch.premise_arity);
+            let current_arity = batch
+                .binding_sources
+                .iter()
+                .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+                .count();
+            let current_start = lane * current_arity;
+            let current_terms = &batch.current_terms[current_start..current_start + current_arity];
+            let arena = self.0.arena.lock().unwrap();
+            let mut terms = Vec::with_capacity(batch.binding_sources.len());
+            let mut current = 0;
+            for source in batch.binding_sources.iter().copied() {
+                let term = match source {
+                    ReplayBindingSource::Premise { premise, column } => {
+                        let fact = premises[premise];
+                        arena.fact_term(fact, column).ok_or_else(|| {
+                            format!(
+                                "missing producer-installed ReplayTermId for {fact:?} column {column}"
+                            )
+                        })?
+                    }
+                    ReplayBindingSource::Current { .. } => {
+                        let term = current_terms[current];
+                        current += 1;
+                        term
+                    }
+                    ReplayBindingSource::Constant { term } => term,
+                };
+                if term.is_missing() {
+                    return Err("pending match prepared a missing ReplayTermId".into());
+                }
+                terms.push(term);
+            }
+            drop(arena);
+            let _ = batch.prepared[lane].set(PreparedMatch {
+                premises: premises.into_vec().into_boxed_slice(),
+                terms: terms.into_boxed_slice(),
+            });
+        }
+        Ok(batch.prepared[lane]
+            .get()
+            .expect("pending match preparation disappeared"))
+    }
+
+    /// Test-only eager registration helper for low-level receipt fixtures.
+    /// Production rule execution always uses pending batches.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_rule_matches(
         &self,
@@ -3571,6 +4129,7 @@ impl CausalReceipts {
         );
         let first_match = ReceiptShared::alloc_u64(&self.0.next_match_draft, lanes.len());
         let first_cause = ReceiptShared::alloc_u64(&self.0.next_cause_draft, lanes.len());
+        let first_native_ordinal = self.reserve_native_match_ordinals(lanes.len());
         let mut arena = self.0.arena.lock().unwrap();
         let mut result = Vec::with_capacity(lanes.len());
         for (offset, lane) in lanes.iter().copied().enumerate() {
@@ -3578,7 +4137,6 @@ impl CausalReceipts {
             let premises = &flat_premises[premise_start..premise_start + premise_arity];
             let premise_range = FlatRange::new(arena.provisional.premises.len(), premises.len());
             arena.provisional.premises.extend_from_slice(premises);
-
             let term_start = arena.provisional.terms.len();
             let mut current = offset * current_arity;
             for source in binding_sources {
@@ -3607,13 +4165,17 @@ impl CausalReceipts {
                 MatchDraft {
                     rule,
                     wave,
+                    native_ordinal: first_native_ordinal + offset as u64,
                     premises: premise_range,
                     terms: term_range,
+                    merge_reads: None,
                 },
             );
             let cause_id = CauseDraftId::new(first_cause + offset as u64);
-            let cause = CauseDraft::Rule(match_id);
-            arena.provisional.causes.install(cause_id.get(), cause);
+            arena
+                .provisional
+                .causes
+                .install(cause_id.get(), CauseDraft::Rule(match_id));
             result.push((lane, cause_id));
         }
         arena.counters.premise_handles += (lanes.len() * premise_arity) as u64;
@@ -3639,6 +4201,16 @@ impl CausalReceipts {
             self.0.abandoned_fragments.load(Ordering::Acquire),
             0,
             "causal worker fragment was dropped without publication"
+        );
+        assert_eq!(
+            self.0.open_pending_batches.load(Ordering::Acquire),
+            0,
+            "cannot finalize causal wave with unresolved pending match batches"
+        );
+        assert_eq!(
+            self.0.open_native_leases.load(Ordering::Acquire),
+            0,
+            "cannot finalize causal wave with queued transactional native mutations"
         );
         let mut arena = self.0.arena.lock().unwrap();
         let has_pending_facts = arena
@@ -3727,10 +4299,19 @@ impl CausalReceipts {
         }
 
         let mut match_map = vec![None; reachable_matches.len()];
-        for (index, promote) in reachable_matches.iter().copied().enumerate() {
-            if !promote {
-                continue;
-            }
+        let mut promotion_order = reachable_matches
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, promote)| promote.then_some(index))
+            .collect::<Vec<_>>();
+        promotion_order.sort_unstable_by_key(|index| {
+            arena.provisional.matches.slots[*index]
+                .as_ref()
+                .expect("reachable match draft")
+                .native_ordinal
+        });
+        for index in promotion_order {
             let draft = arena.provisional.matches.slots[index]
                 .as_ref()
                 .expect("reachable match draft")
@@ -3742,11 +4323,19 @@ impl CausalReceipts {
             let terms_start = arena.durable_terms.len();
             let terms = arena.provisional.terms[draft.terms.as_range()].to_vec();
             arena.durable_terms.extend_from_slice(&terms);
+            let merge_reads = draft
+                .merge_reads
+                .as_ref()
+                .map(|reads| reads.batch.lane(reads.lane))
+                .unwrap_or_default();
+            let merge_reads_start = arena.durable_merge_reads.len();
+            arena.durable_merge_reads.extend_from_slice(&merge_reads);
             arena.durable_matches.push(DurableMatch {
                 rule: draft.rule,
                 wave: draft.wave,
                 premises: FlatRange::new(premises_start, draft.premises.len as usize),
                 terms: FlatRange::new(terms_start, draft.terms.len as usize),
+                merge_reads: FlatRange::new(merge_reads_start, merge_reads.len()),
             });
             debug_assert_eq!(id.get() as usize, arena.durable_matches.len());
             match_map[index] = Some(id);
@@ -3991,6 +4580,16 @@ impl CausalReceipts {
             "cannot snapshot causal receipts with open worker fragments"
         );
         assert_eq!(
+            self.0.open_pending_batches.load(Ordering::Acquire),
+            0,
+            "cannot snapshot causal receipts with unresolved pending match batches"
+        );
+        assert_eq!(
+            self.0.open_native_leases.load(Ordering::Acquire),
+            0,
+            "cannot snapshot causal receipts with queued transactional native mutations"
+        );
+        assert_eq!(
             self.0.abandoned_fragments.load(Ordering::Acquire),
             0,
             "cannot snapshot causal receipts after an unpublished worker fragment"
@@ -4014,6 +4613,7 @@ impl CausalReceipts {
                 wave: record.wave,
                 premises: arena.durable_premises[record.premises.as_range()].into(),
                 terms: arena.durable_terms[record.terms.as_range()].into(),
+                merge_reads: arena.durable_merge_reads[record.merge_reads.as_range()].into(),
             })
             .collect();
         let facts = arena

@@ -506,7 +506,10 @@ impl Database {
             // decision token, so an unsupported collision can neither alter
             // container identity nor leak a queued UF proposal.
             let mut working = self.container_values.clone();
-            let transaction = MutationTransaction::pending();
+            let transaction = MutationTransaction::pending_causal(
+                self.causal_receipts.as_ref().unwrap(),
+                self.causal_wave,
+            );
             let table = &self.tables[table_id].table;
             let rebuilt = catch_unwind(AssertUnwindSafe(|| {
                 self.with_execution_state(|state| {
@@ -587,7 +590,10 @@ impl Database {
         // temporarily removed canonicalizer table even when an exact receipt
         // invariant rejects a row, so callers that catch the diagnostic never
         // observe a structurally damaged database.
-        let transaction = MutationTransaction::pending();
+        let transaction = MutationTransaction::pending_causal(
+            self.causal_receipts.as_ref().unwrap(),
+            self.causal_wave,
+        );
         let rebuilt = catch_unwind(AssertUnwindSafe(|| {
             self.run_on_tables_receipt_safe(to_rebuild, &transaction, |_, info, view| {
                 info.table.apply_rebuild(
@@ -634,7 +640,10 @@ impl Database {
         // It must run after ordinary table rebuild, which already handles
         // changed-id cases by rewriting parent rows to the new id.
         if self.causal_receipts.is_some() {
-            let transaction = MutationTransaction::pending();
+            let transaction = MutationTransaction::pending_causal(
+                self.causal_receipts.as_ref().unwrap(),
+                self.causal_wave,
+            );
             let refreshed = catch_unwind(AssertUnwindSafe(|| {
                 self.run_on_tables_receipt_safe(to_refresh, &transaction, |_, info, view| {
                     let exec_state = ExecutionState::new(*view, Default::default());
@@ -677,7 +686,7 @@ impl Database {
         transaction: &MutationTransaction,
         run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
     ) {
-        if parallelize_db_level_op(self.total_size_estimate) {
+        if self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate) {
             let mut tables = Vec::with_capacity(table_ids.len());
             for id in table_ids {
                 tables.push((*id, self.tables.take(*id).unwrap()));
@@ -718,7 +727,7 @@ impl Database {
         table_ids: &[TableId],
         run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
     ) {
-        if parallelize_db_level_op(self.total_size_estimate) {
+        if self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate) {
             let mut tables = Vec::with_capacity(table_ids.len());
             for id in table_ids {
                 tables.push((*id, self.tables.take(*id).unwrap()));
@@ -824,7 +833,8 @@ impl Database {
     /// Useful for out-of-band insertions into the database.
     pub fn merge_all(&mut self) -> bool {
         let mut ever_changed = false;
-        let do_parallel = parallelize_db_level_op(self.total_size_estimate);
+        let do_parallel =
+            self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
         let mut to_merge = IndexSet::default();
         loop {
             to_merge.clear();
