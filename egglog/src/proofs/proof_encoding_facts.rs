@@ -3,7 +3,7 @@
 //! proof for the rule's proof list.
 
 use super::proof_checker::is_container_side_condition;
-use super::proof_encoding::ProofInstrumentor;
+use super::proof_encoding::{ProofInstrumentor, QueryTermBinding, QueryTermBindings};
 use crate::proofs::proof_encoding_helpers::Justification;
 use crate::typechecking::FuncType;
 use crate::*;
@@ -18,6 +18,7 @@ impl ProofInstrumentor<'_> {
         fact: &ResolvedFact,
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
+        bindings: &mut QueryTermBindings,
     ) -> String {
         // A container side condition: a fact that builds a container with a
         // primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`, or a bare
@@ -52,7 +53,8 @@ impl ProofInstrumentor<'_> {
                 let mut new_args = vec![];
                 let mut arg_proofs = vec![];
                 for arg in args {
-                    let (var, proof) = self.instrument_fact_expr(arg, res, action_lookups);
+                    let (var, proof) =
+                        self.instrument_fact_expr(arg, res, action_lookups, bindings);
                     new_args.push(var);
                     arg_proofs.push(proof);
                 }
@@ -86,8 +88,8 @@ impl ProofInstrumentor<'_> {
                 }
             }
             ResolvedFact::Eq(_span, left_expr, right_expr) => {
-                let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups);
-                let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
+                let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups, bindings);
+                let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups, bindings);
                 res.push(format!("(= {v1} {v2})"));
                 if self.egraph.proof_state.proofs_enabled {
                     let sym = self.proof_names().eq_sym_constructor.clone();
@@ -105,7 +107,8 @@ impl ProofInstrumentor<'_> {
                 }
             }
             ResolvedFact::Fact(generic_expr) => {
-                let (_, proof) = self.instrument_fact_expr(generic_expr, res, action_lookups);
+                let (_, proof) =
+                    self.instrument_fact_expr(generic_expr, res, action_lookups, bindings);
                 if self.proofs_enabled()
                     && matches!(
                         generic_expr,
@@ -132,6 +135,7 @@ impl ProofInstrumentor<'_> {
         expr: &ResolvedExpr,
         res: &mut Vec<String>,
         action_lookups: &mut Vec<String>,
+        bindings: &mut QueryTermBindings,
     ) -> (String, String) {
         match expr {
             ResolvedExpr::Lit(_, lit) => {
@@ -180,7 +184,8 @@ impl ProofInstrumentor<'_> {
                         new_args.push(arg.to_string());
                         arg_proofs.push(None);
                     } else {
-                        let (arg_str, proof) = self.instrument_fact_expr(arg, res, action_lookups);
+                        let (arg_str, proof) =
+                            self.instrument_fact_expr(arg, res, action_lookups, bindings);
                         new_args.push(arg_str);
                         arg_proofs.push(Some(proof));
                     }
@@ -198,34 +203,47 @@ impl ProofInstrumentor<'_> {
 
                         let fv = self.fresh_var();
                         let view_name = self.view_name(&func_type.name);
-                        let args_str = ListDisplay(new_args, " ");
+                        // A constructor view is the FD tuple
+                        // `(children) -> (eclass, {Unit|Proof})`: bind the eclass (`fv`)
+                        // and proof from the tuple.
+                        let view_proof_var = self.fresh_var();
+                        res.push(format!(
+                            "(= (values {fv} {view_proof_var}) ({view_name} {}))",
+                            ListDisplay(&new_args, " ")
+                        ));
 
-                        let proof = {
-                            let view_proof_var = self.fresh_var();
-                            // A constructor view is the FD tuple
-                            // `(children) -> (eclass, {Unit|Proof})`: bind the eclass (`fv`)
-                            // and proof from the tuple.
-                            res.push(format!(
-                                "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
-                            ));
-                            if self.proofs_enabled() {
-                                let congr = self.proof_names().congr_constructor.clone();
-                                let proof_sort = self.proof_sort();
-                                let mut proof = view_proof_var;
-                                for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                                    if let Some(arg_proof) = arg_proof {
-                                        proof = self.mint(
-                                            action_lookups,
-                                            &congr,
-                                            &format!("{proof} {i} {arg_proof}"),
-                                            &proof_sort,
-                                        );
-                                    }
+                        // Record this body match so the head can reuse the e-class
+                        // instead of rebuilding the same application (see
+                        // `ProofInstrumentor::add_term_and_view`). Globals are
+                        // excluded: a global reference lowers to a view lookup in
+                        // actions, never a term build.
+                        if func_type.subtype == FunctionSubtype::Constructor {
+                            bindings.insert(
+                                (func_type.name.to_string(), new_args.clone()),
+                                QueryTermBinding {
+                                    eclass: fv.clone(),
+                                    proof: view_proof_var.clone(),
+                                },
+                            );
+                        }
+
+                        let proof = if self.proofs_enabled() {
+                            let congr = self.proof_names().congr_constructor.clone();
+                            let proof_sort = self.proof_sort();
+                            let mut proof = view_proof_var;
+                            for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
+                                if let Some(arg_proof) = arg_proof {
+                                    proof = self.mint(
+                                        action_lookups,
+                                        &congr,
+                                        &format!("{proof} {i} {arg_proof}"),
+                                        &proof_sort,
+                                    );
                                 }
-                                proof
-                            } else {
-                                "()".to_string()
                             }
+                            proof
+                        } else {
+                            "()".to_string()
                         };
                         (fv, proof)
                     }
@@ -277,22 +295,24 @@ impl ProofInstrumentor<'_> {
     }
 
     /// Return the instrumented query and a proof that it matched.
-    /// Returns `(body_facts, action_lookups, proof)`. Eq-sort variables'
-    /// `term_proof` fetches are emitted into `action_lookups` as
+    /// Returns `(body_facts, action_lookups, proof, term_bindings)`. Eq-sort
+    /// variables' `term_proof` fetches are emitted into `action_lookups` as
     /// `(let p (term_proof v))` lines for the caller to splice into the
-    /// rule's actions (the rule is then `:unsafe-seminaive`). Callers
-    /// that don't build a proof (`run :until`, `check`) discard the
-    /// lookups and the proof.
+    /// rule's actions (the rule is then `:unsafe-seminaive`). `term_bindings`
+    /// records each constructor application the body matched, for head reuse.
+    /// Callers that don't build a proof (`run :until`, `check`) discard the
+    /// lookups, the proof, and the bindings.
     pub(super) fn instrument_facts(
         &mut self,
         facts: &[ResolvedFact],
-    ) -> (Vec<String>, Vec<String>, String) {
+    ) -> (Vec<String>, Vec<String>, String, QueryTermBindings) {
         let mut res = vec![];
         let mut action_lookups = vec![];
         let mut proof = vec![];
+        let mut bindings = QueryTermBindings::default();
 
         for fact in facts.iter() {
-            let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups);
+            let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups, &mut bindings);
             proof.push(f_proof);
         }
 
@@ -304,7 +324,7 @@ impl ProofInstrumentor<'_> {
         } else {
             String::new()
         };
-        (res, action_lookups, proof_list)
+        (res, action_lookups, proof_list, bindings)
     }
 
     /// Mint a reflexive `Fiat` proof `value = value` for a term of `sort_name`

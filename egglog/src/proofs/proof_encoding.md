@@ -176,6 +176,33 @@ the whole story for `union` — both operands are built and canonicalized so an
 equality proof can be threaded through each step (see
 [Building nested terms with proofs](#building-nested-terms-with-proofs)).
 
+## Reusing a built term
+
+Within one action scope (a rule head, a top-level action, or a merge body) the
+encoder caches each constructor application it builds, keyed by its instrumented
+children, and reuses the cached e-class for any repeat instead of minting a fresh
+id and re-interning it. Two cases feed the cache:
+
+- **Body match.** When the head first builds an application the body already
+  matched, its e-class is already interned, so the encoder reuses the body view
+  read's e-class. A head `(Add a b)` whose children match the body's
+  `(AddView a b)` binding lowers to a bare `(let ab_canon e)` — no `get-fresh!`,
+  term row, or `set-if-empty`.
+- **Common subexpression.** A second build of the *same* application reuses the
+  first build's e-class directly, so `(Foo (Bar x) (Bar x))` interns `(Bar x)`
+  once.
+
+The match is keyed on the instrumented (canonical) children, so it composes
+through nested terms — a reused child makes its parent eligible too.
+
+In proof mode a body-match reuse still mints the *natural* node `(Add a b)` (a
+parent's `Congr` and the rule-head check need its as-built shape) but skips the
+view dedup: the body view read's proof `e = (Add a b)` stands in for the re-read
+view proof, so the connector `natural = e` composes directly from it. A
+common-subexpression reuse returns the first build's e-class and its live natural
+node, so the repeats share one natural — a parent's `Congr` applies the shared
+connector at each position.
+
 ## Optimization: building a union operand into an e-class
 
 Building an operand and then unioning it away wastes an e-class id (and its
@@ -192,24 +219,25 @@ passes over the rule's actions implement this:
    constructor-`let` operand (the *guest*) into the target's e-class, dropping
    the explicit union.
 
-The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class:
+The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class. Here the
+target `(Add a b)` is also the body match, so it is reused (see
+[Reusing a built term](#reusing-a-built-term)) rather than rebuilt, and its
+e-class is the body's `e`:
 
 ```text
 (rule ((= (values e p) (AddView a b)))
-      ((let ab (get-fresh! "Math"))
-       (set (Add a b ab) ())
-       (let ab_canon (set-if-empty-AddView! a b ab ()))
-       (set (Add b a ab_canon) ())
-       (set (AddView b a) (values ab_canon ())))
+      ((set (Add b a e) ())
+       (set (AddView b a) (values e ())))
        :name "commutativity")
 ```
 
-- **Target.** `(Add a b)` is built normally (mint + `set-if-empty`), yielding
-  its canonical e-class `ab_canon`.
-- **Guest → target.** The view is `set` to point at `ab_canon`
-  (`(set (AddView b a) (values ab_canon ()))`), so `(Add b a)` *is* `ab_canon`.
-  No fresh e-class and no `UF_Math` edge. The guest's variable is bound to
-  `ab_canon`, so a later reuse (e.g. a subsequent `(Add r a)`) shares it.
+- **Target.** `(Add a b)` is built normally (mint + `set-if-empty`) to obtain
+  its canonical e-class — or, as here, reused directly as `e` when it is a body
+  match.
+- **Guest → target.** The view is `set` to point at the target's e-class (`e`)
+  (`(set (AddView b a) (values e ()))`), so `(Add b a)` *is* `e`. No fresh
+  e-class and no `UF_Math` edge. The guest's variable is bound to `e`, so a
+  later reuse (e.g. a subsequent `(Add r a)`) shares it.
 - **Congruence handles collisions.** If `(Add b a)` already exists under a
   different e-class, the plain view `set` collides on children key `b a` and the
   view's congruence `:merge` unions the two e-classes in `UF_Math` — exactly the
@@ -218,15 +246,15 @@ The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class:
 Only one operand needs to be a constructor application; a `union` of two matched
 variables keeps the plain `UF_<Sort>` edge above.
 
-**In proof mode** the view row carries a proof `ab_canon = (Add b a)`, composed
-from the union's rule proof (`ab_canon = (Add b a)` is the rule's RHS) extended
-by a `Congr` chain over any canonicalized children (see
+**In proof mode** the view row carries a proof `e = (Add b a)`, composed from the
+union's rule proof (`e = (Add b a)` is the rule's RHS) extended by a `Congr`
+chain over any canonicalized children (see
 [Building nested terms with proofs](#building-nested-terms-with-proofs)).
 Crucially, the guest's term keeps **its own** minted id — the view *value* is
-`ab_canon`, but the term-relation row stays on the guest's natural node. Proof
+`e`, but the term-relation row stays on the guest's natural node. Proof
 reconstruction reads term rows (not views), so writing the guest's shape under
-`ab_canon` would give that e-class two shapes and make its `@Ast` ambiguous;
-keeping the term on its own id avoids that.
+`e` would give that e-class two shapes and make its `@Ast` ambiguous; keeping
+the term on its own id avoids that.
 
 ## Building nested terms with proofs
 

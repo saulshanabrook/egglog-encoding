@@ -2240,7 +2240,11 @@ impl EGraph {
             }
 
             ResolvedNCommand::ProveExists(span, resolved_call) => {
-                let mut instrument = ProofInstrumentor { egraph: self };
+                let mut instrument = ProofInstrumentor {
+                    egraph: self,
+                    query_term_bindings: Default::default(),
+                    built_terms: Default::default(),
+                };
                 let (proof_store, proof_id) =
                     instrument
                         .prove_exists(&resolved_call)

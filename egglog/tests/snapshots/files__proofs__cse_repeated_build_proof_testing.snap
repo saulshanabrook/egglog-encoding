@@ -1,0 +1,11 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (Add (Num 7) (Num 7)))
+(let t1 (Add t0 t0))
+(Rule
+  (= t1 t1)
+  (name "dup")
+  (premises (Fiat (= (Num 7) (Num 7))))
+  (substitution (k 7) (n (Num 7))))

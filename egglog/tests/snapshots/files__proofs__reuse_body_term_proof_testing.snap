@@ -1,0 +1,20 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (Add (Num 1) (Num 2)))
+(Rule
+  (= t0 (Add (Num 2) (Num 1)))
+  (name "comm")
+  (premises (Fiat (= t0 t0)))
+  (substitution (x (Num 1)) (y (Num 2))))
+(let t0 (Add (Num 1) (Num 2)))
+(let t1 (Neg t0))
+(let t2 (Add (Num 2) (Num 1)))
+(let t3 (premises (Fiat (= t0 t0))))
+(let t4 (substitution (x (Num 1)) (y (Num 2))))
+(Congr
+  (= t1 (Neg t2))
+  (Rule (= t1 t1) (name "comm") t3 t4)
+  (Rule (= t0 t2) (name "comm") t3 t4)
+  0)
