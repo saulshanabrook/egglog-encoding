@@ -972,6 +972,14 @@ pub(crate) trait ResolvedRuleExt {
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
     ) -> Result<CanonicalizedRule, TypeError>;
+
+    /// Lower and canonicalize a positive check while retaining the exact
+    /// premise cells that own each source equality endpoint's replay term.
+    fn to_canonicalized_check_rule(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+    ) -> Result<CanonicalizedCheck, Error>;
 }
 
 pub(crate) struct CanonicalizedRule {
@@ -979,6 +987,17 @@ pub(crate) struct CanonicalizedRule {
     /// Each variable-to-term substitution performed while canonicalizing the
     /// source query, in application order.
     pub(crate) substitutions: Box<[(ResolvedVar, ResolvedAtomTerm)]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct CheckPremise {
+    pub(crate) body_atom: usize,
+    pub(crate) column: usize,
+}
+
+pub(crate) struct CanonicalizedCheck {
+    pub(crate) core: ResolvedCoreRule,
+    pub(crate) equalities: Box<[(CheckPremise, CheckPremise)]>,
 }
 
 impl ResolvedRuleExt for ResolvedRule {
@@ -1027,6 +1046,138 @@ impl ResolvedRuleExt for ResolvedRule {
         Ok(CanonicalizedRule {
             core: rule,
             substitutions: substitutions.into_boxed_slice(),
+        })
+    }
+
+    fn to_canonicalized_check_rule(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+    ) -> Result<CanonicalizedCheck, Error> {
+        if !self.head.0.is_empty() {
+            return Err(Error::BackendError(
+                "causal check lowering requires an empty rule head".into(),
+            ));
+        }
+
+        let (body, correspondence) = Facts(self.body.clone()).to_query(typeinfo, fresh_gen);
+        let endpoint_producer =
+            |expr: &crate::ast::MappedExpr<ResolvedCall, ResolvedVar>| -> Result<
+                GenericAtom<ResolvedCall, ResolvedVar>,
+                Error,
+            > {
+                let GenericExpr::Call(span, mapped, _) = expr else {
+                    return Err(Error::BackendError(format!(
+                        "{0}: causal equality checks currently require constructor/function-call endpoints",
+                        expr.span()
+                    )));
+                };
+                let ResolvedCall::Func(function) = &mapped.head else {
+                    return Err(Error::BackendError(format!(
+                        "{span}: causal equality checks do not support primitive or tuple endpoints"
+                    )));
+                };
+                if function.num_outputs() != 1 {
+                    return Err(Error::BackendError(format!(
+                        "{span}: causal equality checks require a single-output function endpoint"
+                    )));
+                }
+                let output = GenericAtomTerm::Var(span.clone(), mapped.to.clone());
+                let mut matches = body.atoms.iter().filter_map(|atom| {
+                    let HeadOrEq::Head(head) = &atom.head else {
+                        return None;
+                    };
+                    (head == &mapped.head && atom.args.last() == Some(&output)).then(|| {
+                        GenericAtom {
+                            span: atom.span.clone(),
+                            head: head.clone(),
+                            args: atom.args.clone(),
+                        }
+                    })
+                });
+                let producer = matches.next().ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{span}: causal equality endpoint has no exact producer premise"
+                    ))
+                })?;
+                if matches.next().is_some() {
+                    return Err(Error::BackendError(format!(
+                        "{span}: causal equality endpoint has ambiguous producer premises"
+                    )));
+                }
+                Ok(producer)
+            };
+
+        let mut equality_producers = Vec::new();
+        for fact in &correspondence {
+            if let GenericFact::Eq(_, left, right) = fact {
+                equality_producers.push((endpoint_producer(left)?, endpoint_producer(right)?));
+            }
+        }
+
+        let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
+        let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
+            ResolvedCall::Primitive(SpecializedPrimitive {
+                prim_with_id: value_eq.clone(),
+                input: vec![atom_term_sort(at1), atom_term_sort(at2)],
+                output: UnitSort.to_arcsort(),
+            })
+        };
+        let rule = GenericCoreRule {
+            span: self.span.clone(),
+            body,
+            head: GenericCoreActions::default(),
+        };
+        grounded_check(&rule)?;
+        let mut substitutions = Vec::new();
+        let rule = rule.canonicalize_tracking(&value_eq, &mut substitutions);
+        let rule = rule.remove_dup_vars_tracking(&value_eq, &mut substitutions);
+
+        let locate =
+            |mut producer: GenericAtom<ResolvedCall, ResolvedVar>| -> Result<CheckPremise, Error> {
+                for (variable, replacement) in &substitutions {
+                    producer.substitute_with(&mut |candidate| {
+                        (candidate == variable).then(|| replacement.clone())
+                    });
+                }
+                let mut matches =
+                    rule.body.atoms.iter().enumerate().filter(|(_, atom)| {
+                        atom.head == producer.head && atom.args == producer.args
+                    });
+                let (body_atom, atom) = matches.next().ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{}: canonical causal equality producer premise was lost",
+                        producer.span
+                    ))
+                })?;
+                if matches.next().is_some() {
+                    return Err(Error::BackendError(format!(
+                        "{}: canonical causal equality producer premise is ambiguous",
+                        producer.span
+                    )));
+                }
+                Ok(CheckPremise {
+                    body_atom,
+                    column: atom.args.len() - 1,
+                })
+            };
+        let equalities = equality_producers
+            .into_iter()
+            .map(|(left, right)| {
+                let left = locate(left)?;
+                let right = locate(right)?;
+                if left == right {
+                    return Err(Error::BackendError(
+                        "causal equality endpoints collapsed to one producer premise; exact source terms are unavailable"
+                            .into(),
+                    ));
+                }
+                Ok((left, right))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(CanonicalizedCheck {
+            core: rule,
+            equalities: equalities.into_boxed_slice(),
         })
     }
 }

@@ -801,6 +801,41 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   rule nodes. This calibrates Hardboiled only as evidence that Prefix breadth
   can collapse; it is not an expected exact firing count for the new slice.
 
+### 2026-07-23 — checkpoint 4b2i exact equality check roots
+
+- Status: focused semantic checkpoint. All five checks now have an exact root
+  shape, but equality dependencies inside ordinary rule bodies, TSV sources,
+  primitive/merge result terms, Vec versions, slicing, and replay remain
+  pending.
+- Check lowering retains each explicit equality side's pre-canonical producer
+  cell, chases the existing canonicalization substitutions, and then records
+  its final `(body atom, logical column)`. The backend maps body indices past
+  primitive guards to table-premise ordinals; the bridge converts those cells
+  to the core's existing premise-owned equality endpoints.
+- The supported equality surface is deliberately the cohort's outer,
+  single-output function/constructor calls whose final producer premises stay
+  distinct. Literal, bare-variable, primitive, tuple, and congruence-collapsed
+  endpoints fail closed instead of searching for an approximate witness.
+  `run :until` now propagates those metadata errors and swallows only an
+  ordinary failed check.
+- The canary exposed and fixed a temporal identity bug: a semantic rekey had
+  been assigning the rebuilt fact the canonical target term. Direct rebuilds
+  now inherit the prior immutable fact's term handles; their rebuild cause
+  separately records the old/new raw equality endpoints. The terms are copied
+  from the prior fact during the native batch's existing cause preload, so the
+  effective-commit loop adds no per-fact arena lock.
+- The frontend canary records a rule-caused `A(1) = B(2)`, then checks a global
+  `A(1)` against `B(2)`. Its root has two exact premises, equal canonical raw
+  values, distinct source-ordered term handles, and exactly the one applied
+  rule-union edge as its lazy explanation.
+- Independent review found that congruence could collapse two distinct source
+  endpoint producers onto one surviving structural term. Runtime root
+  publication now rejects that case explicitly; a focused canary preserves
+  the fail-closed boundary rather than emitting a reflexive empty explanation.
+- Validation: all 12 frontend causal canaries passed, all 119 core-relations
+  tests passed, `cargo check --workspace` passed, formatting and
+  `git diff --check` passed.
+
 ### 2026-07-23 — checkpoint 4b2h ordinary rules and relational roots
 
 - Status: accepted focused vertical checkpoint; equality-body/check endpoint

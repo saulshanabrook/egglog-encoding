@@ -162,9 +162,21 @@ pub struct CausalRuleSpec {
 
 /// Exact positive-check root metadata. Equality endpoint witnesses are added
 /// independently; relational premises are always captured in source order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CausalCheckPremise {
+    /// Index in the final canonical backend-rule body.
+    pub body_atom: usize,
+    /// Logical function column containing the source expression's value.
+    pub column: usize,
+}
+
+/// Exact positive-check root metadata. Relational premises are always captured
+/// in source order; equality endpoints cite the premise cells that retain each
+/// source expression's replay term.
 #[derive(Clone, Debug)]
 pub struct CausalCheckSpec {
     pub check: u32,
+    pub equalities: Box<[(CausalCheckPremise, CausalCheckPremise)]>,
 }
 
 /// A call in a rule body.

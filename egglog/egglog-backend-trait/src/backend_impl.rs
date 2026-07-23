@@ -11,18 +11,18 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
 use egglog_bridge::{
-    ActionRegistry, CheckReplaySpec, EGraph, GuardedRuleRunResult, QueryEntry, RuleBuilder,
-    RuleReplayBinding, RuleReplaySpec,
+    ActionRegistry, CheckReplayPremise, CheckReplaySpec, EGraph, GuardedRuleRunResult, QueryEntry,
+    RuleBuilder, RuleReplayBinding, RuleReplaySpec,
 };
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
-    Backend, BaseValues, CausalRuleBinding, ColumnTy, ContainerValues, ExecutionState,
-    ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId, FunctionReplaySpec,
-    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot, ReplayLiteral,
-    ReplaySortId, ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
-    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    Backend, BaseValues, CausalCheckPremise, CausalRuleBinding, ColumnTy, ContainerValues,
+    ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
+    FunctionReplaySpec, GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot,
+    ReplayLiteral, ReplaySortId, ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -78,11 +78,15 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         .as_ref()
         .map(|receipt| receipt.union_sorts.iter().copied());
 
-    for atom in &core.body.atoms {
+    let mut body_atom_to_table_premise = vec![None; core.body.atoms.len()];
+    let mut next_table_premise = 0;
+    for (body_atom, atom) in core.body.atoms.iter().enumerate() {
         let entries = rule_entries(&mut builder, &mut variables, &atom.args)?;
         match &atom.head {
             RuleBodyCall::Table { id, read } => {
                 builder.query_table(*id, &entries, read.is_subsumed())?;
+                body_atom_to_table_premise[body_atom] = Some(next_table_premise);
+                next_table_premise += 1;
             }
             RuleBodyCall::Primitive { id, output, .. } => {
                 builder.query_prim(*id, &entries, *output)?;
@@ -191,8 +195,30 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         });
     }
     if let Some(receipt) = check_receipt {
+        let premise = |source: CausalCheckPremise| -> Result<CheckReplayPremise> {
+            let premise = body_atom_to_table_premise
+                .get(source.body_atom)
+                .copied()
+                .flatten()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "causal check endpoint body atom {} is not a table premise",
+                        source.body_atom
+                    )
+                })?;
+            Ok(CheckReplayPremise {
+                premise,
+                column: source.column,
+            })
+        };
+        let equalities = receipt
+            .equalities
+            .iter()
+            .map(|(left, right)| Ok((premise(*left)?, premise(*right)?)))
+            .collect::<Result<Vec<_>>>()?;
         builder.set_check_receipt(CheckReplaySpec {
             check: receipt.check,
+            equalities: equalities.into_boxed_slice(),
         });
     }
 

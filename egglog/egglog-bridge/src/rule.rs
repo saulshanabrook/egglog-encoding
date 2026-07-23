@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use crate::core_relations;
 use crate::core_relations::{
-    CheckReceiptSpec as CoreCheckReceiptSpec, ColumnId, Constraint, CounterId, ExternalFunctionId,
-    PlanStrategy, QueryBuilder, ReplaySortId, ReplayTermId, RuleBindingSpec,
+    CheckEndpointSource, CheckReceiptSpec as CoreCheckReceiptSpec, ColumnId, Constraint, CounterId,
+    ExternalFunctionId, PlanStrategy, QueryBuilder, ReplaySortId, ReplayTermId, RuleBindingSpec,
     RuleBuilder as CoreRuleBuilder, RuleReceiptSpec as CoreRuleReceiptSpec, RuleSetBuilder,
     SourceReceiptSpec, SourceRef, TableId, Value, WriteVal,
 };
@@ -85,9 +85,18 @@ pub struct RuleReplaySpec {
     pub bindings: Box<[RuleReplayBinding]>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckReplayPremise {
+    /// Source-ordered table-premise ordinal in this bridge query.
+    pub premise: usize,
+    /// Logical function column containing the source expression's value.
+    pub column: usize,
+}
+
+#[derive(Clone, Debug)]
 pub struct CheckReplaySpec {
     pub check: u32,
+    pub equalities: Box<[(CheckReplayPremise, CheckReplayPremise)]>,
 }
 
 impl From<Variable> for QueryEntry {
@@ -887,9 +896,35 @@ impl Query {
                 ),
             )
         } else if let Some(receipt) = &self.check_receipt {
+            let endpoint = |source: CheckReplayPremise| {
+                let (_, entries, schema) = self.atoms.get(source.premise).unwrap_or_else(|| {
+                    panic!(
+                        "check endpoint cites missing table premise {}",
+                        source.premise
+                    )
+                });
+                assert!(
+                    source.column < schema.func_cols,
+                    "check endpoint premise {} column {} cites an engine-only column",
+                    source.premise,
+                    source.column
+                );
+                let entry = entries.get(source.column).unwrap_or_else(|| {
+                    panic!(
+                        "check endpoint premise {} has no logical column {}",
+                        source.premise, source.column
+                    )
+                });
+                CheckEndpointSource::premise(source.premise, source.column, inner.convert(entry))
+            };
+            let equalities = receipt
+                .equalities
+                .iter()
+                .map(|(left, right)| (endpoint(*left), endpoint(*right)));
             rb.build_check_with_receipts(
                 desc,
-                CoreCheckReceiptSpec::new(receipt.check, atom_mapping.iter().copied()),
+                CoreCheckReceiptSpec::new(receipt.check, atom_mapping.iter().copied())
+                    .with_equalities(equalities),
             )
         } else {
             rb.build_with_description(desc)

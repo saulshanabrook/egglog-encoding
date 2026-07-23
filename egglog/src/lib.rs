@@ -42,10 +42,10 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec, GuardedRuleRun,
-    GuardedRuleRunOutcome, ReadMode, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
-    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar, SourceRef,
+    CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec,
+    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, ReceiptSnapshot, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, RuleActionCall,
+    RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -1693,14 +1693,18 @@ impl EGraph {
             return Err(Error::NoSuchRuleset(ruleset.clone(), span.clone()));
         }
 
-        if let Some(facts) = until
-            && self.check_facts(span, facts).is_ok()
-        {
-            log::info!(
-                "Breaking early because of facts:\n {}!",
-                ListDisplay(facts, "\n")
-            );
-            return Ok(report);
+        if let Some(facts) = until {
+            match self.check_facts(span, facts) {
+                Ok(()) => {
+                    log::info!(
+                        "Breaking early because of facts:\n {}!",
+                        ListDisplay(facts, "\n")
+                    );
+                    return Ok(report);
+                }
+                Err(Error::CheckError(..)) => {}
+                Err(error) => return Err(error),
+            }
         }
 
         let subreport = self.step_rules(ruleset)?;
@@ -2367,12 +2371,24 @@ impl EGraph {
             no_decomp: false,
             include_subsumed: false,
         };
-        let core_rule = rule.to_canonicalized_core_rule(
-            &self.type_info,
-            &mut self.parser.symbol_gen,
-            self.proof_state.original_typechecking.is_none(),
-        )?;
-        let query = core_rule.body;
+        let canonicalized = if check_receipt.is_some() {
+            Some(rule.to_canonicalized_check_rule(&self.type_info, &mut self.parser.symbol_gen)?)
+        } else {
+            None
+        };
+        let (query, check_equalities) = if let Some(canonicalized) = canonicalized {
+            (canonicalized.core.body, canonicalized.equalities)
+        } else {
+            (
+                rule.to_canonicalized_core_rule(
+                    &self.type_info,
+                    &mut self.parser.symbol_gen,
+                    self.proof_state.original_typechecking.is_none(),
+                )?
+                .body,
+                Vec::new().into_boxed_slice(),
+            )
+        };
 
         let ext_sc = egglog_bridge::SideChannel::default();
         let ext_sc_ref = ext_sc.clone();
@@ -2401,7 +2417,24 @@ impl EGraph {
             egglog_bridge::ColumnTy::Id,
         );
         if let Some(check) = check_receipt {
-            translator.check_receipt = Some(CausalCheckSpec { check });
+            translator.check_receipt = Some(CausalCheckSpec {
+                check,
+                equalities: check_equalities
+                    .iter()
+                    .map(|(left, right)| {
+                        (
+                            CausalCheckPremise {
+                                body_atom: left.body_atom,
+                                column: left.column,
+                            },
+                            CausalCheckPremise {
+                                body_atom: right.body_atom,
+                                column: right.column,
+                            },
+                        )
+                    })
+                    .collect(),
+            });
         }
         let id = translator.try_build("check_facts", false, false, span.clone())?;
         let run_result = self.backend.run_rules(RuleSetRun {
@@ -4270,6 +4303,96 @@ mod tests {
         assert!(!root.premises.is_empty());
         assert!(root.equalities.is_empty());
         assert_eq!(snapshot.counters.unattributed_commits, 0);
+    }
+
+    #[test]
+    fn causal_receipts_preserve_distinct_check_equality_terms() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Expr (A i64) (B i64))\
+                 (relation Go (Unit))\
+                 (let $lhs (A 1))\
+                 (Go ())\
+                 (rule ((Go u)) ((union (A 1) (B 2))) :name \"merge\")\
+                 (run 1)\
+                 (check (= $lhs (B 2)))",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        assert_eq!(snapshot.check_roots.len(), 1);
+        let root = &snapshot.check_roots[0];
+        assert_eq!(root.premises.len(), 2);
+        assert_eq!(root.equalities.len(), 1);
+        let (left, right) = root.equalities[0];
+        assert_eq!(left.sort, right.sort);
+        assert_eq!(left.raw, right.raw);
+        assert_ne!(left.term, right.term);
+
+        let state = egraph.causal_state.as_ref().unwrap();
+        let a = state.op_ids[&ReplayOpKey {
+            name: "A".into(),
+            inputs: vec!["i64".into()],
+            output: "Expr".into(),
+        }];
+        let b = state.op_ids[&ReplayOpKey {
+            name: "B".into(),
+            inputs: vec!["i64".into()],
+            output: "Expr".into(),
+        }];
+        assert!(matches!(
+            egraph.causal_replay_term(left.term).unwrap(),
+            Some(ReplayTerm::Call { op, .. }) if op == a
+        ));
+        assert!(matches!(
+            egraph.causal_replay_term(right.term).unwrap(),
+            Some(ReplayTerm::Call { op, .. }) if op == b
+        ));
+        let explanation = snapshot
+            .explain_equality(left, right, root.as_of_edges)
+            .unwrap();
+        assert_eq!(explanation.as_ref(), [snapshot.equalities[0].id]);
+        assert!(matches!(
+            snapshot.equalities[0].reason,
+            core_relations::EqualityReason::RuleUnion(rule) if rule == snapshot.matches[0].id
+        ));
+    }
+
+    #[test]
+    fn causal_until_propagates_unsupported_equality_layout() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        let error = egraph
+            .parse_and_run_program(None, "(run 1 :until (= 1 2))")
+            .expect_err("unsupported causal check metadata must not mean `until` is false");
+        assert!(error.to_string().contains(
+            "causal equality checks currently require constructor/function-call endpoints"
+        ));
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "causal equality endpoints collapsed to one structural term; exact source terms are unavailable"
+    )]
+    fn causal_check_rejects_congruence_collapsed_endpoint_producers() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Expr (A) (B) (F Expr))\
+                 (relation Go (Unit))\
+                 (let $fa (F (A)))\
+                 (let $fb (F (B)))\
+                 (Go ())\
+                 (rule ((Go u)) ((union (A) (B))) :name \"merge\")\
+                 (run 1)\
+                 (check (= (F (A)) (F (B))))",
+            )
+            .unwrap();
     }
 
     #[test]

@@ -43,8 +43,8 @@ pub(crate) mod rule;
 mod tests;
 
 pub use rule::{
-    CheckReplaySpec, Function, QueryEntry, RuleBuilder, RuleReplayBinding, RuleReplaySpec,
-    Variable, VariableId,
+    CheckReplayPremise, CheckReplaySpec, Function, QueryEntry, RuleBuilder, RuleReplayBinding,
+    RuleReplaySpec, Variable, VariableId,
 };
 use thiserror::Error;
 

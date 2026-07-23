@@ -1522,31 +1522,38 @@ impl ReceiptArena {
     }
 
     fn fact_term(&self, id: FactId, column: usize) -> Option<ReplayTermId> {
+        self.fact_terms(id)?
+            .1
+            .get(column)
+            .copied()
+            .filter(|term| !term.is_missing())
+    }
+
+    fn fact_terms(&self, id: FactId) -> Option<(TableId, &[ReplayTermId])> {
         if id.is_missing() {
             return None;
         }
         let slot = self.facts.get((id.get() - 1) as usize)?.as_ref()?;
-        match slot {
-            FactSlot::Pending(fact) => self
-                .provisional
-                .fact_terms
-                .get(fact.terms.as_range().start + column)
-                .copied()
-                .filter(|term| !term.is_missing()),
-            FactSlot::Durable(fact) => self
-                .durable_fact_terms
-                .get(fact.terms.as_range().start + column)
-                .copied()
-                .filter(|term| !term.is_missing()),
-        }
+        Some(match slot {
+            FactSlot::Pending(fact) => (
+                fact.table,
+                &self.provisional.fact_terms[fact.terms.as_range()],
+            ),
+            FactSlot::Durable(fact) => {
+                (fact.table, &self.durable_fact_terms[fact.terms.as_range()])
+            }
+        })
     }
 
     fn cause_draft(&self, id: CauseDraftId) -> Result<&CauseDraft, &'static str> {
         let Some(index) = self.provisional.causes.index(id.get()) else {
             return Err("cause draft does not belong to the current causal wave");
         };
-        self.provisional.causes.slots[index]
-            .as_ref()
+        self.provisional
+            .causes
+            .slots
+            .get(index)
+            .and_then(Option::as_ref)
             .ok_or("cause draft has not been published")
     }
 
@@ -1664,6 +1671,11 @@ pub(crate) struct ReceiptBatch {
     draft_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     facts: Vec<(FactId, PendingFact)>,
     fact_terms: Vec<ReplayTermId>,
+    /// Prior fact-owned terms for direct rebuild causes encountered by this
+    /// native input batch. Populated under the existing one-lock preload, then
+    /// consulted lock-free at each effective commit.
+    rebuild_term_ranges: HashMap<CauseDraftId, (TableId, FlatRange)>,
+    rebuild_terms: Vec<ReplayTermId>,
     equalities: Vec<(EqNodeId, PendingEquality)>,
     redundant_unions: u64,
     unattributed_commits: u64,
@@ -1679,6 +1691,8 @@ impl ReceiptBatch {
             draft_summaries: HashMap::default(),
             facts: Vec::new(),
             fact_terms: Vec::new(),
+            rebuild_term_ranges: HashMap::default(),
+            rebuild_terms: Vec::new(),
             equalities: Vec::new(),
             redundant_unions: 0,
             unattributed_commits: 0,
@@ -1761,7 +1775,8 @@ impl ReceiptBatch {
         }
         let mut error = None;
         {
-            let arena = self.shared.arena.lock().unwrap();
+            let shared = Arc::clone(&self.shared);
+            let arena = shared.arena.lock().unwrap();
             for cause in causes {
                 if self.draft_summaries.contains_key(cause) {
                     continue;
@@ -1769,6 +1784,22 @@ impl ReceiptBatch {
                 match arena.cause_summary(*cause) {
                     Ok(summary) => {
                         self.draft_summaries.insert(*cause, summary);
+                        if let Ok(CauseDraft::Rebuild { prior_fact, .. }) =
+                            arena.cause_draft(*cause)
+                        {
+                            let Some((table, terms)) = arena.fact_terms(*prior_fact) else {
+                                error = Some("rebuild cause references a missing prior FactId");
+                                break;
+                            };
+                            let range = FlatRange::new(self.rebuild_terms.len(), terms.len());
+                            self.rebuild_terms.extend_from_slice(terms);
+                            assert!(
+                                self.rebuild_term_ranges
+                                    .insert(*cause, (table, range))
+                                    .is_none(),
+                                "duplicate rebuild-term preload"
+                            );
+                        }
                     }
                     Err(cause_error) => {
                         error = Some(cause_error);
@@ -1799,11 +1830,30 @@ impl ReceiptBatch {
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
         );
-        let term_range = self
-            .shared
-            .replay_terms
-            .append_row_terms(table, row, &mut self.fact_terms)
-            .unwrap_or_else(|error| panic!("cannot record exact committed fact: {error}"));
+        // A semantic rekey creates a new immutable fact version, but its
+        // syntax remains the syntax owned by the prior fact. The rebuild cause
+        // records the old/new raw equality endpoints separately. Looking the
+        // rebuilt row up in the global value map here would instead replace a
+        // term such as `B(2)` with its later canonical representative `A(1)`,
+        // erasing exactly the temporal identity needed by checks and replay.
+        let term_range =
+            if let Some((prior_table, inherited)) = self.rebuild_term_ranges.get(&cause).copied() {
+                assert_eq!(prior_table, table, "rebuild fact changed tables");
+                let terms = &self.rebuild_terms[inherited.as_range()];
+                assert_eq!(
+                    terms.len(),
+                    row.len(),
+                    "rebuild fact changed its registered replay arity"
+                );
+                let range = FlatRange::new(self.fact_terms.len(), terms.len());
+                self.fact_terms.extend_from_slice(terms);
+                range
+            } else {
+                self.shared
+                    .replay_terms
+                    .append_row_terms(table, row, &mut self.fact_terms)
+                    .unwrap_or_else(|error| panic!("cannot record exact committed fact: {error}"))
+            };
         let id = FactId::new(ReceiptShared::alloc_u64(&self.shared.next_fact, 1));
         self.facts.push((
             id,
@@ -2122,8 +2172,11 @@ impl CausalReceipts {
             if term.is_missing() {
                 return Err("changed rebuild column has no fact-owned ReplayTermId");
             }
-            if self.0.replay_terms.lookup(pair.left.sort, pair.left.raw) != Some(term) {
-                return Err("changed rebuild column fact term is not its typed value mapping");
+            let Some(node) = self.0.replay_terms.node(term) else {
+                return Err("changed rebuild column fact term is not installed");
+            };
+            if node.sort() != pair.left.sort {
+                return Err("changed rebuild column fact term has the wrong declared sort");
             }
             pair.left.term = term;
         }
@@ -2263,6 +2316,11 @@ impl CausalReceipts {
         for (left, right) in equalities {
             if left.sort != right.sort {
                 return Err("one check equality crosses logical sorts");
+            }
+            if left.term == right.term {
+                return Err(
+                    "causal equality endpoints collapsed to one structural term; exact source terms are unavailable",
+                );
             }
             for endpoint in [left, right] {
                 if endpoint.term.is_missing() {
