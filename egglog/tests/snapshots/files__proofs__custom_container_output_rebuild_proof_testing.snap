@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (freer (N 0) (set-of (N 1))))
@@ -21,7 +22,7 @@ expression: proof_snapshot
     (Trans (= t0 t0) (Sym (= t0 t1) prf0) prf0)
     (Fiat (= (N 1) (N 1)))
     (Eval))
-  (substitution (@n (set-of (N 1))) (@v107 (N 1))))
+  (substitution (@v98 (N 1)) (@n (set-of (N 1)))))
 (let t0 (set-of (N 1) (N 3)))
 (let t1 (freer (N 0) t0))
 (let t2 (freer (N 0) (set-of (N 1))))
@@ -49,4 +50,4 @@ expression: proof_snapshot
     (Fiat (= (N 1) (N 1)))
     (Fiat (= (N 3) (N 3)))
     (Eval))
-  (substitution (@v179 (N 1)) (@v180 (N 3)) (@n1 t0)))
+  (substitution (@v170 (N 1)) (@v171 (N 3)) (@n1 t0)))
