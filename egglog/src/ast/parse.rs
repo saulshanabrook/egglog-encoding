@@ -59,6 +59,7 @@ const RESERVED_KEYWORDS: &[&str] = &[
     "rewrite",
     "birewrite",
     "run",
+    "run-rule",
     "run-schedule",
     "check",
     "extract",
@@ -1040,7 +1041,87 @@ impl Parser {
 
                 Schedule::Run(span, RunConfig { ruleset, until })
             }
-            _ => return error!(span, "expected either saturate, seq, repeat, or run"),
+            "run-rule" => match tail {
+                [rule, options @ ..] => {
+                    let rule = rule.expect_string("rule name")?;
+                    let mut bindings = Vec::new();
+                    let mut selectors = Vec::new();
+                    let mut expect = None;
+                    let mut saw_bind = false;
+                    let mut saw_internal_select = false;
+                    for (option, args) in self.parse_options(options)? {
+                        match (option, args) {
+                            (":bind", [bindings_sexp]) => {
+                                if saw_bind {
+                                    return error!(span, "duplicate :bind option in run-rule");
+                                }
+                                saw_bind = true;
+                                for binding in bindings_sexp.expect_list("run-rule bindings")? {
+                                    let entries = binding.expect_list("run-rule binding")?;
+                                    let [var, expr] = entries else {
+                                        return error!(
+                                            binding.span(),
+                                            "run-rule binding must be (<rule variable> <closed expression>)"
+                                        );
+                                    };
+                                    bindings.push((
+                                        var.expect_atom("rule variable")?,
+                                        self.parse_expr(expr)?,
+                                    ));
+                                }
+                            }
+                            (":internal-select", [facts]) => {
+                                if saw_internal_select {
+                                    return error!(
+                                        span,
+                                        "duplicate :internal-select option in run-rule"
+                                    );
+                                }
+                                saw_internal_select = true;
+                                selectors = map_fallible(
+                                    facts.expect_list("run-rule internal selectors")?,
+                                    self,
+                                    Self::parse_fact,
+                                )?;
+                            }
+                            (":expect", [count]) if expect.is_none() => {
+                                expect = Some(count.expect_uint("expected match count")?);
+                            }
+                            (":expect", [_]) => {
+                                return error!(span, "duplicate :expect option in run-rule");
+                            }
+                            _ => return error!(span, "could not parse run-rule options"),
+                        }
+                    }
+                    if saw_bind && saw_internal_select {
+                        return error!(
+                            span,
+                            "run-rule cannot combine :bind with encoder-only :internal-select"
+                        );
+                    }
+                    Schedule::RunRule(
+                        span,
+                        RunRuleConfig {
+                            rule,
+                            bindings,
+                            selectors,
+                            expect,
+                        },
+                    )
+                }
+                _ => {
+                    return error!(
+                        span,
+                        "usage: (run-rule <rule name string> :bind ((<var> <expr>)*)? :expect <uint>?)"
+                    );
+                }
+            },
+            _ => {
+                return error!(
+                    span,
+                    "expected either saturate, seq, repeat, run, or run-rule"
+                );
+            }
         })
     }
 
@@ -1472,6 +1553,27 @@ mod tests {
         let s = r#"(f (g a 3) 4.0 (H "hello"))"#;
         let e = Parser::default().get_expr_from_string(None, s).unwrap();
         assert_eq!(format!("{e}"), s);
+    }
+
+    #[test]
+    fn run_rule_schedule_parser_display_roundtrip() {
+        let source = r#"(run-rule "step" :bind ((x (Node 1)) (y 2)) :expect 1)"#;
+        let mut parser = Parser::default();
+        let schedule = parser.get_schedule_from_string(None, source).unwrap();
+        assert_eq!(schedule.to_string(), source);
+    }
+
+    #[test]
+    fn run_rule_rejects_bind_with_internal_select() {
+        let source = r#"(run-rule "step" :bind ((x 1)) :internal-select ((= x 1)))"#;
+        let error = Parser::default()
+            .get_schedule_from_string(None, source)
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("cannot combine :bind with encoder-only :internal-select")
+        );
     }
 
     #[test]

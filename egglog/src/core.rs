@@ -722,6 +722,18 @@ trait CanonicalizeCoreRule<Head, Leaf> {
     fn canonicalize(
         self,
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+    ) -> GenericCoreRule<Head, Head, Leaf>
+    where
+        Self: Sized,
+    {
+        let mut substitutions = Vec::new();
+        self.canonicalize_tracking(&value_eq, &mut substitutions)
+    }
+
+    fn canonicalize_tracking(
+        self,
+        value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        substitutions: &mut Vec<(Leaf, GenericAtomTerm<Leaf>)>,
     ) -> GenericCoreRule<Head, Head, Leaf>;
 }
 
@@ -734,10 +746,10 @@ where
     /// In particular, it removes equality checks between variables and
     /// other arguments, and turns equality checks between non-variable arguments
     /// into a primitive equality check `value-eq`.
-    fn canonicalize(
+    fn canonicalize_tracking(
         self,
-        // Users need to pass in a substitute for equality constraints.
-        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        substitutions: &mut Vec<(Leaf, GenericAtomTerm<Leaf>)>,
     ) -> GenericCoreRule<Head, Head, Leaf> {
         let mut result_rule = self;
         loop {
@@ -754,6 +766,7 @@ where
                 }
             }
             if let Some((x, y)) = to_subst {
+                substitutions.push((x.clone(), y.clone()));
                 let subst = HashMap::from_iter([(x.clone(), y.clone())]);
                 result_rule.subst(&subst);
             } else {
@@ -837,6 +850,18 @@ trait RemoveDuplicateVars<Head, Leaf> {
     fn remove_dup_vars(
         self,
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+    ) -> Self
+    where
+        Self: Sized,
+    {
+        let mut substitutions = Vec::new();
+        self.remove_dup_vars_tracking(&value_eq, &mut substitutions)
+    }
+
+    fn remove_dup_vars_tracking(
+        self,
+        value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        substitutions: &mut Vec<(Leaf, GenericAtomTerm<Leaf>)>,
     ) -> Self;
 }
 
@@ -850,9 +875,10 @@ where
     /// For example, if we have two atoms `R(x, y, z1)` and `R(x, y, z2)`,
     /// then we can remove one of them and add an equality constraint `z1 = z2`.
     /// This is done until fixpoint, so it is kind of like rebuilding.
-    fn remove_dup_vars(
+    fn remove_dup_vars_tracking(
         mut self,
-        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
+        substitutions: &mut Vec<(Leaf, GenericAtomTerm<Leaf>)>,
     ) -> Self {
         // Maps function calls to sets of equivalent variables to be deduplicated
         let mut groups: HashMap<(Head, Vec<GenericAtomTerm<Leaf>>), Vec<GenericAtomTerm<Leaf>>> =
@@ -886,8 +912,8 @@ where
                 body: Query { atoms },
                 head: self.head,
             }
-            .canonicalize(&value_eq)
-            .remove_dup_vars(value_eq)
+            .canonicalize_tracking(value_eq, substitutions)
+            .remove_dup_vars_tracking(value_eq, substitutions)
         }
     }
 }
@@ -939,6 +965,20 @@ pub(crate) trait ResolvedRuleExt {
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
     ) -> Result<ResolvedCoreRule, TypeError>;
+
+    fn to_canonicalized_core_rule_with_substitutions(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+        union_to_set_optimization: bool,
+    ) -> Result<CanonicalizedRule, TypeError>;
+}
+
+pub(crate) struct CanonicalizedRule {
+    pub(crate) core: ResolvedCoreRule,
+    /// Each variable-to-term substitution performed while canonicalizing the
+    /// source query, in application order.
+    pub(crate) substitutions: Box<[(ResolvedVar, ResolvedAtomTerm)]>,
 }
 
 impl ResolvedRuleExt for ResolvedRule {
@@ -948,6 +988,21 @@ impl ResolvedRuleExt for ResolvedRule {
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
     ) -> Result<ResolvedCoreRule, TypeError> {
+        Ok(self
+            .to_canonicalized_core_rule_with_substitutions(
+                typeinfo,
+                fresh_gen,
+                union_to_set_optimization,
+            )?
+            .core)
+    }
+
+    fn to_canonicalized_core_rule_with_substitutions(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+        union_to_set_optimization: bool,
+    ) -> Result<CanonicalizedRule, TypeError> {
         let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
             ResolvedCall::Primitive(SpecializedPrimitive {
@@ -964,12 +1019,94 @@ impl ResolvedRuleExt for ResolvedRule {
         // `(rule ((= x y)) ((R x y)))`) but unboundedness is only checked during type checking.
         grounded_check(&rule)?;
 
-        let rule = rule.canonicalize(&value_eq);
+        let mut substitutions = Vec::new();
+        let rule = rule.canonicalize_tracking(&value_eq, &mut substitutions);
 
-        let rule = rule.remove_dup_vars(value_eq);
+        let rule = rule.remove_dup_vars_tracking(&value_eq, &mut substitutions);
 
-        Ok(rule)
+        Ok(CanonicalizedRule {
+            core: rule,
+            substitutions: substitutions.into_boxed_slice(),
+        })
     }
+}
+
+pub(crate) fn specialize_core_rule(
+    core: &ResolvedCoreRule,
+    selectors: &[ResolvedFact],
+    substitutions: &[(ResolvedVar, ResolvedAtomTerm)],
+    typeinfo: &TypeInfo,
+    fresh_gen: &mut SymbolGen,
+) -> Result<ResolvedCoreRule, TypeError> {
+    let (mut selector_query, _) = Facts(selectors.to_vec()).to_query(typeinfo, fresh_gen);
+    // A source variable may have been eliminated from the stored core rule.
+    // Chase its canonicalization aliases before attaching the new selector.
+    for atom in &mut selector_query.atoms {
+        atom.substitute_with(&mut |variable| {
+            let mut current = substitutions
+                .iter()
+                .find(|(source, _)| source == variable)
+                .map(|(_, target)| target.clone())?;
+            for _ in 0..substitutions.len() {
+                let GenericAtomTerm::Var(_, variable) = &current else {
+                    break;
+                };
+                let Some((_, target)) = substitutions.iter().find(|(source, _)| source == variable)
+                else {
+                    break;
+                };
+                current = target.clone();
+            }
+            Some(current)
+        });
+    }
+
+    let selector_vars = selector_query.vars().collect::<HashSet<_>>();
+    for action in &core.head.0 {
+        let (span, variable) = match action {
+            GenericCoreAction::Let(span, variable, ..)
+            | GenericCoreAction::LetAtomTerm(span, variable, ..) => (span, variable),
+            GenericCoreAction::Set(..)
+            | GenericCoreAction::Change(..)
+            | GenericCoreAction::Union(..)
+            | GenericCoreAction::Panic(..) => continue,
+        };
+        if selector_vars.contains(variable) {
+            return Err(TypeError::AlreadyDefined(
+                variable.to_string(),
+                span.clone(),
+            ));
+        }
+    }
+
+    let atoms = core
+        .body
+        .atoms
+        .iter()
+        .cloned()
+        .map(|atom| GenericAtom {
+            span: atom.span,
+            head: HeadOrEq::Head(atom.head),
+            args: atom.args,
+        })
+        .chain(selector_query.atoms)
+        .collect();
+    let rule = GenericCoreRule {
+        span: core.span.clone(),
+        body: Query { atoms },
+        head: core.head.clone(),
+    };
+    grounded_check(&rule)?;
+
+    let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
+    let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
+        ResolvedCall::Primitive(SpecializedPrimitive {
+            prim_with_id: value_eq.clone(),
+            input: vec![atom_term_sort(at1), atom_term_sort(at2)],
+            output: UnitSort.to_arcsort(),
+        })
+    };
+    Ok(rule.canonicalize(&value_eq).remove_dup_vars(value_eq))
 }
 
 #[cfg(test)]

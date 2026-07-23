@@ -175,6 +175,13 @@ pub struct RuleSpec {
     pub seminaive: bool,
     pub no_decomp: bool,
     pub core: BackendCoreRule,
+    /// External-function registrations whose lifetime is owned by this rule.
+    ///
+    /// [`Backend::add_rule`] takes ownership of these handles, including on
+    /// its error path, and [`Backend::free_rule`] releases them exactly once.
+    /// Backends that retain or clone the structural rule specification must
+    /// keep ownership accounting attached to the registered rule itself.
+    pub owned_external_funcs: Vec<ExternalFunctionId>,
 }
 
 /// One bounded invocation of a logical ruleset.
@@ -182,6 +189,34 @@ pub struct RuleSpec {
 pub struct RuleSetRun<'a> {
     pub name: Option<&'a str>,
     pub rules: &'a [RuleId],
+}
+
+/// One guarded invocation of a single logical rule.
+///
+/// The backend searches the rule body once. If `expected_matches` is present,
+/// it applies the rule head only when the number of body matches is exactly the
+/// expected value.
+#[derive(Clone, Copy, Debug)]
+pub struct GuardedRuleRun {
+    pub rule: RuleId,
+    pub expected_matches: Option<usize>,
+}
+
+/// The result of a guarded single-rule invocation.
+#[derive(Debug)]
+pub enum GuardedRuleRunOutcome {
+    /// The guard passed and the head was applied to the bindings captured by
+    /// the single body search.
+    Applied {
+        observed_matches: usize,
+        report: IterationReport,
+    },
+    /// The body match count did not equal the requested count. No rule-head
+    /// effects were applied.
+    MatchCountMismatch {
+        expected_matches: usize,
+        observed_matches: usize,
+    },
 }
 
 /// Backend-selected policy for reconciling two ids that rebuild to the same
@@ -284,7 +319,8 @@ pub trait Backend: Send + Sync {
 
     // -- rule management ----------------------------------------------------
 
-    /// Register a complete logical rule.
+    /// Register a complete logical rule, taking ownership of its
+    /// [`RuleSpec::owned_external_funcs`] even if registration fails.
     fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId>;
 
     /// Drop a registered rule.
@@ -298,6 +334,15 @@ pub trait Backend: Send + Sync {
     /// contract in the crate docs, especially for function `set`/`merge`,
     /// `remove`, `subsume`, and constructor lookup-or-insert effects.
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport>;
+
+    /// Search one logical rule once and conditionally apply its head to the
+    /// exact bindings found by that search.
+    ///
+    /// Implementations must check `expected_matches`, when present, before
+    /// executing any head action or making any head-induced e-graph change.
+    /// A mismatch therefore has no rule-head effects. A successful invocation
+    /// must not re-run the body search before applying the captured bindings.
+    fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome>;
 
     /// Drain staged inserts and rebuild if the union-find changed. Returns
     /// whether the database changed.

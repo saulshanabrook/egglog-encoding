@@ -210,6 +210,16 @@ impl RuleBuilder<'_> {
         panic
     }
 
+    /// Transfer an already-registered external function into this rule's
+    /// lifetime. The handle is released if rule construction fails or when the
+    /// built rule is freed.
+    ///
+    /// Repeated handles are retained deliberately: reference-counted external
+    /// functions such as cached panics acquire one reference per registration.
+    pub fn own_external_func(&mut self, func: crate::ExternalFunctionId) {
+        self.resources.external_funcs.push(func);
+    }
+
     pub(crate) fn set_plan_strategy(&mut self, strategy: PlanStrategy) {
         self.query.plan_strategy = strategy;
     }

@@ -116,6 +116,19 @@ pub(crate) struct IterationResult {
     pub merge_time: Duration,
 }
 
+/// Result of materializing one rule's complete current match set and applying
+/// an optional exact-count guard before any head action runs.
+pub(crate) enum GuardedIterationResult {
+    Applied {
+        observed_matches: usize,
+        result: IterationResult,
+    },
+    MatchCountMismatch {
+        expected_matches: usize,
+        observed_matches: usize,
+    },
+}
+
 /// One bounded egglog iteration with the body join running on the in-process,
 /// build-once, epoch-driven raw differential-dataflow dataflow
 /// (`crate::dd_native`).
@@ -135,12 +148,6 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     // call advances it, the O(1) signal that a new term row was created.
     let next_id_at_start = eg.next_id;
 
-    let mut writes: Vec<Write> = Vec::new();
-    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
-    // constructor hash-cons). Built lazily per function so repeated lookups in
-    // one iteration are O(1) instead of rescanning the growing mirror each time.
-    let mut lookup_index = LookupIndex::new();
-
     // Compute every rule's binding envs FIRST (so the whole atom-bearing ruleset
     // runs on one fused DD worker via `fused_bindings`), THEN
     // apply head actions in the original rule firing order. Atom-less rules
@@ -149,6 +156,82 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     let search_timer = Instant::now();
     let envs_by_rule = fused_bindings(eg, rules)?;
     let search_time = search_timer.elapsed();
+
+    let (changed, apply_time, merge_time) =
+        apply_materialized_envs(eg, rules, envs_by_rule, next_id_at_start)?;
+
+    Ok(IterationResult {
+        changed,
+        search_time,
+        apply_time,
+        merge_time,
+    })
+}
+
+/// Run one rule against the complete current mirror, optionally requiring an
+/// exact number of body matches before any head action is evaluated.
+///
+/// Ordinary bounded iterations retain a fused worker and feed it only relation
+/// deltas. A guarded manual firing has deliberately different semantics: each
+/// invocation is a fresh, naive/full query of the current database. Drop both
+/// pieces of single-rule incremental state so the new worker is seeded from the
+/// whole mirror, and clear the atom-less `seen` bit for the same reason.
+pub(crate) fn run_rule_guarded(
+    eg: &mut EGraph,
+    rule: &(usize, RuleSpec),
+    expected_matches: Option<usize>,
+) -> Result<GuardedIterationResult> {
+    let key = vec![rule.0];
+    eg.dd_fused.retain(|cached| cached != &key);
+    eg.dd_fused_fed_versions.remove(&key);
+    eg.seen.remove(&rule.0);
+
+    let next_id_at_start = eg.next_id;
+    let rules = std::slice::from_ref(rule);
+    let search_timer = Instant::now();
+    let envs_by_rule = fused_bindings(eg, rules)?;
+    let search_time = search_timer.elapsed();
+    let observed_matches = envs_by_rule[0].len();
+
+    if let Some(expected_matches) =
+        expected_matches.filter(|&expected| expected != observed_matches)
+    {
+        return Ok(GuardedIterationResult::MatchCountMismatch {
+            expected_matches,
+            observed_matches,
+        });
+    }
+
+    // Consume exactly the environments counted above. In particular, do not
+    // re-run the body query after the guard succeeds: head actions may change
+    // relations that the body reads.
+    let (changed, apply_time, merge_time) =
+        apply_materialized_envs(eg, rules, envs_by_rule, next_id_at_start)?;
+    Ok(GuardedIterationResult::Applied {
+        observed_matches,
+        result: IterationResult {
+            changed,
+            search_time,
+            apply_time,
+            merge_time,
+        },
+    })
+}
+
+/// Apply an already-materialized set of rule environments and resolve all
+/// writes. Keeping this phase separate is what makes guarded count mismatches
+/// atomic with respect to rule-head effects.
+fn apply_materialized_envs(
+    eg: &mut EGraph,
+    rules: &[(usize, RuleSpec)],
+    envs_by_rule: Vec<Vec<Env>>,
+    next_id_at_start: u32,
+) -> Result<(bool, Duration, Duration)> {
+    let mut writes: Vec<Write> = Vec::new();
+    // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
+    // constructor hash-cons). Built lazily per function so repeated lookups in
+    // one iteration are O(1) instead of rescanning the growing mirror each time.
+    let mut lookup_index = LookupIndex::new();
 
     let apply_timer = Instant::now();
     for ((_, rule), envs) in rules.iter().zip(envs_by_rule) {
@@ -209,12 +292,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     }
 
     let merge_time = merge_timer.elapsed();
-    Ok(IterationResult {
-        changed,
-        search_time,
-        apply_time,
-        merge_time,
-    })
+    Ok((changed, apply_time, merge_time))
 }
 
 /// Compute every rule's binding envs in ONE fused pass: the whole atom-bearing

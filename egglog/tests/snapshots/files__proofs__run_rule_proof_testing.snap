@@ -1,0 +1,20 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 279
+expression: proof_snapshot
+---
+(Rule
+  (= (Fired (A)) (Fired (A)))
+  (name "mark-wrapped")
+  (premises (Fiat (= (Wrap (A)) (Wrap (A)))))
+  (substitution (root (Wrap (A))) (x (A))))
+(Rule
+  (= (Fired (A)) (Fired (A)))
+  (name "mark-wrapped")
+  (premises (Fiat (= (Wrap (A)) (Wrap (A)))))
+  (substitution (root (Wrap (A))) (x (A))))
+(Rule
+  (= (Fired (B)) (Fired (B)))
+  (name "mark-wrapped")
+  (premises (Fiat (= (Wrap (B)) (Wrap (B)))))
+  (substitution (root (Wrap (B))) (x (B))))

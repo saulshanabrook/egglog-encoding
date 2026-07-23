@@ -1,0 +1,19 @@
+(datatype Expr
+  (A)
+  (B)
+  (Wrap Expr))
+
+(rule ((= root (Wrap x)))
+      ((union root x))
+      :name "unwrap")
+
+(let $wrapped-a (Wrap (A)))
+(let $wrapped-b (Wrap (B)))
+
+(run-schedule
+  (run-rule "unwrap"
+    :bind ((x (A)))
+    :expect 1))
+
+(check (= $wrapped-a (A)))
+(fail (check (= $wrapped-b (B))))

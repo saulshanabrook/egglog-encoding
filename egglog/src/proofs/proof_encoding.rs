@@ -1493,6 +1493,25 @@ impl<'a> ProofInstrumentor<'a> {
                 };
                 Schedule::Sequence(span.clone(), vec![new_run, self.rebuild()])
             }
+            ResolvedSchedule::RunRule(span, config) => {
+                // Bindings select matches but are not premises of the logical rule.
+                // Encode their normalized selector facts so they query the proof
+                // views/UF, then deliberately discard the proof values they would
+                // produce. The temporary execution rule retains the original
+                // instrumented head, whose Justification::Rule still contains only
+                // the source rule's body premises.
+                let (instrumented, _lookups, _proof) = self.instrument_facts(&config.selectors);
+                let new_run = Schedule::RunRule(
+                    span.clone(),
+                    RunRuleConfig {
+                        rule: config.rule.clone(),
+                        bindings: vec![],
+                        selectors: self.parse_facts(&instrumented),
+                        expect: config.expect,
+                    },
+                );
+                Schedule::Sequence(span.clone(), vec![new_run, self.rebuild()])
+            }
             ResolvedSchedule::Sequence(span, schedules) => Schedule::Sequence(
                 span.clone(),
                 schedules

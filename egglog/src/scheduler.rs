@@ -177,8 +177,8 @@ impl EGraph {
         ) {
             match &rulesets[ruleset] {
                 Ruleset::Rules(rules) => {
-                    for (rule_name, (core_rule, _)) in rules.iter() {
-                        ids.push((rule_name.clone(), core_rule));
+                    for (rule_name, rule) in rules.iter() {
+                        ids.push((rule_name.clone(), &rule.core));
                     }
                 }
                 Ruleset::Combined(sub_rulesets) => {
@@ -417,6 +417,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            &mut egraph.unstable_fn_panic_ids,
             false, // seminaive query: Pure/Write contexts
         );
         if let Err(error) = qrule_builder.query(&rule.body, false) {
@@ -463,6 +464,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            &mut egraph.unstable_fn_panic_ids,
             true, // action rule reads the DB: Read/Full contexts
         );
         let entries = free_vars
@@ -522,7 +524,7 @@ mod test {
         let Ruleset::Rules(rules) = &egraph.rulesets["test"] else {
             unreachable!()
         };
-        let rule = rules["test-rule"].0.clone();
+        let rule = rules["test-rule"].core.clone();
         (egraph, rule)
     }
 
@@ -548,6 +550,7 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
+                    owned_external_funcs: Vec::new(),
                 })
                 .unwrap()
         });

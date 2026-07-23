@@ -20,9 +20,81 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, MergeAction, MergeFn, QueryEntry,
-    TableAction, add_expressions, define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, GuardedRuleRunResult, MergeAction,
+    MergeFn, QueryEntry, TableAction, add_expressions, define_rule,
 };
+
+#[test]
+fn guarded_rule_uses_one_full_search_and_preserves_seminaive_epoch_on_mismatch() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let input = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "guarded-input".into(),
+        can_subsume: false,
+    });
+    for value in 0..3i64 {
+        let value = egraph.base_values_mut().get(value);
+        egraph.add_term(input, &[value]);
+    }
+
+    let head_calls = Arc::new(AtomicUsize::new(0));
+    let calls = head_calls.clone();
+    let observe_head =
+        egraph.register_external_func(Box::new(make_external_func(move |state, args| {
+            assert!(args.is_empty());
+            calls.fetch_add(1, Ordering::Relaxed);
+            Some(state.base_values().get(()))
+        })));
+    let rule = {
+        let mut builder = egraph.new_rule("guarded", true);
+        let value: QueryEntry = builder.new_var(ColumnTy::Base(int_base)).into();
+        let id: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        builder
+            .query_table(input, &[value, id], Some(false))
+            .unwrap();
+        builder.call_external_func(observe_head, &[], ColumnTy::Base(unit_base), || {
+            "head call failed".into()
+        });
+        builder.build()
+    };
+
+    let mismatch = egraph.run_rule_guarded(rule, Some(2)).unwrap();
+    assert!(matches!(
+        mismatch,
+        GuardedRuleRunResult::MatchCountMismatch {
+            expected_matches: 2,
+            observed_matches: 3,
+        }
+    ));
+    assert_eq!(head_calls.load(Ordering::Relaxed), 0);
+
+    // A mismatch must not consume the rule's seminaive epoch.
+    egraph.run_rules(&[rule]).unwrap();
+    assert_eq!(head_calls.load(Ordering::Relaxed), 3);
+
+    // Guarded execution deliberately performs a full logical-rule search,
+    // independent of the rule's prior seminaive run history.
+    let applied = egraph.run_rule_guarded(rule, Some(3)).unwrap();
+    assert!(matches!(
+        applied,
+        GuardedRuleRunResult::Applied {
+            observed_matches: 3,
+            ..
+        }
+    ));
+    assert_eq!(head_calls.load(Ordering::Relaxed), 6);
+
+    // A successful guarded run does advance the epoch for later scheduled
+    // seminaive execution.
+    egraph.run_rules(&[rule]).unwrap();
+    assert_eq!(head_calls.load(Ordering::Relaxed), 6);
+}
 
 #[test]
 fn dropped_rule_builder_releases_panics() {
@@ -57,6 +129,13 @@ fn dropped_rule_builder_releases_panics() {
     drop(builder);
     assert_eq!(register(&mut egraph), reusable);
     egraph.free_external_func(reusable);
+
+    let transferred = register(&mut egraph);
+    let mut builder = egraph.new_rule("dropped", false);
+    builder.own_external_func(transferred);
+    drop(builder);
+    assert_eq!(register(&mut egraph), transferred);
+    egraph.free_external_func(transferred);
 
     let mut builder = egraph.new_rule("dropped", false);
     let first = builder.new_panic("shared panic".into());

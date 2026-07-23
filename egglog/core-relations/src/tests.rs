@@ -1,7 +1,10 @@
 use std::{
     iter,
     ops::Range,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use egglog_reports::{PreMergeTiming, ReportLevel};
@@ -9,7 +12,7 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 use crate::numeric_id::NumericId;
 
 use crate::{
-    PlanStrategy,
+    GuardedRuleSetRunOutcome, PlanStrategy,
     action::WriteVal,
     common::Value,
     free_join::{CounterId, Database, TableId},
@@ -135,6 +138,86 @@ fn basic_query_inner() {
     );
     res.sort();
     assert_eq!(res, Vec::from_iter((0..10).chain([13, 17].into_iter())));
+}
+
+#[test]
+fn guarded_rule_checks_before_heads_and_replays_captured_bindings() {
+    run_serial_and_parallel(|| {
+        let mut db = Database::default();
+        let new_relation = || {
+            SortedWritesTable::new(
+                1,
+                1,
+                None,
+                vec![],
+                Box::new(|_, left, right, _| {
+                    assert_eq!(left, right, "merge not supported");
+                    false
+                }),
+            )
+        };
+        let input = db.add_table(new_relation(), iter::empty(), iter::empty());
+        let output = db.add_table(new_relation(), iter::empty(), iter::empty());
+        {
+            let mut input_buffer = db.new_buffer(input);
+            // This deliberately crosses the database-level parallelism
+            // threshold, so run_serial_and_parallel exercises both executors.
+            for value in 0..10_001 {
+                input_buffer.stage_insert(&[Value::new(value)]);
+            }
+        }
+        db.merge_all();
+
+        let head_calls = Arc::new(AtomicUsize::new(0));
+        let calls = head_calls.clone();
+        let observe_head =
+            db.add_external_function(Box::new(make_external_func(move |_exec_state, args| {
+                assert!(args.is_empty());
+                calls.fetch_add(1, Ordering::Relaxed);
+                Some(Value::new(7))
+            })));
+
+        let mut rules = RuleSetBuilder::new(&mut db);
+        let mut query = rules.new_rule();
+        let value = query.new_var_named("value");
+        query.add_atom(input, &[value.into()], &[]).unwrap();
+        let mut action = query.build();
+        // Deliberately leave the body variable unused by the head. Replay must
+        // still preserve the raw query multiplicity rather than collapsing
+        // this to one head execution per batch.
+        let observed = action.call_external(observe_head, &[]).unwrap();
+        action.insert(output, &[observed.into()]).unwrap();
+        action.build_with_description("guarded-copy");
+        let rule_set = rules.build();
+
+        let mismatch = db
+            .run_rule_set_guarded(&rule_set, Some(10_000), ReportLevel::TimeOnly)
+            .unwrap();
+        assert!(matches!(
+            mismatch,
+            GuardedRuleSetRunOutcome::MatchCountMismatch {
+                expected_matches: 10_000,
+                observed_matches: 10_001,
+            }
+        ));
+        assert_eq!(head_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(db.get_table(output).len(), 0);
+
+        let applied = db
+            .run_rule_set_guarded(&rule_set, Some(10_001), ReportLevel::TimeOnly)
+            .unwrap();
+        let GuardedRuleSetRunOutcome::Applied {
+            observed_matches,
+            report,
+        } = applied
+        else {
+            panic!("exact guard should apply")
+        };
+        assert_eq!(observed_matches, 10_001);
+        assert_eq!(report.num_matches("guarded-copy"), 10_001);
+        assert_eq!(head_calls.load(Ordering::Relaxed), 10_001);
+        assert_eq!(db.get_table(output).len(), 1);
+    });
 }
 
 #[test]

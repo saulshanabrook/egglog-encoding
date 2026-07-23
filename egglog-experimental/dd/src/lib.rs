@@ -28,8 +28,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, MergeAction, MergeFn, PreMergeTiming,
+    ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -242,6 +243,22 @@ impl EGraph {
             apply: Duration::ZERO,
             unattributed: Duration::ZERO,
         };
+        report
+    }
+
+    fn iteration_report(result: interpret::IterationResult) -> IterationReport {
+        let mut report = IterationReport::default();
+        report.rule_set_report.changed = result.changed;
+        report.rule_set_report.pre_merge = PreMergeTiming::Split {
+            search: result.search_time,
+            apply: result.apply_time,
+            unattributed: Duration::ZERO,
+        };
+        report.rule_set_report.merge_time = result.merge_time;
+        // The DD backend has no native union-find rebuild phase. Term/proof
+        // canonicalization is expressed as ordinary rules and is therefore
+        // already included in the ruleset timings.
+        report.rebuild_time = Duration::ZERO;
         report
     }
 
@@ -1050,6 +1067,7 @@ mod tests {
                     name: name.to_owned(),
                     seminaive: true,
                     no_decomp: false,
+                    owned_external_funcs: Vec::new(),
                     core: GenericCoreRule {
                         span: Span::Panic,
                         body: Query::default(),
@@ -1160,6 +1178,20 @@ mod tests {
             RuleSetRun {
                 name: Some("test"),
                 rules,
+            },
+        )
+    }
+
+    fn run_rule_guarded(
+        egraph: &mut EGraph,
+        rule: RuleId,
+        expected_matches: Option<usize>,
+    ) -> Result<GuardedRuleRunOutcome> {
+        Backend::run_rule_guarded(
+            egraph,
+            GuardedRuleRun {
+                rule,
+                expected_matches,
             },
         )
     }
@@ -1401,8 +1433,226 @@ mod tests {
         );
         rule.query_table(input, &[global], Some(false));
 
+        let owned_lifetime = Arc::new(());
+        let retained = owned_lifetime.clone();
+        let owned = Backend::register_external_func(
+            &mut eg,
+            Box::new(egglog_core_relations::make_external_func(move |_, _| {
+                let _ = &retained;
+                Some(Value::new(0))
+            })),
+        );
+        rule.spec.owned_external_funcs.push(owned);
+        assert_eq!(Arc::strong_count(&owned_lifetime), 2);
+
         let error = Backend::add_rule(&mut eg, rule.spec).unwrap_err();
         assert!(error.to_string().contains("residual global"));
+        assert_eq!(Arc::strong_count(&owned_lifetime), 1);
+    }
+
+    #[test]
+    fn freed_rule_slots_are_reused_without_stale_execution_state() {
+        let mut eg = EGraph::new();
+        let input = id_table(&mut eg, "input", 2);
+        let output = id_table(&mut eg, "output", 2);
+        eg.insert_live_row(input, row(&[1, 10]));
+
+        let mut fused = TestRule::new("fused");
+        let key = fused.new_var(ColumnTy::Id);
+        let value = fused.new_var(ColumnTy::Id);
+        fused.query_table(input, &[key.clone(), value.clone()], Some(false));
+        fused.set(output, &[key, value]);
+        let first_id = fused.build(&mut eg);
+        run_rules(&mut eg, &[first_id]).unwrap();
+        assert!(!eg.dd_fused.is_empty());
+        assert!(!eg.dd_fused_fed_versions.is_empty());
+
+        Backend::free_rule(&mut eg, first_id);
+        assert_eq!(eg.rules.len(), 1);
+        assert!(eg.rules[first_id.rep() as usize].is_none());
+        assert!(eg.dd_fused.is_empty());
+        assert!(eg.dd_fused_fed_versions.is_empty());
+        assert!(!eg.seen.contains_key(&(first_id.rep() as usize)));
+
+        let mut atomless = TestRule::new("atomless replacement");
+        atomless.set(
+            output,
+            &[constant(2, ColumnTy::Id), constant(20, ColumnTy::Id)],
+        );
+        let owned_lifetime = Arc::new(());
+        let retained = owned_lifetime.clone();
+        let owned = Backend::register_external_func(
+            &mut eg,
+            Box::new(egglog_core_relations::make_external_func(move |_, _| {
+                let _ = &retained;
+                Some(Value::new(0))
+            })),
+        );
+        atomless.spec.owned_external_funcs.push(owned);
+        assert_eq!(Arc::strong_count(&owned_lifetime), 2);
+        let replacement_id = atomless.build(&mut eg);
+        assert_eq!(replacement_id, first_id);
+        assert_eq!(eg.rules.len(), 1);
+        assert!(eg.dd_fused.is_empty());
+        assert!(eg.dd_fused_fed_versions.is_empty());
+        assert!(!eg.seen.contains_key(&(replacement_id.rep() as usize)));
+
+        run_rules(&mut eg, &[replacement_id]).unwrap();
+        assert!(eg.seen.contains_key(&(replacement_id.rep() as usize)));
+        assert!(eg.mirror[&output].contains(&row(&[2, 20])));
+        Backend::free_rule(&mut eg, replacement_id);
+        assert_eq!(Arc::strong_count(&owned_lifetime), 1);
+        Backend::free_rule(&mut eg, replacement_id);
+        assert_eq!(Arc::strong_count(&owned_lifetime), 1);
+
+        // Top-level `run-rule` creates and frees one temporary rule per command.
+        // Repeating that lifecycle must keep the slot vector bounded and must
+        // not leak atom-less firing state into the replacement rule.
+        for iteration in 0..16 {
+            let rule = TestRule::new(&format!("temporary {iteration}")).build(&mut eg);
+            assert_eq!(rule, first_id);
+            assert_eq!(eg.rules.len(), 1);
+            assert!(!eg.seen.contains_key(&(rule.rep() as usize)));
+            assert!(eg.dd_fused.is_empty());
+            assert!(eg.dd_fused_fed_versions.is_empty());
+
+            let outcome = run_rule_guarded(&mut eg, rule, None).unwrap();
+            assert!(matches!(
+                outcome,
+                GuardedRuleRunOutcome::Applied {
+                    observed_matches: 1,
+                    ..
+                }
+            ));
+            assert!(eg.seen.contains_key(&(rule.rep() as usize)));
+            Backend::free_rule(&mut eg, rule);
+            assert!(!eg.seen.contains_key(&(rule.rep() as usize)));
+        }
+        assert_eq!(eg.rules.len(), 1);
+    }
+
+    #[test]
+    fn guarded_rule_requeries_the_full_view_on_every_run() {
+        let mut eg = EGraph::new();
+        let input = id_table(&mut eg, "input", 2);
+        let output = id_table(&mut eg, "output", 2);
+        eg.insert_live_row(input, row(&[1, 10]));
+
+        let mut builder = TestRule::new("copy one");
+        let key = builder.new_var(ColumnTy::Id);
+        let value = builder.new_var(ColumnTy::Id);
+        builder.query_table(input, &[key.clone(), value.clone()], Some(false));
+        builder.set(output, &[key, value]);
+        let rule = builder.build(&mut eg);
+
+        let first = run_rule_guarded(&mut eg, rule, None).unwrap();
+        assert!(matches!(
+            first,
+            GuardedRuleRunOutcome::Applied {
+                observed_matches: 1,
+                ..
+            }
+        ));
+        assert!(eg.mirror[&output].contains(&row(&[1, 10])));
+
+        // A normal incremental single-rule worker has no positive delta here.
+        // Guarded execution must instead rebuild its worker from the complete
+        // current mirror and observe the same grounding again.
+        let second = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
+        assert!(matches!(
+            second,
+            GuardedRuleRunOutcome::Applied {
+                observed_matches: 1,
+                ..
+            }
+        ));
+
+        // Atom-less rules similarly bypass ordinary `seen` bookkeeping.
+        let mut atomless = TestRule::new("atomless");
+        atomless.set(
+            output,
+            &[constant(2, ColumnTy::Id), constant(20, ColumnTy::Id)],
+        );
+        let atomless = atomless.build(&mut eg);
+        for _ in 0..2 {
+            let outcome = run_rule_guarded(&mut eg, atomless, Some(1)).unwrap();
+            assert!(matches!(
+                outcome,
+                GuardedRuleRunOutcome::Applied {
+                    observed_matches: 1,
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn guarded_rule_count_check_is_atomic_for_zero_one_and_many_matches() {
+        let mut eg = EGraph::new();
+        let input = id_table(&mut eg, "input", 2);
+        let output = id_table(&mut eg, "output", 2);
+
+        let mut builder = TestRule::new("guarded copy");
+        let key = builder.new_var(ColumnTy::Id);
+        let value = builder.new_var(ColumnTy::Id);
+        builder.query_table(input, &[key.clone(), value.clone()], Some(false));
+        builder.set(output, &[key, value]);
+        let rule = builder.build(&mut eg);
+
+        let zero_mismatch = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
+        assert!(matches!(
+            zero_mismatch,
+            GuardedRuleRunOutcome::MatchCountMismatch {
+                expected_matches: 1,
+                observed_matches: 0,
+            }
+        ));
+        assert!(eg.mirror[&output].is_empty());
+
+        let zero = run_rule_guarded(&mut eg, rule, Some(0)).unwrap();
+        assert!(matches!(
+            zero,
+            GuardedRuleRunOutcome::Applied {
+                observed_matches: 0,
+                ..
+            }
+        ));
+
+        eg.insert_live_row(input, row(&[1, 10]));
+        let one = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
+        assert!(matches!(
+            one,
+            GuardedRuleRunOutcome::Applied {
+                observed_matches: 1,
+                ..
+            }
+        ));
+        assert_eq!(eg.mirror[&output], HashSet::from([row(&[1, 10])]));
+
+        eg.insert_live_row(input, row(&[2, 20]));
+        let many_mismatch = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
+        assert!(matches!(
+            many_mismatch,
+            GuardedRuleRunOutcome::MatchCountMismatch {
+                expected_matches: 1,
+                observed_matches: 2,
+            }
+        ));
+        // The already-present row remains, but no head ran for the new match.
+        assert_eq!(eg.mirror[&output], HashSet::from([row(&[1, 10])]));
+
+        let many = run_rule_guarded(&mut eg, rule, Some(2)).unwrap();
+        assert!(matches!(
+            many,
+            GuardedRuleRunOutcome::Applied {
+                observed_matches: 2,
+                ..
+            }
+        ));
+        assert_eq!(
+            eg.mirror[&output],
+            HashSet::from([row(&[1, 10]), row(&[2, 20])])
+        );
     }
 
     #[test]
@@ -2372,23 +2622,42 @@ impl Backend for EGraph {
 
     // -- rule management ----------------------------------------------------
 
-    fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
-        self.validate_rule(&rule)?;
-        let id = RuleId::new(self.rules.len() as u32);
+    fn add_rule(&mut self, mut rule: RuleSpec) -> Result<RuleId> {
+        if let Err(error) = self.validate_rule(&rule) {
+            for func in rule.owned_external_funcs.drain(..) {
+                self.db.free_external_function(func);
+            }
+            return Err(error);
+        }
+        if let Some((idx, slot)) = self
+            .rules
+            .iter_mut()
+            .enumerate()
+            .find(|(_, slot)| slot.is_none())
+        {
+            *slot = Some(rule);
+            return Ok(RuleId::new(idx as u32));
+        }
+
+        let idx = self.rules.len();
         self.rules.push(Some(rule));
-        Ok(id)
+        Ok(RuleId::new(idx as u32))
     }
 
     fn free_rule(&mut self, id: RuleId) {
-        if let Some(slot) = self.rules.get_mut(id.rep() as usize) {
-            *slot = None;
-            let i = id.rep() as usize;
-            self.seen.remove(&i);
-            // Any fused ruleset that included this rule is now stale: drop it so
-            // it is rebuilt (without the freed rule) on the next `run_rules`.
-            self.dd_fused.retain(|key| !key.contains(&i));
-            self.dd_fused_fed_versions
-                .retain(|key, _| !key.contains(&i));
+        let i = id.rep() as usize;
+        let Some(rule) = self.rules.get_mut(i).and_then(Option::take) else {
+            return;
+        };
+
+        self.seen.remove(&i);
+        // Any fused ruleset that included this rule is now stale: drop it so
+        // it is rebuilt (without the freed rule) on the next `run_rules`.
+        self.dd_fused.retain(|key| !key.contains(&i));
+        self.dd_fused_fed_versions
+            .retain(|key, _| !key.contains(&i));
+        for func in rule.owned_external_funcs {
+            self.db.free_external_function(func);
         }
     }
 
@@ -2422,20 +2691,42 @@ impl Backend for EGraph {
             return Err(anyhow!(message));
         }
         let result = result?;
+        Ok(Self::iteration_report(result))
+    }
 
-        let mut report = IterationReport::default();
-        report.rule_set_report.changed = result.changed;
-        report.rule_set_report.pre_merge = PreMergeTiming::Split {
-            search: result.search_time,
-            apply: result.apply_time,
-            unattributed: Duration::ZERO,
-        };
-        report.rule_set_report.merge_time = result.merge_time;
-        // The DD backend has no native union-find rebuild phase. Term/proof
-        // canonicalization is expressed as ordinary rules and is therefore
-        // already included in the ruleset timings.
-        report.rebuild_time = Duration::ZERO;
-        Ok(report)
+    fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome> {
+        if let Some(message) = self.take_panic_message() {
+            return Err(anyhow!(message));
+        }
+
+        let idx = run.rule.rep() as usize;
+        let rule = self
+            .rules
+            .get(idx)
+            .and_then(Option::as_ref)
+            .cloned()
+            .ok_or_else(|| anyhow!("cannot run missing rule id {}", run.rule.rep()))?;
+        let result = interpret::run_rule_guarded(self, &(idx, rule), run.expected_matches);
+        if let Some(message) = self.take_panic_message() {
+            return Err(anyhow!(message));
+        }
+
+        match result? {
+            interpret::GuardedIterationResult::Applied {
+                observed_matches,
+                result,
+            } => Ok(GuardedRuleRunOutcome::Applied {
+                observed_matches,
+                report: Self::iteration_report(result),
+            }),
+            interpret::GuardedIterationResult::MatchCountMismatch {
+                expected_matches,
+                observed_matches,
+            } => Ok(GuardedRuleRunOutcome::MatchCountMismatch {
+                expected_matches,
+                observed_matches,
+            }),
+        }
     }
 
     fn flush_updates(&mut self) -> bool {
