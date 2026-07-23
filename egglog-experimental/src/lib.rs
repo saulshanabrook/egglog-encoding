@@ -166,3 +166,48 @@ pub fn experimental_parser() -> Parser {
     parser.add_command_macro(Arc::new(sugar::WithRuleset));
     parser
 }
+
+#[cfg(test)]
+mod causal_container_tests {
+    use super::*;
+    use std::sync::OnceLock;
+
+    fn serial_pool() -> &'static rayon::ThreadPool {
+        static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+        POOL.get_or_init(|| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .unwrap()
+        })
+    }
+
+    #[test]
+    fn causal_receipts_refresh_either_variant_by_its_logical_child_slot() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Choice (Either Expr i64))\
+                     (function Hold (Unit) Choice :no-merge)\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (let $a (A 1))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((set (Hold ()) (either-left (B 2)))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)\
+                     (rule ((= v (Hold ()))\
+                            (= v (either-left (A 1))))\
+                       ((Done ())) :name \"observe-refresh\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+        });
+    }
+}

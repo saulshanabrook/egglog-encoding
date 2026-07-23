@@ -22,12 +22,14 @@ use rayon::{
     prelude::*,
 };
 use rustc_hash::FxHasher;
+use smallvec::SmallVec;
 
 use crate::{
-    ColumnId, CounterId, ExecutionState, Offset, SubsetRef, TableId, TaggedRowBuffer, Value,
-    WrappedTable,
-    common::{DashMap, IndexSet, SubsetTracker},
+    CausalReceipts, ColumnId, CounterId, ExecutionState, Offset, ReplaySortId, SubsetRef, TableId,
+    TaggedRowBuffer, Value, WrappedTable,
+    common::{DashMap, HashMap, IndexSet, SubsetTracker},
     parallel_heuristics::{parallelize_inter_container_op, parallelize_intra_container_op},
+    receipts::ContainerVersionDependency,
     table_spec::{Rebuilder, ValueRebuilder},
 };
 
@@ -93,6 +95,7 @@ pub struct ContainerRebuildSummary {
     // Container ids whose semantics changed in a way that may not produce a
     // fresh parent-row delta during ordinary table rebuild.
     dirty_ids: IndexSet<Value>,
+    dirty_dependencies: HashMap<(ReplaySortId, Value), SmallVec<[ContainerVersionDependency; 1]>>,
 }
 
 impl ContainerRebuildSummary {
@@ -106,18 +109,75 @@ impl ContainerRebuildSummary {
         &self.dirty_ids
     }
 
+    pub(crate) fn dirty_dependency_candidates(
+        &self,
+        sort: ReplaySortId,
+        value: Value,
+    ) -> Option<&[ContainerVersionDependency]> {
+        self.dirty_dependencies
+            .get(&(sort, value))
+            .map(SmallVec::as_slice)
+    }
+
     fn note_change(&mut self) {
         self.changed = true;
     }
 
-    fn note_dirty_id(&mut self, value: Value) {
+    pub(crate) fn note_dirty_id(&mut self, value: Value) {
         self.changed = true;
         self.dirty_ids.insert(value);
+    }
+
+    pub(crate) fn note_dirty_dependency(&mut self, dependency: ContainerVersionDependency) -> bool {
+        self.note_dirty_id(dependency.outer.raw);
+        let key = (dependency.outer.sort, dependency.outer.raw);
+        match self.dirty_dependencies.entry(key) {
+            hashbrown::hash_map::Entry::Vacant(entry) => {
+                entry.insert(SmallVec::from_buf([dependency]));
+                true
+            }
+            hashbrown::hash_map::Entry::Occupied(mut entry) => {
+                let dependencies = entry.get_mut();
+                if let Some(current) = dependencies
+                    .iter_mut()
+                    .find(|current| current.outer.term == dependency.outer.term)
+                {
+                    assert_eq!(
+                        (
+                            current.dependency.wave,
+                            current.dependency.equalities.as_of_edges,
+                        ),
+                        (
+                            dependency.dependency.wave,
+                            dependency.dependency.equalities.as_of_edges,
+                        ),
+                        "one container rebuild pass produced incompatible dependency landmarks"
+                    );
+                    let prior_len = current.dependency.equalities.pairs.len();
+                    let mut pairs = current.dependency.equalities.pairs.to_vec();
+                    for pair in dependency.dependency.equalities.pairs {
+                        if !pairs.contains(&pair) {
+                            pairs.push(pair);
+                        }
+                    }
+                    current.dependency.equalities.pairs = pairs.into_boxed_slice();
+                    current.dependency.equalities.pairs.len() != prior_len
+                } else {
+                    dependencies.push(dependency);
+                    true
+                }
+            }
+        }
     }
 
     fn extend(&mut self, other: Self) {
         self.changed |= other.changed;
         self.dirty_ids.extend(other.dirty_ids);
+        for (_, dependencies) in other.dirty_dependencies {
+            for dependency in dependencies {
+                self.note_dirty_dependency(dependency);
+            }
+        }
     }
 }
 
@@ -230,7 +290,7 @@ impl ContainerValues {
             }
             summary
         };
-        self.expand_dirty_id_closure(&mut summary);
+        self.expand_dirty_id_closure(&mut summary, exec_state.causal_receipts());
         summary
     }
 
@@ -245,7 +305,75 @@ impl ContainerValues {
     /// inner `Vec` id is dirty; the outer `Vec` row is not retimestamped, so a
     /// later rule like `(rewrite (p (vec-of (vec-of (b)))) (b))` can miss the
     /// newly matchable parent row.
-    fn expand_dirty_id_closure(&self, summary: &mut ContainerRebuildSummary) {
+    fn expand_dirty_id_closure(
+        &self,
+        summary: &mut ContainerRebuildSummary,
+        receipts: Option<&CausalReceipts>,
+    ) {
+        if !summary.dirty_dependencies.is_empty() {
+            let receipts =
+                receipts.expect("typed dirty-container dependencies require causal receipts");
+            let mut frontier = summary
+                .dirty_dependencies
+                .values()
+                .flat_map(|dependencies| dependencies.iter().cloned())
+                .collect::<Vec<_>>();
+            while !frontier.is_empty() {
+                let mut next = Vec::<ContainerVersionDependency>::new();
+                for dependency in frontier.drain(..) {
+                    let child = dependency.outer;
+                    let mut child_set = IndexSet::default();
+                    child_set.insert(child.raw);
+                    for (_, env) in self.data.iter() {
+                        let mut parents = IndexSet::default();
+                        env.extend_containers_containing(&child_set, &mut parents);
+                        for parent in parents {
+                            let mut parent_endpoints = receipts
+                                .container_parent_candidates(env.container_type_id(), parent)
+                                .into_iter()
+                                .filter(|candidate| {
+                                    env.contains_typed_child(
+                                        parent,
+                                        child.raw,
+                                        child.sort,
+                                        &candidate.child_sorts,
+                                    )
+                                })
+                                .map(|candidate| candidate.endpoint);
+                            let Some(parent_endpoint) = parent_endpoints.next() else {
+                                // The raw reverse index is only a candidate
+                                // generator. A value collision in another
+                                // logical sort is not ancestry.
+                                continue;
+                            };
+                            assert!(
+                                parent_endpoints.next().is_none(),
+                                "container parent has multiple exact logical replay sorts"
+                            );
+                            if parent_endpoint == child {
+                                continue;
+                            }
+                            if env.causal_receipt_kind().is_none() {
+                                panic!(
+                                    "causal container rebuild does not support {}",
+                                    env.container_type_name()
+                                );
+                            }
+                            let propagated = ContainerVersionDependency {
+                                outer: parent_endpoint,
+                                dependency: dependency.dependency.clone(),
+                            };
+                            if summary.note_dirty_dependency(propagated.clone()) {
+                                next.push(propagated);
+                            }
+                        }
+                    }
+                }
+                frontier = next;
+            }
+            return;
+        }
+
         let mut frontier = summary.dirty_ids.clone();
         let mut seen = frontier.iter().copied().collect::<IndexSet<_>>();
 
@@ -286,7 +414,47 @@ impl ContainerValues {
 /// Containers behave a lot like base values, but they include extra trait methods to support
 /// rebuilding of container contents and merging containers that become equal after a rebuild pass
 /// has taken place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CausalContainerKind {
+    Pair,
+    Vec,
+    Maybe,
+    Either,
+}
+
+impl CausalContainerKind {
+    fn validate_arity(self, arity: usize) -> Result<(), &'static str> {
+        match self {
+            Self::Pair if arity != 2 => Err("causal Pair container does not have two children"),
+            Self::Maybe if arity > 1 => Err("causal Maybe container has more than one child"),
+            Self::Either if arity != 1 => Err("causal Either container does not have one child"),
+            Self::Vec | Self::Pair | Self::Maybe | Self::Either => Ok(()),
+        }
+    }
+}
+
 pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
+    /// The positional container shape supported by exact causal rebuild
+    /// capture. Unlisted container semantics fail closed only if rebuild
+    /// actually changes the container; ordinary execution is unaffected.
+    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+        None
+    }
+
+    /// Map each value yielded by [`ContainerValue::iter`] to its logical
+    /// child-sort slot. Ordered supported containers have a compact default;
+    /// variant containers such as Either override it.
+    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+        let len = self.iter().count();
+        match Self::causal_receipt_kind()? {
+            CausalContainerKind::Pair => Some((0..len).collect()),
+            CausalContainerKind::Vec | CausalContainerKind::Maybe => {
+                Some(std::iter::repeat_n(0, len).collect())
+            }
+            CausalContainerKind::Either => None,
+        }
+    }
+
     /// Rebuild an additional container in place according the the given [`ValueRebuilder`].
     ///
     /// If this method returns `false` then the container must not have been modified (i.e. it must
@@ -304,6 +472,16 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
 
 pub trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
     fn as_any(&self) -> &dyn Any;
+    fn container_type_id(&self) -> TypeId;
+    fn causal_receipt_kind(&self) -> Option<CausalContainerKind>;
+    fn container_type_name(&self) -> &'static str;
+    fn contains_typed_child(
+        &self,
+        parent: Value,
+        child: Value,
+        child_sort: ReplaySortId,
+        child_sorts: &[ReplaySortId],
+    ) -> bool;
     fn apply_rebuild(
         &mut self,
         table: &WrappedTable,
@@ -352,6 +530,47 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         self
     }
 
+    fn container_type_id(&self) -> TypeId {
+        TypeId::of::<C>()
+    }
+
+    fn causal_receipt_kind(&self) -> Option<CausalContainerKind> {
+        C::causal_receipt_kind()
+    }
+
+    fn container_type_name(&self) -> &'static str {
+        std::any::type_name::<C>()
+    }
+
+    fn contains_typed_child(
+        &self,
+        parent: Value,
+        child: Value,
+        child_sort: ReplaySortId,
+        child_sorts: &[ReplaySortId],
+    ) -> bool {
+        let Some(container) = self.get_container(parent) else {
+            return false;
+        };
+        let values = container.iter().collect::<SmallVec<[Value; 4]>>();
+        if let Some(slots) = container.causal_child_sort_slots() {
+            return values
+                .iter()
+                .copied()
+                .zip(slots)
+                .any(|(value, slot)| value == child && child_sorts.get(slot) == Some(&child_sort));
+        }
+        // Unsupported uniform containers such as Set and MultiSet can still
+        // be identified exactly enough to fail closed only when truly reached.
+        if let [only_sort] = child_sorts {
+            return *only_sort == child_sort && values.contains(&child);
+        }
+        // For an unsupported heterogeneous container, retaining a raw child
+        // whose logical sort occurs anywhere in its schema is conservative
+        // and remains an explicit fail-closed boundary.
+        values.contains(&child) && child_sorts.contains(&child_sort)
+    }
+
     fn apply_rebuild(
         &mut self,
         table: &WrappedTable,
@@ -359,18 +578,36 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         subset: Option<SubsetRef>,
         exec_state: &mut ExecutionState,
     ) -> ContainerRebuildSummary {
-        if let Some(subset) = subset
-            && incremental_rebuild(
+        let use_incremental = subset.is_some_and(|subset| {
+            incremental_rebuild(
                 subset.size(),
                 self.to_id.len(),
                 parallelize_intra_container_op(self.to_id.len()),
             )
-        {
+        });
+        if exec_state.causal_receipts().is_some() {
+            assert_eq!(
+                rayon::current_num_threads(),
+                1,
+                "causal container rebuild requires serial execution"
+            );
+            if use_incremental {
+                return self.apply_rebuild_incremental_receipts(
+                    table,
+                    rebuilder,
+                    exec_state,
+                    subset.expect("incremental rebuild requires a recent-update subset"),
+                    rebuilder.hint_col().unwrap(),
+                );
+            }
+            return self.apply_rebuild_nonincremental_receipts(rebuilder, exec_state);
+        }
+        if use_incremental {
             return self.apply_rebuild_incremental(
                 table,
                 rebuilder,
                 exec_state,
-                subset,
+                subset.expect("incremental rebuild requires a recent-update subset"),
                 rebuilder.hint_col().unwrap(),
             );
         }
@@ -460,7 +697,30 @@ impl<C: ContainerValue> ContainerEnv<C> {
         let target_map = self.to_id.determine_map(&container);
         match self.to_id.entry(container) {
             dashmap::Entry::Occupied(mut occ) => {
+                if let Some(receipts) = exec_state.causal_receipts() {
+                    assert!(
+                        exec_state.active_cause_capability().is_none(),
+                        "container rebuild inherited an unrelated active cause"
+                    );
+                    let cutoff = receipts.equality_edge_count().unwrap_or_else(|error| {
+                        panic!("cannot prepare container canonicalization: {error}")
+                    });
+                    let prepared = receipts
+                        .container_canonicalization_cause(
+                            exec_state.causal_wave(),
+                            *occ.get(),
+                            value,
+                            cutoff,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("cannot record exact container canonicalization: {error}")
+                        });
+                    exec_state.set_active_container_canonicalization(Some(prepared));
+                }
                 let result = (self.merge_fn)(exec_state, *occ.get(), value);
+                if exec_state.causal_receipts().is_some() {
+                    exec_state.set_active_container_canonicalization(None);
+                }
                 let old_val = *occ.get();
                 if result != old_val {
                     self.to_container.remove(&old_val);
@@ -506,6 +766,105 @@ impl<C: ContainerValue> ContainerEnv<C> {
         if container_changed && rebuilt_id == old_id && actual == old_id {
             summary.note_dirty_id(old_id);
         }
+    }
+
+    fn apply_rebuild_nonincremental_receipts(
+        &mut self,
+        rebuilder: &dyn Rebuilder,
+        exec_state: &mut ExecutionState,
+    ) -> ContainerRebuildSummary {
+        struct Prepared<C> {
+            before: C,
+            after: C,
+            old_id: Value,
+            rebuilt_id: Value,
+            contents_changed: bool,
+            dependency: Option<ContainerVersionDependency>,
+        }
+
+        let receipts = exec_state
+            .causal_receipts()
+            .expect("receipt container rebuild requires the receipt arena");
+        let cutoff = receipts
+            .equality_edge_count()
+            .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
+        let wave = exec_state.causal_wave();
+        let mut prepared = Vec::<Prepared<C>>::new();
+        for entry in self.to_id.iter() {
+            let before = entry.key().clone();
+            let old_id = *entry.value();
+            let rebuilt_id = rebuilder.rebuild_val(old_id);
+            let mut after = before.clone();
+            let contents_changed = after.rebuild_contents(rebuilder);
+            if !contents_changed && rebuilt_id == old_id {
+                continue;
+            }
+            let kind = C::causal_receipt_kind().unwrap_or_else(|| {
+                panic!(
+                    "causal container rebuild does not support {}",
+                    std::any::type_name::<C>()
+                )
+            });
+            kind.validate_arity(before.iter().count())
+                .unwrap_or_else(|error| panic!("{error}"));
+            kind.validate_arity(after.iter().count())
+                .unwrap_or_else(|error| panic!("{error}"));
+            let dependency = if contents_changed {
+                let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
+                let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
+                Some(
+                    receipts
+                        .container_dependency(
+                            TypeId::of::<C>(),
+                            old_id,
+                            wave,
+                            &before_children,
+                            &after_children,
+                            cutoff,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("cannot record exact positional container rebuild: {error}")
+                        })
+                        .expect(
+                            "container reported changed contents without a positional child change",
+                        ),
+                )
+            } else {
+                None
+            };
+            prepared.push(Prepared {
+                before,
+                after,
+                old_id,
+                rebuilt_id,
+                contents_changed,
+                dependency,
+            });
+        }
+
+        let mut summary = ContainerRebuildSummary::default();
+        for change in prepared {
+            summary.note_change();
+            let hc = hash_container(&change.before);
+            let target_map = self.to_id.determine_map(&change.before);
+            let shard = self.to_id.shards_mut()[target_map].get_mut();
+            let _ = shard
+                .remove_entry(hc, |(_, value)| *value.get() == change.old_id)
+                .expect("prepared container disappeared before serial publication");
+            self.to_container.remove(&change.old_id);
+            let actual = self.insert_owned(change.after, change.rebuilt_id, exec_state);
+            if change.contents_changed
+                && change.rebuilt_id == change.old_id
+                && actual == change.old_id
+            {
+                summary.note_dirty_dependency(
+                    change
+                        .dependency
+                        .expect("stable changed container has no dependency"),
+                );
+            }
+        }
+        summary
     }
 
     fn apply_rebuild_incremental(
@@ -561,6 +920,143 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 exec_state,
                 &mut summary,
             );
+        }
+        summary
+    }
+
+    fn apply_rebuild_incremental_receipts(
+        &mut self,
+        table: &WrappedTable,
+        rebuilder: &dyn Rebuilder,
+        exec_state: &mut ExecutionState,
+        to_scan: SubsetRef,
+        search_col: ColumnId,
+    ) -> ContainerRebuildSummary {
+        struct Prepared<C> {
+            before: C,
+            after: C,
+            old_id: Value,
+            rebuilt_id: Value,
+            contents_changed: bool,
+            dependency: Option<ContainerVersionDependency>,
+        }
+
+        // Preserve the ordinary incremental candidate scan and insertion
+        // order. Receipt preparation is read-only and validates every selected
+        // change before the first registry mutation.
+        let mut buf = TaggedRowBuffer::new(1);
+        table.scan_project(
+            to_scan,
+            &[search_col],
+            Offset::new(0),
+            usize::MAX,
+            &[],
+            &mut buf,
+        );
+        let mut to_rebuild = IndexSet::<Value>::default();
+        for (_, row) in buf.iter() {
+            to_rebuild.insert(row[0]);
+            let Some(ids) = self.val_index.get(&row[0]) else {
+                continue;
+            };
+            to_rebuild.extend(&*ids);
+        }
+
+        let receipts = exec_state
+            .causal_receipts()
+            .expect("receipt container rebuild requires the receipt arena");
+        let cutoff = receipts
+            .equality_edge_count()
+            .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
+        let wave = exec_state.causal_wave();
+        let mut prepared = Vec::<Prepared<C>>::new();
+        for old_id in to_rebuild {
+            let Some(before) = self
+                .get_container(old_id)
+                .map(|container| container.clone())
+            else {
+                continue;
+            };
+            let rebuilt_id = rebuilder.rebuild_val(old_id);
+            let mut after = before.clone();
+            let contents_changed = after.rebuild_contents(rebuilder);
+            if !contents_changed && rebuilt_id == old_id {
+                continue;
+            }
+            let kind = C::causal_receipt_kind().unwrap_or_else(|| {
+                panic!(
+                    "causal container rebuild does not support {}",
+                    std::any::type_name::<C>()
+                )
+            });
+            kind.validate_arity(before.iter().count())
+                .unwrap_or_else(|error| panic!("{error}"));
+            kind.validate_arity(after.iter().count())
+                .unwrap_or_else(|error| panic!("{error}"));
+            let dependency = if contents_changed {
+                let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
+                let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
+                Some(
+                    receipts
+                        .container_dependency(
+                            TypeId::of::<C>(),
+                            old_id,
+                            wave,
+                            &before_children,
+                            &after_children,
+                            cutoff,
+                        )
+                        .unwrap_or_else(|error| {
+                            panic!("cannot record exact positional container rebuild: {error}")
+                        })
+                        .expect(
+                            "container reported changed contents without a positional child change",
+                        ),
+                )
+            } else {
+                None
+            };
+            prepared.push(Prepared {
+                before,
+                after,
+                old_id,
+                rebuilt_id,
+                contents_changed,
+                dependency,
+            });
+        }
+
+        let mut summary = ContainerRebuildSummary::default();
+        for change in prepared {
+            // An earlier incremental collision can retire a later selected id;
+            // the ordinary path observes the same absence and skips it.
+            let Some((hc, target_map)) = self.to_container.get(&change.old_id).map(|entry| *entry)
+            else {
+                continue;
+            };
+            let shard = self.to_id.shards_mut()[target_map].get_mut();
+            let Some((before, _)) =
+                shard.remove_entry(hc as u64, |(_, value)| *value.get() == change.old_id)
+            else {
+                continue;
+            };
+            assert!(
+                before == change.before,
+                "incremental container changed after receipt preflight"
+            );
+            self.to_container.remove(&change.old_id);
+            summary.note_change();
+            let actual = self.insert_owned(change.after, change.rebuilt_id, exec_state);
+            if change.contents_changed
+                && change.rebuilt_id == change.old_id
+                && actual == change.old_id
+            {
+                summary.note_dirty_dependency(
+                    change
+                        .dependency
+                        .expect("stable changed container has no dependency"),
+                );
+            }
         }
         summary
     }

@@ -92,6 +92,9 @@ pub struct CheckReplayPremise {
     pub premise: usize,
     /// Logical function column containing the source expression's value.
     pub column: usize,
+    /// Structural constructor identity when this premise is itself a
+    /// constructor row. Other producer rows already own the exact output term.
+    pub constructor: Option<(ReplaySortId, egglog_core_relations::ReplayOpId)>,
 }
 
 #[derive(Clone, Debug)]
@@ -597,12 +600,19 @@ impl RuleBuilder<'_> {
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let mut dst_vars = inner.convert_all(&entries);
             let expected = dst_vars.pop().expect("must specify a return value");
-            let var = rb.call_external(func, &dst_vars)?;
+            let promote_immediately = replay
+                .as_ref()
+                .is_some_and(|replay| replay.promote_immediately);
+            let var = if promote_immediately {
+                rb.call_external_with_replay(func, &dst_vars, replay.clone())?
+            } else {
+                rb.call_external(func, &dst_vars)?
+            };
             match entries.last().unwrap() {
                 QueryEntry::Var(Variable { id, .. }) if !inner.grounded.contains(id) => {
                     inner.mapping.insert(*id, var.into());
                     inner.grounded.insert(*id);
-                    if let Some(replay) = replay.clone() {
+                    if !promote_immediately && let Some(replay) = replay.clone() {
                         inner.replay_promotions.push(DeferredReplayCall {
                             args: dst_vars,
                             dst: var,
@@ -969,7 +979,20 @@ impl Query {
                         source.premise, source.column
                     )
                 });
-                CheckEndpointSource::premise(source.premise, source.column, inner.convert(entry))
+                match source.constructor {
+                    Some((sort, op)) => CheckEndpointSource::premise_constructor(
+                        source.premise,
+                        source.column,
+                        inner.convert(entry),
+                        sort,
+                        op,
+                    ),
+                    None => CheckEndpointSource::premise(
+                        source.premise,
+                        source.column,
+                        inner.convert(entry),
+                    ),
+                }
             };
             let equalities = receipt
                 .equalities

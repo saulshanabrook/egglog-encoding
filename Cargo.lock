@@ -712,6 +712,7 @@ dependencies = [
  "libtest-mimic",
  "log",
  "num",
+ "rayon",
  "serde_json",
 ]
 

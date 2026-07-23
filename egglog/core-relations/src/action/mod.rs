@@ -522,6 +522,8 @@ pub struct ExecutionState<'a> {
     /// lane or merge callback. It is state-local so parallel execution cannot
     /// cross-attribute proposals.
     active_cause: Option<CauseCapability>,
+    /// Logical sort selected for a prepared container-registry union.
+    active_container_union_sort: Option<ReplaySortId>,
 }
 
 /// A basic wrapper around an map from table id to a mutation buffer for that table that also
@@ -529,11 +531,15 @@ pub struct ExecutionState<'a> {
 struct MutationBuffers<'a> {
     notify_list: &'a NotificationList<TableId>,
     buffers: DenseIdMap<TableId, Box<dyn MutationBuffer>>,
+    transaction: Option<crate::table_spec::MutationTransaction>,
+    transaction_changed: HashMap<TableId, ()>,
 }
 
 impl Clone for MutationBuffers<'_> {
     fn clone(&self) -> Self {
         let mut res = MutationBuffers::new(self.notify_list, Default::default());
+        res.transaction = self.transaction.clone();
+        res.transaction_changed = self.transaction_changed.clone();
         for (id, buf) in self.buffers.iter() {
             res.buffers.insert(id, buf.fresh_handle());
         }
@@ -549,14 +555,45 @@ impl<'a> MutationBuffers<'a> {
         MutationBuffers {
             notify_list,
             buffers,
+            transaction: None,
+            transaction_changed: HashMap::default(),
         }
     }
-    fn lazy_init(&mut self, table_id: TableId, f: impl FnOnce() -> Box<dyn MutationBuffer>) {
-        self.buffers.get_or_insert(table_id, f);
+
+    fn defer_until(&mut self, transaction: crate::table_spec::MutationTransaction) {
+        assert!(
+            self.buffers.iter().next().is_none(),
+            "a mutation commit guard must be installed before opening buffers"
+        );
+        assert!(
+            self.transaction.replace(transaction).is_none(),
+            "an execution state received more than one mutation commit guard"
+        );
     }
+
+    fn lazy_init(&mut self, table_id: TableId, f: impl FnOnce() -> Box<dyn MutationBuffer>) {
+        self.buffers.get_or_insert(table_id, || {
+            let mut buffer = f();
+            if let Some(transaction) = &self.transaction {
+                buffer.defer_until(transaction.clone());
+            }
+            buffer
+        });
+    }
+
+    fn note_changed(&mut self, table_id: TableId) {
+        if let Some(transaction) = &self.transaction {
+            if self.transaction_changed.insert(table_id, ()).is_none() {
+                transaction.defer_changed_table(table_id);
+            }
+        } else {
+            self.notify_list.notify(table_id);
+        }
+    }
+
     fn stage_insert(&mut self, table_id: TableId, row: &[Value]) {
         self.buffers[table_id].stage_insert(row);
-        self.notify_list.notify(table_id);
+        self.note_changed(table_id);
     }
 
     fn stage_insert_with_cause(&mut self, table_id: TableId, row: &[Value], cause: CauseDraftId) {
@@ -565,7 +602,22 @@ impl<'a> MutationBuffers<'a> {
             "receipt-enabled insertion is missing an exact cause"
         );
         self.buffers[table_id].stage_insert_with_cause(row, cause);
-        self.notify_list.notify(table_id);
+        self.note_changed(table_id);
+    }
+
+    fn stage_insert_with_cause_and_terms(
+        &mut self,
+        table_id: TableId,
+        row: &[Value],
+        cause: CauseDraftId,
+        terms: &[ReplayTermId],
+    ) {
+        assert!(
+            !cause.is_unattributed(),
+            "receipt-enabled insertion is missing an exact cause"
+        );
+        self.buffers[table_id].stage_insert_with_cause_and_terms(row, cause, terms);
+        self.note_changed(table_id);
     }
 
     fn stage_typed_union(
@@ -580,12 +632,12 @@ impl<'a> MutationBuffers<'a> {
             "receipt-enabled union is missing an exact cause"
         );
         self.buffers[table_id].stage_typed_union(row, cause, proposal);
-        self.notify_list.notify(table_id);
+        self.note_changed(table_id);
     }
 
     fn stage_remove(&mut self, table_id: TableId, key: &[Value]) {
         self.buffers[table_id].stage_remove(key);
-        self.notify_list.notify(table_id);
+        self.note_changed(table_id);
     }
 }
 
@@ -598,6 +650,7 @@ impl Clone for ExecutionState<'_> {
             changed: false,
             stop_match: Arc::clone(&self.stop_match),
             active_cause: self.active_cause,
+            active_container_union_sort: self.active_container_union_sort,
         }
     }
 }
@@ -614,7 +667,17 @@ impl<'a> ExecutionState<'a> {
             changed: false,
             stop_match: Arc::new(AtomicBool::new(false)),
             active_cause: None,
+            active_container_union_sort: None,
         }
+    }
+
+    /// Delay every native mutation staged through this state until one shared
+    /// transaction reaches an explicit commit decision.
+    pub(crate) fn defer_mutations_until(
+        &mut self,
+        transaction: crate::table_spec::MutationTransaction,
+    ) {
+        self.buffers.defer_until(transaction);
     }
 
     /// Stage an insertion of the given row into `table`.
@@ -623,12 +686,20 @@ impl<'a> ExecutionState<'a> {
     pub fn stage_insert(&mut self, table: TableId, row: &[Value]) {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        if self.db.causal_receipts.is_some() {
+        if let Some(receipts) = self.db.causal_receipts {
             let cause = self
                 .active_cause
                 .expect("receipt-enabled native insertion reached an uninstrumented action")
                 .id();
-            self.buffers.stage_insert_with_cause(table, row, cause);
+            match receipts
+                .constructor_row_terms(table, row)
+                .unwrap_or_else(|error| panic!("cannot stage exact constructor row terms: {error}"))
+            {
+                Some(terms) => self
+                    .buffers
+                    .stage_insert_with_cause_and_terms(table, row, cause, &terms),
+                None => self.buffers.stage_insert_with_cause(table, row, cause),
+            }
         } else {
             self.buffers.stage_insert(table, row);
         }
@@ -696,6 +767,37 @@ impl<'a> ExecutionState<'a> {
 
     pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {
         self.active_cause
+    }
+
+    pub(crate) fn set_active_container_canonicalization(
+        &mut self,
+        cause: Option<(CauseCapability, ReplaySortId)>,
+    ) {
+        match cause {
+            Some((cause, sort)) => {
+                self.active_cause = Some(cause);
+                self.active_container_union_sort = Some(sort);
+            }
+            None => {
+                self.active_cause = None;
+                self.active_container_union_sort = None;
+            }
+        }
+    }
+
+    /// Stage the prepared container-registry union through the ordinary typed
+    /// equality path. Only the registry merge callback may call this method.
+    pub fn stage_container_union(
+        &mut self,
+        table: TableId,
+        left: Value,
+        right: Value,
+        timestamp: Value,
+    ) {
+        let sort = self
+            .active_container_union_sort
+            .expect("container union has no prepared logical sort");
+        self.stage_union_with_replay(table, left, right, timestamp, sort);
     }
 
     pub(crate) fn causal_receipts(&self) -> Option<&CausalReceipts> {
@@ -816,12 +918,19 @@ impl<'a> ExecutionState<'a> {
                 })
             }
             buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
-            if db.causal_receipts.is_some() {
-                buffers.stage_insert_with_cause(
-                    table,
-                    &new,
-                    cause.expect("receipt-enabled predicted insertion is missing its match cause"),
-                );
+            if let Some(receipts) = db.causal_receipts {
+                let cause =
+                    cause.expect("receipt-enabled predicted insertion is missing its match cause");
+                match receipts
+                    .constructor_row_terms(table, &new)
+                    .unwrap_or_else(|error| {
+                        panic!("cannot stage exact constructor row terms: {error}")
+                    }) {
+                    Some(terms) => {
+                        buffers.stage_insert_with_cause_and_terms(table, &new, cause, &terms)
+                    }
+                    None => buffers.stage_insert_with_cause(table, &new, cause),
+                }
             } else {
                 buffers.stage_insert(table, &new);
             }
@@ -1074,31 +1183,10 @@ impl ExecutionState<'_> {
                     bindings.replace(out);
                 }
 
-                // Phase 2: install one typed structural producer for every
-                // active constructor evaluation. Existing output mappings
-                // make hit-heavy execution one point lookup per lane.
-                mask.iter(&bindings[*dst_var])
-                    .for_each_indexed(|offset, output| {
-                        if receipts.lookup_term(replay.result_sort, *output).is_some() {
-                            return;
-                        }
-                        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
-                        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
-                            let value = match arg {
-                                QueryEntry::Const(value) => *value,
-                                QueryEntry::Var(variable) => bindings[*variable][offset],
-                            };
-                            children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
-                                panic!("constructor child has no producer-installed ReplayTermId")
-                            }));
-                        }
-                        receipts
-                            .intern_call(replay.result_sort, replay.op, &children, *output)
-                            .expect("constructor call must install a typed output");
-                    });
-
-                // Phase 3: only distinct missing rows are effects. Resolve
-                // their causes after dst terms exist, then stage them.
+                // Phase 2: only distinct missing rows are effects. Preserve
+                // the exact Call node assembled for each owner beside its
+                // staged row; a global current-value lookup can select a
+                // different structural alias by commit time.
                 if !owners.is_empty() {
                     let owner_lanes = owners.iter().map(|(_, lane)| *lane).collect::<Vec<_>>();
                     bindings.ensure_receipt_causes(&owner_lanes, receipts);
@@ -1108,12 +1196,30 @@ impl ExecutionState<'_> {
                         let row = predicted
                             .get(&(*table_id, key))
                             .expect("new constructor prediction disappeared");
-                        buffers.stage_insert_with_cause(
+                        let mut terms = vec![ReplayTermId::MISSING; row.len()];
+                        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+                        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
+                            let value = match arg {
+                                QueryEntry::Const(value) => *value,
+                                QueryEntry::Var(variable) => bindings[*variable][lane],
+                            };
+                            children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
+                                panic!("constructor child has no producer-installed ReplayTermId")
+                            }));
+                        }
+                        let output = bindings[*dst_var][lane];
+                        let call = receipts
+                            .intern_spec_call(replay, &children, output)
+                            .expect("constructor call must install a typed output");
+                        terms[..children.len()].copy_from_slice(&children);
+                        terms[children.len()] = call;
+                        buffers.stage_insert_with_cause_and_terms(
                             *table_id,
                             row,
                             bindings
                                 .receipt_cause(lane)
                                 .expect("constructor owner lane is missing its exact cause"),
+                            &terms,
                         );
                     }
                 }
@@ -1440,12 +1546,11 @@ impl ExecutionState<'_> {
                     .iter()
                     .flat_map(|(left, right)| [left, right])
                     .filter_map(|endpoint| match endpoint.term {
-                        CheckTermSource::Premise { premise, column } => {
-                            Some((premise, column, endpoint.sort))
-                        }
+                        source @ (CheckTermSource::Premise { .. }
+                        | CheckTermSource::Constructor { .. }) => Some((source, endpoint.sort)),
                         CheckTermSource::Current => None,
                     })
-                    .collect::<SmallVec<[(usize, usize, ReplaySortId); 8]>>();
+                    .collect::<SmallVec<[(CheckTermSource, ReplaySortId); 8]>>();
                 let mut winner = None::<(
                     CausalWave,
                     SmallVec<[FactId; 4]>,
@@ -1465,7 +1570,8 @@ impl ExecutionState<'_> {
                     let mut resolve = |endpoint: CheckEndpointSpec| {
                         let raw = get(endpoint.value);
                         match endpoint.term {
-                            CheckTermSource::Premise { .. } => EqualityEndpoint {
+                            CheckTermSource::Premise { .. }
+                            | CheckTermSource::Constructor { .. } => EqualityEndpoint {
                                 sort: endpoint.sort,
                                 term: premise_terms
                                     .next()
@@ -1523,6 +1629,9 @@ fn promote_replay_call(
         args.len(),
         "primitive replay metadata needs one sort per argument"
     );
+    receipts
+        .register_spec_container_type(replay)
+        .expect("pure primitive replay sort has conflicting container metadata");
     mask.iter(&bindings[dst])
         .for_each_indexed(|offset, output| {
             if receipts.lookup_term(replay.result_sort, *output).is_some() {
@@ -1544,7 +1653,7 @@ fn promote_replay_call(
                 }));
             }
             receipts
-                .intern_call(replay.result_sort, replay.op, &children, *output)
+                .intern_spec_call(replay, &children, *output)
                 .expect("pure primitive call must install a typed output");
         });
 }

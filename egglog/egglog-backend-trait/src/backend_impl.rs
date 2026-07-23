@@ -5,7 +5,7 @@
 //! free of any dependency on the trait; the orphan rule permits it because the
 //! [`Backend`] trait is local here.
 
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
@@ -224,6 +224,7 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
             Ok(CheckReplayPremise {
                 premise,
                 column: source.column,
+                constructor: source.constructor,
             })
         };
         let equalities = receipt
@@ -259,6 +260,15 @@ impl Backend for EGraph {
         spec: FunctionReplaySpec,
     ) -> Result<()> {
         EGraph::register_function_replay(self, func, spec)
+    }
+
+    fn register_container_replay_sort(
+        &mut self,
+        sort: ReplaySortId,
+        container_type: TypeId,
+        child_sorts: &[ReplaySortId],
+    ) -> Result<()> {
+        EGraph::register_container_replay_sort(self, sort, container_type, child_sorts)
     }
 
     fn intern_replay_literal(

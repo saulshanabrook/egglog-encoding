@@ -8,6 +8,10 @@ pub struct SetContainer {
 }
 
 impl ContainerValue for SetContainer {
+    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+        Some(vec![0; self.data.len()].into_boxed_slice())
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         if self.do_rebuild {
             let mut xs: Vec<_> = self.data.iter().copied().collect();

@@ -168,6 +168,10 @@ pub struct CausalCheckPremise {
     pub body_atom: usize,
     /// Logical function column containing the source expression's value.
     pub column: usize,
+    /// Structural constructor identity for constructor producers. At match
+    /// time the producer fact's immutable key terms resolve the exact existing
+    /// call. Non-constructor rows already own their exact output term.
+    pub constructor: Option<(ReplaySortId, ReplayOpId)>,
 }
 
 /// Exact positive-check root metadata. Relational premises are always captured
@@ -482,6 +486,20 @@ pub trait Backend: Send + Sync {
         &mut self,
         _func: FunctionId,
         _spec: FunctionReplaySpec,
+    ) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Register the physical registry type and logical child sorts for one
+    /// container sort. Causal container ancestry uses this metadata to reject
+    /// raw-value collisions across unrelated sorts.
+    fn register_container_replay_sort(
+        &mut self,
+        _sort: ReplaySortId,
+        _container_type: TypeId,
+        _child_sorts: &[ReplaySortId],
     ) -> Result<()> {
         Err(anyhow::anyhow!(
             "this backend does not support causal receipts"

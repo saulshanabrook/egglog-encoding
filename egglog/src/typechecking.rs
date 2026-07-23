@@ -322,10 +322,19 @@ impl EGraph {
         sort.register_type(self.backend.as_mut());
 
         let name = sort.name();
+        let causal_container = self
+            .causal_state
+            .as_mut()
+            .and_then(|causal| causal.container_sort_spec(&sort));
         match self.type_info.sorts.entry(name.to_owned()) {
             HEntry::Occupied(_) => Err(TypeError::SortAlreadyBound(name.to_owned(), span)),
             HEntry::Vacant(e) => {
                 e.insert(sort.clone());
+                if let Some((logical_sort, container_type, child_sorts)) = causal_container {
+                    self.backend
+                        .register_container_replay_sort(logical_sort, container_type, &child_sorts)
+                        .expect("cannot register causal container sort metadata");
+                }
                 // A sort's primitives already reach the term-encoding typechecker
                 // through its OWN `add_arcsort` when it typechecks the sort
                 // command, so don't propagate them again from here (that would

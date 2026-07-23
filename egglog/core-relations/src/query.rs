@@ -620,6 +620,7 @@ impl RuleBuilder<'_, '_> {
                 premise,
                 column,
                 value,
+                constructor,
             } => {
                 let atom = *premises
                     .get(premise)
@@ -632,11 +633,20 @@ impl RuleBuilder<'_, '_> {
                             "check endpoint premise {premise} column {column} has no replay sort"
                         )
                     });
-                CheckEndpointSpec {
-                    value,
-                    sort,
-                    term: CheckTermSource::Premise { premise, column },
-                }
+                let term = if let Some((constructor_sort, op)) = constructor {
+                    assert_eq!(
+                        sort, constructor_sort,
+                        "check constructor result sort differs from its producer column"
+                    );
+                    CheckTermSource::Constructor {
+                        premise,
+                        input_columns: column,
+                        op,
+                    }
+                } else {
+                    CheckTermSource::Premise { premise, column }
+                };
+                CheckEndpointSpec { value, sort, term }
             }
             CheckEndpointSource::Current { value, sort } => CheckEndpointSpec {
                 value,
@@ -882,6 +892,11 @@ impl RuleBuilder<'_, '_> {
                 );
             }
         }
+        receipts
+            .register_table_constructor(table, replay.clone())
+            .unwrap_or_else(|error| {
+                panic!("cannot register constructor replay metadata for {table:?}: {error}")
+            });
         let res = self.qb.new_var();
         self.qb.instrs.push(Instr::LookupOrInsertDefaultReplay {
             table,

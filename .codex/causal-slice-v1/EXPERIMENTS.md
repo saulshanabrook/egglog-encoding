@@ -38,9 +38,11 @@ implementation worker writes feature code. Reviewers are read-only.
    congruence store endpoint pairs and explain them lazily during slicing.
 5. Merge receipts cite the match and prior fact. Decomposed joins carry exact
    premise FactIds through materialized intermediates.
-6. Same-ID Vec canonicalization creates an immutable container-version receipt
-   at the registry rebuild site, linked to the prior version and changed child
-   equality or nested-version causes.
+6. Pair, Vec, Maybe, and Either canonicalization creates an immutable
+   container-version receipt at the registry rebuild site, linked to the prior
+   fact version and changed child equality or nested-version causes. Raw
+   container IDs are candidate indexes only; exact ancestry is checked against
+   current registry contents and logical child-sort slots.
 7. Successful checks record exact fact premises plus equality endpoints as
    roots. Leaf FactIds map to source assertions, TSV rows, or globals.
 8. Replay uses top-level `(let-check name expr)` aliases and list-form
@@ -1089,3 +1091,81 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   Embedders must likewise keep execution in the pool used for activation.
 - Canaries cover both the CLI's `--threads 2` rejection and direct bridge
   activation in a two-thread Rayon pool.
+
+### 2026-07-23 — checkpoint 5c exact ordered-container and check provenance
+
+- Hypothesis: the remaining Hardboiled/Eggcc boundary was container
+  canonicalization history discarded between the registry and table/UF
+  commit paths. The treatment records only positional endpoint pairs and
+  immutable prior FactIds at the native sites that already know them; equality
+  paths remain lazy and are unfolded only by a later slicer.
+- Pair, Vec, Maybe, and Either construction use the existing compact
+  hash-consed `Call` replay terms. Pair/registry ID changes publish an exact
+  `ContainerCanonicalize` cause. Stable-ID Vec refreshes publish a new
+  immutable fact version with `ContainerRefresh { prior_fact, changed
+  children, cutoff }`; nested Vec refreshes compose through the same fact and
+  term machinery. Raw IDs are only reverse-index candidates: the causal path
+  checks actual registry contents against the logical child-sort schema, so an
+  unrelated Set element with the same bits is not treated as an ancestor. A
+  genuinely reached changed Set, Map, MultiSet, or UnstableFn dependency still
+  fails closed with its kind named.
+- Causal container rebuild is one transaction: it rebuilds a cloned registry,
+  defers UF batches, notifications, and incremental cursors, and publishes all
+  of them only after every supported environment succeeds. A late unsupported
+  container therefore restores the original registry and leaks no native
+  union or receipt state. This deliberately simple clone has O(total
+  containers) causal-only cost; H1's 1.5x gate, rather than speculation, decides
+  whether it later needs a mutation journal.
+- Constructor commits now carry an optional row-term sidecar through native
+  staging. A constructor fact snapshots one coherent witness: its output Call
+  and that exact Call's ordered child terms, rather than independently
+  consulting the first-wins `(sort, native value)` map for each cell.
+  Same-table merges inherit the prior fact's coherent term vector. Registered
+  constructor tables use the serial commit path while receipts are active,
+  preserving exact sidecars even above the native 20,000-row parallel
+  threshold; receipt-disabled and non-constructor parallel paths are unchanged.
+  This fixed Math's collapsed runtime-value check without eagerly rendering
+  source text.
+- Successful top-level checks record the exact ordered premise FactIds plus
+  typed equality endpoints and the applied-edge cutoff visible at match time.
+  Constructor endpoints are reconstructed read-only from immutable fact-owned
+  child terms and a registered operation ID. Schedule `:until` probes do not
+  allocate check IDs or roots: replay does not re-decide schedule control
+  flow, so they are not soundness roots.
+- Eggcc and Math exposed one additional exact case: two distinct native IDs can
+  already denote terms in one historical logical component. Such an effective
+  UF operation now records `NativeAliasRecord` with its exact cause, native
+  parent, and native child, while allocating no duplicate logical equality
+  node or edge. This includes both identical structural terms and a native
+  catch-up whose distinct endpoint terms are already connected by the forest.
+  A structural term owned by a genuinely third component still fails before
+  native publication. This check is deliberately order-sensitive: the
+  recorder does not reorder or search a batch to make a later alias legal.
+- Focused container/check canaries pass, including Pair canonicalization,
+  one/two-level stable Vec refresh chains, nested Vec refresh, Either variant
+  child slots, unrelated raw-ID collisions, registry/UF transaction rollback,
+  the above-threshold constructor sidecar, direct and transitive
+  unsupported-container failures, distinct equality-root terms, the
+  non-recording `:until` path, and both durable and same-publication
+  native-alias/catch-up paths.
+  Multiple nominal logical container sorts sharing one physical registry entry
+  remain explicitly unsupported and fail closed rather than choosing an
+  arbitrary term.
+  The existing deliberately unsupported corner remains fail-closed: if
+  congruence has collapsed both same-operation check producers to one
+  surviving FactId and one structural term, the current FactId-root contract
+  cannot invent two source witnesses.
+- Direct serial causal validation exits successfully for
+  `math-microbenchmark.egg`, `eggcc-2mm-pass1.egg`,
+  `pointer-analysis-small.egg` with its fact directory, and
+  `hardboiled_conv1d_32.egg`. Luminal advances to and fails at the unchanged
+  explicit removal boundary. These are semantic probes, not benchmark
+  measurements. The already-landed low-level parallel receipt implementation
+  remains intact; public causal activation is serial-only, so the benchmark
+  path selects serial table operations through the existing one-thread
+  heuristic. `make check` passes; after the final same-publication UF canary,
+  all 130 core-relations unit tests and `make nits` also pass.
+- No H1 recording-overhead or causal-replay performance claim is made here.
+  The five-workload receipt gate remains intentionally blocked on Luminal's
+  separate removal boundary, and no delete/subsume implementation or slicer
+  retention policy is part of this checkpoint.

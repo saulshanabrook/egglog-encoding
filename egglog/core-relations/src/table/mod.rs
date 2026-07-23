@@ -25,7 +25,7 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    CauseDraftId, EqualityEdgeCount, FactId, Pooled, TableChange, TableId,
+    CauseDraftId, EqualityEdgeCount, FactId, Pooled, ReplayTermId, TableChange, TableId,
     action::ExecutionState,
     common::{HashMap, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
@@ -310,6 +310,7 @@ struct Buffer {
 
 struct ReceiptBuffer {
     causes: DenseIdMap<ShardId, Vec<CauseDraftId>>,
+    row_terms: DenseIdMap<ShardId, Vec<Option<Box<[ReplayTermId]>>>>,
     transaction: Option<MutationTransaction>,
 }
 
@@ -326,6 +327,7 @@ impl MutationBuffer for Buffer {
         let receipt = self.receipt.get_or_insert_with(|| {
             Box::new(ReceiptBuffer {
                 causes: DenseIdMap::default(),
+                row_terms: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -347,19 +349,50 @@ impl MutationBuffer for Buffer {
             .pending_rows
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .len();
-        let causes = self
-            .receipt
-            .get_or_insert_with(|| {
-                Box::new(ReceiptBuffer {
-                    causes: DenseIdMap::default(),
-                    transaction: None,
-                })
+        let receipt = self.receipt.get_or_insert_with(|| {
+            Box::new(ReceiptBuffer {
+                causes: DenseIdMap::default(),
+                row_terms: DenseIdMap::default(),
+                transaction: None,
             })
+        });
+        let causes = receipt
             .causes
             .get_or_insert(shard, || vec![CauseDraftId::UNATTRIBUTED; rows]);
+        let row_terms = receipt.row_terms.get_or_insert(shard, || vec![None; rows]);
         debug_assert_eq!(causes.len(), rows);
+        debug_assert_eq!(row_terms.len(), rows);
         self.pending_rows[shard].add_row(row);
         causes.push(cause);
+        row_terms.push(None);
+    }
+    fn stage_insert_with_cause_and_terms(
+        &mut self,
+        row: &[Value],
+        cause: CauseDraftId,
+        terms: &[ReplayTermId],
+    ) {
+        let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
+        let rows = self
+            .pending_rows
+            .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
+            .len();
+        let receipt = self.receipt.get_or_insert_with(|| {
+            Box::new(ReceiptBuffer {
+                causes: DenseIdMap::default(),
+                row_terms: DenseIdMap::default(),
+                transaction: None,
+            })
+        });
+        let causes = receipt
+            .causes
+            .get_or_insert(shard, || vec![CauseDraftId::UNATTRIBUTED; rows]);
+        let row_terms = receipt.row_terms.get_or_insert(shard, || vec![None; rows]);
+        debug_assert_eq!(causes.len(), rows);
+        debug_assert_eq!(row_terms.len(), rows);
+        self.pending_rows[shard].add_row(row);
+        causes.push(cause);
+        row_terms.push(Some(terms.into()));
     }
     fn stage_remove(&mut self, key: &[Value]) {
         let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
@@ -374,6 +407,7 @@ impl MutationBuffer for Buffer {
                 receipt.transaction.as_ref().map(|transaction| {
                     Box::new(ReceiptBuffer {
                         causes: DenseIdMap::default(),
+                        row_terms: DenseIdMap::default(),
                         transaction: Some(transaction.clone()),
                     })
                 })
@@ -407,7 +441,18 @@ impl Drop for Buffer {
                         .receipt
                         .as_mut()
                         .and_then(|receipt| receipt.causes.take(shard));
-                    pending_rows.push((shard, PendingRowBatch { rows, causes }));
+                    let row_terms = self
+                        .receipt
+                        .as_mut()
+                        .and_then(|receipt| receipt.row_terms.take(shard));
+                    pending_rows.push((
+                        shard,
+                        PendingRowBatch {
+                            rows,
+                            causes,
+                            row_terms,
+                        },
+                    ));
                 }
                 let mut pending_removals = Vec::new();
                 let mut removal_count = 0;
@@ -448,7 +493,15 @@ impl Drop for Buffer {
                     .receipt
                     .as_mut()
                     .and_then(|receipt| receipt.causes.take(shard));
-                state.pending_rows[shard].push(PendingRowBatch { rows: buf, causes });
+                let row_terms = self
+                    .receipt
+                    .as_mut()
+                    .and_then(|receipt| receipt.row_terms.take(shard));
+                state.pending_rows[shard].push(PendingRowBatch {
+                    rows: buf,
+                    causes,
+                    row_terms,
+                });
             }
             state.total_rows.fetch_add(rows, Ordering::Relaxed);
 
@@ -535,11 +588,12 @@ impl Table for SortedWritesTable {
 
     fn refresh_rows_for_values(
         &mut self,
-        dirty_ids: &[Value],
+        summary: &crate::ContainerRebuildSummary,
         next_ts: Value,
+        exec_state: Option<&ExecutionState>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
-        SortedWritesTable::refresh_rows_for_values(self, dirty_ids, next_ts, transaction)
+        SortedWritesTable::refresh_rows_for_values(self, summary, next_ts, exec_state, transaction)
     }
 
     fn version(&self) -> TableVersion {
@@ -915,7 +969,10 @@ impl SortedWritesTable {
     fn do_insert(&mut self, exec_state: &mut ExecutionState) -> bool {
         let total = self.pending_state.total_rows.swap(0, Ordering::Relaxed);
         self.data.data.reserve(total);
-        if parallelize_table_op(total) {
+        let requires_coherent_constructor_terms = exec_state
+            .causal_receipts()
+            .is_some_and(|receipts| receipts.table_has_constructor_terms(self.table_id));
+        if parallelize_table_op(total) && !requires_coherent_constructor_terms {
             if let Some(col) = self.sort_by {
                 self.parallel_insert(
                     exec_state,
@@ -1001,7 +1058,11 @@ impl SortedWritesTable {
                                 .then(|| exec_state.active_cause_capability())
                                 .flatten();
                             let merge_cause = receipt_batch.as_mut().map(|batch| {
-                                batch.merge_draft_capability(incoming_cause, prior_fact)
+                                batch.merge_draft_capability_for_table(
+                                    incoming_cause,
+                                    prior_fact,
+                                    self.table_id,
+                                )
                             });
                             if RECEIPTS {
                                 exec_state.set_active_cause_capability(Some(
@@ -1016,12 +1077,13 @@ impl SortedWritesTable {
                                 let sort_val = query[sort_by.index()];
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                        batch.record_fact(
+                                        batch.record_fact_with_terms(
                                             self.table_id,
                                             merge_cause
                                                 .expect("receipt merge is missing its capability")
                                                 .id(),
                                             &scratch,
+                                            buf.receipt_terms(proposal_index),
                                         )
                                     });
                                 let new = if RECEIPTS {
@@ -1049,7 +1111,12 @@ impl SortedWritesTable {
                             let sort_val = query[sort_by.index()];
                             // New value: update invariants.
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                batch.record_fact(self.table_id, incoming_cause, query)
+                                batch.record_fact_with_terms(
+                                    self.table_id,
+                                    incoming_cause,
+                                    query,
+                                    buf.receipt_terms(proposal_index),
+                                )
                             });
                             let new = if RECEIPTS {
                                 self.data.add_row_with_fact(query, fact)
@@ -1121,7 +1188,11 @@ impl SortedWritesTable {
                                 .then(|| exec_state.active_cause_capability())
                                 .flatten();
                             let merge_cause = receipt_batch.as_mut().map(|batch| {
-                                batch.merge_draft_capability(incoming_cause, prior_fact)
+                                batch.merge_draft_capability_for_table(
+                                    incoming_cause,
+                                    prior_fact,
+                                    self.table_id,
+                                )
                             });
                             if RECEIPTS {
                                 exec_state.set_active_cause_capability(Some(
@@ -1135,12 +1206,13 @@ impl SortedWritesTable {
                             if merged {
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                        batch.record_fact(
+                                        batch.record_fact_with_terms(
                                             self.table_id,
                                             merge_cause
                                                 .expect("receipt merge is missing its capability")
                                                 .id(),
                                             &scratch,
+                                            buf.receipt_terms(proposal_index),
                                         )
                                     });
                                 let new = if RECEIPTS {
@@ -1156,7 +1228,12 @@ impl SortedWritesTable {
                         } else {
                             // New value: update invariants.
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                batch.record_fact(self.table_id, incoming_cause, query)
+                                batch.record_fact_with_terms(
+                                    self.table_id,
+                                    incoming_cause,
+                                    query,
+                                    buf.receipt_terms(proposal_index),
+                                )
                             });
                             let new = if RECEIPTS {
                                 self.data.add_row_with_fact(query, fact)
@@ -1309,20 +1386,18 @@ impl SortedWritesTable {
                                     } else {
                                         FactId::MISSING
                                     };
-                                    let merge_cause = if RECEIPTS {
-                                        receipt_batch
-                                            .as_mut()
-                                            .expect("receipt mode requires an open batch")
-                                            .merge_draft_capability(staged_cause, prior_fact)
-                                    } else {
-                                        unreachable!("ordinary merge has no receipt capability")
-                                    };
+                                    let merge_cause = receipt_batch.as_mut().map(|batch| {
+                                        batch.merge_draft_capability(staged_cause, prior_fact)
+                                    });
                                     let previous_cause = RECEIPTS
                                         .then(|| exec_state.active_cause_capability())
                                         .flatten();
                                     if RECEIPTS {
-                                        exec_state
-                                            .set_active_cause_capability(Some(merge_cause));
+                                        exec_state.set_active_cause_capability(Some(
+                                            merge_cause.expect(
+                                                "receipt merge is missing its capability",
+                                            ),
+                                        ));
                                     }
 
                                     // SAFETY: The safety requirements of
@@ -1336,7 +1411,11 @@ impl SortedWritesTable {
                                         {
                                             let fact = batch.record_fact(
                                                 self.table_id,
-                                                merge_cause.id(),
+                                                merge_cause
+                                                    .expect(
+                                                        "receipt merge is missing its capability",
+                                                    )
+                                                    .id(),
                                                 row,
                                             );
                                             assignments.insert(cur_row, fact);
@@ -1408,25 +1487,26 @@ impl SortedWritesTable {
                             row,
                             cause,
                             |cur, cur_cause, new, incoming_cause, out| {
-                            let merge_cause = if RECEIPTS {
-                                receipt_batch
-                                    .as_mut()
-                                    .expect("receipt mode requires an open batch")
-                                    .merge_drafts_capability(incoming_cause, cur_cause)
-                            } else {
-                                unreachable!("ordinary merge has no receipt capability")
-                            };
+                            let merge_cause = receipt_batch.as_mut().map(|batch| {
+                                batch.merge_drafts_capability(incoming_cause, cur_cause)
+                            });
                             let previous = RECEIPTS
                                 .then(|| exec_state.active_cause_capability())
                                 .flatten();
                             if RECEIPTS {
-                                exec_state.set_active_cause_capability(Some(merge_cause));
+                                exec_state.set_active_cause_capability(Some(
+                                    merge_cause
+                                        .expect("receipt merge is missing its capability"),
+                                ));
                             }
                             let changed = (self.merge)(&mut exec_state, cur, new, out);
                             if RECEIPTS {
                                 exec_state.set_active_cause_capability(previous);
                             }
-                            (changed, merge_cause.id())
+                            (
+                                changed,
+                                merge_cause.map_or(CauseDraftId::UNATTRIBUTED, |cause| cause.id()),
+                            )
                         });
                         if staged.len() >= BATCH_SIZE {
                             flush_staged_outputs!();
@@ -1855,6 +1935,7 @@ struct PendingState {
 struct PendingRowBatch {
     rows: RowBuffer,
     causes: Option<Vec<CauseDraftId>>,
+    row_terms: Option<Vec<Option<Box<[ReplayTermId]>>>>,
 }
 
 impl PendingRowBatch {
@@ -1878,6 +1959,19 @@ impl PendingRowBatch {
             "receipt-enabled table proposal has no exact cause"
         );
         cause
+    }
+
+    fn receipt_terms(&self, index: usize) -> Option<&[ReplayTermId]> {
+        let terms = self
+            .row_terms
+            .as_deref()
+            .expect("receipt-enabled table batch has no structural-term sidecar");
+        assert_eq!(
+            terms.len(),
+            self.rows.len(),
+            "receipt-enabled table batch has incomplete structural-term sidecar"
+        );
+        terms[index].as_deref()
     }
 }
 

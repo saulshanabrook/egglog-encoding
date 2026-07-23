@@ -358,8 +358,9 @@ pub trait Table: Any + Send + Sync {
     /// no-op implementation.
     fn refresh_rows_for_values(
         &mut self,
-        _dirty_ids: &[Value],
+        _summary: &crate::ContainerRebuildSummary,
         _next_ts: Value,
+        _exec_state: Option<&ExecutionState>,
         _transaction: Option<&MutationTransaction>,
     ) -> bool {
         false
@@ -570,6 +571,18 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// Stage an insertion with the exact native cause draft already known by
     /// the current execution lane.
     fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId);
+
+    /// Stage an insertion together with the coherent structural terms that
+    /// produced this exact row. Constructor actions use this when a current
+    /// e-class value already has other structural aliases.
+    fn stage_insert_with_cause_and_terms(
+        &mut self,
+        _row: &[Value],
+        _cause: CauseDraftId,
+        _terms: &[crate::ReplayTermId],
+    ) {
+        panic!("structural row terms staged into a table without receipt support")
+    }
 
     /// Stage a typed equality proposal. Only the native equality table
     /// implements this receipt-only operation.

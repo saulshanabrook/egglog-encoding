@@ -1116,6 +1116,7 @@ mod tests {
                     id,
                     name: "external".into(),
                     output,
+                    replay: None,
                 },
                 args: args.to_vec(),
             });

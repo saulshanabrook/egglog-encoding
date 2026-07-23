@@ -500,11 +500,50 @@ impl Database {
     }
 
     pub fn rebuild_containers(&mut self, table_id: TableId) -> ContainerRebuildSummary {
+        if self.causal_receipts.is_some() {
+            // Exact container rebuild is a prepare/commit operation. Work on a
+            // registry snapshot and hold every staged union behind the same
+            // decision token, so an unsupported collision can neither alter
+            // container identity nor leak a queued UF proposal.
+            let mut working = self.container_values.clone();
+            let transaction = MutationTransaction::pending();
+            let table = &self.tables[table_id].table;
+            let rebuilt = catch_unwind(AssertUnwindSafe(|| {
+                self.with_execution_state(|state| {
+                    state.defer_mutations_until(transaction.clone());
+                    working.rebuild_all(table_id, table, state)
+                })
+            }));
+            return match rebuilt {
+                Ok(summary) => {
+                    self.container_values = working;
+                    let committed = transaction.commit();
+                    assert!(
+                        committed.rebuild_cursors.is_empty(),
+                        "container rebuild transaction recorded a table-rebuild cursor"
+                    );
+                    for table in committed.changed_tables {
+                        self.notification_list.notify(table);
+                    }
+                    summary
+                }
+                Err(payload) => {
+                    transaction.abort();
+                    resume_unwind(payload)
+                }
+            };
+        }
+
         let mut containers = mem::take(&mut self.container_values);
         let table = &self.tables[table_id].table;
-        let res = self.with_execution_state(|state| containers.rebuild_all(table_id, table, state));
+        let rebuilt = catch_unwind(AssertUnwindSafe(|| {
+            self.with_execution_state(|state| containers.rebuild_all(table_id, table, state))
+        }));
         self.container_values = containers;
-        res
+        match rebuilt {
+            Ok(summary) => summary,
+            Err(payload) => resume_unwind(payload),
+        }
     }
 
     /// Apply the value-level rebuild encoded by `func_id` to all the tables in `to_rebuild`.
@@ -581,10 +620,10 @@ impl Database {
     pub fn refresh_rows_for_values(
         &mut self,
         to_refresh: &[TableId],
-        dirty_ids: &[Value],
+        summary: &ContainerRebuildSummary,
         next_ts: Value,
     ) -> bool {
-        if dirty_ids.is_empty() {
+        if summary.dirty_ids().is_empty() {
             return false;
         }
         // This is the follow-up for `ContainerRebuildSummary::dirty_ids()`.
@@ -597,9 +636,14 @@ impl Database {
         if self.causal_receipts.is_some() {
             let transaction = MutationTransaction::pending();
             let refreshed = catch_unwind(AssertUnwindSafe(|| {
-                self.run_on_tables_receipt_safe(to_refresh, &transaction, |_, info, _| {
-                    info.table
-                        .refresh_rows_for_values(dirty_ids, next_ts, Some(&transaction))
+                self.run_on_tables_receipt_safe(to_refresh, &transaction, |_, info, view| {
+                    let exec_state = ExecutionState::new(*view, Default::default());
+                    info.table.refresh_rows_for_values(
+                        summary,
+                        next_ts,
+                        Some(&exec_state),
+                        Some(&transaction),
+                    )
                 });
             }));
             if let Err(payload) = refreshed {
@@ -616,7 +660,8 @@ impl Database {
             }
         } else {
             self.run_on_tables(to_refresh, |_, info, _| {
-                info.table.refresh_rows_for_values(dirty_ids, next_ts, None)
+                info.table
+                    .refresh_rows_for_values(summary, next_ts, None, None)
             });
         }
         self.merge_all()

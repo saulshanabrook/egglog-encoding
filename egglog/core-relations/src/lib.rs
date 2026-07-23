@@ -26,7 +26,9 @@ mod tests;
 pub use action::{ExecutionState, MergeVal, QueryEntry, WriteVal};
 pub use base_values::{BaseValue, BaseValueId, BaseValuePrinter, BaseValues, Boxed};
 pub use common::Value;
-pub use containers::{ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues};
+pub use containers::{
+    CausalContainerKind, ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues,
+};
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GuardedRuleSetRunError,
     GuardedRuleSetRunOutcome, TableId, Variable, make_external_func, plan::PlanStrategy,
@@ -39,13 +41,13 @@ pub use query::{
 };
 pub use receipts::{
     CausalReceipts, CausalWave, CauseDraftId, CheckEndpointSource, CheckReceiptSpec, CheckRoot,
-    EqComponentRef, EqNodeId, EqNodeRecord, EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint,
-    EqualityLandmark, EqualityReason, EqualityRecord, FactCause, FactId, FactRecord, MatchRecord,
-    RebuildDependency, ReceiptCauseDependencies, ReceiptCauseDependency, ReceiptCauseId,
-    ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
-    RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
-    TypedEqualityProposal,
+    ContainerDependency, EqComponentRef, EqNodeId, EqNodeRecord, EqualityEdgeCount, EqualityEdgeId,
+    EqualityEndpoint, EqualityLandmark, EqualityReason, EqualityRecord, FactCause, FactId,
+    FactRecord, MatchRecord, NativeAliasRecord, RebuildDependency, ReceiptCauseDependencies,
+    ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters,
+    ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm,
+    ReplayTermCounters, ReplayTermId, RuleBindingSpec, RuleMatchId, RuleReceiptSpec,
+    SourceReceiptSpec, SourceRef, TypedCellEquality, TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

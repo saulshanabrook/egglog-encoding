@@ -6,8 +6,8 @@ use crate::numeric_id::NumericId;
 use rayon::prelude::*;
 
 use crate::{
-    ColumnId, EqualityEdgeCount, ExecutionState, FactId, Offset, RowId, Subset, Table, TableId,
-    TaggedRowBuffer, Value, WrappedTable,
+    ColumnId, ContainerRebuildSummary, EqualityEdgeCount, ExecutionState, FactId, Offset, RowId,
+    Subset, Table, TableId, TaggedRowBuffer, Value, WrappedTable,
     common::HashSet,
     hash_index::{ColumnIndex, Index},
     offsets::Offsets,
@@ -184,11 +184,12 @@ impl SortedWritesTable {
 
     pub(super) fn refresh_rows_for_values(
         &mut self,
-        dirty_ids: &[Value],
+        summary: &ContainerRebuildSummary,
         next_ts: Value,
+        exec_state: Option<&ExecutionState>,
         transaction: Option<&MutationTransaction>,
     ) -> bool {
-        if dirty_ids.is_empty() || self.to_rebuild.is_empty() {
+        if summary.dirty_ids().is_empty() || self.to_rebuild.is_empty() {
             return false;
         }
         // Reuse the rebuild index to find rows whose rebuildable columns mention
@@ -196,7 +197,7 @@ impl SortedWritesTable {
         self.refresh_rebuild_index();
 
         let mut candidate_rows = HashSet::<RowId>::default();
-        for value in dirty_ids {
+        for value in summary.dirty_ids() {
             let Some(subset) = self.rebuild_index.get_subset(value) else {
                 continue;
             };
@@ -209,9 +210,10 @@ impl SortedWritesTable {
             return false;
         }
 
-        assert!(
-            self.data.fact_ids.is_none(),
-            "causal receipts do not yet support same-ID container row refresh; failing closed"
+        assert_eq!(
+            self.data.fact_ids.is_some(),
+            exec_state.is_some(),
+            "container refresh receipt mode disagrees with the table FactId sidecar"
         );
 
         let mut changed = false;
@@ -221,6 +223,59 @@ impl SortedWritesTable {
             let Some(current_row) = self.data.get_row(row_id) else {
                 continue;
             };
+            let cause = if let Some(exec_state) = exec_state {
+                let receipts = exec_state
+                    .causal_receipts()
+                    .expect("receipt container refresh requires the receipt arena");
+                let mut candidates = Vec::new();
+                for column in &self.to_rebuild {
+                    let value = current_row[column.index()];
+                    let sort = exec_state
+                        .causal_replay_sort(self.table_id, *column)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "container refresh table column {} has no replay sort",
+                                column.index()
+                            )
+                        });
+                    let Some(dependencies) = summary.dirty_dependency_candidates(sort, value)
+                    else {
+                        continue;
+                    };
+                    assert!(
+                        receipts.lookup_term(sort, value).is_some(),
+                        "container refresh value is not installed for its table-column sort"
+                    );
+                    for dependency in dependencies {
+                        assert_eq!(
+                            dependency.dependency.wave,
+                            exec_state.causal_wave(),
+                            "container refresh dependency belongs to another causal wave"
+                        );
+                    }
+                    candidates.push((*column, dependencies));
+                }
+                if candidates.is_empty() {
+                    // A raw rebuild-index hit in another table-column sort is
+                    // not an exact container dependency.
+                    continue;
+                }
+                let prior_fact = self.data.fact_id(row_id).unwrap_or(FactId::MISSING);
+                let Some(cause) = receipts
+                    .container_refresh_draft(prior_fact, &candidates)
+                    .unwrap_or_else(|error| {
+                        panic!("cannot record exact container refresh: {error}")
+                    })
+                else {
+                    // The row owns another structural version of the same raw
+                    // container candidate. It is unaffected by this exact
+                    // dependency.
+                    continue;
+                };
+                Some(cause)
+            } else {
+                None
+            };
             // Preserve the logical row and only advance its sort/timestamp
             // column, so seminaive treats this as a fresh parent-row delta.
             mutation_buf.stage_remove(&current_row[0..self.n_keys]);
@@ -229,12 +284,17 @@ impl SortedWritesTable {
             if let Some(sort_by) = self.sort_by {
                 refreshed_row[sort_by.index()] = next_ts;
             }
-            mutation_buf.stage_insert(&refreshed_row);
+            if let Some(cause) = cause {
+                mutation_buf.stage_insert_with_cause(&refreshed_row, cause);
+            } else {
+                mutation_buf.stage_insert(&refreshed_row);
+            }
             changed = true;
         }
         changed
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rebuild_incremental<const RECEIPTS: bool>(
         &mut self,
         table: &WrappedTable,

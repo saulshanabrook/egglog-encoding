@@ -63,6 +63,10 @@ pub struct DisplacedTable {
     /// Receipt-only mirror from current native roots to immutable explanation
     /// components. This never answers equality or performs a find.
     equality_components: Option<Box<HashMap<Value, TypedComponent>>>,
+    /// One native member for every structural term already present in an
+    /// explanation component. Native find resolves the member's current root;
+    /// keeping one member avoids rewriting the whole component after unions.
+    equality_term_owners: Option<Box<HashMap<crate::ReplayTermId, Value>>>,
 }
 
 struct Canonicalizer<'a> {
@@ -207,6 +211,7 @@ impl Default for DisplacedTable {
             buffered_writes: Arc::new(SegQueue::new()),
             receipts_enabled: false,
             equality_components: None,
+            equality_term_owners: None,
         }
     }
 }
@@ -222,6 +227,7 @@ impl Clone for DisplacedTable {
             buffered_writes: Default::default(),
             receipts_enabled: self.receipts_enabled,
             equality_components: self.equality_components.clone(),
+            equality_term_owners: self.equality_term_owners.clone(),
         }
     }
 }
@@ -231,6 +237,7 @@ struct UfBuffer {
     receipts: ManuallyDrop<Option<Vec<UfProposalReceipt>>>,
     wave: Option<crate::CausalWave>,
     buffered_writes: Weak<SegQueue<UfPendingBatch>>,
+    transaction: Option<crate::table_spec::MutationTransaction>,
 }
 
 #[derive(Clone, Copy)]
@@ -247,6 +254,12 @@ struct TypedComponent {
     component: EqComponentRef,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreflightComponent {
+    Durable(EqComponentRef),
+    Pending(u64),
+}
+
 /// Transaction-local union overlay used to validate an entire receipt-mode
 /// publication before touching the native union-find. It stores only roots
 /// reached by this publication, so preflight is proportional to proposals
@@ -255,6 +268,9 @@ struct TypedComponent {
 struct UnionPreflight {
     parents: HashMap<Value, Value>,
     sorts: HashMap<Value, crate::ReplaySortId>,
+    components: HashMap<Value, PreflightComponent>,
+    term_owners: HashMap<crate::ReplayTermId, Value>,
+    next_component: u64,
     highest_timestamp: Option<Value>,
 }
 
@@ -304,6 +320,102 @@ impl UnionPreflight {
         }
     }
 
+    fn component_for(
+        &self,
+        existing: Option<&HashMap<Value, TypedComponent>>,
+        root: Value,
+        endpoint: Value,
+        sort: crate::ReplaySortId,
+        term: crate::ReplayTermId,
+    ) -> PreflightComponent {
+        self.validate_component(existing, root, endpoint, sort);
+        self.components
+            .get(&root)
+            .copied()
+            .or_else(|| {
+                existing.and_then(|components| {
+                    components
+                        .get(&root)
+                        .map(|component| PreflightComponent::Durable(component.component))
+                })
+            })
+            .unwrap_or(PreflightComponent::Durable(EqComponentRef::Term(term)))
+    }
+
+    fn logical_owner_root(
+        &mut self,
+        existing: Option<&HashMap<crate::ReplayTermId, Value>>,
+        native: &UnionFind,
+        term: crate::ReplayTermId,
+        root: Value,
+        other_root: Value,
+    ) -> Value {
+        let owner = self
+            .term_owners
+            .get(&term)
+            .copied()
+            .or_else(|| existing.and_then(|owners| owners.get(&term).copied()));
+        let Some(owner) = owner else {
+            return root;
+        };
+        let owner_root = self.find(native.find_naive(owner));
+        assert!(
+            owner_root == root || owner_root == other_root,
+            "one structural equality term {term:?} would enter two distinct logical components: \
+             existing owner {owner:?} has root {owner_root:?}, endpoint root is {root:?}, \
+             and other endpoint root is {other_root:?}"
+        );
+        owner_root
+    }
+
+    fn native_alias_component(
+        left: PreflightComponent,
+        right: PreflightComponent,
+        term: crate::ReplayTermId,
+    ) -> PreflightComponent {
+        match (left, right) {
+            (
+                PreflightComponent::Durable(EqComponentRef::Term(left)),
+                PreflightComponent::Durable(EqComponentRef::Term(right)),
+            ) => {
+                assert_eq!(left, term, "native alias left leaf changed terms");
+                assert_eq!(right, term, "native alias right leaf changed terms");
+                PreflightComponent::Durable(EqComponentRef::Term(term))
+            }
+            (
+                node @ (PreflightComponent::Durable(EqComponentRef::Node(_))
+                | PreflightComponent::Pending(_)),
+                PreflightComponent::Durable(EqComponentRef::Term(right)),
+            ) => {
+                assert_eq!(right, term, "native alias singleton changed terms");
+                node
+            }
+            (
+                PreflightComponent::Durable(EqComponentRef::Term(left)),
+                node @ (PreflightComponent::Durable(EqComponentRef::Node(_))
+                | PreflightComponent::Pending(_)),
+            ) => {
+                assert_eq!(left, term, "native alias singleton changed terms");
+                node
+            }
+            (left, right) => {
+                assert_eq!(
+                    left, right,
+                    "distinct native roots claim different logical components for one term"
+                );
+                left
+            }
+        }
+    }
+
+    fn new_component(&mut self) -> PreflightComponent {
+        self.next_component = self
+            .next_component
+            .checked_add(1)
+            .expect("one union publication exceeded u64 component identities");
+        PreflightComponent::Pending(self.next_component)
+    }
+
     fn validate_redundant_component(
         &self,
         existing: Option<&HashMap<Value, TypedComponent>>,
@@ -323,13 +435,25 @@ impl UnionPreflight {
         }
     }
 
-    fn union(&mut self, left: Value, right: Value, sort: crate::ReplaySortId) -> (Value, Value) {
+    fn union(
+        &mut self,
+        left: Value,
+        right: Value,
+        sort: crate::ReplaySortId,
+        component: PreflightComponent,
+    ) -> (Value, Value) {
         let parent = left.min(right);
         let child = left.max(right);
         self.parents.insert(child, parent);
         self.sorts.remove(&child);
         self.sorts.insert(parent, sort);
+        self.components.remove(&child);
+        self.components.insert(parent, component);
         (parent, child)
+    }
+
+    fn note_term_owner(&mut self, term: crate::ReplayTermId, member: Value) {
+        self.term_owners.entry(term).or_insert(member);
     }
 }
 
@@ -356,15 +480,35 @@ impl Drop for UfBuffer {
         // dropping it immediately.
         let to_insert = unsafe { ManuallyDrop::take(&mut self.to_insert) };
         let receipts = unsafe { ManuallyDrop::take(&mut self.receipts) };
-        buffered_writes.push(UfPendingBatch {
+        if to_insert.len() == 0 {
+            return;
+        }
+        let pending = UfPendingBatch {
             rows: to_insert,
             receipts,
             wave: self.wave,
-        });
+        };
+        if let Some(transaction) = self.transaction.take() {
+            transaction.defer_publication(move || buffered_writes.push(pending));
+        } else {
+            buffered_writes.push(pending);
+        }
     }
 }
 
 impl MutationBuffer for UfBuffer {
+    fn defer_until(&mut self, transaction: crate::table_spec::MutationTransaction) {
+        assert_eq!(
+            self.to_insert.len(),
+            0,
+            "a union commit guard must be installed before staging proposals"
+        );
+        assert!(
+            self.transaction.replace(transaction).is_none(),
+            "a union buffer received more than one commit guard"
+        );
+    }
+
     fn stage_insert(&mut self, row: &[Value]) {
         assert!(
             self.receipts.is_none(),
@@ -439,6 +583,7 @@ impl MutationBuffer for UfBuffer {
             receipts: ManuallyDrop::new(self.receipts.as_ref().map(|_| Vec::new())),
             wave: None,
             buffered_writes: self.buffered_writes.clone(),
+            transaction: self.transaction.clone(),
         })
     }
 }
@@ -491,6 +636,7 @@ impl Table for DisplacedTable {
         self.uf.reset();
         self.displaced.clear();
         self.equality_components = None;
+        self.equality_term_owners = None;
     }
 
     fn all(&self) -> Subset {
@@ -647,6 +793,7 @@ impl Table for DisplacedTable {
             receipts: ManuallyDrop::new(self.receipts_enabled.then(Vec::new)),
             wave: None,
             buffered_writes: Arc::downgrade(&self.buffered_writes),
+            transaction: None,
         })
     }
 
@@ -718,16 +865,27 @@ impl Table for DisplacedTable {
                             raw: row[1],
                         },
                     };
+                    let left_owner_root =
+                        self.logical_owner_root(proposal.left.term, left_root, right_root);
+                    let right_owner_root =
+                        self.logical_owner_root(proposal.right.term, right_root, left_root);
                     let (left_component, right_component) = {
-                        let components = self
-                            .equality_components
-                            .get_or_insert_with(|| Box::new(Default::default()));
+                        let components = self.equality_components.get_or_insert_with(Box::default);
                         components.reserve(1);
                         (
-                            Self::component_for(components, left_root, proposal.left),
-                            Self::component_for(components, right_root, proposal.right),
+                            Self::component_for(components, left_owner_root, proposal.left),
+                            Self::component_for(components, right_owner_root, proposal.right),
                         )
                     };
+                    let native_alias_component = (proposal.left.term == proposal.right.term
+                        || left_owner_root == right_owner_root)
+                        .then(|| {
+                            Self::native_alias_component(
+                                left_component,
+                                right_component,
+                                proposal.left.term,
+                            )
+                        });
                     let (parent, child) = self.uf.union(row[0], row[1]);
                     assert!(
                         (parent == left_root && child == right_root)
@@ -735,6 +893,20 @@ impl Table for DisplacedTable {
                         "native union parent/child do not match the captured pre-roots"
                     );
                     self.finish_receipt_insert(row, parent, child);
+                    let term_owners = self.equality_term_owners.get_or_insert_with(Box::default);
+                    term_owners.entry(proposal.left.term).or_insert(row[0]);
+                    term_owners.entry(proposal.right.term).or_insert(row[1]);
+                    if let Some(component) = native_alias_component {
+                        receipt_batch.record_native_alias(proposal, parent, child, cause);
+                        let components = self
+                            .equality_components
+                            .as_mut()
+                            .expect("native alias initialized its component mirror");
+                        components.insert(parent, TypedComponent { sort, component });
+                        components.remove(&child);
+                        self.changed = true;
+                        continue;
+                    }
                     let node = receipt_batch.record_applied_union(
                         proposal,
                         left_component,
@@ -870,23 +1042,75 @@ impl DisplacedTable {
                     );
                 }
                 effective_causes.push(proposal.cause);
-                overlay.validate_component(
-                    self.equality_components.as_deref(),
+                let left_owner_root = overlay.logical_owner_root(
+                    self.equality_term_owners.as_deref(),
+                    &self.uf,
+                    proposal.left_term,
                     left_root,
+                    right_root,
+                );
+                let right_owner_root = overlay.logical_owner_root(
+                    self.equality_term_owners.as_deref(),
+                    &self.uf,
+                    proposal.right_term,
+                    right_root,
+                    left_root,
+                );
+                let left_component = overlay.component_for(
+                    self.equality_components.as_deref(),
+                    left_owner_root,
                     row[0],
                     proposal.sort,
+                    proposal.left_term,
                 );
-                overlay.validate_component(
+                let right_component = overlay.component_for(
                     self.equality_components.as_deref(),
-                    right_root,
+                    right_owner_root,
                     row[1],
                     proposal.sort,
+                    proposal.right_term,
                 );
-                overlay.union(left_root, right_root, proposal.sort);
+                let same_term_alias = proposal.left_term == proposal.right_term;
+                let native_only = same_term_alias || left_owner_root == right_owner_root;
+                let component = if native_only {
+                    UnionPreflight::native_alias_component(
+                        left_component,
+                        right_component,
+                        proposal.left_term,
+                    )
+                } else {
+                    overlay.new_component()
+                };
+                let (parent, _) = overlay.union(left_root, right_root, proposal.sort, component);
+                overlay.note_term_owner(proposal.left_term, parent);
+                overlay.note_term_owner(proposal.right_term, parent);
                 overlay.highest_timestamp = Some(row[2]);
             }
         }
         receipts.validate_equality_causes(&effective_causes);
+    }
+
+    fn logical_owner_root(
+        &self,
+        term: crate::ReplayTermId,
+        root: Value,
+        other_root: Value,
+    ) -> Value {
+        let Some(owner) = self
+            .equality_term_owners
+            .as_deref()
+            .and_then(|owners| owners.get(&term).copied())
+        else {
+            return root;
+        };
+        let owner_root = self.uf.find_naive(owner);
+        assert!(
+            owner_root == root || owner_root == other_root,
+            "one structural equality term {term:?} would enter two distinct logical components: \
+             existing owner {owner:?} has root {owner_root:?}, endpoint root is {root:?}, \
+             and other endpoint root is {other_root:?}"
+        );
+        owner_root
     }
 
     fn component_for(
@@ -906,6 +1130,35 @@ impl DisplacedTable {
             "non-singleton native root is missing its equality component"
         );
         EqComponentRef::Term(endpoint.term)
+    }
+
+    fn native_alias_component(
+        left: EqComponentRef,
+        right: EqComponentRef,
+        term: crate::ReplayTermId,
+    ) -> EqComponentRef {
+        match (left, right) {
+            (EqComponentRef::Term(left), EqComponentRef::Term(right)) => {
+                assert_eq!(left, term, "native alias left leaf changed terms");
+                assert_eq!(right, term, "native alias right leaf changed terms");
+                EqComponentRef::Term(term)
+            }
+            (node @ EqComponentRef::Node(_), EqComponentRef::Term(right)) => {
+                assert_eq!(right, term, "native alias singleton changed terms");
+                node
+            }
+            (EqComponentRef::Term(left), node @ EqComponentRef::Node(_)) => {
+                assert_eq!(left, term, "native alias singleton changed terms");
+                node
+            }
+            (EqComponentRef::Node(left), EqComponentRef::Node(right)) => {
+                assert_eq!(
+                    left, right,
+                    "distinct native roots claim different logical components for one term"
+                );
+                EqComponentRef::Node(left)
+            }
+        }
     }
 
     fn finish_receipt_insert(&mut self, row: &[Value], parent: Value, child: Value) {

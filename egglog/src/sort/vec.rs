@@ -11,6 +11,10 @@ pub struct VecContainer {
 }
 
 impl ContainerValue for VecContainer {
+    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+        Some(CausalContainerKind::Vec)
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         if self.do_rebuild {
             rebuilder.rebuild_slice(&mut self.data)

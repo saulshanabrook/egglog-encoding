@@ -2,8 +2,8 @@ use egglog::ast::{Expr, Literal};
 use egglog::prelude::ContainerSort;
 use egglog::sort::{ContainerValues, F, Presort, ValueRebuilder};
 use egglog::{
-    ArcSort, ContainerValue, EGraph, Term, TermDag, TermId, TypeError, TypeInfo, Value,
-    add_primitive_with_validator,
+    ArcSort, CausalContainerKind, ContainerValue, EGraph, Term, TermDag, TermId, TypeError,
+    TypeInfo, Value, add_primitive_with_validator,
 };
 use std::any::TypeId;
 
@@ -14,6 +14,10 @@ pub struct MaybeContainer {
 }
 
 impl ContainerValue for MaybeContainer {
+    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+        Some(CausalContainerKind::Maybe)
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         if self.do_rebuild {
             if let Some(old) = self.data {

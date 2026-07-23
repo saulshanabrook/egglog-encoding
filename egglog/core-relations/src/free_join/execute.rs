@@ -2575,6 +2575,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
 
     /// Expand the binding sets to individual bindings and
     /// call push_bindings
+    #[allow(clippy::too_many_arguments)]
     fn push_bindings_factorized(
         &mut self,
         action: A,
@@ -3038,6 +3039,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Sized>(
     action_buf: &mut BUF,
     action: A,
@@ -3200,6 +3202,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validated_atom_fact<A: NumericId>(
     action: A,
     atom_id: AtomId,

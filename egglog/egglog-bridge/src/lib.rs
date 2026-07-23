@@ -9,6 +9,7 @@
 //! joins, union-finds, etc.
 
 use std::{
+    any::TypeId,
     fmt::Debug,
     hash::Hash,
     iter, mem,
@@ -337,7 +338,11 @@ impl EGraph {
             move |state, old, new| {
                 if old != new {
                     let next_ts = Value::from_usize(state.read_counter(ts_counter));
-                    state.stage_insert(uf_table, &[old, new, next_ts]);
+                    if state.causal_receipts_enabled() {
+                        state.stage_container_union(uf_table, old, new, next_ts);
+                    } else {
+                        state.stage_insert(uf_table, &[old, new, next_ts]);
+                    }
                     std::cmp::min(old, new)
                 } else {
                     old
@@ -849,8 +854,26 @@ impl EGraph {
         receipts
             .register_table_layout(info.table, &layout)
             .map_err(anyhow::Error::msg)?;
+        if let Some(constructor) = spec.constructor.clone() {
+            receipts
+                .register_table_constructor(info.table, constructor)
+                .map_err(anyhow::Error::msg)?;
+        }
         self.funcs[func].replay = Some(spec);
         Ok(())
+    }
+
+    pub fn register_container_replay_sort(
+        &mut self,
+        sort: ReplaySortId,
+        container_type: TypeId,
+        child_sorts: &[ReplaySortId],
+    ) -> Result<()> {
+        self.causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?
+            .register_container_sort(sort, container_type, child_sorts)
+            .map_err(anyhow::Error::msg)
     }
 
     /// Stage one prevalidated TSV input batch with exact per-line source
@@ -911,7 +934,7 @@ impl EGraph {
                         .lookup_or_insert(state, &row.values)
                         .expect("constructor source insertion must return its result value");
                     receipts
-                        .intern_call(constructor.result_sort, constructor.op, &row.terms, output)
+                        .intern_spec_call(constructor, &row.terms, output)
                         .expect("prevalidated constructor source terms must form a replay call");
                 } else {
                     action.insert(state, row.values.iter().copied());
@@ -1128,10 +1151,9 @@ impl EGraph {
                 // Container rebuild can make a parent row newly matchable without
                 // changing the row's stored id. Re-timestamp those parents so
                 // seminaive sees the newly enabled match on the next pass.
-                let dirty_ids: Vec<Value> = container_rebuild.dirty_ids().iter().copied().collect();
-                let refreshed_rows = self
-                    .db
-                    .refresh_rows_for_values(&tables, &dirty_ids, next_ts);
+                let refreshed_rows =
+                    self.db
+                        .refresh_rows_for_values(&tables, &container_rebuild, next_ts);
                 self.inc_ts();
                 if !table_rebuild && !refreshed_rows && !container_rebuild.changed() {
                     break;
@@ -1931,6 +1953,7 @@ impl MergeAction {
 }
 
 impl ResolvedMergeAction {
+    #[allow(clippy::too_many_arguments)]
     fn run(
         &self,
         state: &mut ExecutionState,

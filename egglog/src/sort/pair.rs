@@ -9,6 +9,10 @@ pub struct PairContainer {
 }
 
 impl ContainerValue for PairContainer {
+    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+        Some(CausalContainerKind::Pair)
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         let mut changed = false;
         if self.do_rebuild_first {

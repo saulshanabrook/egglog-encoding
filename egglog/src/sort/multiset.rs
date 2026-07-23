@@ -27,6 +27,10 @@ fn multiset_term_children(termdag: &TermDag, term: TermId) -> Option<Vec<TermId>
 }
 
 impl ContainerValue for MultiSetContainer {
+    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+        Some(vec![0; self.data.len()].into_boxed_slice())
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         // If the contents are an eq-sort then we want to rebuild
         if self.do_rebuild {

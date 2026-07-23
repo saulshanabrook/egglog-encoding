@@ -36,4 +36,5 @@ divan = { workspace = true }
 glob = "0.3.1"
 insta = "1.40"
 libtest-mimic = "0.8.1"
+rayon = { workspace = true }
 serde_json = { workspace = true }

@@ -83,7 +83,7 @@ struct Args {
     /// Enable proof testing, turning all `check` statements into `prove` statements
     #[clap(long)]
     proof_testing: bool,
-    /// Record compact native causal receipts for supported source actions
+    /// Record compact native causal receipts for supported execution semantics
     #[clap(long)]
     causal_receipts: bool,
 }

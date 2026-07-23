@@ -7,6 +7,7 @@
 //! segment.
 
 use std::{
+    any::TypeId,
     mem,
     sync::{
         Arc, Mutex,
@@ -131,6 +132,13 @@ pub struct ReplayConstructorSpec {
     pub result_sort: ReplaySortId,
     pub op: ReplayOpId,
     pub child_sorts: Box<[ReplaySortId]>,
+    /// Promote successful calls before later query guards run. Container
+    /// primitives need this because native interning is globally visible even
+    /// when the surrounding rule match subsequently fails.
+    pub promote_immediately: bool,
+    /// Physical registry type for a container result. This is intentionally
+    /// absent for ordinary e-class constructors and base-value primitives.
+    container_type: Option<TypeId>,
 }
 
 impl ReplayConstructorSpec {
@@ -143,7 +151,19 @@ impl ReplayConstructorSpec {
             result_sort,
             op,
             child_sorts: child_sorts.into_iter().collect(),
+            promote_immediately: false,
+            container_type: None,
         }
+    }
+
+    pub fn with_immediate_promotion(mut self) -> Self {
+        self.promote_immediately = true;
+        self
+    }
+
+    pub fn with_container_type(mut self, container_type: TypeId) -> Self {
+        self.container_type = Some(container_type);
+        self
     }
 }
 
@@ -167,7 +187,12 @@ struct ReplayTermStore {
     by_node: DashMap<ReplayTerm, ReplayTermId>,
     nodes: DashMap<ReplayTermId, ReplayTerm>,
     by_value: DashMap<(ReplaySortId, Value), ReplayTermId>,
+    sorts_by_value: DashMap<Value, SmallVec<[ReplaySortId; 2]>>,
+    original_value_by_term: DashMap<(ReplaySortId, ReplayTermId), Value>,
     table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
+    table_constructors: DashMap<TableId, ReplayConstructorSpec>,
+    container_type_by_sort: DashMap<ReplaySortId, TypeId>,
+    container_child_sorts: DashMap<ReplaySortId, Arc<[ReplaySortId]>>,
 }
 
 impl ReplayTermStore {
@@ -190,6 +215,10 @@ impl ReplayTermStore {
         self.nodes.get(&id).map(|node| node.clone())
     }
 
+    fn lookup_node(&self, node: &ReplayTerm) -> Option<ReplayTermId> {
+        self.by_node.get(node).map(|term| *term)
+    }
+
     fn install_value(
         &self,
         sort: ReplaySortId,
@@ -203,17 +232,73 @@ impl ReplayTermStore {
             return Err("ReplayTermId sort does not match its value sort");
         }
         drop(node);
-        match self.by_value.entry((sort, value)) {
+        let installed = match self.by_value.entry((sort, value)) {
             Entry::Occupied(entry) => Ok(*entry.get()),
             Entry::Vacant(entry) => {
                 entry.insert(term);
                 Ok(term)
             }
+        }?;
+        let mut sorts = self.sorts_by_value.entry(value).or_default();
+        if !sorts.contains(&sort) {
+            sorts.push(sort);
         }
+        self.original_value_by_term
+            .entry((sort, term))
+            .or_insert(value);
+        Ok(installed)
     }
 
     fn lookup(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
         self.by_value.get(&(sort, value)).map(|term| *term)
+    }
+
+    fn common_compatible_call_sorts(
+        &self,
+        left: Value,
+        right: Value,
+    ) -> Result<SmallVec<[ReplaySortId; 2]>, &'static str> {
+        let Some(left_sorts) = self.sorts_by_value.get(&left) else {
+            return Err("left container id has no installed replay sort");
+        };
+        let Some(right_sorts) = self.sorts_by_value.get(&right) else {
+            return Err("right container id has no installed replay sort");
+        };
+        let common = left_sorts
+            .iter()
+            .copied()
+            .filter(|sort| right_sorts.contains(sort))
+            .filter(|sort| {
+                let Some(left_term) = self.lookup(*sort, left) else {
+                    return false;
+                };
+                let Some(right_term) = self.lookup(*sort, right) else {
+                    return false;
+                };
+                matches!(
+                    (self.node(left_term), self.node(right_term)),
+                    (
+                        Some(ReplayTerm::Call {
+                            op: left_op,
+                            children: left_children,
+                            ..
+                        }),
+                        Some(ReplayTerm::Call {
+                            op: right_op,
+                            children: right_children,
+                            ..
+                        })
+                    ) if left_op == right_op && left_children.len() == right_children.len()
+                )
+            })
+            .collect::<SmallVec<[_; 2]>>();
+        Ok(common)
+    }
+
+    fn original_value(&self, sort: ReplaySortId, term: ReplayTermId) -> Option<Value> {
+        self.original_value_by_term
+            .get(&(sort, term))
+            .map(|value| *value)
     }
 
     fn table_layout(&self, table: TableId) -> Option<Arc<[Option<ReplaySortId>]>> {
@@ -232,6 +317,63 @@ impl ReplayTermStore {
             Entry::Occupied(_) => Err("table already has a different replay-term layout"),
             Entry::Vacant(entry) => {
                 entry.insert(sorts.into());
+                Ok(())
+            }
+        }
+    }
+
+    fn register_table_constructor(
+        &self,
+        table: TableId,
+        constructor: ReplayConstructorSpec,
+    ) -> Result<(), &'static str> {
+        match self.table_constructors.entry(table) {
+            Entry::Occupied(entry) if entry.get() == &constructor => Ok(()),
+            Entry::Occupied(_) => Err("table already has different replay constructor metadata"),
+            Entry::Vacant(entry) => {
+                entry.insert(constructor);
+                Ok(())
+            }
+        }
+    }
+
+    fn register_container_type(
+        &self,
+        constructor: &ReplayConstructorSpec,
+    ) -> Result<(), &'static str> {
+        let Some(container_type) = constructor.container_type else {
+            return Ok(());
+        };
+        match self.container_type_by_sort.entry(constructor.result_sort) {
+            Entry::Occupied(entry) if *entry.get() == container_type => Ok(()),
+            Entry::Occupied(_) => Err("replay sort has conflicting physical container types"),
+            Entry::Vacant(entry) => {
+                entry.insert(container_type);
+                Ok(())
+            }
+        }
+    }
+
+    fn register_container_sort(
+        &self,
+        sort: ReplaySortId,
+        container_type: TypeId,
+        child_sorts: &[ReplaySortId],
+    ) -> Result<(), &'static str> {
+        match self.container_type_by_sort.entry(sort) {
+            Entry::Occupied(entry) if *entry.get() == container_type => {}
+            Entry::Occupied(_) => {
+                return Err("replay sort has conflicting physical container types");
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(container_type);
+            }
+        }
+        match self.container_child_sorts.entry(sort) {
+            Entry::Occupied(entry) if entry.get().as_ref() == child_sorts => Ok(()),
+            Entry::Occupied(_) => Err("replay container sort has conflicting child sorts"),
+            Entry::Vacant(entry) => {
+                entry.insert(child_sorts.into());
                 Ok(())
             }
         }
@@ -271,6 +413,53 @@ impl ReplayTermStore {
         Ok(())
     }
 
+    fn validate_row_terms(
+        &self,
+        table: TableId,
+        row: &[Value],
+        terms: &[ReplayTermId],
+    ) -> Result<(), &'static str> {
+        let Some(layout) = self.table_layouts.get(&table) else {
+            return Err("table has no replay-term layout");
+        };
+        if layout.len() != row.len() || row.len() != terms.len() {
+            return Err("committed row, structural terms, and table layout have different arities");
+        }
+        for (sort, term) in layout.iter().copied().zip(terms) {
+            match sort {
+                Some(sort) => {
+                    let node = self
+                        .nodes
+                        .get(term)
+                        .ok_or("committed row owns an unknown ReplayTermId")?;
+                    if node.sort() != sort {
+                        return Err("committed row term has the wrong logical sort");
+                    }
+                }
+                None if !term.is_missing() => {
+                    return Err("engine-only committed row column has a replay term");
+                }
+                None => {}
+            }
+        }
+        if let Some(constructor) = self.table_constructors.get(&table) {
+            let output_column = constructor.child_sorts.len();
+            let output_term = *terms
+                .get(output_column)
+                .ok_or("constructor row has no structural result term")?;
+            let Some(ReplayTerm::Call { sort, op, children }) = self.node(output_term) else {
+                return Err("constructor row result does not name a structural Call");
+            };
+            if sort != constructor.result_sort
+                || op != constructor.op
+                || children.as_ref() != &terms[..output_column]
+            {
+                return Err("constructor row terms are not one coherent structural Call");
+            }
+        }
+        Ok(())
+    }
+
     fn append_row_terms(
         &self,
         table: TableId,
@@ -294,6 +483,42 @@ impl ReplayTermStore {
             } else {
                 out.push(ReplayTermId::MISSING);
             }
+        }
+        if let Some(constructor) = self.table_constructors.get(&table) {
+            let output_column = constructor.child_sorts.len();
+            let output = *row
+                .get(output_column)
+                .ok_or("constructor row has no result column")?;
+            let output_term = self
+                .lookup(constructor.result_sort, output)
+                .ok_or("constructor row result has no producer-installed ReplayTermId")?;
+            let Some(ReplayTerm::Call { sort, op, children }) = self.node(output_term) else {
+                out.truncate(start);
+                return Err("constructor row result does not name a structural Call");
+            };
+            if sort != constructor.result_sort
+                || op != constructor.op
+                || children.len() != constructor.child_sorts.len()
+            {
+                out.truncate(start);
+                return Err("constructor row result has incompatible structural Call metadata");
+            }
+            for (child, expected_sort) in children
+                .iter()
+                .copied()
+                .zip(constructor.child_sorts.iter().copied())
+            {
+                let child_sort = self
+                    .node(child)
+                    .ok_or("constructor row Call has an unknown child ReplayTermId")?
+                    .sort();
+                if child_sort != expected_sort {
+                    out.truncate(start);
+                    return Err("constructor row Call child has the wrong logical sort");
+                }
+            }
+            out[start..start + output_column].copy_from_slice(&children);
+            out[start + output_column] = output_term;
         }
         Ok(FlatRange::new(start, row.len()))
     }
@@ -341,6 +566,7 @@ pub enum CheckEndpointSource {
         premise: usize,
         column: usize,
         value: QueryEntry,
+        constructor: Option<(ReplaySortId, ReplayOpId)>,
     },
     Current {
         value: QueryEntry,
@@ -354,6 +580,22 @@ impl CheckEndpointSource {
             premise,
             column,
             value,
+            constructor: None,
+        }
+    }
+
+    pub fn premise_constructor(
+        premise: usize,
+        column: usize,
+        value: QueryEntry,
+        sort: ReplaySortId,
+        op: ReplayOpId,
+    ) -> Self {
+        Self::Premise {
+            premise,
+            column,
+            value,
+            constructor: Some((sort, op)),
         }
     }
 
@@ -499,7 +741,15 @@ pub(crate) enum ActionReceiptKind {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum CheckTermSource {
-    Premise { premise: usize, column: usize },
+    Premise {
+        premise: usize,
+        column: usize,
+    },
+    Constructor {
+        premise: usize,
+        input_columns: usize,
+        op: ReplayOpId,
+    },
     Current,
 }
 
@@ -541,11 +791,41 @@ pub struct RebuildDependency {
     pub equalities: EqualityLandmark,
 }
 
+/// Exact positional child changes produced by one serial container rebuild.
+///
+/// The container's structural replay term remains immutable. Re-executing the
+/// child equalities makes that same term denote the rebuilt native container.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ContainerDependency {
+    pub wave: CausalWave,
+    pub equalities: EqualityLandmark,
+}
+
+/// Receipt-only logical identity for one container version. Public snapshots
+/// expose the dependency itself; native refresh bookkeeping additionally
+/// needs the exact structural producer that owned the raw container id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ContainerVersionDependency {
+    pub(crate) outer: EqualityEndpoint,
+    pub(crate) dependency: ContainerDependency,
+}
+
+#[derive(Clone)]
+pub(crate) struct ContainerParentCandidate {
+    pub(crate) endpoint: EqualityEndpoint,
+    pub(crate) child_sorts: Arc<[ReplaySortId]>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FactCause {
     Source(SourceRef),
     Rule(RuleMatchId),
     Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        equalities: EqualityLandmark,
+    },
+    ContainerRefresh {
         wave: CausalWave,
         prior_fact: FactId,
         equalities: EqualityLandmark,
@@ -560,7 +840,9 @@ pub enum FactCause {
 impl FactCause {
     pub fn rule_match(&self) -> Option<RuleMatchId> {
         match self {
-            FactCause::Source(_) | FactCause::Rebuild { .. } => None,
+            FactCause::Source(_)
+            | FactCause::Rebuild { .. }
+            | FactCause::ContainerRefresh { .. } => None,
             FactCause::Rule(id) => Some(*id),
             FactCause::Merge { .. } => None,
         }
@@ -616,6 +898,15 @@ pub enum ReceiptCauseRecord {
         prior_fact: FactId,
         equalities: EqualityLandmark,
     },
+    ContainerCanonicalize {
+        wave: CausalWave,
+        equalities: EqualityLandmark,
+    },
+    ContainerRefresh {
+        wave: CausalWave,
+        prior_fact: FactId,
+        equalities: EqualityLandmark,
+    },
     Merge {
         incoming: ReceiptCauseId,
         prior: ReceiptCausePrior,
@@ -628,6 +919,17 @@ pub enum ReceiptCauseDependency<'a> {
     Rule(RuleMatchId),
     Fact(FactId),
     Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: &'a [TypedCellEquality],
+    },
+    ContainerCanonicalize {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+        equalities: &'a [TypedCellEquality],
+    },
+    ContainerRefresh {
         wave: CausalWave,
         prior_fact: FactId,
         as_of_edges: EqualityEdgeCount,
@@ -668,6 +970,25 @@ impl<'a> Iterator for ReceiptCauseDependencies<'a> {
                             equalities,
                         } => {
                             return Some(ReceiptCauseDependency::Rebuild {
+                                wave: *wave,
+                                prior_fact: *prior_fact,
+                                as_of_edges: equalities.as_of_edges,
+                                equalities: &equalities.pairs,
+                            });
+                        }
+                        ReceiptCauseRecord::ContainerCanonicalize { wave, equalities } => {
+                            return Some(ReceiptCauseDependency::ContainerCanonicalize {
+                                wave: *wave,
+                                as_of_edges: equalities.as_of_edges,
+                                equalities: &equalities.pairs,
+                            });
+                        }
+                        ReceiptCauseRecord::ContainerRefresh {
+                            wave,
+                            prior_fact,
+                            equalities,
+                        } => {
+                            return Some(ReceiptCauseDependency::ContainerRefresh {
                                 wave: *wave,
                                 prior_fact: *prior_fact,
                                 as_of_edges: equalities.as_of_edges,
@@ -746,6 +1067,20 @@ pub struct EqualityRecord {
     pub reason: EqualityReason,
 }
 
+/// One effective native union between distinct runtime ids whose endpoint
+/// terms already belong to the same logical equality component. It is
+/// attributable but adds no new logical equality, so it deliberately does
+/// not allocate an equality-forest edge.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativeAliasRecord {
+    pub wave: CausalWave,
+    pub left: EqualityEndpoint,
+    pub right: EqualityEndpoint,
+    pub native_parent: crate::Value,
+    pub native_child: crate::Value,
+    pub reason: EqualityReason,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReceiptCounters {
     pub provisional_matches: u64,
@@ -757,12 +1092,20 @@ pub struct ReceiptCounters {
     pub promotion_misses: u64,
     pub unattributed_commits: u64,
     pub redundant_unions: u64,
+    /// Effective native unions that added no logical equality edge.
+    pub native_alias_unions: u64,
     /// Semantic rows for which an exact rebuild cause was captured.
     pub rebuild_causes: u64,
     /// Changed typed cells stored across those rebuild causes.
     pub rebuild_equalities: u64,
     /// Logical bytes of rebuild cause and changed-cell payload captured.
     pub rebuild_bytes: u64,
+    /// Container canonicalization and same-ID parent-refresh causes retained.
+    pub container_causes: u64,
+    /// Positional child equality pairs stored across container causes.
+    pub container_equalities: u64,
+    /// Logical bytes of container cause and child-pair payload captured.
+    pub container_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -771,6 +1114,7 @@ pub struct ReceiptSnapshot {
     pub matches: Vec<MatchRecord>,
     pub equality_nodes: Vec<EqNodeRecord>,
     pub equalities: Vec<EqualityRecord>,
+    pub native_aliases: Vec<NativeAliasRecord>,
     pub causes: Vec<ReceiptCauseRecord>,
     pub check_roots: Vec<CheckRoot>,
     pub counters: ReceiptCounters,
@@ -877,8 +1221,8 @@ impl<'a> EqualityExplanationIndex<'a> {
         let mut term_positions = HashMap::default();
         let mut node_intervals = vec![None; cutoff];
         let mut next_position = 0usize;
-        for root_index in 0..cutoff {
-            if node_parents[root_index].is_some() {
+        for (root_index, parent) in node_parents.iter().enumerate().take(cutoff) {
+            if parent.is_some() {
                 continue;
             }
             let root = EqNodeId::new(root_index as u64 + 1);
@@ -1166,6 +1510,17 @@ enum CauseDraft {
         as_of_edges: EqualityEdgeCount,
         equalities: FlatRange,
     },
+    ContainerCanonicalize {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
+    ContainerRefresh {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
     Merge {
         incoming: CauseDraftId,
         prior: PriorVersion,
@@ -1203,6 +1558,10 @@ impl EqualityCauseError {
 pub(crate) enum EqualityCauseSummary {
     Source,
     Rule,
+    Container {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+    },
     Rebuild {
         wave: CausalWave,
         as_of_edges: EqualityEdgeCount,
@@ -1232,6 +1591,13 @@ impl EqualityCauseSummary {
                     }
                 }
             }
+            CauseDraft::ContainerCanonicalize {
+                wave, as_of_edges, ..
+            } => Self::Container {
+                wave: *wave,
+                as_of_edges: *as_of_edges,
+            },
+            CauseDraft::ContainerRefresh { .. } => Self::Invalid(EqualityCauseError::Mixed),
             CauseDraft::Merge { .. } => {
                 unreachable!("merge summaries require their child summaries")
             }
@@ -1244,6 +1610,7 @@ impl EqualityCauseSummary {
         }
         match self {
             Self::Rule => Self::Rule,
+            Self::Container { .. } => Self::Invalid(EqualityCauseError::Mixed),
             Self::Rebuild {
                 wave, as_of_edges, ..
             } => Self::Rebuild {
@@ -1277,6 +1644,9 @@ impl EqualityCauseSummary {
             },
             (Self::Invalid(error), _) | (_, Self::Invalid(error)) => Self::Invalid(error),
             (Self::Source, _) | (_, Self::Source) => Self::Invalid(EqualityCauseError::Source),
+            (Self::Container { .. }, _) | (_, Self::Container { .. }) => {
+                Self::Invalid(EqualityCauseError::Mixed)
+            }
             (Self::Rebuild { .. }, Self::Rebuild { .. }) => {
                 Self::Invalid(EqualityCauseError::LandmarkMismatch)
             }
@@ -1286,7 +1656,7 @@ impl EqualityCauseSummary {
 
     pub(crate) fn validate(self) -> Result<(), &'static str> {
         match self {
-            Self::Rule => Ok(()),
+            Self::Rule | Self::Container { .. } => Ok(()),
             Self::Rebuild { complete: true, .. } => Ok(()),
             Self::Rebuild { .. } => {
                 Err("unsupported equality cause: a direct rebuild cannot justify a union")
@@ -1353,6 +1723,17 @@ enum DurableCause {
         as_of_edges: EqualityEdgeCount,
         equalities: FlatRange,
     },
+    ContainerCanonicalize {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
+    ContainerRefresh {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
     Merge {
         incoming: DurableCauseId,
         prior: DurablePrior,
@@ -1397,6 +1778,22 @@ struct PendingEquality {
 #[derive(Clone, Debug)]
 struct DurableEquality {
     node: EqNodeRecord,
+    proposal: AppliedEqualityProposal,
+    native_parent: crate::Value,
+    native_child: crate::Value,
+    reason: EqualityReason,
+}
+
+#[derive(Clone, Debug)]
+struct PendingNativeAlias {
+    proposal: AppliedEqualityProposal,
+    native_parent: crate::Value,
+    native_child: crate::Value,
+    cause: CauseDraftId,
+}
+
+#[derive(Clone, Debug)]
+struct DurableNativeAlias {
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
     native_child: crate::Value,
@@ -1470,6 +1867,7 @@ struct ProvisionalArena {
     fact_terms: Vec<ReplayTermId>,
     rebuild_equalities: Vec<TypedCellEquality>,
     pending_equalities: IdSegment<PendingEquality>,
+    pending_native_aliases: Vec<PendingNativeAlias>,
 }
 
 impl ProvisionalArena {
@@ -1482,6 +1880,7 @@ impl ProvisionalArena {
             && self.fact_terms.is_empty()
             && self.rebuild_equalities.is_empty()
             && self.pending_equalities.present() == 0
+            && self.pending_native_aliases.is_empty()
     }
 }
 
@@ -1504,6 +1903,7 @@ struct ReceiptArena {
     durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<DurableCause>,
     durable_equalities: Vec<DurableEquality>,
+    durable_native_aliases: Vec<DurableNativeAlias>,
     check_roots: HashMap<u32, CheckRoot>,
     counters: ReceiptCounters,
 }
@@ -1580,23 +1980,37 @@ impl ReceiptArena {
     fn unfold_cause(&self, root: DurableCauseId) -> Option<FactCause> {
         let root_node = self.durable_causes.get((root.get() - 1) as usize)?;
         match root_node {
-            DurableCause::Source(source) => return Some(FactCause::Source(source.clone())),
-            DurableCause::Rule(rule) => return Some(FactCause::Rule(*rule)),
+            DurableCause::Source(source) => Some(FactCause::Source(source.clone())),
+            DurableCause::Rule(rule) => Some(FactCause::Rule(*rule)),
             DurableCause::Rebuild {
                 wave,
                 prior_fact,
                 as_of_edges,
                 equalities,
-            } => {
-                return Some(FactCause::Rebuild {
-                    wave: *wave,
-                    prior_fact: *prior_fact,
-                    equalities: EqualityLandmark {
-                        as_of_edges: *as_of_edges,
-                        pairs: self.durable_rebuild_equalities[equalities.as_range()].into(),
-                    },
-                });
+            } => Some(FactCause::Rebuild {
+                wave: *wave,
+                prior_fact: *prior_fact,
+                equalities: EqualityLandmark {
+                    as_of_edges: *as_of_edges,
+                    pairs: self.durable_rebuild_equalities[equalities.as_range()].into(),
+                },
+            }),
+            DurableCause::ContainerCanonicalize { .. } => {
+                panic!("container canonicalization cannot justify an effective table fact")
             }
+            DurableCause::ContainerRefresh {
+                wave,
+                prior_fact,
+                as_of_edges,
+                equalities,
+            } => Some(FactCause::ContainerRefresh {
+                wave: *wave,
+                prior_fact: *prior_fact,
+                equalities: EqualityLandmark {
+                    as_of_edges: *as_of_edges,
+                    pairs: self.durable_rebuild_equalities[equalities.as_range()].into(),
+                },
+            }),
             DurableCause::Merge { .. } => Some(FactCause::Merge { cause: root }),
         }
     }
@@ -1610,6 +2024,16 @@ impl ReceiptArena {
         match (&self.durable_causes[(root.get() - 1) as usize], summary) {
             (DurableCause::Rule(rule), _) => EqualityReason::RuleUnion(*rule),
             (_, EqualityCauseSummary::Rule) => EqualityReason::MergeFn { cause: root },
+            (
+                _,
+                EqualityCauseSummary::Container {
+                    wave, as_of_edges, ..
+                },
+            ) => EqualityReason::Congruence {
+                cause: root,
+                wave,
+                as_of_edges,
+            },
             (
                 _,
                 EqualityCauseSummary::Rebuild {
@@ -1684,6 +2108,7 @@ pub(crate) struct ReceiptBatch {
     rebuild_term_ranges: HashMap<CauseDraftId, (TableId, FlatRange)>,
     rebuild_terms: Vec<ReplayTermId>,
     equalities: Vec<(EqNodeId, PendingEquality)>,
+    native_aliases: Vec<PendingNativeAlias>,
     redundant_unions: u64,
     unattributed_commits: u64,
     published: bool,
@@ -1701,6 +2126,7 @@ impl ReceiptBatch {
             rebuild_term_ranges: HashMap::default(),
             rebuild_terms: Vec::new(),
             equalities: Vec::new(),
+            native_aliases: Vec::new(),
             redundant_unions: 0,
             unattributed_commits: 0,
             published: false,
@@ -1728,6 +2154,47 @@ impl ReceiptBatch {
             },
             equality,
         )
+    }
+
+    pub(crate) fn merge_draft_capability_for_table(
+        &mut self,
+        incoming: CauseDraftId,
+        prior_fact: FactId,
+        table: TableId,
+    ) -> CauseCapability {
+        let capability = self.merge_draft_capability(incoming, prior_fact);
+        if self
+            .shared
+            .replay_terms
+            .table_constructors
+            .contains_key(&table)
+        {
+            let local = self
+                .facts
+                .iter()
+                .find(|(fact, _)| *fact == prior_fact)
+                .map(|(_, fact)| (fact.table, self.fact_terms[fact.terms.as_range()].to_vec()));
+            let (prior_table, terms) = if let Some(local) = local {
+                local
+            } else {
+                let shared = Arc::clone(&self.shared);
+                let arena = shared.arena.lock().unwrap();
+                let (prior_table, terms) = arena
+                    .fact_terms(prior_fact)
+                    .expect("constructor merge references a missing prior FactId");
+                (prior_table, terms.to_vec())
+            };
+            assert_eq!(prior_table, table, "constructor merge changed tables");
+            let range = FlatRange::new(self.rebuild_terms.len(), terms.len());
+            self.rebuild_terms.extend_from_slice(&terms);
+            assert!(
+                self.rebuild_term_ranges
+                    .insert(capability.id(), (table, range))
+                    .is_none(),
+                "duplicate constructor merge-term preload"
+            );
+        }
+        capability
     }
 
     #[cfg(test)]
@@ -1791,8 +2258,10 @@ impl ReceiptBatch {
                 match arena.cause_summary(*cause) {
                     Ok(summary) => {
                         self.draft_summaries.insert(*cause, summary);
-                        if let Ok(CauseDraft::Rebuild { prior_fact, .. }) =
-                            arena.cause_draft(*cause)
+                        if let Ok(
+                            CauseDraft::Rebuild { prior_fact, .. }
+                            | CauseDraft::ContainerRefresh { prior_fact, .. },
+                        ) = arena.cause_draft(*cause)
                         {
                             let Some((table, terms)) = arena.fact_terms(*prior_fact) else {
                                 error = Some("rebuild cause references a missing prior FactId");
@@ -1833,6 +2302,16 @@ impl ReceiptBatch {
         cause: CauseDraftId,
         row: &[Value],
     ) -> FactId {
+        self.record_fact_with_terms(table, cause, row, None)
+    }
+
+    pub(crate) fn record_fact_with_terms(
+        &mut self,
+        table: TableId,
+        cause: CauseDraftId,
+        row: &[Value],
+        explicit_terms: Option<&[ReplayTermId]>,
+    ) -> FactId {
         assert!(
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
@@ -1855,11 +2334,23 @@ impl ReceiptBatch {
                 let range = FlatRange::new(self.fact_terms.len(), terms.len());
                 self.fact_terms.extend_from_slice(terms);
                 range
+            } else if let Some(terms) = explicit_terms {
+                self.shared
+                    .replay_terms
+                    .validate_row_terms(table, row, terms)
+                    .unwrap_or_else(|error| {
+                        panic!("cannot record explicit committed fact terms: {error}")
+                    });
+                let range = FlatRange::new(self.fact_terms.len(), terms.len());
+                self.fact_terms.extend_from_slice(terms);
+                range
             } else {
                 self.shared
                     .replay_terms
                     .append_row_terms(table, row, &mut self.fact_terms)
-                    .unwrap_or_else(|error| panic!("cannot record exact committed fact: {error}"))
+                    .unwrap_or_else(|error| {
+                        panic!("cannot record exact committed fact for {table:?}: {error}")
+                    })
             };
         let id = FactId::new(ReceiptShared::alloc_u64(&self.shared.next_fact, 1));
         self.facts.push((
@@ -1909,13 +2400,41 @@ impl ReceiptBatch {
         id
     }
 
+    pub(crate) fn record_native_alias(
+        &mut self,
+        proposal: AppliedEqualityProposal,
+        native_parent: crate::Value,
+        native_child: crate::Value,
+        cause: CauseDraftId,
+    ) {
+        assert!(
+            !cause.is_unattributed(),
+            "native alias union is missing exact causal attribution"
+        );
+        assert_eq!(
+            proposal.left.sort, proposal.right.sort,
+            "native alias endpoints cross logical sorts"
+        );
+        assert_ne!(
+            native_parent, native_child,
+            "native alias did not merge distinct runtime roots"
+        );
+        self.native_aliases.push(PendingNativeAlias {
+            proposal,
+            native_parent,
+            native_child,
+            cause,
+        });
+    }
+
     pub(crate) fn publish(mut self) {
         {
             let mut arena = self.shared.arena.lock().unwrap();
             let mut added_bytes = self.drafts.len() * mem::size_of::<CauseDraft>()
                 + self.facts.len() * mem::size_of::<PendingFact>()
                 + self.fact_terms.len() * mem::size_of::<ReplayTermId>()
-                + self.equalities.len() * mem::size_of::<PendingEquality>();
+                + self.equalities.len() * mem::size_of::<PendingEquality>()
+                + self.native_aliases.len() * mem::size_of::<PendingNativeAlias>();
             for (id, draft) in self.drafts.drain(..) {
                 let equality = self
                     .draft_summaries
@@ -1950,6 +2469,10 @@ impl ReceiptBatch {
                     .pending_equalities
                     .install(id.get(), equality);
             }
+            arena
+                .provisional
+                .pending_native_aliases
+                .append(&mut self.native_aliases);
             arena.counters.redundant_unions += self.redundant_unions;
             arena.counters.unattributed_commits += self.unattributed_commits;
             arena.add_live_bytes(added_bytes);
@@ -1968,6 +2491,7 @@ impl Drop for ReceiptBatch {
             || !self.facts.is_empty()
             || !self.fact_terms.is_empty()
             || !self.equalities.is_empty()
+            || !self.native_aliases.is_empty()
         {
             self.shared
                 .abandoned_fragments
@@ -1982,12 +2506,33 @@ impl Drop for ReceiptBatch {
 pub struct CausalReceipts(Arc<ReceiptShared>);
 
 impl CausalReceipts {
+    pub fn register_container_sort(
+        &self,
+        sort: ReplaySortId,
+        container_type: TypeId,
+        child_sorts: &[ReplaySortId],
+    ) -> Result<(), &'static str> {
+        self.0
+            .replay_terms
+            .register_container_sort(sort, container_type, child_sorts)
+    }
+
     pub fn register_table_layout(
         &self,
         table: TableId,
         sorts: &[Option<ReplaySortId>],
     ) -> Result<(), &'static str> {
         self.0.replay_terms.register_table_layout(table, sorts)
+    }
+
+    pub fn register_table_constructor(
+        &self,
+        table: TableId,
+        constructor: ReplayConstructorSpec,
+    ) -> Result<(), &'static str> {
+        self.0
+            .replay_terms
+            .register_table_constructor(table, constructor)
     }
 
     pub(crate) fn table_column_sort(&self, table: TableId, column: usize) -> Option<ReplaySortId> {
@@ -1998,6 +2543,10 @@ impl CausalReceipts {
             .get(column)
             .copied()
             .flatten()
+    }
+
+    pub(crate) fn table_has_constructor_terms(&self, table: TableId) -> bool {
+        self.0.replay_terms.table_constructors.contains_key(&table)
     }
 
     /// Capture one complete applied-edge prefix at the native rebuild
@@ -2093,6 +2642,7 @@ impl CausalReceipts {
     /// removal/insertion is staged. This deliberately takes the existing arena
     /// lock once per changed row; the H1 counters expose the resulting logical
     /// payload until rebuild-local batching is justified by measurement.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn rebuild_draft(
         &self,
         table: TableId,
@@ -2207,6 +2757,357 @@ impl CausalReceipts {
         Ok(id)
     }
 
+    /// Resolve the positional equality dependencies of one ordered container
+    /// value before the registry mutates it. No explanation path is walked
+    /// here; the immutable forest is unfolded lazily by the slicer.
+    pub(crate) fn container_dependency(
+        &self,
+        container_type: TypeId,
+        outer_raw: Value,
+        wave: CausalWave,
+        before: &[Value],
+        after: &[Value],
+        as_of_edges: EqualityEdgeCount,
+    ) -> Result<Option<ContainerVersionDependency>, &'static str> {
+        if before.len() != after.len() {
+            return Err("positional container rebuild changed arity");
+        }
+        let value_sorts = self.0.equality_value_sorts.lock().unwrap();
+        let mut typed = SmallVec::<[Option<ReplaySortId>; 4]>::new();
+        for (&left, &right) in before.iter().zip(after) {
+            if left == right {
+                typed.push(None);
+                continue;
+            }
+            let Some(left_sort) = value_sorts.get(&left).copied() else {
+                return Err("container child before rebuild has no equality sort");
+            };
+            let Some(right_sort) = value_sorts.get(&right).copied() else {
+                return Err("container child after rebuild has no equality sort");
+            };
+            if left_sort != right_sort {
+                return Err("container child rebuild crossed logical sorts");
+            }
+            typed.push(Some(left_sort));
+        }
+        drop(value_sorts);
+
+        let mut pairs = SmallVec::<[TypedCellEquality; 4]>::new();
+        for (slot, ((&left, &right), sort)) in before.iter().zip(after).zip(typed).enumerate() {
+            let Some(sort) = sort else {
+                continue;
+            };
+            pairs.push(TypedCellEquality {
+                column: crate::ColumnId::from_usize(slot),
+                left: self.equality_endpoint(sort, left)?,
+                right: self.equality_endpoint(sort, right)?,
+            });
+        }
+        if pairs.is_empty() {
+            return Ok(None);
+        }
+        let mut outer_candidates = SmallVec::<[EqualityEndpoint; 2]>::new();
+        for entry in self.0.replay_terms.container_type_by_sort.iter() {
+            if *entry.value() != container_type {
+                continue;
+            }
+            let sort = *entry.key();
+            if self
+                .0
+                .replay_terms
+                .container_child_sorts
+                .get(&sort)
+                .is_none()
+            {
+                continue;
+            }
+            let Some(term) = self.0.replay_terms.lookup(sort, outer_raw) else {
+                continue;
+            };
+            if !matches!(
+                self.0.replay_terms.node(term),
+                Some(ReplayTerm::Call { .. })
+            ) {
+                continue;
+            }
+            outer_candidates.push(EqualityEndpoint {
+                sort,
+                term,
+                raw: outer_raw,
+            });
+        }
+        let outer = match outer_candidates.as_slice() {
+            [outer] => *outer,
+            [] => return Err("changed container has no exact typed structural producer"),
+            _ => return Err("changed container has multiple exact logical replay sorts"),
+        };
+        Ok(Some(ContainerVersionDependency {
+            outer,
+            dependency: ContainerDependency {
+                wave,
+                equalities: EqualityLandmark {
+                    as_of_edges,
+                    pairs: pairs.into_vec().into_boxed_slice(),
+                },
+            },
+        }))
+    }
+
+    /// Resolve one raw reverse-index candidate to an exact logical parent.
+    /// The physical registry type and exact child term both have to agree;
+    /// raw `Value` equality alone is never container ancestry.
+    pub(crate) fn container_parent_candidates(
+        &self,
+        container_type: TypeId,
+        parent_raw: Value,
+    ) -> SmallVec<[ContainerParentCandidate; 2]> {
+        let mut candidates = SmallVec::<[ContainerParentCandidate; 2]>::new();
+        for entry in self.0.replay_terms.container_type_by_sort.iter() {
+            if *entry.value() != container_type {
+                continue;
+            }
+            let sort = *entry.key();
+            let Some(child_sorts) = self
+                .0
+                .replay_terms
+                .container_child_sorts
+                .get(&sort)
+                .map(|sorts| Arc::clone(&sorts))
+            else {
+                continue;
+            };
+            let Some(term) = self.0.replay_terms.lookup(sort, parent_raw) else {
+                continue;
+            };
+            if !matches!(
+                self.0.replay_terms.node(term),
+                Some(ReplayTerm::Call { .. })
+            ) {
+                continue;
+            }
+            candidates.push(ContainerParentCandidate {
+                endpoint: EqualityEndpoint {
+                    sort,
+                    term,
+                    raw: parent_raw,
+                },
+                child_sorts,
+            });
+        }
+        candidates
+    }
+
+    /// Register one exact container-registry collision cause and return the
+    /// only logical outer sort shared by its native ids.
+    pub(crate) fn container_canonicalization_cause(
+        &self,
+        wave: CausalWave,
+        left: Value,
+        right: Value,
+        as_of_edges: EqualityEdgeCount,
+    ) -> Result<(CauseCapability, ReplaySortId), &'static str> {
+        let common_sorts = self
+            .0
+            .replay_terms
+            .common_compatible_call_sorts(left, right)?;
+        let value_sorts = self.0.equality_value_sorts.lock().unwrap();
+        let mut candidates =
+            SmallVec::<[(ReplaySortId, SmallVec<[TypedCellEquality; 4]>); 2]>::new();
+        for sort in common_sorts {
+            let left_term = self
+                .0
+                .replay_terms
+                .lookup(sort, left)
+                .expect("common Call sort must have a left term");
+            let right_term = self
+                .0
+                .replay_terms
+                .lookup(sort, right)
+                .expect("common Call sort must have a right term");
+            let Some(ReplayTerm::Call {
+                children: left_children,
+                ..
+            }) = self.0.replay_terms.node(left_term)
+            else {
+                unreachable!("compatible Call sort lost its left Call")
+            };
+            let Some(ReplayTerm::Call {
+                children: right_children,
+                ..
+            }) = self.0.replay_terms.node(right_term)
+            else {
+                unreachable!("compatible Call sort lost its right Call")
+            };
+            let mut pairs = SmallVec::<[TypedCellEquality; 4]>::new();
+            let mut exact = true;
+            for (slot, (&left_child, &right_child)) in
+                left_children.iter().zip(right_children.iter()).enumerate()
+            {
+                if left_child == right_child {
+                    continue;
+                }
+                let left_node = self
+                    .0
+                    .replay_terms
+                    .node(left_child)
+                    .expect("left container child term is unknown");
+                let right_node = self
+                    .0
+                    .replay_terms
+                    .node(right_child)
+                    .expect("right container child term is unknown");
+                let child_sort = left_node.sort();
+                if right_node.sort() != child_sort {
+                    exact = false;
+                    break;
+                }
+                let Some(left_raw) = self.0.replay_terms.original_value(child_sort, left_child)
+                else {
+                    exact = false;
+                    break;
+                };
+                let Some(right_raw) = self.0.replay_terms.original_value(child_sort, right_child)
+                else {
+                    exact = false;
+                    break;
+                };
+                if value_sorts.get(&left_raw) != Some(&child_sort)
+                    || value_sorts.get(&right_raw) != Some(&child_sort)
+                {
+                    exact = false;
+                    break;
+                }
+                pairs.push(TypedCellEquality {
+                    column: crate::ColumnId::from_usize(slot),
+                    left: EqualityEndpoint {
+                        sort: child_sort,
+                        term: left_child,
+                        raw: left_raw,
+                    },
+                    right: EqualityEndpoint {
+                        sort: child_sort,
+                        term: right_child,
+                        raw: right_raw,
+                    },
+                });
+            }
+            // Distinct native container ids can already denote one hash-consed
+            // structural Call. That collision is exact even without changed
+            // child pairs; the UF records it as a native alias, not an
+            // equality-forest edge.
+            if exact && (!pairs.is_empty() || left_term == right_term) {
+                candidates.push((sort, pairs));
+            }
+        }
+        drop(value_sorts);
+        let (sort, pairs) = match candidates.as_slice() {
+            [(sort, pairs)] => (*sort, pairs.clone()),
+            [] => return Err("container ids have no exact typed Call collision"),
+            _ => return Err("container ids have multiple exact typed Call collisions"),
+        };
+        let mut arena = self.0.arena.lock().unwrap();
+        let equalities = FlatRange::new(arena.provisional.rebuild_equalities.len(), pairs.len());
+        arena
+            .provisional
+            .rebuild_equalities
+            .extend_from_slice(&pairs);
+        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        arena.provisional.causes.install(
+            id.get(),
+            CauseDraft::ContainerCanonicalize {
+                wave,
+                as_of_edges,
+                equalities,
+            },
+        );
+        arena.add_live_bytes(
+            mem::size_of::<CauseDraft>() + pairs.len() * mem::size_of::<TypedCellEquality>(),
+        );
+        Ok((
+            CauseCapability {
+                id,
+                equality: EqualityCauseSummary::Container { wave, as_of_edges },
+            },
+            sort,
+        ))
+    }
+
+    /// Register the exact prior fact and child equality landmark for one
+    /// same-id container parent-row refresh.
+    pub(crate) fn container_refresh_draft(
+        &self,
+        prior_fact: FactId,
+        candidates: &[(crate::ColumnId, &[ContainerVersionDependency])],
+    ) -> Result<Option<CauseDraftId>, &'static str> {
+        if prior_fact.is_missing() {
+            return Err("container refresh row has no immutable prior FactId");
+        }
+        let mut arena = self.0.arena.lock().unwrap();
+        let (_, fact_terms) = arena
+            .fact_terms(prior_fact)
+            .ok_or("container refresh references an unknown prior FactId")?;
+        let mut selected: Option<ContainerDependency> = None;
+        for &(column, dependencies) in candidates {
+            let Some(fact_term) = fact_terms.get(column.index()).copied() else {
+                return Err("container refresh column is outside its prior fact");
+            };
+            for version in dependencies {
+                if version.outer.term != fact_term {
+                    continue;
+                }
+                let dependency = &version.dependency;
+                match &mut selected {
+                    None => selected = Some(dependency.clone()),
+                    Some(current) => {
+                        if (current.wave, current.equalities.as_of_edges)
+                            != (dependency.wave, dependency.equalities.as_of_edges)
+                        {
+                            return Err(
+                                "one row refresh combines incompatible container landmarks",
+                            );
+                        }
+                        let mut pairs = current.equalities.pairs.to_vec();
+                        for pair in &dependency.equalities.pairs {
+                            if !pairs.contains(pair) {
+                                pairs.push(*pair);
+                            }
+                        }
+                        current.equalities.pairs = pairs.into_boxed_slice();
+                    }
+                }
+            }
+        }
+        let Some(dependency) = selected else {
+            return Ok(None);
+        };
+        if dependency.equalities.pairs.is_empty() {
+            return Err("container refresh has no child dependency");
+        }
+        let equalities = FlatRange::new(
+            arena.provisional.rebuild_equalities.len(),
+            dependency.equalities.pairs.len(),
+        );
+        arena
+            .provisional
+            .rebuild_equalities
+            .extend_from_slice(&dependency.equalities.pairs);
+        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        arena.provisional.causes.install(
+            id.get(),
+            CauseDraft::ContainerRefresh {
+                wave: dependency.wave,
+                prior_fact,
+                as_of_edges: dependency.equalities.as_of_edges,
+                equalities,
+            },
+        );
+        arena.add_live_bytes(
+            mem::size_of::<CauseDraft>()
+                + dependency.equalities.pairs.len() * mem::size_of::<TypedCellEquality>(),
+        );
+        Ok(Some(id))
+    }
+
     pub fn intern_literal(
         &self,
         sort: ReplaySortId,
@@ -2244,7 +3145,28 @@ impl CausalReceipts {
                 children: children.into(),
             },
         );
-        self.0.replay_terms.install_value(sort, value, term)
+        self.0.replay_terms.install_value(sort, value, term)?;
+        Ok(term)
+    }
+
+    /// Intern one call using its complete producer metadata. Container
+    /// producers also establish the physical registry type for the result
+    /// sort, which later makes dirty-container ancestry type-safe.
+    pub fn intern_spec_call(
+        &self,
+        constructor: &ReplayConstructorSpec,
+        children: &[ReplayTermId],
+        value: Value,
+    ) -> Result<ReplayTermId, &'static str> {
+        self.0.replay_terms.register_container_type(constructor)?;
+        self.intern_call(constructor.result_sort, constructor.op, children, value)
+    }
+
+    pub(crate) fn register_spec_container_type(
+        &self,
+        constructor: &ReplayConstructorSpec,
+    ) -> Result<(), &'static str> {
+        self.0.replay_terms.register_container_type(constructor)
     }
 
     /// Install a typed current-value mapping produced by a primitive. This is
@@ -2262,6 +3184,57 @@ impl CausalReceipts {
         self.0.replay_terms.lookup(sort, value)
     }
 
+    pub(crate) fn constructor_row_terms(
+        &self,
+        table: TableId,
+        row: &[Value],
+    ) -> Result<Option<Box<[ReplayTermId]>>, &'static str> {
+        let Some(constructor) = self
+            .0
+            .replay_terms
+            .table_constructors
+            .get(&table)
+            .map(|entry| entry.clone())
+        else {
+            return Ok(None);
+        };
+        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+        for (column, sort) in constructor.child_sorts.iter().copied().enumerate() {
+            let value = *row
+                .get(column)
+                .ok_or("constructor row is missing one of its key columns")?;
+            children.push(
+                self.lookup_term(sort, value)
+                    .ok_or("constructor key has no producer-installed ReplayTermId")?,
+            );
+        }
+        let output = *row
+            .get(children.len())
+            .ok_or("constructor row is missing its output column")?;
+        let call = self.intern_spec_call(&constructor, &children, output)?;
+        let mut terms = vec![ReplayTermId::MISSING; row.len()];
+        terms[..children.len()].copy_from_slice(&children);
+        terms[children.len()] = call;
+        Ok(Some(terms.into_boxed_slice()))
+    }
+
+    /// Resolve one already-recorded structural call without installing a
+    /// current-value mapping or allocating a new DAG node. Positive check roots
+    /// use this to preserve their source endpoint syntax after congruence has
+    /// canonicalized both runtime values.
+    pub fn lookup_call(
+        &self,
+        sort: ReplaySortId,
+        op: ReplayOpId,
+        children: &[ReplayTermId],
+    ) -> Option<ReplayTermId> {
+        self.0.replay_terms.lookup_node(&ReplayTerm::Call {
+            sort,
+            op,
+            children: children.into(),
+        })
+    }
+
     pub(crate) fn equality_endpoint(
         &self,
         sort: ReplaySortId,
@@ -2276,32 +3249,86 @@ impl CausalReceipts {
     pub(crate) fn check_premise_terms(
         &self,
         premises: &[FactId],
-        requests: &[(usize, usize, ReplaySortId)],
+        requests: &[(CheckTermSource, ReplaySortId)],
     ) -> Result<SmallVec<[ReplayTermId; 8]>, &'static str> {
-        let terms = {
+        enum Lookup {
+            Direct {
+                term: ReplayTermId,
+                sort: ReplaySortId,
+            },
+            Constructor {
+                sort: ReplaySortId,
+                op: ReplayOpId,
+                children: SmallVec<[ReplayTermId; 4]>,
+            },
+        }
+
+        let lookups = {
             let arena = self.0.arena.lock().unwrap();
-            let mut terms = SmallVec::<[ReplayTermId; 8]>::new();
-            for &(premise, column, _) in requests {
-                let fact = *premises
-                    .get(premise)
-                    .ok_or("check endpoint cites a missing premise slot")?;
-                terms.push(
-                    arena
-                        .fact_term(fact, column)
-                        .ok_or("check endpoint has no immutable fact-owned ReplayTermId")?,
-                );
+            let mut lookups = SmallVec::<[Lookup; 8]>::new();
+            for &(request, sort) in requests {
+                match request {
+                    CheckTermSource::Premise { premise, column } => {
+                        let fact = *premises
+                            .get(premise)
+                            .ok_or("check endpoint cites a missing premise slot")?;
+                        let term = arena
+                            .fact_term(fact, column)
+                            .ok_or("check endpoint has no immutable fact-owned ReplayTermId")?;
+                        lookups.push(Lookup::Direct { term, sort });
+                    }
+                    CheckTermSource::Constructor {
+                        premise,
+                        input_columns,
+                        op,
+                    } => {
+                        let fact = *premises
+                            .get(premise)
+                            .ok_or("check endpoint cites a missing premise slot")?;
+                        let (_, fact_terms) = arena
+                            .fact_terms(fact)
+                            .ok_or("check endpoint cites a missing immutable fact")?;
+                        let children = fact_terms
+                            .get(..input_columns)
+                            .ok_or("check constructor input arity exceeds its producer fact")?;
+                        if children.iter().any(|term| term.is_missing()) {
+                            return Err(
+                                "check constructor producer has a missing input ReplayTermId",
+                            );
+                        }
+                        lookups.push(Lookup::Constructor {
+                            sort,
+                            op,
+                            children: SmallVec::from_slice(children),
+                        });
+                    }
+                    CheckTermSource::Current => {
+                        return Err("current-value check endpoint was requested as a premise term");
+                    }
+                }
             }
-            terms
+            lookups
         };
-        for (term, &(_, _, sort)) in terms.iter().zip(requests) {
-            let node = self
-                .0
-                .replay_terms
-                .node(*term)
-                .ok_or("check endpoint fact owns an unknown ReplayTermId")?;
-            if node.sort() != sort {
-                return Err("check endpoint fact term has the wrong declared sort");
-            }
+
+        let mut terms = SmallVec::<[ReplayTermId; 8]>::new();
+        for lookup in lookups {
+            let term = match lookup {
+                Lookup::Direct { term, sort } => {
+                    let node = self
+                        .0
+                        .replay_terms
+                        .node(term)
+                        .ok_or("check endpoint fact owns an unknown ReplayTermId")?;
+                    if node.sort() != sort {
+                        return Err("check endpoint fact term has the wrong declared sort");
+                    }
+                    term
+                }
+                Lookup::Constructor { sort, op, children } => self
+                    .lookup_call(sort, op, &children)
+                    .ok_or("check constructor producer has no exact immutable structural call")?,
+            };
+            terms.push(term);
         }
         Ok(terms)
     }
@@ -2519,6 +3546,7 @@ impl CausalReceipts {
     /// Register all previously-unregistered action lanes with one arena lock.
     /// FactId lookups are dense and all term cells are resolved in this same
     /// bulk access.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_rule_matches(
         &self,
         rule: u32,
@@ -2636,6 +3664,11 @@ impl CausalReceipts {
                 panic!("{error}");
             }
         }
+        for alias in &arena.provisional.pending_native_aliases {
+            if let Err(error) = arena.validate_equality_cause_draft(alias.cause) {
+                panic!("{error}");
+            }
+        }
 
         let cause_len = arena.provisional.causes.slots.len();
         let mut reachable_causes = vec![false; cause_len];
@@ -2654,6 +3687,13 @@ impl CausalReceipts {
                 .iter()
                 .map(|edge| edge.as_ref().expect("complete equality edge").cause),
         );
+        stack.extend(
+            arena
+                .provisional
+                .pending_native_aliases
+                .iter()
+                .map(|alias| alias.cause),
+        );
         while let Some(cause_id) = stack.pop() {
             let Some(index) = arena.provisional.causes.index(cause_id.get()) else {
                 arena.counters.promotion_misses += 1;
@@ -2666,7 +3706,10 @@ impl CausalReceipts {
                 .as_ref()
                 .expect("complete cause segment")
             {
-                CauseDraft::Source(_) | CauseDraft::Rebuild { .. } => {}
+                CauseDraft::Source(_)
+                | CauseDraft::Rebuild { .. }
+                | CauseDraft::ContainerCanonicalize { .. }
+                | CauseDraft::ContainerRefresh { .. } => {}
                 CauseDraft::Rule(match_id) => {
                     let Some(match_index) = arena.provisional.matches.index(match_id.get()) else {
                         arena.counters.promotion_misses += 1;
@@ -2757,6 +3800,60 @@ impl CausalReceipts {
                         + pair_len * mem::size_of::<TypedCellEquality>())
                         as u64;
                     DurableCause::Rebuild {
+                        wave,
+                        prior_fact,
+                        as_of_edges,
+                        equalities: FlatRange::new(start, pair_len),
+                    }
+                }
+                CauseDraft::ContainerCanonicalize {
+                    wave,
+                    as_of_edges,
+                    equalities,
+                } => {
+                    let pair_range = equalities.as_range();
+                    let pair_len = pair_range.len();
+                    let start = arena.durable_rebuild_equalities.len();
+                    arena.durable_rebuild_equalities.reserve(pair_len);
+                    for pair_index in pair_range {
+                        let pair = arena.provisional.rebuild_equalities[pair_index];
+                        arena.durable_rebuild_equalities.push(pair);
+                    }
+                    arena.counters.container_causes += 1;
+                    arena.counters.container_equalities += pair_len as u64;
+                    arena.counters.container_bytes += (mem::size_of::<DurableCause>()
+                        + pair_len * mem::size_of::<TypedCellEquality>())
+                        as u64;
+                    DurableCause::ContainerCanonicalize {
+                        wave,
+                        as_of_edges,
+                        equalities: FlatRange::new(start, pair_len),
+                    }
+                }
+                CauseDraft::ContainerRefresh {
+                    wave,
+                    prior_fact,
+                    as_of_edges,
+                    equalities,
+                } => {
+                    if prior_fact.is_missing() {
+                        arena.counters.promotion_misses += 1;
+                        panic!("container refresh references a missing prior FactId");
+                    }
+                    let pair_range = equalities.as_range();
+                    let pair_len = pair_range.len();
+                    let start = arena.durable_rebuild_equalities.len();
+                    arena.durable_rebuild_equalities.reserve(pair_len);
+                    for pair_index in pair_range {
+                        let pair = arena.provisional.rebuild_equalities[pair_index];
+                        arena.durable_rebuild_equalities.push(pair);
+                    }
+                    arena.counters.container_causes += 1;
+                    arena.counters.container_equalities += pair_len as u64;
+                    arena.counters.container_bytes += (mem::size_of::<DurableCause>()
+                        + pair_len * mem::size_of::<TypedCellEquality>())
+                        as u64;
+                    DurableCause::ContainerRefresh {
                         wave,
                         prior_fact,
                         as_of_edges,
@@ -2861,6 +3958,26 @@ impl CausalReceipts {
                 reason,
             });
         }
+        let pending_native_aliases = mem::take(&mut arena.provisional.pending_native_aliases);
+        for alias in pending_native_aliases {
+            let index = arena
+                .provisional
+                .causes
+                .index(alias.cause.get())
+                .expect("native alias cause belongs to current segment");
+            let cause = cause_map[index].expect("native alias cause is reachable");
+            let summary = arena
+                .cause_summary(alias.cause)
+                .expect("native alias cause has a cached classification");
+            let reason = arena.equality_reason(cause, summary);
+            arena.durable_native_aliases.push(DurableNativeAlias {
+                proposal: alias.proposal,
+                native_parent: alias.native_parent,
+                native_child: alias.native_child,
+                reason,
+            });
+            arena.counters.native_alias_unions += 1;
+        }
 
         arena.provisional = ProvisionalArena::default();
         arena.counters.provisional_matches = 0;
@@ -2938,6 +4055,18 @@ impl CausalReceipts {
                 reason: edge.reason.clone(),
             })
             .collect();
+        let native_aliases = arena
+            .durable_native_aliases
+            .iter()
+            .map(|alias| NativeAliasRecord {
+                wave: alias.proposal.wave,
+                left: alias.proposal.left,
+                right: alias.proposal.right,
+                native_parent: alias.native_parent,
+                native_child: alias.native_child,
+                reason: alias.reason.clone(),
+            })
+            .collect();
         let causes = arena
             .durable_causes
             .iter()
@@ -2950,6 +4079,30 @@ impl CausalReceipts {
                     as_of_edges,
                     equalities,
                 } => ReceiptCauseRecord::Rebuild {
+                    wave: *wave,
+                    prior_fact: *prior_fact,
+                    equalities: EqualityLandmark {
+                        as_of_edges: *as_of_edges,
+                        pairs: arena.durable_rebuild_equalities[equalities.as_range()].into(),
+                    },
+                },
+                DurableCause::ContainerCanonicalize {
+                    wave,
+                    as_of_edges,
+                    equalities,
+                } => ReceiptCauseRecord::ContainerCanonicalize {
+                    wave: *wave,
+                    equalities: EqualityLandmark {
+                        as_of_edges: *as_of_edges,
+                        pairs: arena.durable_rebuild_equalities[equalities.as_range()].into(),
+                    },
+                },
+                DurableCause::ContainerRefresh {
+                    wave,
+                    prior_fact,
+                    as_of_edges,
+                    equalities,
+                } => ReceiptCauseRecord::ContainerRefresh {
                     wave: *wave,
                     prior_fact: *prior_fact,
                     equalities: EqualityLandmark {
@@ -2973,6 +4126,7 @@ impl CausalReceipts {
             matches,
             equality_nodes,
             equalities,
+            native_aliases,
             causes,
             check_roots,
             counters: arena.counters,

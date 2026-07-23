@@ -2,8 +2,8 @@ use egglog::ast::Expr;
 use egglog::prelude::ContainerSort;
 use egglog::sort::{ContainerValues, Presort, ValueRebuilder};
 use egglog::{
-    ArcSort, ContainerValue, EGraph, TermDag, TermId, TypeError, TypeInfo, Value,
-    add_primitive_with_validator,
+    ArcSort, CausalContainerKind, ContainerValue, EGraph, TermDag, TermId, TypeError, TypeInfo,
+    Value, add_primitive_with_validator,
 };
 use std::any::TypeId;
 
@@ -21,6 +21,20 @@ pub struct EitherContainer {
 }
 
 impl ContainerValue for EitherContainer {
+    fn causal_receipt_kind() -> Option<CausalContainerKind> {
+        Some(CausalContainerKind::Either)
+    }
+
+    fn causal_child_sort_slots(&self) -> Option<Box<[usize]>> {
+        Some(
+            vec![match self.data {
+                EitherData::Left(_) => 0,
+                EitherData::Right(_) => 1,
+            }]
+            .into_boxed_slice(),
+        )
+    }
+
     fn rebuild_contents(&mut self, rebuilder: &dyn ValueRebuilder) -> bool {
         match &mut self.data {
             EitherData::Left(value) if self.do_rebuild_left => {

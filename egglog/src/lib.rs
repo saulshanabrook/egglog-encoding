@@ -29,7 +29,7 @@ use constraint::{Constraint, Problem, SimpleTypeConstraint, TypeConstraint};
 pub use core::{Atom, AtomTerm};
 use core::{CoreActionContext, ResolvedAtomTerm, specialize_core_rule};
 pub use core::{ResolvedCall, SpecializedPrimitive};
-pub use core_relations::{BaseValue, ContainerValue, Value};
+pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
 use csv::Writer;
 pub use egglog_add_primitive::add_literal_prim;
@@ -415,6 +415,27 @@ impl CausalState {
         id
     }
 
+    fn container_sort_spec(
+        &mut self,
+        sort: &ArcSort,
+    ) -> Option<(ReplaySortId, TypeId, Box<[ReplaySortId]>)> {
+        if !sort.is_container_sort() {
+            return None;
+        }
+        let logical_sort = self.sort_id(sort.name());
+        let child_sorts = sort
+            .inner_sorts()
+            .iter()
+            .map(|child| self.sort_id(child.name()))
+            .collect();
+        Some((
+            logical_sort,
+            sort.value_type()
+                .expect("container sort must expose its physical value type"),
+            child_sorts,
+        ))
+    }
+
     fn literal_sort(&self, literal: &Literal) -> ReplaySortId {
         let name = match literal {
             Literal::Unit => "Unit",
@@ -467,7 +488,17 @@ impl CausalState {
                 output: output_names[0].clone(),
             };
             let op = self.op_id(key);
-            ReplayConstructorSpec::new(output_sorts[0], op, input_sorts.iter().copied())
+            let replay =
+                ReplayConstructorSpec::new(output_sorts[0], op, input_sorts.iter().copied());
+            if schema.outputs[0].is_container_sort() {
+                replay.with_container_type(
+                    schema.outputs[0]
+                        .value_type()
+                        .expect("container sort must expose its physical value type"),
+                )
+            } else {
+                replay
+            }
         });
         FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
     }
@@ -512,11 +543,51 @@ impl CausalState {
             .iter()
             .map(|sort| self.sort_ids.get(sort.name()).copied())
             .collect::<Option<Vec<_>>>()?;
-        Some(Arc::new(ReplayConstructorSpec::new(
-            result_sort,
-            op,
-            child_sorts,
-        )))
+        let replay = ReplayConstructorSpec::new(result_sort, op, child_sorts);
+        Some(Arc::new(if primitive.output().is_container_sort() {
+            replay
+                .with_container_type(
+                    primitive
+                        .output()
+                        .value_type()
+                        .expect("container sort must expose its physical value type"),
+                )
+                .with_immediate_promotion()
+        } else {
+            replay
+        }))
+    }
+
+    fn constructor_term_spec(
+        &self,
+        function: &typechecking::FuncType,
+    ) -> Option<(ReplaySortId, ReplayOpId)> {
+        if function.subtype != FunctionSubtype::Constructor || function.num_outputs() != 1 {
+            return None;
+        }
+        let key = ReplayOpKey {
+            name: function.name.clone(),
+            inputs: function
+                .input
+                .iter()
+                .map(|sort| sort.name().to_owned())
+                .collect(),
+            output: function.output().name().to_owned(),
+        };
+        Some((
+            *self.sort_ids.get(function.output().name())?,
+            *self.op_ids.get(&key)?,
+        ))
+    }
+
+    fn register_action_primitives(&mut self, actions: &core::ResolvedCoreActions) {
+        for action in &actions.0 {
+            if let core::GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _) =
+                action
+            {
+                self.register_primitive(primitive);
+            }
+        }
     }
 
     fn register_rule_primitives(&mut self, rule: &core::ResolvedCoreRule) {
@@ -525,13 +596,7 @@ impl CausalState {
                 self.register_primitive(primitive);
             }
         }
-        for action in &rule.head.0 {
-            if let core::GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _) =
-                action
-            {
-                self.register_primitive(primitive);
-            }
-        }
+        self.register_action_primitives(&rule.head);
     }
 
     fn next_source_ordinal(&mut self) -> u64 {
@@ -936,6 +1001,21 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()))?;
 
         let mut causal = CausalState::default();
+        let container_sorts = self
+            .type_info
+            .sorts
+            .values()
+            .filter(|sort| sort.is_container_sort())
+            .cloned()
+            .collect::<Vec<_>>();
+        for sort in container_sorts {
+            let (logical_sort, container_type, child_sorts) = causal
+                .container_sort_spec(&sort)
+                .expect("filtered container sort lost its metadata");
+            self.backend
+                .register_container_replay_sort(logical_sort, container_type, &child_sorts)
+                .map_err(|error| Error::BackendError(error.to_string()))?;
+        }
         let registrations = self
             .functions
             .values()
@@ -1778,7 +1858,7 @@ impl EGraph {
         }
 
         if let Some(facts) = until {
-            match self.check_facts(span, facts) {
+            match self.check_facts(span, facts, false) {
                 Ok(()) => {
                     log::info!(
                         "Breaking early because of facts:\n {}!",
@@ -1991,6 +2071,9 @@ impl EGraph {
             self.proof_state.original_typechecking.is_none(),
         );
         let (actions, _) = actions.to_core_actions(&mut ctx)?;
+        if let Some(causal) = self.causal_state.as_mut() {
+            causal.register_action_primitives(&actions);
+        }
 
         let source_receipt = self.causal_state.as_mut().map(CausalState::next_source);
         let mut translator = BackendRule::new(
@@ -2444,8 +2527,15 @@ impl EGraph {
         };
     }
 
-    fn check_facts(&mut self, span: &Span, facts: &[ResolvedFact]) -> Result<(), Error> {
-        let check_receipt = self.causal_state.as_mut().map(CausalState::next_check);
+    fn check_facts(
+        &mut self,
+        span: &Span,
+        facts: &[ResolvedFact],
+        record_causal_root: bool,
+    ) -> Result<(), Error> {
+        let check_receipt = record_causal_root
+            .then(|| self.causal_state.as_mut().map(CausalState::next_check))
+            .flatten();
         let fresh_name = self.parser.symbol_gen.fresh("check_facts");
         let fresh_ruleset = self.parser.symbol_gen.fresh("check_facts_ruleset");
         let rule = ast::ResolvedRule {
@@ -2475,6 +2565,50 @@ impl EGraph {
                 .body,
                 Vec::new().into_boxed_slice(),
             )
+        };
+        let causal_check_equalities = if check_receipt.is_some() {
+            let causal = self
+                .causal_state
+                .as_ref()
+                .expect("a causal check id requires active causal state");
+            let premise = |source: &core::CheckPremise| -> Result<CausalCheckPremise, Error> {
+                let atom = query.atoms.get(source.body_atom).ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "causal check endpoint cites missing body atom {}",
+                        source.body_atom
+                    ))
+                })?;
+                let ResolvedCall::Func(function) = &atom.head else {
+                    return Err(Error::BackendError(format!(
+                        "{}: causal check endpoint producer is not a function",
+                        atom.span
+                    )));
+                };
+                let constructor = causal.constructor_term_spec(function);
+                if function.subtype == FunctionSubtype::Constructor && constructor.is_none() {
+                    return Err(Error::BackendError(format!(
+                        "{}: causal check endpoint constructor has no registered replay identity",
+                        atom.span
+                    )));
+                }
+                if source.column + 1 != atom.args.len() {
+                    return Err(Error::BackendError(format!(
+                        "{}: causal check endpoint does not cite the constructor output column",
+                        atom.span
+                    )));
+                }
+                Ok(CausalCheckPremise {
+                    body_atom: source.body_atom,
+                    column: source.column,
+                    constructor,
+                })
+            };
+            check_equalities
+                .iter()
+                .map(|(left, right)| Ok((premise(left)?, premise(right)?)))
+                .collect::<Result<Vec<_>, Error>>()?
+        } else {
+            Vec::new()
         };
 
         let ext_sc = egglog_bridge::SideChannel::default();
@@ -2506,21 +2640,7 @@ impl EGraph {
         if let Some(check) = check_receipt {
             translator.check_receipt = Some(CausalCheckSpec {
                 check,
-                equalities: check_equalities
-                    .iter()
-                    .map(|(left, right)| {
-                        (
-                            CausalCheckPremise {
-                                body_atom: left.body_atom,
-                                column: left.column,
-                            },
-                            CausalCheckPremise {
-                                body_atom: right.body_atom,
-                                column: right.column,
-                            },
-                        )
-                    })
-                    .collect(),
+                equalities: causal_check_equalities.into_boxed_slice(),
             });
         }
         let id = translator.try_build("check_facts", false, false, span.clone())?;
@@ -2621,7 +2741,7 @@ impl EGraph {
                 }
             },
             ResolvedNCommand::Check(span, facts) => {
-                self.check_facts(&span, &facts)?;
+                self.check_facts(&span, &facts, true)?;
                 log::info!("Checked fact {facts:?}.");
             }
             ResolvedNCommand::CoreAction(action) => match &action {
@@ -3660,6 +3780,13 @@ fn resolve_function_container_target_with_context(
     })
 }
 
+type LoweredPrimitive = (
+    ExternalFunctionId,
+    Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
+    ColumnTy,
+    Option<Arc<ReplayConstructorSpec>>,
+);
+
 struct BackendRule<'a> {
     backend: &'a mut dyn Backend,
     unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
@@ -3865,15 +3992,7 @@ impl<'a> BackendRule<'a> {
         prim: &core::SpecializedPrimitive,
         args: &[core::ResolvedAtomTerm],
         ctx: crate::Context,
-    ) -> Result<
-        (
-            ExternalFunctionId,
-            Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
-            ColumnTy,
-            Option<Arc<ReplayConstructorSpec>>,
-        ),
-        Error,
-    > {
+    ) -> Result<LoweredPrimitive, Error> {
         // The typechecker has already checked that this primitive is
         // valid in `ctx`; pick the runtime id that stamps the same ctx
         // onto the state wrapper when invoked.
@@ -4342,20 +4461,23 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::constraint::SimpleTypeConstraint;
+    use crate::core_relations::{EqualityReason, FactCause};
     use crate::*;
 
     use crate::PureState;
 
-    fn enable_serial_causal_receipts(egraph: &mut EGraph) -> Result<(), Error> {
+    fn serial_causal_pool() -> &'static rayon::ThreadPool {
         static SERIAL_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
-        SERIAL_POOL
-            .get_or_init(|| {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(1)
-                    .build()
-                    .unwrap()
-            })
-            .install(|| egraph.enable_causal_receipts())
+        SERIAL_POOL.get_or_init(|| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(1)
+                .build()
+                .unwrap()
+        })
+    }
+
+    fn enable_serial_causal_receipts(egraph: &mut EGraph) -> Result<(), Error> {
+        serial_causal_pool().install(|| egraph.enable_causal_receipts())
     }
 
     #[test]
@@ -4387,6 +4509,475 @@ mod tests {
             }
         }
         assert!(saw_constructor);
+    }
+
+    #[test]
+    fn causal_receipts_attribute_pair_registry_congruence() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            let mut program = String::new();
+            // Base literals and container ids share raw Value bits. Crowd the
+            // literal and computed-Call sorts so collision selection must use
+            // the changed children's typed equality metadata.
+            for value in 0..200 {
+                program.push_str(&format!("(let $literal-{value} {value})"));
+                program.push_str(&format!(
+                    "(let $computed-{value} (+ 1000 {}))",
+                    value - 1000
+                ));
+            }
+            program.push_str(
+                "(datatype Expr (A i64) (B i64))\
+                 (sort ExprPair (Pair Expr i64))\
+                 (datatype Root (Hold ExprPair))\
+                 (relation Go (Unit))\
+                 (relation Done (Unit))\
+                 (Go ())\
+                 (rule ((Go u))\
+                   ((Hold (pair (A 1) 7))\
+                    (Hold (pair (B 2) 7))\
+                    (Done ())\
+                    (union (A 1) (B 2))) :name \"merge-child\")\
+                 (run 1)\
+                 (check (Done ()))",
+            );
+            egraph.parse_and_run_program(None, &program).unwrap();
+
+            let snapshot = egraph.causal_receipt_snapshot().unwrap();
+            let (cause, wave, as_of_edges) = snapshot
+                .equalities
+                .iter()
+                .find_map(|edge| match edge.reason {
+                    EqualityReason::Congruence {
+                        cause,
+                        wave,
+                        as_of_edges,
+                    } => Some((cause, wave, as_of_edges)),
+                    _ => None,
+                })
+                .expect("Pair collision should retain one exact container-congruence edge");
+            let dependency = snapshot
+                .cause_dependencies(cause)
+                .find_map(|dependency| match dependency {
+                    core_relations::ReceiptCauseDependency::ContainerCanonicalize {
+                        wave,
+                        as_of_edges,
+                        equalities,
+                    } => Some((wave, as_of_edges, equalities)),
+                    _ => None,
+                })
+                .expect("Pair congruence should unfold to its container collision");
+            assert_eq!((dependency.0, dependency.1), (wave, as_of_edges));
+            assert!(!dependency.2.is_empty());
+            let explanation = snapshot
+                .equality_explanation_index(as_of_edges)
+                .expect("container landmark should be a complete equality prefix");
+            for pair in dependency.2 {
+                assert!(
+                    !explanation
+                        .explain_equality(pair.left, pair.right)
+                        .expect("each changed Pair child must be equal at the landmark")
+                        .is_empty()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn causal_receipts_refresh_parent_fact_after_stable_vec_rebuild() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Exprs (Vec Expr))\
+                     (function Hold (Unit) Exprs :no-merge)\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (let $a (A 1))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((set (Hold ()) (vec-of (B 2)))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)",
+                )
+                .unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(rule ((= v (Hold ()))\
+                            (= v (vec-of (A 1))))\
+                       ((Done ())) :name \"observe-refresh\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+
+            let snapshot = egraph.causal_receipt_snapshot().unwrap();
+            let observed = snapshot
+                .matches
+                .iter()
+                .find(|matched| matched.rule == 1)
+                .expect("the post-refresh observer should fire");
+            let (fact, prior_fact, equalities) = observed
+                .premises
+                .iter()
+                .find_map(
+                    |fact| match &snapshot.facts[(fact.get() - 1) as usize].cause {
+                        FactCause::ContainerRefresh {
+                            prior_fact,
+                            equalities,
+                            ..
+                        } => Some((*fact, *prior_fact, equalities)),
+                        _ => None,
+                    },
+                )
+                .expect("the successful check should cite a refreshed immutable parent fact");
+            assert_ne!(fact, prior_fact);
+            let refreshed_fact = &snapshot.facts[(fact.get() - 1) as usize];
+            assert_eq!(
+                snapshot.facts[(prior_fact.get() - 1) as usize].table,
+                refreshed_fact.table
+            );
+            assert!(!equalities.pairs.is_empty());
+            let explanation = snapshot
+                .equality_explanation_index(equalities.as_of_edges)
+                .expect("container refresh landmark should be complete");
+            for pair in &equalities.pairs {
+                assert!(
+                    !explanation
+                        .explain_equality(pair.left, pair.right)
+                        .expect("each changed Vec child must be equal at the landmark")
+                        .is_empty()
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn causal_receipts_ignore_raw_colliding_unrelated_set_ancestor() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            let mut program = String::from(
+                "(datatype Expr (A i64) (B i64))\
+                 (sort Exprs (Vec Expr))\
+                 (sort Ints (Set i64))\
+                 (function Hold (Unit) Exprs :no-merge)\
+                 (relation Go (Unit))\
+                 (relation Done (Unit))\
+                 (let $a (A 1))",
+            );
+            // Crowd the unsupported Set registry with every likely raw child
+            // id. Its i64 elements are not typed Vec children, even when their
+            // Value bits collide with the dirty Vec id.
+            for value in 0..256 {
+                program.push_str(&format!("(let $ints-{value} (set-of {value}))"));
+            }
+            program.push_str(
+                "(Go ())\
+                 (rule ((Go u))\
+                   ((set (Hold ()) (vec-of (B 2)))\
+                    (union (A 1) (B 2))) :name \"merge-child\")\
+                 (run 1)\
+                 (rule ((= v (Hold ()))\
+                        (= v (vec-of (A 1))))\
+                   ((Done ())) :name \"observe-refresh\")\
+                 (run 1)\
+                 (check (Done ()))",
+            );
+            egraph.parse_and_run_program(None, &program).unwrap();
+
+            let snapshot = egraph.causal_receipt_snapshot().unwrap();
+            assert!(
+                snapshot
+                    .facts
+                    .iter()
+                    .any(|fact| { matches!(fact.cause, FactCause::ContainerRefresh { .. }) })
+            );
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple exact logical replay sorts")]
+    fn causal_receipts_reject_ambiguous_nominal_container_aliases() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort P1 (Pair Expr i64))\
+                     (sort P2 (Pair Expr i64))\
+                     (datatype R1 (H1 P1))\
+                     (datatype R2 (H2 P2))\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((H1 (pair (A 1) 7))\
+                        (H1 (pair (B 2) 7))\
+                        (H2 (pair (A 1) 7))\
+                        (H2 (pair (B 2) 7))\
+                        (Done ())\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn causal_receipts_chain_two_stable_vec_refreshes() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64) (C i64))\
+                     (sort Exprs (Vec Expr))\
+                     (function Hold (Unit) Exprs :no-merge)\
+                     (relation First (Unit))\
+                     (let $a (A 1))\
+                     (let $b (B 2))\
+                     (First ())\
+                     (rule ((First u))\
+                       ((set (Hold ()) (vec-of (C 3)))\
+                        (union (B 2) (C 3))) :name \"first-refresh\")\
+                     (run 1)",
+                )
+                .unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Second (Unit))\
+                     (Second ())\
+                     (rule ((Second u))\
+                       ((union (A 1) (B 2))) :name \"second-refresh\")\
+                     (run 1)",
+                )
+                .unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Done (Unit))\
+                     (rule ((= v (Hold ()))\
+                            (= v (vec-of (A 1))))\
+                       ((Done ())) :name \"observe-refresh-chain\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+
+            let snapshot = egraph.causal_receipt_snapshot().unwrap();
+            let (latest, middle, latest_landmark) = snapshot
+                .facts
+                .iter()
+                .find_map(|fact| {
+                    let FactCause::ContainerRefresh {
+                        prior_fact,
+                        equalities,
+                        ..
+                    } = &fact.cause
+                    else {
+                        return None;
+                    };
+                    matches!(
+                        snapshot.facts[(prior_fact.get() - 1) as usize].cause,
+                        FactCause::ContainerRefresh { .. }
+                    )
+                    .then_some((fact.id, *prior_fact, equalities))
+                })
+                .expect("latest Vec fact should point to a prior refreshed fact");
+            let FactCause::ContainerRefresh {
+                wave: middle_wave,
+                prior_fact: original,
+                equalities: middle_landmark,
+            } = &snapshot.facts[(middle.get() - 1) as usize].cause
+            else {
+                unreachable!()
+            };
+            let FactCause::ContainerRefresh {
+                wave: latest_wave, ..
+            } = &snapshot.facts[(latest.get() - 1) as usize].cause
+            else {
+                unreachable!()
+            };
+            assert_ne!(latest, middle);
+            assert_ne!(middle, *original);
+            assert!(middle_wave < latest_wave);
+            assert_ne!(middle_landmark.as_of_edges, latest_landmark.as_of_edges);
+            for landmark in [middle_landmark, latest_landmark] {
+                let explanation = snapshot
+                    .equality_explanation_index(landmark.as_of_edges)
+                    .unwrap();
+                for pair in &landmark.pairs {
+                    assert!(
+                        !explanation
+                            .explain_equality(pair.left, pair.right)
+                            .unwrap()
+                            .is_empty()
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn causal_receipts_refresh_nested_vec_parent_fact() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(sort E)\
+                     (sort VE (Vec E))\
+                     (sort VVE (Vec VE))\
+                     (constructor b () E)\
+                     (constructor w (E) E)\
+                     (constructor p (VVE) E)\
+                     (rewrite (w x) x)\
+                     (rewrite (p (vec-of (vec-of (b)))) (b))\
+                     (let $nested (p (vec-of (vec-of (w (b))))))\
+                     (run-schedule (saturate (run)))\
+                     (check (= $nested (b)))",
+                )
+                .unwrap();
+
+            let p = egraph.causal_state.as_ref().unwrap().op_ids[&ReplayOpKey {
+                name: "p".into(),
+                inputs: vec!["VVE".into()],
+                output: "E".into(),
+            }];
+            let snapshot = egraph.causal_receipt_snapshot().unwrap();
+            let parent = snapshot
+                .facts
+                .iter()
+                .find(|fact| {
+                    matches!(fact.cause, FactCause::ContainerRefresh { .. })
+                        && fact.terms.iter().any(|term| {
+                            matches!(
+                                egraph.causal_replay_term(*term).unwrap(),
+                                Some(ReplayTerm::Call { op, .. }) if op == p
+                            )
+                        })
+                })
+                .expect("the outer p fact should receive an exact nested-container refresh");
+            let FactCause::ContainerRefresh { equalities, .. } = &parent.cause else {
+                unreachable!()
+            };
+            assert!(!equalities.pairs.is_empty());
+            let explanation = snapshot
+                .equality_explanation_index(equalities.as_of_edges)
+                .unwrap();
+            for pair in &equalities.pairs {
+                assert!(
+                    !explanation
+                        .explain_equality(pair.left, pair.right)
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "SetContainer")]
+    fn causal_receipts_fail_closed_on_unsupported_container_rebuild() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Exprs (Set Expr))\
+                     (datatype Root (Hold Exprs))\
+                     (relation Go (Unit))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((Hold (set-of (A 1)))\
+                        (Hold (set-of (B 2)))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)",
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn causal_container_rebuild_restores_registry_on_unwind() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Exprs (Set Expr))\
+                     (datatype Root (Hold Exprs))\
+                     (relation Go (Unit))\
+                     (let $kept-set (set-of (A 99)))\
+                     (Go ())",
+                )
+                .unwrap();
+            let kept = get_value(&egraph, "$kept-set");
+            let before = egraph
+                .value_to_container::<SetContainer>(kept)
+                .expect("kept Set must exist before the rejected rebuild")
+                .clone();
+
+            let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                egraph
+                    .parse_and_run_program(
+                        None,
+                        "(rule ((Go u))\
+                           ((Hold (set-of (A 1)))\
+                            (Hold (set-of (B 2)))\
+                            (union (A 1) (B 2))) :name \"merge-child\")\
+                         (run 1)",
+                    )
+                    .unwrap();
+            }));
+            assert!(failed.is_err());
+            let after = egraph
+                .value_to_container::<SetContainer>(kept)
+                .expect("caught rebuild panic dropped the container registry")
+                .clone();
+            assert_eq!(after, before);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "SetContainer")]
+    fn causal_receipts_fail_closed_on_unsupported_container_ancestor() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Exprs (Vec Expr))\
+                     (sort ExprSets (Set Exprs))\
+                     (function Hold (Unit) ExprSets :no-merge)\
+                     (relation Go (Unit))\
+                     (let $a (A 1))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((set (Hold ()) (set-of (vec-of (B 2))))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)",
+                )
+                .unwrap();
+        });
     }
 
     #[test]
@@ -4670,15 +5261,20 @@ mod tests {
     }
 
     #[test]
-    fn causal_until_propagates_unsupported_equality_layout() {
+    fn causal_until_does_not_record_a_check_root() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
-        let error = egraph
-            .parse_and_run_program(None, "(run 1 :until (= 1 2))")
-            .expect_err("unsupported causal check metadata must not mean `until` is false");
-        assert!(error.to_string().contains(
-            "causal equality checks currently require constructor/function-call endpoints"
-        ));
+        egraph
+            .parse_and_run_program(None, "(run 1 :until (= 1 1))")
+            .unwrap();
+        assert!(
+            egraph
+                .causal_receipt_snapshot()
+                .unwrap()
+                .check_roots
+                .is_empty(),
+            "schedule probes are control flow, not replay soundness roots"
+        );
     }
 
     #[test]
@@ -4747,8 +5343,10 @@ mod tests {
         std::fs::write(directory.join("edge.tsv"), "1\t2\n").unwrap();
         std::fs::write(directory.join("score.tsv"), "1\t10\n").unwrap();
 
-        let mut egraph = EGraph::default();
-        egraph.fact_directory = Some(directory.clone());
+        let mut egraph = EGraph {
+            fact_directory: Some(directory.clone()),
+            ..Default::default()
+        };
         enable_serial_causal_receipts(&mut egraph).unwrap();
         let result = egraph.parse_and_run_program(
             None,
@@ -4769,8 +5367,10 @@ mod tests {
         result.unwrap();
 
         std::fs::write(directory.join("bad.tsv"), "1\nnot-an-integer\n").unwrap();
-        let mut rejected = EGraph::default();
-        rejected.fact_directory = Some(directory.clone());
+        let mut rejected = EGraph {
+            fact_directory: Some(directory.clone()),
+            ..Default::default()
+        };
         enable_serial_causal_receipts(&mut rejected).unwrap();
         let error = rejected
             .parse_and_run_program(
