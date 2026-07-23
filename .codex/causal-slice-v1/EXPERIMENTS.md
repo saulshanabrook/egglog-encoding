@@ -261,3 +261,57 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   no-op-retention failure modes found by review, but H1 remains untested until
   the receipt-only five-workload benchmark gate. No performance claim is made
   from unit tests.
+
+### 2026-07-22 — checkpoint 4a stable FactIds and decomposed witnesses
+
+- Status: bounded core-relations checkpoint is green and uncommitted for
+  coordinator review. Equality/rebuild/container receipts, bridge/check roots,
+  slicing, replay, and workload benchmarks were not started.
+- Snapshot: `/Users/saul/p/wt/egglog-encoding/causal-slice-receipts-v1`,
+  branch `agent/causal-slice-receipts-v1`, starting `HEAD`
+  `e8233328d17512393aaa801931c2635bbc7c9079`.
+- Compaction result: focused serial and parallel canaries force physical
+  compaction, observe both a changed table generation and a moved surviving
+  `RowId`, and prove that the survivor retains its immutable `FactId`.
+  Replaced historical facts remain addressable in the receipt arena. Both
+  paths passed without a production repair.
+- Discriminating decomposed repro: a four-edge rectangle query with an
+  unrelated first-row decoy asserts `Plan::DecomposedPlan` and at least two
+  materialized stages. Before witness transport it reached native execution
+  and failed at `free_join/execute.rs` with
+  `missing exact premise FactId for atom AtomId(0)`. The same canary now passes
+  with source-ordered premise FactIds and no decoy retention.
+- Transport: receipt metadata maps each source `AtomId` once to a compact
+  `PremiseSlot`. Materialized rows optionally carry flat, row-aligned witness
+  records containing direct `(PremiseSlot, FactId)` evidence and prior-only
+  compact `(MatId, group, row)` ancestor references. The final action resolves
+  them through the already-retained immutable materialization map, unfolds
+  this acyclic structure iteratively, and requires duplicate evidence for a
+  premise slot to agree. References are three `u32` words with no owned state.
+  Ordinary materializations leave a pointer-sized optional sidecar absent;
+  the three-vector witness payload is boxed only when capture is enabled.
+- Scoped and projection canaries: the same exact rectangle passes through the
+  forced scoped/parallel materializer above the real 10,000-row database
+  threshold. A second decomposed query with two existential supports for one
+  projected key deterministically retains row zero and records its exact
+  aligned `R`/`S` facts. An ordinary decomposed control records zero witness
+  sidecar allocations/writes and zero FactId/witness lookups.
+- Focused commands:
+  `cargo test -p egglog-core-relations
+  compaction_preserves_live_and_historical_fact_ids -- --nocapture` passed both
+  compaction canaries; and
+  `cargo test -p egglog-core-relations decomposed -- --nocapture` passed all
+  four decomposed receipt/ordinary controls.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 71
+  tests. `cargo fmt --all` and `git diff --check` passed.
+- Deferred measured cost: receipt-enabled materialized groups still allocate
+  their boxed witness payload lazily. Flattening it across scoped workers would
+  require synchronization or barrier remapping, so H1 must report total
+  materialization groups/rows, sidecar groups/witness rows, fact/ancestor
+  entries, vector capacities/estimated bytes, and sidecar-groups per
+  materialized-row before deciding whether this needs optimization.
+- Hypothesis result: this closes the native FactId stability and decomposed
+  premise-transport gaps for the exercised table/materializer paths, including
+  deterministic existential projection. It does not establish H1 recording
+  overhead or workload-wide zero-Prefix completeness; those remain later
+  explicit gates.

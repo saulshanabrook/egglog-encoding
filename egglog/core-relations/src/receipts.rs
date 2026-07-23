@@ -14,7 +14,7 @@ use std::{
     },
 };
 
-use crate::{AtomId, TableId, Variable};
+use crate::{AtomId, TableId, Variable, numeric_id::DenseIdMap};
 
 macro_rules! handle {
     ($name:ident, $inner:ty) => {
@@ -40,6 +40,23 @@ handle!(CausalWave, u64);
 handle!(CauseDraftId, u64);
 handle!(MatchDraftId, u64);
 handle!(DurableCauseId, u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PremiseSlot(u16);
+
+impl PremiseSlot {
+    pub(crate) fn from_usize(value: usize) -> Self {
+        Self(
+            value
+                .try_into()
+                .expect("a receipt has more than u16 premises"),
+        )
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 impl FactId {
     pub(crate) const MISSING: Self = Self(0);
@@ -89,7 +106,8 @@ impl RuleReceiptSpec {
 #[derive(Clone, Debug)]
 pub(crate) struct ActionReceiptSpec {
     pub(crate) rule: u32,
-    pub(crate) premises: Box<[AtomId]>,
+    pub(crate) premise_count: usize,
+    pub(crate) premise_slots: Arc<DenseIdMap<AtomId, PremiseSlot>>,
     /// For each ordinary variable, the premise slot and table column whose
     /// committed row carries its producer-installed structural term handle.
     pub(crate) binding_cells: Box<[(usize, usize)]>,

@@ -13,11 +13,16 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 use crate::numeric_id::NumericId;
 
 use crate::{
-    CausalWave, GuardedRuleSetRunOutcome, PlanStrategy, RuleReceiptSpec, SourceRef,
+    CausalWave, FactId, GuardedRuleSetRunOutcome, PlanStrategy, RuleReceiptSpec, SourceRef,
     action::{ExecutionState, WriteVal},
     common::Value,
-    free_join::{CounterId, Database, TableId},
+    free_join::{
+        CounterId, Database, TableId,
+        execute::{materialized_witness_test_counts, reset_materialized_witness_test_counts},
+        plan::Plan,
+    },
     make_external_func,
+    offsets::RowId,
     query::RuleSetBuilder,
     table::{SortedWritesTable, causal_lookup_counters, reset_causal_lookup_counters},
     table_shortcuts::v,
@@ -325,6 +330,554 @@ fn causal_receipts_parallel_merge_preserves_proposal_and_fact_causes() {
         assert_eq!(final_snapshot.counters.live_provisional_bytes, 0);
         assert_eq!(final_snapshot.counters.unattributed_commits, 0);
     });
+}
+
+fn committed_fact_id_for_key(db: &Database, table: TableId, key: &[Value]) -> FactId {
+    let table = db.get_table(table);
+    let row = table.get_row(key).expect("committed key must exist");
+    table
+        .fact_id(row.id)
+        .expect("receipt-enabled row must have an immutable FactId")
+}
+
+fn committed_fact_id(db: &Database, table: TableId, key: Value) -> FactId {
+    committed_fact_id_for_key(db, table, &[key])
+}
+
+fn committed_row_id(db: &Database, table: TableId, key: Value) -> RowId {
+    db.get_table(table)
+        .get_row(&[key])
+        .expect("committed key must exist")
+        .id
+}
+
+#[test]
+fn serial_compaction_preserves_live_and_historical_fact_ids() {
+    let mut db = Database::default();
+    let table = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, out| {
+                if right[1] > left[1] {
+                    out.extend_from_slice(right);
+                    true
+                } else {
+                    false
+                }
+            }),
+        ),
+        "SerialCompaction".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let zero = receipts.intern_test_term("zero");
+    for key in 0..20 {
+        let key_term = receipts.intern_test_term(&format!("key-{key}"));
+        db.stage_source_row(
+            table,
+            &[Value::new(key), Value::new(0)],
+            &[key_term, zero],
+            SourceRef::Synthetic(key as u64),
+        )
+        .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let survivor = Value::new(19);
+    let target_before = committed_fact_id(&db, table, survivor);
+    let target_row_before = committed_row_id(&db, table, survivor);
+    let historical = committed_fact_id(&db, table, Value::new(1));
+    let version_before = db.get_table(table).version();
+
+    db.set_causal_wave(CausalWave::new(1));
+    let lanes = (0..40).collect::<Vec<_>>();
+    let causes = receipts
+        .register_rule_matches(30, CausalWave::new(1), 0, &[], &[], &lanes)
+        .into_iter()
+        .map(|(_, cause)| cause)
+        .collect::<Vec<_>>();
+    let mut updates = db.new_buffer(table);
+    for (index, cause) in causes.into_iter().enumerate() {
+        let key = 1 + index / 4;
+        let value = 1 + index % 4;
+        updates.stage_insert_with_cause(&[Value::from_usize(key), Value::from_usize(value)], cause);
+    }
+    drop(updates);
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let version_after = db.get_table(table).version();
+    assert_ne!(
+        version_before.major, version_after.major,
+        "the canary must cross a physical rekey/compaction boundary"
+    );
+    assert_eq!(
+        committed_fact_id(&db, table, survivor),
+        target_before,
+        "an untouched live row must keep its FactId while its RowId generation changes"
+    );
+    assert_ne!(
+        committed_row_id(&db, table, survivor),
+        target_row_before,
+        "the untouched canary row must physically move during serial compaction"
+    );
+    assert_ne!(
+        committed_fact_id(&db, table, Value::new(1)),
+        historical,
+        "an effective replacement must create a new immutable FactId"
+    );
+    assert_eq!(
+        receipts.fact_record(historical).unwrap().id,
+        historical,
+        "a compacted-away historical row must remain addressable in the receipt arena"
+    );
+}
+
+#[test]
+fn parallel_compaction_preserves_live_and_historical_fact_ids() {
+    const INITIAL_ROWS: usize = 20_001;
+    const UPDATED_KEYS: usize = 10_001;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut db = Database::default();
+        let table = db.add_table_named(
+            SortedWritesTable::new(
+                1,
+                3,
+                Some(ColumnId::new(2)),
+                vec![],
+                Box::new(|_, left, right, out| {
+                    if right[1] > left[1] {
+                        out.extend_from_slice(right);
+                        true
+                    } else {
+                        false
+                    }
+                }),
+            ),
+            "ParallelCompaction".into(),
+            iter::empty(),
+            iter::empty(),
+        );
+        let receipts = db.enable_causal_receipts();
+        db.set_causal_wave(CausalWave::new(1));
+        let initial_lanes = (0..INITIAL_ROWS).collect::<Vec<_>>();
+        let initial_causes = receipts
+            .register_rule_matches(40, CausalWave::new(1), 0, &[], &[], &initial_lanes)
+            .into_iter()
+            .map(|(_, cause)| cause)
+            .collect::<Vec<_>>();
+        let mut initial = db.new_buffer(table);
+        for (key, cause) in initial_causes.into_iter().enumerate() {
+            initial.stage_insert_with_cause(
+                &[Value::from_usize(key), Value::new(0), Value::new(0)],
+                cause,
+            );
+        }
+        drop(initial);
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+
+        let survivor = Value::from_usize(INITIAL_ROWS - 1);
+        let target_before = committed_fact_id(&db, table, survivor);
+        let target_row_before = committed_row_id(&db, table, survivor);
+        let historical = committed_fact_id(&db, table, Value::new(1));
+        let version_before = db.get_table(table).version();
+        db.set_causal_wave(CausalWave::new(2));
+        let update_count = UPDATED_KEYS * 2;
+        let update_lanes = (0..update_count).collect::<Vec<_>>();
+        let update_causes = receipts
+            .register_rule_matches(41, CausalWave::new(2), 0, &[], &[], &update_lanes)
+            .into_iter()
+            .map(|(_, cause)| cause)
+            .collect::<Vec<_>>();
+        let mut updates = db.new_buffer(table);
+        for (index, cause) in update_causes.into_iter().enumerate() {
+            let key = 1 + index / 2;
+            let value = 1 + index % 2;
+            updates.stage_insert_with_cause(
+                &[
+                    Value::from_usize(key),
+                    Value::from_usize(value),
+                    Value::new(1),
+                ],
+                cause,
+            );
+        }
+        drop(updates);
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+
+        let version_after = db.get_table(table).version();
+        assert_ne!(
+            version_before.major, version_after.major,
+            "the canary must cross the parallel physical rekey path"
+        );
+        assert_eq!(committed_fact_id(&db, table, survivor), target_before);
+        assert_ne!(
+            committed_row_id(&db, table, survivor),
+            target_row_before,
+            "the untouched canary row must physically move during parallel compaction"
+        );
+        assert_ne!(committed_fact_id(&db, table, Value::new(1)), historical);
+        assert_eq!(receipts.fact_record(historical).unwrap().id, historical);
+    });
+}
+
+fn decomposed_receipt_materialization_case(force_scoped_execution: bool) {
+    let mut db = Database::default();
+    let receipts = db.enable_causal_receipts();
+    let immutable_relation = |n_keys, n_columns| {
+        SortedWritesTable::new(
+            n_keys,
+            n_columns,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    if force_scoped_execution {
+        let filler = db.add_table_named(
+            immutable_relation(1, 1),
+            "ParallelThresholdFiller".into(),
+            iter::empty(),
+            iter::empty(),
+        );
+        for value in 0..10_001 {
+            let term = receipts.intern_test_term(&format!("filler-{value}"));
+            db.stage_source_row(
+                filler,
+                &[Value::from_usize(value)],
+                &[term],
+                SourceRef::Synthetic(1_000_000 + value as u64),
+            )
+            .unwrap();
+        }
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+    }
+    let r = db.add_table_named(
+        immutable_relation(2, 2),
+        "R".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let s = db.add_table_named(
+        immutable_relation(2, 2),
+        "S".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let t = db.add_table_named(
+        immutable_relation(2, 2),
+        "T".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let u = db.add_table_named(
+        immutable_relation(2, 2),
+        "U".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let derived = db.add_table_named(
+        immutable_relation(4, 4),
+        "DerivedRectangle".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+
+    let term = |value: usize| receipts.intern_test_term(&format!("value-{value}"));
+    let source_rows = [
+        (r, vec![2, 10]),
+        (r, vec![1, 10]),
+        (s, vec![10, 20]),
+        (t, vec![20, 30]),
+        (u, vec![30, 1]),
+    ];
+    for (source, (table, row)) in source_rows.into_iter().enumerate() {
+        let values = row
+            .iter()
+            .copied()
+            .map(Value::from_usize)
+            .collect::<Vec<_>>();
+        let terms = row.iter().copied().map(&term).collect::<Vec<_>>();
+        db.stage_source_row(table, &values, &terms, SourceRef::Synthetic(source as u64))
+            .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let r_decoy = committed_fact_id_for_key(&db, r, &[Value::new(2), Value::new(10)]);
+    let r_first = committed_fact_id_for_key(&db, r, &[Value::new(1), Value::new(10)]);
+    let s_fact = committed_fact_id_for_key(&db, s, &[Value::new(10), Value::new(20)]);
+    let t_fact = committed_fact_id_for_key(&db, t, &[Value::new(20), Value::new(30)]);
+    let u_fact = committed_fact_id_for_key(&db, u, &[Value::new(30), Value::new(1)]);
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    query.set_plan_strategy(PlanStrategy::Gj);
+    let x = query.new_var_named("x");
+    let y = query.new_var_named("y");
+    let z = query.new_var_named("z");
+    let w = query.new_var_named("w");
+    let r_atom = query.add_atom(r, &[x.into(), y.into()], &[]).unwrap();
+    let s_atom = query.add_atom(s, &[y.into(), z.into()], &[]).unwrap();
+    let t_atom = query.add_atom(t, &[z.into(), w.into()], &[]).unwrap();
+    let u_atom = query.add_atom(u, &[w.into(), x.into()], &[]).unwrap();
+    let mut action = query.build();
+    action
+        .insert(derived, &[x.into(), y.into(), z.into(), w.into()])
+        .unwrap();
+    action.build_with_receipts(
+        "rectangle-receipt",
+        RuleReceiptSpec::new(50, [r_atom, s_atom, t_atom, u_atom], [x, y, z, w]),
+    );
+    let rule_set = rules.build();
+    let (plan, _, _) = rule_set
+        .plans
+        .values()
+        .next()
+        .expect("rectangle rule must have one plan");
+    let Plan::DecomposedPlan(plan) = plan else {
+        panic!("the receipt canary must exercise decomposed materialization");
+    };
+    assert!(
+        plan.stages.blocks.len() >= 2,
+        "the receipt canary must cross at least two materialized stages"
+    );
+
+    db.set_causal_wave(CausalWave::new(1));
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    assert!(report.changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    let derived_fact = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == derived)
+        .expect("rectangle result must be committed");
+    let match_id = derived_fact
+        .cause
+        .rule_match()
+        .expect("rectangle result must cite its native match");
+    let matched = snapshot
+        .matches
+        .iter()
+        .find(|record| record.id == match_id)
+        .expect("rectangle match receipt must be durable");
+    assert_eq!(
+        matched.premises.as_ref(),
+        &[r_first, s_fact, t_fact, u_fact],
+        "receipt premise order must follow the source rule"
+    );
+    assert!(!matched.premises.contains(&r_decoy));
+}
+
+#[test]
+fn decomposed_receipts_preserve_exact_ordered_premises_through_materialization() {
+    decomposed_receipt_materialization_case(false);
+}
+
+#[test]
+fn scoped_decomposed_receipts_preserve_exact_ordered_premises() {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap()
+        .install(|| decomposed_receipt_materialization_case(true));
+}
+
+#[test]
+fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
+    let mut db = Database::default();
+    let relation = |arity| {
+        SortedWritesTable::new(
+            arity,
+            arity,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    let r = db.add_table(relation(3), iter::empty(), iter::empty());
+    let s = db.add_table(relation(3), iter::empty(), iter::empty());
+    let t = db.add_table(relation(2), iter::empty(), iter::empty());
+    let u = db.add_table(relation(2), iter::empty(), iter::empty());
+    let derived = db.add_table(relation(4), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    for (source, (table, row)) in [
+        (r, vec![1, 10, 100]),
+        (r, vec![1, 10, 101]),
+        (s, vec![10, 20, 100]),
+        (s, vec![10, 20, 101]),
+        (t, vec![20, 30]),
+        (u, vec![30, 1]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let values = row
+            .iter()
+            .copied()
+            .map(Value::from_usize)
+            .collect::<Vec<_>>();
+        let terms = row
+            .iter()
+            .map(|value| receipts.intern_test_term(&format!("value-{value}")))
+            .collect::<Vec<_>>();
+        db.stage_source_row(table, &values, &terms, SourceRef::Synthetic(source as u64))
+            .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let r_first =
+        committed_fact_id_for_key(&db, r, &[Value::new(1), Value::new(10), Value::new(100)]);
+    let r_second =
+        committed_fact_id_for_key(&db, r, &[Value::new(1), Value::new(10), Value::new(101)]);
+    let s_first =
+        committed_fact_id_for_key(&db, s, &[Value::new(10), Value::new(20), Value::new(100)]);
+    let s_second =
+        committed_fact_id_for_key(&db, s, &[Value::new(10), Value::new(20), Value::new(101)]);
+    let t_fact = committed_fact_id_for_key(&db, t, &[Value::new(20), Value::new(30)]);
+    let u_fact = committed_fact_id_for_key(&db, u, &[Value::new(30), Value::new(1)]);
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    query.set_plan_strategy(PlanStrategy::Gj);
+    let x = query.new_var_named("x");
+    let y = query.new_var_named("y");
+    let z = query.new_var_named("z");
+    let w = query.new_var_named("w");
+    let existential = query.new_var_named("existential");
+    let r_atom = query
+        .add_atom(r, &[x.into(), y.into(), existential.into()], &[])
+        .unwrap();
+    let s_atom = query
+        .add_atom(s, &[y.into(), z.into(), existential.into()], &[])
+        .unwrap();
+    let t_atom = query.add_atom(t, &[z.into(), w.into()], &[]).unwrap();
+    let u_atom = query.add_atom(u, &[w.into(), x.into()], &[]).unwrap();
+    let mut action = query.build();
+    action
+        .insert(derived, &[x.into(), y.into(), z.into(), w.into()])
+        .unwrap();
+    action.build_with_receipts(
+        "existential-rectangle",
+        RuleReceiptSpec::new(51, [r_atom, s_atom, t_atom, u_atom], [x, y, z, w]),
+    );
+    let rule_set = rules.build();
+    let (plan, _, _) = rule_set.plans.values().next().unwrap();
+    let Plan::DecomposedPlan(plan) = plan else {
+        panic!("existential receipt canary must exercise decomposed materialization");
+    };
+    assert!(plan.stages.blocks.len() >= 2);
+
+    db.set_causal_wave(CausalWave::new(1));
+    assert!(db.run_rule_set(&rule_set, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+    let snapshot = receipts.snapshot();
+    let derived_fact = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == derived)
+        .unwrap();
+    let matched = snapshot
+        .matches
+        .iter()
+        .find(|record| record.id == derived_fact.cause.rule_match().unwrap())
+        .unwrap();
+    assert_eq!(
+        matched.premises.as_ref(),
+        &[r_first, s_first, t_fact, u_fact]
+    );
+    assert!(!matched.premises.contains(&r_second));
+    assert!(!matched.premises.contains(&s_second));
+}
+
+#[test]
+fn ordinary_decomposed_execution_allocates_no_witness_sidecars() {
+    let mut db = Database::default();
+    let relation = |arity| {
+        SortedWritesTable::new(
+            arity,
+            arity,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    let r = db.add_table(relation(2), iter::empty(), iter::empty());
+    let s = db.add_table(relation(2), iter::empty(), iter::empty());
+    let t = db.add_table(relation(2), iter::empty(), iter::empty());
+    let u = db.add_table(relation(2), iter::empty(), iter::empty());
+    let derived = db.add_table(relation(4), iter::empty(), iter::empty());
+    for (table, row) in [
+        (r, [Value::new(1), Value::new(10)]),
+        (s, [Value::new(10), Value::new(20)]),
+        (t, [Value::new(20), Value::new(30)]),
+        (u, [Value::new(30), Value::new(1)]),
+    ] {
+        let mut source = db.new_buffer(table);
+        source.stage_insert(&row);
+    }
+    assert!(db.merge_all());
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    query.set_plan_strategy(PlanStrategy::Gj);
+    let x = query.new_var_named("x");
+    let y = query.new_var_named("y");
+    let z = query.new_var_named("z");
+    let w = query.new_var_named("w");
+    query.add_atom(r, &[x.into(), y.into()], &[]).unwrap();
+    query.add_atom(s, &[y.into(), z.into()], &[]).unwrap();
+    query.add_atom(t, &[z.into(), w.into()], &[]).unwrap();
+    query.add_atom(u, &[w.into(), x.into()], &[]).unwrap();
+    let mut action = query.build();
+    action
+        .insert(derived, &[x.into(), y.into(), z.into(), w.into()])
+        .unwrap();
+    action.build();
+    let rule_set = rules.build();
+    let (plan, _, _) = rule_set.plans.values().next().unwrap();
+    assert!(
+        matches!(plan, Plan::DecomposedPlan(plan) if plan.stages.blocks.len() >= 2),
+        "ordinary control must exercise the same decomposed materialization path"
+    );
+
+    reset_causal_lookup_counters();
+    reset_materialized_witness_test_counts();
+    assert!(db.run_rule_set(&rule_set, ReportLevel::TimeOnly).changed);
+    assert_eq!(
+        materialized_witness_test_counts(),
+        (0, 0),
+        "ordinary materialization must allocate and write no witness sidecars"
+    );
+    assert_eq!(
+        causal_lookup_counters(),
+        (0, 0),
+        "ordinary decomposed execution must perform no receipt witness reads"
+    );
 }
 
 #[test]

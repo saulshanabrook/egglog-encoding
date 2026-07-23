@@ -20,6 +20,22 @@ use egglog_reports::{PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
 use smallvec::SmallVec;
 use web_time::{Duration, Instant};
 
+#[cfg(test)]
+thread_local! {
+    static MATERIALIZED_WITNESS_TEST_COUNTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_materialized_witness_test_counts() {
+    MATERIALIZED_WITNESS_TEST_COUNTS.set((0, 0));
+}
+
+#[cfg(test)]
+pub(crate) fn materialized_witness_test_counts() -> (usize, usize) {
+    MATERIALIZED_WITNESS_TEST_COUNTS.get()
+}
+
 use crate::{
     Constraint, OffsetRange, Pool, SubsetRef,
     action::{Bindings, ExecutionState},
@@ -33,6 +49,7 @@ use crate::{
     parallel_heuristics::parallelize_db_level_op,
     pool::Pooled,
     query::RuleSet,
+    receipts::PremiseSlot,
     row_buffer::TaggedRowBuffer,
     table_spec::{ColumnId, Offset, WrappedTableRef},
 };
@@ -421,7 +438,7 @@ impl Database {
                                 Plan::DecomposedPlan(plan) => {
                                     let mut materializations: DenseIdMap<
                                         MatId,
-                                        Arc<DashMap<Vec<Value>, RowBuffer>>,
+                                        Arc<ScopedMaterialization>,
                                     > = DenseIdMap::with_capacity(plan.stages.blocks.len());
                                     for i in 0..plan.stages.blocks.len() {
                                         materializations.insert(
@@ -440,6 +457,10 @@ impl Database {
                                             .collect(),
                                     );
                                     let mut materializations = Arc::new(materializations);
+                                    let receipt = rule_set.actions[plan.actions].receipt.as_ref();
+                                    let capture_witness = receipt.is_some();
+                                    let premise_slots =
+                                        receipt.map(|receipt| receipt.premise_slots.clone());
 
                                     for (mat_id, stage_block) in
                                         plan.stages.blocks.iter().enumerate()
@@ -450,6 +471,8 @@ impl Database {
                                                 scope: stage_scope,
                                                 specs: specs.clone(),
                                                 materializations: materializations.clone(),
+                                                capture_witness,
+                                                premise_slots: premise_slots.clone(),
                                                 scratch_key: Default::default(),
                                                 scratch_val: Default::default(),
                                             };
@@ -574,6 +597,11 @@ impl Database {
                                     .map(|(i, block)| (MatId::from_usize(i), block.1.clone()))
                                     .collect(),
                                 materializations,
+                                capture_witness: rule_set.actions[plan.actions].receipt.is_some(),
+                                premise_slots: rule_set.actions[plan.actions]
+                                    .receipt
+                                    .as_ref()
+                                    .map(|receipt| receipt.premise_slots.clone()),
                                 scratch_key: Default::default(),
                                 scratch_val: Default::default(),
                             };
@@ -714,7 +742,7 @@ impl Database {
                             Plan::DecomposedPlan(plan) => {
                                 let mut materializations: DenseIdMap<
                                     MatId,
-                                    Arc<DashMap<Vec<Value>, RowBuffer>>,
+                                    Arc<ScopedMaterialization>,
                                 > = DenseIdMap::with_capacity(plan.stages.blocks.len());
                                 for i in 0..plan.stages.blocks.len() {
                                     materializations
@@ -738,6 +766,8 @@ impl Database {
                                             scope: stage_scope,
                                             specs: specs.clone(),
                                             materializations: materializations.clone(),
+                                            capture_witness: false,
+                                            premise_slots: None,
                                             scratch_key: Default::default(),
                                             scratch_val: Default::default(),
                                         };
@@ -814,6 +844,8 @@ impl Database {
                                     .map(|(i, block)| (MatId::from_usize(i), block.1.clone()))
                                     .collect(),
                                 materializations,
+                                capture_witness: false,
+                                premise_slots: None,
                                 scratch_key: Default::default(),
                                 scratch_val: Default::default(),
                             };
@@ -867,15 +899,21 @@ impl Database {
         let match_counter = Arc::new(MatchCounter::new(rule_set.actions.n_ids()));
         let apply_timer = Instant::now();
         let exec_state = ExecutionState::new(self.read_only_view(), Default::default());
+        let materializations: DenseIdMap<MatId, Arc<Materialization>> = DenseIdMap::default();
         if run_in_parallel {
             rayon::in_place_scope(|scope| {
                 let mut action_buf =
                     ScopedActionBuffer::new(scope, rule_set, match_counter.clone());
                 for captured in &captured {
                     let bindings = captured.to_map();
-                    action_buf.push_bindings(captured.action, &bindings, None, &exec_state, || {
-                        exec_state.clone()
-                    });
+                    action_buf.push_bindings(
+                        captured.action,
+                        &bindings,
+                        None,
+                        &materializations,
+                        &exec_state,
+                        || exec_state.clone(),
+                    );
                 }
                 if action_buf.needs_flush {
                     action_buf.flush(&mut exec_state.clone());
@@ -890,9 +928,14 @@ impl Database {
             };
             for captured in &captured {
                 let bindings = captured.to_map();
-                action_buf.push_bindings(captured.action, &bindings, None, &exec_state, || {
-                    exec_state.clone()
-                });
+                action_buf.push_bindings(
+                    captured.action,
+                    &bindings,
+                    None,
+                    &materializations,
+                    &exec_state,
+                    || exec_state.clone(),
+                );
             }
             action_buf.flush(&mut exec_state.clone());
         }
@@ -1097,35 +1140,224 @@ impl FrameUpdates {
     }
 }
 
-type BindingSet = Vec<(
-    Option<AtomId>,
-    SmallVec<[Variable; 4]>,
-    Arc<TaggedRowBuffer<SmallValueVec>>,
-)>;
+type Materialization = IndexMap<Vec<Value>, MaterializedGroup>;
+type ScopedMaterialization = DashMap<Vec<Value>, MaterializedGroup>;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct MaterializedWitnessRef {
+    materialization: MatId,
+    group: u32,
+    row: u32,
+}
+
+impl MaterializedWitnessRef {
+    fn new(materialization: MatId, group: usize, row: usize) -> Self {
+        Self {
+            materialization,
+            group: group
+                .try_into()
+                .expect("materialization has more than u32 groups"),
+            row: row
+                .try_into()
+                .expect("materialized group has more than u32 rows"),
+        }
+    }
+}
+
+const _: () = {
+    assert!(
+        mem::size_of::<MaterializedWitnessRef>() == 3 * mem::size_of::<u32>(),
+        "materialized witness references must remain three compact integer IDs"
+    );
+    assert!(
+        !mem::needs_drop::<MaterializedWitnessRef>(),
+        "materialized witness references must not own Arc or heap state"
+    );
+};
+
+#[derive(Clone, Copy)]
+struct FlatWitnessRange {
+    start: u32,
+    len: u32,
+}
+
+impl FlatWitnessRange {
+    fn new(start: usize, len: usize) -> Self {
+        Self {
+            start: start
+                .try_into()
+                .expect("materialized witness arena exceeds u32"),
+            len: len.try_into().expect("materialized witness exceeds u32"),
+        }
+    }
+
+    fn as_range(self) -> Range<usize> {
+        let start = self.start as usize;
+        start..start + self.len as usize
+    }
+}
+
+#[derive(Clone, Copy)]
+struct StoredWitness {
+    facts: FlatWitnessRange,
+    ancestors: FlatWitnessRange,
+}
+
+#[derive(Default)]
+struct StoredWitnessRows {
+    rows: Vec<StoredWitness>,
+    facts: Vec<(PremiseSlot, crate::FactId)>,
+    ancestors: Vec<MaterializedWitnessRef>,
+}
+
+impl StoredWitnessRows {
+    fn push(&mut self, witness: &MatchWitness) {
+        let facts = FlatWitnessRange::new(self.facts.len(), witness.facts.len());
+        self.facts.extend_from_slice(&witness.facts);
+        let ancestors = FlatWitnessRange::new(self.ancestors.len(), witness.ancestors.len());
+        self.ancestors.extend_from_slice(&witness.ancestors);
+        self.rows.push(StoredWitness { facts, ancestors });
+    }
+
+    fn get(&self, row: usize) -> (&[(PremiseSlot, crate::FactId)], &[MaterializedWitnessRef]) {
+        let witness = self
+            .rows
+            .get(row)
+            .unwrap_or_else(|| panic!("missing witness for materialized row {row}"));
+        (
+            &self.facts[witness.facts.as_range()],
+            &self.ancestors[witness.ancestors.as_range()],
+        )
+    }
+}
+
+struct MaterializedGroup {
+    rows: RowBuffer,
+    witnesses: Option<Box<StoredWitnessRows>>,
+}
+
+const _: () = assert!(
+    mem::size_of::<Option<Box<StoredWitnessRows>>>() == mem::size_of::<usize>(),
+    "the disabled materialized-witness sidecar must stay pointer-sized"
+);
+
+impl MaterializedGroup {
+    fn new(arity: usize) -> Self {
+        Self {
+            rows: RowBuffer::new(arity),
+            witnesses: None,
+        }
+    }
+
+    fn add_row(&mut self, row: &[Value], capture_witness: bool, witness: Option<&MatchWitness>) {
+        let row = self.rows.add_row(row);
+        if capture_witness {
+            let witness = witness.expect("receipt materialization requires a native witness");
+            #[cfg(test)]
+            MATERIALIZED_WITNESS_TEST_COUNTS.set({
+                let (allocations, writes) = MATERIALIZED_WITNESS_TEST_COUNTS.get();
+                (
+                    allocations + usize::from(self.witnesses.is_none()),
+                    writes + 1,
+                )
+            });
+            let witnesses = self.witnesses.get_or_insert_default();
+            assert_eq!(
+                witnesses.rows.len(),
+                row.index(),
+                "materialized witness rows must stay aligned with value rows"
+            );
+            witnesses.push(witness);
+        } else {
+            debug_assert!(witness.is_none());
+            debug_assert!(self.witnesses.is_none());
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.rows.len()
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &[Value]> {
+        self.rows.iter()
+    }
+}
+
+#[derive(Clone)]
+struct BindingSetEntry {
+    atom: Option<AtomId>,
+    vars: SmallVec<[Variable; 4]>,
+    rows: Arc<TaggedRowBuffer<SmallValueVec>>,
+    materialized_witnesses: Option<Arc<[MaterializedWitnessRef]>>,
+}
+
+type BindingSet = Vec<BindingSetEntry>;
 
 #[derive(Default)]
 struct MatchWitness {
-    facts: SmallVec<[(AtomId, crate::FactId); 4]>,
+    facts: SmallVec<[(PremiseSlot, crate::FactId); 4]>,
+    ancestors: SmallVec<[MaterializedWitnessRef; 2]>,
 }
 
 fn push_receipt_witness(
     action: &ActionInfo,
     witness: &MatchWitness,
+    materializations: &DenseIdMap<MatId, Arc<Materialization>>,
     exec_state: &ExecutionState<'_>,
     bindings: &mut Bindings,
 ) {
     let Some(layout) = &action.receipt else {
         return;
     };
-    let mut premises = SmallVec::<[crate::FactId; 4]>::new();
-    for atom in &layout.premises {
-        let fact = witness
-            .facts
-            .iter()
-            .find_map(|(candidate, fact)| (*candidate == *atom).then_some(*fact))
-            .unwrap_or_else(|| panic!("missing exact premise FactId for atom {atom:?}"));
-        premises.push(fact);
+    let mut premises = SmallVec::<[Option<crate::FactId>; 4]>::new();
+    premises.resize(layout.premise_count, None);
+    let mut record = |slot: PremiseSlot, fact: crate::FactId| {
+        let cell = &mut premises[slot.index()];
+        if let Some(previous) = cell {
+            assert_eq!(
+                *previous,
+                fact,
+                "decomposed witnesses disagree for premise slot {}",
+                slot.index()
+            );
+        } else {
+            *cell = Some(fact);
+        }
+    };
+    for &(slot, fact) in &witness.facts {
+        record(slot, fact);
     }
+    let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
+    while let Some(ancestor) = ancestors.pop() {
+        let materialization = materializations
+            .get(ancestor.materialization)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing materialization resolver entry {:?}",
+                    ancestor.materialization
+                )
+            });
+        let group = materialization
+            .get_index(ancestor.group as usize)
+            .unwrap_or_else(|| panic!("missing materialized witness group {}", ancestor.group))
+            .1;
+        let stored = group
+            .witnesses
+            .as_ref()
+            .expect("receipt materialization is missing its witness sidecar");
+        let (facts, nested) = stored.get(ancestor.row as usize);
+        for &(slot, fact) in facts {
+            record(slot, fact);
+        }
+        ancestors.extend_from_slice(nested);
+    }
+    let premises = premises
+        .into_iter()
+        .enumerate()
+        .map(|(slot, fact)| {
+            fact.unwrap_or_else(|| panic!("missing exact premise FactId for slot {slot}"))
+        })
+        .collect::<SmallVec<[crate::FactId; 4]>>();
     bindings.push_receipt(
         layout.rule,
         exec_state.causal_wave(),
@@ -1139,7 +1371,8 @@ struct BindingInfo {
     bindings: DenseIdMap<Variable, Value>,
     binding_sets: BindingSet,
     subsets: DenseIdMap<AtomId, Arc<TrieNode>>,
-    materializations: DenseIdMap<MatId, Arc<IndexMap<Vec<Value>, RowBuffer>>>,
+    materializations: DenseIdMap<MatId, Arc<Materialization>>,
+    materialized_witnesses: SmallVec<[MaterializedWitnessRef; 2]>,
 }
 
 impl BindingInfo {
@@ -1339,6 +1572,8 @@ impl<'a> JoinState<'a> {
                 &binding_info.binding_sets,
                 atoms,
                 &binding_info.subsets,
+                &binding_info.materializations,
+                &binding_info.materialized_witnesses,
                 &self.exec_state,
             );
             return;
@@ -1363,6 +1598,7 @@ impl<'a> JoinState<'a> {
                 if (cur == 0 || cur == 1) && action_buf.supports_parallel_drain() {
                     drain_updates_parallel!($updates)
                 } else {
+                    let witness_base = binding_info.materialized_witnesses.len();
                     $updates.drain(|update| match update {
                         UpdateInstr::PushBinding(var, val) => {
                             binding_info.bindings.insert(var, val);
@@ -1372,6 +1608,9 @@ impl<'a> JoinState<'a> {
                         }
                         UpdateInstr::RefineAtomDense(atom, range) => {
                             binding_info.insert_subset(atom, Subset::Dense(range));
+                        }
+                        UpdateInstr::PushMaterializedWitness(witness) => {
+                            binding_info.materialized_witnesses.push(witness);
                         }
                         UpdateInstr::EndFrame => {
                             // Inline leaf-level: if cur+1 is the leaf (no more
@@ -1385,6 +1624,8 @@ impl<'a> JoinState<'a> {
                                     &binding_info.binding_sets,
                                     atoms,
                                     &binding_info.subsets,
+                                    &binding_info.materializations,
+                                    &binding_info.materialized_witnesses,
                                     &self.exec_state,
                                 );
                             } else {
@@ -1399,6 +1640,9 @@ impl<'a> JoinState<'a> {
                                     action_buf,
                                 );
                             }
+                            binding_info
+                                .materialized_witnesses
+                                .truncate(witness_base);
                         }
                     })
                 }
@@ -1427,6 +1671,7 @@ impl<'a> JoinState<'a> {
                               updates,
                           },
                           buf| {
+                        let witness_base = binding_info.materialized_witnesses.len();
                         updates.drain(|update| match update {
                             UpdateInstr::PushBinding(var, val) => {
                                 binding_info.bindings.insert(var, val);
@@ -1436,6 +1681,9 @@ impl<'a> JoinState<'a> {
                             }
                             UpdateInstr::RefineAtomDense(atom, range) => {
                                 binding_info.insert_subset(atom, Subset::Dense(range));
+                            }
+                            UpdateInstr::PushMaterializedWitness(witness) => {
+                                binding_info.materialized_witnesses.push(witness);
                             }
                             UpdateInstr::EndFrame => {
                                 JoinState {
@@ -1456,6 +1704,7 @@ impl<'a> JoinState<'a> {
                                     binding_info,
                                     buf,
                                 );
+                                binding_info.materialized_witnesses.truncate(witness_base);
                             }
                         })
                     },
@@ -1782,9 +2031,12 @@ impl<'a> JoinState<'a> {
                         return;
                     }
 
-                    binding_info
-                        .binding_sets
-                        .push((Some(cover_atom), vars, Arc::new(buf)));
+                    binding_info.binding_sets.push(BindingSetEntry {
+                        atom: Some(cover_atom),
+                        vars,
+                        rows: Arc::new(buf),
+                        materialized_witnesses: None,
+                    });
                     let mut updates = FrameUpdates::with_capacity(1);
                     updates.finish_frame();
                     drain_updates!(updates);
@@ -1963,12 +2215,15 @@ impl<'a> JoinState<'a> {
                 let vars: SmallVec<[Variable; 4]> = bind.iter().map(|(_, v)| *v).collect();
                 let mut buf = TaggedRowBuffer::new_inline(bind.len());
                 let mut row_scratch: SmallVec<[Value; 8]> = SmallVec::new();
+                let mut materialized_witnesses = action_buf
+                    .needs_receipt_witness(action)
+                    .then(Vec::<MaterializedWitnessRef>::new);
                 match mode {
                     MatScanMode::Full => {
-                        for group in cover_mat.iter() {
+                        for (group_index, group) in cover_mat.iter().enumerate() {
                             let group_key = group.0;
                             let group_key_len = group_key.len();
-                            for non_keys in group.1.iter() {
+                            for (row_index, non_keys) in group.1.iter().enumerate() {
                                 row_scratch.clear();
                                 for (col, _) in bind.iter() {
                                     let val = if col.index() < group_key_len {
@@ -1979,11 +2234,18 @@ impl<'a> JoinState<'a> {
                                     row_scratch.push(val);
                                 }
                                 buf.add_row(RowId::new(0), &row_scratch);
+                                if let Some(witnesses) = &mut materialized_witnesses {
+                                    witnesses.push(MaterializedWitnessRef::new(
+                                        *cover,
+                                        group_index,
+                                        row_index,
+                                    ));
+                                }
                             }
                         }
                     }
                     MatScanMode::KeyOnly => {
-                        for group in cover_mat.iter() {
+                        for (group_index, group) in cover_mat.iter().enumerate() {
                             let group_key = group.0;
                             row_scratch.clear();
                             for (col, _) in bind.iter() {
@@ -1991,6 +2253,9 @@ impl<'a> JoinState<'a> {
                                 row_scratch.push(group_key[col.index()]);
                             }
                             buf.add_row(RowId::new(0), &row_scratch);
+                            if let Some(witnesses) = &mut materialized_witnesses {
+                                witnesses.push(MaterializedWitnessRef::new(*cover, group_index, 0));
+                            }
                         }
                     }
                     MatScanMode::Value(index_vars) => {
@@ -1998,14 +2263,21 @@ impl<'a> JoinState<'a> {
                             .iter()
                             .map(|var| binding_info.bindings[*var])
                             .collect();
-                        if let Some(group) = cover_mat.get(&keys) {
-                            for vals in group.iter() {
+                        if let Some((group_index, _, group)) = cover_mat.get_full(&keys) {
+                            for (row_index, vals) in group.iter().enumerate() {
                                 debug_assert!(vals.len() == bind.len());
                                 row_scratch.clear();
                                 for (col, _) in bind.iter() {
                                     row_scratch.push(vals[col.index()]);
                                 }
                                 buf.add_row(RowId::new(0), &row_scratch);
+                                if let Some(witnesses) = &mut materialized_witnesses {
+                                    witnesses.push(MaterializedWitnessRef::new(
+                                        *cover,
+                                        group_index,
+                                        row_index,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -2014,7 +2286,13 @@ impl<'a> JoinState<'a> {
                 if buf.is_empty() {
                     return;
                 }
-                binding_info.binding_sets.push((None, vars, Arc::new(buf)));
+                binding_info.binding_sets.push(BindingSetEntry {
+                    atom: None,
+                    vars,
+                    rows: Arc::new(buf),
+                    materialized_witnesses: materialized_witnesses
+                        .map(|witnesses| Arc::from(witnesses.into_boxed_slice())),
+                });
                 let mut updates = FrameUpdates::with_capacity(1);
                 updates.finish_frame();
                 drain_updates!(updates);
@@ -2027,6 +2305,7 @@ impl<'a> JoinState<'a> {
                 to_intersect,
             } => {
                 let cover_mat = binding_info.materializations[*cover].clone();
+                let capture_witness = action_buf.needs_receipt_witness(action);
                 let mut updates = FrameUpdates::with_capacity(cmp::min(chunk_size, cur_size));
                 let probers = to_intersect
                     .iter()
@@ -2095,13 +2374,13 @@ impl<'a> JoinState<'a> {
                 match mode {
                     MatScanMode::Full | MatScanMode::KeyOnly => {
                         // enumerate keys
-                        for group in cover_mat.iter() {
+                        for (group_index, group) in cover_mat.iter().enumerate() {
                             let group_key = group.0;
                             let group_val = group.1;
                             let group_key_len = group_key.len();
                             if mode == &MatScanMode::Full {
                                 // enumerate non-keys
-                                for non_keys in group_val.iter() {
+                                for (row_index, non_keys) in group_val.iter().enumerate() {
                                     for (col, var) in bind.iter() {
                                         if col.index() < group_key_len {
                                             updates.push_binding(*var, group_key[col.index()]);
@@ -2117,6 +2396,15 @@ impl<'a> JoinState<'a> {
                                             );
                                         }
                                     }
+                                    if capture_witness {
+                                        updates.push_materialized_witness(
+                                            MaterializedWitnessRef::new(
+                                                *cover,
+                                                group_index,
+                                                row_index,
+                                            ),
+                                        );
+                                    }
                                     if prune_probers(&mut updates, Some(group_key), Some(non_keys))
                                     {
                                         updates.finish_frame();
@@ -2128,6 +2416,13 @@ impl<'a> JoinState<'a> {
                                 for (col, var) in bind.iter() {
                                     debug_assert!(col.index() < group_key_len);
                                     updates.push_binding(*var, group_key[col.index()]);
+                                }
+                                if capture_witness {
+                                    updates.push_materialized_witness(MaterializedWitnessRef::new(
+                                        *cover,
+                                        group_index,
+                                        0,
+                                    ));
                                 }
                                 if prune_probers(&mut updates, Some(group_key), None) {
                                     updates.finish_frame();
@@ -2143,21 +2438,35 @@ impl<'a> JoinState<'a> {
                             .map(|var| binding_info.bindings[*var])
                             .collect::<Vec<Value>>();
                         // lookup keys
-                        if let Some(group) = cover_mat.get(&keys) {
+                        if let Some((group_index, _, group)) = cover_mat.get_full(&keys) {
                             if matches!(mode, MatScanMode::Lookup(_)) {
                                 debug_assert_eq!(to_intersect.len(), 0);
                                 debug_assert_eq!(bind.len(), 0);
                                 if group.len() > 0 {
+                                    if capture_witness {
+                                        updates.push_materialized_witness(
+                                            MaterializedWitnessRef::new(*cover, group_index, 0),
+                                        );
+                                    }
                                     updates.finish_frame();
                                 }
                                 drain_updates!(updates);
                             } else {
                                 // enumerate non-keys
                                 // for vals in group.value().iter() {
-                                for vals in group.iter() {
+                                for (row_index, vals) in group.iter().enumerate() {
                                     debug_assert!(vals.len() == bind.len()); // TODO: not true for non-full query
                                     for (col, var) in bind.iter() {
                                         updates.push_binding(*var, vals[col.index()]);
+                                    }
+                                    if capture_witness {
+                                        updates.push_materialized_witness(
+                                            MaterializedWitnessRef::new(
+                                                *cover,
+                                                group_index,
+                                                row_index,
+                                            ),
+                                        );
                                     }
                                     if prune_probers(&mut updates, None, Some(vals)) {
                                         updates.finish_frame();
@@ -2226,11 +2535,14 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         binding_sets: &BindingSet,
         atoms: &DenseIdMap<AtomId, Atom>,
         subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+        materializations: &DenseIdMap<MatId, Arc<Materialization>>,
+        materialized_witnesses: &[MaterializedWitnessRef],
         exec_state: &ExecutionState<'state>,
     ) {
-        let mut witness = self
-            .needs_receipt_witness(action)
-            .then(MatchWitness::default);
+        let mut witness = self.needs_receipt_witness(action).then(|| MatchWitness {
+            facts: SmallVec::new(),
+            ancestors: SmallVec::from_slice(materialized_witnesses),
+        });
         expand_binding_sets(
             self,
             action,
@@ -2238,6 +2550,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
             binding_sets,
             atoms,
             subsets,
+            materializations,
             0,
             &mut witness,
             exec_state,
@@ -2246,6 +2559,10 @@ trait ActionBuffer<'state, A: NumericId>: Send {
 
     fn needs_receipt_witness(&self, _action: A) -> bool {
         false
+    }
+
+    fn receipt_premise_slot(&self, _action: A, _atom: AtomId) -> Option<PremiseSlot> {
+        None
     }
 
     /// Push the given bindings to be executed for the specified action. If this
@@ -2260,6 +2577,7 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         action: A,
         bindings: &DenseIdMap<Variable, Value>,
         witness: Option<&MatchWitness>,
+        materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         exec_state: &ExecutionState<'state>,
         to_exec_state: impl FnMut() -> ExecutionState<'state>,
     );
@@ -2317,6 +2635,7 @@ impl<'state> ActionBuffer<'state, ActionId> for InPlaceCaptureBuffer {
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
         _witness: Option<&MatchWitness>,
+        _materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         _exec_state: &ExecutionState<'state>,
         _to_exec_state: impl FnMut() -> ExecutionState<'state>,
     ) {
@@ -2378,6 +2697,7 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedCaptureBuffer<'_, 'scope> 
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
         _witness: Option<&MatchWitness>,
+        _materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         _exec_state: &ExecutionState<'scope>,
         _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
@@ -2434,11 +2754,21 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         self.rule_set.actions[action].receipt.is_some()
     }
 
+    fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
+        self.rule_set.actions[action]
+            .receipt
+            .as_ref()?
+            .premise_slots
+            .get(atom)
+            .copied()
+    }
+
     fn push_bindings(
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
         witness: Option<&MatchWitness>,
+        materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         exec_state: &ExecutionState<'a>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
@@ -2448,8 +2778,14 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         let action_info = &self.rule_set.actions[action];
         if let Some(layout) = &action_info.receipt {
             let witness = witness.expect("receipt action requires a native match witness");
-            debug_assert!(!layout.premises.is_empty());
-            push_receipt_witness(action_info, witness, exec_state, &mut action_state.bindings);
+            debug_assert_ne!(layout.premise_count, 0);
+            push_receipt_witness(
+                action_info,
+                witness,
+                materializations,
+                exec_state,
+                &mut action_state.bindings,
+            );
         }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.
@@ -2526,11 +2862,21 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         self.rule_set.actions[action].receipt.is_some()
     }
 
+    fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
+        self.rule_set.actions[action]
+            .receipt
+            .as_ref()?
+            .premise_slots
+            .get(atom)
+            .copied()
+    }
+
     fn push_bindings(
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
         witness: Option<&MatchWitness>,
+        materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         exec_state: &ExecutionState<'scope>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
@@ -2541,8 +2887,14 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         let action_info = &self.rule_set.actions[action];
         if let Some(layout) = &action_info.receipt {
             let witness = witness.expect("receipt action requires a native match witness");
-            debug_assert!(!layout.premises.is_empty());
-            push_receipt_witness(action_info, witness, exec_state, &mut action_state.bindings);
+            debug_assert_ne!(layout.premise_count, 0);
+            push_receipt_witness(
+                action_info,
+                witness,
+                materializations,
+                exec_state,
+                &mut action_state.bindings,
+            );
         }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.
@@ -2620,6 +2972,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     binding_sets: &BindingSet,
     atoms: &DenseIdMap<AtomId, Atom>,
     subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
+    materializations: &DenseIdMap<MatId, Arc<Materialization>>,
     idx: usize,
     witness: &mut Option<MatchWitness>,
     exec_state: &ExecutionState<'state>,
@@ -2631,7 +2984,10 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
         let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
         if let Some(witness) = witness {
             for (atom, info) in atoms.iter() {
-                if info.table.is_dummy() || witness.facts.iter().any(|(seen, _)| *seen == atom) {
+                let Some(slot) = action_buf.receipt_premise_slot(action, atom) else {
+                    continue;
+                };
+                if info.table.is_dummy() || witness.facts.iter().any(|(seen, _)| *seen == slot) {
                     continue;
                 }
                 let Some(node) = subsets.get(atom) else {
@@ -2643,30 +2999,45 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                 }
                 let row = subset.first().expect("singleton subset has one row");
                 let fact = validated_atom_fact(info, row, bindings, exec_state);
-                witness.facts.push((atom, fact));
+                witness.facts.push((slot, fact));
             }
         }
-        action_buf.push_bindings(action, bindings, witness.as_ref(), exec_state, || {
-            exec_state.clone()
-        });
+        action_buf.push_bindings(
+            action,
+            bindings,
+            witness.as_ref(),
+            materializations,
+            exec_state,
+            || exec_state.clone(),
+        );
         if let Some(witness) = witness {
             witness.facts.truncate(retained);
         }
         return;
     }
     if idx + 1 == binding_sets.len() {
-        let (atom, vars, buf) = &binding_sets[idx];
-        for (row_id, row) in buf.iter() {
+        let entry = &binding_sets[idx];
+        for (buffer_row, (row_id, row)) in entry.rows.iter().enumerate() {
             if exec_state.should_stop() {
                 return;
             }
-            for (var, val) in vars.iter().zip(row.iter()) {
+            for (var, val) in entry.vars.iter().zip(row.iter()) {
                 bindings.insert(*var, *val);
             }
-            let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
-            if let (Some(witness), Some(atom)) = (witness.as_mut(), atom) {
-                let fact = validated_atom_fact(&atoms[*atom], row_id, bindings, exec_state);
-                witness.facts.push((*atom, fact));
+            let retained_facts = witness.as_ref().map_or(0, |witness| witness.facts.len());
+            let retained_ancestors = witness
+                .as_ref()
+                .map_or(0, |witness| witness.ancestors.len());
+            if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
+                && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
+            {
+                let fact = validated_atom_fact(&atoms[atom], row_id, bindings, exec_state);
+                witness.facts.push((slot, fact));
+            }
+            if let (Some(witness), Some(materialized)) =
+                (witness.as_mut(), &entry.materialized_witnesses)
+            {
+                witness.ancestors.push(materialized[buffer_row]);
             }
             expand_binding_sets(
                 action_buf,
@@ -2675,25 +3046,37 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                 binding_sets,
                 atoms,
                 subsets,
+                materializations,
                 idx + 1,
                 witness,
                 exec_state,
             );
             if let Some(witness) = witness {
-                witness.facts.truncate(retained);
+                witness.facts.truncate(retained_facts);
+                witness.ancestors.truncate(retained_ancestors);
             }
         }
         return;
     }
-    let (atom, vars, buf) = &binding_sets[idx];
-    for (row_id, row) in buf.iter() {
-        for (var, val) in vars.iter().zip(row.iter()) {
+    let entry = &binding_sets[idx];
+    for (buffer_row, (row_id, row)) in entry.rows.iter().enumerate() {
+        for (var, val) in entry.vars.iter().zip(row.iter()) {
             bindings.insert(*var, *val);
         }
-        let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
-        if let (Some(witness), Some(atom)) = (witness.as_mut(), atom) {
-            let fact = validated_atom_fact(&atoms[*atom], row_id, bindings, exec_state);
-            witness.facts.push((*atom, fact));
+        let retained_facts = witness.as_ref().map_or(0, |witness| witness.facts.len());
+        let retained_ancestors = witness
+            .as_ref()
+            .map_or(0, |witness| witness.ancestors.len());
+        if let (Some(witness), Some(atom)) = (witness.as_mut(), entry.atom)
+            && let Some(slot) = action_buf.receipt_premise_slot(action, atom)
+        {
+            let fact = validated_atom_fact(&atoms[atom], row_id, bindings, exec_state);
+            witness.facts.push((slot, fact));
+        }
+        if let (Some(witness), Some(materialized)) =
+            (witness.as_mut(), &entry.materialized_witnesses)
+        {
+            witness.ancestors.push(materialized[buffer_row]);
         }
         expand_binding_sets(
             action_buf,
@@ -2702,12 +3085,14 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
             binding_sets,
             atoms,
             subsets,
+            materializations,
             idx + 1,
             witness,
             exec_state,
         );
         if let Some(witness) = witness {
-            witness.facts.truncate(retained);
+            witness.facts.truncate(retained_facts);
+            witness.ancestors.truncate(retained_ancestors);
         }
     }
 }
@@ -2776,7 +3161,9 @@ fn flush_action_states(
 
 struct InPlaceMaterializer<'a> {
     specs: &'a DenseIdMap<MatId, MatSpec>,
-    materializations: DenseIdMap<MatId, IndexMap<Vec<Value>, RowBuffer>>,
+    materializations: DenseIdMap<MatId, Materialization>,
+    capture_witness: bool,
+    premise_slots: Option<Arc<DenseIdMap<AtomId, PremiseSlot>>>,
     scratch_key: Vec<Value>,
     scratch_val: Vec<Value>,
 }
@@ -2787,14 +3174,33 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
     where
         'a: 'b;
 
+    fn needs_receipt_witness(&self, _mat_id: MatId) -> bool {
+        self.capture_witness
+    }
+
+    fn receipt_premise_slot(&self, _mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+        self.premise_slots.as_ref()?.get(atom).copied()
+    }
+
     fn push_bindings(
         &mut self,
         mat_id: MatId,
         bindings: &DenseIdMap<Variable, Value>,
-        _witness: Option<&MatchWitness>,
+        witness: Option<&MatchWitness>,
+        _materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         _exec_state: &ExecutionState<'a>,
         _to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
+        if self.capture_witness {
+            let witness = witness.expect("receipt materialization requires a native witness");
+            assert!(
+                witness
+                    .ancestors
+                    .iter()
+                    .all(|ancestor| ancestor.materialization.index() < mat_id.index()),
+                "materialized witnesses may refer only to prior stages"
+            );
+        }
         let mat = self
             .materializations
             .get_mut(mat_id)
@@ -2811,12 +3217,12 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
         if self.scratch_val.is_empty() {
             self.scratch_val.push(Value::stale());
         }
-        if let Some(buffer) = mat.get_mut(&self.scratch_key) {
-            buffer.add_row(&self.scratch_val);
+        if let Some(group) = mat.get_mut(&self.scratch_key) {
+            group.add_row(&self.scratch_val, self.capture_witness, witness);
         } else {
-            let mut buffer = RowBuffer::new(usize::max(spec.val_vars.len(), 1));
-            buffer.add_row(&self.scratch_val);
-            mat.insert(self.scratch_key.clone(), buffer);
+            let mut group = MaterializedGroup::new(usize::max(spec.val_vars.len(), 1));
+            group.add_row(&self.scratch_val, self.capture_witness, witness);
+            mat.insert(self.scratch_key.clone(), group);
         }
     }
 
@@ -2841,7 +3247,9 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
 struct ScopedMaterializer<'inner, 'scope> {
     scope: &'inner rayon::Scope<'scope>,
     specs: Arc<DenseIdMap<MatId, MatSpec>>,
-    materializations: Arc<DenseIdMap<MatId, Arc<DashMap<Vec<Value>, RowBuffer>>>>,
+    materializations: Arc<DenseIdMap<MatId, Arc<ScopedMaterialization>>>,
+    capture_witness: bool,
+    premise_slots: Option<Arc<DenseIdMap<AtomId, PremiseSlot>>>,
     scratch_key: Vec<Value>,
     scratch_val: Vec<Value>,
 }
@@ -2851,14 +3259,33 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
     where
         'scope: 'a;
 
+    fn needs_receipt_witness(&self, _mat_id: MatId) -> bool {
+        self.capture_witness
+    }
+
+    fn receipt_premise_slot(&self, _mat_id: MatId, atom: AtomId) -> Option<PremiseSlot> {
+        self.premise_slots.as_ref()?.get(atom).copied()
+    }
+
     fn push_bindings(
         &mut self,
         mat_id: MatId,
         bindings: &DenseIdMap<Variable, Value>,
-        _witness: Option<&MatchWitness>,
+        witness: Option<&MatchWitness>,
+        _materializations: &DenseIdMap<MatId, Arc<Materialization>>,
         _exec_state: &ExecutionState<'scope>,
         _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
+        if self.capture_witness {
+            let witness = witness.expect("receipt materialization requires a native witness");
+            assert!(
+                witness
+                    .ancestors
+                    .iter()
+                    .all(|ancestor| ancestor.materialization.index() < mat_id.index()),
+                "materialized witnesses may refer only to prior stages"
+            );
+        }
         let mat = self.materializations.get(mat_id).expect("invalid mat id");
         let spec = self.specs.get(mat_id).expect("invalid mat id");
         self.scratch_key.clear();
@@ -2875,12 +3302,13 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
         let key = self.scratch_key.clone();
         match mat.entry(key) {
             Entry::Occupied(mut occ) => {
-                occ.get_mut().add_row(&self.scratch_val);
+                occ.get_mut()
+                    .add_row(&self.scratch_val, self.capture_witness, witness);
             }
             Entry::Vacant(vac) => {
-                let mut buffer = RowBuffer::new(usize::max(spec.val_vars.len(), 1));
-                buffer.add_row(&self.scratch_val);
-                vac.insert(buffer);
+                let mut group = MaterializedGroup::new(usize::max(spec.val_vars.len(), 1));
+                group.add_row(&self.scratch_val, self.capture_witness, witness);
+                vac.insert(group);
             }
         }
     }
@@ -2900,12 +3328,16 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
         let scope = self.scope;
         let specs = self.specs.clone();
         let materializations = self.materializations.clone();
+        let capture_witness = self.capture_witness;
+        let premise_slots = self.premise_slots.clone();
         let mut inner = local.clone_state();
         scope.spawn(move |scope| {
             let mut buf: ScopedMaterializer<'_, 'scope> = ScopedMaterializer {
                 scope,
                 specs,
                 materializations: materializations.clone(),
+                capture_witness,
+                premise_slots,
                 scratch_key: Vec::new(),
                 scratch_val: Vec::new(),
             };

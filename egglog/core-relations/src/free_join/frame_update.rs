@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use crate::free_join::execute::TrieNode;
+use crate::free_join::execute::{MaterializedWitnessRef, TrieNode};
 use crate::numeric_id::define_id;
 use crate::offsets::OffsetRange;
 
@@ -30,6 +30,8 @@ pub(super) enum UpdateInstr {
     RefineAtom(AtomId, Arc<TrieNode>),
     /// Refine an atom to a dense offset range, avoiding an Arc<TrieNode> allocation.
     RefineAtomDense(AtomId, OffsetRange),
+    /// Attach the exact native support chosen for a materialized row.
+    PushMaterializedWitness(MaterializedWitnessRef),
     /// Marks the end of the current frame. Time to make a recursive call.
     EndFrame,
 }
@@ -65,6 +67,11 @@ impl FrameUpdates {
     /// allocating an Arc<TrieNode> eagerly.
     pub(super) fn refine_atom_dense(&mut self, atom: AtomId, range: OffsetRange) {
         self.updates.push(UpdateInstr::RefineAtomDense(atom, range));
+    }
+
+    pub(super) fn push_materialized_witness(&mut self, witness: MaterializedWitnessRef) {
+        self.updates
+            .push(UpdateInstr::PushMaterializedWitness(witness));
     }
 
     /// Roll back the updates to the last frame start. Note that repeated calls

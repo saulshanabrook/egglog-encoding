@@ -9,7 +9,7 @@ use crate::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::receipts::ActionReceiptSpec;
+use crate::receipts::{ActionReceiptSpec, PremiseSlot};
 use crate::{
     BaseValueId, CounterId, ExternalFunctionId, PoolSet, RuleReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
@@ -573,6 +573,14 @@ impl RuleBuilder<'_, '_> {
             }
         }));
         let receipt = receipt.map(|spec| {
+            let premise_count = spec.premises.len();
+            let premise_slots = Arc::new(
+                spec.premises
+                    .iter()
+                    .enumerate()
+                    .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
+                    .collect(),
+            );
             let mut binding_cells = Vec::with_capacity(spec.ordinary_vars.len());
             for var in &spec.ordinary_vars {
                 let cell = spec
@@ -591,7 +599,8 @@ impl RuleBuilder<'_, '_> {
             }
             ActionReceiptSpec {
                 rule: spec.rule,
-                premises: spec.premises,
+                premise_count,
+                premise_slots,
                 binding_cells: binding_cells.into_boxed_slice(),
             }
         });
