@@ -24,7 +24,7 @@ use crate::{
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
-    receipts::{ReplayBindingSource, TypedEqualityProposal},
+    receipts::{CauseCapability, ReplayBindingSource, TypedEqualityProposal},
     table_spec::{ColumnId, MutationBuffer},
 };
 
@@ -478,7 +478,7 @@ pub struct ExecutionState<'a> {
     /// Cause inherited by every native write performed in the current action
     /// lane or merge callback. It is state-local so parallel execution cannot
     /// cross-attribute proposals.
-    active_cause: Option<CauseDraftId>,
+    active_cause: Option<CauseCapability>,
 }
 
 /// A basic wrapper around an map from table id to a mutation buffer for that table that also
@@ -583,7 +583,8 @@ impl<'a> ExecutionState<'a> {
         if self.db.causal_receipts.is_some() {
             let cause = self
                 .active_cause
-                .expect("receipt-enabled native insertion reached an uninstrumented action");
+                .expect("receipt-enabled native insertion reached an uninstrumented action")
+                .id();
             self.buffers.stage_insert_with_cause(table, row, cause);
         } else {
             self.buffers.stage_insert(table, row);
@@ -608,21 +609,41 @@ impl<'a> ExecutionState<'a> {
         let cause = self
             .active_cause
             .expect("receipt-enabled union reached an uninstrumented action");
+        cause
+            .validate_equality()
+            .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
+        receipts
+            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+            .unwrap_or_else(|error| panic!("invalid equality timestamp: {error}"));
         let proposal = receipts
             .typed_equality_proposal(self.db.causal_wave, sort, left, right)
             .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
         let row = [left, right, timestamp];
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        self.buffers.stage_typed_union(table, &row, cause, proposal);
+        self.buffers
+            .stage_typed_union(table, &row, cause.id(), proposal);
         self.changed = true;
     }
 
     pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
+        self.active_cause = cause.map(|cause| {
+            self.db
+                .causal_receipts
+                .expect("active receipt cause requires causal receipts")
+                .cause_capability(cause)
+        });
+    }
+
+    pub(crate) fn set_active_rule_cause(&mut self, cause: Option<CauseDraftId>) {
+        self.active_cause = cause.map(CauseCapability::rule);
+    }
+
+    pub(crate) fn set_active_cause_capability(&mut self, cause: Option<CauseCapability>) {
         self.active_cause = cause;
     }
 
-    pub(crate) fn active_cause(&self) -> Option<CauseDraftId> {
+    pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {
         self.active_cause
     }
 
@@ -717,7 +738,7 @@ impl<'a> ExecutionState<'a> {
                         table,
                         key,
                         vals,
-                        self.active_cause,
+                        self.active_cause.map(CauseCapability::id),
                     )
                 })
                 .deref(),
@@ -778,7 +799,7 @@ impl<'a> ExecutionState<'a> {
                 table,
                 key,
                 vals,
-                self.active_cause,
+                self.active_cause.map(CauseCapability::id),
             )
         })[col.index()]
     }
@@ -1118,13 +1139,13 @@ impl ExecutionState<'_> {
                         .collect::<Vec<_>>();
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, vals| {
-                            self.set_active_cause(Some(causes[offset].expect(
+                            self.set_active_rule_cause(Some(causes[offset].expect(
                                 "effective action lane is missing its exact receipt cause",
                             )));
                             self.stage_insert(*table, vals.as_slice());
                         })
                     });
-                    self.set_active_cause(None);
+                    self.set_active_rule_cause(None);
                 } else {
                     // Keep the ordinary loop byte-for-byte equivalent to the
                     // pre-receipt action path.
@@ -1157,7 +1178,7 @@ impl ExecutionState<'_> {
                         QueryEntry::Const(value) => value,
                         QueryEntry::Var(variable) => bindings[variable][offset],
                     };
-                    self.set_active_cause(Some(
+                    self.set_active_rule_cause(Some(
                         bindings
                             .receipt_cause(offset)
                             .expect("typed union lane is missing its exact receipt cause"),
@@ -1170,7 +1191,7 @@ impl ExecutionState<'_> {
                         *sort,
                     );
                 });
-                self.set_active_cause(None);
+                self.set_active_rule_cause(None);
             }
             Instr::InsertIfEq { table, l, r, vals } => {
                 assert!(

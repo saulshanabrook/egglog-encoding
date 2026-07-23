@@ -20,7 +20,7 @@ pub mod concurrent;
 mod tests;
 
 /// A basic implementation of a union-find datastructure.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct UnionFind<Value> {
     parents: Vec<Value>,
 }

@@ -39,10 +39,12 @@ pub use query::{
 };
 pub use receipts::{
     CausalReceipts, CausalWave, CauseDraftId, EqComponentRef, EqNodeId, EqNodeRecord,
-    EqualityEdgeId, EqualityEndpoint, EqualityReason, EqualityRecord, FactCause, FactId,
-    FactRecord, MatchRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
-    RuleMatchId, RuleReceiptSpec, SourceRef, TypedEqualityProposal,
+    EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint, EqualityLandmark, EqualityReason,
+    EqualityRecord, FactCause, FactId, FactRecord, MatchRecord, RebuildDependency,
+    ReceiptCauseDependencies, ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior,
+    ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
+    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId, RuleMatchId,
+    RuleReceiptSpec, SourceRef, TypedCellEquality, TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

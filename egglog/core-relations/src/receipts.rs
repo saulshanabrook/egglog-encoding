@@ -15,8 +15,13 @@ use std::{
 };
 
 use dashmap::mapref::entry::Entry;
+use smallvec::SmallVec;
 
-use crate::{AtomId, TableId, Value, Variable, common::DashMap, numeric_id::DenseIdMap};
+use crate::{
+    AtomId, TableId, Value, Variable,
+    common::{DashMap, HashMap},
+    numeric_id::{DenseIdMap, NumericId},
+};
 
 macro_rules! handle {
     ($name:ident, $inner:ty) => {
@@ -41,10 +46,14 @@ handle!(ReplayTermId, u32);
 handle!(ReplaySortId, u32);
 handle!(ReplayOpId, u32);
 handle!(EqNodeId, u64);
+handle!(EqualityEdgeCount, u64);
 handle!(CausalWave, u64);
 handle!(CauseDraftId, u64);
 handle!(MatchDraftId, u64);
 handle!(DurableCauseId, u32);
+
+/// Stable index into the snapshot-owned, shared causal DAG.
+pub type ReceiptCauseId = DurableCauseId;
 
 /// Applied equality edges and their immutable binary join nodes are 1:1.
 pub type EqualityEdgeId = EqNodeId;
@@ -207,6 +216,12 @@ impl ReplayTermStore {
         self.by_value.get(&(sort, value)).map(|term| *term)
     }
 
+    fn table_layout(&self, table: TableId) -> Option<Arc<[Option<ReplaySortId>]>> {
+        self.table_layouts
+            .get(&table)
+            .map(|layout| Arc::clone(&layout))
+    }
+
     fn register_table_layout(
         &self,
         table: TableId,
@@ -362,33 +377,34 @@ pub struct MatchRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RebuildDependency {
+    pub wave: CausalWave,
+    pub prior_fact: FactId,
+    pub equalities: EqualityLandmark,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FactCause {
     Source(SourceRef),
     Rule(RuleMatchId),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        equalities: EqualityLandmark,
+    },
     Merge {
-        /// Matches whose proposals contributed to the committed value, in
-        /// native merge-fold order.
-        rule_matches: Box<[RuleMatchId]>,
-        /// Previously committed versions read by the merge fold. Same-wave
-        /// proposals do not yet have a FactId.
-        prior_facts: Box<[FactId]>,
+        /// Shared exact native fold DAG. This preserves cross-kind ordering
+        /// without copying a growing dependency prefix into every fact.
+        cause: ReceiptCauseId,
     },
 }
 
 impl FactCause {
     pub fn rule_match(&self) -> Option<RuleMatchId> {
         match self {
-            FactCause::Source(_) => None,
+            FactCause::Source(_) | FactCause::Rebuild { .. } => None,
             FactCause::Rule(id) => Some(*id),
-            FactCause::Merge { rule_matches, .. } => rule_matches.last().copied(),
-        }
-    }
-
-    pub fn rule_matches(&self) -> &[RuleMatchId] {
-        match self {
-            FactCause::Source(_) => &[],
-            FactCause::Rule(id) => std::slice::from_ref(id),
-            FactCause::Merge { rule_matches, .. } => rule_matches,
+            FactCause::Merge { .. } => None,
         }
     }
 }
@@ -405,8 +421,15 @@ pub struct FactRecord {
 pub enum EqualityReason {
     RuleUnion(RuleMatchId),
     MergeFn {
-        rule_match: RuleMatchId,
-        prior_fact: FactId,
+        /// Shared exact cause root. Dependencies are unfolded lazily through
+        /// [`ReceiptSnapshot::cause_dependencies`].
+        cause: ReceiptCauseId,
+    },
+    Congruence {
+        /// Shared exact cause root; no growing prefix is copied per edge.
+        cause: ReceiptCauseId,
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
     },
 }
 
@@ -414,7 +437,97 @@ impl EqualityReason {
     pub fn rule_match(&self) -> Option<RuleMatchId> {
         match self {
             EqualityReason::RuleUnion(id) => Some(*id),
-            EqualityReason::MergeFn { rule_match, .. } => Some(*rule_match),
+            EqualityReason::MergeFn { .. } => None,
+            EqualityReason::Congruence { .. } => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptCausePrior {
+    Fact(FactId),
+    Cause(ReceiptCauseId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReceiptCauseRecord {
+    Source(SourceRef),
+    Rule(RuleMatchId),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        equalities: EqualityLandmark,
+    },
+    Merge {
+        incoming: ReceiptCauseId,
+        prior: ReceiptCausePrior,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptCauseDependency<'a> {
+    Source(&'a SourceRef),
+    Rule(RuleMatchId),
+    Fact(FactId),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: &'a [TypedCellEquality],
+    },
+}
+
+enum CauseDependencyItem {
+    Cause(ReceiptCauseId),
+    Fact(FactId),
+}
+
+pub struct ReceiptCauseDependencies<'a> {
+    causes: &'a [ReceiptCauseRecord],
+    stack: Vec<CauseDependencyItem>,
+}
+
+impl<'a> Iterator for ReceiptCauseDependencies<'a> {
+    type Item = ReceiptCauseDependency<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.stack.pop()? {
+                CauseDependencyItem::Fact(fact) => {
+                    return Some(ReceiptCauseDependency::Fact(fact));
+                }
+                CauseDependencyItem::Cause(cause) => {
+                    match &self.causes[(cause.get() - 1) as usize] {
+                        ReceiptCauseRecord::Source(source) => {
+                            return Some(ReceiptCauseDependency::Source(source));
+                        }
+                        ReceiptCauseRecord::Rule(rule) => {
+                            return Some(ReceiptCauseDependency::Rule(*rule));
+                        }
+                        ReceiptCauseRecord::Rebuild {
+                            wave,
+                            prior_fact,
+                            equalities,
+                        } => {
+                            return Some(ReceiptCauseDependency::Rebuild {
+                                wave: *wave,
+                                prior_fact: *prior_fact,
+                                as_of_edges: equalities.as_of_edges,
+                                equalities: &equalities.pairs,
+                            });
+                        }
+                        ReceiptCauseRecord::Merge { incoming, prior } => {
+                            self.stack.push(CauseDependencyItem::Cause(*incoming));
+                            self.stack.push(match prior {
+                                ReceiptCausePrior::Fact(fact) => CauseDependencyItem::Fact(*fact),
+                                ReceiptCausePrior::Cause(cause) => {
+                                    CauseDependencyItem::Cause(*cause)
+                                }
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -424,6 +537,20 @@ pub struct EqualityEndpoint {
     pub sort: ReplaySortId,
     pub term: ReplayTermId,
     pub raw: crate::Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypedCellEquality {
+    pub column: crate::ColumnId,
+    pub left: EqualityEndpoint,
+    pub right: EqualityEndpoint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EqualityLandmark {
+    /// Dense applied-edge prefix visible when this rebuild row was recorded.
+    pub as_of_edges: EqualityEdgeCount,
+    pub pairs: Box<[TypedCellEquality]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -462,6 +589,12 @@ pub struct ReceiptCounters {
     pub promotion_misses: u64,
     pub unattributed_commits: u64,
     pub redundant_unions: u64,
+    /// Semantic rows for which an exact rebuild cause was captured.
+    pub rebuild_causes: u64,
+    /// Changed typed cells stored across those rebuild causes.
+    pub rebuild_equalities: u64,
+    /// Logical bytes of rebuild cause and changed-cell payload captured.
+    pub rebuild_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -470,7 +603,325 @@ pub struct ReceiptSnapshot {
     pub matches: Vec<MatchRecord>,
     pub equality_nodes: Vec<EqNodeRecord>,
     pub equalities: Vec<EqualityRecord>,
+    pub causes: Vec<ReceiptCauseRecord>,
     pub counters: ReceiptCounters,
+}
+
+impl ReceiptSnapshot {
+    pub fn cause_dependencies(&self, root: ReceiptCauseId) -> ReceiptCauseDependencies<'_> {
+        assert!(
+            root.get() > 0 && root.get() as usize <= self.causes.len(),
+            "receipt cause root is outside this snapshot"
+        );
+        ReceiptCauseDependencies {
+            causes: &self.causes,
+            stack: vec![CauseDependencyItem::Cause(root)],
+        }
+    }
+
+    /// Lazily unfold one exact applied-edge explanation as it existed at the
+    /// supplied historical landmark. This walks only immutable receipt data;
+    /// native path compression and later equality edges are irrelevant.
+    ///
+    /// The applied forest supplies one deterministic explanation. Shorter
+    /// alternatives through redundant proposals are deliberately not stored
+    /// on the recording hot path.
+    pub fn explain_equality(
+        &self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
+        self.equality_explanation_index(as_of)?
+            .explain_equality(left, right)
+    }
+
+    /// Build one immutable forest index for a historical cutoff. A slicer
+    /// should reuse this value for every changed-cell pair at that cutoff;
+    /// membership checks during explanation are constant-time interval tests.
+    pub fn equality_explanation_index(
+        &self,
+        as_of: EqualityEdgeCount,
+    ) -> Result<EqualityExplanationIndex<'_>, &'static str> {
+        EqualityExplanationIndex::new(self, as_of)
+    }
+}
+
+pub struct EqualityExplanationIndex<'a> {
+    snapshot: &'a ReceiptSnapshot,
+    cutoff: usize,
+    term_positions: HashMap<ReplayTermId, (EqNodeId, usize)>,
+    node_intervals: Vec<Option<(usize, usize)>>,
+}
+
+impl<'a> EqualityExplanationIndex<'a> {
+    fn new(snapshot: &'a ReceiptSnapshot, as_of: EqualityEdgeCount) -> Result<Self, &'static str> {
+        let cutoff: usize = as_of
+            .get()
+            .try_into()
+            .map_err(|_| "equality landmark exceeds addressable receipt storage")?;
+        if cutoff > snapshot.equality_nodes.len() || cutoff > snapshot.equalities.len() {
+            return Err("equality landmark exceeds the recorded applied-edge prefix");
+        }
+
+        let mut term_parents = HashMap::default();
+        let mut node_parents = vec![None; cutoff];
+        for index in 0..cutoff {
+            let expected = EqNodeId::new(index as u64 + 1);
+            let node = &snapshot.equality_nodes[index];
+            let equality = &snapshot.equalities[index];
+            if node.id != expected || node.edge != expected || equality.id != expected {
+                return Err("equality receipt IDs are not one dense applied-edge prefix");
+            }
+            if equality.left.sort != equality.right.sort {
+                return Err("one applied equality edge crosses logical sorts");
+            }
+            for child in [node.left, node.right] {
+                match child {
+                    EqComponentRef::Term(term) => {
+                        if term.is_missing() || term_parents.insert(term, node.id).is_some() {
+                            return Err("equality forest term has multiple parents");
+                        }
+                    }
+                    EqComponentRef::Node(child) => {
+                        let child_index: usize = child
+                            .get()
+                            .checked_sub(1)
+                            .ok_or("equality forest references node zero")?
+                            .try_into()
+                            .map_err(|_| "equality node ID exceeds addressable storage")?;
+                        if child_index >= index {
+                            return Err("equality forest child does not precede its parent");
+                        }
+                        if node_parents[child_index].replace(node.id).is_some() {
+                            return Err("equality forest node has multiple parents");
+                        }
+                    }
+                }
+            }
+        }
+
+        enum Visit {
+            Enter(EqComponentRef, EqNodeId),
+            Exit(EqNodeId, usize),
+        }
+        let mut term_positions = HashMap::default();
+        let mut node_intervals = vec![None; cutoff];
+        let mut next_position = 0usize;
+        for root_index in 0..cutoff {
+            if node_parents[root_index].is_some() {
+                continue;
+            }
+            let root = EqNodeId::new(root_index as u64 + 1);
+            let mut stack = vec![Visit::Enter(EqComponentRef::Node(root), root)];
+            while let Some(visit) = stack.pop() {
+                match visit {
+                    Visit::Enter(EqComponentRef::Term(term), root) => {
+                        if term_positions.insert(term, (root, next_position)).is_some() {
+                            return Err("equality forest term occurs in more than one leaf");
+                        }
+                        next_position += 1;
+                    }
+                    Visit::Enter(EqComponentRef::Node(node), root) => {
+                        let index: usize = node
+                            .get()
+                            .checked_sub(1)
+                            .ok_or("equality forest references node zero")?
+                            .try_into()
+                            .map_err(|_| "equality node ID exceeds addressable storage")?;
+                        let record = snapshot
+                            .equality_nodes
+                            .get(index)
+                            .ok_or("equality forest references an absent node")?;
+                        let start = next_position;
+                        stack.push(Visit::Exit(node, start));
+                        stack.push(Visit::Enter(record.right, root));
+                        stack.push(Visit::Enter(record.left, root));
+                    }
+                    Visit::Exit(node, start) => {
+                        let index = (node.get() - 1) as usize;
+                        if start == next_position {
+                            return Err("equality forest node contains no term leaves");
+                        }
+                        if node_intervals[index]
+                            .replace((start, next_position))
+                            .is_some()
+                        {
+                            return Err("equality forest node was visited more than once");
+                        }
+                    }
+                }
+            }
+        }
+        if node_intervals.iter().any(Option::is_none) {
+            return Err("equality forest contains an unreachable node");
+        }
+
+        Ok(Self {
+            snapshot,
+            cutoff,
+            term_positions,
+            node_intervals,
+        })
+    }
+
+    pub fn explain_equality(
+        &self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
+        if left.sort != right.sort {
+            return Err("cannot explain equality across logical sorts");
+        }
+        if left.term.is_missing() || right.term.is_missing() {
+            return Err("cannot explain equality with a missing ReplayTermId");
+        }
+        if left.term == right.term {
+            return Ok(Box::new([]));
+        }
+
+        let Some(left_root) = self.root(left.term) else {
+            return Err("left equality endpoint is absent from the historical forest");
+        };
+        let Some(right_root) = self.root(right.term) else {
+            return Err("right equality endpoint is absent from the historical forest");
+        };
+        if left_root != right_root {
+            return Err("equality endpoints were disconnected at the historical landmark");
+        }
+        self.explain(left_root, left.term, right.term, left.sort)
+    }
+
+    fn root(&self, term: ReplayTermId) -> Option<EqComponentRef> {
+        self.term_positions
+            .get(&term)
+            .map(|(root, _)| EqComponentRef::Node(*root))
+    }
+
+    fn contains(&self, component: EqComponentRef, term: ReplayTermId) -> bool {
+        match component {
+            EqComponentRef::Term(expected) => expected == term,
+            EqComponentRef::Node(node) => {
+                let Some((_, position)) = self.term_positions.get(&term) else {
+                    return false;
+                };
+                let Some(index) = node.get().checked_sub(1).map(|id| id as usize) else {
+                    return false;
+                };
+                let Some(Some((start, end))) = self.node_intervals.get(index) else {
+                    return false;
+                };
+                *start <= *position && *position < *end
+            }
+        }
+    }
+
+    fn explain(
+        &self,
+        root: EqComponentRef,
+        left: ReplayTermId,
+        right: ReplayTermId,
+        sort: ReplaySortId,
+    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
+        enum Task {
+            Pair {
+                component: EqComponentRef,
+                left: ReplayTermId,
+                right: ReplayTermId,
+            },
+            Edge(EqualityEdgeId),
+        }
+
+        let mut tasks = vec![Task::Pair {
+            component: root,
+            left,
+            right,
+        }];
+        let mut result = Vec::new();
+        while let Some(task) = tasks.pop() {
+            let Task::Pair {
+                component,
+                left,
+                right,
+            } = task
+            else {
+                let Task::Edge(edge) = task else {
+                    unreachable!()
+                };
+                result.push(edge);
+                continue;
+            };
+            if left == right {
+                continue;
+            }
+            let EqComponentRef::Node(node_id) = component else {
+                return Err("distinct terms reached one leaf in the equality forest");
+            };
+            let node_index: usize = node_id
+                .get()
+                .checked_sub(1)
+                .ok_or("equality explanation reached node zero")?
+                .try_into()
+                .map_err(|_| "equality node ID exceeds addressable storage")?;
+            if node_index >= self.cutoff {
+                return Err("equality explanation crossed its historical landmark");
+            }
+            let node = &self.snapshot.equality_nodes[node_index];
+            let equality = &self.snapshot.equalities[node_index];
+            if equality.left.sort != sort || equality.right.sort != sort {
+                return Err("equality explanation crossed logical sorts");
+            }
+            if !self.contains(node.left, equality.left.term)
+                || !self.contains(node.right, equality.right.term)
+            {
+                return Err("applied edge endpoints do not belong to their recorded components");
+            }
+            let left_in_left = self.contains(node.left, left);
+            let left_in_right = self.contains(node.right, left);
+            let right_in_left = self.contains(node.left, right);
+            let right_in_right = self.contains(node.right, right);
+            if left_in_left && right_in_left {
+                tasks.push(Task::Pair {
+                    component: node.left,
+                    left,
+                    right,
+                });
+            } else if left_in_right && right_in_right {
+                tasks.push(Task::Pair {
+                    component: node.right,
+                    left,
+                    right,
+                });
+            } else if left_in_left && right_in_right {
+                tasks.push(Task::Pair {
+                    component: node.right,
+                    left: equality.right.term,
+                    right,
+                });
+                tasks.push(Task::Edge(equality.id));
+                tasks.push(Task::Pair {
+                    component: node.left,
+                    left,
+                    right: equality.left.term,
+                });
+            } else if left_in_right && right_in_left {
+                tasks.push(Task::Pair {
+                    component: node.left,
+                    left: equality.left.term,
+                    right,
+                });
+                tasks.push(Task::Edge(equality.id));
+                tasks.push(Task::Pair {
+                    component: node.right,
+                    left,
+                    right: equality.right.term,
+                });
+            } else {
+                return Err("equality terms do not belong to the requested component");
+            }
+        }
+        Ok(result.into_boxed_slice())
+    }
 }
 
 /// Opaque proof that both raw union endpoints were resolved through the
@@ -540,10 +991,170 @@ struct MatchDraft {
 enum CauseDraft {
     Source(SourceRef),
     Rule(MatchDraftId),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
     Merge {
         incoming: CauseDraftId,
         prior: PriorVersion,
     },
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum EqualityCauseError {
+    Source,
+    Mixed,
+    MissingFact,
+    LandmarkMismatch,
+}
+
+impl EqualityCauseError {
+    fn message(self) -> &'static str {
+        match self {
+            EqualityCauseError::Source => {
+                "unsupported equality cause: source receipts cannot justify a union"
+            }
+            EqualityCauseError::Mixed => {
+                "unsupported equality cause: merge DAG mixes rule and rebuild proposals"
+            }
+            EqualityCauseError::MissingFact => {
+                "equality cause references a missing immutable FactId"
+            }
+            EqualityCauseError::LandmarkMismatch => {
+                "congruence dependencies used different waves or equality landmarks"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum EqualityCauseSummary {
+    Source,
+    Rule,
+    Rebuild {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+        complete: bool,
+    },
+    Invalid(EqualityCauseError),
+}
+
+impl EqualityCauseSummary {
+    fn for_leaf(cause: &CauseDraft) -> Self {
+        match cause {
+            CauseDraft::Source(_) => Self::Source,
+            CauseDraft::Rule(_) => Self::Rule,
+            CauseDraft::Rebuild {
+                wave,
+                prior_fact,
+                as_of_edges,
+                ..
+            } => {
+                if prior_fact.is_missing() {
+                    Self::Invalid(EqualityCauseError::MissingFact)
+                } else {
+                    Self::Rebuild {
+                        wave: *wave,
+                        as_of_edges: *as_of_edges,
+                        complete: false,
+                    }
+                }
+            }
+            CauseDraft::Merge { .. } => {
+                unreachable!("merge summaries require their child summaries")
+            }
+        }
+    }
+
+    fn with_prior_fact(self, fact: FactId) -> Self {
+        if fact.is_missing() {
+            return Self::Invalid(EqualityCauseError::MissingFact);
+        }
+        match self {
+            Self::Rule => Self::Rule,
+            Self::Rebuild {
+                wave, as_of_edges, ..
+            } => Self::Rebuild {
+                wave,
+                as_of_edges,
+                complete: true,
+            },
+            Self::Source => Self::Invalid(EqualityCauseError::Source),
+            Self::Invalid(error) => Self::Invalid(error),
+        }
+    }
+
+    fn merge(self, prior: Self) -> Self {
+        match (self, prior) {
+            (Self::Rule, Self::Rule) => Self::Rule,
+            (
+                Self::Rebuild {
+                    wave: incoming_wave,
+                    as_of_edges: incoming_edges,
+                    ..
+                },
+                Self::Rebuild {
+                    wave: prior_wave,
+                    as_of_edges: prior_edges,
+                    ..
+                },
+            ) if incoming_wave == prior_wave && incoming_edges == prior_edges => Self::Rebuild {
+                wave: incoming_wave,
+                as_of_edges: incoming_edges,
+                complete: true,
+            },
+            (Self::Invalid(error), _) | (_, Self::Invalid(error)) => Self::Invalid(error),
+            (Self::Source, _) | (_, Self::Source) => Self::Invalid(EqualityCauseError::Source),
+            (Self::Rebuild { .. }, Self::Rebuild { .. }) => {
+                Self::Invalid(EqualityCauseError::LandmarkMismatch)
+            }
+            _ => Self::Invalid(EqualityCauseError::Mixed),
+        }
+    }
+
+    pub(crate) fn validate(self) -> Result<(), &'static str> {
+        match self {
+            Self::Rule => Ok(()),
+            Self::Rebuild { complete: true, .. } => Ok(()),
+            Self::Rebuild { .. } => {
+                Err("unsupported equality cause: a direct rebuild cannot justify a union")
+            }
+            Self::Source => {
+                Err("unsupported equality cause: source receipts cannot justify a union")
+            }
+            Self::Invalid(error) => Err(error.message()),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CauseCapability {
+    id: CauseDraftId,
+    equality: EqualityCauseSummary,
+}
+
+impl CauseCapability {
+    pub(crate) fn rule(id: CauseDraftId) -> Self {
+        assert!(
+            !id.is_unattributed(),
+            "rule cause capability is missing its exact cause"
+        );
+        Self {
+            id,
+            equality: EqualityCauseSummary::Rule,
+        }
+    }
+
+    pub(crate) fn id(self) -> CauseDraftId {
+        self.id
+    }
+
+    pub(crate) fn validate_equality(self) -> Result<(), &'static str> {
+        self.equality.validate()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -556,6 +1167,12 @@ enum PriorVersion {
 enum DurableCause {
     Source(SourceRef),
     Rule(RuleMatchId),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        equalities: FlatRange,
+    },
     Merge {
         incoming: DurableCauseId,
         prior: DurablePrior,
@@ -603,7 +1220,7 @@ struct DurableEquality {
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
     native_child: crate::Value,
-    cause: DurableCauseId,
+    reason: EqualityReason,
 }
 
 struct IdSegment<T> {
@@ -665,29 +1282,25 @@ impl<T> IdSegment<T> {
 struct ProvisionalArena {
     matches: IdSegment<MatchDraft>,
     causes: IdSegment<CauseDraft>,
+    /// Only merge drafts need cached classification; leaf summaries are
+    /// recoverable directly from their compact cause node.
+    equality_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     premises: Vec<FactId>,
     terms: Vec<ReplayTermId>,
     fact_terms: Vec<ReplayTermId>,
+    rebuild_equalities: Vec<TypedCellEquality>,
     pending_equalities: IdSegment<PendingEquality>,
 }
 
 impl ProvisionalArena {
-    fn bytes(&self, pending_facts: usize) -> usize {
-        self.matches.present() * mem::size_of::<MatchDraft>()
-            + self.causes.present() * mem::size_of::<CauseDraft>()
-            + self.premises.len() * mem::size_of::<FactId>()
-            + self.terms.len() * mem::size_of::<ReplayTermId>()
-            + self.fact_terms.len() * mem::size_of::<ReplayTermId>()
-            + self.pending_equalities.present() * mem::size_of::<PendingEquality>()
-            + pending_facts * mem::size_of::<PendingFact>()
-    }
-
     fn is_empty(&self) -> bool {
         self.matches.present() == 0
             && self.causes.present() == 0
+            && self.equality_summaries.is_empty()
             && self.premises.is_empty()
             && self.terms.is_empty()
             && self.fact_terms.is_empty()
+            && self.rebuild_equalities.is_empty()
             && self.pending_equalities.present() == 0
     }
 }
@@ -708,6 +1321,7 @@ struct ReceiptArena {
     durable_premises: Vec<FactId>,
     durable_terms: Vec<ReplayTermId>,
     durable_fact_terms: Vec<ReplayTermId>,
+    durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<DurableCause>,
     durable_equalities: Vec<DurableEquality>,
     counters: ReceiptCounters,
@@ -725,16 +1339,12 @@ impl ReceiptArena {
         );
     }
 
-    fn update_live_bytes(&mut self) {
-        let pending_facts = self
-            .facts
-            .iter()
-            .filter(|slot| matches!(slot, Some(FactSlot::Pending(_))))
-            .count();
-        let live = self.provisional.bytes(pending_facts) as u64;
-        self.counters.live_provisional_bytes = live;
-        self.counters.peak_provisional_bytes = self.counters.peak_provisional_bytes.max(live);
-        self.counters.provisional_matches = self.provisional.matches.present() as u64;
+    fn add_live_bytes(&mut self, bytes: usize) {
+        self.counters.live_provisional_bytes += bytes as u64;
+        self.counters.peak_provisional_bytes = self
+            .counters
+            .peak_provisional_bytes
+            .max(self.counters.live_provisional_bytes);
     }
 
     fn fact_term(&self, id: FactId, column: usize) -> Option<ReplayTermId> {
@@ -757,117 +1367,77 @@ impl ReceiptArena {
         }
     }
 
+    fn cause_draft(&self, id: CauseDraftId) -> Result<&CauseDraft, &'static str> {
+        let Some(index) = self.provisional.causes.index(id.get()) else {
+            return Err("cause draft does not belong to the current causal wave");
+        };
+        self.provisional.causes.slots[index]
+            .as_ref()
+            .ok_or("cause draft has not been published")
+    }
+
+    fn cause_summary(&self, id: CauseDraftId) -> Result<EqualityCauseSummary, &'static str> {
+        let cause = self.cause_draft(id)?;
+        if matches!(cause, CauseDraft::Merge { .. }) {
+            self.provisional
+                .equality_summaries
+                .get(&id)
+                .copied()
+                .ok_or("merge cause draft has no cached equality classification")
+        } else {
+            Ok(EqualityCauseSummary::for_leaf(cause))
+        }
+    }
+
     fn unfold_cause(&self, root: DurableCauseId) -> Option<FactCause> {
         let root_node = self.durable_causes.get((root.get() - 1) as usize)?;
         match root_node {
             DurableCause::Source(source) => return Some(FactCause::Source(source.clone())),
             DurableCause::Rule(rule) => return Some(FactCause::Rule(*rule)),
-            DurableCause::Merge { .. } => {}
-        }
-
-        enum Item {
-            Cause(DurableCauseId),
-            Fact(FactId),
-        }
-        let mut stack = vec![Item::Cause(root)];
-        let mut rule_matches = Vec::new();
-        let mut prior_facts = Vec::new();
-        while let Some(item) = stack.pop() {
-            match item {
-                Item::Fact(fact) => prior_facts.push(fact),
-                Item::Cause(cause) => {
-                    match &self.durable_causes[(cause.get() - 1) as usize] {
-                        DurableCause::Source(_) => return None,
-                        DurableCause::Rule(rule) => rule_matches.push(*rule),
-                        DurableCause::Merge { incoming, prior } => {
-                            // Stack is LIFO: visit the prior proposal/version first.
-                            stack.push(Item::Cause(*incoming));
-                            stack.push(match prior {
-                                DurablePrior::Fact(fact) => Item::Fact(*fact),
-                                DurablePrior::Cause(cause) => Item::Cause(*cause),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-        Some(FactCause::Merge {
-            rule_matches: rule_matches.into_boxed_slice(),
-            prior_facts: prior_facts.into_boxed_slice(),
-        })
-    }
-
-    fn equality_reason(&self, root: DurableCauseId) -> EqualityReason {
-        match &self.durable_causes[(root.get() - 1) as usize] {
-            DurableCause::Rule(rule) => EqualityReason::RuleUnion(*rule),
-            DurableCause::Merge {
-                incoming,
-                prior: DurablePrior::Fact(prior_fact),
-            } => match &self.durable_causes[(incoming.get() - 1) as usize] {
-                DurableCause::Rule(rule_match) => EqualityReason::MergeFn {
-                    rule_match: *rule_match,
+            DurableCause::Rebuild {
+                wave,
+                prior_fact,
+                as_of_edges,
+                equalities,
+            } => {
+                return Some(FactCause::Rebuild {
+                    wave: *wave,
                     prior_fact: *prior_fact,
-                },
-                DurableCause::Source(_) | DurableCause::Merge { .. } => {
-                    panic!("unsupported equality merge cause: incoming cause is not one rule match")
-                }
-            },
-            DurableCause::Source(_) => {
-                panic!("unsupported equality cause: source receipts cannot justify a union")
+                    equalities: EqualityLandmark {
+                        as_of_edges: *as_of_edges,
+                        pairs: self.durable_rebuild_equalities[equalities.as_range()].into(),
+                    },
+                });
             }
-            DurableCause::Merge {
-                prior: DurablePrior::Cause(_),
-                ..
-            } => {
-                panic!("unsupported equality merge cause: prior version is not one immutable fact")
-            }
+            DurableCause::Merge { .. } => Some(FactCause::Merge { cause: root }),
         }
     }
 
-    fn validate_equality_cause_draft(&self, root: CauseDraftId) {
-        let index = self
-            .provisional
-            .causes
-            .index(root.get())
-            .expect("equality cause belongs to the current causal wave");
-        match self.provisional.causes.slots[index]
-            .as_ref()
-            .expect("complete equality cause draft")
-        {
-            CauseDraft::Rule(_) => {}
-            CauseDraft::Merge {
-                incoming,
-                prior: PriorVersion::Fact(prior_fact),
-            } if !prior_fact.is_missing() => {
-                let incoming_index = self
-                    .provisional
-                    .causes
-                    .index(incoming.get())
-                    .expect("equality merge input belongs to the current causal wave");
-                assert!(
-                    matches!(
-                        self.provisional.causes.slots[incoming_index],
-                        Some(CauseDraft::Rule(_))
-                    ),
-                    "unsupported equality merge cause: incoming cause is not one rule match"
-                );
-            }
-            CauseDraft::Source(_) => {
-                panic!("unsupported equality cause: source receipts cannot justify a union")
-            }
-            CauseDraft::Merge {
-                prior: PriorVersion::Fact(_),
-                ..
-            } => {
-                panic!("unsupported equality merge cause: prior FactId is missing")
-            }
-            CauseDraft::Merge {
-                prior: PriorVersion::Draft(_),
-                ..
-            } => {
-                panic!("unsupported equality merge cause: prior version is not one immutable fact")
-            }
+    fn equality_reason(
+        &self,
+        root: DurableCauseId,
+        summary: EqualityCauseSummary,
+    ) -> EqualityReason {
+        summary.validate().unwrap_or_else(|error| panic!("{error}"));
+        match (&self.durable_causes[(root.get() - 1) as usize], summary) {
+            (DurableCause::Rule(rule), _) => EqualityReason::RuleUnion(*rule),
+            (_, EqualityCauseSummary::Rule) => EqualityReason::MergeFn { cause: root },
+            (
+                _,
+                EqualityCauseSummary::Rebuild {
+                    wave, as_of_edges, ..
+                },
+            ) => EqualityReason::Congruence {
+                cause: root,
+                wave,
+                as_of_edges,
+            },
+            _ => unreachable!("validated equality cause has no public reason"),
         }
+    }
+
+    fn validate_equality_cause_draft(&self, root_id: CauseDraftId) -> Result<(), &'static str> {
+        self.cause_summary(root_id)?.validate()
     }
 }
 
@@ -881,6 +1451,8 @@ struct ReceiptShared {
     open_fragments: AtomicUsize,
     abandoned_fragments: AtomicU64,
     replay_terms: ReplayTermStore,
+    equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
+    equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
     arena: Mutex<ReceiptArena>,
 }
 
@@ -896,6 +1468,8 @@ impl Default for ReceiptShared {
             open_fragments: AtomicUsize::new(0),
             abandoned_fragments: AtomicU64::new(0),
             replay_terms: ReplayTermStore::default(),
+            equality_value_sorts: Mutex::new(HashMap::default()),
+            equality_wave_timestamp: Mutex::new(None),
             arena: Mutex::new(ReceiptArena::default()),
         }
     }
@@ -913,6 +1487,7 @@ impl ReceiptShared {
 pub(crate) struct ReceiptBatch {
     shared: Arc<ReceiptShared>,
     drafts: Vec<(CauseDraftId, CauseDraft)>,
+    draft_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     facts: Vec<(FactId, PendingFact)>,
     fact_terms: Vec<ReplayTermId>,
     equalities: Vec<(EqNodeId, PendingEquality)>,
@@ -927,6 +1502,7 @@ impl ReceiptBatch {
         Self {
             shared,
             drafts: Vec::new(),
+            draft_summaries: HashMap::default(),
             facts: Vec::new(),
             fact_terms: Vec::new(),
             equalities: Vec::new(),
@@ -936,11 +1512,11 @@ impl ReceiptBatch {
         }
     }
 
-    pub(crate) fn merge_draft(
+    pub(crate) fn merge_draft_capability(
         &mut self,
         incoming: CauseDraftId,
         prior_fact: FactId,
-    ) -> CauseDraftId {
+    ) -> CauseCapability {
         assert!(
             !incoming.is_unattributed(),
             "merge receipt is missing its incoming cause"
@@ -949,31 +1525,94 @@ impl ReceiptBatch {
             !prior_fact.is_missing(),
             "merge receipt is missing its prior FactId"
         );
-        self.add_draft(CauseDraft::Merge {
-            incoming,
-            prior: PriorVersion::Fact(prior_fact),
-        })
+        let equality = self.cause_summary(incoming).with_prior_fact(prior_fact);
+        self.add_draft(
+            CauseDraft::Merge {
+                incoming,
+                prior: PriorVersion::Fact(prior_fact),
+            },
+            equality,
+        )
     }
 
+    #[cfg(test)]
     pub(crate) fn merge_drafts(
         &mut self,
         incoming: CauseDraftId,
         prior: CauseDraftId,
     ) -> CauseDraftId {
+        self.merge_drafts_capability(incoming, prior).id()
+    }
+
+    pub(crate) fn merge_drafts_capability(
+        &mut self,
+        incoming: CauseDraftId,
+        prior: CauseDraftId,
+    ) -> CauseCapability {
         assert!(
             !incoming.is_unattributed() && !prior.is_unattributed(),
             "same-wave merge receipt is missing an exact proposal cause"
         );
-        self.add_draft(CauseDraft::Merge {
-            incoming,
-            prior: PriorVersion::Draft(prior),
-        })
+        let equality = self
+            .cause_summary(incoming)
+            .merge(self.cause_summary(prior));
+        self.add_draft(
+            CauseDraft::Merge {
+                incoming,
+                prior: PriorVersion::Draft(prior),
+            },
+            equality,
+        )
     }
 
-    fn add_draft(&mut self, draft: CauseDraft) -> CauseDraftId {
+    fn cause_summary(&self, cause: CauseDraftId) -> EqualityCauseSummary {
+        if let Some(summary) = self.draft_summaries.get(&cause).copied() {
+            return summary;
+        }
+        let arena = self.shared.arena.lock().unwrap();
+        arena
+            .cause_summary(cause)
+            .unwrap_or_else(|error| panic!("cannot classify merge input cause: {error}"))
+    }
+
+    /// Prime published cause classifications once for an entire native row
+    /// batch. Merge callbacks then consult only this worker-local map, avoiding
+    /// one global arena lock for every colliding row.
+    pub(crate) fn preload_cause_summaries(&mut self, causes: &[CauseDraftId]) {
+        for cause in causes {
+            assert!(
+                !cause.is_unattributed(),
+                "receipt-enabled table proposal has no exact cause"
+            );
+        }
+        let mut error = None;
+        {
+            let arena = self.shared.arena.lock().unwrap();
+            for cause in causes {
+                if self.draft_summaries.contains_key(cause) {
+                    continue;
+                }
+                match arena.cause_summary(*cause) {
+                    Ok(summary) => {
+                        self.draft_summaries.insert(*cause, summary);
+                    }
+                    Err(cause_error) => {
+                        error = Some(cause_error);
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(error) = error {
+            panic!("cannot preload merge input cause: {error}");
+        }
+    }
+
+    fn add_draft(&mut self, draft: CauseDraft, equality: EqualityCauseSummary) -> CauseCapability {
         let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.shared.next_cause_draft, 1));
         self.drafts.push((id, draft));
-        id
+        assert!(self.draft_summaries.insert(id, equality).is_none());
+        CauseCapability { id, equality }
     }
 
     pub(crate) fn record_fact(
@@ -1042,9 +1681,32 @@ impl ReceiptBatch {
     pub(crate) fn publish(mut self) {
         {
             let mut arena = self.shared.arena.lock().unwrap();
+            let mut added_bytes = self.drafts.len() * mem::size_of::<CauseDraft>()
+                + self.facts.len() * mem::size_of::<PendingFact>()
+                + self.fact_terms.len() * mem::size_of::<ReplayTermId>()
+                + self.equalities.len() * mem::size_of::<PendingEquality>();
             for (id, draft) in self.drafts.drain(..) {
+                let equality = self
+                    .draft_summaries
+                    .remove(&id)
+                    .expect("local merge draft has no cached equality classification");
+                if matches!(draft, CauseDraft::Merge { .. }) {
+                    assert!(
+                        arena
+                            .provisional
+                            .equality_summaries
+                            .insert(id, equality)
+                            .is_none(),
+                        "duplicate merge-cause classification"
+                    );
+                    added_bytes +=
+                        mem::size_of::<CauseDraftId>() + mem::size_of::<EqualityCauseSummary>();
+                }
                 arena.provisional.causes.install(id.get(), draft);
             }
+            // Published input summaries are only a worker-local lookup cache;
+            // the arena already owns their canonical entries.
+            self.draft_summaries.clear();
             let fact_term_base = arena.provisional.fact_terms.len();
             arena.provisional.fact_terms.append(&mut self.fact_terms);
             for (id, mut fact) in self.facts.drain(..) {
@@ -1059,7 +1721,7 @@ impl ReceiptBatch {
             }
             arena.counters.redundant_unions += self.redundant_unions;
             arena.counters.unattributed_commits += self.unattributed_commits;
-            arena.update_live_bytes();
+            arena.add_live_bytes(added_bytes);
         }
         self.published = true;
         self.shared.open_fragments.fetch_sub(1, Ordering::Release);
@@ -1105,6 +1767,209 @@ impl CausalReceipts {
             .get(column)
             .copied()
             .flatten()
+    }
+
+    /// Capture one complete applied-edge prefix at the native rebuild
+    /// barrier. A bare counter read is insufficient: every allocated edge up
+    /// to the cutoff must already have been published without holes.
+    pub(crate) fn equality_edge_count(&self) -> Result<EqualityEdgeCount, &'static str> {
+        if self.0.open_fragments.load(Ordering::Acquire) != 0 {
+            return Err("cannot start rebuild with open receipt fragments");
+        }
+        if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
+            return Err("cannot start rebuild after an abandoned receipt fragment");
+        }
+        let count = self.0.next_equality.load(Ordering::Acquire);
+        let arena = self.0.arena.lock().unwrap();
+        if self.0.open_fragments.load(Ordering::Acquire) != 0 {
+            return Err("receipt fragment opened while capturing rebuild equality cutoff");
+        }
+        if arena
+            .provisional
+            .pending_equalities
+            .slots
+            .iter()
+            .any(Option::is_none)
+        {
+            return Err("rebuild equality cutoff contains an unpublished edge hole");
+        }
+        let durable = u64::try_from(arena.durable_equalities.len())
+            .map_err(|_| "durable equality count exceeds u64")?;
+        let pending = u64::try_from(arena.provisional.pending_equalities.slots.len())
+            .map_err(|_| "pending equality count exceeds u64")?;
+        if count != durable + pending {
+            return Err("rebuild equality cutoff is not one complete dense prefix");
+        }
+        if pending > 0 && arena.provisional.pending_equalities.base != Some(durable + 1) {
+            return Err("pending equality segment does not follow the durable prefix");
+        }
+        Ok(EqualityEdgeCount::new(count))
+    }
+
+    /// Classify one effective union cause before the native union-find is
+    /// mutated. Finalization repeats the assertion as an arena-integrity
+    /// check, but unsupported receipt shapes must fail at this boundary rather
+    /// than after an equality has already become observable.
+    pub(crate) fn validate_equality_causes(&self, causes: &[CauseDraftId]) {
+        let error = {
+            let arena = self.0.arena.lock().unwrap();
+            causes
+                .iter()
+                .find_map(|cause| arena.validate_equality_cause_draft(*cause).err())
+        };
+        if let Some(error) = error {
+            panic!("{error}");
+        }
+    }
+
+    pub(crate) fn cause_capability(&self, cause: CauseDraftId) -> CauseCapability {
+        let arena = self.0.arena.lock().unwrap();
+        let equality = arena
+            .cause_summary(cause)
+            .unwrap_or_else(|error| panic!("cannot resolve active cause: {error}"));
+        CauseCapability {
+            id: cause,
+            equality,
+        }
+    }
+
+    pub(crate) fn validate_equality_wave_timestamp(
+        &self,
+        wave: CausalWave,
+        timestamp: Value,
+    ) -> Result<(), &'static str> {
+        let mut current = self.0.equality_wave_timestamp.lock().unwrap();
+        match *current {
+            None => *current = Some((wave, timestamp)),
+            Some((known_wave, known_timestamp)) if known_wave == wave => {
+                if known_timestamp != timestamp {
+                    return Err("one causal wave proposed more than one equality timestamp");
+                }
+            }
+            Some((known_wave, known_timestamp)) if known_wave < wave => {
+                if timestamp < known_timestamp {
+                    return Err("equality timestamps decreased across causal waves");
+                }
+                *current = Some((wave, timestamp));
+            }
+            Some(_) => return Err("equality proposal returned to an earlier causal wave"),
+        }
+        Ok(())
+    }
+
+    /// Validate and register one exact semantic table rebuild before its
+    /// removal/insertion is staged. This deliberately takes the existing arena
+    /// lock once per changed row; the H1 counters expose the resulting logical
+    /// payload until rebuild-local batching is justified by measurement.
+    pub(crate) fn rebuild_draft(
+        &self,
+        table: TableId,
+        wave: CausalWave,
+        prior_fact: FactId,
+        old_row: &[Value],
+        new_row: &[Value],
+        rebuild_columns: &[crate::ColumnId],
+        as_of_edges: EqualityEdgeCount,
+    ) -> Result<CauseDraftId, &'static str> {
+        if prior_fact.is_missing() {
+            return Err("rebuild row has no immutable prior FactId");
+        }
+        let Some(layout) = self.0.replay_terms.table_layout(table) else {
+            return Err("rebuild table has no replay-term layout");
+        };
+        if layout.len() != old_row.len() || old_row.len() != new_row.len() {
+            return Err("rebuild rows and replay-term table layout have different arities");
+        }
+
+        if rebuild_columns
+            .iter()
+            .any(|column| column.index() >= layout.len())
+        {
+            return Err("rebuild column exceeds the registered table layout");
+        }
+
+        // Resolve every new typed endpoint before entering the receipt arena.
+        // The prior fact-owned terms are validated under the one arena lock
+        // below; no table mutation has been staged at either point.
+        let mut pairs = SmallVec::<[TypedCellEquality; 4]>::new();
+        for (index, declared_sort) in layout.iter().copied().enumerate() {
+            let column = crate::ColumnId::from_usize(index);
+            if !rebuild_columns.contains(&column) || old_row[index] == new_row[index] {
+                continue;
+            }
+            let Some(sort) = declared_sort else {
+                return Err("changed rebuild column has no replay sort");
+            };
+            let raw = new_row[index];
+            let Some(term) = self.0.replay_terms.lookup(sort, raw) else {
+                return Err("rebuilt cell has no ReplayTermId for its declared sort");
+            };
+            pairs.push(TypedCellEquality {
+                column,
+                left: EqualityEndpoint {
+                    sort,
+                    term: ReplayTermId::MISSING,
+                    raw: old_row[index],
+                },
+                right: EqualityEndpoint { sort, term, raw },
+            });
+        }
+        if pairs.is_empty() {
+            return Err("rebuild receipt has no changed semantic column");
+        }
+
+        let mut arena = self.0.arena.lock().unwrap();
+        let Some(slot) = arena
+            .facts
+            .get((prior_fact.get() - 1) as usize)
+            .and_then(Option::as_ref)
+        else {
+            return Err("rebuild row references an unknown prior FactId");
+        };
+        let (fact_table, terms) = match slot {
+            FactSlot::Pending(fact) => (
+                fact.table,
+                &arena.provisional.fact_terms[fact.terms.as_range()],
+            ),
+            FactSlot::Durable(fact) => {
+                (fact.table, &arena.durable_fact_terms[fact.terms.as_range()])
+            }
+        };
+        if fact_table != table {
+            return Err("rebuild row prior FactId belongs to another table");
+        }
+        if terms.len() != layout.len() {
+            return Err("rebuild row prior fact and table layout have different arities");
+        }
+
+        for pair in &mut pairs {
+            let term = terms[pair.column.index()];
+            if term.is_missing() {
+                return Err("changed rebuild column has no fact-owned ReplayTermId");
+            }
+            if self.0.replay_terms.lookup(pair.left.sort, pair.left.raw) != Some(term) {
+                return Err("changed rebuild column fact term is not its typed value mapping");
+            }
+            pair.left.term = term;
+        }
+
+        let equalities = FlatRange::new(arena.provisional.rebuild_equalities.len(), pairs.len());
+        arena
+            .provisional
+            .rebuild_equalities
+            .extend_from_slice(&pairs);
+        let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
+        let cause = CauseDraft::Rebuild {
+            wave,
+            prior_fact,
+            as_of_edges,
+            equalities,
+        };
+        arena.provisional.causes.install(id.get(), cause);
+        arena.add_live_bytes(
+            mem::size_of::<CauseDraft>() + pairs.len() * mem::size_of::<TypedCellEquality>(),
+        );
+        Ok(id)
     }
 
     pub fn intern_literal(
@@ -1180,10 +2045,23 @@ impl CausalReceipts {
         left: Value,
         right: Value,
     ) -> Result<TypedEqualityProposal, &'static str> {
+        let left_endpoint = self.equality_endpoint(sort, left)?;
+        let right_endpoint = self.equality_endpoint(sort, right)?;
+        let mut value_sorts = self.0.equality_value_sorts.lock().unwrap();
+        for value in [left, right] {
+            if value_sorts
+                .get(&value)
+                .is_some_and(|known_sort| *known_sort != sort)
+            {
+                return Err("one native equality value was used through different logical sorts");
+            }
+        }
+        value_sorts.entry(left).or_insert(sort);
+        value_sorts.entry(right).or_insert(sort);
         Ok(TypedEqualityProposal {
             wave,
-            left: self.equality_endpoint(sort, left)?,
-            right: self.equality_endpoint(sort, right)?,
+            left: left_endpoint,
+            right: right_endpoint,
         })
     }
 
@@ -1224,11 +2102,9 @@ impl CausalReceipts {
     pub(crate) fn source_draft(&self, source: SourceRef) -> CauseDraftId {
         let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
-        arena
-            .provisional
-            .causes
-            .install(id.get(), CauseDraft::Source(source));
-        arena.update_live_bytes();
+        let cause = CauseDraft::Source(source);
+        arena.provisional.causes.install(id.get(), cause);
+        arena.add_live_bytes(mem::size_of::<CauseDraft>());
         id
     }
 
@@ -1299,15 +2175,18 @@ impl CausalReceipts {
                 },
             );
             let cause_id = CauseDraftId::new(first_cause + offset as u64);
-            arena
-                .provisional
-                .causes
-                .install(cause_id.get(), CauseDraft::Rule(match_id));
+            let cause = CauseDraft::Rule(match_id);
+            arena.provisional.causes.install(cause_id.get(), cause);
             result.push((lane, cause_id));
         }
         arena.counters.premise_handles += (lanes.len() * premise_arity) as u64;
         arena.counters.term_handles += (lanes.len() * binding_sources.len()) as u64;
-        arena.update_live_bytes();
+        arena.counters.provisional_matches += lanes.len() as u64;
+        arena.add_live_bytes(
+            lanes.len() * (mem::size_of::<MatchDraft>() + mem::size_of::<CauseDraft>())
+                + lanes.len() * premise_arity * mem::size_of::<FactId>()
+                + lanes.len() * binding_sources.len() * mem::size_of::<ReplayTermId>(),
+        );
         result
     }
 
@@ -1342,15 +2221,11 @@ impl CausalReceipts {
             arena.facts.iter().all(Option::is_some),
             "missing dense FactId publication before causal-wave finalization"
         );
-        let equality_causes = arena
-            .provisional
-            .pending_equalities
-            .slots
-            .iter()
-            .map(|edge| edge.as_ref().expect("complete equality edge").cause)
-            .collect::<Vec<_>>();
-        for cause in equality_causes {
-            arena.validate_equality_cause_draft(cause);
+        for edge in &arena.provisional.pending_equalities.slots {
+            let cause = edge.as_ref().expect("complete equality edge").cause;
+            if let Err(error) = arena.validate_equality_cause_draft(cause) {
+                panic!("{error}");
+            }
         }
 
         let cause_len = arena.provisional.causes.slots.len();
@@ -1382,7 +2257,7 @@ impl CausalReceipts {
                 .as_ref()
                 .expect("complete cause segment")
             {
-                CauseDraft::Source(_) => {}
+                CauseDraft::Source(_) | CauseDraft::Rebuild { .. } => {}
                 CauseDraft::Rule(match_id) => {
                     let Some(match_index) = arena.provisional.matches.index(match_id.get()) else {
                         arena.counters.promotion_misses += 1;
@@ -1448,6 +2323,36 @@ impl CausalReceipts {
                     DurableCause::Rule(
                         match_map[index].expect("reachable rule cause promotes its match"),
                     )
+                }
+                CauseDraft::Rebuild {
+                    wave,
+                    prior_fact,
+                    as_of_edges,
+                    equalities,
+                } => {
+                    if prior_fact.is_missing() {
+                        arena.counters.promotion_misses += 1;
+                        panic!("rebuild cause references a missing prior FactId");
+                    }
+                    let pair_range = equalities.as_range();
+                    let pair_len = pair_range.len();
+                    let start = arena.durable_rebuild_equalities.len();
+                    arena.durable_rebuild_equalities.reserve(pair_len);
+                    for pair_index in pair_range {
+                        let pair = arena.provisional.rebuild_equalities[pair_index];
+                        arena.durable_rebuild_equalities.push(pair);
+                    }
+                    arena.counters.rebuild_causes += 1;
+                    arena.counters.rebuild_equalities += pair_len as u64;
+                    arena.counters.rebuild_bytes += (mem::size_of::<DurableCause>()
+                        + pair_len * mem::size_of::<TypedCellEquality>())
+                        as u64;
+                    DurableCause::Rebuild {
+                        wave,
+                        prior_fact,
+                        as_of_edges,
+                        equalities: FlatRange::new(start, pair_len),
+                    }
                 }
                 CauseDraft::Merge { incoming, prior } => {
                     let incoming_index = arena
@@ -1534,12 +2439,17 @@ impl CausalReceipts {
                 .causes
                 .index(edge.cause.get())
                 .expect("equality cause belongs to current segment");
+            let cause = cause_map[index].expect("applied equality cause is reachable");
+            let summary = arena
+                .cause_summary(edge.cause)
+                .expect("applied equality cause has a cached classification");
+            let reason = arena.equality_reason(cause, summary);
             arena.durable_equalities.push(DurableEquality {
                 node: edge.node,
                 proposal: edge.proposal,
                 native_parent: edge.native_parent,
                 native_child: edge.native_child,
-                cause: cause_map[index].expect("applied equality cause is reachable"),
+                reason,
             });
         }
 
@@ -1616,7 +2526,35 @@ impl CausalReceipts {
                 right: edge.proposal.right,
                 native_parent: edge.native_parent,
                 native_child: edge.native_child,
-                reason: arena.equality_reason(edge.cause),
+                reason: edge.reason.clone(),
+            })
+            .collect();
+        let causes = arena
+            .durable_causes
+            .iter()
+            .map(|entry| match entry {
+                DurableCause::Source(source) => ReceiptCauseRecord::Source(source.clone()),
+                DurableCause::Rule(rule) => ReceiptCauseRecord::Rule(*rule),
+                DurableCause::Rebuild {
+                    wave,
+                    prior_fact,
+                    as_of_edges,
+                    equalities,
+                } => ReceiptCauseRecord::Rebuild {
+                    wave: *wave,
+                    prior_fact: *prior_fact,
+                    equalities: EqualityLandmark {
+                        as_of_edges: *as_of_edges,
+                        pairs: arena.durable_rebuild_equalities[equalities.as_range()].into(),
+                    },
+                },
+                DurableCause::Merge { incoming, prior } => ReceiptCauseRecord::Merge {
+                    incoming: *incoming,
+                    prior: match prior {
+                        DurablePrior::Fact(fact) => ReceiptCausePrior::Fact(*fact),
+                        DurablePrior::Cause(cause) => ReceiptCausePrior::Cause(*cause),
+                    },
+                },
             })
             .collect();
         ReceiptSnapshot {
@@ -1624,6 +2562,7 @@ impl CausalReceipts {
             matches,
             equality_nodes,
             equalities,
+            causes,
             counters: arena.counters,
         }
     }
@@ -1667,9 +2606,19 @@ mod tests {
     fn receipt_batches_publish_out_of_order_without_holes() {
         let receipts = CausalReceipts::default();
         let mut lower = receipts.new_batch();
-        let lower_id = lower.add_draft(CauseDraft::Rule(MatchDraftId::new(1)));
+        let lower_id = lower
+            .add_draft(
+                CauseDraft::Rule(MatchDraftId::new(1)),
+                EqualityCauseSummary::Rule,
+            )
+            .id();
         let mut higher = receipts.new_batch();
-        let higher_id = higher.add_draft(CauseDraft::Rule(MatchDraftId::new(2)));
+        let higher_id = higher
+            .add_draft(
+                CauseDraft::Rule(MatchDraftId::new(2)),
+                EqualityCauseSummary::Rule,
+            )
+            .id();
         assert!(higher_id > lower_id);
 
         // Parallel shards can reach their publication barriers in either

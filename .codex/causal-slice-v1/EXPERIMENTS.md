@@ -495,3 +495,263 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   the largest avoidable per-proposal copy before H1 measurement. Required
   typed lookups, component-map operations, and one applied-edge allocation
   remain for the all-five receipt gate to measure.
+
+### 2026-07-23 — checkpoint 4b2b table rebuild and congruence receipts
+
+- Status: bounded core-relations rebuild/rekey checkpoint is green and
+  uncommitted for independent review. Same-ID container versions, bridge
+  activation, source/check roots, slicing, grounded replay, and workload
+  measurements remain excluded.
+- Snapshot: `/Users/saul/p/wt/egglog-encoding/causal-slice-receipts-v1`,
+  branch `agent/causal-slice-receipts-v1`, starting `HEAD`
+  `29265e4c33b962aff177d4bbf22324ed17b0b5aa`.
+- Immutable rekeys: each changed semantic row keeps its old `FactId` as
+  history and commits a new fact version with `RebuildDependency { wave,
+  prior_fact, EqualityLandmark }`. The landmark stores only typed old/new
+  endpoint pairs in physical-column order plus a dense applied-edge cutoff;
+  it performs no equality-path walk while rebuilding. Timestamp and ignored
+  columns contribute no pair.
+- Native integration: all four existing incremental/nonincremental,
+  serial/parallel staging loops call one receipt-aware row helper. With
+  capture disabled they retain raw remove/insert staging. With capture
+  enabled, prior FactId, table layout, old fact-owned term, new typed value
+  term, and the historical cutoff are validated before that row's first
+  staged removal; the same native merge/rebuild machinery then commits the
+  caused row. The initial implementation intentionally takes one receipt-arena
+  lock per changed row; H1's 1.5x screen must reject that simple choice if
+  rebuild-heavy workloads make it too costly.
+- Congruence: when a rebuilt key collides, the existing table merge creates
+  `Merge(rebuild_draft, target_prior_fact)`. A union proposed by that native
+  merge becomes `Congruence { fact_a, fact_b, equalities }`, citing the
+  rewritten-away row, the colliding row, and the earlier key equalities. It
+  invents no rule match. Rule and merge-function union reasons remain
+  unchanged.
+- Lazy explanations: `ReceiptSnapshot::explain_equality` unfolds one exact
+  deterministic path through the immutable applied-edge forest, bounded by
+  `EqualityEdgeCount`. It is iterative and runs only for retained landmarks.
+  Later edges cannot justify an earlier rebuild. Redundant proposal adjacency
+  remains deliberately unrecorded: shorter alternative explanations are an
+  optional slice-size optimization, not correctness data or hot-path work.
+- Failure boundary: a missing typed rebuilt endpoint errors before staging;
+  receipt-mode table runners restore temporarily removed tables before
+  propagating the diagnostic. The same-ID container refresh path now fails
+  before its first row mutation pending the explicit Vec version checkpoint.
+  The ordinary database/table rebuild path does not enter the unwind-safe
+  receipt wrapper and allocates no fact sidecar.
+- Discriminating canaries cover a direct rekey plus no-op identity retention,
+  a later edge beyond the historical cutoff, exact collision/congruence, two
+  changed columns supplied in reverse rebuild order, a missing typed endpoint
+  with no latent staged mutation, the same-ID refresh guard, the ordinary
+  zero-sidecar control, and chained lazy explanation with an earlier cutoff.
+- Focused commands:
+  `cargo test -p egglog-core-relations causal_receipt_rebuild -- --nocapture`,
+  `cargo test -p egglog-core-relations causal_receipt_same_id_refresh --
+  --nocapture`,
+  `cargo test -p egglog-core-relations
+  ordinary_table_rebuild_uses_no_receipt_sidecars -- --nocapture`, and
+  `cargo test -p egglog-core-relations
+  typed_union_forest_is_immutable -- --nocapture` all passed.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 92
+  tests before the final lazy-explanation type tightening; a fresh full run,
+  formatting, diff check, and independent correctness/cost review are the
+  freeze gate below.
+- Hypothesis result: the engine can retain exact rebuild and congruence
+  dependencies using the single native execution path and lazy endpoint
+  landmarks. This is recording plumbing, not a second evaluator. Route-wide
+  parallel coverage, container versions, and H1 recording cost remain open;
+  no workload performance claim is made at this checkpoint.
+
+### 2026-07-23 — checkpoint 4b2c rebuild review repair
+
+- Status: the earlier 4b2b/4b2c freezes were rejected. Correctness review found that a
+  later row/table validation failure could leave an earlier buffer queued, and
+  that parallel same-key rebuilt proposals produced an unsupported
+  `Merge(Rebuild, Draft(Rebuild))`. Cost review found three per-row temporary
+  vectors, repeated forest construction/path walks, a nontransactional
+  incremental cursor, and growing cause-prefix work. This repair is frozen
+  for another independent review; container and bridge work remains excluded.
+- Operation abort: every receipt-mode rebuild buffer now shares one explicit
+  tri-state `MutationTransaction` (`Pending`, `Committed`, or `Aborted`). A
+  table merge treats pending as an invariant violation, consumes committed
+  batches, and discards only explicitly aborted batches. The coordinator
+  records the terminal decision after all target tables finish validation;
+  unwind restoration records `Aborted` before propagating the diagnostic.
+  Multi-row and cross-table canaries then force a later real table merge and
+  prove the old FactIds/keys survive while no rejected rekey appears.
+- Same-wave congruence: equality validation now runs before native UF mutation.
+  A congruence reason unfolds an arbitrary rebuild-only native merge DAG into
+  its ordered immutable leaf FactIds and typed rebuild landmarks. This covers
+  serial `Merge(Rebuild, Fact)`, parallel
+  `Merge(Rebuild, Draft(Rebuild))`, and nested three-proposal folds without a
+  Prefix or same-wave draft identity escaping the wave. Real 20,001-row,
+  four-thread canaries cross both parallel thresholds and verify two- and
+  three-leaf reasons, typed terms, common endpoints, cutoffs, and explainable
+  historical paths.
+- Same-wave merge functions use the same bounded DAG rule: a `MergeFn` reason
+  points to every ordered `RuleMatchId` and immutable prior `FactId` read by
+  the fold, including nested parallel `Merge(Rule, Draft(Merge(...)))` shapes. A
+  three-proposal canary proves no same-wave proposal identity is lost; mixed
+  rule/rebuild merge DAGs remain an explicit unsupported error rather than a
+  widened slice.
+- Recording cost repair: rebuild preparation uses one inline `SmallVec` and
+  promotes its flat pairs directly into durable storage only when the cause is
+  reachable. Rebuild counters likewise advance only on promotion, so aborted
+  or no-op drafts do not inflate H1. The per-row hot path increments logical
+  live-byte accounting by exactly one cause plus its changed-cell pairs; it no
+  longer rescans every provisional fact and arena segment after each rebuilt
+  row. One equality cutoff is captured once at the database rebuild barrier
+  after checking zero open/abandoned fragments and a complete dense edge
+  prefix; every target table and row in the operation reuses it.
+- Abort-cost repair: a transaction retains the exact pending-row and removal
+  counter increments made by its published buffers. Commit drops that tiny
+  adjustment list; abort subtracts it. Rejected batches can therefore remain
+  queued for fail-closed disposal without affecting the next merge's reserve
+  size or serial/parallel choice, and no shard-queue scan is added.
+- Incremental retry safety: receipt-mode table rebuild previews the
+  canonicalizer subset and publishes every target table's `SubsetTracker`
+  cursor only at the shared database transaction barrier. A 10,001-row
+  single-target canary rejects the sole changed row, installs its missing
+  typed term, and proves a retry against the unchanged UF version still
+  performs the rekey. A second canary gives two 10,001-row targets the same UF
+  delta: the first validates, the second rejects, and a corrected retry proves
+  both cursors were rolled back rather than only the failing table's cursor.
+- UF publication is preflighted atomically: receipt mode drains the complete
+  pending queue and simulates it in FIFO order with a sparse union-by-min
+  parent overlay, component-sort overrides, and a shadow highest timestamp.
+  Only after every effective proposal's timestamp, exact cause, and typed
+  components validate does the code open a receipt fragment or touch the
+  native UF. The commit pass begins with read-only native roots, while the
+  first mutation remains the existing `union`; ordinary mode is unchanged.
+  Canaries cover a late invalid row in one batch, a conflicting-sort row in a
+  later batch, a depth-two native path that must remain structurally identical
+  after rejection, and an unsupported cause that becomes harmless only
+  because an earlier pending proposal makes it redundant. Rejected proposals
+  are discarded under the experiment's fail-closed exit contract; they do not
+  reserve equality IDs, as a same-wave corrected publication proves.
+- Cutoff failure is pre-transactional: the shared equality boundary is
+  validated while the canonicalizer and every target table are still
+  installed. A canary holds an open receipt fragment, observes the expected
+  cutoff rejection, then proves both tables remain accessible and the empty
+  fragment can still publish/finalize cleanly.
+- Slice-time cost repair: `EqualityExplanationIndex` builds one forest view per
+  historical cutoff, assigns immutable leaf intervals, and answers subtree
+  membership in constant time. The future slicer can reuse that index across
+  every retained changed-cell pair rather than rebuilding the forest or
+  walking parents for each membership query. Convenience single-pair
+  explanation delegates to the same index.
+- Deep-cause cost repair: every published cause draft caches one constant-size
+  equality classification from its already-cached children. Pre-UF and
+  finalization validation are O(1) per equality. Public fact merges and
+  equality reasons retain a snapshot-owned shared cause-root ID; ordered
+  source/rule/fact/rebuild dependencies unfold lazily, preserving mixed-kind
+  fold order without copying growing prefixes. A 512-proposal canary records
+  511 effective prefix unions, retains exactly 1,023 cause nodes, and unfolds
+  the final ordered 512 rule leaves only on request.
+- Global provisional accounting now advances incrementally at source, match,
+  worker publication, and rebuild sites. It no longer rescans the growing
+  cause/fact arenas per source row or shard publication; H1 still decides the
+  measured constant factor.
+- Regression gate: `cargo test -p egglog-core-relations` passed 105 unit tests
+  and 2 doc tests. The real parallel canaries finish in about 0.3 seconds
+  together on this machine. `cargo fmt --all` and `git diff --check` passed.
+  No workload timing has been run; H1 remains the required five-workload gate.
+
+### 2026-07-23 — checkpoint 4b2d recording-site validation and hot-path repair
+
+- Status: the 4b2c freeze was rejected by independent treatment-isolation and
+  cost review. The reviewers found that table merge callbacks could stage an
+  invalid union and then publish their parent row before UF preflight, that a
+  panic could strand a `TableInfo` temporarily removed by the database merge
+  coordinator, and that transaction/cause bookkeeping had leaked into the
+  ordinary buffer and rebuild hot paths. This repair remains scoped to the
+  existing native execution path; container, bridge, root, slicer, and replay
+  work is still excluded.
+- Valid-by-construction engine proposals: `ExecutionState` now carries a
+  compact `CauseCapability` beside the draft ID. Direct rule actions construct
+  the known Rule capability without an arena lookup; serial and parallel table
+  merge folds compute capabilities while the exact proposal and prior FactId
+  are in hand. `stage_union_with_replay` validates that capability before it
+  allocates a UF buffer or notification, so an unsupported merge-induced union
+  cannot be followed by a replacement parent-row commit.
+- Typed proposal boundary: endpoint terms are resolved first and both raw
+  equality values are checked under one receipt-only sort-registry lock before
+  either binding is installed. This reflects the bridge's one global UF with
+  globally fresh equality values: disjoint logical sorts can share the table,
+  but one native equality value cannot change logical sort. The cumulative
+  wave/timestamp consistency check also runs before buffer staging. The UF's
+  whole-queue preflight remains as a low-level invariant guard; supported
+  engine proposals no longer depend on it for semantic rejection.
+- Cause storage repair: provisional cause storage is again one `CauseDraft`
+  per cause. Only merge drafts have a sparse cached equality summary, and
+  durable causes do not retain a second summary. Equality reasons are decided
+  while the provisional classification exists, then stored directly on the
+  durable edge. The active capability is ephemeral and is not copied into
+  pending rows or facts.
+- Mutation publication repair: receipt rebuild transactions own deferred
+  buffer publications, target cursors, and changed-table notifications.
+  Ordinary `Buffer` and `PendingRowBatch` shapes retain inline counters, raw
+  removal queues, and no transaction-state check. Commit publishes once at the
+  existing database barrier; abort drops every unpublished row/removal and
+  cursor without queue scans or pending-count repair.
+- Rebuild dispatch repair: receipt selection is hoisted once above the four
+  incremental/full and serial/parallel loops. A single const-generic row helper
+  preserves staging order, while the ordinary specialization has no per-row
+  receipt, transaction, or `Option` branch. Transaction attachment remains one
+  buffer-construction operation in receipt mode.
+- Structural unwind safety: `merge_simple`, dependency-stratified `merge_all`,
+  and direct `merge_table` restore every extracted table before propagating a
+  panic; `merge_table` also restores its size estimate. This is not rollback:
+  unsupported causal semantics still fail closed and terminate the treatment,
+  but a caught diagnostic can inspect a structurally intact database.
+- New canaries: a source-attributed merge function that attempts a union fails
+  at `stage_union_with_replay`, preserves the immutable prior parent fact and
+  both separate UF roots, and leaves its table addressable. Separate canaries
+  cover simple, direct, and four-table stratified unwind restoration. The
+  conflicting-sort canaries now assert rejection at proposal construction,
+  before UF notification or mutation.
+- Regression gate: `cargo test -p egglog-core-relations` passed 109 unit tests
+  and 2 doc tests. `cargo check --workspace`, `cargo fmt --all -- --check`, and
+  `git diff --check` passed. No workload timing has been run; the receipt-only
+  all-five H1 gate remains mandatory before replay implementation.
+
+### 2026-07-23 — checkpoint 4b2e activation and batched-classification repair
+
+- Status: independent correctness review passed 4b2d, while treatment review
+  found a delayed activation failure and cost review found two global-arena
+  locks inside per-union/per-collision loops. This bounded repair addresses
+  only those findings plus the reviewer's disjoint-sort canary; H1 remains
+  unmeasured.
+- Activation is now one side-effect-free all-table preflight followed by the
+  infallible mode switch. The default contract rejects committed rows;
+  `SortedWritesTable` and `DisplacedTable` additionally reject queued ordinary
+  mutations and any live receipt-disabled buffer. The latter uses the already
+  present `Weak` buffer handle count, so ordinary staging gains no new counter
+  or branch. Adding a table to an active receipt database runs the same
+  preflight before registering or enabling the table.
+- Activation canaries cover dropped-but-unmerged and still-live buffers for
+  both relations and the global UF, a preloaded table added after activation,
+  and all-or-nothing mode selection across multiple tables. The last canary
+  proves an earlier UF still accepts raw ordinary staging after a later table
+  rejects preflight.
+- UF publication preflight now collects the effective proposal causes while
+  simulating the drained queue, then validates the complete list under one
+  arena lock after the simulation. It still skips unsupported causes that an
+  earlier pending proposal makes redundant, and still panics only after
+  releasing the lock so caught fail-closed diagnostics cannot poison the
+  arena.
+- Each pending table row batch preloads its published constant-size cause
+  summaries under one arena lock into the existing worker-local summary map.
+  Every serial/parallel collision and same-wave fold then performs only local
+  lookups. Publication removes local draft summaries and discards the external
+  cache; external summaries are never duplicated in durable storage.
+- The dependency-stratified ordinary merge path now stores its usually-small
+  outer stratum list inline with `SmallVec` instead of introducing an
+  unconditional heap `Vec`. Receipt-disabled row and buffer paths otherwise
+  remain unchanged.
+- A positive canary proves the single native UF accepts two disjoint logical
+  sorts in one wave while existing overlap canaries still reject one raw value
+  or component used through conflicting sorts.
+- Regression gate: `cargo test -p egglog-core-relations` passed 114 unit tests
+  and 2 doc tests. Focused activation, invalid-union, merge-function, and
+  disjoint-sort canaries passed. Workspace checking, formatting, diff checking,
+  and independent re-review remain the freeze gate below.

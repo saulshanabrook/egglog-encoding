@@ -247,6 +247,92 @@ struct TypedComponent {
     component: EqComponentRef,
 }
 
+/// Transaction-local union overlay used to validate an entire receipt-mode
+/// publication before touching the native union-find. It stores only roots
+/// reached by this publication, so preflight is proportional to proposals
+/// rather than to the size of the existing e-graph.
+#[derive(Default)]
+struct UnionPreflight {
+    parents: HashMap<Value, Value>,
+    sorts: HashMap<Value, crate::ReplaySortId>,
+    highest_timestamp: Option<Value>,
+}
+
+impl UnionPreflight {
+    fn find(&mut self, native_root: Value) -> Value {
+        let mut root = native_root;
+        while let Some(parent) = self.parents.get(&root).copied() {
+            if parent == root {
+                break;
+            }
+            root = parent;
+        }
+
+        let mut current = native_root;
+        while let Some(parent) = self.parents.get(&current).copied() {
+            if parent == root {
+                break;
+            }
+            self.parents.insert(current, root);
+            current = parent;
+        }
+        root
+    }
+
+    fn validate_component(
+        &self,
+        existing: Option<&HashMap<Value, TypedComponent>>,
+        root: Value,
+        endpoint: Value,
+        sort: crate::ReplaySortId,
+    ) {
+        let known_sort = self
+            .sorts
+            .get(&root)
+            .copied()
+            .or_else(|| existing.and_then(|components| components.get(&root).map(|c| c.sort)));
+        if let Some(known_sort) = known_sort {
+            assert_eq!(
+                known_sort, sort,
+                "native equality component was reached through a different logical sort"
+            );
+        } else {
+            assert_eq!(
+                root, endpoint,
+                "non-singleton native root is missing its equality component"
+            );
+        }
+    }
+
+    fn validate_redundant_component(
+        &self,
+        existing: Option<&HashMap<Value, TypedComponent>>,
+        root: Value,
+        sort: crate::ReplaySortId,
+    ) {
+        if let Some(known_sort) = self
+            .sorts
+            .get(&root)
+            .copied()
+            .or_else(|| existing.and_then(|components| components.get(&root).map(|c| c.sort)))
+        {
+            assert_eq!(
+                known_sort, sort,
+                "native equality component was reached through a different logical sort"
+            );
+        }
+    }
+
+    fn union(&mut self, left: Value, right: Value, sort: crate::ReplaySortId) -> (Value, Value) {
+        let parent = left.min(right);
+        let child = left.max(right);
+        self.parents.insert(child, parent);
+        self.sorts.remove(&child);
+        self.sorts.insert(parent, sort);
+        (parent, child)
+    }
+}
+
 #[derive(Clone)]
 struct UfPendingBatch {
     rows: RowBuffer,
@@ -366,6 +452,18 @@ impl Table for DisplacedTable {
     }
     fn set_table_id(&mut self, table: crate::TableId) {
         self.table_id = table;
+    }
+    fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
+        if self.len() != 0 {
+            return Err("union-find already contains rows without exact source identities");
+        }
+        if !self.buffered_writes.is_empty() {
+            return Err("union-find has queued receipt-disabled mutations");
+        }
+        if Arc::weak_count(&self.buffered_writes) != 0 {
+            return Err("union-find has an outstanding receipt-disabled mutation buffer");
+        }
+        Ok(())
     }
     fn enable_causal_receipts(&mut self) {
         self.receipts_enabled = true;
@@ -554,11 +652,19 @@ impl Table for DisplacedTable {
 
     fn merge(&mut self, exec_state: &mut ExecutionState) -> TableChange {
         if let Some(receipts) = exec_state.causal_receipts() {
-            let mut receipt_batch = receipts.new_batch();
+            // Rejection is terminal for these invalid proposals: drain their
+            // owned buffers, validate the complete publication, and discard
+            // them on unwind without mutating native or receipt state.
+            let mut batches = Vec::new();
             while let Some(batch) = self.buffered_writes.pop() {
-                if batch.rows.len() == 0 {
-                    continue;
+                if batch.rows.len() != 0 {
+                    batches.push(batch);
                 }
+            }
+            self.preflight_receipt_batches(&batches, receipts, exec_state.causal_wave());
+
+            let mut receipt_batch = receipts.new_batch();
+            for batch in batches {
                 let proposal_receipts = batch
                     .receipts
                     .as_ref()
@@ -588,8 +694,8 @@ impl Table for DisplacedTable {
                         "receipt-enabled union proposal has no exact cause"
                     );
                     assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
-                    let left_root = self.uf.find(row[0]);
-                    let right_root = self.uf.find(row[1]);
+                    let left_root = self.uf.find_naive(row[0]);
+                    let right_root = self.uf.find_naive(row[1]);
                     if left_root == right_root {
                         Self::validate_component_sort(
                             self.equality_components.as_deref(),
@@ -599,7 +705,6 @@ impl Table for DisplacedTable {
                         receipt_batch.record_redundant_union();
                         continue;
                     }
-                    self.validate_receipt_timestamp(row);
                     let proposal = AppliedEqualityProposal {
                         wave,
                         left: crate::EqualityEndpoint {
@@ -711,6 +816,79 @@ impl DisplacedTable {
         }
     }
 
+    fn preflight_receipt_batches(
+        &self,
+        batches: &[UfPendingBatch],
+        receipts: &crate::CausalReceipts,
+        current_wave: crate::CausalWave,
+    ) {
+        let mut effective_causes = Vec::new();
+        let mut overlay = UnionPreflight {
+            highest_timestamp: self.displaced.last().map(|(_, timestamp)| *timestamp),
+            ..Default::default()
+        };
+        for batch in batches {
+            let proposal_receipts = batch
+                .receipts
+                .as_ref()
+                .expect("receipt-enabled union batch has no typed proposal sidecar");
+            assert_eq!(
+                proposal_receipts.len(),
+                batch.rows.len(),
+                "receipt-enabled union batch has incomplete typed proposals"
+            );
+            let wave = batch
+                .wave
+                .expect("receipt-enabled union batch has no causal wave");
+            assert_eq!(
+                wave, current_wave,
+                "typed union proposal crossed a causal-wave boundary"
+            );
+
+            for (index, row) in batch.rows.iter().enumerate() {
+                assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
+                let proposal = proposal_receipts[index];
+                assert!(
+                    !proposal.cause.is_unattributed(),
+                    "receipt-enabled union proposal has no exact cause"
+                );
+                let left_root = overlay.find(self.uf.find_naive(row[0]));
+                let right_root = overlay.find(self.uf.find_naive(row[1]));
+                if left_root == right_root {
+                    overlay.validate_redundant_component(
+                        self.equality_components.as_deref(),
+                        left_root,
+                        proposal.sort,
+                    );
+                    continue;
+                }
+
+                if let Some(highest) = overlay.highest_timestamp {
+                    assert!(
+                        highest <= row[2],
+                        "must insert rows with increasing timestamps"
+                    );
+                }
+                effective_causes.push(proposal.cause);
+                overlay.validate_component(
+                    self.equality_components.as_deref(),
+                    left_root,
+                    row[0],
+                    proposal.sort,
+                );
+                overlay.validate_component(
+                    self.equality_components.as_deref(),
+                    right_root,
+                    row[1],
+                    proposal.sort,
+                );
+                overlay.union(left_root, right_root, proposal.sort);
+                overlay.highest_timestamp = Some(row[2]);
+            }
+        }
+        receipts.validate_equality_causes(&effective_causes);
+    }
+
     fn component_for(
         components: &HashMap<Value, TypedComponent>,
         root: Value,
@@ -728,16 +906,6 @@ impl DisplacedTable {
             "non-singleton native root is missing its equality component"
         );
         EqComponentRef::Term(endpoint.term)
-    }
-
-    fn validate_receipt_timestamp(&self, row: &[Value]) {
-        let ts = row[2];
-        if let Some((_, highest)) = self.displaced.last() {
-            assert!(
-                *highest <= ts,
-                "must insert rows with increasing timestamps"
-            );
-        }
     }
 
     fn finish_receipt_insert(&mut self, row: &[Value], parent: Value, child: Value) {

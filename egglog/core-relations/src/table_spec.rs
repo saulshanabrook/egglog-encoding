@@ -8,13 +8,17 @@ use std::{
     any::Any,
     marker::PhantomData,
     ops::{Deref, DerefMut},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CauseDraftId, FactId, QueryEntry, TableId, TypedEqualityProposal, Variable,
+    CauseDraftId, EqualityEdgeCount, FactId, QueryEntry, TableId, TypedEqualityProposal, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -27,6 +31,126 @@ use crate::{
 };
 
 define_id!(pub ColumnId, u32, "a particular column in a table", pretty "Col");
+
+const MUTATION_PENDING: u8 = 0;
+const MUTATION_COMMITTED: u8 = 1;
+const MUTATION_ABORTED: u8 = 2;
+
+/// Shared decision token for one multi-buffer native mutation. Pending
+/// batches may be staged concurrently, but no table may consume them until
+/// the coordinator records an explicit commit or abort decision.
+#[derive(Clone)]
+#[doc(hidden)]
+pub struct MutationTransaction(Arc<MutationTransactionState>);
+
+struct MutationTransactionState {
+    decision: AtomicU8,
+    pending: Mutex<PendingMutationTransaction>,
+}
+
+#[derive(Default)]
+struct PendingMutationTransaction {
+    publications: Vec<Box<dyn FnOnce() + Send>>,
+    rebuild_cursors: Vec<RebuildCursor>,
+    changed_tables: Vec<TableId>,
+}
+
+pub(crate) struct RebuildCursor {
+    pub(crate) target: TableId,
+    pub(crate) source: TableId,
+    pub(crate) version: TableVersion,
+}
+
+pub(crate) struct MutationCommit {
+    pub(crate) rebuild_cursors: Vec<RebuildCursor>,
+    pub(crate) changed_tables: Vec<TableId>,
+}
+
+impl MutationTransaction {
+    pub(crate) fn pending() -> Self {
+        Self(Arc::new(MutationTransactionState {
+            decision: AtomicU8::new(MUTATION_PENDING),
+            pending: Mutex::new(PendingMutationTransaction::default()),
+        }))
+    }
+
+    pub(crate) fn commit(&self) -> MutationCommit {
+        let mut pending = self.0.pending.lock().unwrap();
+        assert_eq!(
+            self.0.decision.swap(MUTATION_COMMITTED, Ordering::Release),
+            MUTATION_PENDING,
+            "mutation transaction received more than one terminal decision"
+        );
+        let publications = std::mem::take(&mut pending.publications);
+        let cursors = std::mem::take(&mut pending.rebuild_cursors);
+        let changed_tables = std::mem::take(&mut pending.changed_tables);
+        drop(pending);
+        for publish in publications {
+            publish();
+        }
+        MutationCommit {
+            rebuild_cursors: cursors,
+            changed_tables,
+        }
+    }
+
+    pub(crate) fn abort(&self) {
+        let mut pending = self.0.pending.lock().unwrap();
+        assert_eq!(
+            self.0.decision.swap(MUTATION_ABORTED, Ordering::Release),
+            MUTATION_PENDING,
+            "mutation transaction received more than one terminal decision"
+        );
+        pending.publications.clear();
+        pending.rebuild_cursors.clear();
+        pending.changed_tables.clear();
+    }
+
+    pub(crate) fn defer_publication(&self, publish: impl FnOnce() + Send + 'static) {
+        let mut pending = self.0.pending.lock().unwrap();
+        match self.0.decision.load(Ordering::Acquire) {
+            MUTATION_PENDING => {
+                pending.publications.push(Box::new(publish));
+            }
+            MUTATION_COMMITTED => {
+                drop(pending);
+                publish();
+            }
+            MUTATION_ABORTED => {}
+            _ => unreachable!("invalid mutation transaction state"),
+        }
+    }
+
+    pub(crate) fn defer_rebuild_cursor(
+        &self,
+        target: TableId,
+        source: TableId,
+        version: TableVersion,
+    ) {
+        let mut pending = self.0.pending.lock().unwrap();
+        assert_eq!(
+            self.0.decision.load(Ordering::Acquire),
+            MUTATION_PENDING,
+            "rebuild cursor registered after its transaction decision"
+        );
+        pending.rebuild_cursors.push(RebuildCursor {
+            target,
+            source,
+            version,
+        });
+    }
+
+    pub(crate) fn defer_changed_table(&self, table: TableId) {
+        let mut pending = self.0.pending.lock().unwrap();
+        assert_eq!(
+            self.0.decision.load(Ordering::Acquire),
+            MUTATION_PENDING,
+            "changed table registered after its transaction decision"
+        );
+        pending.changed_tables.push(table);
+    }
+}
+
 define_id!(
     pub Generation,
     u64,
@@ -177,6 +301,19 @@ pub trait Table: Any + Send + Sync {
     /// specialized receipt contract may ignore this.
     fn enable_causal_receipts(&mut self) {}
 
+    /// Verify that receipt capture can be enabled without backfilling native
+    /// history. Implementations with deferred mutation buffers must also
+    /// reject queued or outstanding receipt-disabled buffers here. This pass
+    /// is side-effect free and runs for every table before any table changes
+    /// mode.
+    fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
+        if self.len() == 0 {
+            Ok(())
+        } else {
+            Err("table already contains rows without exact source identities")
+        }
+    }
+
     /// If this table can perform a table-level rebuild, construct a [`Rebuilder`] for it.
     fn rebuilder<'a>(&'a self, _cols: &[ColumnId]) -> Option<Box<dyn Rebuilder + 'a>> {
         None
@@ -196,10 +333,16 @@ pub trait Table: Any + Send + Sync {
         _table: &WrappedTable,
         _next_ts: Value,
         _exec_state: &mut ExecutionState,
+        _equality_cutoff: Option<EqualityEdgeCount>,
+        _transaction: Option<&MutationTransaction>,
     ) -> bool {
         // Default implementation does nothing.
         false
     }
+
+    /// Publish an incremental-rebuild cursor returned through the shared
+    /// receipt transaction after every target table validates.
+    fn commit_rebuild_cursor(&mut self, _table_id: TableId, _version: TableVersion) {}
 
     /// Refresh rows whose rebuildable columns mention one of `dirty_ids` by re-inserting the same
     /// logical row with a fresh timestamp.
@@ -213,7 +356,12 @@ pub trait Table: Any + Send + Sync {
     ///
     /// Tables that do not maintain rebuildable id columns can use the default
     /// no-op implementation.
-    fn refresh_rows_for_values(&mut self, _dirty_ids: &[Value], _next_ts: Value) -> bool {
+    fn refresh_rows_for_values(
+        &mut self,
+        _dirty_ids: &[Value],
+        _next_ts: Value,
+        _transaction: Option<&MutationTransaction>,
+    ) -> bool {
         false
     }
 
@@ -408,6 +556,12 @@ pub trait Table: Any + Send + Sync {
 /// mutations to the table. Calling  [`Table::merge`] on that table would then
 /// apply those mutations, making them visible for future readers.
 pub trait MutationBuffer: Any + Send + Sync {
+    /// Attach this buffer to one explicit commit/abort decision. Receipt-mode
+    /// rebuilds share a token across every row and target table.
+    fn defer_until(&mut self, _transaction: MutationTransaction) {
+        panic!("this table buffer does not support transactional rebuild staging")
+    }
+
     /// Stage the keyed entries for insertion. Changes may not be visible until
     /// this buffer is dropped, and after `merge` is called on the underlying
     /// table.

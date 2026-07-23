@@ -1,6 +1,7 @@
 //! Execute queries against a database using a variant of Free Join.
 use std::{
     mem,
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -32,7 +33,8 @@ use crate::{
     pool::{Pool, Pooled, with_pool_set},
     query::{Query, RuleSetBuilder},
     table_spec::{
-        ColumnId, Constraint, MutationBuffer, Table, TableSpec, WrappedTable, WrappedTableRef,
+        ColumnId, Constraint, MutationBuffer, MutationTransaction, Table, TableSpec, WrappedTable,
+        WrappedTableRef,
     },
 };
 
@@ -376,10 +378,11 @@ impl Database {
         if let Some(receipts) = &self.causal_receipts {
             return receipts.clone();
         }
-        assert!(
-            self.tables.iter().all(|(_, info)| info.table.len() == 0),
-            "causal receipts must be enabled before any table rows are loaded"
-        );
+        for (_, info) in self.tables.iter() {
+            info.table
+                .preflight_causal_receipt_activation()
+                .unwrap_or_else(|error| panic!("cannot enable causal receipts: {error}"));
+        }
         for (_, info) in self.tables.iter_mut() {
             info.table.enable_causal_receipts();
         }
@@ -490,16 +493,62 @@ impl Database {
         to_rebuild: &[TableId],
         next_ts: Value,
     ) -> bool {
+        if self.causal_receipts.is_none() {
+            let func = self.tables.take(func_id).unwrap();
+            self.run_on_tables(to_rebuild, |_, info, view| {
+                info.table.apply_rebuild(
+                    func_id,
+                    &func.table,
+                    next_ts,
+                    &mut ExecutionState::new(*view, Default::default()),
+                    None,
+                    None,
+                )
+            });
+            self.tables.insert(func_id, func);
+            return self.merge_all();
+        }
+        // Capture and validate the shared history boundary while every table
+        // is still installed. A cutoff failure must not structurally modify
+        // the database before the receipt-safe staging transaction begins.
+        let equality_cutoff = self
+            .causal_receipts
+            .as_ref()
+            .expect("receipt rebuild requires the receipt arena")
+            .equality_edge_count()
+            .unwrap_or_else(|error| panic!("cannot start exact table rebuild: {error}"));
         let func = self.tables.take(func_id).unwrap();
-        self.run_on_tables(to_rebuild, |_, info, view| {
-            info.table.apply_rebuild(
-                func_id,
-                &func.table,
-                next_ts,
-                &mut ExecutionState::new(*view, Default::default()),
-            )
-        });
+        // Rebuild validation is deliberately fail-closed. Restore the
+        // temporarily removed canonicalizer table even when an exact receipt
+        // invariant rejects a row, so callers that catch the diagnostic never
+        // observe a structurally damaged database.
+        let transaction = MutationTransaction::pending();
+        let rebuilt = catch_unwind(AssertUnwindSafe(|| {
+            self.run_on_tables_receipt_safe(to_rebuild, &transaction, |_, info, view| {
+                info.table.apply_rebuild(
+                    func_id,
+                    &func.table,
+                    next_ts,
+                    &mut ExecutionState::new(*view, Default::default()),
+                    Some(equality_cutoff),
+                    Some(&transaction),
+                )
+            });
+        }));
         self.tables.insert(func_id, func);
+        if let Err(payload) = rebuilt {
+            transaction.abort();
+            resume_unwind(payload);
+        }
+        let committed = transaction.commit();
+        for cursor in committed.rebuild_cursors {
+            self.tables[cursor.target]
+                .table
+                .commit_rebuild_cursor(cursor.source, cursor.version);
+        }
+        for table in committed.changed_tables {
+            self.notification_list.notify(table);
+        }
         self.merge_all()
     }
 
@@ -519,10 +568,78 @@ impl Database {
         //
         // It must run after ordinary table rebuild, which already handles
         // changed-id cases by rewriting parent rows to the new id.
-        self.run_on_tables(to_refresh, |_, info, _| {
-            info.table.refresh_rows_for_values(dirty_ids, next_ts)
-        });
+        if self.causal_receipts.is_some() {
+            let transaction = MutationTransaction::pending();
+            let refreshed = catch_unwind(AssertUnwindSafe(|| {
+                self.run_on_tables_receipt_safe(to_refresh, &transaction, |_, info, _| {
+                    info.table
+                        .refresh_rows_for_values(dirty_ids, next_ts, Some(&transaction))
+                });
+            }));
+            if let Err(payload) = refreshed {
+                transaction.abort();
+                resume_unwind(payload);
+            }
+            let committed = transaction.commit();
+            assert!(
+                committed.rebuild_cursors.is_empty(),
+                "container refresh unexpectedly registered a rebuild cursor"
+            );
+            for table in committed.changed_tables {
+                self.notification_list.notify(table);
+            }
+        } else {
+            self.run_on_tables(to_refresh, |_, info, _| {
+                info.table.refresh_rows_for_values(dirty_ids, next_ts, None)
+            });
+        }
         self.merge_all()
+    }
+
+    /// Receipt validation deliberately reports unsupported semantics by
+    /// unwinding. Restore every temporarily removed table before propagating
+    /// that diagnostic; the ordinary rebuild path keeps using the smaller
+    /// unchecked helper below.
+    fn run_on_tables_receipt_safe(
+        &mut self,
+        table_ids: &[TableId],
+        transaction: &MutationTransaction,
+        run: impl for<'a> Fn(TableId, &mut TableInfo, &DbView<'a>) -> bool + Sync,
+    ) {
+        if parallelize_db_level_op(self.total_size_estimate) {
+            let mut tables = Vec::with_capacity(table_ids.len());
+            for id in table_ids {
+                tables.push((*id, self.tables.take(*id).unwrap()));
+            }
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                let view = self.read_only_view();
+                tables.par_iter_mut().for_each(|(id, info)| {
+                    if run(*id, info, &view) {
+                        transaction.defer_changed_table(*id);
+                    }
+                });
+            }));
+            for (id, info) in tables {
+                self.tables.insert(id, info);
+            }
+            if let Err(payload) = outcome {
+                resume_unwind(payload);
+            }
+        } else {
+            for id in table_ids {
+                let mut info = self.tables.take(*id).unwrap();
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    let view = self.read_only_view();
+                    run(*id, &mut info, &view)
+                }));
+                self.tables.insert(*id, info);
+                match outcome {
+                    Ok(true) => transaction.defer_changed_table(*id),
+                    Ok(false) => {}
+                    Err(payload) => resume_unwind(payload),
+                }
+            }
+        }
     }
 
     fn run_on_tables(
@@ -669,9 +786,20 @@ impl Database {
                     DenseIdMap<TableId, Box<dyn MutationBuffer>>,
                 ),
             >::with_capacity(self.tables.n_ids());
-            for stratum in self.deps.strata() {
+            let strata = self
+                .deps
+                .strata()
+                .map(|stratum| {
+                    stratum
+                        .intersection(&to_merge)
+                        .copied()
+                        .collect::<SmallVec<[_; 4]>>()
+                })
+                .filter(|stratum| !stratum.is_empty())
+                .collect::<SmallVec<[SmallVec<[TableId; 4]>; 8]>>();
+            for stratum_tables in strata {
                 // Initialize the write dependencies first.
-                for table in stratum.intersection(&to_merge).copied() {
+                for table in stratum_tables.iter().copied() {
                     let mut bufs = DenseIdMap::default();
                     for dep in self.deps.write_deps(table) {
                         if let Some(info) = self.tables.get(dep) {
@@ -680,33 +808,41 @@ impl Database {
                     }
                     tables_merging.insert(table, (None, bufs));
                 }
-                // Then initialize read dependencies (this two-phase structure is why we have an
-                // Option in the tables_merging map).
-                for table in stratum.intersection(&to_merge).copied() {
-                    tables_merging[table].0 = Some(self.tables.unwrap_val(table));
-                }
-                let db = self.read_only_view();
-                changed |= if do_parallel {
-                    tables_merging
-                        .par_iter_mut()
-                        .map(|(_, (info, buffers))| {
-                            let mut es = ExecutionState::new(db, mem::take(buffers));
-                            info.as_mut().unwrap().table.merge(&mut es).added || es.changed
-                        })
-                        .max()
-                        .unwrap_or(false)
-                } else {
-                    tables_merging
-                        .iter_mut()
-                        .map(|(_, (info, buffers))| {
-                            let mut es = ExecutionState::new(db, mem::take(buffers));
-                            info.as_mut().unwrap().table.merge(&mut es).added || es.changed
-                        })
-                        .max()
-                        .unwrap_or(false)
-                };
+                let merge_result = catch_unwind(AssertUnwindSafe(|| {
+                    // Then initialize read dependencies (this two-phase structure is why we have
+                    // an Option in the tables_merging map).
+                    for table in stratum_tables.iter().copied() {
+                        tables_merging[table].0 = Some(self.tables.unwrap_val(table));
+                    }
+                    let db = self.read_only_view();
+                    if do_parallel {
+                        tables_merging
+                            .par_iter_mut()
+                            .map(|(_, (info, buffers))| {
+                                let mut es = ExecutionState::new(db, mem::take(buffers));
+                                info.as_mut().unwrap().table.merge(&mut es).added || es.changed
+                            })
+                            .max()
+                            .unwrap_or(false)
+                    } else {
+                        tables_merging
+                            .iter_mut()
+                            .map(|(_, (info, buffers))| {
+                                let mut es = ExecutionState::new(db, mem::take(buffers));
+                                info.as_mut().unwrap().table.merge(&mut es).added || es.changed
+                            })
+                            .max()
+                            .unwrap_or(false)
+                    }
+                }));
                 for (id, (table, _)) in tables_merging.drain() {
-                    self.tables.insert(id, table.unwrap());
+                    if let Some(table) = table {
+                        self.tables.insert(id, table);
+                    }
+                }
+                match merge_result {
+                    Ok(stratum_changed) => changed |= stratum_changed,
+                    Err(payload) => resume_unwind(payload),
                 }
             }
             ever_changed |= changed;
@@ -734,18 +870,25 @@ impl Database {
         while !to_merge.is_empty() {
             for table_id in to_merge.iter().copied() {
                 let mut info = self.tables.unwrap_val(table_id);
-                // Pre-seed the table's OWN buffer so a self-referential merge — one that stages a
-                // write back into its own table (e.g. the term encoder's `@UF` recursive
-                // parent-union) — can stage it. The table has been `unwrap_val`'d out of
-                // `self.tables`, so the lazy `new_buffer()` path (which indexes `self.tables`) would
-                // fail for the self id. Staged rows land in `pending_state` and are picked up on the
-                // next fixpoint iteration of this loop. Non-self-referential merges get an empty,
-                // never-touched buffer. (The strata path in `merge_all` handles this via write-deps.)
-                let mut bufs = DenseIdMap::default();
-                bufs.insert(table_id, info.table.new_buffer());
-                let mut es = ExecutionState::new(self.read_only_view(), bufs);
-                changed |= info.table.merge(&mut es).added || es.changed;
+                let merge_result = catch_unwind(AssertUnwindSafe(|| {
+                    // Pre-seed the table's OWN buffer so a self-referential merge — one that stages
+                    // a write back into its own table (e.g. the term encoder's `@UF` recursive
+                    // parent-union) — can stage it. The table has been `unwrap_val`'d out of
+                    // `self.tables`, so the lazy `new_buffer()` path (which indexes `self.tables`)
+                    // would fail for the self id. Staged rows land in `pending_state` and are picked
+                    // up on the next fixpoint iteration of this loop. Non-self-referential merges
+                    // get an empty, never-touched buffer. (The strata path in `merge_all` handles
+                    // this via write-deps.)
+                    let mut bufs = DenseIdMap::default();
+                    bufs.insert(table_id, info.table.new_buffer());
+                    let mut es = ExecutionState::new(self.read_only_view(), bufs);
+                    info.table.merge(&mut es).added || es.changed
+                }));
                 self.tables.insert(table_id, info);
+                match merge_result {
+                    Ok(table_changed) => changed |= table_changed,
+                    Err(payload) => resume_unwind(payload),
+                }
             }
             to_merge = self.notification_list.reset();
         }
@@ -761,17 +904,21 @@ impl Database {
     pub fn merge_table(&mut self, table: TableId) -> bool {
         let mut info = self.tables.unwrap_val(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
-        // Pre-seed the table's own write buffer so a self-referential merge can stage a write back
-        // into itself (the table has been `unwrap_val`'d out, so the lazy `new_buffer()` path would
-        // fail for the self id). This mirrors `merge_simple`; see the comment there.
-        let mut bufs = DenseIdMap::default();
-        bufs.insert(table, info.table.new_buffer());
-        let table_changed = info
-            .table
-            .merge(&mut ExecutionState::new(self.read_only_view(), bufs));
+        let merge_result = catch_unwind(AssertUnwindSafe(|| {
+            // Pre-seed the table's own write buffer so a self-referential merge can stage a write
+            // back into itself (the table has been `unwrap_val`'d out, so the lazy `new_buffer()`
+            // path would fail for the self id). This mirrors `merge_simple`; see the comment there.
+            let mut bufs = DenseIdMap::default();
+            bufs.insert(table, info.table.new_buffer());
+            info.table
+                .merge(&mut ExecutionState::new(self.read_only_view(), bufs))
+        }));
         self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
         self.tables.insert(table, info);
-        table_changed.added
+        match merge_result {
+            Ok(table_changed) => table_changed.added,
+            Err(payload) => resume_unwind(payload),
+        }
     }
 
     /// Get id of the next table to be added to the database.
@@ -816,6 +963,11 @@ impl Database {
         let expected_id = self.tables.next_id();
         table.set_table_id(expected_id);
         if self.causal_receipts.is_some() {
+            table
+                .preflight_causal_receipt_activation()
+                .unwrap_or_else(|error| {
+                    panic!("cannot add table to receipt-enabled database: {error}")
+                });
             table.enable_causal_receipts();
         }
         let table = WrappedTable::new(table);
@@ -1152,5 +1304,87 @@ impl Ord for ColUniqueness {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (self.table_size.saturating_mul(other.col_size))
             .cmp(&(other.table_size.saturating_mul(self.col_size)))
+    }
+}
+
+#[cfg(test)]
+mod unwind_tests {
+    use super::*;
+    use crate::table::SortedWritesTable;
+
+    fn relation(panic_on_conflict: bool) -> SortedWritesTable {
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(move |_, _, _, _| {
+                assert!(!panic_on_conflict, "intentional merge failure");
+                false
+            }),
+        )
+    }
+
+    fn stage(db: &Database, table: TableId, value: u32) {
+        let mut buffer = db.new_buffer(table);
+        buffer.stage_insert(&[Value::new(0), Value::new(value)]);
+    }
+
+    #[test]
+    fn merge_simple_restores_table_before_resuming_unwind() {
+        let mut db = Database::default();
+        let table = db.add_table(relation(true), [], []);
+        stage(&db, table, 1);
+        assert!(db.merge_all());
+
+        stage(&db, table, 2);
+        let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+        assert!(failed.is_err());
+        assert_eq!(db.get_table(table).len(), 1);
+    }
+
+    #[test]
+    fn merge_table_restores_table_and_size_before_resuming_unwind() {
+        let mut db = Database::default();
+        let table = db.add_table(relation(true), [], []);
+        {
+            let mut buffer = db.get_table(table).new_buffer();
+            buffer.stage_insert(&[Value::new(0), Value::new(1)]);
+        }
+        assert!(db.merge_table(table));
+        assert_eq!(db.total_size_estimate, 1);
+
+        {
+            let mut buffer = db.get_table(table).new_buffer();
+            buffer.stage_insert(&[Value::new(0), Value::new(2)]);
+        }
+        let failed = catch_unwind(AssertUnwindSafe(|| db.merge_table(table)));
+        assert!(failed.is_err());
+        assert_eq!(db.get_table(table).len(), 1);
+        assert_eq!(db.total_size_estimate, 1);
+    }
+
+    #[test]
+    fn strata_merge_restores_every_extracted_table_before_resuming_unwind() {
+        let mut db = Database::default();
+        let tables = [
+            db.add_table(relation(false), [], []),
+            db.add_table(relation(false), [], []),
+            db.add_table(relation(true), [], []),
+            db.add_table(relation(false), [], []),
+        ];
+        for table in tables {
+            stage(&db, table, 1);
+        }
+        assert!(db.merge_all());
+
+        for table in tables {
+            stage(&db, table, 2);
+        }
+        let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+        assert!(failed.is_err());
+        for table in tables {
+            assert_eq!(db.get_table(table).len(), 1);
+        }
     }
 }

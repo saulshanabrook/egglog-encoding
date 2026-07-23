@@ -199,15 +199,13 @@ pub(crate) struct SubsetTracker {
 }
 
 impl SubsetTracker {
-    /// Hand back the subset of the table needed to be scanned in order to see all updates since
-    /// the last call to this method.
-    ///
-    /// If the given table's major version has been incremented, this method will return the whole
-    /// table. In other words, this method does not guarantee that the returned subset is disjoint
-    /// from ones that have been returned in the past.
-    pub(crate) fn recent_updates(&mut self, table_id: TableId, table: &WrappedTable) -> Subset {
+    fn updates_since_last(
+        &self,
+        table_id: TableId,
+        table: &WrappedTable,
+    ) -> (Subset, TableVersion) {
         let current_version = table.version();
-        let res = if let Some(last_version) = self.last_rebuilt_at.get(table_id) {
+        let subset = if let Some(last_version) = self.last_rebuilt_at.get(table_id) {
             if current_version.major == last_version.major {
                 table.updates_since(last_version.minor)
             } else {
@@ -216,7 +214,32 @@ impl SubsetTracker {
         } else {
             table.all()
         };
-        self.last_rebuilt_at.insert(table_id, current_version);
-        res
+        (subset, current_version)
+    }
+
+    /// Preview the next incremental subset without advancing the cursor.
+    /// Receipt-mode rebuilds commit this cursor only after every row validates.
+    pub(crate) fn preview_recent_updates(
+        &self,
+        table_id: TableId,
+        table: &WrappedTable,
+    ) -> (Subset, TableVersion) {
+        self.updates_since_last(table_id, table)
+    }
+
+    pub(crate) fn commit_recent_updates(&mut self, table_id: TableId, version: TableVersion) {
+        self.last_rebuilt_at.insert(table_id, version);
+    }
+
+    /// Hand back the subset of the table needed to be scanned in order to see all updates since
+    /// the last call to this method.
+    ///
+    /// If the given table's major version has been incremented, this method will return the whole
+    /// table. In other words, this method does not guarantee that the returned subset is disjoint
+    /// from ones that have been returned in the past.
+    pub(crate) fn recent_updates(&mut self, table_id: TableId, table: &WrappedTable) -> Subset {
+        let (subset, version) = self.updates_since_last(table_id, table);
+        self.commit_recent_updates(table_id, version);
+        subset
     }
 }

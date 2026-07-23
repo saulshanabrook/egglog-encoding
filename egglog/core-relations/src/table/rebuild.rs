@@ -6,31 +6,74 @@ use crate::numeric_id::NumericId;
 use rayon::prelude::*;
 
 use crate::{
-    ColumnId, ExecutionState, Offset, RowId, Subset, Table, TableId, TaggedRowBuffer, Value,
-    WrappedTable,
+    ColumnId, EqualityEdgeCount, ExecutionState, FactId, Offset, RowId, Subset, Table, TableId,
+    TaggedRowBuffer, Value, WrappedTable,
     common::HashSet,
     hash_index::{ColumnIndex, Index},
     offsets::Offsets,
     parallel_heuristics::parallelize_rebuild,
-    table_spec::{Rebuilder, WrappedTableRef},
+    table_spec::{MutationBuffer, MutationTransaction, Rebuilder, WrappedTableRef},
 };
 
 use super::SortedWritesTable;
 
-// Helper macro used for adjusting sort before inserting to a mutation buffer.
-macro_rules! insert_row {
-    ($this: expr, $mutation_buf: expr, $row:expr, $next_ts:expr) => {{
-        let row = $row;
-        let this = &*$this;
-        let next_ts = $next_ts;
-        if let Some(sort_by) = this.sort_by {
-            row[sort_by.index()] = next_ts;
-        }
-        $mutation_buf.stage_insert(row);
-    }};
-}
-
 impl SortedWritesTable {
+    fn new_rebuild_buffer(
+        &self,
+        transaction: Option<&MutationTransaction>,
+    ) -> Box<dyn MutationBuffer> {
+        let mut buffer = self.new_buffer();
+        if let Some(transaction) = transaction {
+            buffer.defer_until(transaction.clone());
+        }
+        buffer
+    }
+
+    /// Validate and stage one semantic rekey through the existing native
+    /// removal/insertion path. Receipt work is entirely absent when capture is
+    /// disabled; when enabled, every fallible provenance lookup precedes the
+    /// first staged mutation.
+    fn stage_rebuilt_row<const RECEIPTS: bool>(
+        &self,
+        mutation_buf: &mut dyn MutationBuffer,
+        row_id: RowId,
+        rebuilt_row: &mut [Value],
+        next_ts: Value,
+        exec_state: &ExecutionState,
+        equality_cutoff: Option<EqualityEdgeCount>,
+    ) -> bool {
+        let Some(current_row) = self.data.get_row(row_id) else {
+            return false;
+        };
+        if let Some(sort_by) = self.sort_by {
+            rebuilt_row[sort_by.index()] = next_ts;
+        }
+
+        if RECEIPTS {
+            let receipts = exec_state
+                .causal_receipts()
+                .expect("receipt rebuild mode requires an enabled arena");
+            let prior_fact = self.data.fact_id(row_id).unwrap_or(FactId::MISSING);
+            let cause = receipts
+                .rebuild_draft(
+                    self.table_id,
+                    exec_state.causal_wave(),
+                    prior_fact,
+                    current_row,
+                    rebuilt_row,
+                    &self.to_rebuild,
+                    equality_cutoff.expect("receipt rebuild is missing its equality landmark"),
+                )
+                .unwrap_or_else(|error| panic!("cannot record exact table rebuild: {error}"));
+            mutation_buf.stage_remove(&current_row[0..self.n_keys]);
+            mutation_buf.stage_insert_with_cause(rebuilt_row, cause);
+        } else {
+            mutation_buf.stage_remove(&current_row[0..self.n_keys]);
+            mutation_buf.stage_insert(rebuilt_row);
+        }
+        true
+    }
+
     fn refresh_rebuild_index(&mut self) {
         let mut index = mem::replace(
             &mut self.rebuild_index,
@@ -48,6 +91,39 @@ impl SortedWritesTable {
         table: &WrappedTable,
         next_ts: Value,
         exec_state: &mut ExecutionState,
+        equality_cutoff: Option<EqualityEdgeCount>,
+        transaction: Option<&MutationTransaction>,
+    ) -> bool {
+        // Keep receipt selection outside the changed-row loops below.
+        if exec_state.causal_receipts().is_none() {
+            self.do_rebuild_mode::<false>(
+                table_id,
+                table,
+                next_ts,
+                exec_state,
+                equality_cutoff,
+                transaction,
+            )
+        } else {
+            self.do_rebuild_mode::<true>(
+                table_id,
+                table,
+                next_ts,
+                exec_state,
+                equality_cutoff,
+                transaction,
+            )
+        }
+    }
+
+    fn do_rebuild_mode<const RECEIPTS: bool>(
+        &mut self,
+        table_id: TableId,
+        table: &WrappedTable,
+        next_ts: Value,
+        exec_state: &mut ExecutionState,
+        equality_cutoff: Option<EqualityEdgeCount>,
+        transaction: Option<&MutationTransaction>,
     ) -> bool {
         if self.to_rebuild.is_empty() {
             return false;
@@ -59,22 +135,59 @@ impl SortedWritesTable {
         if let Some(hint_col) = rebuilder.hint_col() {
             // Incremental rebuilds are possible if we can scan the subset of the columns that are
             // relevant.
-            let to_scan = self.subset_tracker.recent_updates(table_id, table);
-            if incremental_rebuild(
+            let (to_scan, deferred_cursor) = if transaction.is_some() {
+                let (subset, version) = self.subset_tracker.preview_recent_updates(table_id, table);
+                (subset, Some(version))
+            } else {
+                (self.subset_tracker.recent_updates(table_id, table), None)
+            };
+            let changed = if incremental_rebuild(
                 to_scan.size(),
                 self.data.next_row().index(),
                 parallelize_rebuild(to_scan.size()),
             ) {
-                self.rebuild_incremental(table, &*rebuilder, hint_col, to_scan, next_ts, exec_state)
+                self.rebuild_incremental::<RECEIPTS>(
+                    table,
+                    &*rebuilder,
+                    hint_col,
+                    to_scan,
+                    next_ts,
+                    exec_state,
+                    equality_cutoff,
+                    transaction,
+                )
             } else {
-                self.rebuild_nonincremental(&*rebuilder, next_ts, exec_state)
+                self.rebuild_nonincremental::<RECEIPTS>(
+                    &*rebuilder,
+                    next_ts,
+                    exec_state,
+                    equality_cutoff,
+                    transaction,
+                )
+            };
+            if let Some(version) = deferred_cursor {
+                transaction
+                    .expect("deferred rebuild cursor requires a transaction")
+                    .defer_rebuild_cursor(self.table_id, table_id, version);
             }
+            changed
         } else {
-            self.rebuild_nonincremental(&*rebuilder, next_ts, exec_state)
+            self.rebuild_nonincremental::<RECEIPTS>(
+                &*rebuilder,
+                next_ts,
+                exec_state,
+                equality_cutoff,
+                transaction,
+            )
         }
     }
 
-    pub(super) fn refresh_rows_for_values(&mut self, dirty_ids: &[Value], next_ts: Value) -> bool {
+    pub(super) fn refresh_rows_for_values(
+        &mut self,
+        dirty_ids: &[Value],
+        next_ts: Value,
+        transaction: Option<&MutationTransaction>,
+    ) -> bool {
         if dirty_ids.is_empty() || self.to_rebuild.is_empty() {
             return false;
         }
@@ -96,8 +209,13 @@ impl SortedWritesTable {
             return false;
         }
 
+        assert!(
+            self.data.fact_ids.is_none(),
+            "causal receipts do not yet support same-ID container row refresh; failing closed"
+        );
+
         let mut changed = false;
-        let mut mutation_buf = self.new_buffer();
+        let mut mutation_buf = self.new_rebuild_buffer(transaction);
         let mut refreshed_row = Vec::<Value>::with_capacity(self.n_columns);
         for row_id in candidate_rows {
             let Some(current_row) = self.data.get_row(row_id) else {
@@ -117,7 +235,7 @@ impl SortedWritesTable {
         changed
     }
 
-    fn rebuild_incremental(
+    fn rebuild_incremental<const RECEIPTS: bool>(
         &mut self,
         table: &WrappedTable,
         rebuilder: &dyn Rebuilder,
@@ -125,6 +243,8 @@ impl SortedWritesTable {
         to_scan: Subset,
         next_ts: Value,
         exec_state: &mut ExecutionState,
+        equality_cutoff: Option<EqualityEdgeCount>,
+        transaction: Option<&MutationTransaction>,
     ) -> bool {
         self.refresh_rebuild_index();
         let mut buf = TaggedRowBuffer::new(1);
@@ -141,7 +261,13 @@ impl SortedWritesTable {
             WrappedTableRef::with_wrapper(self, |wrapped| {
                 buf.par_iter()
                     .fold(
-                        || (self.new_buffer(), exec_state.clone(), false),
+                        || {
+                            (
+                                self.new_rebuild_buffer(transaction),
+                                exec_state.clone(),
+                                false,
+                            )
+                        },
                         |(mut mutation_buf, mut exec_state, mut changed), (_, row)| {
                             let Some(subset) = self.rebuild_index.get_subset(&row[0]) else {
                                 return (mutation_buf, exec_state, changed);
@@ -154,13 +280,14 @@ impl SortedWritesTable {
                                 &mut exec_state,
                             );
                             for (row_id, row) in scanned.non_stale_mut() {
-                                let to_remove =
-                                    self.data.get_row(row_id).map(|x| &x[0..self.n_keys]);
-                                if let Some(key) = to_remove {
-                                    mutation_buf.stage_remove(key);
-                                }
-                                changed = true;
-                                insert_row!(self, mutation_buf, row, next_ts);
+                                changed |= self.stage_rebuilt_row::<RECEIPTS>(
+                                    &mut *mutation_buf,
+                                    row_id,
+                                    row,
+                                    next_ts,
+                                    &exec_state,
+                                    equality_cutoff,
+                                );
                             }
                             (mutation_buf, exec_state, changed)
                         },
@@ -182,23 +309,29 @@ impl SortedWritesTable {
                 changed |= subset.size() > 0;
             }
             if !scratch.is_empty() {
-                let mut write_buf = self.new_buffer();
+                let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in scratch.non_stale_mut() {
-                    if let Some(to_remove) = self.data.get_row(row_id).map(|x| &x[0..self.n_keys]) {
-                        write_buf.stage_remove(to_remove);
-                    }
-                    insert_row!(self, write_buf, row, next_ts);
+                    self.stage_rebuilt_row::<RECEIPTS>(
+                        &mut *write_buf,
+                        row_id,
+                        row,
+                        next_ts,
+                        exec_state,
+                        equality_cutoff,
+                    );
                 }
             }
             changed
         }
     }
 
-    fn rebuild_nonincremental(
+    fn rebuild_nonincremental<const RECEIPTS: bool>(
         &mut self,
         rebuilder: &dyn Rebuilder,
         next_ts: Value,
         exec_state: &mut ExecutionState,
+        equality_cutoff: Option<EqualityEdgeCount>,
+        transaction: Option<&MutationTransaction>,
     ) -> bool {
         const STEP_SIZE: usize = 2048;
         if parallelize_rebuild(self.data.next_row().index()) {
@@ -208,7 +341,7 @@ impl SortedWritesTable {
                 .fold(
                     || {
                         (
-                            self.new_buffer(),
+                            self.new_rebuild_buffer(transaction),
                             TaggedRowBuffer::new(self.n_columns),
                             exec_state.clone(),
                             false,
@@ -226,12 +359,14 @@ impl SortedWritesTable {
                             &mut exec_state,
                         );
                         for (row_id, row) in buf.non_stale_mut() {
-                            let to_remove = self.data.get_row(row_id).map(|x| &x[0..self.n_keys]);
-                            changed = true;
-                            if let Some(key) = to_remove {
-                                mutation_buf.stage_remove(key);
-                            }
-                            insert_row!(self, mutation_buf, row, next_ts);
+                            changed |= self.stage_rebuilt_row::<RECEIPTS>(
+                                &mut *mutation_buf,
+                                row_id,
+                                row,
+                                next_ts,
+                                &exec_state,
+                                equality_cutoff,
+                            );
                         }
                         buf.clear();
                         (mutation_buf, buf, exec_state, changed)
@@ -255,13 +390,16 @@ impl SortedWritesTable {
                 );
             }
             if !buf.is_empty() {
-                let mut write_buf = self.new_buffer();
+                let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in buf.non_stale_mut() {
-                    if let Some(to_remove) = self.data.get_row(row_id).map(|x| &x[0..self.n_keys]) {
-                        write_buf.stage_remove(to_remove);
-                    }
-                    insert_row!(self, write_buf, row, next_ts);
-                    changed = true;
+                    changed |= self.stage_rebuilt_row::<RECEIPTS>(
+                        &mut *write_buf,
+                        row_id,
+                        row,
+                        next_ts,
+                        exec_state,
+                        equality_cutoff,
+                    );
                 }
             }
             changed
