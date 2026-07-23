@@ -1057,6 +1057,14 @@ impl<const WIDTH: usize> PersistentEngine<WIDTH> {
                         }
                     }
 
+                    // NOTE (measured, July 2026): reducing this stream to
+                    // presence EDGES via arrange+reduce is semantically exact
+                    // but nearly doubles wall time single-threaded — the
+                    // reduce arrangements on the system's hottest stream cost
+                    // more than the engine bookkeeping they save. Revisit as
+                    // the sharding point under multi-worker execution. (And
+                    // avoid `distinct_total` here: its total-order fast path
+                    // emitted spurious edges inside this feedback cycle.)
                     var.set(differential_dataflow::collection::concatenate(
                         scope, matches,
                     ));

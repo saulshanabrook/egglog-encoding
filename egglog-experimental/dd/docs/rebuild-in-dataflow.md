@@ -359,3 +359,29 @@ resolves everything). Estimated value: modest at small scale (the driver's
 1.2s is mostly real work + DD per-tuple economics, not invocation overhead),
 real at large scale (a from-scratch rebuild schedule costs ~6s at 5.6M rows;
 the replay cache already covers the exact-no-op case).
+
+## Optimization round 2 (July 23 2026)
+
+Sorted run-fold ingest in the engine (sort each round's raw deltas, net
+equal-binding runs sequentially, fetch per-rule state once per group)
+replaced the per-delta hash-netting: run 11 **95.4s -> 79.1s**, split-11
+driver 91.6 -> 74.7s. Volume ground truth from new counters: 84.3M raw /
+62.6M netted match deltas against **17.26M distinct matches** at fixpoint
+(4.26x re-derivation multiplier), and the emitted-row classification shows
+the churn is dominated by canonicalization rewrites of view rows (@AddView:
+1.13M new / 0.47M removed / 0.85M rewritten) — inherent to rebuild, NOT
+epoch-column overhead, so the keyed-get-fresh encoding change would not
+recover much on math.
+
+Negative result worth keeping: routing matches through an in-dataflow
+distinct (presence edges) is semantically exact but nearly DOUBLED wall time
+single-threaded — the reduce arrangements on the hottest stream cost more
+than the engine bookkeeping they save. It becomes attractive only as the
+sharding point under multi-worker execution. Also: differential's
+`distinct_total` emitted spurious edges inside this feedback cycle (its
+total-order fast path's batch-window bookkeeping); the general reduce-based
+distinct was exact. Use `reduce`, not `distinct_total`, in cycles.
+
+Next levers, in order: multi-worker execution (joins + a sharded presence
+reduce, engine pinned to one worker), the 7s host-side apply, delta-query
+joins for 3-atom rules.

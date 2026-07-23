@@ -375,12 +375,18 @@ where
             let mut turns = 0u64;
             let mut engine_time = std::time::Duration::ZERO;
             let mut ingested = 0u64;
+            let mut raw = 0u64;
             let mut emitted = 0u64;
             let mut last_turn = std::time::Instant::now();
             let mut turn_gaps: Vec<(u64, f64, u64)> = Vec::new();
+            // Debug: per-table (new, removed, rewritten) row counts, where a
+            // -/+ pair on the same key within one turn is a rewrite.
+            let classify = std::env::var("EGGLOG_DD_VOLUMES").is_ok();
+            let mut emit_classes: HashMap<u32, (u64, u64, u64)> = HashMap::new();
             move |(input, frontier), output| {
                 input.for_each(|cap, data| {
                     caps.insert(cap.retain(0));
+                    raw += data.len() as u64;
                     for (d, t, r) in data.drain(..) {
                         queue
                             .entry(t.clone())
@@ -396,21 +402,18 @@ where
                     .is_some_and(|Reverse(t)| !frontier.frontier().less_equal(t))
                 {
                     let Reverse(time) = times.pop().expect("peeked above");
-                    let mut net: HashMap<MatchDelta<WIDTH>, isize> = HashMap::new();
-                    for (d, r) in queue.remove(&time).expect("bucket exists") {
-                        *net.entry(d).or_insert(0) += r;
-                    }
+                    let mut bucket = queue.remove(&time).expect("bucket exists");
                     let started = std::time::Instant::now();
+                    let gap_ms = last_turn.elapsed().as_secs_f64() * 1e3;
+                    // Sort raw deltas and fold equal-binding runs: netting by
+                    // sequential scan beats a hash map at tens of millions of
+                    // 72-byte keys, and groups amortize the per-rule lookup.
+                    bucket.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                    let (distinct, boot) = state.ingest(&bucket);
+                    ingested += distinct;
                     if debug {
-                        turn_gaps.push((
-                            turns,
-                            last_turn.elapsed().as_secs_f64() * 1e3,
-                            net.len() as u64,
-                        ));
+                        turn_gaps.push((turns, gap_ms, distinct));
                     }
-                    ingested += net.len() as u64;
-                    let boot = net.keys().any(|(l, r, _)| *l == TICK && *r == BOOT);
-                    state.ingest(net);
 
                     let mut emits: Vec<(StateDelta<WIDTH>, isize)> = Vec::new();
                     if boot {
@@ -423,6 +426,31 @@ where
                     }
                     turns += 1;
                     emitted += emits.len() as u64;
+                    if classify {
+                        let mut per_key: HashMap<(u32, Vec<u32>), (u64, u64)> = HashMap::new();
+                        for ((f, loc, row), w) in &emits {
+                            if *loc == LOC_TICK || *loc >= LOC_SEED_LIVE {
+                                continue;
+                            }
+                            let Some(table) = state.cfg.tables.get(f) else {
+                                continue;
+                            };
+                            let key: Vec<u32> = (0..table.n_keys).map(|i| row[i]).collect();
+                            let e = per_key.entry((*f, key)).or_default();
+                            if *w > 0 {
+                                e.0 += 1;
+                            } else {
+                                e.1 += 1;
+                            }
+                        }
+                        for ((f, _), (pos, neg)) in per_key {
+                            let c = emit_classes.entry(f).or_default();
+                            let rewrites = pos.min(neg);
+                            c.2 += rewrites;
+                            c.0 += pos - rewrites;
+                            c.1 += neg - rewrites;
+                        }
+                    }
                     engine_time += started.elapsed();
                     if debug {
                         last_turn = std::time::Instant::now();
@@ -437,6 +465,16 @@ where
                                 eprintln!("[engine]   {n:>10}  l{leaf}r{rule}");
                             }
                         }
+                        let mut classes: Vec<_> = emit_classes.iter().collect();
+                        classes.sort_by_key(|(_, (n, r, w))| std::cmp::Reverse(n + r + w));
+                        for (f, (new, removed, rewritten)) in classes.iter().take(8) {
+                            eprintln!(
+                                "[engine] table f{f}: new={new} removed={removed} rewritten={rewritten}"
+                            );
+                        }
+                        let present: usize =
+                            state.matches.values().map(|m| m.present.len()).sum();
+                        eprintln!("[engine] distinct present matches at done: {present}");
                         let gaps: String = turn_gaps
                             .iter()
                             .map(|(t, ms, n)| format!("{t}:{ms:.0}ms/{n}"))
@@ -444,7 +482,7 @@ where
                             .join(" ");
                         eprintln!("[engine] turn gaps (turn:dataflow_ms/deltas): {gaps}");
                         eprintln!(
-                            "[engine] turns={turns} ingested={ingested} emitted={emitted} engine_time={:.1}ms",
+                            "[engine] turns={turns} raw={raw} ingested={ingested} emitted={emitted} engine_time={:.1}ms",
                             engine_time.as_secs_f64() * 1e3
                         );
                     }
@@ -593,39 +631,62 @@ impl<const WIDTH: usize> EngineState<WIDTH> {
         }
     }
 
-    fn ingest(&mut self, net: HashMap<MatchDelta<WIDTH>, isize>) {
-        for ((leaf, rule, binding), delta) in net {
-            if leaf == TICK || delta == 0 {
+    /// Apply one round's SORTED raw deltas: equal bindings net by run-fold,
+    /// per-(leaf, rule) state is fetched once per group. Returns the distinct
+    /// netted-delta count and whether a BOOT marker was present.
+    fn ingest(&mut self, sorted: &[(MatchDelta<WIDTH>, isize)]) -> (u64, bool) {
+        let mut distinct = 0u64;
+        let mut boot = false;
+        let mut i = 0;
+        while i < sorted.len() {
+            let (leaf, rule, _) = sorted[i].0;
+            if leaf == TICK {
+                boot |= rule == BOOT;
+                i += 1;
                 continue;
             }
-            if self.debug_traffic.is_some() {
-                *self
-                    .debug_traffic
-                    .as_mut()
-                    .expect("checked")
-                    .entry((leaf, rule))
-                    .or_default() += 1;
-            }
             let per_rule = self.matches.entry((leaf, rule)).or_default();
-            let (count, fired) = per_rule
-                .present
-                .get(&binding)
-                .copied()
-                .unwrap_or((0, false));
-            let updated = count + delta;
-            if updated <= 0 {
-                // Retracted: forget it entirely so a re-derivation refires.
-                per_rule.present.remove(&binding);
-            } else {
-                // A 0 -> positive transition is fresh (unfired) even if the
-                // binding had fired in an earlier incarnation.
-                let fired = if count <= 0 { false } else { fired };
-                if count <= 0 {
-                    per_rule.pending.push(binding);
+            let mut group_traffic = 0u64;
+            while i < sorted.len() {
+                let (l, r, binding) = sorted[i].0;
+                if (l, r) != (leaf, rule) {
+                    break;
                 }
-                per_rule.present.insert(binding, (updated, fired));
+                let mut delta = 0isize;
+                while i < sorted.len() && sorted[i].0 == (l, r, binding) {
+                    delta += sorted[i].1;
+                    i += 1;
+                }
+                if delta == 0 {
+                    continue;
+                }
+                distinct += 1;
+                group_traffic += 1;
+                let (count, fired) = per_rule
+                    .present
+                    .get(&binding)
+                    .copied()
+                    .unwrap_or((0, false));
+                let updated = count + delta;
+                if updated <= 0 {
+                    // Retracted: forget it entirely so a re-derivation
+                    // refires.
+                    per_rule.present.remove(&binding);
+                } else {
+                    // A 0 -> positive transition is fresh (unfired) even if
+                    // the binding had fired in an earlier incarnation.
+                    let fired = if count <= 0 { false } else { fired };
+                    if count <= 0 {
+                        per_rule.pending.push(binding);
+                    }
+                    per_rule.present.insert(binding, (updated, fired));
+                }
+            }
+            if let Some(traffic) = self.debug_traffic.as_mut() {
+                *traffic.entry((leaf, rule)).or_default() += group_traffic;
             }
         }
+        (distinct, boot)
     }
 
     /// Execute one leaf turn (if the schedule is unfinished), emitting table
@@ -687,6 +748,12 @@ impl<const WIDTH: usize> EngineState<WIDTH> {
         changed |= self.apply_staged(staged, emits);
         changed |= self.counter != minted_before;
         *self.cfg.channels.minted.borrow_mut() = self.counter - self.pass_start;
+        if std::env::var("EGGLOG_DD_TURN_TRACE").is_ok() {
+            eprintln!(
+                "[turn] leaf={leaf_idx} changed={changed} minted={}",
+                self.counter
+            );
+        }
         self.cfg
             .channels
             .turns
@@ -932,7 +999,7 @@ impl<const WIDTH: usize> EngineState<WIDTH> {
             ));
             return false;
         }
-        let key = row[..table.n_keys].to_vec();
+        let key: Vec<u32> = (0..table.n_keys).map(|i| row[i]).collect();
         let incoming = row[table.n_keys..].to_vec();
         let rows = self.tables.entry(func).or_default();
         let Some((old, loc)) = rows.get(&key).cloned() else {
