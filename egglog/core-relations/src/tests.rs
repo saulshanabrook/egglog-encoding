@@ -21,7 +21,7 @@ use crate::{
     free_join::{
         CounterId, Database, TableId,
         execute::{materialized_witness_test_counts, reset_materialized_witness_test_counts},
-        plan::Plan,
+        plan::{JoinStage, MatScanMode, Plan},
     },
     make_external_func,
     offsets::RowId,
@@ -3784,8 +3784,7 @@ fn scoped_decomposed_receipts_preserve_exact_ordered_premises() {
         .install(|| decomposed_receipt_materialization_case(true));
 }
 
-#[test]
-fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
+fn decomposed_projected_receipt_case(retain_existential: bool) {
     let mut db = Database::default();
     let relation = |arity| {
         SortedWritesTable::new(
@@ -3803,9 +3802,19 @@ fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
     let s = db.add_table(relation(3), iter::empty(), iter::empty());
     let t = db.add_table(relation(2), iter::empty(), iter::empty());
     let u = db.add_table(relation(2), iter::empty(), iter::empty());
-    let derived = db.add_table(relation(4), iter::empty(), iter::empty());
+    let derived = db.add_table(
+        relation(if retain_existential { 5 } else { 4 }),
+        iter::empty(),
+        iter::empty(),
+    );
     let receipts = db.enable_causal_receipts();
-    for (table, columns) in [(r, 3), (s, 3), (t, 2), (u, 2), (derived, 4)] {
+    for (table, columns) in [
+        (r, 3),
+        (s, 3),
+        (t, 2),
+        (u, 2),
+        (derived, if retain_existential { 5 } else { 4 }),
+    ] {
         register_test_receipt_table(&receipts, table, columns);
     }
     for (source, (table, row)) in [
@@ -3844,6 +3853,8 @@ fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
         committed_fact_id_for_key(&db, s, &[Value::new(10), Value::new(20), Value::new(101)]);
     let t_fact = committed_fact_id_for_key(&db, t, &[Value::new(20), Value::new(30)]);
     let u_fact = committed_fact_id_for_key(&db, u, &[Value::new(30), Value::new(1)]);
+    let existential_100_term = receipts.intern_test_term("value-100");
+    let existential_101_term = receipts.intern_test_term("value-101");
 
     let mut rules = RuleSetBuilder::new(&mut db);
     let mut query = rules.new_rule();
@@ -3862,12 +3873,16 @@ fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
     let t_atom = query.add_atom(t, &[z.into(), w.into()], &[]).unwrap();
     let u_atom = query.add_atom(u, &[w.into(), x.into()], &[]).unwrap();
     let mut action = query.build();
-    action
-        .insert(derived, &[x.into(), y.into(), z.into(), w.into()])
-        .unwrap();
+    let mut outputs = vec![x.into(), y.into(), z.into(), w.into()];
+    let mut ordinary_vars = vec![x, y, z, w];
+    if retain_existential {
+        outputs.push(existential.into());
+        ordinary_vars.push(existential);
+    }
+    action.insert(derived, &outputs).unwrap();
     action.build_with_receipts(
         "existential-rectangle",
-        RuleReceiptSpec::new(51, [r_atom, s_atom, t_atom, u_atom], [x, y, z, w]),
+        RuleReceiptSpec::new(51, [r_atom, s_atom, t_atom, u_atom], ordinary_vars),
     );
     let rule_set = rules.build();
     let (plan, _, _) = rule_set.plans.values().next().unwrap();
@@ -3875,27 +3890,89 @@ fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
         panic!("existential receipt canary must exercise decomposed materialization");
     };
     assert!(plan.stages.blocks.len() >= 2);
+    if retain_existential {
+        let projected = plan
+            .stages
+            .blocks
+            .iter()
+            .flat_map(|(stages, _)| stages.instrs.iter())
+            .filter_map(|stage| match stage {
+                JoinStage::FusedIntersectMat {
+                    cover,
+                    mode: MatScanMode::KeyOnly | MatScanMode::Lookup(_),
+                    ..
+                } => Some(*cover),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let exact = plan
+            .result_block
+            .instrs
+            .iter()
+            .filter_map(|stage| match stage {
+                JoinStage::FusedIntersectMat {
+                    cover,
+                    mode: MatScanMode::Full | MatScanMode::Value(_),
+                    ..
+                } => Some(*cover),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            projected.iter().any(|cover| exact.contains(cover)),
+            "the precision canary must use one materialization through both a projected probe and an exact result scan"
+        );
+    }
 
     db.set_causal_wave(CausalWave::new(1));
     assert!(db.run_rule_set(&rule_set, ReportLevel::TimeOnly).changed);
     db.finalize_causal_wave();
     let snapshot = receipts.snapshot();
-    let derived_fact = snapshot
-        .facts
-        .iter()
-        .find(|fact| fact.table == derived)
-        .unwrap();
-    let matched = snapshot
+    let matches = snapshot
         .matches
         .iter()
-        .find(|record| record.id == derived_fact.cause.rule_match().unwrap())
-        .unwrap();
-    assert_eq!(
-        matched.premises.as_ref(),
-        &[r_first, s_first, t_fact, u_fact]
-    );
-    assert!(!matched.premises.contains(&r_second));
-    assert!(!matched.premises.contains(&s_second));
+        .filter(|record| record.rule == 51)
+        .collect::<Vec<_>>();
+    if retain_existential {
+        assert_eq!(matches.len(), 2);
+        let derived_facts = snapshot
+            .facts
+            .iter()
+            .filter(|fact| fact.table == derived)
+            .collect::<Vec<_>>();
+        assert_eq!(derived_facts.len(), 2);
+        for fact in derived_facts {
+            let expected = if fact.terms[4] == existential_100_term {
+                [r_first, s_first, t_fact, u_fact]
+            } else {
+                assert_eq!(fact.terms[4], existential_101_term);
+                [r_second, s_second, t_fact, u_fact]
+            };
+            let matched = matches
+                .iter()
+                .find(|record| Some(record.id) == fact.cause.rule_match())
+                .expect("each derived row must cite its own exact native match");
+            assert_eq!(matched.premises.as_ref(), expected);
+        }
+    } else {
+        assert_eq!(matches.len(), 1);
+        assert_eq!(
+            matches[0].premises.as_ref(),
+            &[r_first, s_first, t_fact, u_fact]
+        );
+        assert!(!matches[0].premises.contains(&r_second));
+        assert!(!matches[0].premises.contains(&s_second));
+    }
+}
+
+#[test]
+fn decomposed_key_only_receipt_uses_first_exact_existential_support() {
+    decomposed_projected_receipt_case(false);
+}
+
+#[test]
+fn decomposed_exact_result_owner_overrides_nested_projected_support() {
+    decomposed_projected_receipt_case(true);
 }
 
 #[test]

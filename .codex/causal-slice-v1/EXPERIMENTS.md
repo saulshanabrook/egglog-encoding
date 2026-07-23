@@ -999,3 +999,29 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   class now diagnosed precisely on Hardboiled, not an `InsertIfEq` failure.
 - H1 timing remains deferred until the exact receipt path reaches all five
   workload roots.
+
+### 2026-07-23 — checkpoint 4b2m decomposed witness ownership
+
+- Hypothesis: Hardboiled's `FactId(2737)` versus `FactId(2736)` disagreement
+  and Luminal's later slot disagreement were not missing provenance. A
+  projected `KeyOnly`/`Lookup` probe was contributing arbitrary row zero for a
+  materialization that the completed match also scanned through an exact
+  `Full`/`Value` result row.
+- `MaterializedWitnessRef` now packs `ExactRow` versus `ProjectedGroup` into
+  the high bit of its row word, preserving the three-`u32` sidecar. Projected
+  references can denote only row zero. At final receipt resolution, an exact
+  direct owner suppresses a nested projected subtree only for the same
+  `(MatId, group)`; different keys, direct projected roots, and genuine owner
+  disagreements remain fail-closed.
+- The existing existential canary still retains deterministic row-zero support
+  when no exact result owner exists. A new precision canary forces one
+  materialization through both a projected intermediate probe and an exact
+  result scan, then verifies its two output matches retain the aligned 100 and
+  101 premise rows rather than both inheriting row zero.
+- Direct single-thread treatment probes now move both workloads past the
+  ownership bug: Hardboiled reaches the planned same-ID container row-refresh
+  boundary, while Luminal reaches the separate unsupported removal boundary.
+  Neither boundary is widened here.
+- Focused validation: all five decomposed tests pass, including the scoped
+  transport and ordinary-mode no-sidecar controls. Full core/workspace gates
+  are required before freezing the checkpoint.

@@ -1151,20 +1151,50 @@ type ScopedMaterialization = DashMap<Vec<Value>, MaterializedGroup>;
 pub(super) struct MaterializedWitnessRef {
     materialization: MatId,
     group: u32,
-    row: u32,
+    /// Low 31 bits select the row. The high bit distinguishes an exact row
+    /// selected by `Full`/`Value` from the arbitrary first support used by a
+    /// projected `KeyOnly`/`Lookup` probe.
+    row_and_projection: u32,
 }
 
 impl MaterializedWitnessRef {
-    fn new(materialization: MatId, group: usize, row: usize) -> Self {
+    const PROJECTED: u32 = 1 << 31;
+
+    fn exact(materialization: MatId, group: usize, row: usize) -> Self {
+        Self::new(materialization, group, row, false)
+    }
+
+    fn projected(materialization: MatId, group: usize) -> Self {
+        Self::new(materialization, group, 0, true)
+    }
+
+    fn new(materialization: MatId, group: usize, row: usize, projected: bool) -> Self {
+        let row: u32 = row
+            .try_into()
+            .expect("materialized group has more than u32 rows");
+        assert!(
+            row < Self::PROJECTED,
+            "materialized witness row exceeds the packed 31-bit row limit"
+        );
         Self {
             materialization,
             group: group
                 .try_into()
                 .expect("materialization has more than u32 groups"),
-            row: row
-                .try_into()
-                .expect("materialized group has more than u32 rows"),
+            row_and_projection: row | if projected { Self::PROJECTED } else { 0 },
         }
+    }
+
+    fn row(self) -> usize {
+        (self.row_and_projection & !Self::PROJECTED) as usize
+    }
+
+    fn is_exact(self) -> bool {
+        self.row_and_projection & Self::PROJECTED == 0
+    }
+
+    fn is_projected(self) -> bool {
+        !self.is_exact()
     }
 }
 
@@ -1331,6 +1361,13 @@ fn push_receipt_witness(
     for &(slot, fact) in &witness.facts {
         record(slot, fact);
     }
+    let has_direct_exact_owner = |candidate: MaterializedWitnessRef| {
+        witness.ancestors.iter().any(|ancestor| {
+            ancestor.materialization == candidate.materialization
+                && ancestor.group == candidate.group
+                && ancestor.is_exact()
+        })
+    };
     let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
     while let Some(ancestor) = ancestors.pop() {
         let materialization = materializations
@@ -1349,11 +1386,16 @@ fn push_receipt_witness(
             .witnesses
             .as_ref()
             .expect("receipt materialization is missing its witness sidecar");
-        let (facts, nested) = stored.get(ancestor.row as usize);
+        let (facts, nested) = stored.get(ancestor.row());
         for &(slot, fact) in facts {
             record(slot, fact);
         }
-        ancestors.extend_from_slice(nested);
+        ancestors.extend(
+            nested
+                .iter()
+                .copied()
+                .filter(|nested| !(nested.is_projected() && has_direct_exact_owner(*nested))),
+        );
     }
     let premises = premises
         .into_iter()
@@ -2241,7 +2283,7 @@ impl<'a> JoinState<'a> {
                                 }
                                 buf.add_row(RowId::new(0), &row_scratch);
                                 if let Some(witnesses) = &mut materialized_witnesses {
-                                    witnesses.push(MaterializedWitnessRef::new(
+                                    witnesses.push(MaterializedWitnessRef::exact(
                                         *cover,
                                         group_index,
                                         row_index,
@@ -2260,7 +2302,8 @@ impl<'a> JoinState<'a> {
                             }
                             buf.add_row(RowId::new(0), &row_scratch);
                             if let Some(witnesses) = &mut materialized_witnesses {
-                                witnesses.push(MaterializedWitnessRef::new(*cover, group_index, 0));
+                                witnesses
+                                    .push(MaterializedWitnessRef::projected(*cover, group_index));
                             }
                         }
                     }
@@ -2278,7 +2321,7 @@ impl<'a> JoinState<'a> {
                                 }
                                 buf.add_row(RowId::new(0), &row_scratch);
                                 if let Some(witnesses) = &mut materialized_witnesses {
-                                    witnesses.push(MaterializedWitnessRef::new(
+                                    witnesses.push(MaterializedWitnessRef::exact(
                                         *cover,
                                         group_index,
                                         row_index,
@@ -2404,7 +2447,7 @@ impl<'a> JoinState<'a> {
                                     }
                                     if capture_witness {
                                         updates.push_materialized_witness(
-                                            MaterializedWitnessRef::new(
+                                            MaterializedWitnessRef::exact(
                                                 *cover,
                                                 group_index,
                                                 row_index,
@@ -2424,11 +2467,9 @@ impl<'a> JoinState<'a> {
                                     updates.push_binding(*var, group_key[col.index()]);
                                 }
                                 if capture_witness {
-                                    updates.push_materialized_witness(MaterializedWitnessRef::new(
-                                        *cover,
-                                        group_index,
-                                        0,
-                                    ));
+                                    updates.push_materialized_witness(
+                                        MaterializedWitnessRef::projected(*cover, group_index),
+                                    );
                                 }
                                 if prune_probers(&mut updates, Some(group_key), None) {
                                     updates.finish_frame();
@@ -2451,7 +2492,7 @@ impl<'a> JoinState<'a> {
                                 if group.len() > 0 {
                                     if capture_witness {
                                         updates.push_materialized_witness(
-                                            MaterializedWitnessRef::new(*cover, group_index, 0),
+                                            MaterializedWitnessRef::projected(*cover, group_index),
                                         );
                                     }
                                     updates.finish_frame();
@@ -2467,7 +2508,7 @@ impl<'a> JoinState<'a> {
                                     }
                                     if capture_witness {
                                         updates.push_materialized_witness(
-                                            MaterializedWitnessRef::new(
+                                            MaterializedWitnessRef::exact(
                                                 *cover,
                                                 group_index,
                                                 row_index,
