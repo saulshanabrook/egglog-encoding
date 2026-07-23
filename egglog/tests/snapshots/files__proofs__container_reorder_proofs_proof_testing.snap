@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (premises (Fiat (= (Go) (Go)))))
@@ -100,7 +101,7 @@ expression: proof_snapshot
             (substitution (x (N 2)) (@rewrite_var__ (Id (N 2)))))
           1))
       0))
-  (substitution (@v901 (N 2)) (@v900 (N 1)) (@v902 t3)))
+  (substitution (@v855 (N 1)) (@v856 (N 2)) (@v857 t3)))
 (let t0 (Add (Num 51) (Num 52)))
 (let t1 (Add (Num 52) (Num 51)))
 (let t2 (premises (Fiat (= (Go) (Go)))))
@@ -147,7 +148,7 @@ expression: proof_snapshot
         prf0
         0)
       0))
-  (substitution (@v949 t5) (@v948 t1)))
+  (substitution (@v903 t1) (@v904 t5)))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -249,7 +250,7 @@ expression: proof_snapshot
             (substitution (x (N 12)) (@rewrite_var__ (Id (N 12)))))
           1))
       0))
-  (substitution (@v998 t3) (@v996 (N 11)) (@v997 (N 12)) (@v995 (N 11))))
+  (substitution (@v952 (N 12)) (@v951 (N 11)) (@v950 (N 11)) (@v953 t3)))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -344,11 +345,11 @@ expression: proof_snapshot
           0))
       0))
   (substitution
-    (@v1053 (N 23))
-    (@v1052 (N 22))
-    (@v1050 (N 21))
-    (@v1054 t3)
-    (@v1051 (N 23))))
+    (@v1006 (N 23))
+    (@v1005 (N 21))
+    (@v1009 t3)
+    (@v1008 (N 23))
+    (@v1007 (N 22))))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -418,7 +419,7 @@ expression: proof_snapshot
         prf1
         1)
       0))
-  (substitution (@v1112 (N 31)) (@v1113 (N 31)) (@v1114 (N 32)) (@v1115 t3)))
+  (substitution (@v1068 (N 31)) (@v1070 t3) (@v1069 (N 32)) (@v1067 (N 31))))
 (let t0 (premises (Fiat (= (Go) (Go)))))
 (let prf0
   (Rule
@@ -526,4 +527,4 @@ expression: proof_snapshot
           0)
         1)
       0))
-  (substitution (@v1169 (N 41)) (@v1168 (N 42)) (@v1170 t5) (@v1167 (N 41))))
+  (substitution (@v1122 (N 41)) (@v1125 t5) (@v1124 (N 41)) (@v1123 (N 42))))

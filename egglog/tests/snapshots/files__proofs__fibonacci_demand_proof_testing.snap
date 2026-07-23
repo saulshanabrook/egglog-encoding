@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 279
 expression: proof_snapshot
 ---
 (let prf0 (Fiat (= () ())))
@@ -44,7 +45,6 @@ expression: proof_snapshot
                                                 (substitution
                                                   (@rewrite_var__2 (Fib 1))
                                                   (x 1))))
-(let prop0 (= (Fib 2) (Num 1)))
 (let t6
   (premises
                                                             (Rule
@@ -61,7 +61,7 @@ expression: proof_snapshot
                                                             (x 2)))
 (let prf2
   (Rule
-                                                  prop0
+                                                  (= (Fib 2) (Num 1))
                                                   (name
                                                     "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
                                                   (premises
@@ -105,14 +105,6 @@ expression: proof_snapshot
                                                     (b 0)
                                                     (@rewrite_var__ (Fib 2)))))
 (let prf3
-  (Trans
-                                            prop0
-                                            (Trans
-                                              (= (Fib 2) (Fib 1))
-                                              prf2
-                                              (Sym (= (Num 1) (Fib 1)) prf1))
-                                            prf1))
-(let prf4
   (Rule
                                     (= (Fib 3) (Num 2))
                                     (name
@@ -135,15 +127,15 @@ expression: proof_snapshot
                                               prf1
                                               (Sym (= (Num 1) (Fib 2)) prf2))
                                             1)
-                                          prf3
+                                          prf2
                                           0)
-                                        prf3
+                                        prf2
                                         1))
                                     (substitution
                                       (a 1)
                                       (b 1)
                                       (@rewrite_var__ (Fib 3)))))
-(let prf5
+(let prf4
   (Rule
                             (= (Fib 4) (Num 3))
                             (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -165,12 +157,12 @@ expression: proof_snapshot
                                         t3)
                                       prf0)
                                     (substitution (@rewrite_var__1 (Fib 4)) (x 4)))
-                                  prf4
+                                  prf3
                                   0)
-                                prf3
+                                prf2
                                 1))
                             (substitution (a 2) (b 1) (@rewrite_var__ (Fib 4)))))
-(let prf6
+(let prf5
   (Rule
                     (= (Fib 5) (Num 5))
                     (name "(rewrite (Add (Num a) (Num b)) (Num (+ a b)))")
@@ -185,9 +177,9 @@ expression: proof_snapshot
                               "(rewrite (Fib x) (Add (Fib (- x 1)) (Fib (- x 2))) :when ((> x 1)))")
                             t2
                             t3)
-                          prf5
+                          prf4
                           0)
-                        prf4
+                        prf3
                         1))
                     (substitution (a 3) (b 2) (@rewrite_var__ (Fib 5)))))
 (Rule
@@ -225,12 +217,12 @@ expression: proof_snapshot
                       t1)
                     prf0)
                   (substitution (@rewrite_var__1 (Fib 6)) (x 6)))
-                prf6
+                prf5
                 0)
-              prf5
+              prf4
               1))
           (substitution (a 5) (b 3) (@rewrite_var__ (Fib 6))))
         0)
-      prf6
+      prf5
       1))
   (substitution (a 8) (b 5) (@rewrite_var__ (Fib 7))))

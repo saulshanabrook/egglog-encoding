@@ -1,0 +1,10 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 126
+expression: snapshot_content_across_treatments
+---
+((A 1)
+ (Add 3)
+ (B 1)
+ (C 1)
+ (Go 1))

@@ -1,7 +1,9 @@
 #[doc = include_str!("proof_encoding.md")]
 use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
+use crate::util::HashSet;
 use crate::*;
+use egglog_ast::generic_ast::GenericExpr;
 
 /// Term-construction side channel (proof mode): maps a built term's canonical
 /// e-class var to `(natural e-class var, connector proof var)`, where the
@@ -249,6 +251,224 @@ impl<'a> ProofInstrumentor<'a> {
         let sym_min = self.mint(stmts, &sym, &min_pf, &proof_sort);
         let edge = self.mint(stmts, &trans, &format!("{max_pf} {sym_min}"), &proof_sort);
         format!("(set ({uf_name} {larger}) (values {smaller} {edge}))")
+    }
+
+    /// The `(FuncType, args)` of a constructor-application expression, else `None`.
+    fn constructor_operand(expr: &ResolvedExpr) -> Option<(&FuncType, &[ResolvedExpr])> {
+        match expr {
+            ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args)
+                if func_type.subtype == FunctionSubtype::Constructor =>
+            {
+                Some((func_type, args.as_slice()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Lift each constructor-application `union` operand into a preceding `let`,
+    /// so every union operand is a variable and the inline and let-bound shapes
+    /// coincide before [`Self::plan_construct_into`] runs.
+    fn normalize_union_operands(&mut self, actions: &[ResolvedAction]) -> Vec<ResolvedAction> {
+        let mut out = vec![];
+        for action in actions {
+            match action {
+                ResolvedAction::Union(span, lhs, rhs) => {
+                    let lhs = self.lift_union_operand(lhs.clone(), &mut out);
+                    let rhs = self.lift_union_operand(rhs.clone(), &mut out);
+                    out.push(ResolvedAction::Union(span.clone(), lhs, rhs));
+                }
+                other => out.push(other.clone()),
+            }
+        }
+        out
+    }
+
+    /// If `operand` is a constructor application, bind it to a fresh `let`
+    /// (pushed onto `out`) and return a variable referencing it; otherwise
+    /// return `operand` unchanged.
+    fn lift_union_operand(
+        &mut self,
+        operand: ResolvedExpr,
+        out: &mut Vec<ResolvedAction>,
+    ) -> ResolvedExpr {
+        if Self::constructor_operand(&operand).is_none() {
+            return operand;
+        }
+        let span = operand.span();
+        let var = ResolvedVar {
+            name: self.egraph.parser.symbol_gen.fresh("union_operand"),
+            sort: operand.output_type(),
+            is_global_ref: false,
+        };
+        out.push(ResolvedAction::Let(span.clone(), var.clone(), operand));
+        GenericExpr::Var(span, var)
+    }
+
+    /// Plan the construct-into optimization over normalized actions (union
+    /// operands are variables). Returns a map `guest -> target` — the guest's
+    /// constructor is built into the target's e-class instead of a fresh one —
+    /// and the set of union action indices it makes redundant.
+    ///
+    /// Conservative: only a `union` of two distinct, not-yet-touched variables
+    /// where at least one is a constructor-`let` is optimized. The guest is the
+    /// later-defined constructor operand (so the target's e-class is already
+    /// bound where the guest is built); a matched (un-`let`) variable is always
+    /// an eligible target.
+    fn plan_construct_into(
+        actions: &[ResolvedAction],
+    ) -> (HashMap<String, String>, HashSet<usize>) {
+        let mut all_def: HashMap<String, usize> = HashMap::default();
+        let mut ctor_def: HashMap<String, usize> = HashMap::default();
+        for (i, action) in actions.iter().enumerate() {
+            if let ResolvedAction::Let(_, v, expr) = action {
+                all_def.insert(v.name.clone(), i);
+                if Self::constructor_operand(expr).is_some() {
+                    ctor_def.insert(v.name.clone(), i);
+                }
+            }
+        }
+
+        let mut construct_into: HashMap<String, String> = HashMap::default();
+        let mut dropped: HashSet<usize> = HashSet::default();
+        let mut used: HashSet<String> = HashSet::default();
+        for (i, action) in actions.iter().enumerate() {
+            let ResolvedAction::Union(_, lhs, rhs) = action else {
+                continue;
+            };
+            let (GenericExpr::Var(_, va), GenericExpr::Var(_, vb)) = (lhs, rhs) else {
+                continue;
+            };
+            let (a, b) = (va.name.clone(), vb.name.clone());
+            if a == b {
+                // Union of a variable with itself is a no-op.
+                dropped.insert(i);
+                continue;
+            }
+            if used.contains(&a) || used.contains(&b) {
+                // Keep chains of optimized unions out of scope for now.
+                continue;
+            }
+            let (guest, target) = match (ctor_def.get(&a), ctor_def.get(&b)) {
+                (Some(&ia), Some(&ib)) => {
+                    if ia >= ib {
+                        (a, b)
+                    } else {
+                        (b, a)
+                    }
+                }
+                (Some(_), None) => (a, b),
+                (None, Some(_)) => (b, a),
+                (None, None) => continue,
+            };
+            // The target's e-class must be bound where the guest is built: a
+            // matched variable always is; a `let` must precede the guest's.
+            let guest_idx = ctor_def[&guest];
+            if let Some(&target_idx) = all_def.get(&target)
+                && target_idx >= guest_idx
+            {
+                continue;
+            }
+            used.insert(guest.clone());
+            used.insert(target.clone());
+            construct_into.insert(guest, target);
+            dropped.insert(i);
+        }
+        (construct_into, dropped)
+    }
+
+    /// Lower a construct-into guest `(let guest (F args))`: point its view value
+    /// at `target`'s e-class with a plain `set` (a collision with an existing
+    /// `F(args)` unions the two via the view's `:merge`), and bind `guest` to
+    /// `target` so later uses share the representative. In proof mode the view
+    /// row also carries the proof `target = F(args)`.
+    fn instrument_construct_into(
+        &mut self,
+        res: &mut Vec<String>,
+        expr: &ResolvedExpr,
+        target: &str,
+        guest: &str,
+        justification: &Justification,
+        nat_conn: &mut NatConn,
+    ) {
+        let (func_type, args) = Self::constructor_operand(expr)
+            .expect("construct-into guest must be a constructor application");
+        let ctor_name = func_type.name.clone();
+        let child_vals: Vec<String> = args
+            .iter()
+            .map(|arg| self.instrument_action_expr(arg, res, justification, nat_conn))
+            .collect();
+
+        if !self.proofs_enabled() {
+            res.push(format!(
+                "(set ({ctor_name} {} {target}) ())",
+                ListDisplay(&child_vals, " ")
+            ));
+            res.push(self.update_fd_view(&ctor_name, &child_vals, target, "()"));
+            res.push(format!("(let {guest} {target})"));
+            return;
+        }
+
+        let sort_name = func_type.output().name().to_string();
+        let view_sort = self
+            .egraph
+            .proof_state
+            .proof_names
+            .fn_to_term_sort
+            .get(&ctor_name)
+            .expect("term sort")
+            .clone();
+        let sort_ast = self
+            .proof_names()
+            .sort_to_ast_constructor
+            .get(&sort_name)
+            .expect("sort AST")
+            .clone();
+        let proof_sort = self.proof_sort();
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let view = self.view_name(&ctor_name);
+        let (dedup_args, fv_nat, nat_prf, nat_to_dedup) = self.build_natural_with_congr(
+            res,
+            &ctor_name,
+            &view_sort,
+            &child_vals,
+            justification,
+            nat_conn,
+        );
+        let term_proof_ctor = self.term_proof_name(&sort_name);
+        res.push(format!("(set ({term_proof_ctor} {fv_nat}) {nat_prf})"));
+        let target_entry = nat_conn.get(target).cloned();
+        let target_nat = target_entry
+            .as_ref()
+            .map(|e| e.natural.clone())
+            .unwrap_or_else(|| target.to_string());
+        let edge = self.edge_proof(res, &sort_ast, &target_nat, &fv_nat, justification);
+        let to_dedup = self.mint(res, &trans, &format!("{edge} {nat_to_dedup}"), &proof_sort);
+        let view_proof = match target_entry.as_ref().and_then(|e| e.connector.clone()) {
+            Some(conn) => {
+                let sc = self.mint(res, &sym, &conn, &proof_sort);
+                self.mint(res, &trans, &format!("{sc} {to_dedup}"), &proof_sort)
+            }
+            None => to_dedup,
+        };
+        // The guest's term keeps its own id (`fv_nat`); only the view VALUE uses
+        // the target. Emitting `(F dedup_args target)` would add the guest's
+        // shape to `target`'s term relation, making `target`'s `@Ast` ambiguous
+        // during proof reconstruction (which reads term rows, not views).
+        let dedup_disp = ListDisplay(&dedup_args, " ").to_string();
+        res.push(format!(
+            "(set ({view} {dedup_disp}) (values {target} {view_proof}))"
+        ));
+        res.push(format!("(let {guest} {target})"));
+        let sv = self.mint(res, &sym, &view_proof, &proof_sort);
+        let guest_conn = self.mint(res, &trans, &format!("{nat_to_dedup} {sv}"), &proof_sort);
+        nat_conn.insert(
+            guest.to_string(),
+            NatEntry {
+                natural: fv_nat,
+                connector: Some(guest_conn),
+            },
+        );
     }
 
     /// The parent table is the database representation of a union-find datastructure.
@@ -648,6 +868,9 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedAction::Union(_span, generic_expr, generic_expr1) => {
+                // A union whose operand is a freshly-built constructor term is
+                // optimized upstream in `instrument_actions`; this arm handles
+                // the remaining general unions.
                 let v1 =
                     self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
                 let v2 =
@@ -949,6 +1172,55 @@ impl<'a> ProofInstrumentor<'a> {
         canon
     }
 
+    /// Mint a constructor's *natural* node (children at their as-built ids) and
+    /// build a `Congr` chain proving `fv_nat = f(deduped children)`. Returns
+    /// `(deduped children, fv_nat, nat_prf, nat_to_dedup)`, where `nat_prf` is
+    /// `fv_nat`'s term proof (the caller anchors it) and `nat_to_dedup` is the
+    /// chain. Shared by [`Self::add_constructor_with_proof`] and
+    /// [`Self::instrument_construct_into`].
+    fn build_natural_with_congr(
+        &mut self,
+        res: &mut Vec<String>,
+        fname: &str,
+        view_sort: &str,
+        args: &[String],
+        justification: &Justification,
+        nat_conn: &NatConn,
+    ) -> (Vec<String>, String, String, String) {
+        let to_ast = self.fname_to_ast_name(fname).to_string();
+        let congr = self.proof_names().congr_constructor.clone();
+        let proof_sort = self.proof_sort();
+        // Each arg is a child's deduped id; look up its natural id + connector.
+        let children: Vec<(String, String, Option<String>)> = args
+            .iter()
+            .map(|a| match nat_conn.get(a) {
+                Some(e) => (a.clone(), e.natural.clone(), e.connector.clone()),
+                None => (a.clone(), a.clone(), None),
+            })
+            .collect();
+        let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
+        let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
+        let fv_nat = self.mint(
+            res,
+            fname,
+            &ListDisplay(&nat_args, " ").to_string(),
+            view_sort,
+        );
+        let nat_prf = self.term_proof_for_justification(res, &fv_nat, &to_ast, justification);
+        let mut nat_to_dedup = nat_prf.clone();
+        for (i, (_, _, conn)) in children.iter().enumerate() {
+            if let Some(conn) = conn {
+                nat_to_dedup = self.mint(
+                    res,
+                    &congr,
+                    &format!("{nat_to_dedup} {i} {conn}"),
+                    &proof_sort,
+                );
+            }
+        }
+        (dedup_args, fv_nat, nat_prf, nat_to_dedup)
+    }
+
     /// Proof-mode constructors: build the *natural* term (children at their
     /// as-built ids) and the *canonical* term (children at their view-deduped
     /// ids), connect them with a `Congr` chain over the changed children, then
@@ -967,48 +1239,24 @@ impl<'a> ProofInstrumentor<'a> {
     ) -> String {
         let view = self.view_name(&func_type.name);
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
-        let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
         let proof_sort = self.proof_sort();
-        let congr = self.proof_names().congr_constructor.clone();
         let trans = self.proof_names().eq_trans_constructor.clone();
         let sym = self.proof_names().eq_sym_constructor.clone();
         let term_proof_constructor = self.term_proof_name(func_type.output().name());
-
-        // Each arg is a child's deduped id; look up its natural id + connector.
-        let children: Vec<(String, String, Option<String>)> = args
-            .iter()
-            .map(|a| match nat_conn.get(a) {
-                Some(e) => (a.clone(), e.natural.clone(), e.connector.clone()),
-                None => (a.clone(), a.clone(), None),
-            })
-            .collect();
-        let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
-        let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
 
         // `fv_nat` stays *unseeded* (only `fv_can` is written to the view) so it is
         // never pulled into the view's congruence `:merge`; its `@Rule` endpoint
         // therefore keeps the as-built shape the rule head produced. `fv_can` is
         // always a separate node (even when no child changed) with the reflexive
         // proof `fv_can = fv_can`, exempt from the rule-head check.
-        let fv_nat = self.mint(
+        let (dedup_args, fv_nat, nat_prf, nat_to_dedup_term) = self.build_natural_with_congr(
             res,
             &func_type.name,
-            &ListDisplay(&nat_args, " ").to_string(),
             view_sort,
+            args,
+            justification,
+            nat_conn,
         );
-        let nat_prf = self.term_proof_for_justification(res, &fv_nat, &to_ast, justification);
-        // `Congr` chain: `fv_nat = f(deduped children)`.
-        let mut nat_to_dedup_term = nat_prf.clone();
-        for (i, (_, _, conn)) in children.iter().enumerate() {
-            if let Some(conn) = conn {
-                nat_to_dedup_term = self.mint(
-                    res,
-                    &congr,
-                    &format!("{nat_to_dedup_term} {i} {conn}"),
-                    &proof_sort,
-                );
-            }
-        }
         let fv_can = self.mint(
             res,
             &func_type.name,
@@ -1247,9 +1495,30 @@ impl<'a> ProofInstrumentor<'a> {
         justification: &Justification,
         nat_conn: &mut NatConn,
     ) -> Vec<String> {
+        // Normalize union operands to variables, then build each
+        // freshly-constructed union operand directly into the other operand's
+        // e-class (see proof_encoding.md, "Union in a rule").
+        let normalized = self.normalize_union_operands(actions);
+        let (construct_into, dropped) = Self::plan_construct_into(&normalized);
         let mut res = vec![];
-        for action in actions {
-            res.extend(self.instrument_action(action, justification, nat_conn));
+        for (i, action) in normalized.iter().enumerate() {
+            if dropped.contains(&i) {
+                continue;
+            }
+            match action {
+                ResolvedAction::Let(_, v, expr) if construct_into.contains_key(&v.name) => {
+                    let target = construct_into[&v.name].clone();
+                    self.instrument_construct_into(
+                        &mut res,
+                        expr,
+                        &target,
+                        &v.name,
+                        justification,
+                        nat_conn,
+                    );
+                }
+                _ => res.extend(self.instrument_action(action, justification, nat_conn)),
+            }
         }
         res
     }
@@ -1508,7 +1777,11 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::CoreAction(action) => {
                 let mut nat_conn = NatConn::default();
                 let instrumented = self
-                    .instrument_action(action, &Justification::Fiat, &mut nat_conn)
+                    .instrument_actions(
+                        std::slice::from_ref(action),
+                        &Justification::Fiat,
+                        &mut nat_conn,
+                    )
                     .join("\n");
                 res.extend(self.parse_program(&instrumented));
             }

@@ -1,5 +1,6 @@
 ---
 source: egglog/tests/files.rs
+assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (If (Var "x") (N 0) (N 1)))
@@ -65,14 +66,16 @@ expression: proof_snapshot
            )")
                                   (premises (Fiat (= t3 t3)))
                                   (substitution (a (FConst)) (f t2) t19))
-                                (Rule
+                                (Sym
                                   (= (Comb (FConst)) (CFConst))
-                                  (name
-                                    "(rule ((= x $F))
+                                  (Rule
+                                    (= (CFConst) (Comb (FConst)))
+                                    (name
+                                      "(rule ((= x $F))
         ((union (Comb x) $CF))
            )")
-                                  (premises (Fiat (= (FConst) (FConst))))
-                                  (substitution (x (FConst))))
+                                    (premises (Fiat (= (FConst) (FConst))))
+                                    (substitution (x (FConst)))))
                                 1)
                               (Rule
                                 (= t18 t17)
@@ -710,14 +713,16 @@ expression: proof_snapshot
          )")
                     t85
                     t86)
-                  (Rule
+                  (Sym
                     (= (Uncomb (CFConst)) (FConst))
-                    (name
-                      "(rule ((= cx $CF))
+                    (Rule
+                      (= (FConst) (Uncomb (CFConst)))
+                      (name
+                        "(rule ((= cx $CF))
       ((union (Uncomb cx) $F))
          )")
-                    (premises (Fiat (= (CFConst) (CFConst))))
-                    (substitution (cx (CFConst))))
+                      (premises (Fiat (= (CFConst) (CFConst))))
+                      (substitution (cx (CFConst)))))
                   0)
                 (Rule
                   (= t42 (N 0))
