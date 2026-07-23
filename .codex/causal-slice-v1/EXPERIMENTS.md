@@ -974,3 +974,28 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   frontend canaries; `cargo check --workspace`, formatting, and diff checking
   passed. The all-five H1 receipt-overhead gate remains unmeasured until every
   workload reaches an exact root with zero unsupported semantics.
+
+### 2026-07-23 — checkpoint 4b2l exact conditional action causes
+
+- Hypothesis: Luminal's first reached unsupported instruction was the native
+  `InsertIfEq` emitted for an effective `(subsume (MMul ...))`; the ordinary
+  conditional action already had the exact rule lane in hand and needed only
+  the same cause-capability plumbing as `Insert`.
+- Receipt mode now enumerates condition-true lane indexes, resolves causes for
+  those lanes only, and stages the existing native insertion under each exact
+  capability. False lanes allocate and stage nothing. Effective-commit and
+  merge filtering remain in the existing table path, so redundant proposals
+  do not promote matches and an update still cites the immutable prior fact.
+  The receipt-disabled three-shape conditional loop is unchanged.
+- A mixed true/false core canary records one source-backed rule match and one
+  output fact, identifies the retained premise as the condition-true source
+  lane, then repeats the rule and proves the no-op firing stays provisional.
+  All-false batches skip match registration and cause-vector allocation. This
+  covers exact lane attribution without introducing a new receipt or
+  conditional-action semantics.
+- The direct Luminal probe advanced from the effective subsumption boundary to
+  an independent decomposed-witness ownership disagreement (slot 6,
+  `FactId(2343)` versus `FactId(1519)`). This is the same planner-DAG ownership
+  class now diagnosed precisely on Hardboiled, not an `InsertIfEq` failure.
+- H1 timing remains deferred until the exact receipt path reaches all five
+  workload roots.

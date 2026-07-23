@@ -3030,6 +3030,146 @@ fn causal_receipt_metadata_rejects_binding_an_ignored_column() {
 }
 
 #[test]
+fn conditional_insert_records_only_true_effective_lanes() {
+    let mut db = Database::default();
+    let immutable = || {
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    let input = db.add_table(
+        SortedWritesTable::new(
+            2,
+            3,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "input rows are immutable");
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let output = db.add_table(immutable(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(12);
+    receipts
+        .register_table_layout(input, &[Some(sort), Some(sort), None])
+        .unwrap();
+    receipts
+        .register_table_layout(output, &[Some(sort), Some(sort)])
+        .unwrap();
+    let true_value = Value::new(1);
+    let false_value = Value::new(0);
+    let output_value = Value::new(9);
+    for value in [
+        Value::new(10),
+        Value::new(20),
+        true_value,
+        false_value,
+        output_value,
+    ] {
+        receipts.intern_literal(sort, ReplayLiteral::Internal(value.index() as u64), value);
+    }
+    for (ordinal, (key, condition)) in [(Value::new(10), true_value), (Value::new(20), false_value)]
+        .into_iter()
+        .enumerate()
+    {
+        let terms = [
+            receipts.lookup_term(sort, key).unwrap(),
+            receipts.lookup_term(sort, condition).unwrap(),
+            crate::ReplayTermId::MISSING,
+        ];
+        db.stage_source_row(
+            input,
+            &[key, condition, Value::new(0)],
+            &terms,
+            SourceRef::Synthetic(900 + ordinal as u64),
+        )
+        .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let key = query.new_var_named("key");
+    let condition = query.new_var_named("condition");
+    let timestamp = query.new_var_named("timestamp");
+    let atom = query
+        .add_atom(
+            input,
+            &[key.into(), condition.into(), timestamp.into()],
+            &[],
+        )
+        .unwrap();
+    let mut action = query.build();
+    action
+        .insert_if_eq(
+            output,
+            condition.into(),
+            crate::QueryEntry::Const(true_value),
+            &[key.into(), crate::QueryEntry::Const(output_value)],
+        )
+        .unwrap();
+    action.build_with_receipts(
+        "conditional-insert",
+        RuleReceiptSpec::new(91, [atom], [key, condition]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.matches.len(), 1);
+    let premise = snapshot.matches[0].premises[0];
+    assert_eq!(
+        snapshot
+            .facts
+            .iter()
+            .find(|fact| fact.id == premise)
+            .expect("the retained premise must be a durable source fact")
+            .cause,
+        crate::FactCause::Source(SourceRef::Synthetic(900)),
+        "the conditional action must retain the condition-true lane"
+    );
+    let outputs = snapshot
+        .facts
+        .iter()
+        .filter(|fact| fact.table == output)
+        .collect::<Vec<_>>();
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].cause.rule_match(), Some(snapshot.matches[0].id));
+
+    db.set_causal_wave(CausalWave::new(2));
+    assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+    let repeated = receipts.snapshot();
+    assert_eq!(
+        repeated.matches.len(),
+        1,
+        "a no-op firing stays provisional"
+    );
+    assert_eq!(
+        repeated
+            .facts
+            .iter()
+            .filter(|fact| fact.table == output)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn causal_receipts_serial_merge_records_final_output_row_terms() {
     let mut db = Database::default();
     let table = db.add_table(

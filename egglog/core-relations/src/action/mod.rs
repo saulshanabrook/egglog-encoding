@@ -1245,39 +1245,73 @@ impl ExecutionState<'_> {
                 self.set_active_cause_capability(None);
             }
             Instr::InsertIfEq { table, l, r, vals } => {
-                assert!(
-                    self.db.causal_receipts.is_none(),
-                    "causal receipts do not yet support InsertIfEq; failing closed"
-                );
-                match (l, r) {
-                    (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
-                        for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                            iter.zip(&bindings[*v1]).zip(&bindings[*v2]).for_each(
-                                |((vals, v1), v2)| {
-                                    if v1 == v2 {
-                                        self.stage_insert(*table, &vals);
-                                    }
-                                },
-                            )
-                        })
+                if let Some(receipts) = self.db.causal_receipts {
+                    fn get(bindings: &Bindings, entry: QueryEntry, offset: usize) -> Value {
+                        match entry {
+                            QueryEntry::Const(value) => value,
+                            QueryEntry::Var(variable) => bindings[variable][offset],
+                        }
                     }
-                    (QueryEntry::Var(v), QueryEntry::Const(c))
-                    | (QueryEntry::Const(c), QueryEntry::Var(v)) => {
+                    let mut lanes = Vec::new();
+                    let mut cause_mask = mask.clone();
+                    cause_mask.empty_iter().for_each_indexed(|offset, ()| {
+                        if get(bindings, *l, offset) == get(bindings, *r, offset) {
+                            lanes.push(offset);
+                        }
+                    });
+                    if !lanes.is_empty() {
+                        bindings.ensure_receipt_causes(&lanes, receipts);
+                        let causes = (0..bindings.matches)
+                            .map(|lane| bindings.receipt_cause_capability(lane))
+                            .collect::<Vec<_>>();
                         for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                            iter.zip(&bindings[*v]).for_each(|(vals, cond)| {
-                                if cond == c {
-                                    self.stage_insert(*table, &vals);
+                            iter.for_each_indexed(|offset, vals| {
+                                if get(bindings, *l, offset) == get(bindings, *r, offset) {
+                                    self.set_active_cause_capability(Some(causes[offset].expect(
+                                        "effective conditional action lane is missing its exact receipt cause",
+                                    )));
+                                    self.stage_insert(*table, vals.as_slice());
                                 }
                             })
-                        })
+                        });
                     }
-                    (QueryEntry::Const(c1), QueryEntry::Const(c2)) => {
-                        if c1 == c2 {
+                    self.set_active_cause_capability(None);
+                } else {
+                    match (l, r) {
+                        (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
                             for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                                iter.for_each(|vals| {
-                                    self.stage_insert(*table, &vals);
+                                iter.zip(&bindings[*v1]).zip(&bindings[*v2]).for_each(
+                                    |((vals, v1), v2)| {
+                                        if v1 == v2 {
+                                            self.stage_insert(*table, &vals);
+                                        }
+                                    },
+                                )
+                            })
+                        }
+                        (QueryEntry::Var(v), QueryEntry::Const(c))
+                        | (QueryEntry::Const(c), QueryEntry::Var(v)) => {
+                            for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                                iter.zip(&bindings[*v]).for_each(|(vals, cond)| {
+                                    if cond == c {
+                                        self.stage_insert(*table, &vals);
+                                    }
                                 })
                             })
+                        }
+                        (QueryEntry::Const(c1), QueryEntry::Const(c2)) => {
+                            if c1 == c2 {
+                                for_each_binding_with_mask!(
+                                    mask,
+                                    vals.as_slice(),
+                                    bindings,
+                                    |iter| {
+                                        iter.for_each(|vals| {
+                                            self.stage_insert(*table, &vals);
+                                        })
+                                    }
+                                )
+                            }
                         }
                     }
                 }
