@@ -1379,3 +1379,62 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   - `cargo fmt --all -- --check`: passed.
 - Scope remains frozen: no non-identity map conversion, non-atomic ID
   allocation, deletion/timeline, slicing, replay, or benchmark-runner change.
+
+### 2026-07-23 — checkpoint-1 recording gate: failed after bounded optimization
+
+- The contracted comparison used the same clean final binary for both
+  endpoints, the normal append-only `.reports.jsonl`, `main/off` versus
+  `main/causal-receipts`, `-j 1` through the benchmark target, a 120-second
+  timeout, and the unchanged Math and Eggcc files. The final command was:
+
+  ```sh
+  ./bench.py --target . --backend main --treatment causal-receipts \
+    --compare-backend main --compare-treatment off --rounds 3 \
+    --timeout-sec 120 --report .reports.jsonl --detail files \
+    --format markdown egglog/tests/math-microbenchmark.egg \
+    egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg
+  ```
+
+- At clean commit `41bbe244d63a8f30cb03d820fb55c8d768db1498`, the three exact
+  cached rounds were JSONL lines 24-35. Arithmetic means were:
+
+  | Workload | Native wall | Receipts wall | Wall ratio | Native RSS | Receipts RSS | RSS ratio |
+  | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+  | Math | 0.450s | 2.452s | 5.44x | 256.4 MiB | 1.505 GiB | 6.01x |
+  | Eggcc | 1.237s | 1.811s | 1.46x | 121.4 MiB | 213.6 MiB | 1.76x |
+
+  The report's bootstrap intervals were 4.36-6.95x for Math and 1.36-1.59x
+  for Eggcc. Eggcc's mean clears the strict wall screen, but its interval
+  crosses 1.5x; Math decisively fails both the approximately 1.3x target and
+  the 1.5x hard screen.
+- Optimization 1 was strongly validated: its clean one-round Math result at
+  `f18797058aac4c8fc4ac7744c834768c229e20dc` improved from the pre-fix
+  27.0x result to 5.24x by deleting the quadratic prior-fact scan.
+  Optimization 2 was not a material second win: the final one-round Math point
+  estimate was 5.04x, and the three-round mean remained 5.44x. The serial-map
+  change did modestly reduce Eggcc's mean and RSS, but did not alter the Math
+  boundary.
+- The post-fix Samply artifact is
+  `/tmp/egglog-causal-profile-f187970/v3/be3bb6224b720bff873884a513f4d394c1a04c4bbbedc9f0449f2a26fcf1e808/6017cf55fcc0bbc0dfb6c512b1a805709a33ac501b7f72796a74a788c804f77c/no-facts/main-causal-receipts-i1.json.gz`.
+  It has no replacement runaway function: the largest application self symbol
+  is serial table insertion at 8.5%, followed by structural-map operations,
+  fact recording, finalization, witness resolution, and native execution.
+  Controlled phase data at `f187970` was native
+  search/apply/merge/rebuild = 0.094s/0.096s/0.050s/0.148s versus receipts
+  0.170s/0.890s/0.587s/0.389s. Exact-event cost is distributed rather than one
+  remaining representation bug.
+- Cardinality explains the remaining floor. Math executes 943,125 native rule
+  candidates; 810,853 (85.98%) are promoted because they have effective
+  effects. Exact capture retains 1,731,581 immutable fact versions, 1,607,701
+  durable causes, 439,079 rebuild causes, 182,412 logical equality edges,
+  167,956 native aliases, and a 1,398,704-node structural term DAG. This is not
+  Prefix or eager losing-candidate elaboration; it is the supported exact-event
+  contract applied to a workload with unusually dense effective history.
+- Gate decision: stop after the two measured bounded optimizations. Do not
+  begin deletion/timeline recording, slicing, grounded replay, or causal-proof
+  benchmarking under a failed receipt-cost premise. No Prefix, projection,
+  selector search, workload special case, or third architecture is introduced.
+  The committed checkpoint remains a coherent, exact, serial recording
+  experiment and the replay-independent debugging artifact; reaching the full
+  plan now requires an explicit decision to relax the 1.5x screen or change
+  the recording contract, not another unmeasured tuning pass.
