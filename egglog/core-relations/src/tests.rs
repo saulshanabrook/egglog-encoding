@@ -500,7 +500,14 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         .unwrap();
     action.build_with_receipts(
         "derive-node",
-        RuleReceiptSpec::new(0, [input_atom], [value]),
+        RuleReceiptSpec::with_bindings(
+            0,
+            [input_atom],
+            [
+                crate::RuleBindingSpec::variable(value, None),
+                crate::RuleBindingSpec::constant(input_term, value_sort),
+            ],
+        ),
     );
     let rule_set = rules.build();
 
@@ -534,7 +541,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         .expect("effective constructor must promote its match");
     assert_eq!(match_record.wave, CausalWave::new(1));
     assert_eq!(match_record.premises.as_ref(), &[source.id]);
-    assert_eq!(match_record.terms.as_ref(), &[input_term]);
+    assert_eq!(match_record.terms.as_ref(), &[input_term, input_term]);
     assert_eq!(derived_fact.cause.rule_match(), Some(match_record.id));
     let node_term = constructor_fact.terms[1];
     assert_eq!(
@@ -585,7 +592,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     assert_eq!(snapshot.counters.promoted_matches, 1);
     assert_eq!(snapshot.counters.premise_handles, 1);
     assert_eq!(
-        snapshot.counters.term_handles, 1,
+        snapshot.counters.term_handles, 2,
         "match terms are counted once; fact-owned term ranges are separate storage"
     );
     assert_eq!(snapshot.counters.live_provisional_bytes, 0);
@@ -2508,6 +2515,36 @@ fn typed_union_rejects_decreasing_timestamp_before_native_mutation() {
     assert_eq!(snapshot.equalities.len(), 1);
     assert_eq!(snapshot.equality_nodes.len(), 1);
     assert_eq!(snapshot.matches.len(), 1);
+}
+
+#[test]
+fn causal_wave_accepts_monotone_native_equality_timestamps() {
+    let mut db = Database::default();
+    let receipts = db.enable_causal_receipts();
+    let wave = CausalWave::new(1);
+
+    assert!(
+        receipts
+            .validate_equality_wave_timestamp(wave, Value::new(2))
+            .is_ok()
+    );
+    assert!(
+        receipts
+            .validate_equality_wave_timestamp(wave, Value::new(3))
+            .is_ok(),
+        "native rebuild epochs remain inside one logical replay wave"
+    );
+    assert_eq!(
+        receipts
+            .validate_equality_wave_timestamp(wave, Value::new(2))
+            .unwrap_err(),
+        "equality timestamps decreased within one causal wave"
+    );
+    assert!(
+        receipts
+            .validate_equality_wave_timestamp(CausalWave::new(2), Value::new(4))
+            .is_ok()
+    );
 }
 
 #[test]

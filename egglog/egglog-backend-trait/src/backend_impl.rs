@@ -10,16 +10,19 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
-use egglog_bridge::{ActionRegistry, EGraph, GuardedRuleRunResult, QueryEntry, RuleBuilder};
+use egglog_bridge::{
+    ActionRegistry, CheckReplaySpec, EGraph, GuardedRuleRunResult, QueryEntry, RuleBuilder,
+    RuleReplayBinding, RuleReplaySpec,
+};
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
-    Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, FunctionReplaySpec, GuardedRuleRun,
-    GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot, ReplayLiteral, ReplaySortId,
-    ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    Backend, BaseValues, CausalRuleBinding, ColumnTy, ContainerValues, ExecutionState,
+    ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId, FunctionReplaySpec,
+    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot, ReplayLiteral,
+    ReplaySortId, ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId,
+    RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -57,6 +60,8 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         seminaive,
         no_decomp,
         core,
+        causal_receipt,
+        check_receipt,
         source_receipt,
         owned_external_funcs,
     } = rule;
@@ -69,6 +74,9 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
     }
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
+    let mut union_sorts = causal_receipt
+        .as_ref()
+        .map(|receipt| receipt.union_sorts.iter().copied());
 
     for atom in &core.body.atoms {
         let entries = rule_entries(&mut builder, &mut variables, &atom.args)?;
@@ -135,10 +143,57 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
             GenericCoreAction::Union(_, lhs, rhs) => {
                 let lhs = rule_entry(&mut builder, &mut variables, lhs)?;
                 let rhs = rule_entry(&mut builder, &mut variables, rhs)?;
-                builder.union(lhs, rhs);
+                if let Some(sorts) = union_sorts.as_mut() {
+                    let sort = sorts.next().ok_or_else(|| {
+                        anyhow::anyhow!("causal rule has fewer union sorts than union actions")
+                    })?;
+                    builder.union_with_replay(lhs, rhs, sort);
+                } else {
+                    builder.union(lhs, rhs);
+                }
             }
             GenericCoreAction::Panic(_, message) => builder.panic(message.clone()),
         }
+    }
+    if union_sorts.is_some_and(|mut sorts| sorts.next().is_some()) {
+        bail!("causal rule has more union sorts than union actions");
+    }
+
+    if let Some(receipt) = causal_receipt {
+        let bindings = receipt
+            .bindings
+            .iter()
+            .map(|binding| match binding {
+                CausalRuleBinding::Variable {
+                    variable,
+                    current_sort,
+                } => {
+                    let entry = variables.get(&variable.id).cloned().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "causal rule binding `{}` was not lowered into the native rule",
+                            variable.name
+                        )
+                    })?;
+                    Ok(RuleReplayBinding::Entry {
+                        entry,
+                        current_sort: *current_sort,
+                    })
+                }
+                CausalRuleBinding::Constant { term, sort } => Ok(RuleReplayBinding::Constant {
+                    term: *term,
+                    sort: *sort,
+                }),
+            })
+            .collect::<Result<Vec<_>>>()?;
+        builder.set_rule_receipt(RuleReplaySpec {
+            rule: receipt.rule,
+            bindings: bindings.into_boxed_slice(),
+        });
+    }
+    if let Some(receipt) = check_receipt {
+        builder.set_check_receipt(CheckReplaySpec {
+            check: receipt.check,
+        });
     }
 
     Ok(builder.build())
@@ -180,6 +235,10 @@ impl Backend for EGraph {
 
     fn finalize_causal_wave(&mut self) -> Result<()> {
         EGraph::finalize_causal_wave(self)
+    }
+
+    fn set_causal_wave(&mut self, wave: u64) -> Result<()> {
+        EGraph::set_causal_wave(self, wave)
     }
 
     fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>> {

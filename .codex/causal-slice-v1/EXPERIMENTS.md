@@ -801,6 +801,47 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   rule nodes. This calibrates Hardboiled only as evidence that Prefix breadth
   can collapse; it is not an expected exact firing count for the new slice.
 
+### 2026-07-23 — checkpoint 4b2h ordinary rules and relational roots
+
+- Status: accepted focused vertical checkpoint; equality-body/check endpoint
+  layouts, TSV rows, primitive result producers, Vec versions, slicing, replay,
+  and the five-workload receipt gate remain pending.
+- Ordinary native rules now promote one shared match record only when an
+  effect commits. The record owns the stable source rule ordinal, cumulative
+  logical wave, source-ordered exact premise `FactId`s, and compact term handles
+  for source variables. Canonicalized literal bindings copy a validated typed
+  `ReplayTermId`; no term is rendered or reconstructed at match time.
+- The frontend catalog retains ruleset/name and source variable name/sort pairs
+  for later replay emission. Table premises retain bridge source order and use
+  the existing decomposed-plan witness sidecar; primitives are guards, not
+  `FactId` premises.
+- Positive relational checks now publish their first exact successful native
+  premise witness. Explicit equality endpoints are intentionally not yet
+  claimed by this checkpoint.
+- A logical wave is one frontend execution leaf (`step_rules` or a future
+  grounded batch), not a bridge timestamp. Separate run commands advance a
+  global counter, while monotone native timestamps across multi-pass rebuild
+  remain inside one wave.
+- Source `run-rule` schedules fail closed before opening a wave while recording
+  receipts. The final proof replay will use its own grounded list-form command
+  with receipt recording disabled; guarded native witness capture is therefore
+  not added to this checkpoint.
+- Direct rule unions and constructor merge/congruence unions retain their
+  logical EqSort. Constructor merges derive that sort from the executing
+  database's registered table layout, preserving receipt-mode isolation across
+  cloned databases while supporting both CLI early activation and the
+  empty-function late-activation API. Union effects inside merge action blocks
+  remain an explicit unsupported receipt boundary.
+- Discriminating canaries cover mixed `[Premise(y), Constant(7)]` bindings,
+  one exact relational root, waves 1 then 2 across separate runs, direct plus
+  multi-pass congruence in one wave, early source-`run-rule` rejection, and
+  activation after empty function declarations.
+- Validation before freeze: `cargo test -p egglog causal_receipt -- --nocapture`
+  passed the focused frontend canaries; the multi-pass rebuild canary passed
+  separately; `cargo test -p egglog-core-relations --lib` passed 119 tests;
+  `cargo check --workspace`, formatting, and `git diff --check` passed. No
+  workload timing or receipt-overhead claim is made.
+
 ### 2026-07-23 — checkpoint 4b2g frontend source-constructor vertical slice
 
 - Status: bounded source-only bridge checkpoint. This is not yet a receipt

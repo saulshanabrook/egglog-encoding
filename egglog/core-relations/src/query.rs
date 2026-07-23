@@ -15,7 +15,7 @@ use crate::receipts::{
 };
 use crate::{
     BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, ExternalFunctionId, PoolSet,
-    ReplayConstructorSpec, ReplaySortId, RuleReceiptSpec, SourceReceiptSpec,
+    ReplayConstructorSpec, ReplaySortId, RuleBindingSpec, RuleReceiptSpec, SourceReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -683,8 +683,35 @@ impl RuleBuilder<'_, '_> {
                         .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
                         .collect(),
                 );
-                let mut binding_sources = Vec::with_capacity(spec.ordinary_vars.len());
-                for var in &spec.ordinary_vars {
+                let mut binding_sources = Vec::with_capacity(spec.bindings.len());
+                for binding in &spec.bindings {
+                    let RuleBindingSpec::Variable {
+                        variable: var,
+                        current_sort,
+                    } = binding
+                    else {
+                        let RuleBindingSpec::Constant { term, sort } = binding else {
+                            unreachable!()
+                        };
+                        assert!(!term.is_missing(), "receipt constant binding is missing");
+                        let node = self
+                            .qb
+                            .rsb
+                            .db
+                            .causal_receipts
+                            .as_ref()
+                            .and_then(|receipts| receipts.replay_term(*term))
+                            .unwrap_or_else(|| {
+                                panic!("receipt constant binding has an unknown ReplayTermId")
+                            });
+                        assert_eq!(
+                            node.sort(),
+                            *sort,
+                            "receipt constant binding has the wrong replay sort"
+                        );
+                        binding_sources.push(ReplayBindingSource::Constant { term: *term });
+                        continue;
+                    };
                     let premise_cell = spec
                         .premises
                         .iter()
@@ -705,11 +732,7 @@ impl RuleBuilder<'_, '_> {
                         }
                         ReplayBindingSource::Premise { premise, column }
                     } else {
-                        let sort = spec
-                            .current_vars
-                            .iter()
-                            .find_map(|(current, sort)| (*current == *var).then_some(*sort))
-                            .unwrap_or_else(|| {
+                        let sort = current_sort.unwrap_or_else(|| {
                                 panic!(
                                     "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
                                 )

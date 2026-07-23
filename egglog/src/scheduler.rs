@@ -552,6 +552,8 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
+                    causal_receipt: None,
+                    check_receipt: None,
                     source_receipt: None,
                     owned_external_funcs: Vec::new(),
                 })

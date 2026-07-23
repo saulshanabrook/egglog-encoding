@@ -44,7 +44,7 @@ pub use receipts::{
     RebuildDependency, ReceiptCauseDependencies, ReceiptCauseDependency, ReceiptCauseId,
     ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
     ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
-    RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
+    RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
     TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;

@@ -392,8 +392,33 @@ impl CheckReceiptSpec {
 pub struct RuleReceiptSpec {
     pub(crate) rule: u32,
     pub(crate) premises: Box<[AtomId]>,
-    pub(crate) ordinary_vars: Box<[Variable]>,
-    pub(crate) current_vars: Box<[(Variable, ReplaySortId)]>,
+    pub(crate) bindings: Box<[RuleBindingSpec]>,
+}
+
+/// One source-ordered binding retained by an effective rule match.
+#[derive(Clone, Copy, Debug)]
+pub enum RuleBindingSpec {
+    Variable {
+        variable: Variable,
+        current_sort: Option<ReplaySortId>,
+    },
+    Constant {
+        term: ReplayTermId,
+        sort: ReplaySortId,
+    },
+}
+
+impl RuleBindingSpec {
+    pub fn variable(variable: Variable, current_sort: Option<ReplaySortId>) -> Self {
+        Self::Variable {
+            variable,
+            current_sort,
+        }
+    }
+
+    pub fn constant(term: ReplayTermId, sort: ReplaySortId) -> Self {
+        Self::Constant { term, sort }
+    }
 }
 
 impl RuleReceiptSpec {
@@ -405,8 +430,22 @@ impl RuleReceiptSpec {
         Self {
             rule,
             premises: premises.into_iter().collect(),
-            ordinary_vars: ordinary_vars.into_iter().collect(),
-            current_vars: Box::new([]),
+            bindings: ordinary_vars
+                .into_iter()
+                .map(|variable| RuleBindingSpec::variable(variable, None))
+                .collect(),
+        }
+    }
+
+    pub fn with_bindings(
+        rule: u32,
+        premises: impl IntoIterator<Item = AtomId>,
+        bindings: impl IntoIterator<Item = RuleBindingSpec>,
+    ) -> Self {
+        Self {
+            rule,
+            premises: premises.into_iter().collect(),
+            bindings: bindings.into_iter().collect(),
         }
     }
 
@@ -414,7 +453,17 @@ impl RuleReceiptSpec {
         mut self,
         vars: impl IntoIterator<Item = (Variable, ReplaySortId)>,
     ) -> Self {
-        self.current_vars = vars.into_iter().collect();
+        let current_vars = vars.into_iter().collect::<HashMap<_, _>>();
+        for binding in &mut self.bindings {
+            if let RuleBindingSpec::Variable {
+                variable,
+                current_sort,
+            } = binding
+                && let Some(sort) = current_vars.get(variable)
+            {
+                *current_sort = Some(*sort);
+            }
+        }
         self
     }
 }
@@ -428,6 +477,9 @@ pub(crate) enum ReplayBindingSource {
     Current {
         variable: Variable,
         sort: ReplaySortId,
+    },
+    Constant {
+        term: ReplayTermId,
     },
 }
 
@@ -1964,9 +2016,10 @@ impl CausalReceipts {
         match *current {
             None => *current = Some((wave, timestamp)),
             Some((known_wave, known_timestamp)) if known_wave == wave => {
-                if known_timestamp != timestamp {
-                    return Err("one causal wave proposed more than one equality timestamp");
+                if timestamp < known_timestamp {
+                    return Err("equality timestamps decreased within one causal wave");
                 }
+                *current = Some((wave, timestamp));
             }
             Some((known_wave, known_timestamp)) if known_wave < wave => {
                 if timestamp < known_timestamp {
@@ -2427,6 +2480,7 @@ impl CausalReceipts {
                         current += 1;
                         term
                     }
+                    ReplayBindingSource::Constant { term } => term,
                 };
                 arena.provisional.terms.push(term);
             }

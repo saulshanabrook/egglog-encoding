@@ -1067,6 +1067,8 @@ mod tests {
                     name: name.to_owned(),
                     seminaive: true,
                     no_decomp: false,
+                    causal_receipt: None,
+                    check_receipt: None,
                     source_receipt: None,
                     owned_external_funcs: Vec::new(),
                     core: GenericCoreRule {

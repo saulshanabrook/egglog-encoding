@@ -311,7 +311,7 @@ impl HeadOps for ResolvedCall {
 }
 pub type ResolvedAtomTerm = GenericAtomTerm<ResolvedVar>;
 
-fn atom_term_sort(term: &ResolvedAtomTerm) -> ArcSort {
+pub(crate) fn atom_term_sort(term: &ResolvedAtomTerm) -> ArcSort {
     match term {
         GenericAtomTerm::Var(_, variable) | GenericAtomTerm::Global(_, variable) => {
             variable.sort.clone()

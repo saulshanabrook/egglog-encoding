@@ -8,9 +8,10 @@ use std::sync::Arc;
 
 use crate::core_relations;
 use crate::core_relations::{
-    ColumnId, Constraint, CounterId, ExternalFunctionId, PlanStrategy, QueryBuilder,
-    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceReceiptSpec, SourceRef, TableId, Value,
-    WriteVal,
+    CheckReceiptSpec as CoreCheckReceiptSpec, ColumnId, Constraint, CounterId, ExternalFunctionId,
+    PlanStrategy, QueryBuilder, ReplaySortId, ReplayTermId, RuleBindingSpec,
+    RuleBuilder as CoreRuleBuilder, RuleReceiptSpec as CoreRuleReceiptSpec, RuleSetBuilder,
+    SourceReceiptSpec, SourceRef, TableId, Value, WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use anyhow::Context;
@@ -64,6 +65,29 @@ pub enum QueryEntry {
         // correspond to a base value constant in egglog.
         ty: ColumnTy,
     },
+}
+
+#[derive(Clone, Debug)]
+pub enum RuleReplayBinding {
+    Entry {
+        entry: QueryEntry,
+        current_sort: ReplaySortId,
+    },
+    Constant {
+        term: ReplayTermId,
+        sort: ReplaySortId,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct RuleReplaySpec {
+    pub rule: u32,
+    pub bindings: Box<[RuleReplayBinding]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CheckReplaySpec {
+    pub check: u32,
 }
 
 impl From<Variable> for QueryEntry {
@@ -122,6 +146,10 @@ pub(crate) struct Query {
     no_decomp: bool,
     /// Stable source identity for an empty-query top-level action.
     source_receipt: Option<SourceRef>,
+    /// Exact ordinary-rule receipt metadata translated during lazy plan build.
+    rule_receipt: Option<RuleReplaySpec>,
+    /// Exact successful-check root metadata translated during lazy plan build.
+    check_receipt: Option<CheckReplaySpec>,
 }
 
 pub struct RuleBuilder<'a> {
@@ -168,6 +196,8 @@ impl EGraph {
                 plan_strategy: Default::default(),
                 no_decomp: false,
                 source_receipt: None,
+                rule_receipt: None,
+                check_receipt: None,
             },
         }
     }
@@ -357,7 +387,21 @@ impl RuleBuilder<'_> {
     /// Attribute effective commits from this empty-query action directly to
     /// one stable source identity.
     pub fn set_source_receipt(&mut self, source: SourceRef) {
+        assert!(self.query.rule_receipt.is_none());
+        assert!(self.query.check_receipt.is_none());
         self.query.source_receipt = Some(source);
+    }
+
+    pub fn set_rule_receipt(&mut self, receipt: RuleReplaySpec) {
+        assert!(self.query.source_receipt.is_none());
+        assert!(self.query.check_receipt.is_none());
+        self.query.rule_receipt = Some(receipt);
+    }
+
+    pub fn set_check_receipt(&mut self, receipt: CheckReplaySpec) {
+        assert!(self.query.source_receipt.is_none());
+        assert!(self.query.rule_receipt.is_none());
+        self.query.check_receipt = Some(receipt);
     }
 
     /// Bind a new variable of the given type in the query.
@@ -691,6 +735,16 @@ impl RuleBuilder<'_> {
         }));
     }
 
+    /// Merge two values while retaining their logical equality sort.
+    pub fn union_with_replay(&mut self, l: QueryEntry, r: QueryEntry, sort: ReplaySortId) {
+        self.query.add_rule.push(Box::new(move |inner, rb| {
+            let l = inner.convert(&l);
+            let r = inner.convert(&r);
+            rb.union_with_replay(inner.uf_table, l, r, inner.next_ts(), sort)
+                .context("typed union")
+        }));
+    }
+
     /// This method is equivalent to `remove(table, before); set(table, after)`,
     /// optionally propagating subsumption to the next row.
     pub(crate) fn rebuild_row(
@@ -800,17 +854,45 @@ impl Query {
         qb: QueryBuilder,
         mut inner: Bindings,
         desc: &str,
+        atom_mapping: &[core_relations::AtomId],
     ) -> Result<core_relations::RuleId> {
         let mut rb = qb.build();
         inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
         self.add_rule
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
-        Ok(match &self.source_receipt {
-            Some(source) => {
-                rb.build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))
-            }
-            None => rb.build_with_description(desc),
+        Ok(if let Some(source) = &self.source_receipt {
+            rb.build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))
+        } else if let Some(receipt) = &self.rule_receipt {
+            let bindings = receipt.bindings.iter().map(|binding| match binding {
+                RuleReplayBinding::Entry {
+                    entry,
+                    current_sort,
+                } => {
+                    let DstVar::Var(variable) = inner.convert(entry) else {
+                        panic!("rule receipt variable unexpectedly lowered to a constant")
+                    };
+                    RuleBindingSpec::variable(variable, Some(*current_sort))
+                }
+                RuleReplayBinding::Constant { term, sort } => {
+                    RuleBindingSpec::constant(*term, *sort)
+                }
+            });
+            rb.build_with_receipts(
+                desc,
+                CoreRuleReceiptSpec::with_bindings(
+                    receipt.rule,
+                    atom_mapping.iter().copied(),
+                    bindings,
+                ),
+            )
+        } else if let Some(receipt) = &self.check_receipt {
+            rb.build_check_with_receipts(
+                desc,
+                CoreCheckReceiptSpec::new(receipt.check, atom_mapping.iter().copied()),
+            )
+        } else {
+            rb.build_with_description(desc)
         })
     }
 
@@ -825,7 +907,7 @@ impl Query {
         for (table, entries, _schema_info) in &self.atoms {
             atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
         }
-        let rule_id = self.run_rules_and_build(qb, inner, desc)?;
+        let rule_id = self.run_rules_and_build(qb, inner, desc, &atom_mapping)?;
         let rs = rsb.build();
         let plan = Arc::new(rs.build_cached_plan(rule_id));
         Ok(CachedPlanInfo { plan, atom_mapping })

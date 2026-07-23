@@ -669,6 +669,18 @@ impl<'a> ExecutionState<'a> {
         self.changed = true;
     }
 
+    /// Whether this execution belongs to a database recording causal receipts.
+    pub fn causal_receipts_enabled(&self) -> bool {
+        self.db.causal_receipts.is_some()
+    }
+
+    /// Resolve the instance-local logical sort registered for one table cell.
+    pub fn causal_replay_sort(&self, table: TableId, column: ColumnId) -> Option<ReplaySortId> {
+        self.db
+            .causal_receipts
+            .and_then(|receipts| receipts.table_column_sort(table, column.index()))
+    }
+
     pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
         self.active_cause = cause.map(|cause| {
             self.db

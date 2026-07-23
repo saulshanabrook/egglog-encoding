@@ -25,7 +25,7 @@ use crate::core_relations::{
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
-    CausalReceipts, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
+    CausalReceipts, CausalWave, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
     ReplaySortId, ReplayTerm, ReplayTermId,
 };
 use egglog_numeric_id as numeric_id;
@@ -42,7 +42,10 @@ pub(crate) mod rule;
 #[cfg(test)]
 mod tests;
 
-pub use rule::{Function, QueryEntry, RuleBuilder, Variable, VariableId};
+pub use rule::{
+    CheckReplaySpec, Function, QueryEntry, RuleBuilder, RuleReplayBinding, RuleReplaySpec,
+    Variable, VariableId,
+};
 use thiserror::Error;
 
 /// A live registry of action handles for use by typed primitives.
@@ -712,7 +715,7 @@ impl EGraph {
             !read_deps.contains(&table_id),
             "self-referential merge for `{name}` may only write to its own table, not read it"
         );
-        let merge_fn = merge.to_callback(schema_math, &name, self);
+        let merge_fn = merge.to_callback(schema_math, &name, table_id, self);
         let table = SortedWritesTable::new(
             n_args,
             n_cols,
@@ -851,6 +854,14 @@ impl EGraph {
             anyhow::bail!("causal receipts are not enabled");
         }
         self.db.finalize_causal_wave();
+        Ok(())
+    }
+
+    pub fn set_causal_wave(&mut self, wave: u64) -> Result<()> {
+        if self.causal_receipts.is_none() {
+            anyhow::bail!("causal receipts are not enabled");
+        }
+        self.db.set_causal_wave(CausalWave::new(wave));
         Ok(())
     }
 
@@ -1525,6 +1536,7 @@ impl MergeFn {
         &self,
         schema_math: SchemaMath,
         function_name: &str,
+        merge_table: TableId,
         egraph: &mut EGraph,
     ) -> Box<core_relations::MergeFn> {
         // Split the merge into side-effect actions (run once) and one value expression per value
@@ -1571,7 +1583,15 @@ impl MergeFn {
             // Run the block's side effects once, before computing the merged values.
             if !identity_unchanged {
                 for action in &actions {
-                    action.run(state, cur, new, schema_math.n_keys, timestamp, &mut env);
+                    action.run(
+                        state,
+                        cur,
+                        new,
+                        schema_math.n_keys,
+                        timestamp,
+                        &mut env,
+                        merge_table,
+                    );
                 }
             }
 
@@ -1584,7 +1604,16 @@ impl MergeFn {
                 let out_val = if identity_unchanged {
                     cur[schema_math.val_col(i)]
                 } else {
-                    col_merge.run(state, cur, new, schema_math.n_keys, i, timestamp, &env)
+                    col_merge.run(
+                        state,
+                        cur,
+                        new,
+                        schema_math.n_keys,
+                        i,
+                        timestamp,
+                        &env,
+                        merge_table,
+                    )
                 };
                 changed |= cur[schema_math.val_col(i)] != out_val;
                 merged_vals.push(out_val);
@@ -1815,6 +1844,7 @@ impl ResolvedMergeAction {
         n_keys: usize,
         ts: Value,
         env: &mut SmallVec<[Value; 4]>,
+        merge_table: TableId,
     ) {
         // Action value expressions use explicit `OldCol`/`NewCol`, so `self_col` is irrelevant
         // (pass 0).
@@ -1823,20 +1853,24 @@ impl ResolvedMergeAction {
                 // `insert` respects the target table's own merge.
                 let row = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, 0, ts, env))
+                    .map(|arg| arg.run(state, cur, new, n_keys, 0, ts, env, merge_table))
                     .collect::<Vec<_>>();
                 table.insert(state, row.into_iter());
             }
             ResolvedMergeAction::Let { slot, value } => {
-                let v = value.run(state, cur, new, n_keys, 0, ts, env);
+                let v = value.run(state, cur, new, n_keys, 0, ts, env, merge_table);
                 // `let`s run in slot order, so the new binding lands at `slot`.
                 debug_assert_eq!(*slot, env.len());
                 env.push(v);
             }
             ResolvedMergeAction::Union { a, b, uf_table } => {
-                let av = a.run(state, cur, new, n_keys, 0, ts, env);
-                let bv = b.run(state, cur, new, n_keys, 0, ts, env);
+                let av = a.run(state, cur, new, n_keys, 0, ts, env, merge_table);
+                let bv = b.run(state, cur, new, n_keys, 0, ts, env, merge_table);
                 if av != bv {
+                    assert!(
+                        !state.causal_receipts_enabled(),
+                        "receipt recording does not support union effects inside merge blocks"
+                    );
                     state.stage_insert(*uf_table, &[av, bv, ts]);
                 }
             }
@@ -1861,6 +1895,7 @@ impl ResolvedMergeFn {
         self_col: usize,
         ts: Value,
         env: &[Value],
+        merge_table: TableId,
     ) -> Value {
         match self {
             ResolvedMergeFn::Const(v) => *v,
@@ -1880,7 +1915,19 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::UnionId { uf_table } => {
                 let (cur, new) = (cur[n_keys + self_col], new[n_keys + self_col]);
                 if cur != new {
-                    state.stage_insert(*uf_table, &[cur, new, ts]);
+                    if state.causal_receipts_enabled() {
+                        let sort = state
+                            .causal_replay_sort(
+                                merge_table,
+                                ColumnId::from_usize(n_keys + self_col),
+                            )
+                            .expect(
+                                "receipt-enabled merge is missing its logical replay-sort layout",
+                            );
+                        state.stage_union_with_replay(*uf_table, cur, new, ts, sort);
+                    } else {
+                        state.stage_insert(*uf_table, &[cur, new, ts]);
+                    }
                     // We pick the minimum when unioning. This matches the original egglog
                     // behavior. THIS MUST MATCH THE UNION-FIND IMPLEMENTATION!
                     std::cmp::min(cur, new)
@@ -1895,7 +1942,7 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::Primitive { prim, args, panic } => {
                 let args = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env, merge_table))
                     .collect::<Vec<_>>();
 
                 match state.call_external_func(*prim, &args) {
@@ -1915,7 +1962,7 @@ impl ResolvedMergeFn {
 
                 let args = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env, merge_table))
                     .collect::<Vec<_>>();
 
                 // Merge functions dispatch to another function that may be
@@ -1932,7 +1979,7 @@ impl ResolvedMergeFn {
             ResolvedMergeFn::Lookup { table, args } => {
                 let key = args
                     .iter()
-                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env))
+                    .map(|arg| arg.run(state, cur, new, n_keys, self_col, ts, env, merge_table))
                     .collect::<SmallVec<[Value; 4]>>();
                 // A constructor mints its (single) output on miss; no extra value columns.
                 table

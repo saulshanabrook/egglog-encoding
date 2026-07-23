@@ -138,6 +138,35 @@ pub struct RuleValue {
     pub ty: ColumnTy,
 }
 
+/// One source-ordered binding in an ordinary-rule receipt template.
+#[derive(Clone, Debug)]
+pub enum CausalRuleBinding {
+    Variable {
+        variable: RuleVar,
+        current_sort: ReplaySortId,
+    },
+    Constant {
+        term: ReplayTermId,
+        sort: ReplaySortId,
+    },
+}
+
+/// Backend-neutral causal metadata for one ordinary source rule.
+#[derive(Clone, Debug)]
+pub struct CausalRuleSpec {
+    pub rule: u32,
+    pub bindings: Box<[CausalRuleBinding]>,
+    /// Logical equality sorts for source `union` actions, in head order.
+    pub union_sorts: Box<[ReplaySortId]>,
+}
+
+/// Exact positive-check root metadata. Equality endpoint witnesses are added
+/// independently; relational premises are always captured in source order.
+#[derive(Clone, Debug)]
+pub struct CausalCheckSpec {
+    pub check: u32,
+}
+
 /// A call in a rule body.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RuleBodyCall {
@@ -176,6 +205,9 @@ pub struct RuleSpec {
     pub seminaive: bool,
     pub no_decomp: bool,
     pub core: BackendCoreRule,
+    /// Exact ordinary-rule receipt metadata, absent outside causal mode.
+    pub causal_receipt: Option<CausalRuleSpec>,
+    pub check_receipt: Option<CausalCheckSpec>,
     /// Stable source identity for a top-level action command.
     ///
     /// Source actions have an empty query and attribute every effective
@@ -460,6 +492,13 @@ pub trait Backend: Send + Sync {
     /// Promote all effective roots from the completed synchronous causal
     /// wave. Call only at an existing native merge/rebuild barrier.
     fn finalize_causal_wave(&mut self) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Set the globally monotone wave inherited by subsequent native effects.
+    fn set_causal_wave(&mut self, _wave: u64) -> Result<()> {
         Err(anyhow::anyhow!(
             "this backend does not support causal receipts"
         ))
