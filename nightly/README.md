@@ -26,13 +26,12 @@ open nightly/output/index.html
 
 ## Tuning
 
-`scripts/nightly_bench.py` reads these environment variables:
+Edit the constants at the top of `scripts/nightly_bench.py`:
 
-- `NIGHTLY_ROUNDS` — rows per endpoint/file (default: `bench.py`'s default).
-- `NIGHTLY_TIMEOUT_SEC` — per-process timeout in seconds.
-- `NIGHTLY_FILES` — shell-split benchmark files; empty selects the
-  representative suite.
-- `NIGHTLY_FACT_DIRECTORY` — fact directory for explicit `NIGHTLY_FILES`.
+- `ROUNDS` — rows per endpoint/file.
+- `TIMEOUT_SEC` — per-process timeout in seconds.
+- `FILES` — benchmark files to run; empty selects the representative suite.
+- `FACT_DIRECTORY` — fact directory for explicit `FILES`.
 
 Pass an alternate output directory as a single positional argument:
 

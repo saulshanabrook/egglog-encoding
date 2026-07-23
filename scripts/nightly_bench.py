@@ -8,15 +8,9 @@ writes eval-live's single-file interactive HTML report to
 nightly``, and serves that directory, matching ``report=`` in the nightly
 configuration.
 
-The output directory defaults to ``<repo>/nightly/output`` and may be
-overridden with a single positional argument. Environment variables tune the
-run without editing this script:
-
-- ``NIGHTLY_ROUNDS``: rows per endpoint/file (default: bench.py's default).
-- ``NIGHTLY_TIMEOUT_SEC``: per-process timeout in seconds.
-- ``NIGHTLY_FILES``: shell-split benchmark files; empty selects bench.py's
-  representative suite.
-- ``NIGHTLY_FACT_DIRECTORY``: fact directory for the explicit ``NIGHTLY_FILES``.
+Edit the constants below to tune the run. The output directory defaults to
+``<repo>/nightly/output`` and may be overridden with a single positional
+argument.
 """
 
 from __future__ import annotations
@@ -32,35 +26,26 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCH_SCRIPT = REPO_ROOT / "bench.py"
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "nightly" / "output"
 
-
-def _optional_int_env(name: str) -> int | None:
-    """Return a positive integer environment override, or None when unset."""
-
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return None
-    value = int(raw)
-    if value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {value}")
-    return value
+# Benchmark configuration — edit these to tune the nightly run.
+ROUNDS = 6
+TIMEOUT_SEC = 120
+# Benchmark files to run. Empty selects bench.py's representative suite, which
+# also pairs benchmarks/pointer-analysis-small.egg with its fact directory.
+FILES: tuple[str, ...] = ()
+# Fact directory for the explicit FILES above; keep None when FILES is empty.
+FACT_DIRECTORY: str | None = None
 
 
 def _bench_command(output_dir: Path) -> list[str]:
     """Build the bench.py invocation that writes the interactive report."""
 
     report_path = output_dir / "index.jsonl"
-    command = [sys.executable, str(BENCH_SCRIPT)]
-    command.extend(shlex.split(os.environ.get("NIGHTLY_FILES", "")))
-    fact_directory = os.environ.get("NIGHTLY_FACT_DIRECTORY", "").strip()
-    if fact_directory:
-        command.extend(("--fact-directory", fact_directory))
+    command = [sys.executable, str(BENCH_SCRIPT), *FILES]
+    if FACT_DIRECTORY is not None:
+        command.extend(("--fact-directory", FACT_DIRECTORY))
     command.extend(("--report", str(report_path), "--open"))
-    rounds = _optional_int_env("NIGHTLY_ROUNDS")
-    if rounds is not None:
-        command.extend(("--rounds", str(rounds)))
-    timeout_sec = _optional_int_env("NIGHTLY_TIMEOUT_SEC")
-    if timeout_sec is not None:
-        command.extend(("--timeout-sec", str(timeout_sec)))
+    command.extend(("--rounds", str(ROUNDS)))
+    command.extend(("--timeout-sec", str(TIMEOUT_SEC)))
     return command
 
 

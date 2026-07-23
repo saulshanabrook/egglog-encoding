@@ -65,8 +65,8 @@ benchmark-smoke:
 # Benchmark the suite and write eval-live's interactive report to
 # nightly/output/index.html. The egraphs-good nightly service
 # (nightly.cs.washington.edu) runs this target and serves that directory,
-# matching `report=` in the nightly configuration. Tune a run with the
-# NIGHTLY_* environment variables documented in scripts/nightly_bench.py.
+# matching `report=` in the nightly configuration. Tune a run by editing the
+# constants at the top of scripts/nightly_bench.py.
 nightly:
 	uv run --locked python scripts/nightly_bench.py
 
