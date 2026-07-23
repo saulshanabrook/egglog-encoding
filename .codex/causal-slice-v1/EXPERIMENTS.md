@@ -1300,3 +1300,40 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - These are integration and regression checks, not receipt-overhead benchmark
   measurements. Deletion/timeline recording and all later checkpoints remain
   untouched.
+
+### 2026-07-23 — checkpoint-1 optimization 1: ordered local prior lookup
+
+- Falsifying profile: the coordinator's release Math sample at clean
+  `d2a18a827864d12b6ac679eeb3b8d3582c63951c` placed 3,372 of 6,697 samples in
+  `ReceiptBatch::cache_prior_fact_terms`. The effective-event repair was
+  linearly scanning every fact already appended to the batch for every rebuilt
+  fact, making a rebuild-heavy batch quadratic even though only effective
+  events copied terms.
+- One variable changed: batch-local prior lookup is now allocation-free binary
+  search over the existing `(FactId, PendingFact)` vector. A cheap first/last
+  range guard sends prior-wave FactIds directly to the shared arena without any
+  local comparisons. No per-batch map, counter, eager preload, or additional
+  retained memory was introduced.
+- The ordering invariant is explicit at append: each batch debug-asserts that
+  its new FactId is strictly greater than the preceding local FactId. Global
+  atomic allocation may leave gaps when batches interleave, but cannot reverse
+  one batch's append order.
+- The focused canary gives one batch FactIds 1 and 3 while another batch owns
+  FactId 2, then resolves both local endpoints and verifies their exact term
+  slices. This exercises ordered lookup across a real global-ID gap rather than
+  assuming local density.
+- Validation:
+  - `cargo test -p egglog-core-relations
+    batch_local_prior_lookup_handles_interleaved_fact_ids --lib -q`: 1 passed,
+    0 failed.
+  - `cargo test -p egglog-core-relations --lib -q`: 144 passed, 0 failed.
+  - `cargo check -p egglog-core-relations`: passed with no warnings.
+  - `cargo build --release -p egglog-experimental`: passed.
+  - direct release Math and Eggcc `-j 1 --causal-receipts` probes both exited
+    0. The Math command's diagnostic wall time fell from 11.86s before this
+    change to 2.76s in this run, and its printed merge/rebuild split fell from
+    1.970s/8.399s to 0.671s/0.414s. These are directional integration probes,
+    not the contracted `./bench.py` receipt gate; the coordinator owns that
+    measurement.
+- Scope remains frozen: no deletion/timeline, slicing, replay, workload cases,
+  or benchmark-runner changes.

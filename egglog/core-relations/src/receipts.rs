@@ -2463,11 +2463,16 @@ impl ReceiptBatch {
         if self.rebuild_term_ranges.contains_key(&cause) {
             return 0;
         }
-        let local = self
-            .facts
-            .iter()
-            .find(|(fact, _)| *fact == prior_fact)
-            .map(|(_, fact)| (fact.table, self.fact_terms[fact.terms.as_range()].to_vec()));
+        let local = match (self.facts.first(), self.facts.last()) {
+            (Some((first, _)), Some((last, _))) if *first <= prior_fact && prior_fact <= *last => {
+                self.facts
+                    .binary_search_by_key(&prior_fact, |(fact, _)| *fact)
+                    .ok()
+                    .map(|index| &self.facts[index])
+                    .map(|(_, fact)| (fact.table, self.fact_terms[fact.terms.as_range()].to_vec()))
+            }
+            _ => None,
+        };
         let (prior_table, terms) = if let Some(local) = local {
             local
         } else {
@@ -2649,6 +2654,12 @@ impl ReceiptBatch {
                     })
             };
         let id = FactId::new(ReceiptShared::alloc_u64(&self.shared.next_fact, 1));
+        if let Some((last, _)) = self.facts.last() {
+            debug_assert!(
+                *last < id,
+                "ReceiptBatch FactIds must remain strictly increasing"
+            );
+        }
         self.facts.push((
             id,
             PendingFact {
@@ -4956,6 +4967,64 @@ mod tests {
             [low_term, high_term],
             "FactId order must be independent of batch publication order"
         );
+    }
+
+    #[test]
+    fn batch_local_prior_lookup_handles_interleaved_fact_ids() {
+        let receipts = CausalReceipts::default();
+        let table = TableId::new_const(2);
+        let sort = ReplaySortId::new(31);
+        receipts
+            .register_table_layout(table, &[Some(sort)])
+            .unwrap();
+
+        let first_row = [Value::new_const(31)];
+        let gap_row = [Value::new_const(32)];
+        let last_row = [Value::new_const(33)];
+        let first_term = receipts.intern_literal(sort, ReplayLiteral::I64(31), first_row[0]);
+        let gap_term = receipts.intern_literal(sort, ReplayLiteral::I64(32), gap_row[0]);
+        let last_term = receipts.intern_literal(sort, ReplayLiteral::I64(33), last_row[0]);
+
+        let mut local = receipts.new_batch();
+        let first_fact = local.record_fact_with_terms(
+            table,
+            receipts.source_draft(SourceRef::Synthetic(31)),
+            &first_row,
+            Some(&[first_term]),
+        );
+        let mut interleaved = receipts.new_batch();
+        let gap_fact = interleaved.record_fact_with_terms(
+            table,
+            receipts.source_draft(SourceRef::Synthetic(32)),
+            &gap_row,
+            Some(&[gap_term]),
+        );
+        let last_fact = local.record_fact_with_terms(
+            table,
+            receipts.source_draft(SourceRef::Synthetic(33)),
+            &last_row,
+            Some(&[last_term]),
+        );
+        assert!(first_fact < gap_fact && gap_fact < last_fact);
+
+        let first_cache = receipts.source_draft(SourceRef::Synthetic(34));
+        let last_cache = receipts.source_draft(SourceRef::Synthetic(35));
+        assert_eq!(
+            local.cache_prior_fact_terms(first_cache, first_fact, table),
+            1
+        );
+        assert_eq!(
+            local.cache_prior_fact_terms(last_cache, last_fact, table),
+            1
+        );
+        let (_, first_range) = local.rebuild_term_ranges[&first_cache];
+        let (_, last_range) = local.rebuild_term_ranges[&last_cache];
+        assert_eq!(&local.rebuild_terms[first_range.as_range()], &[first_term]);
+        assert_eq!(&local.rebuild_terms[last_range.as_range()], &[last_term]);
+
+        interleaved.publish();
+        local.publish();
+        receipts.finalize_wave();
     }
 
     #[test]
