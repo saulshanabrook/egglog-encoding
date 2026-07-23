@@ -370,6 +370,11 @@ struct CausalState {
     rule_catalog: Vec<(String, String, Box<[(String, String)]>)>,
 }
 
+struct ParsedInputRow {
+    line: u64,
+    literals: Vec<Literal>,
+}
+
 impl Default for CausalState {
     fn default() -> Self {
         let mut state = Self {
@@ -419,6 +424,16 @@ impl CausalState {
             Literal::String(_) => "String",
         };
         self.sort_ids[name]
+    }
+
+    fn replay_literal(literal: &Literal) -> ReplayLiteral {
+        match literal {
+            Literal::Unit => ReplayLiteral::Unit,
+            Literal::Bool(value) => ReplayLiteral::Bool(*value),
+            Literal::Int(value) => ReplayLiteral::I64(*value),
+            Literal::Float(value) => ReplayLiteral::F64(value.0.to_bits()),
+            Literal::String(value) => ReplayLiteral::String(Arc::from(value.as_str())),
+        }
     }
 
     fn function_spec(
@@ -519,13 +534,17 @@ impl CausalState {
         }
     }
 
-    fn next_source(&mut self) -> SourceRef {
+    fn next_source_ordinal(&mut self) -> u64 {
         let ordinal = self.next_source;
         self.next_source = self
             .next_source
             .checked_add(1)
             .expect("too many causal source commands");
-        SourceRef::Synthetic(ordinal)
+        ordinal
+    }
+
+    fn next_source(&mut self) -> SourceRef {
+        SourceRef::Synthetic(self.next_source_ordinal())
     }
 
     fn register_rule(&mut self, ruleset: &str, name: &str, inputs: &[ResolvedVar]) -> u32 {
@@ -2778,7 +2797,7 @@ impl EGraph {
         function_type: &FuncType,
         span: &Span,
         file: &str,
-    ) -> Result<Vec<Vec<Literal>>, Error> {
+    ) -> Result<Vec<ParsedInputRow>, Error> {
         let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
         filename.push(file);
 
@@ -2807,7 +2826,7 @@ impl EGraph {
         }
 
         let mut rows = Vec::with_capacity(contents.lines().count());
-        for line in contents.lines() {
+        for (line_index, line) in contents.lines().enumerate() {
             let mut fields = line.split('\t').map(str::trim);
             let mut row = Vec::with_capacity(row_schema.len());
             for sort in &row_schema {
@@ -2839,7 +2858,10 @@ impl EGraph {
             if row.len() != row_schema.len() || fields.next().is_some() {
                 return Err(Error::InputFileFormatError(file.to_owned()));
             }
-            rows.push(row);
+            rows.push(ParsedInputRow {
+                line: u64::try_from(line_index + 1).expect("input file has too many lines"),
+                literals: row,
+            });
         }
         Ok(rows)
     }
@@ -2852,29 +2874,70 @@ impl EGraph {
             .clone();
         let parsed_contents =
             Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
-        let func = self.functions.get_mut(func_name).unwrap();
+        let backend_id = self.functions[func_name].backend_id;
         let unit_val = self.backend.base_values().get(());
-        let parsed_contents = parsed_contents
-            .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(|literal| match literal {
-                        Literal::Int(value) => self.backend.base_values().get(value),
-                        Literal::Float(value) => self
-                            .backend
-                            .base_values()
-                            .get::<F>(core_relations::Boxed::new(value)),
-                        Literal::String(value) => self.backend.base_values().get::<S>(value.into()),
-                        Literal::Unit => unit_val,
-                        Literal::Bool(_) => unreachable!(),
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
+        let source_command = self
+            .causal_state
+            .as_mut()
+            .map(CausalState::next_source_ordinal);
+        let (values, causal_rows) = if let Some(command) = source_command {
+            let mut causal_rows = Vec::with_capacity(parsed_contents.len());
+            for parsed in parsed_contents {
+                let row_values = parsed
+                    .literals
+                    .iter()
+                    .map(|literal| literal_to_value(self.backend.base_values(), literal))
+                    .collect::<Vec<_>>();
+                let mut terms = Vec::with_capacity(parsed.literals.len());
+                for (literal, value) in parsed.literals.iter().zip(row_values.iter().copied()) {
+                    let causal = self.causal_state.as_ref().unwrap();
+                    let term = self
+                        .backend
+                        .intern_replay_literal(
+                            causal.literal_sort(literal),
+                            CausalState::replay_literal(literal),
+                            value,
+                        )
+                        .map_err(|error| Error::BackendError(error.to_string()))?;
+                    terms.push(term);
+                }
+                causal_rows.push(egglog_bridge::SourceInputRow::new(
+                    SourceRef::InputRow {
+                        command,
+                        line: parsed.line,
+                    },
+                    row_values,
+                    terms,
+                ));
+            }
+            (Vec::new(), Some(causal_rows))
+        } else {
+            let values = parsed_contents
+                .into_iter()
+                .map(|row| {
+                    row.literals
+                        .into_iter()
+                        .map(|literal| match literal {
+                            Literal::Int(value) => self.backend.base_values().get(value),
+                            Literal::Float(value) => self
+                                .backend
+                                .base_values()
+                                .get::<F>(core_relations::Boxed::new(value)),
+                            Literal::String(value) => {
+                                self.backend.base_values().get::<S>(value.into())
+                            }
+                            Literal::Unit => unit_val,
+                            Literal::Bool(_) => unreachable!(),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            (values, None)
+        };
 
         log::debug!("Successfully loaded file.");
 
-        let num_facts = parsed_contents.len();
+        let num_facts = causal_rows.as_ref().map_or_else(|| values.len(), Vec::len);
 
         let bridge = self
             .backend
@@ -2885,27 +2948,37 @@ impl EGraph {
                     "loading facts from a file requires the reference bridge backend".into(),
                 )
             })?;
-        let table_action = egglog_bridge::TableAction::new(bridge, func.backend_id);
-
-        if function_type.subtype != FunctionSubtype::Constructor {
-            self.backend.with_execution_state(|es| {
-                for row in parsed_contents.iter() {
-                    table_action.insert(es, row.iter().copied());
-                }
-                Some(unit_val)
-            });
+        if let Some(causal_rows) = causal_rows {
+            bridge
+                .stage_source_input_rows(backend_id, &causal_rows)
+                .map_err(|error| Error::BackendError(error.to_string()))?;
         } else {
-            self.backend.with_execution_state(|es| {
-                for row in parsed_contents.iter() {
-                    // Constructor semantics: mint a fresh eclass id for
-                    // each missing key.
-                    table_action.lookup_or_insert(es, row);
-                }
-                Some(unit_val)
-            });
+            let table_action = egglog_bridge::TableAction::new(bridge, backend_id);
+            if function_type.subtype != FunctionSubtype::Constructor {
+                self.backend.with_execution_state(|es| {
+                    for row in values.iter() {
+                        table_action.insert(es, row.iter().copied());
+                    }
+                    Some(unit_val)
+                });
+            } else {
+                self.backend.with_execution_state(|es| {
+                    for row in values.iter() {
+                        // Constructor semantics: mint a fresh eclass id for
+                        // each missing key.
+                        table_action.lookup_or_insert(es, row);
+                    }
+                    Some(unit_val)
+                });
+            }
         }
 
         self.backend.flush_updates();
+        if self.causal_state.is_some() {
+            self.backend
+                .finalize_causal_wave()
+                .map_err(|error| Error::BackendError(error.to_string()))?;
+        }
 
         log::info!("Read {num_facts} facts into {func_name} from '{file}'.");
         Ok(())
@@ -3760,16 +3833,13 @@ impl<'a> BackendRule<'a> {
             core::GenericAtomTerm::Literal(span, literal) => {
                 let value = literal_to_rule_value(self.backend.base_values(), literal);
                 if let Some(causal) = self.causal_state {
-                    let replay = match literal {
-                        Literal::Unit => ReplayLiteral::Unit,
-                        Literal::Bool(value) => ReplayLiteral::Bool(*value),
-                        Literal::Int(value) => ReplayLiteral::I64(*value),
-                        Literal::Float(value) => ReplayLiteral::F64(value.0.to_bits()),
-                        Literal::String(value) => ReplayLiteral::String(Arc::from(value.as_str())),
-                    };
                     let term = self
                         .backend
-                        .intern_replay_literal(causal.literal_sort(literal), replay, value.value)
+                        .intern_replay_literal(
+                            causal.literal_sort(literal),
+                            CausalState::replay_literal(literal),
+                            value.value,
+                        )
                         .map_err(|error| Error::BackendError(error.to_string()))?;
                     self.literal_terms.insert(literal.clone(), term);
                 }
@@ -4646,6 +4716,132 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2]
         );
+    }
+
+    #[test]
+    fn causal_receipts_batch_tsv_rows_with_exact_physical_sources() {
+        let directory = std::env::temp_dir().join(format!(
+            "egglog-causal-input-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("leaf.tsv"), "7\n7\n9\n").unwrap();
+        std::fs::write(directory.join("edge.tsv"), "1\t2\n").unwrap();
+        std::fs::write(directory.join("score.tsv"), "1\t10\n").unwrap();
+
+        let mut egraph = EGraph::default();
+        egraph.fact_directory = Some(directory.clone());
+        egraph.enable_causal_receipts().unwrap();
+        let result = egraph.parse_and_run_program(
+            None,
+            r#"
+                (datatype Node (Leaf i64))
+                (relation Edge (i64 i64))
+                (function Score (i64) i64 :merge old)
+                (relation SeenScore (i64))
+                (input Leaf "leaf.tsv")
+                (input Edge "edge.tsv")
+                (input Score "score.tsv")
+                (rule ((= value (Score 1))) ((SeenScore value)))
+                (run 1)
+                (check (Edge 1 2))
+                (check (SeenScore 10))
+            "#,
+        );
+        result.unwrap();
+
+        std::fs::write(directory.join("bad.tsv"), "1\nnot-an-integer\n").unwrap();
+        let mut rejected = EGraph::default();
+        rejected.fact_directory = Some(directory.clone());
+        rejected.enable_causal_receipts().unwrap();
+        let error = rejected
+            .parse_and_run_program(
+                None,
+                "(datatype BadNode (BadLeaf i64)) (input BadLeaf \"bad.tsv\")",
+            )
+            .unwrap_err();
+        assert!(matches!(error, Error::InputFileFormatError(_)));
+        assert!(
+            rejected.causal_receipt_snapshot().unwrap().facts.is_empty(),
+            "full-file validation must reject the batch before staging its valid prefix"
+        );
+        rejected
+            .parse_and_run_program(None, "(input BadLeaf \"leaf.tsv\")")
+            .unwrap();
+        let recovered = rejected
+            .causal_receipt_snapshot()
+            .unwrap()
+            .facts
+            .iter()
+            .filter_map(|fact| match &fact.cause {
+                core_relations::FactCause::Source(source) => Some(source),
+                _ => None,
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(!recovered.is_empty());
+        assert!(
+            recovered
+                .iter()
+                .all(|source| matches!(source, SourceRef::InputRow { command: 0, .. })),
+            "a rejected file must not consume the next source command ordinal"
+        );
+        std::fs::remove_dir_all(&directory).ok();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        let source_facts = snapshot
+            .facts
+            .iter()
+            .filter_map(|fact| match &fact.cause {
+                core_relations::FactCause::Source(source) => Some((source, fact)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(source_facts.len(), 4);
+        for expected in [
+            SourceRef::InputRow {
+                command: 0,
+                line: 1,
+            },
+            SourceRef::InputRow {
+                command: 0,
+                line: 3,
+            },
+            SourceRef::InputRow {
+                command: 1,
+                line: 1,
+            },
+            SourceRef::InputRow {
+                command: 2,
+                line: 1,
+            },
+        ] {
+            assert!(source_facts.iter().any(|(source, _)| **source == expected));
+        }
+        assert!(!source_facts.iter().any(|(source, _)| {
+            **source
+                == SourceRef::InputRow {
+                    command: 0,
+                    line: 2,
+                }
+        }));
+        for (_, fact) in source_facts
+            .iter()
+            .filter(|(source, _)| matches!(source, SourceRef::InputRow { command: 0, .. }))
+        {
+            assert!(fact.terms.iter().copied().any(|term| {
+                !term.is_missing()
+                    && matches!(
+                        egraph.causal_replay_term(term).unwrap(),
+                        Some(ReplayTerm::Call { .. })
+                    )
+            }));
+        }
+        assert_eq!(snapshot.counters.unattributed_commits, 0);
     }
 
     #[test]

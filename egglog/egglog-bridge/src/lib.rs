@@ -258,6 +258,28 @@ pub struct FunctionReplaySpec {
     pub constructor: Option<ReplayConstructorSpec>,
 }
 
+/// One fully parsed source row ready for causal input staging.
+#[derive(Clone, Debug)]
+pub struct SourceInputRow {
+    pub source: core_relations::SourceRef,
+    pub values: Box<[Value]>,
+    pub terms: Box<[ReplayTermId]>,
+}
+
+impl SourceInputRow {
+    pub fn new(
+        source: core_relations::SourceRef,
+        values: impl IntoIterator<Item = Value>,
+        terms: impl IntoIterator<Item = ReplayTermId>,
+    ) -> Self {
+        Self {
+            source,
+            values: values.into_iter().collect(),
+            terms: terms.into_iter().collect(),
+        }
+    }
+}
+
 impl FunctionReplaySpec {
     pub fn new(
         logical_sorts: impl IntoIterator<Item = ReplaySortId>,
@@ -823,6 +845,73 @@ impl EGraph {
             .map_err(anyhow::Error::msg)?;
         self.funcs[func].replay = Some(spec);
         Ok(())
+    }
+
+    /// Stage one prevalidated TSV input batch with exact per-line source
+    /// causes. All rows share one native execution state and one bulk receipt
+    /// registration; constructor prediction therefore keeps its normal
+    /// within-batch identity semantics.
+    pub fn stage_source_input_rows(&self, func: FunctionId, rows: &[SourceInputRow]) -> Result<()> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        let info = &self.funcs[func];
+        let replay = info.replay.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("function `{}` has no causal replay metadata", info.name)
+        })?;
+        let constructor = replay.constructor.as_ref();
+        let expected_columns = if constructor.is_some() {
+            info.n_keys
+        } else {
+            info.schema.len()
+        };
+        for row in rows {
+            if row.values.len() != expected_columns || row.terms.len() != expected_columns {
+                anyhow::bail!(
+                    "function `{}` expected {expected_columns} source columns but received {} values and {} terms",
+                    info.name,
+                    row.values.len(),
+                    row.terms.len()
+                );
+            }
+            for ((sort, value), term) in replay
+                .logical_sorts
+                .iter()
+                .take(expected_columns)
+                .copied()
+                .zip(row.values.iter().copied())
+                .zip(row.terms.iter().copied())
+            {
+                if receipts.lookup_term(sort, value) != Some(term) {
+                    anyhow::bail!(
+                        "function `{}` source value is missing its exact typed replay term",
+                        info.name
+                    );
+                }
+            }
+        }
+
+        let sources = rows
+            .iter()
+            .map(|row| row.source.clone())
+            .collect::<Vec<_>>();
+        let action = TableAction::new(self, func);
+        self.db
+            .with_source_row_causes(&sources, |state, row_index| {
+                let row = &rows[row_index];
+                if let Some(constructor) = constructor {
+                    let output = action
+                        .lookup_or_insert(state, &row.values)
+                        .expect("constructor source insertion must return its result value");
+                    receipts
+                        .intern_call(constructor.result_sort, constructor.op, &row.terms, output)
+                        .expect("prevalidated constructor source terms must form a replay call");
+                } else {
+                    action.insert(state, row.values.iter().copied());
+                }
+            })
+            .map_err(anyhow::Error::msg)
     }
 
     /// Intern one typed source literal in the structural replay DAG.

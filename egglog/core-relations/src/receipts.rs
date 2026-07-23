@@ -312,6 +312,13 @@ impl ReplayTermStore {
 pub enum SourceRef {
     /// Test and embedding callers may provide their own stable input ordinal.
     Synthetic(u64),
+    /// One physical row of an original `(input ...)` command.
+    InputRow {
+        /// Frontend-global source-command ordinal.
+        command: u64,
+        /// One-based physical line number in the source file.
+        line: u64,
+    },
 }
 
 /// Static source identity attached to every effective lane of one source
@@ -2483,6 +2490,29 @@ impl CausalReceipts {
             })
             .collect();
         arena.add_live_bytes(lanes.len() * mem::size_of::<CauseDraft>());
+        result
+    }
+
+    /// Register heterogeneous source rows contiguously under one arena lock.
+    pub(crate) fn register_source_rows(&self, sources: &[SourceRef]) -> Vec<CauseDraftId> {
+        if sources.is_empty() {
+            return Vec::new();
+        }
+        let first = ReceiptShared::alloc_u64(&self.0.next_cause_draft, sources.len());
+        let mut arena = self.0.arena.lock().unwrap();
+        let result = sources
+            .iter()
+            .enumerate()
+            .map(|(offset, source)| {
+                let id = CauseDraftId::new(first + offset as u64);
+                arena
+                    .provisional
+                    .causes
+                    .install(id.get(), CauseDraft::Source(source.clone()));
+                id
+            })
+            .collect();
+        arena.add_live_bytes(sources.len() * mem::size_of::<CauseDraft>());
         result
     }
 

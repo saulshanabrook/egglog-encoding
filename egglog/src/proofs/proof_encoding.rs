@@ -1545,6 +1545,7 @@ impl<'a> ProofInstrumentor<'a> {
         let mut actions = vec![];
         for row in rows {
             let mut expressions = row
+                .literals
                 .into_iter()
                 .map(|literal| ResolvedExpr::Lit(span.clone(), literal));
             let inputs = expressions

@@ -1025,3 +1025,31 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Focused validation: all five decomposed tests pass, including the scoped
   transport and ordinary-mode no-sidecar controls. Full core/workspace gates
   are required before freezing the checkpoint.
+
+### 2026-07-23 — checkpoint 4b2n batched TSV source receipts
+
+- Hypothesis: Pointer's first failure occurred before rule execution because
+  `(input ...)` used raw `TableAction` writes with no active source cause. Its
+  23 files and 2,255 rows require a per-file batch, not one receipt arena lock
+  and execution-state construction per row.
+- `SourceRef::InputRow { command, line }` now names the frontend-global input
+  command and one-based physical TSV line. Parsing and type validation still
+  complete for the entire file before a command ordinal, replay term, cause,
+  or native mutation is produced.
+- The bridge validates the complete typed row batch, bulk-registers its
+  heterogeneous source causes under one receipt-arena lock for a nonempty
+  file, and stages every row through one native `ExecutionState`. Constructor
+  rows retain the native shared prediction map, install one structural call
+  term for the minted ID, and make duplicate keys no-ops; custom/relation rows
+  retain exact typed terms for all visible columns. One flush and one receipt
+  finalization follow the file. The atomicity contract is unchanged native
+  import semantics: parse/schema failures occur before all effects, while a
+  custom merge failure during flush is not a transactional file rollback.
+- The frontend canary combines constructor and relation inputs. It proves
+  distinct command ordinals, exact physical lines, first-effective duplicate
+  ownership, resolvable constructor calls, and zero unattributed commits.
+- The direct single-thread Pointer treatment command now exits successfully
+  with its original check, moving from the first predicted-insertion panic
+  through the complete workload. No Pointer-specific rule or fallback was
+  added. Full focused and workspace regressions remain required before
+  freezing the checkpoint.

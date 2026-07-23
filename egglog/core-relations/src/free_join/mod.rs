@@ -444,6 +444,27 @@ impl Database {
         Ok(())
     }
 
+    /// Run one prevalidated batch of heterogeneous source rows through a
+    /// shared execution state. Causes are registered with one receipt-arena
+    /// lock, then activated one row at a time before `f` stages native work.
+    pub fn with_source_row_causes(
+        &self,
+        sources: &[SourceRef],
+        mut f: impl FnMut(&mut ExecutionState, usize),
+    ) -> Result<(), &'static str> {
+        let Some(receipts) = &self.causal_receipts else {
+            return Err("causal receipts are not enabled");
+        };
+        let causes = receipts.register_source_rows(sources);
+        let mut state = ExecutionState::new(self.read_only_view(), Default::default());
+        for (row, cause) in causes.into_iter().enumerate() {
+            state.set_active_cause(Some(cause));
+            f(&mut state, row);
+        }
+        state.set_active_cause(None);
+        Ok(())
+    }
+
     /// Initialize a new rulse set to run against this database.
     pub fn new_rule_set(&mut self) -> RuleSetBuilder<'_> {
         RuleSetBuilder::new(self)
