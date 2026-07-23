@@ -1,6 +1,6 @@
 .PHONY: \
 	check nits test python-check python-nits rust-check rust-nits \
-	proof-tests benchmark-smoke update-snapshots format \
+	proof-tests benchmark-smoke nightly update-snapshots format \
 	python-lock python-format-check python-lint python-typecheck python-test \
 	rust-format-check rust-clippy rust-test
 
@@ -61,6 +61,14 @@ benchmark-smoke:
 	uv run --locked python -c \
 		'from pathlib import Path; import sys; from benchmarking.reports.store import ReportStore; assert ReportStore(Path(sys.argv[1])).row_count > 0' \
 		"$(BENCHMARK_SMOKE_REPORT)"
+
+# Benchmark the suite and write eval-live's interactive report to
+# nightly/output/index.html. The egraphs-good nightly service
+# (nightly.cs.washington.edu) runs this target and serves that directory,
+# matching `report=` in the nightly configuration. Tune a run by editing the
+# constants at the top of scripts/nightly_bench.py.
+nightly:
+	uv run --locked python scripts/nightly_bench.py
 
 update-snapshots:
 	uv run --locked pytest -q --snapshot-update --snapshot-details
