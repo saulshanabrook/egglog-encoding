@@ -94,11 +94,13 @@ pub trait Sort: Any + Send + Sync + Debug {
     }
 
     /// For a base sort whose values termify as an application rather than a
-    /// literal (e.g. a BigInt's `(from-string "…")`): the canonical head and a
-    /// validator that recognizes/normalizes that value term form. Proof
-    /// checking uses it to accept a reflexive `Fiat` over a termified base
-    /// value. `None` (the default) for literal-backed and non-base sorts.
-    fn prim_value_constructor(&self) -> Option<(String, PrimitiveValidator)> {
+    /// literal (e.g. a BigInt's `(from-string "…")`): the head of that canonical
+    /// value term. Proof checking treats this head as a value constructor (a term
+    /// built from it over literals is self-evident), so it accepts a reflexive
+    /// `Fiat` over a termified base value. The head must name exactly one
+    /// primitive (no overloads); otherwise ignoring it would be unsound. `None`
+    /// (the default) for literal-backed and non-base sorts.
+    fn prim_value_constructor(&self) -> Option<String> {
         None
     }
 

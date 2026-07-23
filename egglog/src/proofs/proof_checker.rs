@@ -574,24 +574,21 @@ fn format_substitution(term_dag: &TermDag, substitution: &HashMap<String, TermId
 }
 
 impl ProofStore {
-    /// Whether `term` is a termified base value the checker can re-evaluate
-    /// from the term alone: a literal, or a sort's canonical value term form
-    /// (`Sort::prim_value_constructor`) over such arguments, reproducing exactly
-    /// this term. A reflexive `Fiat` over such a term is self-evident. Terms
-    /// carrying an existence claim never qualify: eq-sort and container heads
-    /// are not value-term heads.
-    pub(super) fn reflexive_value_term(&mut self, term: TermId) -> bool {
-        match self.term_dag.get(term).clone() {
+    /// Whether `term` is a termified base value that is self-evident from the
+    /// term alone: a literal, or a sort's canonical value-constructor head
+    /// (`Sort::prim_value_constructor`) applied to such arguments. Since a value
+    /// constructor names exactly one primitive, its head unambiguously marks a
+    /// value term, so the checker ignores it (no re-evaluation needed). A
+    /// reflexive `Fiat` over such a term is self-evident. Terms carrying an
+    /// existence claim never qualify: eq-sort and container heads are not
+    /// value-constructor heads.
+    pub(super) fn reflexive_value_term(&self, term: TermId) -> bool {
+        match self.term_dag.get(term) {
             Term::Lit(_) => true,
             Term::Var(_) => false,
             Term::App(head, args) => {
-                let Some(validator) = self.prim_value_constructors.get(&head).cloned() else {
-                    return false;
-                };
-                if !args.iter().all(|a| self.reflexive_value_term(*a)) {
-                    return false;
-                }
-                validator(&mut self.term_dag, &args) == Some(term)
+                self.prim_value_constructors.contains(head)
+                    && args.iter().all(|a| self.reflexive_value_term(*a))
             }
         }
     }

@@ -1,6 +1,7 @@
 use crate::proofs::proof_encoding::ProofInstrumentor;
 use crate::proofs::proof_extractor::extract_root;
 use crate::proofs::proof_format::{Justification, ProofId, ProofStore, proof_store_from_term};
+use crate::util::HashSet;
 use crate::{ResolvedCall, TermDag, Value};
 use egglog_backend_trait::BackendExt;
 use thiserror::Error;
@@ -104,13 +105,23 @@ impl ProofInstrumentor<'_> {
             .values()
             .filter_map(|sort| sort.rebuild_container_normalizer())
             .collect();
-        let prim_value_constructors = self
-            .egraph
-            .type_info
-            .sorts
-            .values()
-            .filter_map(|sort| sort.prim_value_constructor())
-            .collect();
+        // A base sort's value-constructor head is treated by the checker as an
+        // unambiguous value marker, so it must resolve to exactly one primitive
+        // (no overloads) — otherwise ignoring the head would be unsound.
+        let mut prim_value_constructors: HashSet<String> = HashSet::default();
+        for sort in self.egraph.type_info.sorts.values() {
+            if let Some(head) = sort.prim_value_constructor() {
+                let count = self.egraph.type_info.get_prims(&head).map_or(0, <[_]>::len);
+                assert!(
+                    count == 1,
+                    "sort `{}` declares `{head}` as its primitive value constructor, but `{head}` \
+                     resolves to {count} primitives; a value constructor must name exactly one \
+                     primitive (no overloads)",
+                    sort.name(),
+                );
+                prim_value_constructors.insert(head);
+            }
+        }
         let (mut proof_store, proof_id) = proof_store_from_term(
             &self.egraph.proof_state.proof_names,
             termdag,

@@ -850,11 +850,10 @@ pub trait BaseSort: Any + Send + Sync + Debug {
     fn reconstruct_termdag(&self, _: &BaseValues, _: Value, _: &mut TermDag) -> TermId;
 
     /// For a base sort whose values termify as an application rather than a
-    /// literal (e.g. a BigInt's `(from-string "…")`): the canonical head and a
-    /// validator recognizing that value term form (see
-    /// [`Sort::prim_value_constructor`]). `None` (the default) for literal-backed
-    /// sorts.
-    fn prim_value_constructor(&self) -> Option<(String, crate::PrimitiveValidator)> {
+    /// literal (e.g. a BigInt's `(from-string "…")`): the head of that canonical
+    /// value term (see [`Sort::prim_value_constructor`]). `None` (the default)
+    /// for literal-backed sorts.
+    fn prim_value_constructor(&self) -> Option<String> {
         None
     }
 
@@ -904,7 +903,7 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
         self.0.reconstruct_termdag(base_values, value, termdag)
     }
 
-    fn prim_value_constructor(&self) -> Option<(String, crate::PrimitiveValidator)> {
+    fn prim_value_constructor(&self) -> Option<String> {
         self.0.prim_value_constructor()
     }
 }

@@ -112,7 +112,7 @@ pub(crate) fn proof_store_from_term(
     proof_term: TermId,
     prog: &Vec<ResolvedNCommand>,
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    prim_value_constructors: HashMap<String, PrimitiveValidator>,
+    prim_value_constructors: HashSet<String>,
 ) -> (ProofStore, ProofId) {
     let (raw_store, raw_proof_id) =
         RawProofStore::from_extracted(encoding_names, term_dag, proof_term);
@@ -186,11 +186,11 @@ pub struct ProofStore {
     /// Container constructor head -> its validator (the container's term
     /// normalizer), used by [`ProofStore::normalize_container`].
     container_normalizers: HashMap<String, PrimitiveValidator>,
-    /// Canonical value-term head -> its sort's recognizer, for base sorts whose
-    /// values termify as applications (see `Sort::prim_value_constructor`). Used
-    /// to accept a reflexive `Fiat` over a termified base value
-    /// ([`ProofStore::reflexive_value_term`]).
-    pub(super) prim_value_constructors: HashMap<String, PrimitiveValidator>,
+    /// Canonical value-term heads for base sorts whose values termify as
+    /// applications (see `Sort::prim_value_constructor`). A term built from one of
+    /// these heads over literals is a self-evident value, so the checker accepts a
+    /// reflexive `Fiat` over it ([`ProofStore::reflexive_value_term`]).
+    pub(super) prim_value_constructors: HashSet<String>,
 }
 
 impl fmt::Debug for ProofStore {
@@ -528,7 +528,7 @@ impl ProofStore {
         raw_store: RawProofStore,
         raw_proof_id: RawProofId,
         container_normalizers: HashMap<String, PrimitiveValidator>,
-        prim_value_constructors: HashMap<String, PrimitiveValidator>,
+        prim_value_constructors: HashSet<String>,
     ) -> (ProofStore, ProofId) {
         let mut store = ProofStore {
             term_dag: raw_store.term_dag.clone(),
