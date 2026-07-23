@@ -39,8 +39,9 @@ pub use query::{
 };
 pub use receipts::{
     CausalReceipts, CausalWave, CauseDraftId, EqualityReason, EqualityRecord, FactCause, FactId,
-    FactRecord, MatchRecord, ReceiptCounters, ReceiptSnapshot, ReplayTermId, RuleMatchId,
-    RuleReceiptSpec, SourceRef,
+    FactRecord, MatchRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    RuleMatchId, RuleReceiptSpec, SourceRef,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

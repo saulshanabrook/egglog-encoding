@@ -892,6 +892,7 @@ impl SortedWritesTable {
                                         batch.record_fact(
                                             self.table_id,
                                             merge_cause.unwrap_or(incoming_cause),
+                                            &scratch,
                                         )
                                     });
                                 let new = if RECEIPTS {
@@ -919,7 +920,7 @@ impl SortedWritesTable {
                             let sort_val = query[sort_by.index()];
                             // New value: update invariants.
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                batch.record_fact(self.table_id, incoming_cause)
+                                batch.record_fact(self.table_id, incoming_cause, query)
                             });
                             let new = if RECEIPTS {
                                 self.data.add_row_with_fact(query, fact)
@@ -999,6 +1000,7 @@ impl SortedWritesTable {
                                         batch.record_fact(
                                             self.table_id,
                                             merge_cause.unwrap_or(incoming_cause),
+                                            &scratch,
                                         )
                                     });
                                 let new = if RECEIPTS {
@@ -1014,7 +1016,7 @@ impl SortedWritesTable {
                         } else {
                             // New value: update invariants.
                             let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
-                                batch.record_fact(self.table_id, incoming_cause)
+                                batch.record_fact(self.table_id, incoming_cause, query)
                             });
                             let new = if RECEIPTS {
                                 self.data.add_row_with_fact(query, fact)
@@ -1190,8 +1192,11 @@ impl SortedWritesTable {
                                         if let (Some(batch), Some(assignments)) =
                                             (&mut receipt_batch, &mut fact_assignments)
                                         {
-                                            let fact =
-                                                batch.record_fact(self.table_id, merge_cause);
+                                            let fact = batch.record_fact(
+                                                self.table_id,
+                                                merge_cause,
+                                                row,
+                                            );
                                             assignments.insert(cur_row, fact);
                                         }
                                         unsafe {
@@ -1218,7 +1223,7 @@ impl SortedWritesTable {
                                         (&mut receipt_batch, &mut fact_assignments)
                                     {
                                         let fact =
-                                            batch.record_fact(self.table_id, staged_cause);
+                                            batch.record_fact(self.table_id, staged_cause, row);
                                         assignments.insert(cur_row, fact);
                                     }
                                     changed = true;

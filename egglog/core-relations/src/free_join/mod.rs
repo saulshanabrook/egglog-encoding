@@ -404,7 +404,8 @@ impl Database {
         let Some(receipts) = &self.causal_receipts else {
             return Err("causal receipts are not enabled");
         };
-        let cause = receipts.source_draft(source, terms);
+        receipts.install_source_row(table, row, terms)?;
+        let cause = receipts.source_draft(source);
         let mut state = ExecutionState::new(self.read_only_view(), Default::default());
         state.set_active_cause(Some(cause));
         state.stage_insert(table, row);

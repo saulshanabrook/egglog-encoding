@@ -20,10 +20,11 @@ use smallvec::SmallVec;
 
 use crate::{
     BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, ExternalFunctionId,
-    FactId, WrappedTable,
+    FactId, ReplayConstructorSpec, ReplayTermId, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
+    receipts::ReplayBindingSource,
     table_spec::{ColumnId, MutationBuffer},
 };
 
@@ -125,7 +126,7 @@ struct ReceiptBindings {
     rule: u32,
     wave: CausalWave,
     premise_arity: usize,
-    binding_cells: Box<[(usize, usize)]>,
+    binding_sources: Box<[ReplayBindingSource]>,
     premises: Vec<FactId>,
     causes: Vec<Option<CauseDraftId>>,
 }
@@ -263,13 +264,13 @@ impl Bindings {
         rule: u32,
         wave: CausalWave,
         premises: &[FactId],
-        binding_cells: &[(usize, usize)],
+        binding_sources: &[ReplayBindingSource],
     ) {
         if let Some(existing) = &mut self.receipt {
             assert_eq!(existing.rule, rule);
             assert_eq!(existing.wave, wave);
             assert_eq!(existing.premise_arity, premises.len());
-            assert_eq!(existing.binding_cells.as_ref(), binding_cells);
+            assert_eq!(existing.binding_sources.as_ref(), binding_sources);
             existing.premises.extend_from_slice(premises);
             existing.causes.push(None);
         } else {
@@ -277,7 +278,7 @@ impl Bindings {
                 rule,
                 wave,
                 premise_arity: premises.len(),
-                binding_cells: binding_cells.into(),
+                binding_sources: binding_sources.into(),
                 premises: premises.into(),
                 causes: vec![None],
             }));
@@ -287,21 +288,59 @@ impl Bindings {
     fn ensure_receipt_causes(&mut self, lanes: &[usize], receipts: &CausalReceipts) {
         let state = self
             .receipt
-            .as_mut()
+            .as_ref()
             .expect("receipt-enabled action requires exact match witnesses");
-        let missing = lanes
-            .iter()
-            .copied()
-            .filter(|lane| state.causes[*lane].is_none())
-            .collect::<Vec<_>>();
-        let registered = receipts.register_rule_matches(
-            state.rule,
-            state.wave,
-            state.premise_arity,
-            &state.binding_cells,
-            &state.premises,
-            &missing,
+        let mut missing = SmallVec::<[usize; 16]>::new();
+        missing.extend(
+            lanes
+                .iter()
+                .copied()
+                .filter(|lane| state.causes[*lane].is_none()),
         );
+        if missing.is_empty() {
+            return;
+        }
+        let current_arity = state
+            .binding_sources
+            .iter()
+            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+            .count();
+        let registered = if current_arity == 0 {
+            receipts.register_rule_matches(
+                state.rule,
+                state.wave,
+                state.premise_arity,
+                &state.binding_sources,
+                &state.premises,
+                &[],
+                &missing,
+            )
+        } else {
+            let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
+            current_terms.reserve(missing.len() * current_arity);
+            for lane in missing.iter().copied() {
+                for source in state.binding_sources.iter().copied() {
+                    if let ReplayBindingSource::Current { variable, sort } = source {
+                        let value = self[variable][lane];
+                        current_terms.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
+                            panic!(
+                                "missing typed current-value ReplayTermId for {variable:?}={value:?}"
+                            )
+                        }));
+                    }
+                }
+            }
+            receipts.register_rule_matches(
+                state.rule,
+                state.wave,
+                state.premise_arity,
+                &state.binding_sources,
+                &state.premises,
+                &current_terms,
+                &missing,
+            )
+        };
+        let state = self.receipt.as_mut().unwrap();
         for (lane, cause) in registered {
             state.causes[lane] = Some(cause);
         }
@@ -859,6 +898,112 @@ impl ExecutionState<'_> {
                 });
                 bindings.replace(out);
             }
+            Instr::LookupOrInsertDefaultReplay {
+                table: table_id,
+                args,
+                default,
+                dst_col,
+                dst_var,
+                replay,
+            } => {
+                let receipts = self
+                    .db
+                    .causal_receipts
+                    .expect("replay constructor instruction requires causal receipts");
+                let pool = with_pool_set(|ps| ps.get_pool::<Vec<Value>>().clone());
+                self.buffers.lazy_init(*table_id, || {
+                    self.db.table_info[*table_id].table.new_buffer()
+                });
+                let table = &self.db.table_info[*table_id].table;
+
+                // Phase 1: read all hits and construct each distinct missing
+                // predicted row once, but do not stage any effect yet.
+                let mut missing = mask.clone();
+                table.lookup_row_vectorized(&mut missing, bindings, args, *dst_col, *dst_var);
+                missing.symmetric_difference(mask);
+                let mut owners = Vec::<(SmallVec<[Value; 3]>, usize)>::new();
+                if !missing.is_empty() {
+                    let mut out = bindings.take(*dst_var).unwrap();
+                    let ctrs = &self.db.counters;
+                    let predicted = &mut self.predicted.data;
+                    for_each_binding_with_mask!(missing, args.as_slice(), bindings, |iter| {
+                        iter.assign_vec(&mut out.vals, |offset, key| {
+                            let key = SmallVec::<[Value; 3]>::from_slice(key.as_slice());
+                            let prediction_key = (*table_id, key.clone());
+                            use hashbrown::hash_map::Entry;
+                            let row = match predicted.entry(prediction_key) {
+                                Entry::Occupied(entry) => entry.into_mut(),
+                                Entry::Vacant(entry) => {
+                                    let mut row = pool.get();
+                                    row.extend_from_slice(&key);
+                                    row.reserve(default.len());
+                                    for val in default {
+                                        let val = match val {
+                                            WriteVal::QueryEntry(QueryEntry::Const(c)) => *c,
+                                            WriteVal::QueryEntry(QueryEntry::Var(v)) => {
+                                                bindings[*v][offset]
+                                            }
+                                            WriteVal::IncCounter(ctr) => {
+                                                Value::from_usize(ctrs.inc(*ctr))
+                                            }
+                                            WriteVal::CurrentVal(ix) => row[*ix],
+                                        };
+                                        row.push(val);
+                                    }
+                                    owners.push((key, offset));
+                                    entry.insert(row)
+                                }
+                            };
+                            row[dst_col.index()]
+                        });
+                    });
+                    bindings.replace(out);
+                }
+
+                // Phase 2: install one typed structural producer for every
+                // active constructor evaluation. Existing output mappings
+                // make hit-heavy execution one point lookup per lane.
+                mask.iter(&bindings[*dst_var])
+                    .for_each_indexed(|offset, output| {
+                        if receipts.lookup_term(replay.result_sort, *output).is_some() {
+                            return;
+                        }
+                        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+                        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
+                            let value = match arg {
+                                QueryEntry::Const(value) => *value,
+                                QueryEntry::Var(variable) => bindings[*variable][offset],
+                            };
+                            children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
+                                panic!("constructor child has no producer-installed ReplayTermId")
+                            }));
+                        }
+                        receipts
+                            .intern_call(replay.result_sort, replay.op, &children, *output)
+                            .expect("constructor call must install a typed output");
+                    });
+
+                // Phase 3: only distinct missing rows are effects. Resolve
+                // their causes after dst terms exist, then stage them.
+                if !owners.is_empty() {
+                    let owner_lanes = owners.iter().map(|(_, lane)| *lane).collect::<Vec<_>>();
+                    bindings.ensure_receipt_causes(&owner_lanes, receipts);
+                    let predicted = &self.predicted.data;
+                    let buffers = &mut self.buffers;
+                    for (key, lane) in owners {
+                        let row = predicted
+                            .get(&(*table_id, key))
+                            .expect("new constructor prediction disappeared");
+                        buffers.stage_insert_with_cause(
+                            *table_id,
+                            row,
+                            bindings
+                                .receipt_cause(lane)
+                                .expect("constructor owner lane is missing its exact cause"),
+                        );
+                    }
+                }
+            }
             Instr::LookupWithDefault {
                 table,
                 args,
@@ -1073,6 +1218,17 @@ pub(crate) enum Instr {
         default: Vec<WriteVal>,
         dst_col: ColumnId,
         dst_var: Variable,
+    },
+
+    /// Receipt-only constructor producer. Ordinary rules use the distinct
+    /// variant above and never touch replay-term metadata or storage.
+    LookupOrInsertDefaultReplay {
+        table: TableId,
+        args: Vec<QueryEntry>,
+        default: Vec<WriteVal>,
+        dst_col: ColumnId,
+        dst_var: Variable,
+        replay: Box<ReplayConstructorSpec>,
     },
 
     /// Look up the value of the given table; if the value is not there, use the

@@ -3,7 +3,18 @@ use crate::{
     pool::{PoolSet, with_pool_set},
 };
 
-use super::mask::{Mask, MaskIter};
+use super::{
+    Instr,
+    mask::{Mask, MaskIter},
+};
+
+#[test]
+fn instruction_footprint_stays_within_the_pre_receipt_baseline() {
+    assert!(
+        std::mem::size_of::<Instr>() <= 80,
+        "replay-only metadata must not enlarge every ordinary action instruction"
+    );
+}
 
 #[test]
 fn mask_iter() {

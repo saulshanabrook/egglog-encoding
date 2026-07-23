@@ -1362,7 +1362,7 @@ fn push_receipt_witness(
         layout.rule,
         exec_state.causal_wave(),
         &premises,
-        &layout.binding_cells,
+        &layout.binding_sources,
     );
 }
 
@@ -3731,6 +3731,13 @@ mod tests {
             std::iter::empty(),
         );
         let receipts = db.enable_causal_receipts();
+        let test_sort = crate::ReplaySortId::new(0);
+        receipts
+            .register_table_layout(selected, &[Some(test_sort), Some(test_sort)])
+            .unwrap();
+        receipts
+            .register_table_layout(candidates, &[Some(test_sort), Some(test_sort)])
+            .unwrap();
         let zero = receipts.intern_test_term("zero");
         let one = receipts.intern_test_term("one");
         let two = receipts.intern_test_term("two");

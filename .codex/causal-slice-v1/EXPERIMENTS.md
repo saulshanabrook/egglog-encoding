@@ -315,3 +315,74 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   deterministic existential projection. It does not establish H1 recording
   overhead or workload-wide zero-Prefix completeness; those remain later
   explicit gates.
+
+### 2026-07-23 — checkpoint 4b1 typed producers and fact-owned terms
+
+- Status: bounded core-relations producer/fact-term checkpoint is green and
+  uncommitted for coordinator review. Bridge/CLI activation, equality and
+  rebuild causes, container versions, check roots, slicing, and replay were not
+  started.
+- Snapshot: `/Users/saul/p/wt/egglog-encoding/causal-slice-receipts-v1`,
+  branch `agent/causal-slice-receipts-v1`, starting `HEAD`
+  `0fe412547330314fabdad189031771b787bc7ed9`.
+- Storage result: every pending and durable FactId now owns one immutable,
+  physical-row-aligned term range. Worker fragments append term IDs to a local
+  flat vector and rebase once at publication; finalization moves the completed
+  provisional flat vector out once, reserves durable storage once, and copies
+  ranges directly without a temporary allocation per fact. Source causes
+  contain only SourceRef. Derived and merge facts therefore resolve terms
+  without inspecting their cause, and out-of-order worker publication
+  preserves dense FactId lookup with no term holes.
+- Typed producer store: stable ReplaySortId/ReplayOpId identify a sharded,
+  hash-consed DAG of backend-neutral Literal and Call nodes. A separate sharded
+  `(sort, Value)` map provides average-constant-time current-value lookup.
+  Structural nodes share `Arc<[ReplayTermId]>` children; effective commits
+  append handles directly into their worker-local vector with no per-fact
+  allocation and no receipt-arena lock. Diagnostics are derived from map sizes
+  only, with no hot-path counter atomics.
+- Physical layouts: receipt mode registers immutable
+  `TableId -> Arc<[Option<ReplaySortId>]>` layouts. Engine-only timestamp or
+  subsume columns stay row-aligned as `ReplayTermId::MISSING`; receipt metadata
+  rejects an ordinary binding that selects such a column. Source installation
+  validates the complete row before installing any typed value mapping.
+- Match timing: native witness capture retains only ordered premise FactIds.
+  `Bindings::ensure_receipt_causes` resolves ordered ordinary-variable handles
+  immediately before the first effect, after preceding action-tape
+  instructions. Premise variables resolve immutable fact-column handles inside
+  the match-registration arena lock. The all-premise common path allocates no
+  term scratch and enters that arena only once; a mixed match pre-resolves only
+  its typed Current handles into a compact SmallVec before the same single
+  registration lock. The stored term order remains the declared ordinary
+  variable order.
+- Constructor seam: ordinary `LookupOrInsertDefault` is unchanged.
+  Receipt-aware constructors compile to a distinct instruction. It reads hits,
+  deduplicates predicted misses without staging, fills all outputs, installs
+  the typed Call on the first unseen output, then resolves owner-lane causes
+  and stages only unique misses. Phase 2 probes each output binding before
+  visiting or copying its key arguments, so an existing output mapping is
+  exactly one typed point lookup and avoids child lookup/hash-cons work. The
+  replay-only metadata is boxed at compilation so its allocation stays off
+  ordinary action tapes and `Instr` remains within its pre-receipt 80-byte
+  footprint.
+- Exact-row canaries: Source A produces derived B, then a next-wave rule
+  consumes B to produce C while the same constructor transitions from miss to
+  hit; both paths share one typed Call and B/C carry complete terms. Separate
+  canaries cover primitive-only current values, ignored physical columns,
+  serial merge output distinct from its proposal, parallel native publication
+  distinct from merge scratch, and out-of-order fact-term range publication.
+  The ordinary control asserts its compiled tape contains only the non-replay
+  constructor variant, plus zero FactId/witness reads and zero table sidecar
+  bytes.
+- Focused commands:
+  `cargo test -p egglog-core-relations causal_receipt -- --nocapture`,
+  `cargo test -p egglog-core-relations receipts::tests -- --nocapture`, and
+  `cargo test -p egglog-core-relations
+  receipt_disabled_rule_path_uses_no_fact_sidecars_or_witness_reads --
+  --nocapture` all passed.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 78
+  tests. `cargo fmt --all` and `git diff --check` passed.
+- Hypothesis result: the native producer/fact-term layer now carries exact
+  derived terms without eager rendering, a second evaluator, per-match trees,
+  or producer work on the ordinary path. H1 recording overhead and all
+  workload-wide completeness/performance claims remain untested until the
+  later bridge and receipt-only gates.

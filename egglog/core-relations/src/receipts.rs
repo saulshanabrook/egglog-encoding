@@ -14,7 +14,9 @@ use std::{
     },
 };
 
-use crate::{AtomId, TableId, Variable, numeric_id::DenseIdMap};
+use dashmap::mapref::entry::Entry;
+
+use crate::{AtomId, TableId, Value, Variable, common::DashMap, numeric_id::DenseIdMap};
 
 macro_rules! handle {
     ($name:ident, $inner:ty) => {
@@ -36,6 +38,8 @@ macro_rules! handle {
 handle!(FactId, u64);
 handle!(RuleMatchId, u64);
 handle!(ReplayTermId, u32);
+handle!(ReplaySortId, u32);
+handle!(ReplayOpId, u32);
 handle!(CausalWave, u64);
 handle!(CauseDraftId, u64);
 handle!(MatchDraftId, u64);
@@ -66,11 +70,221 @@ impl FactId {
     }
 }
 
+impl ReplayTermId {
+    pub const MISSING: Self = Self(0);
+
+    pub fn is_missing(self) -> bool {
+        self == Self::MISSING
+    }
+}
+
 impl CauseDraftId {
     pub(crate) const UNATTRIBUTED: Self = Self(0);
 
     pub(crate) fn is_unattributed(self) -> bool {
         self == Self::UNATTRIBUTED
+    }
+}
+
+/// Backend-neutral payload for one structural literal.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ReplayLiteral {
+    Unit,
+    Bool(bool),
+    I64(i64),
+    F64(u64),
+    String(Arc<str>),
+    /// Embeddings may reserve stable literal ordinals without exposing a
+    /// runtime [`Value`] from the recorded database.
+    Internal(u64),
+}
+
+/// One compact typed node in the replay-term DAG.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ReplayTerm {
+    Literal {
+        sort: ReplaySortId,
+        literal: ReplayLiteral,
+    },
+    Call {
+        sort: ReplaySortId,
+        op: ReplayOpId,
+        children: Arc<[ReplayTermId]>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayConstructorSpec {
+    pub result_sort: ReplaySortId,
+    pub op: ReplayOpId,
+    pub child_sorts: Box<[ReplaySortId]>,
+}
+
+impl ReplayConstructorSpec {
+    pub fn new(
+        result_sort: ReplaySortId,
+        op: ReplayOpId,
+        child_sorts: impl IntoIterator<Item = ReplaySortId>,
+    ) -> Self {
+        Self {
+            result_sort,
+            op,
+            child_sorts: child_sorts.into_iter().collect(),
+        }
+    }
+}
+
+impl ReplayTerm {
+    pub fn sort(&self) -> ReplaySortId {
+        match self {
+            Self::Literal { sort, .. } | Self::Call { sort, .. } => *sort,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReplayTermCounters {
+    pub interned_nodes: u64,
+    pub installed_values: u64,
+    pub table_layouts: u64,
+}
+
+#[derive(Default)]
+struct ReplayTermStore {
+    by_node: DashMap<ReplayTerm, ReplayTermId>,
+    nodes: DashMap<ReplayTermId, ReplayTerm>,
+    by_value: DashMap<(ReplaySortId, Value), ReplayTermId>,
+    table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
+}
+
+impl ReplayTermStore {
+    fn intern(&self, next_term: &AtomicU32, node: ReplayTerm) -> ReplayTermId {
+        match self.by_node.entry(node.clone()) {
+            Entry::Occupied(entry) => *entry.get(),
+            Entry::Vacant(entry) => {
+                let id = ReplayTermId::new(next_term.fetch_add(1, Ordering::Relaxed) + 1);
+                assert!(
+                    self.nodes.insert(id, node).is_none(),
+                    "duplicate ReplayTermId"
+                );
+                entry.insert(id);
+                id
+            }
+        }
+    }
+
+    fn node(&self, id: ReplayTermId) -> Option<ReplayTerm> {
+        self.nodes.get(&id).map(|node| node.clone())
+    }
+
+    fn install_value(
+        &self,
+        sort: ReplaySortId,
+        value: Value,
+        term: ReplayTermId,
+    ) -> Result<ReplayTermId, &'static str> {
+        let Some(node) = self.nodes.get(&term) else {
+            return Err("ReplayTermId is not installed");
+        };
+        if node.sort() != sort {
+            return Err("ReplayTermId sort does not match its value sort");
+        }
+        drop(node);
+        match self.by_value.entry((sort, value)) {
+            Entry::Occupied(entry) => Ok(*entry.get()),
+            Entry::Vacant(entry) => {
+                entry.insert(term);
+                Ok(term)
+            }
+        }
+    }
+
+    fn lookup(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
+        self.by_value.get(&(sort, value)).map(|term| *term)
+    }
+
+    fn register_table_layout(
+        &self,
+        table: TableId,
+        sorts: &[Option<ReplaySortId>],
+    ) -> Result<(), &'static str> {
+        match self.table_layouts.entry(table) {
+            Entry::Occupied(entry) if entry.get().as_ref() == sorts => Ok(()),
+            Entry::Occupied(_) => Err("table already has a different replay-term layout"),
+            Entry::Vacant(entry) => {
+                entry.insert(sorts.into());
+                Ok(())
+            }
+        }
+    }
+
+    fn install_source_row(
+        &self,
+        table: TableId,
+        row: &[Value],
+        terms: &[ReplayTermId],
+    ) -> Result<(), &'static str> {
+        let Some(layout) = self.table_layouts.get(&table) else {
+            return Err("table has no replay-term layout");
+        };
+        if layout.len() != row.len() || row.len() != terms.len() {
+            return Err("source row, term handles, and table layout have different arities");
+        }
+        for (sort, term) in layout.iter().copied().zip(terms) {
+            let Some(sort) = sort else {
+                if !term.is_missing() {
+                    return Err("ignored source column must use ReplayTermId::MISSING");
+                }
+                continue;
+            };
+            let Some(node) = self.nodes.get(term) else {
+                return Err("ReplayTermId is not installed");
+            };
+            if node.sort() != sort {
+                return Err("ReplayTermId sort does not match its source column");
+            }
+        }
+        for ((sort, value), term) in layout.iter().copied().zip(row).zip(terms) {
+            if let Some(sort) = sort {
+                self.install_value(sort, *value, *term)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn append_row_terms(
+        &self,
+        table: TableId,
+        row: &[Value],
+        out: &mut Vec<ReplayTermId>,
+    ) -> Result<FlatRange, &'static str> {
+        let Some(layout) = self.table_layouts.get(&table) else {
+            return Err("table has no replay-term layout");
+        };
+        if layout.len() != row.len() {
+            return Err("committed row and replay-term table layout have different arities");
+        }
+        let start = out.len();
+        for (sort, value) in layout.iter().copied().zip(row) {
+            if let Some(sort) = sort {
+                let Some(term) = self.lookup(sort, *value) else {
+                    out.truncate(start);
+                    return Err("committed row cell has no producer-installed ReplayTermId");
+                };
+                out.push(term);
+            } else {
+                out.push(ReplayTermId::MISSING);
+            }
+        }
+        Ok(FlatRange::new(start, row.len()))
+    }
+
+    fn counters(&self) -> ReplayTermCounters {
+        ReplayTermCounters {
+            interned_nodes: self.nodes.len() as u64,
+            installed_values: self.by_value.len() as u64,
+            table_layouts: self.table_layouts.len() as u64,
+        }
     }
 }
 
@@ -87,6 +301,7 @@ pub struct RuleReceiptSpec {
     pub(crate) rule: u32,
     pub(crate) premises: Box<[AtomId]>,
     pub(crate) ordinary_vars: Box<[Variable]>,
+    pub(crate) current_vars: Box<[(Variable, ReplaySortId)]>,
 }
 
 impl RuleReceiptSpec {
@@ -99,8 +314,29 @@ impl RuleReceiptSpec {
             rule,
             premises: premises.into_iter().collect(),
             ordinary_vars: ordinary_vars.into_iter().collect(),
+            current_vars: Box::new([]),
         }
     }
+
+    pub fn with_current_vars(
+        mut self,
+        vars: impl IntoIterator<Item = (Variable, ReplaySortId)>,
+    ) -> Self {
+        self.current_vars = vars.into_iter().collect();
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplayBindingSource {
+    Premise {
+        premise: usize,
+        column: usize,
+    },
+    Current {
+        variable: Variable,
+        sort: ReplaySortId,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -108,9 +344,8 @@ pub(crate) struct ActionReceiptSpec {
     pub(crate) rule: u32,
     pub(crate) premise_count: usize,
     pub(crate) premise_slots: Arc<DenseIdMap<AtomId, PremiseSlot>>,
-    /// For each ordinary variable, the premise slot and table column whose
-    /// committed row carries its producer-installed structural term handle.
-    pub(crate) binding_cells: Box<[(usize, usize)]>,
+    /// One exact term source for every ordinary variable, in source order.
+    pub(crate) binding_sources: Box<[ReplayBindingSource]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -227,6 +462,10 @@ impl FlatRange {
         let start = self.start as usize;
         start..start + self.len as usize
     }
+
+    fn shifted(self, offset: usize) -> Self {
+        Self::new(self.as_range().start + offset, self.len as usize)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -239,10 +478,7 @@ struct MatchDraft {
 
 #[derive(Clone, Debug)]
 enum CauseDraft {
-    Source {
-        source: SourceRef,
-        terms: FlatRange,
-    },
+    Source(SourceRef),
     Rule(MatchDraftId),
     Merge {
         incoming: CauseDraftId,
@@ -258,10 +494,7 @@ enum PriorVersion {
 
 #[derive(Clone, Debug)]
 enum DurableCause {
-    Source {
-        source: SourceRef,
-        terms: FlatRange,
-    },
+    Source(SourceRef),
     Rule(RuleMatchId),
     Merge {
         incoming: DurableCauseId,
@@ -279,12 +512,14 @@ enum DurablePrior {
 struct PendingFact {
     table: TableId,
     cause: CauseDraftId,
+    terms: FlatRange,
 }
 
 #[derive(Clone, Debug)]
 struct DurableFact {
     table: TableId,
     cause: DurableCauseId,
+    terms: FlatRange,
 }
 
 #[derive(Clone, Debug)]
@@ -350,10 +585,6 @@ impl<T> IdSegment<T> {
         (id >= base).then(|| (id - base).try_into().ok()).flatten()
     }
 
-    fn get(&self, id: u64) -> Option<&T> {
-        self.slots.get(self.index(id)?)?.as_ref()
-    }
-
     fn assert_complete(&self, kind: &str) {
         assert!(
             self.slots.iter().all(Option::is_some),
@@ -372,6 +603,7 @@ struct ProvisionalArena {
     causes: IdSegment<CauseDraft>,
     premises: Vec<FactId>,
     terms: Vec<ReplayTermId>,
+    fact_terms: Vec<ReplayTermId>,
     pending_equalities: Vec<PendingEquality>,
 }
 
@@ -381,6 +613,7 @@ impl ProvisionalArena {
             + self.causes.present() * mem::size_of::<CauseDraft>()
             + self.premises.len() * mem::size_of::<FactId>()
             + self.terms.len() * mem::size_of::<ReplayTermId>()
+            + self.fact_terms.len() * mem::size_of::<ReplayTermId>()
             + self.pending_equalities.len() * mem::size_of::<PendingEquality>()
             + pending_facts * mem::size_of::<PendingFact>()
     }
@@ -390,6 +623,7 @@ impl ProvisionalArena {
             && self.causes.present() == 0
             && self.premises.is_empty()
             && self.terms.is_empty()
+            && self.fact_terms.is_empty()
             && self.pending_equalities.is_empty()
     }
 }
@@ -409,7 +643,7 @@ struct ReceiptArena {
     durable_matches: Vec<DurableMatch>,
     durable_premises: Vec<FactId>,
     durable_terms: Vec<ReplayTermId>,
-    durable_source_terms: Vec<ReplayTermId>,
+    durable_fact_terms: Vec<ReplayTermId>,
     durable_causes: Vec<DurableCause>,
     durable_equalities: Vec<DurableEquality>,
     counters: ReceiptCounters,
@@ -444,33 +678,25 @@ impl ReceiptArena {
             return None;
         }
         let slot = self.facts.get((id.get() - 1) as usize)?.as_ref()?;
-        let cause = match slot {
-            FactSlot::Pending(fact) => {
-                let CauseDraft::Source { terms, .. } =
-                    self.provisional.causes.get(fact.cause.get())?
-                else {
-                    return None;
-                };
-                return self
-                    .provisional
-                    .terms
-                    .get(terms.as_range().start + column)
-                    .copied();
-            }
-            FactSlot::Durable(fact) => &self.durable_causes[(fact.cause.get() - 1) as usize],
-        };
-        let DurableCause::Source { terms, .. } = cause else {
-            return None;
-        };
-        self.durable_source_terms
-            .get(terms.as_range().start + column)
-            .copied()
+        match slot {
+            FactSlot::Pending(fact) => self
+                .provisional
+                .fact_terms
+                .get(fact.terms.as_range().start + column)
+                .copied()
+                .filter(|term| !term.is_missing()),
+            FactSlot::Durable(fact) => self
+                .durable_fact_terms
+                .get(fact.terms.as_range().start + column)
+                .copied()
+                .filter(|term| !term.is_missing()),
+        }
     }
 
     fn unfold_cause(&self, root: DurableCauseId) -> Option<FactCause> {
         let root_node = self.durable_causes.get((root.get() - 1) as usize)?;
         match root_node {
-            DurableCause::Source { source, .. } => return Some(FactCause::Source(source.clone())),
+            DurableCause::Source(source) => return Some(FactCause::Source(source.clone())),
             DurableCause::Rule(rule) => return Some(FactCause::Rule(*rule)),
             DurableCause::Merge { .. } => {}
         }
@@ -487,7 +713,7 @@ impl ReceiptArena {
                 Item::Fact(fact) => prior_facts.push(fact),
                 Item::Cause(cause) => {
                     match &self.durable_causes[(cause.get() - 1) as usize] {
-                        DurableCause::Source { .. } => return None,
+                        DurableCause::Source(_) => return None,
                         DurableCause::Rule(rule) => rule_matches.push(*rule),
                         DurableCause::Merge { incoming, prior } => {
                             // Stack is LIFO: visit the prior proposal/version first.
@@ -516,6 +742,7 @@ struct ReceiptShared {
     next_cause_draft: AtomicU64,
     open_fragments: AtomicUsize,
     abandoned_fragments: AtomicU64,
+    replay_terms: ReplayTermStore,
     arena: Mutex<ReceiptArena>,
 }
 
@@ -529,6 +756,7 @@ impl Default for ReceiptShared {
             next_cause_draft: AtomicU64::new(0),
             open_fragments: AtomicUsize::new(0),
             abandoned_fragments: AtomicU64::new(0),
+            replay_terms: ReplayTermStore::default(),
             arena: Mutex::new(ReceiptArena::default()),
         }
     }
@@ -547,6 +775,7 @@ pub(crate) struct ReceiptBatch {
     shared: Arc<ReceiptShared>,
     drafts: Vec<(CauseDraftId, CauseDraft)>,
     facts: Vec<(FactId, PendingFact)>,
+    fact_terms: Vec<ReplayTermId>,
     equalities: Vec<PendingEquality>,
     redundant_unions: u64,
     unattributed_commits: u64,
@@ -560,6 +789,7 @@ impl ReceiptBatch {
             shared,
             drafts: Vec::new(),
             facts: Vec::new(),
+            fact_terms: Vec::new(),
             equalities: Vec::new(),
             redundant_unions: 0,
             unattributed_commits: 0,
@@ -607,13 +837,30 @@ impl ReceiptBatch {
         id
     }
 
-    pub(crate) fn record_fact(&mut self, table: TableId, cause: CauseDraftId) -> FactId {
+    pub(crate) fn record_fact(
+        &mut self,
+        table: TableId,
+        cause: CauseDraftId,
+        row: &[Value],
+    ) -> FactId {
         assert!(
             !cause.is_unattributed(),
             "effective commit is missing exact causal attribution"
         );
+        let term_range = self
+            .shared
+            .replay_terms
+            .append_row_terms(table, row, &mut self.fact_terms)
+            .unwrap_or_else(|error| panic!("cannot record exact committed fact: {error}"));
         let id = FactId::new(ReceiptShared::alloc_u64(&self.shared.next_fact, 1));
-        self.facts.push((id, PendingFact { table, cause }));
+        self.facts.push((
+            id,
+            PendingFact {
+                table,
+                cause,
+                terms: term_range,
+            },
+        ));
         id
     }
 
@@ -641,7 +888,10 @@ impl ReceiptBatch {
             for (id, draft) in self.drafts.drain(..) {
                 arena.provisional.causes.install(id.get(), draft);
             }
-            for (id, fact) in self.facts.drain(..) {
+            let fact_term_base = arena.provisional.fact_terms.len();
+            arena.provisional.fact_terms.append(&mut self.fact_terms);
+            for (id, mut fact) in self.facts.drain(..) {
+                fact.terms = fact.terms.shifted(fact_term_base);
                 arena.install_fact(id, fact);
             }
             arena
@@ -662,7 +912,11 @@ impl Drop for ReceiptBatch {
         if self.published {
             return;
         }
-        if !self.drafts.is_empty() || !self.facts.is_empty() || !self.equalities.is_empty() {
+        if !self.drafts.is_empty()
+            || !self.facts.is_empty()
+            || !self.fact_terms.is_empty()
+            || !self.equalities.is_empty()
+        {
             self.shared
                 .abandoned_fragments
                 .fetch_add(1, Ordering::Relaxed);
@@ -676,29 +930,120 @@ impl Drop for ReceiptBatch {
 pub struct CausalReceipts(Arc<ReceiptShared>);
 
 impl CausalReceipts {
+    pub fn register_table_layout(
+        &self,
+        table: TableId,
+        sorts: &[Option<ReplaySortId>],
+    ) -> Result<(), &'static str> {
+        self.0.replay_terms.register_table_layout(table, sorts)
+    }
+
+    pub(crate) fn table_column_sort(&self, table: TableId, column: usize) -> Option<ReplaySortId> {
+        self.0
+            .replay_terms
+            .table_layouts
+            .get(&table)?
+            .get(column)
+            .copied()
+            .flatten()
+    }
+
+    pub fn intern_literal(
+        &self,
+        sort: ReplaySortId,
+        literal: ReplayLiteral,
+        value: Value,
+    ) -> ReplayTermId {
+        let term = self
+            .0
+            .replay_terms
+            .intern(&self.0.next_term, ReplayTerm::Literal { sort, literal });
+        self.0
+            .replay_terms
+            .install_value(sort, value, term)
+            .expect("newly interned literal must have a matching sort")
+    }
+
+    pub fn intern_call(
+        &self,
+        sort: ReplaySortId,
+        op: ReplayOpId,
+        children: &[ReplayTermId],
+        value: Value,
+    ) -> Result<ReplayTermId, &'static str> {
+        if children
+            .iter()
+            .any(|child| self.0.replay_terms.node(*child).is_none())
+        {
+            return Err("call has an unknown ReplayTermId child");
+        }
+        let term = self.0.replay_terms.intern(
+            &self.0.next_term,
+            ReplayTerm::Call {
+                sort,
+                op,
+                children: children.into(),
+            },
+        );
+        self.0.replay_terms.install_value(sort, value, term)
+    }
+
+    /// Install a typed current-value mapping produced by a primitive. This is
+    /// the bounded seam used before general primitive metadata is available.
+    pub fn install_value_term(
+        &self,
+        sort: ReplaySortId,
+        value: Value,
+        term: ReplayTermId,
+    ) -> Result<ReplayTermId, &'static str> {
+        self.0.replay_terms.install_value(sort, value, term)
+    }
+
+    pub fn lookup_term(&self, sort: ReplaySortId, value: Value) -> Option<ReplayTermId> {
+        self.0.replay_terms.lookup(sort, value)
+    }
+
+    pub fn replay_term(&self, id: ReplayTermId) -> Option<ReplayTerm> {
+        self.0.replay_terms.node(id)
+    }
+
+    pub fn replay_term_counters(&self) -> ReplayTermCounters {
+        self.0.replay_terms.counters()
+    }
+
     /// A compact test-only structural node. Real producers install equivalent
     /// handles; the receipt kernel never renders the label.
-    pub fn intern_test_term(&self, _label: &str) -> ReplayTermId {
-        ReplayTermId::new(self.0.next_term.fetch_add(1, Ordering::Relaxed) + 1)
+    #[cfg(test)]
+    pub fn intern_test_term(&self, label: &str) -> ReplayTermId {
+        self.0.replay_terms.intern(
+            &self.0.next_term,
+            ReplayTerm::Literal {
+                sort: ReplaySortId::new(0),
+                literal: ReplayLiteral::String(label.into()),
+            },
+        )
     }
 
     pub(crate) fn new_batch(&self) -> ReceiptBatch {
         ReceiptBatch::new(self.0.clone())
     }
 
-    pub(crate) fn source_draft(&self, source: SourceRef, terms: &[ReplayTermId]) -> CauseDraftId {
+    pub(crate) fn install_source_row(
+        &self,
+        table: TableId,
+        row: &[Value],
+        terms: &[ReplayTermId],
+    ) -> Result<(), &'static str> {
+        self.0.replay_terms.install_source_row(table, row, terms)
+    }
+
+    pub(crate) fn source_draft(&self, source: SourceRef) -> CauseDraftId {
         let id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
-        let term_range = FlatRange::new(arena.provisional.terms.len(), terms.len());
-        arena.provisional.terms.extend_from_slice(terms);
-        arena.provisional.causes.install(
-            id.get(),
-            CauseDraft::Source {
-                source,
-                terms: term_range,
-            },
-        );
-        arena.counters.term_handles += terms.len() as u64;
+        arena
+            .provisional
+            .causes
+            .install(id.get(), CauseDraft::Source(source));
         arena.update_live_bytes();
         id
     }
@@ -711,13 +1056,23 @@ impl CausalReceipts {
         rule: u32,
         wave: CausalWave,
         premise_arity: usize,
-        binding_cells: &[(usize, usize)],
+        binding_sources: &[ReplayBindingSource],
         flat_premises: &[FactId],
+        flat_current_terms: &[ReplayTermId],
         lanes: &[usize],
     ) -> Vec<(usize, CauseDraftId)> {
         if lanes.is_empty() {
             return Vec::new();
         }
+        let current_arity = binding_sources
+            .iter()
+            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+            .count();
+        assert_eq!(
+            flat_current_terms.len(),
+            lanes.len() * current_arity,
+            "current replay terms must be dense and lane-aligned"
+        );
         let first_match = ReceiptShared::alloc_u64(&self.0.next_match_draft, lanes.len());
         let first_cause = ReceiptShared::alloc_u64(&self.0.next_cause_draft, lanes.len());
         let mut arena = self.0.arena.lock().unwrap();
@@ -729,14 +1084,26 @@ impl CausalReceipts {
             arena.provisional.premises.extend_from_slice(premises);
 
             let term_start = arena.provisional.terms.len();
-            for &(premise, column) in binding_cells {
-                let fact = premises[premise];
-                let term = arena.fact_term(fact, column).unwrap_or_else(|| {
-                    panic!("missing producer-installed ReplayTermId for {fact:?} column {column}")
-                });
+            let mut current = offset * current_arity;
+            for source in binding_sources {
+                let term = match *source {
+                    ReplayBindingSource::Premise { premise, column } => {
+                        let fact = premises[premise];
+                        arena.fact_term(fact, column).unwrap_or_else(|| {
+                            panic!(
+                                "missing producer-installed ReplayTermId for {fact:?} column {column}"
+                            )
+                        })
+                    }
+                    ReplayBindingSource::Current { .. } => {
+                        let term = flat_current_terms[current];
+                        current += 1;
+                        term
+                    }
+                };
                 arena.provisional.terms.push(term);
             }
-            let term_range = FlatRange::new(term_start, arena.provisional.terms.len() - term_start);
+            let term_range = FlatRange::new(term_start, binding_sources.len());
             let match_id = MatchDraftId::new(first_match + offset as u64);
             arena.provisional.matches.install(
                 match_id.get(),
@@ -755,7 +1122,7 @@ impl CausalReceipts {
             result.push((lane, cause_id));
         }
         arena.counters.premise_handles += (lanes.len() * premise_arity) as u64;
-        arena.counters.term_handles += (lanes.len() * binding_cells.len()) as u64;
+        arena.counters.term_handles += (lanes.len() * binding_sources.len()) as u64;
         arena.update_live_bytes();
         result
     }
@@ -816,7 +1183,7 @@ impl CausalReceipts {
                 .as_ref()
                 .expect("complete cause segment")
             {
-                CauseDraft::Source { .. } => {}
+                CauseDraft::Source(_) => {}
                 CauseDraft::Rule(match_id) => {
                     let Some(match_index) = arena.provisional.matches.index(match_id.get()) else {
                         arena.counters.promotion_misses += 1;
@@ -872,15 +1239,7 @@ impl CausalReceipts {
                 .expect("reachable cause draft")
                 .clone();
             let durable = match draft {
-                CauseDraft::Source { source, terms } => {
-                    let start = arena.durable_source_terms.len();
-                    let source_terms = arena.provisional.terms[terms.as_range()].to_vec();
-                    arena.durable_source_terms.extend_from_slice(&source_terms);
-                    DurableCause::Source {
-                        source,
-                        terms: FlatRange::new(start, terms.len as usize),
-                    }
-                }
+                CauseDraft::Source(source) => DurableCause::Source(source),
                 CauseDraft::Rule(match_id) => {
                     let index = arena
                         .provisional
@@ -940,6 +1299,8 @@ impl CausalReceipts {
                 Some(FactSlot::Durable(_)) | None => None,
             })
             .collect::<Vec<_>>();
+        let fact_terms = mem::take(&mut arena.provisional.fact_terms);
+        arena.durable_fact_terms.reserve(fact_terms.len());
         for (slot_index, fact) in pending_facts {
             let index = arena
                 .provisional
@@ -947,9 +1308,14 @@ impl CausalReceipts {
                 .index(fact.cause.get())
                 .expect("fact cause belongs to current segment");
             let durable = cause_map[index].expect("effective fact cause is reachable");
+            let term_start = arena.durable_fact_terms.len();
+            arena
+                .durable_fact_terms
+                .extend_from_slice(&fact_terms[fact.terms.as_range()]);
             arena.facts[slot_index] = Some(FactSlot::Durable(DurableFact {
                 table: fact.table,
                 cause: durable,
+                terms: FlatRange::new(term_start, fact.terms.len as usize),
             }));
         }
         let pending_equalities = mem::take(&mut arena.provisional.pending_equalities);
@@ -1015,12 +1381,7 @@ impl CausalReceipts {
                     .unfold_cause(fact.cause)
                     .expect("durable fact cause must unfold");
                 let terms: Box<[ReplayTermId]> =
-                    match &arena.durable_causes[(fact.cause.get() - 1) as usize] {
-                        DurableCause::Source { terms, .. } => {
-                            arena.durable_source_terms[terms.as_range()].into()
-                        }
-                        DurableCause::Rule(_) | DurableCause::Merge { .. } => Box::new([]),
-                    };
+                    arena.durable_fact_terms[fact.terms.as_range()].into();
                 FactRecord {
                     id: FactId::new(index as u64 + 1),
                     table: fact.table,
@@ -1086,13 +1447,7 @@ impl CausalReceipts {
         let cause = arena
             .unfold_cause(fact.cause)
             .expect("durable fact cause must unfold");
-        let terms: Box<[ReplayTermId]> =
-            match &arena.durable_causes[(fact.cause.get() - 1) as usize] {
-                DurableCause::Source { terms, .. } => {
-                    arena.durable_source_terms[terms.as_range()].into()
-                }
-                DurableCause::Rule(_) | DurableCause::Merge { .. } => Box::new([]),
-            };
+        let terms: Box<[ReplayTermId]> = arena.durable_fact_terms[fact.terms.as_range()].into();
         Some(FactRecord {
             id,
             table: fact.table,
@@ -1127,5 +1482,157 @@ mod tests {
         assert!(snapshot.matches.is_empty());
         assert_eq!(snapshot.counters.provisional_matches, 0);
         assert_eq!(snapshot.counters.live_provisional_bytes, 0);
+    }
+
+    #[test]
+    fn derived_fact_owns_the_terms_for_its_committed_row() {
+        let receipts = CausalReceipts::default();
+        let table = TableId::new_const(0);
+        let value_sort = ReplaySortId::new(1);
+        let timestamp_sort = ReplaySortId::new(2);
+        receipts
+            .register_table_layout(table, &[Some(value_sort), Some(timestamp_sort)])
+            .unwrap();
+        let row = [Value::new_const(7), Value::new_const(0)];
+        let terms = [
+            receipts.intern_literal(value_sort, ReplayLiteral::I64(7), row[0]),
+            receipts.intern_literal(timestamp_sort, ReplayLiteral::I64(0), row[1]),
+        ];
+        receipts.install_source_row(table, &row, &terms).unwrap();
+        let source_cause = receipts.source_draft(SourceRef::Synthetic(0));
+        let mut source_batch = receipts.new_batch();
+        let source = source_batch.record_fact(table, source_cause, &row);
+        source_batch.publish();
+        receipts.finalize_wave();
+        assert_eq!(receipts.fact_record(source).unwrap().terms.as_ref(), &terms);
+
+        let binding_sources = [
+            ReplayBindingSource::Premise {
+                premise: 0,
+                column: 0,
+            },
+            ReplayBindingSource::Premise {
+                premise: 0,
+                column: 1,
+            },
+        ];
+        let [(lane, rule_cause)] = receipts
+            .register_rule_matches(
+                7,
+                CausalWave::new(1),
+                1,
+                &binding_sources,
+                &[source],
+                &[],
+                &[0],
+            )
+            .try_into()
+            .unwrap();
+        assert_eq!(lane, 0);
+        let mut derived_batch = receipts.new_batch();
+        let derived = derived_batch.record_fact(table, rule_cause, &row);
+        derived_batch.publish();
+        receipts.finalize_wave();
+
+        assert_eq!(
+            receipts.fact_record(derived).unwrap().terms.as_ref(),
+            &terms,
+            "fact terms belong to the immutable committed row, not its Source cause"
+        );
+
+        let [(lane, next_cause)] = receipts
+            .register_rule_matches(
+                8,
+                CausalWave::new(2),
+                1,
+                &binding_sources,
+                &[derived],
+                &[],
+                &[0],
+            )
+            .try_into()
+            .unwrap();
+        assert_eq!(lane, 0);
+        let mut next_batch = receipts.new_batch();
+        next_batch.record_fact(table, next_cause, &row);
+        next_batch.publish();
+        receipts.finalize_wave();
+        let next_match = receipts
+            .snapshot()
+            .matches
+            .into_iter()
+            .find(|matched| matched.rule == 8)
+            .unwrap();
+        assert_eq!(
+            next_match.terms.as_ref(),
+            &terms,
+            "a later rule must resolve terms through a derived FactId"
+        );
+    }
+
+    #[test]
+    fn out_of_order_fact_publication_rebases_term_ranges_without_holes() {
+        let receipts = CausalReceipts::default();
+        let table = TableId::new_const(1);
+        let sort = ReplaySortId::new(30);
+        receipts
+            .register_table_layout(table, &[Some(sort)])
+            .unwrap();
+        let low_row = [Value::new_const(10)];
+        let high_row = [Value::new_const(20)];
+        let low_term = receipts.intern_literal(sort, ReplayLiteral::I64(10), low_row[0]);
+        let high_term = receipts.intern_literal(sort, ReplayLiteral::I64(20), high_row[0]);
+        receipts
+            .install_source_row(table, &low_row, &[low_term])
+            .unwrap();
+        receipts
+            .install_source_row(table, &high_row, &[high_term])
+            .unwrap();
+
+        let low_cause = receipts.source_draft(SourceRef::Synthetic(10));
+        let high_cause = receipts.source_draft(SourceRef::Synthetic(20));
+        let mut low = receipts.new_batch();
+        let low_fact = low.record_fact(table, low_cause, &low_row);
+        let mut high = receipts.new_batch();
+        let high_fact = high.record_fact(table, high_cause, &high_row);
+        assert!(high_fact > low_fact);
+
+        high.publish();
+        low.publish();
+        receipts.finalize_wave();
+
+        assert_eq!(
+            receipts.fact_record(low_fact).unwrap().terms.as_ref(),
+            &[low_term]
+        );
+        assert_eq!(
+            receipts.fact_record(high_fact).unwrap().terms.as_ref(),
+            &[high_term]
+        );
+        assert_eq!(
+            receipts
+                .snapshot()
+                .facts
+                .iter()
+                .flat_map(|fact| fact.terms.iter().copied())
+                .collect::<Vec<_>>(),
+            [low_term, high_term],
+            "FactId order must be independent of batch publication order"
+        );
+    }
+
+    #[test]
+    fn replay_value_lookup_is_scoped_by_stable_sort() {
+        let receipts = CausalReceipts::default();
+        let value = Value::new_const(7);
+        let left_sort = ReplaySortId::new(40);
+        let right_sort = ReplaySortId::new(41);
+        let left = receipts.intern_literal(left_sort, ReplayLiteral::String("left".into()), value);
+        let right =
+            receipts.intern_literal(right_sort, ReplayLiteral::String("right".into()), value);
+
+        assert_ne!(left, right);
+        assert_eq!(receipts.lookup_term(left_sort, value), Some(left));
+        assert_eq!(receipts.lookup_term(right_sort, value), Some(right));
     }
 }

@@ -9,9 +9,9 @@ use crate::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::receipts::{ActionReceiptSpec, PremiseSlot};
+use crate::receipts::{ActionReceiptSpec, PremiseSlot, ReplayBindingSource};
 use crate::{
-    BaseValueId, CounterId, ExternalFunctionId, PoolSet, RuleReceiptSpec,
+    BaseValueId, CounterId, ExternalFunctionId, PoolSet, ReplayConstructorSpec, RuleReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -581,9 +581,9 @@ impl RuleBuilder<'_, '_> {
                     .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
                     .collect(),
             );
-            let mut binding_cells = Vec::with_capacity(spec.ordinary_vars.len());
+            let mut binding_sources = Vec::with_capacity(spec.ordinary_vars.len());
             for var in &spec.ordinary_vars {
-                let cell = spec
+                let premise_cell = spec
                     .premises
                     .iter()
                     .enumerate()
@@ -591,17 +591,39 @@ impl RuleBuilder<'_, '_> {
                         self.qb.query.atoms[*atom]
                             .get_col(*var)
                             .map(|col| (premise, col.index()))
-                    })
-                    .unwrap_or_else(|| {
-                        panic!("receipt variable {var:?} is not bound by a retained premise")
                     });
-                binding_cells.push(cell);
+                let source = if let Some((premise, column)) = premise_cell {
+                    if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
+                        let atom = spec.premises[premise];
+                        let table = self.qb.query.atoms[atom].table;
+                        assert!(
+                            receipts.table_column_sort(table, column).is_some(),
+                            "receipt variable {var:?} selects non-replayable table column {column}"
+                        );
+                    }
+                    ReplayBindingSource::Premise { premise, column }
+                } else {
+                    let sort = spec
+                        .current_vars
+                        .iter()
+                        .find_map(|(current, sort)| (*current == *var).then_some(*sort))
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
+                            )
+                        });
+                    ReplayBindingSource::Current {
+                        variable: *var,
+                        sort,
+                    }
+                };
+                binding_sources.push(source);
             }
             ActionReceiptSpec {
                 rule: spec.rule,
                 premise_count,
                 premise_slots,
-                binding_cells: binding_cells.into_boxed_slice(),
+                binding_sources: binding_sources.into_boxed_slice(),
             }
         });
         let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {
@@ -652,6 +674,71 @@ impl RuleBuilder<'_, '_> {
             default: default_vals.to_vec(),
             dst_col,
             dst_var: res,
+        });
+        self.qb.mark_used(args);
+        self.qb
+            .mark_used(default_vals.iter().filter_map(|x| match x {
+                WriteVal::QueryEntry(qe) => Some(qe),
+                WriteVal::IncCounter(_) | WriteVal::CurrentVal(_) => None,
+            }));
+        self.qb.mark_defined(&res.into());
+        Ok(res)
+    }
+
+    /// Receipt-only constructor lookup/insert with one typed structural
+    /// producer. This is a distinct instruction so the ordinary hot path does
+    /// not branch on replay metadata.
+    pub fn lookup_or_insert_with_replay(
+        &mut self,
+        table: TableId,
+        args: &[QueryEntry],
+        default_vals: &[WriteVal],
+        dst_col: ColumnId,
+        replay: ReplayConstructorSpec,
+    ) -> Result<Variable, QueryError> {
+        let table_info = self.table_info(table);
+        self.validate_keys(table, table_info, args)?;
+        self.validate_vals(table, table_info, default_vals.iter())?;
+        assert_eq!(
+            replay.child_sorts.len(),
+            args.len(),
+            "constructor replay metadata needs one sort per key argument"
+        );
+        let receipts = self
+            .qb
+            .rsb
+            .db
+            .causal_receipts
+            .as_ref()
+            .expect("constructor replay metadata requires causal receipts");
+        for (column, sort) in replay.child_sorts.iter().copied().enumerate() {
+            assert_eq!(
+                receipts.table_column_sort(table, column),
+                Some(sort),
+                "constructor replay child sort does not match its table column"
+            );
+        }
+        assert_eq!(
+            receipts.table_column_sort(table, dst_col.index()),
+            Some(replay.result_sort),
+            "constructor replay result sort does not match its table column"
+        );
+        for column in args.len()..table_info.spec.arity() {
+            if column != dst_col.index() {
+                assert!(
+                    receipts.table_column_sort(table, column).is_none(),
+                    "constructor replay has an unsupported typed default column {column}"
+                );
+            }
+        }
+        let res = self.qb.new_var();
+        self.qb.instrs.push(Instr::LookupOrInsertDefaultReplay {
+            table,
+            args: args.to_vec(),
+            default: default_vals.to_vec(),
+            dst_col,
+            dst_var: res,
+            replay: Box::new(replay),
         });
         self.qb.mark_used(args);
         self.qb
