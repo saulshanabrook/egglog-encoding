@@ -76,7 +76,7 @@ def test_prove_scan_ignores_comments_strings_and_longer_atoms(tmp_path: Path) ->
     assert not workloads.file_contains_executable_prove_command(check_file)
 
 
-def test_default_workloads_are_the_six_research_cases() -> None:
+def test_default_workloads_are_the_five_causal_slice_cases() -> None:
     files = workloads.resolve_files([], ROOT)
     assert tuple(file.display_path for file in files) == (
         "egglog/tests/math-microbenchmark.egg",
@@ -84,7 +84,6 @@ def test_default_workloads_are_the_six_research_cases() -> None:
         "benchmarks/pointer-analysis-small.egg",
         "egglog/tests/hardboiled_conv1d_32.egg",
         "benchmarks/luminal-llama.egg",
-        "egglog/tests/web-demo/herbie.egg",
     )
     pointer = next(file for file in files if file.display_path == "benchmarks/pointer-analysis-small.egg")
     assert pointer.fact_directory == (ROOT / "benchmarks/data/pointer-analysis-small").resolve()
@@ -128,6 +127,25 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "1",
         "--backend",
         "dd",
+        "--proofs",
+        str(file_spec.absolute_path),
+    ]
+    assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "causal-receipts") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--causal-receipts",
+        str(file_spec.absolute_path),
+    ]
+    assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "causal-proofs") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--causal-slice",
         "--proofs",
         str(file_spec.absolute_path),
     ]

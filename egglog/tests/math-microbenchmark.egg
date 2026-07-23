@@ -65,6 +65,9 @@
                                     (Sqrt (Var "five")))
                                 (Const 2))))
 (run 11)
+(check
+  (= (Pow (Var "x") (Const 2))
+     (Mul (Var "x") (Var "x"))))
 (print-size Add)
 (print-size Mul)
 

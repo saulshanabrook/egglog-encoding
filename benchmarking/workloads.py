@@ -33,7 +33,6 @@ DEFAULT_WORKLOADS = (
     ),
     WorkloadConfig("egglog/tests/hardboiled_conv1d_32.egg"),
     WorkloadConfig("benchmarks/luminal-llama.egg"),
-    WorkloadConfig("egglog/tests/web-demo/herbie.egg"),
 )
 
 

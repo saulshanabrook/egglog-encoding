@@ -82,6 +82,17 @@ def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     assert args.detail == "rulesets"
 
 
+@pytest.mark.parametrize("treatment", ("causal-receipts", "causal-proofs"))
+def test_pair_cli_accepts_causal_treatments_on_the_main_backend(treatment: str) -> None:
+    args = benchmark.parse_benchmark_args(["--treatment", treatment])
+    _baseline, candidate = benchmark.endpoint_requests(args)
+
+    assert candidate.treatment == treatment
+
+    with pytest.raises(ValueError, match=rf"backend dd does not support treatment {treatment}"):
+        models.EndpointRequest(targets.parse_target("."), "dd", treatment)
+
+
 @pytest.mark.parametrize("detail", ["summary", "files", "phases", "rulesets"])
 def test_pair_cli_accepts_each_named_detail_level(detail: str) -> None:
     assert benchmark.parse_benchmark_args(["--detail", detail]).detail == detail

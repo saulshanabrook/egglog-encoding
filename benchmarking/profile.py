@@ -25,6 +25,7 @@ from rich.text import Text
 from . import samply_analysis
 from .models import (
     BACKEND_SPECS,
+    TREATMENTS,
     Backend,
     FileSpec,
     TargetRequest,
@@ -103,7 +104,7 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--treatment",
-        choices=("off", "term", "proofs"),
+        choices=TREATMENTS,
         default="proofs",
         help="treatment to profile (default: proofs)",
     )

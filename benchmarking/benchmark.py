@@ -28,6 +28,7 @@ from .collection import (
 )
 from .models import (
     BACKEND_SPECS,
+    TREATMENTS,
     Backend,
     BenchmarkEndpoint,
     ComparisonSpec,
@@ -72,7 +73,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--treatment",
-        choices=("off", "term", "proofs"),
+        choices=TREATMENTS,
         default="proofs",
         help="candidate treatment (default: proofs)",
     )
@@ -89,7 +90,7 @@ def parse_benchmark_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--compare-treatment",
-        choices=("off", "term", "proofs"),
+        choices=TREATMENTS,
         default="off",
         help="baseline treatment (default: off)",
     )
