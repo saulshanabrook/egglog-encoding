@@ -10,7 +10,7 @@ use crate::{
     common::{HashMap, IndexMap},
     free_join::plan::{JoinStages, MatId, MatScanMode, MatSpec},
     numeric_id::{DenseIdMap, IdVec, NumericId},
-    query::Atom,
+    query::{ActionInfo, Atom},
     row_buffer::{RowBuffer, SmallValueVec},
 };
 use crossbeam::utils::CachePadded;
@@ -675,6 +675,14 @@ impl Database {
         expected_matches: Option<usize>,
         report_level: ReportLevel,
     ) -> Result<GuardedRuleSetRunOutcome, GuardedRuleSetRunError> {
+        if self.causal_receipts.is_some()
+            && rule_set
+                .actions
+                .iter()
+                .any(|(_, action)| action.receipt.is_some())
+        {
+            return Err(GuardedRuleSetRunError::CausalReceiptWitnessUnsupported);
+        }
         if rule_set.plans.len() > 1 {
             return Err(GuardedRuleSetRunError::MultipleExecutablePlans {
                 plan_count: rule_set.plans.len(),
@@ -865,7 +873,9 @@ impl Database {
                     ScopedActionBuffer::new(scope, rule_set, match_counter.clone());
                 for captured in &captured {
                     let bindings = captured.to_map();
-                    action_buf.push_bindings(captured.action, &bindings, || exec_state.clone());
+                    action_buf.push_bindings(captured.action, &bindings, None, &exec_state, || {
+                        exec_state.clone()
+                    });
                 }
                 if action_buf.needs_flush {
                     action_buf.flush(&mut exec_state.clone());
@@ -880,7 +890,9 @@ impl Database {
             };
             for captured in &captured {
                 let bindings = captured.to_map();
-                action_buf.push_bindings(captured.action, &bindings, || exec_state.clone());
+                action_buf.push_bindings(captured.action, &bindings, None, &exec_state, || {
+                    exec_state.clone()
+                });
             }
             action_buf.flush(&mut exec_state.clone());
         }
@@ -1085,7 +1097,42 @@ impl FrameUpdates {
     }
 }
 
-type BindingSet = Vec<(SmallVec<[Variable; 4]>, Arc<TaggedRowBuffer<SmallValueVec>>)>;
+type BindingSet = Vec<(
+    Option<AtomId>,
+    SmallVec<[Variable; 4]>,
+    Arc<TaggedRowBuffer<SmallValueVec>>,
+)>;
+
+#[derive(Default)]
+struct MatchWitness {
+    facts: SmallVec<[(AtomId, crate::FactId); 4]>,
+}
+
+fn push_receipt_witness(
+    action: &ActionInfo,
+    witness: &MatchWitness,
+    exec_state: &ExecutionState<'_>,
+    bindings: &mut Bindings,
+) {
+    let Some(layout) = &action.receipt else {
+        return;
+    };
+    let mut premises = SmallVec::<[crate::FactId; 4]>::new();
+    for atom in &layout.premises {
+        let fact = witness
+            .facts
+            .iter()
+            .find_map(|(candidate, fact)| (*candidate == *atom).then_some(*fact))
+            .unwrap_or_else(|| panic!("missing exact premise FactId for atom {atom:?}"));
+        premises.push(fact);
+    }
+    bindings.push_receipt(
+        layout.rule,
+        exec_state.causal_wave(),
+        &premises,
+        &layout.binding_cells,
+    );
+}
 
 #[derive(Default, Clone)]
 struct BindingInfo {
@@ -1290,6 +1337,8 @@ impl<'a> JoinState<'a> {
                 action,
                 &mut binding_info.bindings,
                 &binding_info.binding_sets,
+                atoms,
+                &binding_info.subsets,
                 &self.exec_state,
             );
             return;
@@ -1334,6 +1383,8 @@ impl<'a> JoinState<'a> {
                                     action,
                                     &mut binding_info.bindings,
                                     &binding_info.binding_sets,
+                                    atoms,
+                                    &binding_info.subsets,
                                     &self.exec_state,
                                 );
                             } else {
@@ -1731,7 +1782,9 @@ impl<'a> JoinState<'a> {
                         return;
                     }
 
-                    binding_info.binding_sets.push((vars, Arc::new(buf)));
+                    binding_info
+                        .binding_sets
+                        .push((Some(cover_atom), vars, Arc::new(buf)));
                     let mut updates = FrameUpdates::with_capacity(1);
                     updates.finish_frame();
                     drain_updates!(updates);
@@ -1961,7 +2014,7 @@ impl<'a> JoinState<'a> {
                 if buf.is_empty() {
                     return;
                 }
-                binding_info.binding_sets.push((vars, Arc::new(buf)));
+                binding_info.binding_sets.push((None, vars, Arc::new(buf)));
                 let mut updates = FrameUpdates::with_capacity(1);
                 updates.finish_frame();
                 drain_updates!(updates);
@@ -2171,9 +2224,28 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         action: A,
         bindings: &mut DenseIdMap<Variable, Value>,
         binding_sets: &BindingSet,
+        atoms: &DenseIdMap<AtomId, Atom>,
+        subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
         exec_state: &ExecutionState<'state>,
     ) {
-        expand_binding_sets(self, action, bindings, binding_sets, 0, exec_state);
+        let mut witness = self
+            .needs_receipt_witness(action)
+            .then(MatchWitness::default);
+        expand_binding_sets(
+            self,
+            action,
+            bindings,
+            binding_sets,
+            atoms,
+            subsets,
+            0,
+            &mut witness,
+            exec_state,
+        );
+    }
+
+    fn needs_receipt_witness(&self, _action: A) -> bool {
+        false
     }
 
     /// Push the given bindings to be executed for the specified action. If this
@@ -2187,6 +2259,8 @@ trait ActionBuffer<'state, A: NumericId>: Send {
         &mut self,
         action: A,
         bindings: &DenseIdMap<Variable, Value>,
+        witness: Option<&MatchWitness>,
+        exec_state: &ExecutionState<'state>,
         to_exec_state: impl FnMut() -> ExecutionState<'state>,
     );
 
@@ -2242,6 +2316,8 @@ impl<'state> ActionBuffer<'state, ActionId> for InPlaceCaptureBuffer {
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
+        _witness: Option<&MatchWitness>,
+        _exec_state: &ExecutionState<'state>,
         _to_exec_state: impl FnMut() -> ExecutionState<'state>,
     ) {
         self.captured.push(CapturedBinding::new(action, bindings));
@@ -2301,6 +2377,8 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedCaptureBuffer<'_, 'scope> 
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
+        _witness: Option<&MatchWitness>,
+        _exec_state: &ExecutionState<'scope>,
         _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
         self.local.push(CapturedBinding::new(action, bindings));
@@ -2352,16 +2430,27 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
     where
         'a: 'b;
 
+    fn needs_receipt_witness(&self, action: ActionId) -> bool {
+        self.rule_set.actions[action].receipt.is_some()
+    }
+
     fn push_bindings(
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
+        witness: Option<&MatchWitness>,
+        exec_state: &ExecutionState<'a>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
         let action_state = self.batches.get_or_default(action);
         action_state.n_runs += 1;
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
+        if let Some(layout) = &action_info.receipt {
+            let witness = witness.expect("receipt action requires a native match witness");
+            debug_assert!(!layout.premises.is_empty());
+            push_receipt_witness(action_info, witness, exec_state, &mut action_state.bindings);
+        }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.
         unsafe {
@@ -2432,10 +2521,17 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         = ScopedActionBuffer<'a, 'scope>
     where
         'scope: 'a;
+
+    fn needs_receipt_witness(&self, action: ActionId) -> bool {
+        self.rule_set.actions[action].receipt.is_some()
+    }
+
     fn push_bindings(
         &mut self,
         action: ActionId,
         bindings: &DenseIdMap<Variable, Value>,
+        witness: Option<&MatchWitness>,
+        exec_state: &ExecutionState<'scope>,
         mut to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
         self.needs_flush = true;
@@ -2443,6 +2539,11 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         action_state.n_runs += 1;
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
+        if let Some(layout) = &action_info.receipt {
+            let witness = witness.expect("receipt action requires a native match witness");
+            debug_assert!(!layout.premises.is_empty());
+            push_receipt_witness(action_info, witness, exec_state, &mut action_state.bindings);
+        }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.
         unsafe {
@@ -2517,43 +2618,139 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     action: A,
     bindings: &mut DenseIdMap<Variable, Value>,
     binding_sets: &BindingSet,
+    atoms: &DenseIdMap<AtomId, Atom>,
+    subsets: &DenseIdMap<AtomId, Arc<TrieNode>>,
     idx: usize,
+    witness: &mut Option<MatchWitness>,
     exec_state: &ExecutionState<'state>,
 ) {
     if exec_state.should_stop() {
         return;
     }
     if idx >= binding_sets.len() {
-        action_buf.push_bindings(action, bindings, || exec_state.clone());
+        let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
+        if let Some(witness) = witness {
+            for (atom, info) in atoms.iter() {
+                if info.table.is_dummy() || witness.facts.iter().any(|(seen, _)| *seen == atom) {
+                    continue;
+                }
+                let Some(node) = subsets.get(atom) else {
+                    continue;
+                };
+                let subset = node.subset.as_ref();
+                if subset.size() != 1 {
+                    continue;
+                }
+                let row = subset.first().expect("singleton subset has one row");
+                let fact = validated_atom_fact(info, row, bindings, exec_state);
+                witness.facts.push((atom, fact));
+            }
+        }
+        action_buf.push_bindings(action, bindings, witness.as_ref(), exec_state, || {
+            exec_state.clone()
+        });
+        if let Some(witness) = witness {
+            witness.facts.truncate(retained);
+        }
         return;
     }
     if idx + 1 == binding_sets.len() {
-        let (vars, buf) = &binding_sets[idx];
-        for (_, row) in buf.iter() {
+        let (atom, vars, buf) = &binding_sets[idx];
+        for (row_id, row) in buf.iter() {
             if exec_state.should_stop() {
                 return;
             }
             for (var, val) in vars.iter().zip(row.iter()) {
                 bindings.insert(*var, *val);
             }
-            action_buf.push_bindings(action, bindings, || exec_state.clone());
+            let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
+            if let (Some(witness), Some(atom)) = (witness.as_mut(), atom) {
+                let fact = validated_atom_fact(&atoms[*atom], row_id, bindings, exec_state);
+                witness.facts.push((*atom, fact));
+            }
+            expand_binding_sets(
+                action_buf,
+                action,
+                bindings,
+                binding_sets,
+                atoms,
+                subsets,
+                idx + 1,
+                witness,
+                exec_state,
+            );
+            if let Some(witness) = witness {
+                witness.facts.truncate(retained);
+            }
         }
         return;
     }
-    let (vars, buf) = &binding_sets[idx];
-    for (_, row) in buf.iter() {
+    let (atom, vars, buf) = &binding_sets[idx];
+    for (row_id, row) in buf.iter() {
         for (var, val) in vars.iter().zip(row.iter()) {
             bindings.insert(*var, *val);
+        }
+        let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
+        if let (Some(witness), Some(atom)) = (witness.as_mut(), atom) {
+            let fact = validated_atom_fact(&atoms[*atom], row_id, bindings, exec_state);
+            witness.facts.push((*atom, fact));
         }
         expand_binding_sets(
             action_buf,
             action,
             bindings,
             binding_sets,
+            atoms,
+            subsets,
             idx + 1,
+            witness,
             exec_state,
         );
+        if let Some(witness) = witness {
+            witness.facts.truncate(retained);
+        }
     }
+}
+
+fn validated_atom_fact(
+    atom: &Atom,
+    row_id: RowId,
+    bindings: &DenseIdMap<Variable, Value>,
+    exec_state: &ExecutionState<'_>,
+) -> crate::FactId {
+    let table = &exec_state.db.table_info[atom.table].table;
+    let row = table
+        .row_at(row_id)
+        .unwrap_or_else(|| panic!("receipt witness row {row_id:?} is not live"));
+    for (column, variable) in atom.var_columns.iter() {
+        if let Some(bound) = bindings.get(variable) {
+            assert_eq!(
+                row.vals[column.index()],
+                *bound,
+                "receipt singleton witness is inconsistent with the current binding"
+            );
+        }
+    }
+    let constraints_hold = atom
+        .constraints
+        .fast
+        .iter()
+        .chain(atom.constraints.slow.iter())
+        .all(|constraint| match constraint {
+            Constraint::Eq { l_col, r_col } => row.vals[l_col.index()] == row.vals[r_col.index()],
+            Constraint::EqConst { col, val } => row.vals[col.index()] == *val,
+            Constraint::LtConst { col, val } => row.vals[col.index()] < *val,
+            Constraint::GtConst { col, val } => row.vals[col.index()] > *val,
+            Constraint::LeConst { col, val } => row.vals[col.index()] <= *val,
+            Constraint::GeConst { col, val } => row.vals[col.index()] >= *val,
+        });
+    assert!(
+        constraints_hold,
+        "receipt singleton witness violates its atom constraints"
+    );
+    table
+        .fact_id(row_id)
+        .unwrap_or_else(|| panic!("receipt witness row {row_id:?} has no immutable FactId"))
 }
 
 fn flush_action_states(
@@ -2594,6 +2791,8 @@ impl<'a> ActionBuffer<'a, MatId> for InPlaceMaterializer<'a> {
         &mut self,
         mat_id: MatId,
         bindings: &DenseIdMap<Variable, Value>,
+        _witness: Option<&MatchWitness>,
+        _exec_state: &ExecutionState<'a>,
         _to_exec_state: impl FnMut() -> ExecutionState<'a>,
     ) {
         let mat = self
@@ -2656,6 +2855,8 @@ impl<'scope> ActionBuffer<'scope, MatId> for ScopedMaterializer<'_, 'scope> {
         &mut self,
         mat_id: MatId,
         bindings: &DenseIdMap<Variable, Value>,
+        _witness: Option<&MatchWitness>,
+        _exec_state: &ExecutionState<'scope>,
         _to_exec_state: impl FnMut() -> ExecutionState<'scope>,
     ) {
         let mat = self.materializations.get(mat_id).expect("invalid mat id");
@@ -3038,5 +3239,112 @@ impl LocalState {
             binding_info: &mut self.binding_info,
             updates: &mut self.updates,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    use super::*;
+    use crate::{
+        SourceRef, TableId, free_join::ProcessedConstraints, query::VarColumnMap,
+        table::SortedWritesTable,
+    };
+
+    fn receipt_test_atom(table: TableId, variable: Variable) -> Atom {
+        let mut var_columns = VarColumnMap::default();
+        var_columns.insert(variable, ColumnId::new(0));
+        let mut fast = Pooled::<Vec<Constraint>>::default();
+        fast.push(Constraint::EqConst {
+            col: ColumnId::new(1),
+            val: Value::new(0),
+        });
+        Atom {
+            table,
+            var_columns,
+            constraints: ProcessedConstraints {
+                subset: Subset::empty(),
+                fast,
+                slow: Default::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn receipt_witness_rejects_first_row_decoy_and_accepts_bound_row() {
+        let mut db = Database::default();
+        let relation = || {
+            SortedWritesTable::new(
+                1,
+                2,
+                None,
+                vec![],
+                Box::new(|_, left, right, _| {
+                    assert_eq!(left, right, "relation rows are immutable");
+                    false
+                }),
+            )
+        };
+        let selected = db.add_table_named(
+            relation(),
+            "Selected".into(),
+            std::iter::empty(),
+            std::iter::empty(),
+        );
+        let candidates = db.add_table_named(
+            relation(),
+            "Candidates".into(),
+            std::iter::empty(),
+            std::iter::empty(),
+        );
+        let receipts = db.enable_causal_receipts();
+        let zero = receipts.intern_test_term("zero");
+        let one = receipts.intern_test_term("one");
+        let two = receipts.intern_test_term("two");
+        db.stage_source_row(
+            selected,
+            &[Value::new(2), Value::new(0)],
+            &[two, zero],
+            SourceRef::Synthetic(0),
+        )
+        .unwrap();
+        db.stage_source_row(
+            candidates,
+            &[Value::new(1), Value::new(0)],
+            &[one, zero],
+            SourceRef::Synthetic(1),
+        )
+        .unwrap();
+        db.stage_source_row(
+            candidates,
+            &[Value::new(2), Value::new(0)],
+            &[two, zero],
+            SourceRef::Synthetic(2),
+        )
+        .unwrap();
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+
+        let variable = Variable::new(0);
+        let selected_atom = receipt_test_atom(selected, variable);
+        let candidate_atom = receipt_test_atom(candidates, variable);
+        let mut bindings = DenseIdMap::default();
+        bindings.insert(variable, Value::new(2));
+        let exec_state = ExecutionState::new(db.read_only_view(), Default::default());
+
+        let selected_fact =
+            validated_atom_fact(&selected_atom, RowId::new(0), &bindings, &exec_state);
+        assert!(!selected_fact.is_missing());
+        let decoy = catch_unwind(AssertUnwindSafe(|| {
+            validated_atom_fact(&candidate_atom, RowId::new(0), &bindings, &exec_state)
+        }));
+        assert!(
+            decoy.is_err(),
+            "a non-selected atom's first row must not be accepted when it contradicts bindings"
+        );
+        let actual = validated_atom_fact(&candidate_atom, RowId::new(1), &bindings, &exec_state);
+        assert!(!actual.is_missing());
+        assert_ne!(selected_fact, actual);
     }
 }

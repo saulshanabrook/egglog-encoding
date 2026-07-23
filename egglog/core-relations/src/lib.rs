@@ -13,6 +13,7 @@ pub(crate) mod offsets;
 pub(crate) mod parallel_heuristics;
 pub(crate) mod pool;
 pub(crate) mod query;
+pub(crate) mod receipts;
 pub(crate) mod row_buffer;
 pub(crate) mod table;
 
@@ -35,6 +36,11 @@ pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use query::{
     CachedPlan, QueryBuilder, QueryError, RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
+};
+pub use receipts::{
+    CausalReceipts, CausalWave, CauseDraftId, EqualityReason, EqualityRecord, FactCause, FactId,
+    FactRecord, MatchRecord, ReceiptCounters, ReceiptSnapshot, ReplayTermId, RuleMatchId,
+    RuleReceiptSpec, SourceRef,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

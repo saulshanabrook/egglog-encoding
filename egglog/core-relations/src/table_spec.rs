@@ -14,7 +14,7 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    QueryEntry, TableId, Variable,
+    CauseDraftId, FactId, QueryEntry, TableId, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -169,6 +169,9 @@ pub trait Table: Any + Send + Sync {
     /// A variant of clone that returns a boxed trait object; this trait object
     /// must contain all of the data associated with the current table.
     fn dyn_clone(&self) -> Box<dyn Table>;
+
+    /// Install the database-local identity used by commit-time receipts.
+    fn set_table_id(&mut self, _table: TableId) {}
 
     /// If this table can perform a table-level rebuild, construct a [`Rebuilder`] for it.
     fn rebuilder<'a>(&'a self, _cols: &[ColumnId]) -> Option<Box<dyn Rebuilder + 'a>> {
@@ -373,6 +376,18 @@ pub trait Table: Any + Send + Sync {
         self.get_row(key).map(|row| row.vals[col.index()])
     }
 
+    /// Return the immutable causal identity associated with a committed row.
+    /// Physical compaction may change `row`, but must preserve this identity.
+    fn fact_id(&self, _row: RowId) -> Option<FactId> {
+        None
+    }
+
+    /// Point-read a live committed row by its current physical identifier.
+    /// Used only while exact receipt witnesses are enabled.
+    fn row_at(&self, _row: RowId) -> Option<Row> {
+        None
+    }
+
     /// Merge any updates to the table, and potentially update the generation for
     /// the table.
     fn merge(&mut self, exec_state: &mut ExecutionState) -> TableChange;
@@ -393,6 +408,10 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// this buffer is dropped, and after `merge` is called on the underlying
     /// table.
     fn stage_insert(&mut self, row: &[Value]);
+
+    /// Stage an insertion with the exact native cause draft already known by
+    /// the current execution lane.
+    fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId);
 
     /// Stage the keyed entries for removal. Changes may not be visible until
     /// this buffer is dropped, and after `merge` is called on the underlying

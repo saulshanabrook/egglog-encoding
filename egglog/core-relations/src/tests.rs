@@ -1,6 +1,7 @@
 use std::{
     iter,
     ops::Range,
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
@@ -12,13 +13,13 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 use crate::numeric_id::NumericId;
 
 use crate::{
-    GuardedRuleSetRunOutcome, PlanStrategy,
-    action::WriteVal,
+    CausalWave, GuardedRuleSetRunOutcome, PlanStrategy, RuleReceiptSpec, SourceRef,
+    action::{ExecutionState, WriteVal},
     common::Value,
     free_join::{CounterId, Database, TableId},
     make_external_func,
     query::RuleSetBuilder,
-    table::SortedWritesTable,
+    table::{SortedWritesTable, causal_lookup_counters, reset_causal_lookup_counters},
     table_shortcuts::v,
     table_spec::{ColumnId, Constraint},
     uf::DisplacedTable,
@@ -38,6 +39,421 @@ fn run_serial_and_parallel(f: impl Fn() + Send + Sync) {
             .unwrap();
         pool.install(&f);
     }
+}
+
+#[test]
+fn causal_receipts_record_only_effective_constructor_and_union_commits() {
+    let mut db = Database::default();
+    let relation = || {
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    let input = db.add_table_named(relation(), "Input".into(), iter::empty(), iter::empty());
+    let constructor = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            3,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "constructor rows are immutable");
+                false
+            }),
+        ),
+        "Node".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let derived = db.add_table_named(relation(), "Derived".into(), iter::empty(), iter::empty());
+    let uf = db.add_table_named(
+        DisplacedTable::default(),
+        "UF".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let fresh = db.add_counter();
+
+    let receipts = db.enable_causal_receipts();
+    let input_term = receipts.intern_test_term("input-7");
+    let ts_term = receipts.intern_test_term("wave-0");
+    db.stage_source_row(
+        input,
+        &[Value::new(7), Value::new(0)],
+        &[input_term, ts_term],
+        SourceRef::Synthetic(0),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    let input_ts = query.new_var_named("input_ts");
+    let input_atom = query
+        .add_atom(input, &[value.into(), input_ts.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    let node = action
+        .lookup_or_insert(
+            constructor,
+            &[value.into()],
+            &[WriteVal::IncCounter(fresh), Value::new(1).into()],
+            ColumnId::new(1),
+        )
+        .unwrap();
+    action
+        .insert(derived, &[value.into(), Value::new(1).into()])
+        .unwrap();
+    action
+        .insert(uf, &[node.into(), value.into(), Value::new(1).into()])
+        .unwrap();
+    action.build_with_receipts(
+        "derive-node",
+        RuleReceiptSpec::new(0, [input_atom], [value, input_ts]),
+    );
+    let rule_set = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    let first = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    assert!(first.changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    let source = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == input)
+        .expect("source fact must be committed");
+    let constructor_fact = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == constructor)
+        .expect("constructor fact must be committed");
+    let derived_fact = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == derived)
+        .expect("derived fact must be committed");
+    assert_ne!(source.id, constructor_fact.id);
+    assert_ne!(source.id, derived_fact.id);
+    let match_record = snapshot
+        .matches
+        .iter()
+        .find(|record| record.id == constructor_fact.cause.rule_match().unwrap())
+        .expect("effective constructor must promote its match");
+    assert_eq!(match_record.wave, CausalWave::new(1));
+    assert_eq!(match_record.premises.as_ref(), &[source.id]);
+    assert_eq!(match_record.terms.as_ref(), &[input_term, ts_term]);
+    assert_eq!(derived_fact.cause.rule_match(), Some(match_record.id));
+    assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(
+        snapshot.equalities[0].reason.rule_match(),
+        Some(match_record.id)
+    );
+    assert!(snapshot.equalities[0].applied);
+    assert_eq!(snapshot.counters.provisional_matches, 0);
+    assert_eq!(snapshot.counters.promoted_matches, 1);
+    assert_eq!(snapshot.counters.premise_handles, 1);
+    assert_eq!(snapshot.counters.term_handles, 4);
+    assert_eq!(snapshot.counters.live_provisional_bytes, 0);
+    assert!(snapshot.counters.peak_provisional_bytes > 0);
+    assert_eq!(snapshot.counters.promotion_misses, 0);
+    assert_eq!(
+        receipts.fact_record(source.id).unwrap(),
+        source.clone(),
+        "FactId must select its dense slot without scanning other facts"
+    );
+
+    db.set_causal_wave(CausalWave::new(2));
+    let second = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    assert!(!second.changed);
+    db.finalize_causal_wave();
+    let after_noop = receipts.snapshot();
+    assert_eq!(after_noop.facts.len(), snapshot.facts.len());
+    assert_eq!(
+        after_noop
+            .equalities
+            .iter()
+            .filter(|edge| edge.applied)
+            .count(),
+        1
+    );
+    assert!(after_noop.counters.redundant_unions >= 1);
+}
+
+#[test]
+fn causal_receipts_parallel_merge_preserves_proposal_and_fact_causes() {
+    const N_KEYS: u32 = 20_001;
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut db = Database::default();
+        let table = db.add_table_named(
+            SortedWritesTable::new(
+                1,
+                2,
+                None,
+                vec![],
+                Box::new(|_, left, right, out| {
+                    if right[1] > left[1] {
+                        out.extend_from_slice(right);
+                        true
+                    } else {
+                        false
+                    }
+                }),
+            ),
+            "ParallelMerge".into(),
+            iter::empty(),
+            iter::empty(),
+        );
+        let receipts = db.enable_causal_receipts();
+        db.set_causal_wave(CausalWave::new(1));
+
+        // The total exceeds `parallelize_table_op`'s real threshold. Two
+        // proposals for key zero merge before either has a committed FactId;
+        // every other key has exactly one effective proposal.
+        let key_zero =
+            receipts.register_rule_matches(10, CausalWave::new(1), 0, &[], &[], &[0])[0].1;
+        let ordinary_lanes = (0..(N_KEYS as usize - 1)).collect::<Vec<_>>();
+        let ordinary = receipts
+            .register_rule_matches(1, CausalWave::new(1), 0, &[], &[], &ordinary_lanes)
+            .into_iter()
+            .map(|(_, cause)| cause)
+            .collect::<Vec<_>>();
+        let replacement =
+            receipts.register_rule_matches(11, CausalWave::new(1), 0, &[], &[], &[0])[0].1;
+        let mut first = db.new_buffer(table);
+        first.stage_insert_with_cause(&[Value::new(0), Value::new(0)], key_zero);
+        for (key, cause) in (1..N_KEYS).zip(ordinary) {
+            first.stage_insert_with_cause(&[Value::new(key), Value::new(key)], cause);
+        }
+        first.stage_insert_with_cause(&[Value::new(0), Value::new(N_KEYS + 1)], replacement);
+        drop(first);
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+
+        let first_snapshot = receipts.snapshot();
+        assert_eq!(first_snapshot.facts.len(), N_KEYS as usize);
+        let same_wave_fact = first_snapshot
+            .facts
+            .iter()
+            .find(|fact| fact.cause.rule_matches().len() == 2)
+            .expect("same-wave proposal fold must retain both matches");
+        let same_wave_rules = same_wave_fact
+            .cause
+            .rule_matches()
+            .iter()
+            .map(|id| {
+                first_snapshot
+                    .matches
+                    .iter()
+                    .find(|record| record.id == *id)
+                    .unwrap()
+                    .rule
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(same_wave_rules, [10, 11]);
+        let crate::FactCause::Merge { prior_facts, .. } = &same_wave_fact.cause else {
+            panic!("same-wave fold must be represented as a merge")
+        };
+        assert!(prior_facts.is_empty());
+        let same_wave_fact_id = same_wave_fact.id;
+
+        // Force the parallel path again. All but key zero are no-ops; key zero
+        // becomes one new immutable version that cites its prior FactId.
+        db.set_causal_wave(CausalWave::new(2));
+        let noop_lanes = (0..(N_KEYS as usize - 1)).collect::<Vec<_>>();
+        let noops = receipts
+            .register_rule_matches(20, CausalWave::new(2), 0, &[], &[], &noop_lanes)
+            .into_iter()
+            .map(|(_, cause)| cause)
+            .collect::<Vec<_>>();
+        let update = receipts.register_rule_matches(21, CausalWave::new(2), 0, &[], &[], &[0])[0].1;
+        let duplicate_noop =
+            receipts.register_rule_matches(22, CausalWave::new(2), 0, &[], &[], &[0])[0].1;
+        let mut second = db.new_buffer(table);
+        for (key, cause) in (1..N_KEYS).zip(noops) {
+            second.stage_insert_with_cause(&[Value::new(key), Value::new(key)], cause);
+        }
+        second.stage_insert_with_cause(&[Value::new(0), Value::new(N_KEYS + 2)], update);
+        // Keep the count above the strict `> 20_000` threshold.
+        second.stage_insert_with_cause(&[Value::new(1), Value::new(1)], duplicate_noop);
+        drop(second);
+        assert!(db.merge_all());
+        db.finalize_causal_wave();
+
+        let final_snapshot = receipts.snapshot();
+        assert_eq!(final_snapshot.facts.len(), N_KEYS as usize + 1);
+        let latest = final_snapshot.facts.last().unwrap();
+        let crate::FactCause::Merge {
+            rule_matches,
+            prior_facts,
+        } = &latest.cause
+        else {
+            panic!("committed update must retain its merge dependencies")
+        };
+        assert_eq!(rule_matches.len(), 1);
+        assert_eq!(prior_facts.as_ref(), &[same_wave_fact_id]);
+        let update_match = final_snapshot
+            .matches
+            .iter()
+            .find(|record| record.id == rule_matches[0])
+            .unwrap();
+        assert_eq!(update_match.rule, 21);
+        assert_eq!(update_match.wave, CausalWave::new(2));
+        assert_eq!(
+            final_snapshot
+                .matches
+                .iter()
+                .filter(|record| record.wave == CausalWave::new(2))
+                .count(),
+            1,
+            "wave-2 no-op match drafts must be reclaimed, not promoted"
+        );
+        assert_eq!(final_snapshot.counters.provisional_matches, 0);
+        assert_eq!(final_snapshot.counters.live_provisional_bytes, 0);
+        assert_eq!(final_snapshot.counters.unattributed_commits, 0);
+    });
+}
+
+#[test]
+fn receipt_disabled_rule_path_uses_no_fact_sidecars_or_witness_reads() {
+    let mut db = Database::default();
+    let relation = || {
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        )
+    };
+    let input = db.add_table_named(relation(), "Input".into(), iter::empty(), iter::empty());
+    let derived = db.add_table_named(relation(), "Derived".into(), iter::empty(), iter::empty());
+
+    let mut source = db.new_buffer(input);
+    source.stage_insert(&[Value::new(7), Value::new(0)]);
+    drop(source);
+    assert!(db.merge_all());
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    let input_ts = query.new_var_named("input_ts");
+    query
+        .add_atom(input, &[value.into(), input_ts.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    action
+        .insert(derived, &[value.into(), Value::new(1).into()])
+        .unwrap();
+    action.build();
+    let rule_set = rules.build();
+
+    reset_causal_lookup_counters();
+    let report = db.run_rule_set(&rule_set, ReportLevel::TimeOnly);
+    assert!(report.changed);
+    assert_eq!(
+        causal_lookup_counters(),
+        (0, 0),
+        "ordinary execution must not read receipt FactIds or witness rows"
+    );
+    for table in [input, derived] {
+        let table = db
+            .get_table(table)
+            .as_any()
+            .downcast_ref::<SortedWritesTable>()
+            .unwrap();
+        assert_eq!(
+            table.causal_sidecar_bytes(),
+            0,
+            "ordinary tables must not allocate causal sidecars"
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "causal receipts must be enabled before any table rows are loaded")]
+fn causal_receipts_reject_activation_after_rows_exist() {
+    let mut db = Database::default();
+    let table = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        ),
+        "Preloaded".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let mut source = db.new_buffer(table);
+    source.stage_insert(&[Value::new(1), Value::new(0)]);
+    drop(source);
+    assert!(db.merge_all());
+    db.enable_causal_receipts();
+}
+
+#[test]
+fn low_level_remove_fails_before_staging_when_receipts_are_enabled() {
+    let mut db = Database::default();
+    let table = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "relation rows are immutable");
+                false
+            }),
+        ),
+        "Source".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let one = receipts.intern_test_term("one");
+    let zero = receipts.intern_test_term("zero");
+    db.stage_source_row(
+        table,
+        &[Value::new(1), Value::new(0)],
+        &[one, zero],
+        SourceRef::Synthetic(0),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let mut exec_state = ExecutionState::new(db.read_only_view(), Default::default());
+    let failure = catch_unwind(AssertUnwindSafe(|| {
+        exec_state.stage_remove(table, &[Value::new(1)]);
+    }));
+    assert!(failure.is_err());
+    drop(exec_state);
+    assert_eq!(
+        db.get_table(table).len(),
+        1,
+        "unsupported deletion must fail before a mutation buffer is staged"
+    );
 }
 
 #[test]

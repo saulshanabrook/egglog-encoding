@@ -19,7 +19,8 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
-    BaseValues, ContainerRebuildSummary, ContainerValues, PoolSet, QueryEntry, TupleIndex, Value,
+    BaseValues, CausalReceipts, CausalWave, ContainerRebuildSummary, ContainerValues, PoolSet,
+    QueryEntry, ReplayTermId, SourceRef, TupleIndex, Value,
     action::{
         Bindings, DbView,
         mask::{Mask, MaskIter, ValueSource},
@@ -88,6 +89,8 @@ pub enum GuardedRuleSetRunOutcome {
 pub enum GuardedRuleSetRunError {
     #[error("guarded rule execution requires at most one executable plan, got {plan_count}")]
     MultipleExecutablePlans { plan_count: usize },
+    #[error("guarded rule execution cannot preserve exact causal match witnesses")]
+    CausalReceiptWitnessUnsupported,
 }
 
 #[derive(Debug)]
@@ -332,6 +335,8 @@ pub struct Database {
     /// This is primarily used to determine whether or not to attempt to do some operations in
     /// parallel.
     total_size_estimate: usize,
+    pub(crate) causal_receipts: Option<CausalReceipts>,
+    pub(crate) causal_wave: CausalWave,
 }
 
 impl Database {
@@ -341,6 +346,69 @@ impl Database {
     /// thread pool.
     pub fn new() -> Database {
         Database::default()
+    }
+
+    /// Enable compact native receipt capture and return a read handle to the
+    /// shared arena. Capture must be enabled before any source rows are loaded:
+    /// existing rows have no exact source identity and are never backfilled.
+    pub fn enable_causal_receipts(&mut self) -> CausalReceipts {
+        if let Some(receipts) = &self.causal_receipts {
+            return receipts.clone();
+        }
+        assert!(
+            self.tables.iter().all(|(_, info)| info.table.len() == 0),
+            "causal receipts must be enabled before any table rows are loaded"
+        );
+        let receipts = CausalReceipts::default();
+        self.causal_receipts = Some(receipts.clone());
+        receipts
+    }
+
+    /// Set the globally monotone user-wave stamp inherited by rule effects.
+    pub fn set_causal_wave(&mut self, wave: CausalWave) {
+        assert!(
+            wave >= self.causal_wave,
+            "causal waves must be globally monotone"
+        );
+        if wave > self.causal_wave
+            && let Some(receipts) = &self.causal_receipts
+        {
+            // Callers advance waves only after the preceding synchronous
+            // native run/merge barrier has returned.
+            receipts.finalize_wave();
+        }
+        self.causal_wave = wave;
+    }
+
+    /// Promote effective roots from the completed synchronous native wave and
+    /// reclaim every unpromoted provisional match/cause.
+    pub fn finalize_causal_wave(&mut self) {
+        if let Some(receipts) = &self.causal_receipts {
+            receipts.finalize_wave();
+        }
+    }
+
+    /// Stage one original source row together with producer-installed term
+    /// handles. This is intentionally explicit: an unlabelled row is not a
+    /// sound source receipt.
+    pub fn stage_source_row(
+        &self,
+        table: TableId,
+        row: &[Value],
+        terms: &[ReplayTermId],
+        source: SourceRef,
+    ) -> Result<(), &'static str> {
+        if row.len() != terms.len() {
+            return Err("one replay-term handle is required for every source row column");
+        }
+        let Some(receipts) = &self.causal_receipts else {
+            return Err("causal receipts are not enabled");
+        };
+        let cause = receipts.source_draft(source, terms);
+        let mut state = ExecutionState::new(self.read_only_view(), Default::default());
+        state.set_active_cause(Some(cause));
+        state.stage_insert(table, row);
+        Ok(())
     }
 
     /// Initialize a new rulse set to run against this database.
@@ -492,6 +560,8 @@ impl Database {
             bases: &self.base_values,
             containers: &self.container_values,
             notification_list: &self.notification_list,
+            causal_receipts: self.causal_receipts.as_ref(),
+            causal_wave: self.causal_wave,
         }
     }
 
@@ -712,12 +782,14 @@ impl Database {
 
     fn add_table_impl<T: Table + Sized + 'static>(
         &mut self,
-        table: T,
+        mut table: T,
         name: Option<Arc<str>>,
         read_deps: impl IntoIterator<Item = TableId>,
         write_deps: impl IntoIterator<Item = TableId>,
     ) -> TableId {
         let spec = table.spec();
+        let expected_id = self.tables.next_id();
+        table.set_table_id(expected_id);
         let table = WrappedTable::new(table);
         let res = self.tables.push(TableInfo {
             name,
@@ -726,6 +798,7 @@ impl Database {
             indexes: IndexCatalog::new(),
             column_indexes: IndexCatalog::new(),
         });
+        debug_assert_eq!(res, expected_id);
         self.deps.add_table(res, read_deps, write_deps);
         res
     }

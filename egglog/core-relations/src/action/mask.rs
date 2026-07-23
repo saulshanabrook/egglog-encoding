@@ -236,6 +236,20 @@ pub(crate) trait MaskIter {
         })
     }
 
+    fn for_each_indexed(mut self, mut f: impl FnMut(usize, Self::Item))
+    where
+        Self: Sized,
+    {
+        loop {
+            let cur = self.inc_counter();
+            match self.get_at(cur) {
+                IterResult::Item(item) => f(cur, item),
+                IterResult::Skip => continue,
+                IterResult::Done => break,
+            }
+        }
+    }
+
     fn zip<T>(self, slice: &[T]) -> ZipIter<'_, Self, T>
     where
         Self: Sized,

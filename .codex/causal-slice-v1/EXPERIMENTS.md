@@ -157,3 +157,107 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Hypothesis result: this checkpoint establishes the measurement surface but
   does not test H1-H4. The next stop is coordinator review and preservation of
   checkpoints 1-2 before any receipt-kernel work.
+
+### 2026-07-22 — checkpoint 3 receipt-kernel vertical canaries
+
+- Status: semantic canaries passed, but the checkpoint was rejected by an
+  independent cost-shape review. The first implementation put permanent
+  boxed/hash-map drafts, eager FactId/cause sidecars, witness reads, and large
+  cause reservations on hot paths. The bounded in-place repair is recorded
+  separately below; frontend/bridge installation, decomposed witness
+  transport, rebuild/container receipts, check roots, and replay are
+  intentionally not claimed here.
+- Snapshot: `/Users/saul/p/wt/egglog-encoding/causal-slice-receipts-v1`,
+  branch `agent/causal-slice-receipts-v1`, starting `HEAD`
+  `544d63d888e524a83f5048374a1453b603aa6478`; changes remain uncommitted for
+  coordinator review.
+- Smallest semantic canary:
+  `cargo test -p egglog-core-relations
+  causal_receipts_record_only_effective_constructor_and_union_commits --
+  --nocapture` from the worktree root passed. One source fact feeds one native
+  rule match; an effective constructor insertion, relational insertion, and
+  applied UF edge share that exact match, while the second no-op wave creates
+  no durable fact/edge receipt.
+- Parallel boundary canary:
+  `cargo test -p egglog-core-relations
+  causal_receipts_parallel_merge_preserves_proposal_and_fact_causes --
+  --nocapture` passed with 20,002 staged rows on a four-thread pool, exceeding
+  the real strict `> 20_000` table threshold. A same-wave merge retains both
+  proposal matches before either has a FactId; a later effective merge retains
+  the immutable prior FactId. The 20,000 no-op proposals in the later wave
+  promote no matches or facts.
+- Core regression: `cargo test -p egglog-core-relations --lib` passed all 60
+  tests. `cargo fmt --all` and `git diff --check` passed.
+- Data-path result: aligned cause sidecars cross serial and parallel table
+  buffers; staged proposal folds retain draft-to-draft predecessor edges;
+  effective commits alone allocate FactIds; applied UF updates retain their
+  rule/merge reason while redundant proposals are counted but not persisted.
+  Compaction preservation is implemented but did not yet have a focused
+  post-repair canary.
+- Scope warning: current replay-term handles are test-producer placeholders,
+  equality endpoints are not yet the final immutable equality-node design,
+  and the one-atom witness canary is not evidence for decomposed joins. H1's
+  all-five recording-overhead gate and H2's zero-Prefix gate remain untested.
+- Hypothesis result: the canaries support the bounded mechanism behind H1/H2
+  (native exact attribution survives both commit paths) without testing their
+  workload-wide performance or completeness. The next gate is coordinator
+  review before expanding the recording contract.
+
+### 2026-07-22 — checkpoint 3 receipt-kernel cost-shape repair
+
+- Status: repaired and green at the bounded core-relations gate; no broad
+  benchmark was run and no frontend/replay scope was added.
+- Storage repair: `ReplayTermId` is `u32`; wave-local matches, causes,
+  premises, and term handles use flat arenas; atomic ID ranges publish through
+  worker-local `ReceiptBatch` fragments with one lock at the native barrier;
+  only roots from effective facts and applied unions promote into the durable
+  cause DAG, and finalization reclaims the whole provisional wave. Fact lookup
+  is dense by `FactId`; cause unfolding is iterative and lazy.
+- Ordinary-path repair: bindings and table/UF/staged causes are lazy
+  `Option` sidecars. Serial and parallel table insertion each use one
+  const-generic source loop, yielding a receipt-free monomorphization without
+  FactId lookups, active sentinel causes, provisional allocations, or the
+  prior 2 MiB-per-shard cause reservation. Ordinary `used_vars` remains
+  RHS-only.
+- Disabled-path canary:
+  `cargo test -p egglog-core-relations
+  receipt_disabled_rule_path_uses_no_fact_sidecars_or_witness_reads --
+  --nocapture` passed. Test-only probes observed zero FactId lookups, zero
+  witness-row reads, and zero causal sidecar bytes while an ordinary rule
+  committed its result.
+- Publication canary:
+  `cargo test -p egglog-core-relations
+  receipt_batches_publish_out_of_order_without_holes -- --nocapture` passed.
+  It publishes a higher atomic cause range before a lower one, then finalizes
+  with no holes or live provisional storage.
+- Witness canary:
+  `cargo test -p egglog-core-relations
+  receipt_witness_rejects_first_row_decoy_and_accepts_bound_row --
+  --nocapture` passed. A binding established by one atom rejects the second
+  atom's first-row decoy and accepts the binding-consistent row with its
+  immutable FactId. This is a direct helper canary rather than a
+  planner-shape-dependent test.
+- Existing serial and parallel exact-attribution canaries both passed after
+  the repair. The parallel case still stages 20,002 proposals; wave 2 promotes
+  only its one effective match and finishes with zero provisional matches and
+  zero live provisional bytes.
+- Fail-closed boundary: effective facts and applied unions now reject missing
+  attribution at the recording site. Guarded receipt execution returns a
+  structured error before search because that capture path does not preserve
+  native match witnesses. Snapshot/finalization reject open, abandoned, or
+  unfinalized fragments.
+- Activation/mutation boundary: initial receipt activation rejects a database
+  containing any committed row; `MutationBuffer::stage_insert_with_cause` is
+  mandatory for every implementation; and low-level
+  `ExecutionState::stage_remove` fails before staging whenever receipts are
+  enabled. The focused activation and embedding-delete canaries passed.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 65
+  tests. `cargo fmt --all` and `git diff --check` passed.
+- Remaining checkpoint gaps: a focused post-compaction FactId-sidecar canary
+  was deliberately deferred to avoid expanding this bounded repair.
+  Decomposed/materialized witness transport remains the next recording
+  checkpoint; the direct decoy canary is not evidence that it works.
+- Hypothesis result: the repair removes the concrete always-on and
+  no-op-retention failure modes found by review, but H1 remains untested until
+  the receipt-only five-workload benchmark gate. No performance claim is made
+  from unit tests.

@@ -4,6 +4,8 @@
 //! in egglog is that high level concepts like "timestamp" and "merge function"
 //! are abstracted away from the core functionality of the table.
 
+#[cfg(test)]
+use std::cell::Cell;
 use std::{
     any::Any,
     cmp,
@@ -11,7 +13,7 @@ use std::{
     mem,
     sync::{
         Arc, Weak,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -23,7 +25,7 @@ use rustc_hash::FxHasher;
 use sharded_hash_table::ShardedHashTable;
 
 use crate::{
-    Pooled, TableChange, TableId,
+    CauseDraftId, FactId, Pooled, TableChange, TableId,
     action::ExecutionState,
     common::{HashMap, ShardData, ShardId, SubsetTracker, Value},
     hash_index::{ColumnIndex, Index},
@@ -48,6 +50,23 @@ mod tests;
 // hashcodes because it uses both the high and low bits of a 64-bit code.
 
 type HashCode = u64;
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FACT_ID_LOOKUPS: Cell<usize> = const { Cell::new(0) };
+    static TEST_WITNESS_ROW_READS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn reset_causal_lookup_counters() {
+    TEST_FACT_ID_LOOKUPS.set(0);
+    TEST_WITNESS_ROW_READS.set(0);
+}
+
+#[cfg(test)]
+pub(crate) fn causal_lookup_counters() -> (usize, usize) {
+    (TEST_FACT_ID_LOOKUPS.get(), TEST_WITNESS_ROW_READS.get())
+}
 
 /// A pointer to a row in the table.
 #[derive(Clone, Debug)]
@@ -74,7 +93,14 @@ impl TableEntry {
 struct Rows {
     data: RowBuffer,
     scratch: RowBuffer,
+    fact_ids: Option<FactSidecars>,
     stale_rows: usize,
+}
+
+#[derive(Clone, Default)]
+struct FactSidecars {
+    data: Vec<FactId>,
+    scratch: Vec<FactId>,
 }
 
 impl Rows {
@@ -83,11 +109,13 @@ impl Rows {
         Rows {
             data,
             scratch: RowBuffer::new(arity),
+            fact_ids: None,
             stale_rows: 0,
         }
     }
     fn clear(&mut self) {
         self.data.clear();
+        self.fact_ids = None;
         self.stale_rows = 0;
     }
     fn next_row(&self) -> RowId {
@@ -111,15 +139,59 @@ impl Rows {
     }
 
     fn add_row(&mut self, row: &[Value]) -> RowId {
+        debug_assert!(
+            self.fact_ids.is_none(),
+            "ordinary insertion cannot extend a receipt-enabled table"
+        );
         if row[0].is_stale() {
             self.stale_rows += 1;
         }
         self.data.add_row(row)
     }
 
-    fn remove_stale(&mut self, remap: impl FnMut(&[Value], RowId, RowId)) {
-        self.data.remove_stale(remap);
+    fn add_row_with_fact(&mut self, row: &[Value], fact: FactId) -> RowId {
+        if row[0].is_stale() {
+            self.stale_rows += 1;
+        }
+        let id = self.data.add_row(row);
+        let facts = self.fact_ids.get_or_insert_with(|| FactSidecars {
+            data: vec![FactId::MISSING; id.index()],
+            scratch: Vec::new(),
+        });
+        debug_assert_eq!(id.index(), facts.data.len());
+        facts.data.push(fact);
+        id
+    }
+
+    fn fact_id(&self, row: RowId) -> Option<FactId> {
+        let fact = *self.fact_ids.as_ref()?.data.get(row.index())?;
+        (!fact.is_missing()).then_some(fact)
+    }
+
+    fn remove_stale(&mut self, mut remap: impl FnMut(&[Value], RowId, RowId)) {
+        if let Some(facts) = &mut self.fact_ids {
+            let old_facts = mem::take(&mut facts.data);
+            let mut new_facts = mem::take(&mut facts.scratch);
+            new_facts.clear();
+            new_facts.reserve(self.data.len().saturating_sub(self.stale_rows));
+            self.data.remove_stale(|row, old, new| {
+                debug_assert_eq!(new.index(), new_facts.len());
+                new_facts.push(old_facts[old.index()]);
+                remap(row, old, new);
+            });
+            facts.scratch = old_facts;
+            facts.data = new_facts;
+        } else {
+            self.data.remove_stale(remap);
+        }
         self.stale_rows = 0;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn causal_sidecar_bytes(&self) -> usize {
+        self.fact_ids.as_ref().map_or(0, |facts| {
+            (facts.data.capacity() + facts.scratch.capacity()) * mem::size_of::<FactId>()
+        })
     }
 }
 
@@ -134,6 +206,7 @@ pub type MergeFn =
     dyn Fn(&mut ExecutionState, &[Value], &[Value], &mut Vec<Value>) -> bool + Send + Sync;
 
 pub struct SortedWritesTable {
+    table_id: TableId,
     generation: Generation,
     data: Rows,
     hash: ShardedHashTable<TableEntry>,
@@ -155,6 +228,7 @@ impl Clone for SortedWritesTable {
     fn clone(&self) -> SortedWritesTable {
         SortedWritesTable {
             generation: self.generation,
+            table_id: self.table_id,
             data: self.data.clone(),
             hash: self.hash.clone(),
             n_keys: self.n_keys,
@@ -226,6 +300,7 @@ impl ArbitraryRowBuffer {
 
 struct Buffer {
     pending_rows: DenseIdMap<ShardId, RowBuffer>,
+    pending_causes: Option<DenseIdMap<ShardId, Vec<CauseDraftId>>>,
     pending_removals: DenseIdMap<ShardId, ArbitraryRowBuffer>,
     state: Weak<PendingState>,
     n_cols: u32,
@@ -240,6 +315,20 @@ impl MutationBuffer for Buffer {
             .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
             .add_row(row);
     }
+    fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId) {
+        let (shard, _) = hash_code(self.shard_data, row, self.n_keys as _);
+        let rows = self
+            .pending_rows
+            .get_or_insert(shard, || RowBuffer::new(self.n_cols as _))
+            .len();
+        let causes = self
+            .pending_causes
+            .get_or_insert_with(DenseIdMap::default)
+            .get_or_insert(shard, || vec![CauseDraftId::UNATTRIBUTED; rows]);
+        debug_assert_eq!(causes.len(), rows);
+        self.pending_rows[shard].add_row(row);
+        causes.push(cause);
+    }
     fn stage_remove(&mut self, key: &[Value]) {
         let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
         self.pending_removals
@@ -249,6 +338,7 @@ impl MutationBuffer for Buffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(Buffer {
             pending_rows: Default::default(),
+            pending_causes: None,
             pending_removals: Default::default(),
             state: self.state.clone(),
             n_cols: self.n_cols,
@@ -268,7 +358,11 @@ impl Drop for Buffer {
                     continue;
                 };
                 rows += buf.len();
-                state.pending_rows[shard].push(buf);
+                let causes = self
+                    .pending_causes
+                    .as_mut()
+                    .and_then(|causes| causes.take(shard));
+                state.pending_rows[shard].push(PendingRowBatch { rows: buf, causes });
             }
             state.total_rows.fetch_add(rows, Ordering::Relaxed);
 
@@ -292,6 +386,9 @@ impl Table for SortedWritesTable {
     }
     fn as_any(&self) -> &dyn Any {
         self
+    }
+    fn set_table_id(&mut self, table: TableId) {
+        self.table_id = table;
     }
     fn clear(&mut self) {
         self.pending_state.clear();
@@ -519,6 +616,7 @@ impl Table for SortedWritesTable {
         let n_shards = self.hash.shard_data().n_shards();
         Box::new(Buffer {
             pending_rows: DenseIdMap::with_capacity(n_shards),
+            pending_causes: None,
             pending_removals: DenseIdMap::with_capacity(n_shards),
             state: Arc::downgrade(&self.pending_state),
             n_keys: u32::try_from(self.n_keys).expect("n_keys should fit in u32"),
@@ -549,9 +647,29 @@ impl Table for SortedWritesTable {
         })?;
         Some(self.data.get_row(id).unwrap()[col.index()])
     }
+
+    fn fact_id(&self, row: RowId) -> Option<FactId> {
+        #[cfg(test)]
+        TEST_FACT_ID_LOOKUPS.set(TEST_FACT_ID_LOOKUPS.get() + 1);
+        self.data.fact_id(row)
+    }
+
+    fn row_at(&self, row: RowId) -> Option<Row> {
+        #[cfg(test)]
+        TEST_WITNESS_ROW_READS.set(TEST_WITNESS_ROW_READS.get() + 1);
+        let values = self.data.get_row(row)?;
+        let mut vals = with_pool_set(|ps| ps.get::<Vec<Value>>());
+        vals.extend_from_slice(values);
+        Some(Row { id: row, vals })
+    }
 }
 
 impl SortedWritesTable {
+    #[cfg(test)]
+    pub(crate) fn causal_sidecar_bytes(&self) -> usize {
+        self.data.causal_sidecar_bytes()
+    }
+
     /// Create a new [`SortedWritesTable`] with the given number of keys,
     /// columns, and an optional sort column.
     ///
@@ -574,6 +692,7 @@ impl SortedWritesTable {
         let shard_data = hash.shard_data();
         let rebuild_index = Index::new(to_rebuild.clone(), ColumnIndex::new());
         SortedWritesTable {
+            table_id: TableId::dummy(),
             generation: Generation::new(0),
             data: Rows::new(RowBuffer::new(n_columns)),
             hash,
@@ -612,7 +731,7 @@ impl SortedWritesTable {
                         let (actual_shard, hc) = hash_code(shard_data, to_remove, self.n_keys);
                         assert_eq!(actual_shard, shard_id);
                         if let Ok(entry) = shard.find_entry(hc, |entry| {
-                            entry.hashcode == (hc as _)
+                            entry.hashcode == (hc as HashCode)
                                 && &self.data.get_row(entry.row).unwrap()[0..self.n_keys]
                                     == to_remove
                         }) {
@@ -651,7 +770,7 @@ impl SortedWritesTable {
                         let (actual_shard, hc) = hash_code(shard_data, to_remove, self.n_keys);
                         assert_eq!(actual_shard, shard_id);
                         if let Ok(entry) = shard.find_entry(hc, |entry| {
-                            entry.hashcode == (hc as _)
+                            entry.hashcode == (hc as HashCode)
                                 && &self.data.get_row(entry.row).unwrap()[0..self.n_keys]
                                     == to_remove
                         }) {
@@ -697,13 +816,42 @@ impl SortedWritesTable {
     }
 
     fn serial_insert(&mut self, exec_state: &mut ExecutionState) -> bool {
+        if exec_state.causal_receipts().is_none() {
+            self.serial_insert_mode::<false>(exec_state)
+        } else {
+            self.serial_insert_mode::<true>(exec_state)
+        }
+    }
+
+    fn serial_insert_mode<const RECEIPTS: bool>(
+        &mut self,
+        exec_state: &mut ExecutionState,
+    ) -> bool {
         let mut changed = false;
         let n_keys = self.n_keys;
         let mut scratch = with_pool_set(|ps| ps.get::<Vec<Value>>());
+        let mut receipt_batch = if RECEIPTS {
+            Some(
+                exec_state
+                    .causal_receipts()
+                    .expect("receipt mode requires an enabled arena")
+                    .new_batch(),
+            )
+        } else {
+            None
+        };
         for (_outer_shard, queue) in self.pending_state.pending_rows.iter() {
             if let Some(sort_by) = self.sort_by {
                 while let Some(buf) = queue.pop() {
-                    for query in buf.non_stale() {
+                    for (proposal_index, query) in buf.rows.iter().enumerate() {
+                        if query.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let incoming_cause = if RECEIPTS {
+                            buf.receipt_cause(proposal_index)
+                        } else {
+                            CauseDraftId::UNATTRIBUTED
+                        };
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
                             let Some(row) = self.data.get_row(row) else {
@@ -716,13 +864,41 @@ impl SortedWritesTable {
                             // First case: overwriting an existing value. Apply merge
                             // function. Insert new row and update hash table if merge
                             // changes anything.
+                            let prior_fact = if RECEIPTS {
+                                self.data.fact_id(*row).unwrap_or(FactId::MISSING)
+                            } else {
+                                FactId::MISSING
+                            };
                             let cur = self
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            if (self.merge)(exec_state, cur, query, &mut scratch) {
+                            let previous_cause =
+                                RECEIPTS.then(|| exec_state.active_cause()).flatten();
+                            let merge_cause = receipt_batch
+                                .as_mut()
+                                .map(|batch| batch.merge_draft(incoming_cause, prior_fact));
+                            if RECEIPTS {
+                                exec_state.set_active_cause(merge_cause.or(Some(incoming_cause)));
+                            }
+                            let merged = (self.merge)(exec_state, cur, query, &mut scratch);
+                            if RECEIPTS {
+                                exec_state.set_active_cause(previous_cause);
+                            }
+                            if merged {
                                 let sort_val = query[sort_by.index()];
-                                let new = self.data.add_row(&scratch);
+                                let fact =
+                                    receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                        batch.record_fact(
+                                            self.table_id,
+                                            merge_cause.unwrap_or(incoming_cause),
+                                        )
+                                    });
+                                let new = if RECEIPTS {
+                                    self.data.add_row_with_fact(&scratch, fact)
+                                } else {
+                                    self.data.add_row(&scratch)
+                                };
                                 if let Some(largest) = self.offsets.last().map(|(v, _)| *v) {
                                     assert!(
                                         sort_val >= largest,
@@ -742,7 +918,14 @@ impl SortedWritesTable {
                         } else {
                             let sort_val = query[sort_by.index()];
                             // New value: update invariants.
-                            let new = self.data.add_row(query);
+                            let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                batch.record_fact(self.table_id, incoming_cause)
+                            });
+                            let new = if RECEIPTS {
+                                self.data.add_row_with_fact(query, fact)
+                            } else {
+                                self.data.add_row(query)
+                            };
                             if let Some(largest) = self.offsets.last().map(|(v, _)| *v) {
                                 assert!(
                                     sort_val >= largest,
@@ -771,7 +954,15 @@ impl SortedWritesTable {
             } else {
                 // Simplified variant without the sorting constraint.
                 while let Some(buf) = queue.pop() {
-                    for query in buf.non_stale() {
+                    for (proposal_index, query) in buf.rows.iter().enumerate() {
+                        if query.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let incoming_cause = if RECEIPTS {
+                            buf.receipt_cause(proposal_index)
+                        } else {
+                            CauseDraftId::UNATTRIBUTED
+                        };
                         let key = &query[0..n_keys];
                         let entry = get_entry_mut(query, n_keys, &mut self.hash, |row| {
                             let Some(row) = self.data.get_row(row) else {
@@ -781,12 +972,40 @@ impl SortedWritesTable {
                         });
 
                         if let Some(row) = entry {
+                            let prior_fact = if RECEIPTS {
+                                self.data.fact_id(*row).unwrap_or(FactId::MISSING)
+                            } else {
+                                FactId::MISSING
+                            };
                             let cur = self
                                 .data
                                 .get_row(*row)
                                 .expect("table should not point to stale entry");
-                            if (self.merge)(exec_state, cur, query, &mut scratch) {
-                                let new = self.data.add_row(&scratch);
+                            let previous_cause =
+                                RECEIPTS.then(|| exec_state.active_cause()).flatten();
+                            let merge_cause = receipt_batch
+                                .as_mut()
+                                .map(|batch| batch.merge_draft(incoming_cause, prior_fact));
+                            if RECEIPTS {
+                                exec_state.set_active_cause(merge_cause.or(Some(incoming_cause)));
+                            }
+                            let merged = (self.merge)(exec_state, cur, query, &mut scratch);
+                            if RECEIPTS {
+                                exec_state.set_active_cause(previous_cause);
+                            }
+                            if merged {
+                                let fact =
+                                    receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                        batch.record_fact(
+                                            self.table_id,
+                                            merge_cause.unwrap_or(incoming_cause),
+                                        )
+                                    });
+                                let new = if RECEIPTS {
+                                    self.data.add_row_with_fact(&scratch, fact)
+                                } else {
+                                    self.data.add_row(&scratch)
+                                };
                                 self.data.set_stale(*row);
                                 *row = new;
                                 changed = true;
@@ -794,7 +1013,14 @@ impl SortedWritesTable {
                             scratch.clear();
                         } else {
                             // New value: update invariants.
-                            let new = self.data.add_row(query);
+                            let fact = receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
+                                batch.record_fact(self.table_id, incoming_cause)
+                            });
+                            let new = if RECEIPTS {
+                                self.data.add_row_with_fact(query, fact)
+                            } else {
+                                self.data.add_row(query)
+                            };
                             let (shard, hc) = hash_code(self.hash.shard_data(), query, self.n_keys);
                             debug_assert_eq!(shard, _outer_shard);
                             self.hash.mut_shards()[shard.index()].insert_unique(
@@ -811,10 +1037,25 @@ impl SortedWritesTable {
                 }
             };
         }
+        if let Some(batch) = receipt_batch {
+            batch.publish();
+        }
         changed
     }
 
     fn parallel_insert<C: OrderingChecker>(
+        &mut self,
+        exec_state: &ExecutionState,
+        checker: C,
+    ) -> bool {
+        if exec_state.causal_receipts().is_none() {
+            self.parallel_insert_mode::<C, false>(exec_state, checker)
+        } else {
+            self.parallel_insert_mode::<C, true>(exec_state, checker)
+        }
+    }
+
+    fn parallel_insert_mode<C: OrderingChecker, const RECEIPTS: bool>(
         &mut self,
         exec_state: &ExecutionState,
         checker: C,
@@ -841,7 +1082,21 @@ impl SortedWritesTable {
                 let mut scratch = with_pool_set(|ps| ps.get::<Vec<Value>>());
                 let queue = &self.pending_state.pending_rows[shard_id];
                 let mut marked_stale = 0usize;
-                let mut staged = StagedOutputs::new(n_keys, n_cols, BATCH_SIZE);
+                let mut staged =
+                    StagedOutputs::new::<RECEIPTS>(n_keys, n_cols, BATCH_SIZE);
+                let mut receipt_batch = if RECEIPTS {
+                    Some(
+                        exec_state
+                            .causal_receipts()
+                            .expect("receipt mode requires an enabled arena")
+                            .new_batch(),
+                    )
+                } else {
+                    None
+                };
+                let mut fact_assignments = receipt_batch
+                    .as_ref()
+                    .map(|_| HashMap::<RowId, FactId>::default());
                 let mut changed = false;
                 // The core flush loop: We call once `staged` reaches `BATCH_SIZE` or
                 // when we're done.
@@ -861,7 +1116,8 @@ impl SortedWritesTable {
                         // contention.
                         let mut cur_row = start_row;
                         let read_handle = row_writer.read_handle();
-                        for row in staged.rows() {
+                        for (row_index, row) in staged.rows() {
+                            let staged_cause = staged.cause::<RECEIPTS>(row_index);
                             if row.first().map(Value::is_stale).unwrap_or(false) {
                                 cur_row = cur_row.inc();
                                 continue;
@@ -894,12 +1150,50 @@ impl SortedWritesTable {
                                     // into the map.
                                     let cur = unsafe { read_handle.get_row_unchecked(occ.get().row) };
 
+                                    let prior_fact = if RECEIPTS {
+                                        let assignments = fact_assignments
+                                            .as_ref()
+                                            .expect("receipt mode requires fact assignments");
+                                        if occ.get().row < next_offset {
+                                            self.data
+                                                .fact_id(occ.get().row)
+                                                .unwrap_or(FactId::MISSING)
+                                        } else {
+                                            assignments
+                                                .get(&occ.get().row)
+                                                .copied()
+                                                .unwrap_or(FactId::MISSING)
+                                        }
+                                    } else {
+                                        FactId::MISSING
+                                    };
+                                    let merge_cause = if RECEIPTS {
+                                        receipt_batch
+                                            .as_mut()
+                                            .expect("receipt mode requires an open batch")
+                                            .merge_draft(staged_cause, prior_fact)
+                                    } else {
+                                        CauseDraftId::UNATTRIBUTED
+                                    };
+                                    let previous_cause =
+                                        RECEIPTS.then(|| exec_state.active_cause()).flatten();
+                                    if RECEIPTS {
+                                        exec_state.set_active_cause(Some(merge_cause));
+                                    }
+
                                     // SAFETY: The safety requirements of
                                     // `set_stale_shared` are that there are no
                                     // concurrent accesses to `row`. We have
                                     // exclusive access to any row whose hash matches this
                                     // shard.
                                     if (self.merge)(&mut exec_state, cur, row, &mut scratch) {
+                                        if let (Some(batch), Some(assignments)) =
+                                            (&mut receipt_batch, &mut fact_assignments)
+                                        {
+                                            let fact =
+                                                batch.record_fact(self.table_id, merge_cause);
+                                            assignments.insert(cur_row, fact);
+                                        }
                                         unsafe {
                                             let _was_stale = read_handle.set_stale_shared(occ.get().row);
                                             debug_assert!(!_was_stale);
@@ -913,10 +1207,20 @@ impl SortedWritesTable {
                                             debug_assert!(!_was_stale);
                                         }
                                     }
+                                    if RECEIPTS {
+                                        exec_state.set_active_cause(previous_cause);
+                                    }
                                     marked_stale += 1;
                                     scratch.clear();
                                 }
                                 Entry::Vacant(v) => {
+                                    if let (Some(batch), Some(assignments)) =
+                                        (&mut receipt_batch, &mut fact_assignments)
+                                    {
+                                        let fact =
+                                            batch.record_fact(self.table_id, staged_cause);
+                                        assignments.insert(cur_row, fact);
+                                    }
                                     changed = true;
                                     v.insert(TableEntry {
                                         hashcode: hc as HashCode,
@@ -938,9 +1242,37 @@ impl SortedWritesTable {
                     // We create a read_handle once per batch to avoid blocking
                     // too many threads if someone needs to resize the row
                     // writer.
-                    for row in buf.non_stale() {
-                        staged.insert(row, |cur, new, out| {
-                            (self.merge)(&mut exec_state, cur, new, out)
+                    for (proposal_index, row) in buf.rows.iter().enumerate() {
+                        if row.first().is_some_and(|value| value.is_stale()) {
+                            continue;
+                        }
+                        let cause = if RECEIPTS {
+                            buf.receipt_cause(proposal_index)
+                        } else {
+                            CauseDraftId::UNATTRIBUTED
+                        };
+                        staged.insert::<RECEIPTS>(
+                            row,
+                            cause,
+                            |cur, cur_cause, new, incoming_cause, out| {
+                            let merge_cause = if RECEIPTS {
+                                receipt_batch
+                                    .as_mut()
+                                    .expect("receipt mode requires an open batch")
+                                    .merge_drafts(incoming_cause, cur_cause)
+                            } else {
+                                CauseDraftId::UNATTRIBUTED
+                            };
+                            let previous =
+                                RECEIPTS.then(|| exec_state.active_cause()).flatten();
+                            if RECEIPTS {
+                                exec_state.set_active_cause(Some(merge_cause));
+                            }
+                            let changed = (self.merge)(&mut exec_state, cur, new, out);
+                            if RECEIPTS {
+                                exec_state.set_active_cause(previous);
+                            }
+                            (changed, merge_cause)
                         });
                         if staged.len() >= BATCH_SIZE {
                             flush_staged_outputs!();
@@ -948,29 +1280,49 @@ impl SortedWritesTable {
                     }
                 }
                 flush_staged_outputs!();
-                (checker, marked_stale, changed)
+                if let Some(batch) = receipt_batch {
+                    batch.publish();
+                }
+                (checker, marked_stale, changed, fact_assignments)
             })
             .collect_vec_list();
         self.data.data = row_writer.finish();
+        if RECEIPTS {
+            let fact_ids = self.data.fact_ids.get_or_insert_with(FactSidecars::default);
+            fact_ids.data.resize(self.data.data.len(), FactId::MISSING);
+            for (_, _, _, assignments) in pending_adds.iter().flatten() {
+                let assignments = assignments
+                    .as_ref()
+                    .expect("receipt mode requires fact assignments");
+                for (&row, &fact) in assignments {
+                    fact_ids.data[row.index()] = fact;
+                }
+            }
+        }
         // Now we just need to reset our invariants.
 
         // Confirm none of the writes violated sort order and update the
         // `offsets` vector.
-        let checker = C::check_global(pending_adds.iter().flatten().map(|(checker, _, _)| checker));
+        let checker = C::check_global(
+            pending_adds
+                .iter()
+                .flatten()
+                .map(|(checker, _, _, _)| checker),
+        );
         checker.update_offsets(next_offset, &mut self.offsets);
 
         // Update the staleness counters.
         self.data.stale_rows += pending_adds
             .iter()
             .flatten()
-            .map(|(_, stale, _)| *stale)
+            .map(|(_, stale, _, _)| *stale)
             .sum::<usize>();
 
         // Register any changes.
         pending_adds
             .iter()
             .flatten()
-            .any(|(_, _, changed)| *changed)
+            .any(|(_, _, changed, _)| *changed)
     }
 
     fn binary_search_sort_val(&self, val: Value) -> Result<(RowId, RowId), RowId> {
@@ -1161,45 +1513,97 @@ impl SortedWritesTable {
 
         self.data.scratch.clear();
         self.data.scratch.reserve(prev_count);
-        self.hash
-            .mut_shards()
-            .par_iter_mut()
-            .with_max_len(1)
-            .enumerate()
-            .for_each(|(shard_id, shard)| {
-                let shard_id = ShardId::from_usize(shard_id);
-                let scratch_ptr = self.data.scratch.raw_rows();
-                let mut progress =
-                    HashMap::<Value /* timestamp */, RowId /* next row */>::default();
-                progress.reserve(results.len());
-                for stats in &results {
-                    let Some(start) = stats.histogram.get(shard_id) else {
-                        continue;
-                    };
-                    progress.insert(stats.value, RowId::from_usize(*start));
-                }
-                for TableEntry { row: row_id, .. } in shard.iter_mut() {
-                    let row = self
-                        .data
-                        .get_row(*row_id)
-                        .expect("shard should not map to a stale value");
-                    let val = row[sort_by.index()];
-                    let next = progress[&val];
-                    // SAFETY: see above longer comment.
-                    unsafe {
-                        std::ptr::copy_nonoverlapping(
-                            row.as_ptr(),
-                            scratch_ptr.add(next.index() * self.n_columns) as *mut Value,
-                            self.n_columns,
-                        )
+        let compacted_facts = if self.data.fact_ids.is_some() {
+            // Fact identities follow logical rows through physical compaction.
+            // This branch is never entered by an ordinary table.
+            let compacted_facts = (0..prev_count)
+                .map(|_| AtomicU64::new(FactId::MISSING.get()))
+                .collect::<Vec<_>>();
+            self.hash
+                .mut_shards()
+                .par_iter_mut()
+                .with_max_len(1)
+                .enumerate()
+                .for_each(|(shard_id, shard)| {
+                    let shard_id = ShardId::from_usize(shard_id);
+                    let scratch_ptr = self.data.scratch.raw_rows();
+                    let mut progress = HashMap::<Value, RowId>::default();
+                    progress.reserve(results.len());
+                    for stats in &results {
+                        let Some(start) = stats.histogram.get(shard_id) else {
+                            continue;
+                        };
+                        progress.insert(stats.value, RowId::from_usize(*start));
                     }
-                    *row_id = next;
-                    progress.insert(val, next.inc());
-                }
-            });
+                    for TableEntry { row: row_id, .. } in shard.iter_mut() {
+                        let prior_fact = self.data.fact_id(*row_id).unwrap_or(FactId::MISSING);
+                        let row = self
+                            .data
+                            .get_row(*row_id)
+                            .expect("shard should not map to a stale value");
+                        let val = row[sort_by.index()];
+                        let next = progress[&val];
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                row.as_ptr(),
+                                scratch_ptr.add(next.index() * self.n_columns) as *mut Value,
+                                self.n_columns,
+                            )
+                        }
+                        compacted_facts[next.index()].store(prior_fact.get(), Ordering::Relaxed);
+                        *row_id = next;
+                        progress.insert(val, next.inc());
+                    }
+                });
+            Some(compacted_facts)
+        } else {
+            self.hash
+                .mut_shards()
+                .par_iter_mut()
+                .with_max_len(1)
+                .enumerate()
+                .for_each(|(shard_id, shard)| {
+                    let shard_id = ShardId::from_usize(shard_id);
+                    let scratch_ptr = self.data.scratch.raw_rows();
+                    let mut progress = HashMap::<Value, RowId>::default();
+                    progress.reserve(results.len());
+                    for stats in &results {
+                        let Some(start) = stats.histogram.get(shard_id) else {
+                            continue;
+                        };
+                        progress.insert(stats.value, RowId::from_usize(*start));
+                    }
+                    for TableEntry { row: row_id, .. } in shard.iter_mut() {
+                        let row = self
+                            .data
+                            .get_row(*row_id)
+                            .expect("shard should not map to a stale value");
+                        let val = row[sort_by.index()];
+                        let next = progress[&val];
+                        unsafe {
+                            std::ptr::copy_nonoverlapping(
+                                row.as_ptr(),
+                                scratch_ptr.add(next.index() * self.n_columns) as *mut Value,
+                                self.n_columns,
+                            )
+                        }
+                        *row_id = next;
+                        progress.insert(val, next.inc());
+                    }
+                });
+            None
+        };
         // SAFETY: see above longer comment.
         unsafe { self.data.scratch.set_len(prev_count) };
         mem::swap(&mut self.data.data, &mut self.data.scratch);
+        if let Some(compacted_facts) = compacted_facts {
+            let compacted_facts = compacted_facts
+                .into_iter()
+                .map(|fact| FactId::new(fact.into_inner()))
+                .collect::<Vec<_>>();
+            let sidecars = self.data.fact_ids.as_mut().unwrap();
+            sidecars.scratch = mem::replace(&mut sidecars.data, compacted_facts);
+        }
         self.data.stale_rows = 0;
     }
     fn rehash_impl(
@@ -1287,10 +1691,30 @@ fn hash_code(shard_data: ShardData, row: &[Value], n_keys: usize) -> (ShardId, u
 
 /// A simple struct for packaging up pending mutations to a `SortedWritesTable`.
 struct PendingState {
-    pending_rows: DenseIdMap<ShardId, SegQueue<RowBuffer>>,
+    pending_rows: DenseIdMap<ShardId, SegQueue<PendingRowBatch>>,
     pending_removals: DenseIdMap<ShardId, SegQueue<ArbitraryRowBuffer>>,
     total_removals: AtomicUsize,
     total_rows: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct PendingRowBatch {
+    rows: RowBuffer,
+    causes: Option<Vec<CauseDraftId>>,
+}
+
+impl PendingRowBatch {
+    fn receipt_cause(&self, index: usize) -> CauseDraftId {
+        let cause = self
+            .causes
+            .as_ref()
+            .expect("receipt-enabled table batch has no cause sidecar")[index];
+        assert!(
+            !cause.is_unattributed(),
+            "receipt-enabled table proposal has no exact cause"
+        );
+        cause
+    }
 }
 
 impl PendingState {
@@ -1468,40 +1892,69 @@ struct StagedOutputs {
     n_keys: usize,
     hash: Pooled<HashTable<TableEntry>>,
     rows: RowBuffer,
+    // Receipt causes are a lazy sidecar. The ordinary monomorphization keeps
+    // this `None`, so it neither allocates nor writes causal metadata.
+    causes: Option<Vec<CauseDraftId>>,
     n_stale: usize,
     scratch: Pooled<Vec<Value>>,
 }
 
 impl StagedOutputs {
-    fn rows(&self) -> impl Iterator<Item = &[Value]> {
-        self.rows.iter()
+    fn rows(&self) -> impl Iterator<Item = (usize, &[Value])> {
+        self.rows.iter().enumerate()
     }
-    fn new(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
+
+    fn cause<const RECEIPTS: bool>(&self, row_index: usize) -> CauseDraftId {
+        if RECEIPTS {
+            self.causes
+                .as_ref()
+                .expect("receipt staging requires a cause sidecar")[row_index]
+        } else {
+            CauseDraftId::UNATTRIBUTED
+        }
+    }
+
+    fn new<const RECEIPTS: bool>(n_keys: usize, n_cols: usize, capacity: usize) -> Self {
         let mut res = with_pool_set(|ps| StagedOutputs {
             shard_data: ShardData::new(1),
             n_keys,
             n_stale: 0,
             hash: ps.get(),
             rows: RowBuffer::new(n_cols),
+            // Do not reserve BATCH_SIZE causes (2 MiB) up front. Receipt
+            // staging grows only with rows actually observed by this shard.
+            causes: RECEIPTS.then(Vec::new),
             scratch: ps.get(),
         });
         res.hash.reserve(capacity, TableEntry::hashcode);
         res.rows.reserve(capacity);
         res
     }
+
     fn clear(&mut self) {
         self.hash.clear();
         self.rows.clear();
+        if let Some(causes) = &mut self.causes {
+            causes.clear();
+        }
         self.n_stale = 0;
     }
+
     fn len(&self) -> usize {
         self.rows.len() - self.n_stale
     }
 
-    fn insert(
+    fn insert<const RECEIPTS: bool>(
         &mut self,
         row: &[Value],
-        mut merge_fn: impl FnMut(&[Value], &[Value], &mut Vec<Value>) -> bool,
+        cause: CauseDraftId,
+        mut merge_fn: impl FnMut(
+            &[Value],
+            CauseDraftId,
+            &[Value],
+            CauseDraftId,
+            &mut Vec<Value>,
+        ) -> (bool, CauseDraftId),
     ) {
         if row[0].is_stale() {
             return;
@@ -1518,10 +1971,28 @@ impl StagedOutputs {
         );
         match entry {
             Entry::Occupied(mut occupied_entry) => {
-                let cur = self.rows.get_row(occupied_entry.get().row);
-                if merge_fn(cur, row, &mut self.scratch) {
+                let prior_row = occupied_entry.get().row;
+                let cur = self.rows.get_row(prior_row);
+                let prior_cause = if RECEIPTS {
+                    self.causes
+                        .as_ref()
+                        .expect("receipt staging requires a cause sidecar")[prior_row.index()]
+                } else {
+                    CauseDraftId::UNATTRIBUTED
+                };
+                let (changed, merged_cause) =
+                    merge_fn(cur, prior_cause, row, cause, &mut self.scratch);
+                if changed {
                     let new = self.rows.add_row(&self.scratch);
-                    self.rows.set_stale(occupied_entry.get().row);
+                    if RECEIPTS {
+                        let causes = self
+                            .causes
+                            .as_mut()
+                            .expect("receipt staging requires a cause sidecar");
+                        debug_assert_eq!(new.index(), causes.len());
+                        causes.push(merged_cause);
+                    }
+                    self.rows.set_stale(prior_row);
                     self.n_stale += 1;
                     occupied_entry.get_mut().row = new;
                 }
@@ -1529,6 +2000,14 @@ impl StagedOutputs {
             }
             Entry::Vacant(vacant_entry) => {
                 let next = self.rows.add_row(row);
+                if RECEIPTS {
+                    let causes = self
+                        .causes
+                        .as_mut()
+                        .expect("receipt staging requires a cause sidecar");
+                    debug_assert_eq!(next.index(), causes.len());
+                    causes.push(cause);
+                }
                 vacant_entry.insert(TableEntry {
                     hashcode: hc as _,
                     row: next,
@@ -1537,8 +2016,6 @@ impl StagedOutputs {
         }
     }
 
-    /// Write the contents of the staged outputs to the given writer, returning the initial RowId
-    /// of the new output. Returns the number of stale values in the buffer that was appended.
     fn write_output(&self, output: &ParallelRowBufWriter) -> (RowId, usize) {
         (output.append_contents(&self.rows), self.n_stale)
     }

@@ -281,6 +281,13 @@ impl SubsetRef<'_> {
         }
     }
 
+    pub(crate) fn first(&self) -> Option<RowId> {
+        match self {
+            SubsetRef::Dense(range) => (range.start < range.end).then_some(range.start),
+            SubsetRef::Sparse(rows) => rows.0.first().copied(),
+        }
+    }
+
     pub(crate) fn to_owned(self, pool: &Pool<SortedOffsetVector>) -> Subset {
         match self {
             SubsetRef::Dense(r) => Subset::Dense(r),

@@ -19,7 +19,8 @@ use egglog_concurrency::NotificationList;
 use smallvec::SmallVec;
 
 use crate::{
-    BaseValues, ContainerValues, ExternalFunctionId, WrappedTable,
+    BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, ExternalFunctionId,
+    FactId, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
@@ -115,6 +116,18 @@ pub(crate) struct Bindings {
     data: Pooled<Vec<Value>>,
     /// Points into `data`. `data[vars[var].. vars[var]+matches]` contains the values for `data`.
     var_offsets: DenseIdMap<Variable, usize>,
+    /// Absent for ordinary rules, keeping every causal allocation off the
+    /// receipt-disabled path.
+    receipt: Option<Box<ReceiptBindings>>,
+}
+
+struct ReceiptBindings {
+    rule: u32,
+    wave: CausalWave,
+    premise_arity: usize,
+    binding_cells: Box<[(usize, usize)]>,
+    premises: Vec<FactId>,
+    causes: Vec<Option<CauseDraftId>>,
 }
 
 impl std::ops::Index<Variable> for Bindings {
@@ -141,6 +154,7 @@ impl Bindings {
             max_batch_size,
             data: Default::default(),
             var_offsets: DenseIdMap::new(),
+            receipt: None,
         }
     }
     fn assert_invariant(&self) {
@@ -163,6 +177,7 @@ impl Bindings {
         self.matches = 0;
         self.var_offsets.clear();
         self.data.clear();
+        self.receipt = None;
         self.assert_invariant();
     }
 
@@ -241,6 +256,59 @@ impl Bindings {
 
         self.matches += 1;
         self.assert_invariant();
+    }
+
+    pub(crate) fn push_receipt(
+        &mut self,
+        rule: u32,
+        wave: CausalWave,
+        premises: &[FactId],
+        binding_cells: &[(usize, usize)],
+    ) {
+        if let Some(existing) = &mut self.receipt {
+            assert_eq!(existing.rule, rule);
+            assert_eq!(existing.wave, wave);
+            assert_eq!(existing.premise_arity, premises.len());
+            assert_eq!(existing.binding_cells.as_ref(), binding_cells);
+            existing.premises.extend_from_slice(premises);
+            existing.causes.push(None);
+        } else {
+            self.receipt = Some(Box::new(ReceiptBindings {
+                rule,
+                wave,
+                premise_arity: premises.len(),
+                binding_cells: binding_cells.into(),
+                premises: premises.into(),
+                causes: vec![None],
+            }));
+        }
+    }
+
+    fn ensure_receipt_causes(&mut self, lanes: &[usize], receipts: &CausalReceipts) {
+        let state = self
+            .receipt
+            .as_mut()
+            .expect("receipt-enabled action requires exact match witnesses");
+        let missing = lanes
+            .iter()
+            .copied()
+            .filter(|lane| state.causes[*lane].is_none())
+            .collect::<Vec<_>>();
+        let registered = receipts.register_rule_matches(
+            state.rule,
+            state.wave,
+            state.premise_arity,
+            &state.binding_cells,
+            &state.premises,
+            &missing,
+        );
+        for (lane, cause) in registered {
+            state.causes[lane] = Some(cause);
+        }
+    }
+
+    fn receipt_cause(&self, lane: usize) -> Option<CauseDraftId> {
+        self.receipt.as_ref()?.causes[lane]
     }
 
     /// A method that removes the bindings for the given variable and allows for its values to be
@@ -330,6 +398,8 @@ pub(crate) struct DbView<'a> {
     pub(crate) bases: &'a BaseValues,
     pub(crate) containers: &'a ContainerValues,
     pub(crate) notification_list: &'a NotificationList<TableId>,
+    pub(crate) causal_receipts: Option<&'a CausalReceipts>,
+    pub(crate) causal_wave: CausalWave,
 }
 
 /// A handle on a database that may be in the process of running a rule.
@@ -366,6 +436,10 @@ pub struct ExecutionState<'a> {
     /// Atomic flag for early stopping of rule execution.
     /// This flag is shared across all handles (clones) of this ExecutionState.
     stop_match: Arc<AtomicBool>,
+    /// Cause inherited by every native write performed in the current action
+    /// lane or merge callback. It is state-local so parallel execution cannot
+    /// cross-attribute proposals.
+    active_cause: Option<CauseDraftId>,
 }
 
 /// A basic wrapper around an map from table id to a mutation buffer for that table that also
@@ -403,6 +477,15 @@ impl<'a> MutationBuffers<'a> {
         self.notify_list.notify(table_id);
     }
 
+    fn stage_insert_with_cause(&mut self, table_id: TableId, row: &[Value], cause: CauseDraftId) {
+        assert!(
+            !cause.is_unattributed(),
+            "receipt-enabled insertion is missing an exact cause"
+        );
+        self.buffers[table_id].stage_insert_with_cause(row, cause);
+        self.notify_list.notify(table_id);
+    }
+
     fn stage_remove(&mut self, table_id: TableId, key: &[Value]) {
         self.buffers[table_id].stage_remove(key);
         self.notify_list.notify(table_id);
@@ -417,6 +500,7 @@ impl Clone for ExecutionState<'_> {
             buffers: self.buffers.clone(),
             changed: false,
             stop_match: Arc::clone(&self.stop_match),
+            active_cause: self.active_cause,
         }
     }
 }
@@ -432,6 +516,7 @@ impl<'a> ExecutionState<'a> {
             buffers: MutationBuffers::new(db.notification_list, buffers),
             changed: false,
             stop_match: Arc::new(AtomicBool::new(false)),
+            active_cause: None,
         }
     }
 
@@ -441,14 +526,41 @@ impl<'a> ExecutionState<'a> {
     pub fn stage_insert(&mut self, table: TableId, row: &[Value]) {
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        self.buffers.stage_insert(table, row);
+        if self.db.causal_receipts.is_some() {
+            let cause = self
+                .active_cause
+                .expect("receipt-enabled native insertion reached an uninstrumented action");
+            self.buffers.stage_insert_with_cause(table, row, cause);
+        } else {
+            self.buffers.stage_insert(table, row);
+        }
         self.changed = true;
+    }
+
+    pub(crate) fn set_active_cause(&mut self, cause: Option<CauseDraftId>) {
+        self.active_cause = cause;
+    }
+
+    pub(crate) fn active_cause(&self) -> Option<CauseDraftId> {
+        self.active_cause
+    }
+
+    pub(crate) fn causal_receipts(&self) -> Option<&CausalReceipts> {
+        self.db.causal_receipts
+    }
+
+    pub(crate) fn causal_wave(&self) -> CausalWave {
+        self.db.causal_wave
     }
 
     /// Stage a removal of the given row from `table` if it is present.
     ///
     /// If you are using `egglog`, consider using `egglog_bridge::TableAction`.
     pub fn stage_remove(&mut self, table: TableId, key: &[Value]) {
+        assert!(
+            self.db.causal_receipts.is_none(),
+            "causal receipts do not support removal; failing closed"
+        );
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
         self.buffers.stage_remove(table, key);
@@ -524,6 +636,7 @@ impl<'a> ExecutionState<'a> {
                         table,
                         key,
                         vals,
+                        self.active_cause,
                     )
                 })
                 .deref(),
@@ -537,6 +650,7 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         key: &[Value],
         vals: impl ExactSizeIterator<Item = MergeVal>,
+        cause: Option<CauseDraftId>,
     ) -> Pooled<Vec<Value>> {
         with_pool_set(|ps| {
             let mut new = ps.get::<Vec<Value>>();
@@ -549,7 +663,15 @@ impl<'a> ExecutionState<'a> {
                 })
             }
             buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
-            buffers.stage_insert(table, &new);
+            if db.causal_receipts.is_some() {
+                buffers.stage_insert_with_cause(
+                    table,
+                    &new,
+                    cause.expect("receipt-enabled predicted insertion is missing its match cause"),
+                );
+            } else {
+                buffers.stage_insert(table, &new);
+            }
             *changed = true;
             new
         })
@@ -575,6 +697,7 @@ impl<'a> ExecutionState<'a> {
                 table,
                 key,
                 vals,
+                self.active_cause,
             )
         })[col.index()]
     }
@@ -660,6 +783,21 @@ impl ExecutionState<'_> {
                 if mask_copy.is_empty() {
                     return;
                 }
+                let receipt_causes = if let Some(receipts) = self.db.causal_receipts {
+                    let mut lanes = Vec::new();
+                    let mut cause_mask = mask_copy.clone();
+                    cause_mask.empty_iter().for_each_indexed(|offset, ()| {
+                        lanes.push(offset);
+                    });
+                    bindings.ensure_receipt_causes(&lanes, receipts);
+                    Some(
+                        (0..bindings.matches)
+                            .map(|lane| bindings.receipt_cause(lane))
+                            .collect::<Vec<_>>(),
+                    )
+                } else {
+                    None
+                };
                 let mut out = bindings.take(*dst_var).unwrap();
                 for_each_binding_with_mask!(mask_copy, args.as_slice(), bindings, |iter| {
                     iter.assign_vec(&mut out.vals, |offset, key| {
@@ -681,32 +819,41 @@ impl ExecutionState<'_> {
                         let ctrs = &self.db.counters;
                         let bindings = &bindings;
                         let pool = pool.clone();
-                        let row =
-                            self.predicted
-                                .data
-                                .entry(prediction_key)
-                                .or_insert_with(move || {
-                                    let mut row = pool.get();
-                                    row.extend_from_slice(key.as_slice());
-                                    // Extend the key with the default values.
-                                    row.reserve(default.len());
-                                    for val in default {
-                                        let val = match val {
-                                            WriteVal::QueryEntry(QueryEntry::Const(c)) => *c,
-                                            WriteVal::QueryEntry(QueryEntry::Var(v)) => {
-                                                bindings[*v][offset]
-                                            }
-                                            WriteVal::IncCounter(ctr) => {
-                                                Value::from_usize(ctrs.inc(*ctr))
-                                            }
-                                            WriteVal::CurrentVal(ix) => row[*ix],
-                                        };
-                                        row.push(val)
-                                    }
-                                    // Insert it into the table.
+                        let row = self
+                            .predicted
+                            .data
+                            .entry(prediction_key)
+                            .or_insert_with(|| {
+                                let mut row = pool.get();
+                                row.extend_from_slice(key.as_slice());
+                                // Extend the key with the default values.
+                                row.reserve(default.len());
+                                for val in default {
+                                    let val = match val {
+                                        WriteVal::QueryEntry(QueryEntry::Const(c)) => *c,
+                                        WriteVal::QueryEntry(QueryEntry::Var(v)) => {
+                                            bindings[*v][offset]
+                                        }
+                                        WriteVal::IncCounter(ctr) => {
+                                            Value::from_usize(ctrs.inc(*ctr))
+                                        }
+                                        WriteVal::CurrentVal(ix) => row[*ix],
+                                    };
+                                    row.push(val)
+                                }
+                                if let Some(causes) = &receipt_causes {
+                                    buffers.stage_insert_with_cause(
+                                        *table_id,
+                                        &row,
+                                        causes[offset].expect(
+                                            "constructor lane is missing its exact receipt cause",
+                                        ),
+                                    );
+                                } else {
                                     buffers.stage_insert(*table_id, &row);
-                                    row
-                                });
+                                }
+                                row
+                            });
                         row[dst_col.index()]
                     });
                 });
@@ -772,44 +919,78 @@ impl ExecutionState<'_> {
                 *mask = lookup_result;
             }
             Instr::Insert { table, vals } => {
-                for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                    iter.for_each(|vals| {
-                        self.stage_insert(*table, vals.as_slice());
-                    })
-                });
-            }
-            Instr::InsertIfEq { table, l, r, vals } => match (l, r) {
-                (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
+                if let Some(receipts) = self.db.causal_receipts {
+                    let mut lanes = Vec::new();
+                    let mut cause_mask = mask.clone();
+                    cause_mask.empty_iter().for_each_indexed(|offset, ()| {
+                        lanes.push(offset);
+                    });
+                    bindings.ensure_receipt_causes(&lanes, receipts);
+                    let causes = (0..bindings.matches)
+                        .map(|lane| bindings.receipt_cause(lane))
+                        .collect::<Vec<_>>();
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                        iter.zip(&bindings[*v1])
-                            .zip(&bindings[*v2])
-                            .for_each(|((vals, v1), v2)| {
-                                if v1 == v2 {
+                        iter.for_each_indexed(|offset, vals| {
+                            self.set_active_cause(Some(causes[offset].expect(
+                                "effective action lane is missing its exact receipt cause",
+                            )));
+                            self.stage_insert(*table, vals.as_slice());
+                        })
+                    });
+                    self.set_active_cause(None);
+                } else {
+                    // Keep the ordinary loop byte-for-byte equivalent to the
+                    // pre-receipt action path.
+                    for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                        iter.for_each(|vals| {
+                            self.stage_insert(*table, vals.as_slice());
+                        })
+                    });
+                }
+            }
+            Instr::InsertIfEq { table, l, r, vals } => {
+                assert!(
+                    self.db.causal_receipts.is_none(),
+                    "causal receipts do not yet support InsertIfEq; failing closed"
+                );
+                match (l, r) {
+                    (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
+                        for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                            iter.zip(&bindings[*v1]).zip(&bindings[*v2]).for_each(
+                                |((vals, v1), v2)| {
+                                    if v1 == v2 {
+                                        self.stage_insert(*table, &vals);
+                                    }
+                                },
+                            )
+                        })
+                    }
+                    (QueryEntry::Var(v), QueryEntry::Const(c))
+                    | (QueryEntry::Const(c), QueryEntry::Var(v)) => {
+                        for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                            iter.zip(&bindings[*v]).for_each(|(vals, cond)| {
+                                if cond == c {
                                     self.stage_insert(*table, &vals);
                                 }
                             })
-                    })
-                }
-                (QueryEntry::Var(v), QueryEntry::Const(c))
-                | (QueryEntry::Const(c), QueryEntry::Var(v)) => {
-                    for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
-                        iter.zip(&bindings[*v]).for_each(|(vals, cond)| {
-                            if cond == c {
-                                self.stage_insert(*table, &vals);
-                            }
                         })
-                    })
-                }
-                (QueryEntry::Const(c1), QueryEntry::Const(c2)) => {
-                    if c1 == c2 {
-                        for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| iter
-                            .for_each(|vals| {
-                                self.stage_insert(*table, &vals);
-                            }))
+                    }
+                    (QueryEntry::Const(c1), QueryEntry::Const(c2)) => {
+                        if c1 == c2 {
+                            for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
+                                iter.for_each(|vals| {
+                                    self.stage_insert(*table, &vals);
+                                })
+                            })
+                        }
                     }
                 }
-            },
+            }
             Instr::Remove { table, args } => {
+                assert!(
+                    self.db.causal_receipts.is_none(),
+                    "causal receipts do not support removal; failing closed"
+                );
                 for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
                     iter.for_each(|args| {
                         self.stage_remove(*table, args.as_slice());

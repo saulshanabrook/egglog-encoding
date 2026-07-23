@@ -9,8 +9,9 @@ use crate::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
+use crate::receipts::ActionReceiptSpec;
 use crate::{
-    BaseValueId, CounterId, ExternalFunctionId, PoolSet,
+    BaseValueId, CounterId, ExternalFunctionId, PoolSet, RuleReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -44,6 +45,7 @@ pub struct CachedPlan {
 pub(crate) struct ActionInfo {
     pub(crate) used_vars: SmallVec<[Variable; 4]>,
     pub(crate) instrs: Arc<Pooled<Vec<Instr>>>,
+    pub(crate) receipt: Option<ActionReceiptSpec>,
 }
 
 /// A set of rules to run against a [`Database`].
@@ -548,7 +550,18 @@ impl RuleBuilder<'_, '_> {
         }
     }
 
-    pub fn build_with_description(mut self, desc: impl Into<String>) -> RuleId {
+    pub fn build_with_description(self, desc: impl Into<String>) -> RuleId {
+        self.build_impl(desc, None)
+    }
+
+    /// Build a rule together with the fixed receipt layout preserved from the
+    /// source-level rule. Runtime capture copies only FactId/ReplayTermId
+    /// handles according to this layout.
+    pub fn build_with_receipts(self, desc: impl Into<String>, spec: RuleReceiptSpec) -> RuleId {
+        self.build_impl(desc, Some(spec))
+    }
+
+    fn build_impl(mut self, desc: impl Into<String>, receipt: Option<RuleReceiptSpec>) -> RuleId {
         let var_info = &self.qb.query.var_info;
         let symbol_map = self.build_symbol_map();
         // Generate an id for our actions and slot them in.
@@ -559,9 +572,33 @@ impl RuleBuilder<'_, '_> {
                 None
             }
         }));
+        let receipt = receipt.map(|spec| {
+            let mut binding_cells = Vec::with_capacity(spec.ordinary_vars.len());
+            for var in &spec.ordinary_vars {
+                let cell = spec
+                    .premises
+                    .iter()
+                    .enumerate()
+                    .find_map(|(premise, atom)| {
+                        self.qb.query.atoms[*atom]
+                            .get_col(*var)
+                            .map(|col| (premise, col.index()))
+                    })
+                    .unwrap_or_else(|| {
+                        panic!("receipt variable {var:?} is not bound by a retained premise")
+                    });
+                binding_cells.push(cell);
+            }
+            ActionReceiptSpec {
+                rule: spec.rule,
+                premises: spec.premises,
+                binding_cells: binding_cells.into_boxed_slice(),
+            }
+        });
         let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {
             instrs: Arc::new(self.qb.instrs),
             used_vars,
+            receipt,
         });
         self.qb.query.action = action_id;
         // Plan the query

@@ -10,7 +10,7 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    TableChange, TaggedRowBuffer,
+    CauseDraftId, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
@@ -52,11 +52,12 @@ type UnionFind = crate::union_find::UnionFind<Value>;
 /// decisions are made internally, so there may not literally be a row added
 /// with this value.
 pub struct DisplacedTable {
+    table_id: crate::TableId,
     uf: UnionFind,
     displaced: Vec<(Value, Value)>,
     changed: bool,
     lookup_table: HashMap<Value, RowId>,
-    buffered_writes: Arc<SegQueue<RowBuffer>>,
+    buffered_writes: Arc<SegQueue<UfPendingBatch>>,
 }
 
 struct Canonicalizer<'a> {
@@ -194,6 +195,7 @@ impl Default for DisplacedTable {
     fn default() -> Self {
         Self {
             uf: UnionFind::default(),
+            table_id: crate::TableId::dummy(),
             displaced: Vec::new(),
             changed: false,
             lookup_table: HashMap::default(),
@@ -206,6 +208,7 @@ impl Clone for DisplacedTable {
     fn clone(&self) -> Self {
         DisplacedTable {
             uf: self.uf.clone(),
+            table_id: self.table_id,
             displaced: self.displaced.clone(),
             changed: self.changed,
             lookup_table: self.lookup_table.clone(),
@@ -216,7 +219,14 @@ impl Clone for DisplacedTable {
 
 struct UfBuffer {
     to_insert: ManuallyDrop<RowBuffer>,
-    buffered_writes: Weak<SegQueue<RowBuffer>>,
+    causes: ManuallyDrop<Option<Vec<CauseDraftId>>>,
+    buffered_writes: Weak<SegQueue<UfPendingBatch>>,
+}
+
+#[derive(Clone)]
+struct UfPendingBatch {
+    rows: RowBuffer,
+    causes: Option<Vec<CauseDraftId>>,
 }
 
 impl Drop for UfBuffer {
@@ -225,6 +235,7 @@ impl Drop for UfBuffer {
             // SAFETY: If we can't write updates, manually drop to_insert
             unsafe {
                 ManuallyDrop::drop(&mut self.to_insert);
+                ManuallyDrop::drop(&mut self.causes);
             }
             return;
         };
@@ -233,7 +244,11 @@ impl Drop for UfBuffer {
         // This avoids creating a fresh row buffer via `mem::take` or `mem::swap` and
         // dropping it immediately.
         let to_insert = unsafe { ManuallyDrop::take(&mut self.to_insert) };
-        buffered_writes.push(to_insert);
+        let causes = unsafe { ManuallyDrop::take(&mut self.causes) };
+        buffered_writes.push(UfPendingBatch {
+            rows: to_insert,
+            causes,
+        });
     }
 }
 
@@ -241,12 +256,21 @@ impl MutationBuffer for UfBuffer {
     fn stage_insert(&mut self, row: &[Value]) {
         self.to_insert.add_row(row);
     }
+    fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId) {
+        let prior_len = self.to_insert.len();
+        let causes = self
+            .causes
+            .get_or_insert_with(|| vec![CauseDraftId::UNATTRIBUTED; prior_len]);
+        self.to_insert.add_row(row);
+        causes.push(cause);
+    }
     fn stage_remove(&mut self, _: &[Value]) {
         panic!("attempting to remove data from a DisplacedTable")
     }
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(self.to_insert.arity())),
+            causes: ManuallyDrop::new(None),
             buffered_writes: self.buffered_writes.clone(),
         })
     }
@@ -258,6 +282,9 @@ impl Table for DisplacedTable {
     }
     fn as_any(&self) -> &dyn Any {
         self
+    }
+    fn set_table_id(&mut self, table: crate::TableId) {
+        self.table_id = table;
     }
     fn spec(&self) -> TableSpec {
         let mut uncacheable_columns = DenseIdMap::default();
@@ -434,14 +461,44 @@ impl Table for DisplacedTable {
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(3)),
+            causes: ManuallyDrop::new(None),
             buffered_writes: Arc::downgrade(&self.buffered_writes),
         })
     }
 
-    fn merge(&mut self, _: &mut ExecutionState) -> TableChange {
-        while let Some(rowbuf) = self.buffered_writes.pop() {
-            for row in rowbuf.iter() {
-                self.changed |= self.insert_impl(row).is_some();
+    fn merge(&mut self, exec_state: &mut ExecutionState) -> TableChange {
+        if let Some(receipts) = exec_state.causal_receipts() {
+            let mut receipt_batch = receipts.new_batch();
+            while let Some(batch) = self.buffered_writes.pop() {
+                if batch.rows.len() == 0 {
+                    continue;
+                }
+                let causes = batch
+                    .causes
+                    .as_ref()
+                    .expect("receipt-enabled union batch has no cause sidecar");
+                assert_eq!(
+                    causes.len(),
+                    batch.rows.len(),
+                    "receipt-enabled union batch has incomplete causes"
+                );
+                for (index, row) in batch.rows.iter().enumerate() {
+                    let cause = causes[index];
+                    assert!(
+                        !cause.is_unattributed(),
+                        "receipt-enabled union proposal has no exact cause"
+                    );
+                    let applied = self.insert_impl(row).is_some();
+                    receipt_batch.record_union(row[0], row[1], cause, applied);
+                    self.changed |= applied;
+                }
+            }
+            receipt_batch.publish();
+        } else {
+            while let Some(batch) = self.buffered_writes.pop() {
+                for row in batch.rows.iter() {
+                    self.changed |= self.insert_impl(row).is_some();
+                }
             }
         }
         let changed = mem::take(&mut self.changed);
