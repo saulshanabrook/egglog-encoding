@@ -49,4 +49,17 @@ fn eggcc_2mm_bounded_export_uses_container_helpers() {
         non_comment_program.contains(":no-merge"),
         "bounded eggcc export should preserve native no-merge declarations"
     );
+
+    for removed in [
+        "ExprSet",
+        "set-intersect",
+        "set-union",
+        "set-insert",
+        "set-length",
+    ] {
+        assert!(
+            !non_comment_program.contains(removed),
+            "bounded eggcc export should not retain dead {removed} support"
+        );
+    }
 }

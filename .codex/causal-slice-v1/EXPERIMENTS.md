@@ -1053,3 +1053,22 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   through the complete workload. No Pointer-specific rule or fallback was
   added. Full focused and workspace regressions remain required before
   freezing the checkpoint.
+
+### 2026-07-23 — checkpoint 5a dead fixture pruning
+
+- Hypothesis: the bounded Eggcc `ExprSet` helpers and Hardboiled aligned-
+  broadcast `UnstableFn` subsystem are parsed but unreachable under the
+  benchmark schedules, so deleting them reduces the causal language surface
+  without changing any observation.
+- The bounded Eggcc fixture no longer declares `ExprSet`; its proof-testing
+  snapshot remained byte-identical, and a fixture-shape test rejects the dead
+  vocabulary. Live Pair, Either, and Maybe helpers remain.
+- Hardboiled 32 no longer declares the unused `UnstableFn` subsystem. Its
+  shared snapshot changed only by removing the nine zero-count rows owned by
+  that subsystem; the ordinary, term, 32-thread, and proof-testing variants
+  still pass.
+- Focused validation:
+  `cargo test -p egglog-experimental --test eggcc_2mm_proof`,
+  `cargo test -p egglog-experimental --test files
+  'proofs/eggcc_2mm_pass1_proof_testing'`, and
+  `cargo test -p egglog --test files hardboiled_conv1d_32`.
