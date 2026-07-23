@@ -1000,7 +1000,7 @@ impl TypeInfo {
             span: fdecl.span.clone(),
             term_constructor: fdecl.term_constructor.clone(),
             identity_vals: fdecl.identity_vals,
-            internal_marker: fdecl.internal_marker,
+            internal_term_node: fdecl.internal_term_node,
         })
     }
 

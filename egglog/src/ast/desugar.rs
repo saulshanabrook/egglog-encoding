@@ -22,7 +22,7 @@ pub(crate) fn desugar_command(
             unextractable,
             identity_vals,
             cost,
-            marker,
+            term_node,
         } => {
             let mut fdecl = FunctionDecl::function(span, name, schema, merge);
             fdecl.internal_hidden = hidden;
@@ -30,7 +30,7 @@ pub(crate) fn desugar_command(
             fdecl.term_constructor = term_constructor;
             fdecl.identity_vals = identity_vals;
             fdecl.cost = cost;
-            fdecl.internal_marker = marker;
+            fdecl.internal_term_node = term_node;
             // Functions with term_constructor are view tables that should be
             // extractable unless explicitly marked unextractable
             if fdecl.term_constructor.is_some() {

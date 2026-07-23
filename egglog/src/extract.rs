@@ -723,20 +723,15 @@ impl Function {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
     }
 
-    /// A term or proof relation created by the term/proof encoding: an
-    /// internal-hidden function-to-`Unit` where the minted id is the last input
-    /// column and the earlier inputs are the term's children. (Distinct from
-    /// views, which carry `term_constructor` and have a non-`Unit` output.) Such
-    /// a relation is reconstructed like an old-form view: last input = output id.
+    /// A term/proof/AST/proof-list node relation created by the term/proof
+    /// encoding, marked `:internal-term-node`. Its rows are reconstructed during
+    /// extraction with the minted id as the last input column and the earlier
+    /// inputs as the term's children. Views (which carry `term_constructor` and a
+    /// non-`Unit` output) and plain bookkeeping relations such as the
+    /// delete/subsume markers are unmarked, so extraction never reads them as
+    /// terms.
     pub(crate) fn is_relation_term(&self) -> bool {
-        self.decl.subtype == FunctionSubtype::Custom
-            && self.decl.internal_hidden
-            && self.decl.term_constructor.is_none()
-            && self.schema.outputs.len() == 1
-            && self.schema.outputs[0].name() == "Unit"
-            // Delete/subsume marker relations key on children with no minted id,
-            // so they are not term producers (and may even be nullary).
-            && !self.decl.internal_marker
+        self.decl.internal_term_node
     }
 
     /// True when the id is the last input column (old-form views and encoding

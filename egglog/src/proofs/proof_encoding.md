@@ -80,20 +80,21 @@ Each constructor expands to a **term relation** (`Add`), a **view** (`AddView`),
 and deferred-deletion helpers:
 
 ```text
-(function Add (i64 i64 Math) Unit :no-merge :unextractable :internal-hidden)
+(function Add (i64 i64 Math) Unit :no-merge :unextractable :internal-hidden :internal-term-node)
 (function AddView (i64 i64) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
     :internal-term-constructor Add :internal-identity-vals 1)
-(function to_delete_Add (i64 i64) Unit :no-merge :internal-hidden :internal-marker)
-(function to_subsume_Add (i64 i64) Unit :no-merge :internal-hidden :internal-marker)
+(function to_delete_Add (i64 i64) Unit :no-merge :internal-hidden)
+(function to_subsume_Add (i64 i64) Unit :no-merge :internal-hidden)
 ```
 
-The deferred-deletion helpers are `Unit` relations keyed on the children (a
+The term relation carries `:internal-term-node`: its rows are term nodes (the
+minted id is the last input), which proof extraction reconstructs. The
+deferred-deletion helpers are plain `Unit` relations keyed on the children (a
 `(delete (Add 1 2))` inserts `to_delete_Add(1, 2)`, which the delete ruleset
-consumes). `:internal-marker` tells extraction they are bookkeeping, not term
-relations — they carry no minted id, so unlike the term relation they are never
-reconstructed as terms.
+consumes); they carry no minted id and no `:internal-term-node`, so extraction
+never reads them as terms.
 
 The term relation `Add(child0, child1, eclass)` stores every application as a
 row whose last column is the term's own id (minted with `get-fresh!`); nothing is

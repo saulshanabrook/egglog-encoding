@@ -533,17 +533,19 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             format!("(sort {fresh_sort})")
         };
+        // The term relation is a term node (`:internal-term-node`): its rows are
+        // reconstructed by proof extraction, with the minted id as the last input.
         // The deferred delete/subsume markers are keyed on children with no output,
-        // so they are `Unit` relations (like the term table) rather than
-        // constructors — the encoding mints no e-class here.
+        // so they are plain `Unit` relations (not term nodes) — the encoding mints
+        // no e-class there and extraction never reads them as terms.
         self.parse_program(&format!(
             "
             {fresh_sort_decl}
             {to_ast_view_sort}
-            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden)
+            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
             {view_decl}
-            (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden :internal-marker)
-            (function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden :internal-marker)
+            (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden)
+            (function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)
             {delete_rule}",
         ))
     }

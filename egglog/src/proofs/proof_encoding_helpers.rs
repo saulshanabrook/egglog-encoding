@@ -281,7 +281,7 @@ impl ProofInstrumentor<'_> {
                 .insert(sort.to_string(), to_ast_constructor.clone());
             let ast_sort = &self.proof_names().ast_sort;
             format!(
-                "(function {to_ast_constructor} ({sort} {ast_sort}) Unit :no-merge :internal-hidden)"
+                "(function {to_ast_constructor} ({sort} {ast_sort}) Unit :no-merge :internal-hidden :internal-term-node)"
             )
         } else {
             "".to_string()
@@ -350,7 +350,7 @@ impl ProofInstrumentor<'_> {
                     .sort_to_ast_constructor
                     .insert(sort_name.clone(), ast_constructor.clone());
                 to_ast_constructors.push(format!(
-                    "(function {ast_constructor} ({sort_name} {}) Unit :no-merge :internal-hidden)",
+                    "(function {ast_constructor} ({sort_name} {}) Unit :no-merge :internal-hidden :internal-term-node)",
                     self.proof_names().ast_sort
                 ));
             }
@@ -388,49 +388,49 @@ impl ProofInstrumentor<'_> {
 ;; a fresh id (`get-fresh!`) and asserts the row, so congruent duplicates are
 ;; kept (never merged away) rather than relying on native congruence. The final
 ;; column of each relation is the minted output id.
-(function {pcons} ({proof_datatype} {proof_list_sort} {proof_list_sort}) Unit :no-merge :internal-hidden)
-(function {pnil} ({proof_list_sort}) Unit :no-merge :internal-hidden)
+(function {pcons} ({proof_datatype} {proof_list_sort} {proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {pnil} ({proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
 
 {to_ast_str}
 
 ;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the proposition being justified
-(function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
-(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; term-free merge justification for an FD custom-function view subexpression:
 ;; name of function, two premise proofs, and the pre-order index of the merge-body
 ;; subexpression whose conclusion is reconstructed during proof conversion
-(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; term-free merge justification for an FD custom-function view row:
 ;; name of function and two premise proofs; the whole-row conclusion is
 ;; reconstructed during proof conversion by running the whole merge body
-(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; transitivity of equality proofs
-(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; symmetry of equality proofs
-(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; given a proof that t1 = f(..., ci, ...)
 ;; and the child index i of ci in the term f(..., ci, ...)
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
-(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; element-matching congruence (used by container rebuilds): given a proof that
 ;; t1 = c and a proof that a = b, produces a justification that t1 = c with
 ;; every child of c equal to a replaced by b.
-(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
 ;; last-write-wins for maps, sort for multisets)
-(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden)
+(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; marks the proof of a container side condition. Carries nothing: the side
 ;; condition is re-evaluated against the rule body when checked.
-(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden)
+(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
                 "
         )
     }
