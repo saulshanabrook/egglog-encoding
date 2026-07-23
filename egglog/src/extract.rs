@@ -734,6 +734,9 @@ impl Function {
             && self.decl.term_constructor.is_none()
             && self.schema.outputs.len() == 1
             && self.schema.outputs[0].name() == "Unit"
+            // Delete/subsume marker relations key on children with no minted id,
+            // so they are not term producers (and may even be nullary).
+            && !self.decl.internal_marker
     }
 
     /// True when the id is the last input column (old-form views and encoding

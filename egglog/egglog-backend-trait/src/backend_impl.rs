@@ -195,7 +195,7 @@ impl Backend for EGraph {
         build_rule(self, rule)
     }
 
-    fn fresh_eclass_id(&mut self) -> Value {
+    fn fresh_id(&mut self) -> Value {
         EGraph::fresh_id(self)
     }
 
@@ -239,8 +239,13 @@ impl Backend for EGraph {
         EGraph::register_set_if_empty(self, view_name, n_keys, out_arity)
     }
 
-    fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
-        EGraph::register_view_proof(self, view_name, n_keys)
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        EGraph::register_view_column_read(self, view_name, n_keys, col_idx)
     }
 
     fn set_report_level(&mut self, level: ReportLevel) {
@@ -259,7 +264,7 @@ impl Backend for EGraph {
         Some(EGraph::action_registry(self))
     }
 
-    fn eclass_id_counter(&self) -> Option<crate::CounterId> {
+    fn id_counter(&self) -> Option<crate::CounterId> {
         Some(EGraph::id_counter(self))
     }
 

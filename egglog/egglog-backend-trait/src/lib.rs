@@ -276,10 +276,11 @@ pub trait Backend: Send + Sync {
         None
     }
 
-    /// The counter that mints fresh eq-class ids, for a backend whose ids come from a counter
-    /// (the reference bridge). Backends with deterministic / structural ids return `None`.
-    /// Exposed so the term/proof encoding's `get-fresh!` primitive can mint fresh ids.
-    fn eclass_id_counter(&self) -> Option<CounterId> {
+    /// The counter this backend mints ids from, when its ids come from a monotonic
+    /// counter (the reference bridge); `None` when it assigns ids
+    /// deterministically/structurally. Exposed so the term encoding's `get-fresh!`
+    /// primitive mints from the same counter the backend uses.
+    fn id_counter(&self) -> Option<CounterId> {
         None
     }
 
@@ -299,9 +300,11 @@ pub trait Backend: Send + Sync {
     // host-side mirror for Differential Dataflow), so input loading never falls
     // back to rule compilation.
 
-    /// Mint a fresh eq-class id from the backend's shared counter (used for term,
-    /// AST, and proof ids). Panics on a backend without a counter.
-    fn fresh_eclass_id(&mut self) -> Value;
+    /// Mint a fresh id: the next unused integer from the backend's counter. A fresh
+    /// id names a term (terms double as their own e-class) or a proof/AST node; the
+    /// id itself is not stored anywhere until the encoding asserts a relation row
+    /// referencing it. Panics on a backend without a counter.
+    fn fresh_id(&mut self) -> Value;
 
     /// Insert a batch of logical rows and flush. Each `(func, row)` gives a
     /// function id and its row as keys followed by all value columns (no
@@ -368,12 +371,12 @@ pub trait Backend: Send + Sync {
     /// Register the `get-fresh!` mint op. Returns the [`ExternalFunctionId`]
     /// its mint sites (`(get-fresh! "Sort")`) resolve to. The default mints an
     /// impure `() -> id` value from the backend's
-    /// [`Backend::eclass_id_counter`], so it works for any counter-based
-    /// backend. Called only when [`Backend::eclass_id_counter`] is `Some`.
+    /// [`Backend::id_counter`], so it works for any counter-based
+    /// backend. Called only when [`Backend::id_counter`] is `Some`.
     fn register_get_fresh(&mut self) -> ExternalFunctionId {
         let counter = self
-            .eclass_id_counter()
-            .expect("register_get_fresh requires an eq-class id counter");
+            .id_counter()
+            .expect("register_get_fresh requires an id counter");
         self.register_external_func(Box::new(egglog_core_relations::make_external_func(
             move |state: &mut ExecutionState, _args: &[Value]| {
                 Some(Value::from_usize(state.inc_counter(counter)))
@@ -400,13 +403,19 @@ pub trait Backend: Send + Sync {
         ))
     }
 
-    /// Register the view-proof reader for the FD view named `view_name`
-    /// (`n_keys` key columns): `(keys, fallback) -> proof`, returning output
-    /// column 1 for `keys` or `fallback` when the key is absent. The default
-    /// registers a panic.
-    fn register_view_proof(&mut self, view_name: String, _n_keys: usize) -> ExternalFunctionId {
+    /// Register a reader for output column `col_idx` of the FD view named
+    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> column`, returning
+    /// that output column for `keys` or `fallback` when the key is absent. Generic
+    /// over the column so the backend stays proof-agnostic; the term/proof encoding
+    /// reads its proof column with `col_idx = 1`. The default registers a panic.
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        _n_keys: usize,
+        _col_idx: usize,
+    ) -> ExternalFunctionId {
         self.new_panic(format!(
-            "this backend does not support view-proof reads for view `{view_name}`"
+            "this backend does not support view-column reads for view `{view_name}`"
         ))
     }
 

@@ -357,10 +357,16 @@ impl EGraph {
         )))
     }
 
-    /// Register the term encoder's view-proof reader for the FD view named
-    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> proof`, returning
-    /// output column 1 for `keys` or `fallback` when the key is absent.
-    pub fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
+    /// Register a reader for output column `col_idx` of the FD view named
+    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> column`, returning
+    /// that output column for `keys` or `fallback` when the key is absent. The term
+    /// encoder reads its proof column with `col_idx = 1`.
+    pub fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
         let registry = self.action_registry.clone();
         self.register_external_func(Box::new(make_external_func(
             move |state: &mut ExecutionState, args: &[Value]| {
@@ -368,7 +374,7 @@ impl EGraph {
                 let action = registry.lookup_table(&view_name)?.clone();
                 let fallback = args[n_keys];
                 Some(match action.lookup_values(state, &args[..n_keys]) {
-                    Some(vals) => vals[1],
+                    Some(vals) => vals[col_idx],
                     None => fallback,
                 })
             },
@@ -403,7 +409,7 @@ impl EGraph {
         Value::from_usize(self.db.inc_counter(self.id_counter))
     }
 
-    /// The global counter that mints fresh eq-class ids (backing [`fresh_id`](Self::fresh_id)
+    /// The global counter that mints fresh ids (backing [`fresh_id`](Self::fresh_id)
     /// and `DefaultVal::FreshId`). Exposed so a primitive can mint ids in the same space during
     /// rule execution — used by the term/proof encoding's `get-fresh!` primitive.
     pub fn id_counter(&self) -> CounterId {

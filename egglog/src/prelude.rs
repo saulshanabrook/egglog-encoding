@@ -782,6 +782,7 @@ pub fn add_function(
         unextractable: false,
         identity_vals: None,
         cost: None,
+        marker: false,
     }])
 }
 

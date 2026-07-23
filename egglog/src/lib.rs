@@ -2496,7 +2496,7 @@ impl EGraph {
         let num_facts = value_rows.len();
         let mut batch: Vec<(egglog_bridge::FunctionId, Vec<Value>)> = Vec::new();
         for value_row in value_rows {
-            let fv = self.backend.fresh_eclass_id();
+            let fv = self.backend.fresh_id();
             // Term-relation row: CSV columns (children [+ output]) + term id + Unit.
             let mut frow = value_row.clone();
             frow.push(fv);
@@ -2505,11 +2505,11 @@ impl EGraph {
 
             let view_proof = if let Some((ast_id, fiat_id, proof_func_id)) = proof_tables {
                 // Fiat proof of the base fact: `@Fiat(ast(fv), ast(fv))`.
-                let a1 = self.backend.fresh_eclass_id();
+                let a1 = self.backend.fresh_id();
                 batch.push((ast_id, vec![fv, a1, unit_val]));
-                let a2 = self.backend.fresh_eclass_id();
+                let a2 = self.backend.fresh_id();
                 batch.push((ast_id, vec![fv, a2, unit_val]));
-                let pf = self.backend.fresh_eclass_id();
+                let pf = self.backend.fresh_id();
                 batch.push((fiat_id, vec![a1, a2, pf, unit_val]));
                 if let Some(proof_func_id) = proof_func_id {
                     batch.push((proof_func_id, vec![fv, pf]));

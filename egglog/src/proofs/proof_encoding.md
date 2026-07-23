@@ -67,9 +67,12 @@ parents and `set`s the larger parent's edge to the smaller one (both are equal t
 the key). `ordering-max`/`ordering-min` impose an arbitrary but deterministic
 order (by insertion) so the parent choice is stable.
 
-`:internal-identity-vals 1` marks the parent column as the row's identity: a
-merge whose parent is unchanged keeps the existing row without running the block,
-so re-setting an existing edge does not re-stage the same union forever.
+`:internal-identity-vals 1` marks the first value column (the parent) as the one
+that decides whether a re-`set` is a change: an incoming `set` carrying the same
+parent leaves the row untouched and does not run the `:merge` block, so re-setting
+an existing edge does not re-stage the same union forever. This is about making
+re-writes idempotent — it is *not* a key; the value column is not a unique index,
+and many keys can point at the same parent.
 
 ## Term relation and view
 
@@ -77,15 +80,20 @@ Each constructor expands to a **term relation** (`Add`), a **view** (`AddView`),
 and deferred-deletion helpers:
 
 ```text
-(sort view)
 (function Add (i64 i64 Math) Unit :no-merge :unextractable :internal-hidden)
 (function AddView (i64 i64) (Math Unit)
     :merge ((set (UF_Math (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
             (values (ordering-min old0 new0) ()))
     :internal-term-constructor Add :internal-identity-vals 1)
-(constructor to_delete_Add (i64 i64) view :internal-hidden)
-(constructor to_subsume_Add (i64 i64) view :internal-hidden)
+(function to_delete_Add (i64 i64) Unit :no-merge :internal-hidden :internal-marker)
+(function to_subsume_Add (i64 i64) Unit :no-merge :internal-hidden :internal-marker)
 ```
+
+The deferred-deletion helpers are `Unit` relations keyed on the children (a
+`(delete (Add 1 2))` inserts `to_delete_Add(1, 2)`, which the delete ruleset
+consumes). `:internal-marker` tells extraction they are bookkeeping, not term
+relations — they carry no minted id, so unlike the term relation they are never
+reconstructed as terms.
 
 The term relation `Add(child0, child1, eclass)` stores every application as a
 row whose last column is the term's own id (minted with `get-fresh!`); nothing is
@@ -102,9 +110,9 @@ the term relation is write-only after creation.
 With proofs enabled, the encoding first emits a header defining the proof format
 (corresponding to [`RawProof`](crate::proofs::RawProof); see
 `proof_encoding_helpers.rs`): the `Proof`, `Ast`, and `ProofList` sorts and the
-proof constructors `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `CongrAll`,
-`Merge…`, `ContainerNormalize`, `Eval`, plus `AstMath` (one `Ast<Sort>` per
-sort) and:
+proof-node relations `Rule`, `Fiat`, `Trans`, `Sym`, `Congr`, `CongrAll`,
+`Merge…`, `ContainerNormalize`, `Eval` (each a `(function … Unit :no-merge)`, not
+a constructor), plus `AstMath` (one `Ast<Sort>` per sort) and:
 
 ```text
 (function MathProof (Math) Proof :merge old :unextractable :internal-hidden)

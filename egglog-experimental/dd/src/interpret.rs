@@ -493,14 +493,14 @@ fn apply_head(
                             .copied()
                             .map(Value::new)
                             .collect::<Vec<_>>();
-                        // The term encoder's `set-if-empty` / view-proof ops are
+                        // The term encoder's `set-if-empty` / view-column-read ops are
                         // serviced against the mirror here (the db external
                         // function for them only panics); every other primitive
                         // runs on the embedded db.
                         if let Some(op) = eg.set_if_empty_ops.get(id).cloned() {
                             Some(set_if_empty_apply(eg, &op, &arguments, lookup_index)?)
-                        } else if let Some(op) = eg.view_proof_ops.get(id).cloned() {
-                            Some(view_proof_apply(eg, &op, &arguments, lookup_index)?)
+                        } else if let Some(op) = eg.view_column_read_ops.get(id).cloned() {
+                            Some(view_column_read_apply(eg, &op, &arguments, lookup_index)?)
                         } else {
                             eg.eval_prim_internal(*id, &arguments)?
                         }
@@ -676,10 +676,10 @@ fn set_if_empty_apply(
     Ok(args[op.n_keys])
 }
 
-/// Service the term encoder's view-proof read against the mirror: the proof
-/// column (output col 1) of the existing `(view keys)` row, or the `fallback`
-/// arg (the one after the keys) when the key is absent.
-fn view_proof_apply(
+/// Service the term encoder's view-column read against the mirror: output column
+/// `op.col_idx` of the existing `(view keys)` row, or the `fallback` arg (the one
+/// after the keys) when the key is absent.
+fn view_column_read_apply(
     eg: &mut EGraph,
     op: &ViewOp,
     args: &[Value],
@@ -688,11 +688,11 @@ fn view_proof_apply(
     let view = *eg
         .table_ids
         .get(&op.view_name)
-        .ok_or_else(|| anyhow!("view-proof view `{}` is not registered", op.view_name))?;
+        .ok_or_else(|| anyhow!("view-column read view `{}` is not registered", op.view_name))?;
     let keys = &args[..op.n_keys];
     let fallback = args[op.n_keys];
     Ok(match lookup_existing(eg, view, keys, index) {
-        Some(values) => Value::new(values[1]),
+        Some(values) => Value::new(values[op.col_idx]),
         None => fallback,
     })
 }

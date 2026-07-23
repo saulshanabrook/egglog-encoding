@@ -146,7 +146,7 @@ pub struct EGraph {
     db: Database,
     /// Monotonic fresh-id counter, shared by the native `FreshId` default
     /// (`fresh_id_internal`) and the term encoder's `get-fresh!` primitive (via
-    /// [`Backend::eclass_id_counter`]) so the two id sources never collide. Lives
+    /// [`Backend::id_counter`]) so the two id sources never collide. Lives
     /// in `db` (survives `db.clone()`); `id_counter` is its handle.
     pub(crate) id_counter: CounterId,
     /// Atom-less rules (`(rule () …)`) fire ONCE; an entry here marks a rule
@@ -174,7 +174,7 @@ pub struct EGraph {
     /// bridge's panic-function behavior.
     panic_message: Arc<Mutex<Option<String>>>,
     /// Relation name → `FunctionId`, populated by `add_table`. Lets the term
-    /// encoder's `set-if-empty` / view-proof ops (registered by view name before
+    /// encoder's `set-if-empty` / view-column-read ops (registered by view name before
     /// the view table exists) resolve their view to a live relation at invoke
     /// time.
     pub(crate) table_ids: HashMap<String, FunctionId>,
@@ -182,18 +182,21 @@ pub struct EGraph {
     /// their call sites to. The interpreter services these against the `mirror`
     /// instead of calling the (panic) db external function.
     pub(crate) set_if_empty_ops: HashMap<ExternalFunctionId, ViewOp>,
-    /// View-proof reader ops, keyed like `set_if_empty_ops`.
-    pub(crate) view_proof_ops: HashMap<ExternalFunctionId, ViewOp>,
+    /// View-column reader ops, keyed like `set_if_empty_ops`.
+    pub(crate) view_column_read_ops: HashMap<ExternalFunctionId, ViewOp>,
 }
 
-/// A term-encoding view op (`set-if-empty` or view-proof) the DD interpreter
+/// A term-encoding view op (`set-if-empty` or view-column read) the DD interpreter
 /// services against its `mirror`: the FD view table name plus its key/output
 /// column counts.
 #[derive(Clone)]
 pub(crate) struct ViewOp {
     pub(crate) view_name: String,
     pub(crate) n_keys: usize,
+    /// Number of output columns to insert (`set-if-empty` only).
     pub(crate) out_arity: usize,
+    /// Output column to read (view-column read only).
+    pub(crate) col_idx: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,7 +264,7 @@ impl EGraph {
             panic_message: Default::default(),
             table_ids: HashMap::new(),
             set_if_empty_ops: HashMap::new(),
-            view_proof_ops: HashMap::new(),
+            view_column_read_ops: HashMap::new(),
         }
     }
 
@@ -922,14 +925,14 @@ impl<'a> MergeTransaction<'a> {
             MergeFn::Primitive(id, arguments) => {
                 let args = self.eval_args(arguments, owner, old, new, self_col, environment)?;
                 // A custom merge lowered into the FD view's `:merge` may build
-                // terms, so the term encoder's `set-if-empty` / view-proof ops can
+                // terms, so the term encoder's `set-if-empty` / view-column-read ops can
                 // be invoked here too. Service them against the transaction's own
                 // view state (the db external function for them only panics).
                 if let Some(op) = self.eg.set_if_empty_ops.get(id).cloned() {
                     return self.set_if_empty_in_merge(&op, &args);
                 }
-                if let Some(op) = self.eg.view_proof_ops.get(id).cloned() {
-                    return self.view_proof_in_merge(&op, &args);
+                if let Some(op) = self.eg.view_column_read_ops.get(id).cloned() {
+                    return self.view_column_read_in_merge(&op, &args);
                 }
                 let arguments = args.into_iter().map(Value::new).collect::<Vec<_>>();
                 self.eg
@@ -1033,15 +1036,15 @@ impl<'a> MergeTransaction<'a> {
         Ok(eclass)
     }
 
-    /// Service a view-proof read invoked from inside a merge: the proof column
-    /// (output col 1) of the current `(view keys)` row, or the `fallback` arg.
-    fn view_proof_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
+    /// Service a view-column read invoked from inside a merge: output column
+    /// `op.col_idx` of the current `(view keys)` row, or the `fallback` arg.
+    fn view_column_read_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
         let view = self.view_op_table(op)?;
         let n_keys = op.n_keys;
         let key: Row = args[..n_keys].into();
         let fallback = args[n_keys];
         Ok(match self.current_row(view, n_keys, &key) {
-            Some(current) => current.values[1],
+            Some(current) => current.values[op.col_idx],
             None => fallback,
         })
     }
@@ -2448,7 +2451,7 @@ impl Backend for EGraph {
         Some(self.db.add_counter())
     }
 
-    fn eclass_id_counter(&self) -> Option<CounterId> {
+    fn id_counter(&self) -> Option<CounterId> {
         Some(self.id_counter)
     }
 
@@ -2474,7 +2477,7 @@ impl Backend for EGraph {
         Ok(id)
     }
 
-    fn fresh_eclass_id(&mut self) -> Value {
+    fn fresh_id(&mut self) -> Value {
         Value::new(self.fresh_id_internal())
     }
 
@@ -2616,24 +2619,30 @@ impl Backend for EGraph {
                 view_name,
                 n_keys,
                 out_arity,
+                col_idx: 0,
             },
         );
         id
     }
 
-    fn register_view_proof(&mut self, view_name: String, n_keys: usize) -> ExternalFunctionId {
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
         let id = Backend::new_panic(
             self,
-            format!("view-proof for `{view_name}` reached the db path; DD must intercept it"),
+            format!("view-column read for `{view_name}` reached the db path; DD must intercept it"),
         );
-        self.view_proof_ops.insert(
+        self.view_column_read_ops.insert(
             id,
             ViewOp {
                 view_name,
                 n_keys,
-                // A view-proof reader never inserts, so out_arity is unused; the
-                // view always has (eclass, proof) outputs.
-                out_arity: 2,
+                // A view-column reader never inserts, so out_arity is unused.
+                out_arity: 0,
+                col_idx,
             },
         );
         id
@@ -2692,7 +2701,7 @@ impl Backend for EGraph {
             panic_message: Arc::clone(&self.panic_message),
             table_ids: self.table_ids.clone(),
             set_if_empty_ops: self.set_if_empty_ops.clone(),
-            view_proof_ops: self.view_proof_ops.clone(),
+            view_column_read_ops: self.view_column_read_ops.clone(),
         })
     }
 

@@ -197,6 +197,7 @@ where
                     unextractable: f.unextractable,
                     identity_vals: f.identity_vals,
                     cost: f.cost,
+                    marker: f.internal_marker,
                 },
             },
             GenericNCommand::AddRuleset(span, name) => {
@@ -788,6 +789,9 @@ where
         /// Extraction head cost, from `:internal-cost`. Used by view tables to
         /// record the user operation's cost for the extractor.
         cost: Option<DefaultCost>,
+        /// `:internal-marker`: an internal bookkeeping relation (deferred
+        /// delete/subsume markers) that is not a term/proof node.
+        marker: bool,
     },
 
     /// Using the `ruleset` command, defines a new
@@ -1089,6 +1093,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1113,6 +1118,9 @@ where
                 }
                 if let Some(c) = cost {
                     write!(f, " :internal-cost {c}")?;
+                }
+                if *marker {
+                    write!(f, " :internal-marker")?;
                 }
                 write!(f, ")")
             }
@@ -1378,6 +1386,10 @@ where
     /// columns — a merge that leaves them unchanged is skipped and the existing
     /// row kept. Only valid for merges that are idempotent on equal inputs.
     pub identity_vals: Option<usize>,
+    /// `:internal-marker`: an internal bookkeeping relation (the term encoding's
+    /// deferred delete/subsume markers) keyed on children with no minted id, so
+    /// it is not a term/proof node and extraction never reconstructs it.
+    pub internal_marker: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1477,6 +1489,7 @@ impl FunctionDecl {
             span,
             term_constructor: None,
             identity_vals: None,
+            internal_marker: false,
         }
     }
 
@@ -1502,6 +1515,7 @@ impl FunctionDecl {
             span,
             term_constructor: None,
             identity_vals: None,
+            internal_marker: false,
         }
     }
 }
@@ -1528,6 +1542,7 @@ where
             span: self.span,
             term_constructor: self.term_constructor,
             identity_vals: self.identity_vals,
+            internal_marker: self.internal_marker,
         }
     }
 }
@@ -1946,6 +1961,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -1960,6 +1976,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, fun(name)),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
@@ -2047,6 +2064,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2058,6 +2076,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2197,6 +2216,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2208,6 +2228,7 @@ where
                 unextractable,
                 identity_vals,
                 cost,
+                marker,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, name),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {

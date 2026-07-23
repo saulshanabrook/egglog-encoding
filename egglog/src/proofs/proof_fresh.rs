@@ -12,7 +12,7 @@
 //! These primitives (`get-fresh!`, `set-if-empty`, and its proof-column reader)
 //! carry only type constraints here; their runtime behavior is supplied by the
 //! backend SPI ([`Backend::register_get_fresh`] / [`Backend::register_set_if_empty`]
-//! / [`Backend::register_view_proof`]) so each backend services the mint /
+//! / [`Backend::register_view_column_read`]) so each backend services the mint /
 //! canonicalize against its own storage — db tables for the reference bridge, a
 //! host-side mirror for the Differential Dataflow backend.
 
@@ -71,7 +71,9 @@ pub(crate) fn register_set_if_empty(
         eg.add_backend_op_primitive(
             view_proof,
             WriteState::valid_contexts(),
-            move |backend, _| backend.register_view_proof(name.clone(), n_keys),
+            // The proof is output column 1 of the FD view `(eclass, proof)`; the
+            // backend itself stays proof-agnostic (a generic view-column read).
+            move |backend, _| backend.register_view_column_read(name.clone(), n_keys, 1),
         );
     }
 }
@@ -139,13 +141,13 @@ impl Primitive for ViewProof {
 pub(crate) const GET_FRESH_PRIM_NAME: &str = "get-fresh!";
 
 /// Register the generic `get-fresh!` primitive, minting from the backend's
-/// eq-class id counter. Called from [`EGraph::with_backend`], so the primitive
+/// id counter. Called from [`EGraph::with_backend`], so the primitive
 /// is available both during encoding and when the desugared program is
 /// re-parsed. A no-op on backends without an id counter (those assign ids
 /// deterministically and need no mint primitive).
 pub(crate) fn register_get_fresh(eg: &mut EGraph) {
     // No counter → the backend assigns ids deterministically; nothing to mint.
-    if eg.backend.eclass_id_counter().is_none() {
+    if eg.backend.id_counter().is_none() {
         return;
     }
     eg.add_backend_op_primitive(GetFresh, WriteState::valid_contexts(), |backend, _| {
@@ -154,7 +156,7 @@ pub(crate) fn register_get_fresh(eg: &mut EGraph) {
 }
 
 /// `get-fresh! "Sort" -> Sort`: mint a fresh id of the named eq-sort from the
-/// shared eq-class id counter. Impure — every call returns a new id. The leading
+/// shared id counter. Impure — every call returns a new id. The leading
 /// string names the output sort (its runtime ignores the arg and just mints); the
 /// mint itself is serviced by the backend.
 #[derive(Clone)]

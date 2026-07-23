@@ -396,7 +396,7 @@ impl ProofInstrumentor<'_> {
                         {uf_lookup}
                         (!= {ci} {leader}))
                      (
-                      ({subsumed_name} {updated_view})
+                      (set ({subsumed_name} {updated_view}) ())
                       (delete ({subsumed_name} {children}))
                      )
                       :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"

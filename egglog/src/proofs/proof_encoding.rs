@@ -525,14 +525,25 @@ impl<'a> ProofInstrumentor<'a> {
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :no-merge :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         };
+        // `fresh_sort` is the term's e-class sort only for a custom function whose
+        // output is a distinct value (see `view_sort` above); a constructor/global
+        // reuses its output sort, leaving `fresh_sort` unused.
+        let fresh_sort_decl = if output_is_eclass {
+            String::new()
+        } else {
+            format!("(sort {fresh_sort})")
+        };
+        // The deferred delete/subsume markers are keyed on children with no output,
+        // so they are `Unit` relations (like the term table) rather than
+        // constructors — the encoding mints no e-class here.
         self.parse_program(&format!(
             "
-            (sort {fresh_sort})
+            {fresh_sort_decl}
             {to_ast_view_sort}
             (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden)
             {view_decl}
-            (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
-            (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
+            (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden :internal-marker)
+            (function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden :internal-marker)
             {delete_rule}",
         ))
     }
@@ -619,7 +630,12 @@ impl<'a> ProofInstrumentor<'a> {
                         .map(|e| self.instrument_action_expr(e, &mut res, justification, nat_conn))
                         .collect::<Vec<_>>();
 
-                    res.push(format!("({symbol} {})", ListDisplay(children, " ")));
+                    // The marker is a `Unit` relation, so insert a row keyed on the
+                    // children with `set` (rather than a constructor application).
+                    res.push(format!(
+                        "(set ({symbol} {}) ())",
+                        ListDisplay(children, " ")
+                    ));
                 } else {
                     panic!(
                         "Delete action on non-function, should have been prevented by typechecking"

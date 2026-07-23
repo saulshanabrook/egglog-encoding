@@ -61,7 +61,7 @@ pub(crate) fn register_container_rebuild_from_spec(
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
         // Proof ids are minted from the backend's id counter; a backend without
         // one can't run these proofs.
-        let Some(id_counter) = eg.backend.eclass_id_counter() else {
+        let Some(id_counter) = eg.backend.id_counter() else {
             return;
         };
         // Each container's `<CSort>Proof` table (this sort + nested containers),
