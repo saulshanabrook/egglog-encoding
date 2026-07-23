@@ -312,7 +312,7 @@ impl Counters {
 /// A collection of tables and indexes over them.
 ///
 /// A database also owns the memory pools used by its tables.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct Database {
     // NB: some fields are pub(crate) to allow some internal modules to avoid
     // borrowing the whole table.
@@ -339,6 +339,27 @@ pub struct Database {
     pub(crate) causal_wave: CausalWave,
 }
 
+impl Clone for Database {
+    fn clone(&self) -> Self {
+        assert!(
+            self.causal_receipts.is_none(),
+            "cloning a receipt-enabled database would fork native state while sharing one receipt arena"
+        );
+        Self {
+            tables: self.tables.clone(),
+            counters: self.counters.clone(),
+            external_functions: self.external_functions.clone(),
+            container_values: self.container_values.clone(),
+            notification_list: self.notification_list.clone(),
+            deps: self.deps.clone(),
+            base_values: self.base_values.clone(),
+            total_size_estimate: self.total_size_estimate,
+            causal_receipts: None,
+            causal_wave: self.causal_wave,
+        }
+    }
+}
+
 impl Database {
     /// Create an empty Database.
     ///
@@ -359,6 +380,9 @@ impl Database {
             self.tables.iter().all(|(_, info)| info.table.len() == 0),
             "causal receipts must be enabled before any table rows are loaded"
         );
+        for (_, info) in self.tables.iter_mut() {
+            info.table.enable_causal_receipts();
+        }
         let receipts = CausalReceipts::default();
         self.causal_receipts = Some(receipts.clone());
         receipts
@@ -791,6 +815,9 @@ impl Database {
         let spec = table.spec();
         let expected_id = self.tables.next_id();
         table.set_table_id(expected_id);
+        if self.causal_receipts.is_some() {
+            table.enable_causal_receipts();
+        }
         let table = WrappedTable::new(table);
         let res = self.tables.push(TableInfo {
             name,
@@ -923,6 +950,10 @@ impl Database {
     /// caller's responsibility to call [`Database::merge_all`] beforehand if
     /// they need staged updates from a previous step to land before the clear.
     pub fn clear_table(&mut self, table: TableId) {
+        assert!(
+            self.causal_receipts.is_none(),
+            "clearing a table is unsupported while causal receipts are enabled"
+        );
         let info = self
             .tables
             .get_mut(table)

@@ -14,7 +14,7 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CauseDraftId, FactId, QueryEntry, TableId, Variable,
+    CauseDraftId, FactId, QueryEntry, TableId, TypedEqualityProposal, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -172,6 +172,10 @@ pub trait Table: Any + Send + Sync {
 
     /// Install the database-local identity used by commit-time receipts.
     fn set_table_id(&mut self, _table: TableId) {}
+
+    /// Mark this table's staging buffers as receipt-enabled. Tables without a
+    /// specialized receipt contract may ignore this.
+    fn enable_causal_receipts(&mut self) {}
 
     /// If this table can perform a table-level rebuild, construct a [`Rebuilder`] for it.
     fn rebuilder<'a>(&'a self, _cols: &[ColumnId]) -> Option<Box<dyn Rebuilder + 'a>> {
@@ -412,6 +416,17 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// Stage an insertion with the exact native cause draft already known by
     /// the current execution lane.
     fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId);
+
+    /// Stage a typed equality proposal. Only the native equality table
+    /// implements this receipt-only operation.
+    fn stage_typed_union(
+        &mut self,
+        _row: &[Value],
+        _cause: CauseDraftId,
+        _proposal: TypedEqualityProposal,
+    ) {
+        panic!("typed union staged into a non-equality table")
+    }
 
     /// Stage the keyed entries for removal. Changes may not be visible until
     /// this buffer is dropped, and after `merge` is called on the underlying

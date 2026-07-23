@@ -28,7 +28,7 @@ use crate::{
     query::RuleSetBuilder,
     table::{SortedWritesTable, causal_lookup_counters, reset_causal_lookup_counters},
     table_shortcuts::v,
-    table_spec::{ColumnId, Constraint},
+    table_spec::{ColumnId, Constraint, Table},
     uf::DisplacedTable,
 };
 
@@ -151,6 +151,8 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
             .unwrap();
     }
     let input_term = receipts.intern_literal(value_sort, ReplayLiteral::I64(7), Value::new(7));
+    let input_as_node_term =
+        receipts.intern_literal(node_sort, ReplayLiteral::Internal(7), Value::new(7));
     db.stage_source_row(
         input,
         &[Value::new(7), Value::new(0)],
@@ -181,7 +183,13 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         .insert(derived, &[value.into(), node.into(), Value::new(1).into()])
         .unwrap();
     action
-        .insert(uf, &[node.into(), value.into(), Value::new(1).into()])
+        .union_with_replay(
+            uf,
+            node.into(),
+            value.into(),
+            Value::new(1).into(),
+            node_sort,
+        )
         .unwrap();
     action.build_with_receipts(
         "derive-node",
@@ -236,11 +244,36 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         }
     );
     assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(snapshot.equality_nodes.len(), 1);
+    let equality = &snapshot.equalities[0];
+    assert_eq!(equality.wave, CausalWave::new(1));
+    assert_eq!(equality.left.sort, node_sort);
+    assert_eq!(equality.left.term, node_term);
+    assert_eq!(equality.right.raw, Value::new(7));
+    assert_eq!(equality.right.sort, node_sort);
+    assert_eq!(equality.right.term, input_as_node_term);
     assert_eq!(
-        snapshot.equalities[0].reason.rule_match(),
-        Some(match_record.id)
+        (equality.native_parent, equality.native_child),
+        if equality.left.raw < equality.right.raw {
+            (equality.left.raw, equality.right.raw)
+        } else {
+            (equality.right.raw, equality.left.raw)
+        }
     );
-    assert!(snapshot.equalities[0].applied);
+    assert_eq!(snapshot.equality_nodes[0].id, equality.id);
+    assert_eq!(snapshot.equality_nodes[0].edge, equality.id);
+    assert_eq!(
+        snapshot.equality_nodes[0].left,
+        crate::EqComponentRef::Term(node_term)
+    );
+    assert_eq!(
+        snapshot.equality_nodes[0].right,
+        crate::EqComponentRef::Term(input_as_node_term)
+    );
+    assert_eq!(
+        equality.reason,
+        crate::EqualityReason::RuleUnion(match_record.id)
+    );
     assert_eq!(snapshot.counters.provisional_matches, 0);
     assert_eq!(snapshot.counters.promoted_matches, 1);
     assert_eq!(snapshot.counters.premise_handles, 1);
@@ -325,6 +358,433 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         nodes_before_hit,
         "constructor hit must reuse the miss path's typed Call"
     );
+}
+
+fn empty_rule_cause(receipts: &CausalReceipts, rule: u32, wave: CausalWave) -> crate::CauseDraftId {
+    receipts.register_rule_matches(rule, wave, 0, &[], &[], &[], &[0])[0].1
+}
+
+fn stage_test_union(
+    db: &Database,
+    table: TableId,
+    cause: crate::CauseDraftId,
+    sort: ReplaySortId,
+    left: Value,
+    right: Value,
+    timestamp: Value,
+) {
+    db.with_execution_state(|state| {
+        state.set_active_cause(Some(cause));
+        state.stage_union_with_replay(table, left, right, timestamp, sort);
+    });
+}
+
+fn native_uf_root(db: &Database, table: TableId, value: Value) -> Value {
+    db.get_table(table)
+        .as_any()
+        .downcast_ref::<DisplacedTable>()
+        .unwrap()
+        .underlying_uf()
+        .find_naive(value)
+}
+
+#[test]
+fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(80);
+    let a = Value::new(30);
+    let b = Value::new(20);
+    let c = Value::new(10);
+    let a_term = receipts.intern_literal(sort, ReplayLiteral::Internal(30), a);
+    let b_term = receipts.intern_literal(sort, ReplayLiteral::Internal(20), b);
+    let c_term = receipts.intern_literal(sort, ReplayLiteral::Internal(10), c);
+
+    db.set_causal_wave(CausalWave::new(1));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 80, CausalWave::new(1)),
+        sort,
+        a,
+        b,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+
+    db.set_causal_wave(CausalWave::new(2));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 81, CausalWave::new(2)),
+        sort,
+        b,
+        c,
+        Value::new(2),
+    );
+    assert!(db.merge_all());
+
+    db.set_causal_wave(CausalWave::new(3));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 82, CausalWave::new(3)),
+        sort,
+        a,
+        c,
+        Value::new(3),
+    );
+    assert!(
+        !db.merge_all(),
+        "the third proposal is redundant in the native UF"
+    );
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equality_nodes.len(), 2);
+    assert_eq!(snapshot.equalities.len(), 2);
+    assert_eq!(snapshot.matches.len(), 2);
+    assert!(snapshot.matches.iter().all(|matched| matched.rule != 82));
+    assert_eq!(snapshot.counters.redundant_unions, 1);
+    let first = &snapshot.equality_nodes[0];
+    let second = &snapshot.equality_nodes[1];
+    assert_eq!(first.id, crate::EqNodeId::new(1));
+    assert_eq!(first.edge, first.id);
+    assert_eq!(first.left, crate::EqComponentRef::Term(a_term));
+    assert_eq!(first.right, crate::EqComponentRef::Term(b_term));
+    assert_eq!(second.id, crate::EqNodeId::new(2));
+    assert_eq!(second.edge, second.id);
+    assert_eq!(second.left, crate::EqComponentRef::Node(first.id));
+    assert_eq!(second.right, crate::EqComponentRef::Term(c_term));
+    assert_eq!(
+        (
+            snapshot.equalities[0].wave,
+            snapshot.equalities[0].native_parent,
+            snapshot.equalities[0].native_child,
+        ),
+        (CausalWave::new(1), b, a)
+    );
+    assert_eq!(
+        (
+            snapshot.equalities[1].wave,
+            snapshot.equalities[1].native_parent,
+            snapshot.equalities[1].native_child,
+        ),
+        (CausalWave::new(2), c, b)
+    );
+    assert_eq!(native_uf_root(&db, uf, a), c);
+    assert_eq!(native_uf_root(&db, uf, b), c);
+    assert_eq!(native_uf_root(&db, uf, c), c);
+    assert_eq!(
+        snapshot.equality_nodes[0].left,
+        crate::EqComponentRef::Term(a_term),
+        "native path compression must not rewrite immutable join topology"
+    );
+}
+
+#[test]
+fn invalid_typed_union_staging_fails_before_native_mutation() {
+    for case in [
+        "raw",
+        "raw-with-cause",
+        "missing",
+        "wrong-sort",
+        "token-row-mismatch",
+    ] {
+        let mut db = Database::default();
+        let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+        let receipts = db.enable_causal_receipts();
+        let sort = ReplaySortId::new(90);
+        let left = Value::new(4);
+        let right = Value::new(5);
+        if case == "wrong-sort" {
+            let other = ReplaySortId::new(91);
+            receipts.intern_literal(other, ReplayLiteral::Internal(4), left);
+            receipts.intern_literal(other, ReplayLiteral::Internal(5), right);
+        } else if case == "token-row-mismatch" {
+            receipts.intern_literal(sort, ReplayLiteral::Internal(4), left);
+            receipts.intern_literal(sort, ReplayLiteral::Internal(5), right);
+        }
+        db.set_causal_wave(CausalWave::new(1));
+        let cause = empty_rule_cause(&receipts, 90, CausalWave::new(1));
+        let failed = catch_unwind(AssertUnwindSafe(|| {
+            if case == "raw" {
+                let mut buffer = db.new_buffer(uf);
+                buffer.stage_insert(&[left, right, Value::new(1)]);
+            } else if case == "raw-with-cause" {
+                let mut buffer = db.new_buffer(uf);
+                buffer.stage_insert_with_cause(&[left, right, Value::new(1)], cause);
+            } else if case == "token-row-mismatch" {
+                let proposal = receipts
+                    .typed_equality_proposal(CausalWave::new(1), sort, left, right)
+                    .unwrap();
+                let mut buffer = db.new_buffer(uf);
+                buffer.stage_typed_union(&[right, left, Value::new(1)], cause, proposal);
+            } else {
+                stage_test_union(&db, uf, cause, sort, left, right, Value::new(1));
+            }
+        }));
+        assert!(failed.is_err(), "{case} staging must fail closed");
+        assert!(!db.merge_all(), "{case} staging mutated the native UF");
+        db.finalize_causal_wave();
+        assert_eq!(native_uf_root(&db, uf, left), left);
+        assert_eq!(native_uf_root(&db, uf, right), right);
+        let snapshot = receipts.snapshot();
+        assert!(snapshot.matches.is_empty());
+        assert!(snapshot.equality_nodes.is_empty());
+        assert!(snapshot.equalities.is_empty());
+    }
+}
+
+#[test]
+fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
+    let sort = ReplaySortId::new(100);
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let target = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(move |state, prior, incoming, _out| {
+                state.stage_union_with_replay(uf, prior[1], incoming[1], Value::new(1), sort);
+                false
+            }),
+        ),
+        "MergeUnionTarget".into(),
+        iter::empty(),
+        iter::once(uf),
+    );
+    let proposal = db.add_table_named(
+        SortedWritesTable::new(
+            2,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        "MergeUnionProposal".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    receipts
+        .register_table_layout(target, &[Some(sort), Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_layout(proposal, &[Some(sort), Some(sort)])
+        .unwrap();
+    let key = Value::new(1);
+    let prior = Value::new(30);
+    let incoming = Value::new(20);
+    let key_term = receipts.intern_literal(sort, ReplayLiteral::Internal(1), key);
+    let prior_term = receipts.intern_literal(sort, ReplayLiteral::Internal(30), prior);
+    let incoming_term = receipts.intern_literal(sort, ReplayLiteral::Internal(20), incoming);
+    db.stage_source_row(
+        target,
+        &[key, prior],
+        &[key_term, prior_term],
+        SourceRef::Synthetic(100),
+    )
+    .unwrap();
+    db.stage_source_row(
+        proposal,
+        &[key, incoming],
+        &[key_term, incoming_term],
+        SourceRef::Synthetic(101),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let prior_fact = committed_fact_id(&db, target, key);
+    let proposal_fact = committed_fact_id_for_key(&db, proposal, &[key, incoming]);
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let matched_key = query.new_var_named("key");
+    let matched_value = query.new_var_named("incoming");
+    let atom = query
+        .add_atom(proposal, &[matched_key.into(), matched_value.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    action
+        .insert(target, &[matched_key.into(), matched_value.into()])
+        .unwrap();
+    action.build_with_receipts(
+        "merge-union",
+        RuleReceiptSpec::new(100, [atom], [matched_key, matched_value]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(snapshot.equality_nodes.len(), 1);
+    let equality = &snapshot.equalities[0];
+    let (rule_match, recorded_prior) = match equality.reason {
+        crate::EqualityReason::MergeFn {
+            rule_match,
+            prior_fact,
+        } => (rule_match, prior_fact),
+        ref other => panic!("expected exact MergeFn reason, got {other:?}"),
+    };
+    assert_eq!(recorded_prior, prior_fact);
+    let matched = snapshot
+        .matches
+        .iter()
+        .find(|matched| matched.id == rule_match)
+        .unwrap();
+    assert_eq!(matched.rule, 100);
+    assert_eq!(matched.premises.as_ref(), &[proposal_fact]);
+    assert_eq!(equality.left.term, prior_term);
+    assert_eq!(equality.right.term, incoming_term);
+    assert_eq!(
+        committed_fact_id(&db, target, key),
+        prior_fact,
+        "a merge that returns false keeps its original immutable fact"
+    );
+}
+
+#[test]
+fn typed_union_rejects_decreasing_timestamp_before_native_mutation() {
+    let mut db = Database::default();
+    let receipts = db.enable_causal_receipts();
+    let mut uf = DisplacedTable::default();
+    uf.enable_causal_receipts();
+    let sort = ReplaySortId::new(110);
+    for raw in [30, 20, 10, 5] {
+        receipts.intern_literal(sort, ReplayLiteral::Internal(raw), Value::new(raw as u32));
+    }
+
+    db.set_causal_wave(CausalWave::new(1));
+    {
+        let mut buffer = uf.new_buffer();
+        buffer.stage_typed_union(
+            &[Value::new(30), Value::new(20), Value::new(2)],
+            empty_rule_cause(&receipts, 110, CausalWave::new(1)),
+            receipts
+                .typed_equality_proposal(CausalWave::new(1), sort, Value::new(30), Value::new(20))
+                .unwrap(),
+        );
+    }
+    let mut state = ExecutionState::new(db.read_only_view(), Default::default());
+    assert!(uf.merge(&mut state).added);
+
+    db.set_causal_wave(CausalWave::new(2));
+    {
+        let mut buffer = uf.new_buffer();
+        buffer.stage_typed_union(
+            &[Value::new(10), Value::new(5), Value::new(1)],
+            empty_rule_cause(&receipts, 111, CausalWave::new(2)),
+            receipts
+                .typed_equality_proposal(CausalWave::new(2), sort, Value::new(10), Value::new(5))
+                .unwrap(),
+        );
+    }
+    let failed = catch_unwind(AssertUnwindSafe(|| {
+        let mut state = ExecutionState::new(db.read_only_view(), Default::default());
+        uf.merge(&mut state)
+    }));
+    assert!(failed.is_err());
+    assert_eq!(
+        uf.underlying_uf().find_naive(Value::new(10)),
+        Value::new(10)
+    );
+    assert_eq!(uf.underlying_uf().find_naive(Value::new(5)), Value::new(5));
+    db.finalize_causal_wave();
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(snapshot.equality_nodes.len(), 1);
+    assert_eq!(snapshot.matches.len(), 1);
+}
+
+#[test]
+fn redundant_union_validates_existing_component_sort_before_counting() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let first_sort = ReplaySortId::new(120);
+    let second_sort = ReplaySortId::new(121);
+    let left = Value::new(30);
+    let right = Value::new(20);
+    for sort in [first_sort, second_sort] {
+        receipts.intern_literal(sort, ReplayLiteral::Internal(30), left);
+        receipts.intern_literal(sort, ReplayLiteral::Internal(20), right);
+    }
+
+    db.set_causal_wave(CausalWave::new(1));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 120, CausalWave::new(1)),
+        first_sort,
+        left,
+        right,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+
+    db.set_causal_wave(CausalWave::new(2));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 121, CausalWave::new(2)),
+        second_sort,
+        left,
+        right,
+        Value::new(2),
+    );
+    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(failed.is_err());
+    db.finalize_causal_wave();
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(snapshot.equality_nodes.len(), 1);
+    assert_eq!(snapshot.matches.len(), 1);
+    assert_eq!(snapshot.counters.redundant_unions, 0);
+}
+
+#[test]
+fn unsupported_equality_cause_fails_during_wave_finalization() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(130);
+    let left = Value::new(2);
+    let right = Value::new(1);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(1), right);
+    db.set_causal_wave(CausalWave::new(1));
+    stage_test_union(
+        &db,
+        uf,
+        receipts.source_draft(SourceRef::Synthetic(130)),
+        sort,
+        left,
+        right,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+    let failed = catch_unwind(AssertUnwindSafe(|| db.finalize_causal_wave()));
+    assert!(failed.is_err());
+}
+
+#[test]
+fn receipt_database_clone_and_clear_fail_before_mutation() {
+    let mut db = Database::default();
+    let table = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    db.enable_causal_receipts();
+    assert!(catch_unwind(AssertUnwindSafe(|| db.clone())).is_err());
+    assert!(catch_unwind(AssertUnwindSafe(|| db.clear_table(table))).is_err());
+    assert_eq!(db.get_table(table).len(), 0);
 }
 
 #[test]

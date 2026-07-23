@@ -386,3 +386,112 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   or producer work on the ordinary path. H1 recording overhead and all
   workload-wide completeness/performance claims remain untested until the
   later bridge and receipt-only gates.
+
+### 2026-07-23 — checkpoint 4b2a typed applied-union join forest
+
+- Status: bounded core-relations equality checkpoint is green and uncommitted
+  for independent review. Table rebuild/congruence, container versions,
+  bridge activation, check roots, slicing, and replay were not started.
+- Snapshot: `/Users/saul/p/wt/egglog-encoding/causal-slice-receipts-v1`,
+  branch `agent/causal-slice-receipts-v1`, starting `HEAD`
+  `7483baa6a6ccd97a68fb307f23116548a8944800`.
+- Typed staging: receipt-mode unions use a dedicated action/buffer operation
+  carrying an explicit logical `ReplaySortId`. Both raw endpoints resolve to
+  canonical `ReplayTermId`s before the UF buffer is initialized or native
+  state can mutate. Database receipt activation marks existing and future UF
+  buffers so raw `stage_insert` and raw caused inserts fail closed. Missing
+  terms and values installed only under another sort also fail before staging.
+- Native boundary: `DisplacedTable` remains the sole connectivity oracle and
+  the ordinary merge loop plus `insert_impl` remain on their baseline path.
+  The receipt branch captures the two roots returned by the existing native
+  finds, calls the same `uf.union(raw_left, raw_right)`, and asserts its
+  parent/child are exactly those roots. Path compression changes no receipt
+  topology.
+- Join forest: every successful native union allocates one dense `EqNodeId`
+  shared 1:1 with its equality edge. The immutable node joins the two
+  pre-union components, each either a typed leaf term or an earlier join node.
+  A receipt-only boxed map mirrors current native roots to typed components;
+  applied union replaces the native parent entry and removes the child.
+  Redundant proposals allocate neither edge nor node and promote no match.
+  Endpoints retain sort, canonical term, and exact proposal-time raw value;
+  edges retain cumulative wave, native parent/child, and the cause DAG until
+  finalization.
+- Exact reasons: finalization accepts a direct `RuleUnion(match)` or the
+  bounded merge shape `MergeFn { rule_match, prior_fact }`. Source causes,
+  nested same-wave merge chains, and other unreached shapes fail closed
+  instead of flattening or widening. Those shapes require later recording-site
+  work, not a conservative fallback.
+- Canaries: the migrated constructor/direct-union test records a typed
+  same-head `RuleUnion` and one Term/Term join. A `30=20`, then `20=10`, then
+  redundant `30=10` sequence records exactly two immutable binary joins,
+  promotes only the first two matches, increments `redundant_unions` once, and
+  stays unchanged after native path compression. Raw, raw-caused, missing-term,
+  and wrong-sort proposals all leave the UF and durable receipts empty. A
+  merge callback that returns false records exactly one incoming match and its
+  immutable prior `FactId`. The ordinary UF canary keeps its component sidecar
+  absent, and the existing `Instr <= 80` footprint guard still passes.
+- Focused commands:
+  `cargo test -p egglog-core-relations typed_union -- --nocapture`,
+  `cargo test -p egglog-core-relations
+  merge_function_union_cites_one_match_and_immutable_prior_fact --
+  --nocapture`,
+  `cargo test -p egglog-core-relations
+  causal_receipts_record_only_effective_constructor_and_union_commits --
+  --nocapture`, and
+  `cargo test -p egglog-core-relations uf::tests::displaced -- --nocapture`
+  all passed.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 81
+  tests. The focused instruction-footprint guard passed.
+  `cargo fmt --all -- --check` and `git diff --check` passed.
+- Hypothesis result: the applied-union recording site can maintain an exact
+  typed immutable explanation forest beside the native path-compressed UF
+  without another find/connectivity implementation. Workload-wide
+  completeness and H1 overhead remain untested until the excluded bridge,
+  rebuild, container, and receipt-only activation stages exist.
+
+### 2026-07-23 — checkpoint 4b2a independent-review repair
+
+- Status: the first frozen diff was rejected by independent correctness and
+  cost review. The repaired diff remains uncommitted for re-review; no
+  rebuild, container, bridge, check-root, slicing, or replay work was added.
+- Atomicity repair: the receipt UF path now validates an effective proposal's
+  timestamp and component-sort invariants before the native union. Its
+  post-union suffix only appends the already-validated native row, records the
+  edge, and updates the receipt mirror. A lower-timestamp canary catches the
+  error and proves the two proposed endpoints remain separate while the
+  earlier durable equality is unchanged.
+- Sort repair: the bridge owns one global UF, so the repair deliberately does
+  not bind the whole table to one logical sort. It instead checks the sort of
+  each existing native component before the redundancy early return. A value
+  may have structural terms under two sorts, but connectivity established for
+  one sort cannot silently justify a redundant proposal for the other.
+- Finalization repair: every applied equality cause is preflighted before any
+  wave-local match, cause, fact, or equality is durabilized. Only a direct rule
+  or one merge of a rule with an immutable prior FactId is accepted; a source
+  union canary now errors during finalization rather than surviving until
+  snapshot.
+- Cost repair: UF proposal sidecars no longer copy both raw endpoints and one
+  wave per lane. Each lane carries only cause, sort, and two term handles; raw
+  endpoints come from the aligned native row and wave is stored once per
+  buffer/batch. The action path reads each registered lane cause directly
+  instead of allocating a second all-lanes cause vector. Redundant proposals
+  validate one component once and allocate no applied proposal; applied
+  proposals perform one component lookup per distinct root.
+- Typed-boundary repair: the public buffer API accepts an opaque resolved
+  proposal token whose fields can only be constructed after canonical
+  `(sort, raw) -> ReplayTermId` lookup. The buffer validates the token's raw
+  endpoints against its aligned native row before queueing, so compact storage
+  cannot substitute or swap term handles.
+- Lifecycle/API repair: ordinary caused UF staging remains supported when
+  receipts are disabled. Receipt-enabled database clone and table clear fail
+  before mutation because forking one shared receipt arena or erasing a forest
+  epoch is not yet supported.
+- Discriminating canaries cover lower timestamps, cross-sort redundancy,
+  invalid source causes at finalization, ordinary caused staging, and
+  clone/clear guards. `cargo test -p egglog-core-relations --lib` passed all 86
+  tests; the instruction footprint guard, `cargo fmt --all`, and
+  `git diff --check` passed.
+- Hypothesis result: the review removed one missing-edge correctness hole and
+  the largest avoidable per-proposal copy before H1 measurement. Required
+  typed lookups, component-map operations, and one applied-edge allocation
+  remain for the all-five receipt gate to measure.

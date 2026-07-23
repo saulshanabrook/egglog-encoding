@@ -38,10 +38,11 @@ pub use query::{
     CachedPlan, QueryBuilder, QueryError, RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
 };
 pub use receipts::{
-    CausalReceipts, CausalWave, CauseDraftId, EqualityReason, EqualityRecord, FactCause, FactId,
+    CausalReceipts, CausalWave, CauseDraftId, EqComponentRef, EqNodeId, EqNodeRecord,
+    EqualityEdgeId, EqualityEndpoint, EqualityReason, EqualityRecord, FactCause, FactId,
     FactRecord, MatchRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
     ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
-    RuleMatchId, RuleReceiptSpec, SourceRef,
+    RuleMatchId, RuleReceiptSpec, SourceRef, TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

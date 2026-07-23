@@ -10,11 +10,12 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    CauseDraftId, TableChange, TaggedRowBuffer,
+    CauseDraftId, EqComponentRef, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
     pool::with_pool_set,
+    receipts::{AppliedEqualityProposal, TypedEqualityProposal},
     row_buffer::RowBuffer,
     table_spec::{
         ColumnId, Constraint, Generation, MutationBuffer, Offset, Rebuilder, Row, Table, TableSpec,
@@ -58,6 +59,10 @@ pub struct DisplacedTable {
     changed: bool,
     lookup_table: HashMap<Value, RowId>,
     buffered_writes: Arc<SegQueue<UfPendingBatch>>,
+    receipts_enabled: bool,
+    /// Receipt-only mirror from current native roots to immutable explanation
+    /// components. This never answers equality or performs a find.
+    equality_components: Option<Box<HashMap<Value, TypedComponent>>>,
 }
 
 struct Canonicalizer<'a> {
@@ -200,6 +205,8 @@ impl Default for DisplacedTable {
             changed: false,
             lookup_table: HashMap::default(),
             buffered_writes: Arc::new(SegQueue::new()),
+            receipts_enabled: false,
+            equality_components: None,
         }
     }
 }
@@ -213,20 +220,38 @@ impl Clone for DisplacedTable {
             changed: self.changed,
             lookup_table: self.lookup_table.clone(),
             buffered_writes: Default::default(),
+            receipts_enabled: self.receipts_enabled,
+            equality_components: self.equality_components.clone(),
         }
     }
 }
 
 struct UfBuffer {
     to_insert: ManuallyDrop<RowBuffer>,
-    causes: ManuallyDrop<Option<Vec<CauseDraftId>>>,
+    receipts: ManuallyDrop<Option<Vec<UfProposalReceipt>>>,
+    wave: Option<crate::CausalWave>,
     buffered_writes: Weak<SegQueue<UfPendingBatch>>,
+}
+
+#[derive(Clone, Copy)]
+struct UfProposalReceipt {
+    cause: CauseDraftId,
+    sort: crate::ReplaySortId,
+    left_term: crate::ReplayTermId,
+    right_term: crate::ReplayTermId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TypedComponent {
+    sort: crate::ReplaySortId,
+    component: EqComponentRef,
 }
 
 #[derive(Clone)]
 struct UfPendingBatch {
     rows: RowBuffer,
-    causes: Option<Vec<CauseDraftId>>,
+    receipts: Option<Vec<UfProposalReceipt>>,
+    wave: Option<crate::CausalWave>,
 }
 
 impl Drop for UfBuffer {
@@ -235,7 +260,7 @@ impl Drop for UfBuffer {
             // SAFETY: If we can't write updates, manually drop to_insert
             unsafe {
                 ManuallyDrop::drop(&mut self.to_insert);
-                ManuallyDrop::drop(&mut self.causes);
+                ManuallyDrop::drop(&mut self.receipts);
             }
             return;
         };
@@ -244,25 +269,80 @@ impl Drop for UfBuffer {
         // This avoids creating a fresh row buffer via `mem::take` or `mem::swap` and
         // dropping it immediately.
         let to_insert = unsafe { ManuallyDrop::take(&mut self.to_insert) };
-        let causes = unsafe { ManuallyDrop::take(&mut self.causes) };
+        let receipts = unsafe { ManuallyDrop::take(&mut self.receipts) };
         buffered_writes.push(UfPendingBatch {
             rows: to_insert,
-            causes,
+            receipts,
+            wave: self.wave,
         });
     }
 }
 
 impl MutationBuffer for UfBuffer {
     fn stage_insert(&mut self, row: &[Value]) {
+        assert!(
+            self.receipts.is_none(),
+            "receipt-mode DisplacedTable insert requires a typed union proposal"
+        );
         self.to_insert.add_row(row);
     }
-    fn stage_insert_with_cause(&mut self, row: &[Value], cause: CauseDraftId) {
-        let prior_len = self.to_insert.len();
-        let causes = self
-            .causes
-            .get_or_insert_with(|| vec![CauseDraftId::UNATTRIBUTED; prior_len]);
+    fn stage_insert_with_cause(&mut self, row: &[Value], _cause: CauseDraftId) {
+        assert!(
+            self.receipts.is_none(),
+            "receipt-mode DisplacedTable insert requires a typed union proposal"
+        );
         self.to_insert.add_row(row);
-        causes.push(cause);
+    }
+    fn stage_typed_union(
+        &mut self,
+        row: &[Value],
+        cause: CauseDraftId,
+        proposal: TypedEqualityProposal,
+    ) {
+        let receipts = self
+            .receipts
+            .as_mut()
+            .expect("typed union proposal staged while causal receipts are disabled");
+        assert_eq!(
+            row.len(),
+            3,
+            "attempt to stage a union with the wrong arity"
+        );
+        let left = proposal.left();
+        let right = proposal.right();
+        assert_eq!(
+            row[0], left.raw,
+            "typed union left endpoint does not match its resolved token"
+        );
+        assert_eq!(
+            row[1], right.raw,
+            "typed union right endpoint does not match its resolved token"
+        );
+        assert_eq!(
+            left.sort, right.sort,
+            "typed union endpoints belong to different logical sorts"
+        );
+        let proposal_wave = proposal.wave();
+        match self.wave {
+            Some(wave) => assert_eq!(
+                wave, proposal_wave,
+                "typed union buffer crossed a causal-wave boundary"
+            ),
+            None => self.wave = Some(proposal_wave),
+        }
+        let prior_len = self.to_insert.len();
+        assert_eq!(
+            receipts.len(),
+            prior_len,
+            "cannot add typed receipts after ordinary union proposals"
+        );
+        self.to_insert.add_row(row);
+        receipts.push(UfProposalReceipt {
+            cause,
+            sort: left.sort,
+            left_term: left.term,
+            right_term: right.term,
+        });
     }
     fn stage_remove(&mut self, _: &[Value]) {
         panic!("attempting to remove data from a DisplacedTable")
@@ -270,7 +350,8 @@ impl MutationBuffer for UfBuffer {
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(self.to_insert.arity())),
-            causes: ManuallyDrop::new(None),
+            receipts: ManuallyDrop::new(self.receipts.as_ref().map(|_| Vec::new())),
+            wave: None,
             buffered_writes: self.buffered_writes.clone(),
         })
     }
@@ -285,6 +366,9 @@ impl Table for DisplacedTable {
     }
     fn set_table_id(&mut self, table: crate::TableId) {
         self.table_id = table;
+    }
+    fn enable_causal_receipts(&mut self) {
+        self.receipts_enabled = true;
     }
     fn spec(&self) -> TableSpec {
         let mut uncacheable_columns = DenseIdMap::default();
@@ -308,6 +392,7 @@ impl Table for DisplacedTable {
     fn clear(&mut self) {
         self.uf.reset();
         self.displaced.clear();
+        self.equality_components = None;
     }
 
     fn all(&self) -> Subset {
@@ -461,7 +546,8 @@ impl Table for DisplacedTable {
     fn new_buffer(&self) -> Box<dyn MutationBuffer> {
         Box::new(UfBuffer {
             to_insert: ManuallyDrop::new(RowBuffer::new(3)),
-            causes: ManuallyDrop::new(None),
+            receipts: ManuallyDrop::new(self.receipts_enabled.then(Vec::new)),
+            wave: None,
             buffered_writes: Arc::downgrade(&self.buffered_writes),
         })
     }
@@ -473,24 +559,98 @@ impl Table for DisplacedTable {
                 if batch.rows.len() == 0 {
                     continue;
                 }
-                let causes = batch
-                    .causes
+                let proposal_receipts = batch
+                    .receipts
                     .as_ref()
-                    .expect("receipt-enabled union batch has no cause sidecar");
+                    .expect("receipt-enabled union batch has no typed proposal sidecar");
                 assert_eq!(
-                    causes.len(),
+                    proposal_receipts.len(),
                     batch.rows.len(),
-                    "receipt-enabled union batch has incomplete causes"
+                    "receipt-enabled union batch has incomplete typed proposals"
+                );
+                let wave = batch
+                    .wave
+                    .expect("receipt-enabled union batch has no causal wave");
+                assert_eq!(
+                    wave,
+                    exec_state.causal_wave(),
+                    "typed union proposal crossed a causal-wave boundary"
                 );
                 for (index, row) in batch.rows.iter().enumerate() {
-                    let cause = causes[index];
+                    let UfProposalReceipt {
+                        cause,
+                        sort,
+                        left_term,
+                        right_term,
+                    } = proposal_receipts[index];
                     assert!(
                         !cause.is_unattributed(),
                         "receipt-enabled union proposal has no exact cause"
                     );
-                    let applied = self.insert_impl(row).is_some();
-                    receipt_batch.record_union(row[0], row[1], cause, applied);
-                    self.changed |= applied;
+                    assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
+                    let left_root = self.uf.find(row[0]);
+                    let right_root = self.uf.find(row[1]);
+                    if left_root == right_root {
+                        Self::validate_component_sort(
+                            self.equality_components.as_deref(),
+                            left_root,
+                            sort,
+                        );
+                        receipt_batch.record_redundant_union();
+                        continue;
+                    }
+                    self.validate_receipt_timestamp(row);
+                    let proposal = AppliedEqualityProposal {
+                        wave,
+                        left: crate::EqualityEndpoint {
+                            sort,
+                            term: left_term,
+                            raw: row[0],
+                        },
+                        right: crate::EqualityEndpoint {
+                            sort,
+                            term: right_term,
+                            raw: row[1],
+                        },
+                    };
+                    let (left_component, right_component) = {
+                        let components = self
+                            .equality_components
+                            .get_or_insert_with(|| Box::new(Default::default()));
+                        components.reserve(1);
+                        (
+                            Self::component_for(components, left_root, proposal.left),
+                            Self::component_for(components, right_root, proposal.right),
+                        )
+                    };
+                    let (parent, child) = self.uf.union(row[0], row[1]);
+                    assert!(
+                        (parent == left_root && child == right_root)
+                            || (parent == right_root && child == left_root),
+                        "native union parent/child do not match the captured pre-roots"
+                    );
+                    self.finish_receipt_insert(row, parent, child);
+                    let node = receipt_batch.record_applied_union(
+                        proposal,
+                        left_component,
+                        right_component,
+                        parent,
+                        child,
+                        cause,
+                    );
+                    let components = self
+                        .equality_components
+                        .as_mut()
+                        .expect("applied typed union initialized its component mirror");
+                    components.insert(
+                        parent,
+                        TypedComponent {
+                            sort,
+                            component: EqComponentRef::Node(node),
+                        },
+                    );
+                    components.remove(&child);
+                    self.changed = true;
                 }
             }
             receipt_batch.publish();
@@ -538,6 +698,58 @@ impl DisplacedTable {
         let vals = self.expand(row);
         eval_constraint(&vals, constraint)
     }
+    fn validate_component_sort(
+        components: Option<&HashMap<Value, TypedComponent>>,
+        root: Value,
+        sort: crate::ReplaySortId,
+    ) {
+        if let Some(component) = components.and_then(|components| components.get(&root)) {
+            assert_eq!(
+                component.sort, sort,
+                "native equality component was reached through a different logical sort"
+            );
+        }
+    }
+
+    fn component_for(
+        components: &HashMap<Value, TypedComponent>,
+        root: Value,
+        endpoint: crate::EqualityEndpoint,
+    ) -> EqComponentRef {
+        if let Some(component) = components.get(&root) {
+            assert_eq!(
+                component.sort, endpoint.sort,
+                "native equality component was reached through a different logical sort"
+            );
+            return component.component;
+        }
+        assert_eq!(
+            root, endpoint.raw,
+            "non-singleton native root is missing its equality component"
+        );
+        EqComponentRef::Term(endpoint.term)
+    }
+
+    fn validate_receipt_timestamp(&self, row: &[Value]) {
+        let ts = row[2];
+        if let Some((_, highest)) = self.displaced.last() {
+            assert!(
+                *highest <= ts,
+                "must insert rows with increasing timestamps"
+            );
+        }
+    }
+
+    fn finish_receipt_insert(&mut self, row: &[Value], parent: Value, child: Value) {
+        // Compress paths somewhat, given that we perform naive finds everywhere else.
+        let _ = self.uf.find(parent);
+        let _ = self.uf.find(child);
+        let ts = row[2];
+        let next = RowId::from_usize(self.displaced.len());
+        self.displaced.push((child, ts));
+        self.lookup_table.insert(child, next);
+    }
+
     fn insert_impl(&mut self, row: &[Value]) -> Option<(Value, Value)> {
         assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
         if self.uf.find(row[0]) == self.uf.find(row[1]) {

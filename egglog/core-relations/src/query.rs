@@ -11,7 +11,8 @@ use thiserror::Error;
 
 use crate::receipts::{ActionReceiptSpec, PremiseSlot, ReplayBindingSource};
 use crate::{
-    BaseValueId, CounterId, ExternalFunctionId, PoolSet, ReplayConstructorSpec, RuleReceiptSpec,
+    BaseValueId, CounterId, ExternalFunctionId, PoolSet, ReplayConstructorSpec, ReplaySortId,
+    RuleReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -814,6 +815,32 @@ impl RuleBuilder<'_, '_> {
             vals: vals.to_vec(),
         });
         self.qb.mark_used(vals);
+        Ok(())
+    }
+
+    /// Stage a receipt-only union whose two endpoints belong to the explicit
+    /// logical equality sort.
+    pub fn union_with_replay(
+        &mut self,
+        table: TableId,
+        left: QueryEntry,
+        right: QueryEntry,
+        timestamp: QueryEntry,
+        sort: ReplaySortId,
+    ) -> Result<(), QueryError> {
+        assert!(
+            self.qb.rsb.db.causal_receipts.is_some(),
+            "typed union actions require causal receipts"
+        );
+        self.validate_row(table, self.table_info(table), &[left, right, timestamp])?;
+        self.qb.instrs.push(Instr::UnionWithReplay {
+            table,
+            left,
+            right,
+            timestamp,
+            sort,
+        });
+        self.qb.mark_used(&[left, right, timestamp]);
         Ok(())
     }
 

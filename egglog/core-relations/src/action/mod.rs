@@ -20,11 +20,11 @@ use smallvec::SmallVec;
 
 use crate::{
     BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, ExternalFunctionId,
-    FactId, ReplayConstructorSpec, ReplayTermId, WrappedTable,
+    FactId, ReplayConstructorSpec, ReplaySortId, ReplayTermId, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
-    receipts::ReplayBindingSource,
+    receipts::{ReplayBindingSource, TypedEqualityProposal},
     table_spec::{ColumnId, MutationBuffer},
 };
 
@@ -525,6 +525,21 @@ impl<'a> MutationBuffers<'a> {
         self.notify_list.notify(table_id);
     }
 
+    fn stage_typed_union(
+        &mut self,
+        table_id: TableId,
+        row: &[Value],
+        cause: CauseDraftId,
+        proposal: TypedEqualityProposal,
+    ) {
+        assert!(
+            !cause.is_unattributed(),
+            "receipt-enabled union is missing an exact cause"
+        );
+        self.buffers[table_id].stage_typed_union(row, cause, proposal);
+        self.notify_list.notify(table_id);
+    }
+
     fn stage_remove(&mut self, table_id: TableId, key: &[Value]) {
         self.buffers[table_id].stage_remove(key);
         self.notify_list.notify(table_id);
@@ -573,6 +588,33 @@ impl<'a> ExecutionState<'a> {
         } else {
             self.buffers.stage_insert(table, row);
         }
+        self.changed = true;
+    }
+
+    /// Stage one equality proposal with an explicit logical sort. Endpoint
+    /// terms are resolved before the native union-find buffer is touched.
+    pub fn stage_union_with_replay(
+        &mut self,
+        table: TableId,
+        left: Value,
+        right: Value,
+        timestamp: Value,
+        sort: ReplaySortId,
+    ) {
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("typed union staging requires causal receipts");
+        let cause = self
+            .active_cause
+            .expect("receipt-enabled union reached an uninstrumented action");
+        let proposal = receipts
+            .typed_equality_proposal(self.db.causal_wave, sort, left, right)
+            .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
+        let row = [left, right, timestamp];
+        self.buffers
+            .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+        self.buffers.stage_typed_union(table, &row, cause, proposal);
         self.changed = true;
     }
 
@@ -1093,6 +1135,43 @@ impl ExecutionState<'_> {
                     });
                 }
             }
+            Instr::UnionWithReplay {
+                table,
+                left,
+                right,
+                timestamp,
+                sort,
+            } => {
+                let receipts = self
+                    .db
+                    .causal_receipts
+                    .expect("typed union instruction requires causal receipts");
+                let mut lanes = Vec::new();
+                let mut cause_mask = mask.clone();
+                cause_mask
+                    .empty_iter()
+                    .for_each_indexed(|offset, ()| lanes.push(offset));
+                bindings.ensure_receipt_causes(&lanes, receipts);
+                mask.empty_iter().for_each_indexed(|offset, ()| {
+                    let get = |entry| match entry {
+                        QueryEntry::Const(value) => value,
+                        QueryEntry::Var(variable) => bindings[variable][offset],
+                    };
+                    self.set_active_cause(Some(
+                        bindings
+                            .receipt_cause(offset)
+                            .expect("typed union lane is missing its exact receipt cause"),
+                    ));
+                    self.stage_union_with_replay(
+                        *table,
+                        get(*left),
+                        get(*right),
+                        get(*timestamp),
+                        *sort,
+                    );
+                });
+                self.set_active_cause(None);
+            }
             Instr::InsertIfEq { table, l, r, vals } => {
                 assert!(
                     self.db.causal_receipts.is_none(),
@@ -1268,6 +1347,15 @@ pub(crate) enum Instr {
     Insert {
         table: TableId,
         vals: Vec<QueryEntry>,
+    },
+
+    /// Receipt-only typed staging for the native equality table.
+    UnionWithReplay {
+        table: TableId,
+        left: QueryEntry,
+        right: QueryEntry,
+        timestamp: QueryEntry,
+        sort: ReplaySortId,
     },
 
     /// Insert `vals` into `table` if `l` and `r` are equal.
