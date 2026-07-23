@@ -315,14 +315,19 @@ def run_process(
         return ProcessObservation(result=result, timing_summary=summary)
 
 
-def run_preflight(binary_path: Path, checkout_path: Path, timeout_sec: int) -> TimingResult:
-    """Run an untimed ``--help`` capability preflight for the timing-summary interface."""
+def run_preflight(
+    binary_path: Path,
+    checkout_path: Path,
+    timeout_sec: int,
+    required_outputs: tuple[str, ...] = ("--timing-summary",),
+) -> TimingResult:
+    """Run one untimed ``--help`` capability preflight."""
 
     return run_command(
         [str(binary_path), "--help"],
         checkout_path,
         timeout_sec,
-        required_output="--timing-summary",
+        required_output=required_outputs,
     )
 
 
@@ -337,7 +342,10 @@ def preflight_collection(plan: CollectionPlan, timeout_sec: int) -> None:
     target = plan.target
     if target.binary_path is None:
         raise ValueError(f"target {target.display_label} needs fresh rows but has no build path")
-    result = run_preflight(target.binary_path, Path(target.row.path), timeout_sec)
+    required_outputs: tuple[str, ...] = ("--timing-summary",)
+    if any(run.treatment == "proof-extraction" and run.missing_observations > 0 for run in plan.runs):
+        required_outputs += ("--proof-extraction",)
+    result = run_preflight(target.binary_path, Path(target.row.path), timeout_sec, required_outputs)
     if result.status != "success":
         message = f"target {target.display_label} preflight failed"
         if result.error is not None:

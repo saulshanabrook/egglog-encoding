@@ -83,6 +83,9 @@ struct Args {
     /// Enable proof testing, turning all `check` statements into `prove` statements
     #[clap(long)]
     proof_testing: bool,
+    /// Extract proofs for all `check` statements without verifying them
+    #[clap(long, conflicts_with_all = ["proofs", "proof_testing"])]
+    proof_extraction: bool,
 }
 
 /// Start a command-line interface for the E-graph.
@@ -128,6 +131,10 @@ where
     if args.proof_testing {
         egraph = egraph.with_proofs_enabled();
         egraph = egraph.with_proof_testing();
+    }
+
+    if args.proof_extraction {
+        egraph = egraph.with_proof_extraction();
     }
 
     EGraph::set_num_threads(args.threads);
@@ -383,6 +390,18 @@ impl FromStr for RunMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proof_extraction_is_a_distinct_cli_mode() {
+        let args = Args::try_parse_from(["egglog", "--proof-extraction"]).unwrap();
+        assert!(args.proof_extraction);
+
+        for conflicting in ["--proofs", "--proof-testing"] {
+            let error = Args::try_parse_from(["egglog", "--proof-extraction", conflicting])
+                .expect_err("proof extraction should conflict with other proof modes");
+            assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        }
+    }
 
     #[test]
     fn test_should_eval() {

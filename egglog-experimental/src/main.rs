@@ -15,7 +15,7 @@ fn main() {
     let proof_mode = args.iter().any(|arg| {
         matches!(
             arg.to_str(),
-            Some("--proofs" | "--proof-testing" | "--term-encoding")
+            Some("--proofs" | "--proof-testing" | "--proof-extraction" | "--term-encoding")
         )
     });
     #[cfg(feature = "dd-backend")]

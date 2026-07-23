@@ -5,6 +5,7 @@ mod tests {
         sanitize_internal_names,
     };
     use crate::core::ResolvedCall;
+    use crate::proofs::proof_extraction::ProveExistsError;
     use crate::{
         CommandOutput, EGraph, Error, ProofEncodingUnsupportedReason, TermDag, TermId,
         add_primitive_with_validator,
@@ -378,6 +379,82 @@ mod tests {
                 "#,
             )
             .unwrap();
+    }
+
+    #[test]
+    fn proof_extraction_skips_container_primitive_validation() {
+        let mut egraph = EGraph::default().with_proof_extraction();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (Mk))
+                (sort EqContainer (Vec E))
+                "#,
+            )
+            .unwrap();
+
+        let eq_container_sort = egraph
+            .type_info
+            .get_sort_by_name("EqContainer")
+            .expect("EqContainer sort")
+            .clone();
+        let validator = |_: &mut TermDag, _: &[TermId]| -> Option<TermId> { None };
+        add_primitive_with_validator!(
+            &mut egraph,
+            "proof-container-reject" = |x: # (eq_container_sort)| -> # (eq_container_sort) { x },
+            validator
+        );
+
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation SeedContainer (EqContainer))
+                (relation Done ())
+
+                (SeedContainer (vec-of (Mk)))
+
+                (rule ((SeedContainer ys)
+                       (proof-container-reject ys))
+                      ((Done))
+                      :name "reject-invalid-container-fact")
+
+                (run 1)
+                (check (Done))
+                "#,
+            )
+            .unwrap();
+        assert!(
+            outputs
+                .iter()
+                .any(|output| matches!(output, CommandOutput::ProveExists { .. }))
+        );
+    }
+
+    #[test]
+    fn proof_extraction_still_rejects_a_false_check() {
+        let error = EGraph::default()
+            .with_proof_extraction()
+            .parse_and_run_program(
+                None,
+                r#"
+                (relation Done ())
+                (check (Done))
+                "#,
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                Error::ProofError {
+                    error: ProveExistsError::QueryDidNotMatch { .. },
+                    ..
+                }
+            ),
+            "expected QueryDidNotMatch, got {error:?}"
+        );
     }
 
     // A container constructed in the query body and not used in an action: the

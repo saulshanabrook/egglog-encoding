@@ -29,6 +29,8 @@ def treatment_flags(treatment: Treatment) -> list[str]:
         return []
     if treatment == "term":
         return ["--term-encoding"]
+    if treatment == "proof-extraction":
+        return ["--proof-extraction"]
     return ["--proofs"]
 
 

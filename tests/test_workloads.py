@@ -131,6 +131,15 @@ def test_workload_command_matches_benchmark_behavior() -> None:
         "--proofs",
         str(file_spec.absolute_path),
     ]
+    assert targets.workload_command(ROOT / "egglog-experimental", file_spec, "main", "proof-extraction") == [
+        str(ROOT / "egglog-experimental"),
+        "--mode",
+        "no-messages",
+        "-j",
+        "1",
+        "--proof-extraction",
+        str(file_spec.absolute_path),
+    ]
 
     facts = ROOT / "facts"
     file_with_facts = models.FileSpec(

@@ -56,6 +56,13 @@ def test_compare_target_inherits_candidate_but_compare_backend_stays_main() -> N
     assert candidate.treatment == "proofs"
 
 
+def test_dd_rejects_explicit_proof_extraction_treatment() -> None:
+    args = benchmark.parse_benchmark_args(["--backend", "dd", "--treatment", "proof-extraction"])
+
+    with pytest.raises(ValueError, match="backend dd does not support treatment proof-extraction"):
+        benchmark.endpoint_requests(args)
+
+
 def test_pair_cli_accepts_arbitrary_explicit_endpoints() -> None:
     args = benchmark.parse_benchmark_args(
         [

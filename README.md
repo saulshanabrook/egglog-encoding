@@ -91,10 +91,14 @@ Treatments map directly to engine modes:
 | `off` | no term or proof encoding |
 | `term` | `--term-encoding` |
 | `proofs` | `--proofs` |
+| `proof-extraction` | `--proof-extraction`; rewrite checks, then extract, materialize, clean, and simplify proofs without verifying them |
 
-The `main` backend supports all three treatments; `dd` supports `term` and
-`proofs`. The engine's `--proof-testing` option is a correctness mode, not a
-benchmark treatment.
+The `main` backend supports all four treatments. The `dd` backend supports
+`term` and `proofs`; an explicit `proof-extraction` treatment is rejected. The
+engine's `--proof-testing` option is a strict correctness mode that rewrites
+checks, extracts proofs, and verifies them, not a benchmark treatment. Results
+from `proof-extraction` are performance evidence only, not proof-validity
+evidence.
 
 ### Common comparisons
 
@@ -102,6 +106,12 @@ Proof overhead in the current checkout is the default:
 
 ```bash
 ./bench.py
+```
+
+Measure non-validating proof-extraction overhead explicitly:
+
+```bash
+./bench.py --treatment proof-extraction
 ```
 
 Compare the current proof implementation with proof mode on `origin/main`:
@@ -198,11 +208,11 @@ corpus:
 | Pointer analysis | First 100 rows from 23 relations; three legacy functions are constructors for current egglog compatibility | Known `constant_points_to` row is derived |
 | Hardboiled | Dormant canonicalization rules using unsupported unstable helpers are omitted | Extracted WMMA store result is checked |
 | Luminal | Static Llama graph from [`egglog_repro` commit `7fb0194`](https://github.com/saulshanabrook/egglog_repro/blob/7fb0194812b5b11e41a286d8b55e48e3b0bfcd66/llama.egg) | `t712` is checked after kernel lowering |
-| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks run through the proof checker |
+| Herbie | Static engine proxy without Racket orchestration or an FPCore corpus | All 14 checks exercise the selected treatment |
 
 Benchmark files must not contain executable `(prove ...)` commands. Use
-`(check ...)` in timed workloads and test proof extraction separately, so
-printing or checking a proof does not become part of the timing boundary.
+`(check ...)` in timed workloads so the selected treatment controls whether
+proof extraction is included in the timing boundary.
 
 Reports normally identify a selected file by filename. If names collide, they
 use the shortest distinguishing path suffix; persisted rows retain the invoked

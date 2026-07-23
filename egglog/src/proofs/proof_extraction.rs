@@ -127,8 +127,9 @@ impl ProofInstrumentor<'_> {
         };
 
         // Check the proof before simplification
-        if let Result::Err(e) =
-            proof_store.check_proof(extra_rule_removed, &self.egraph.proof_check_program)
+        if self.egraph.proof_state.verify_proofs
+            && let Result::Err(e) =
+                proof_store.check_proof(extra_rule_removed, &self.egraph.proof_check_program)
         {
             panic!("Existence proof should be valid before simplification: {e}");
         }
@@ -137,9 +138,11 @@ impl ProofInstrumentor<'_> {
         let simplified_proof = proof_store.simplify(extra_rule_removed);
 
         // Check the proof after simplification
-        proof_store
-            .check_proof(simplified_proof, &self.egraph.proof_check_program)
-            .expect("simplified existence proof should still be valid");
+        if self.egraph.proof_state.verify_proofs {
+            proof_store
+                .check_proof(simplified_proof, &self.egraph.proof_check_program)
+                .expect("simplified existence proof should still be valid");
+        }
 
         Ok((proof_store, simplified_proof))
     }

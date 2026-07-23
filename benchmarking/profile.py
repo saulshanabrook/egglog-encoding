@@ -103,7 +103,7 @@ def parse_profile_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--treatment",
-        choices=("off", "term", "proofs"),
+        choices=("off", "term", "proofs", "proof-extraction"),
         default="proofs",
         help="treatment to profile (default: proofs)",
     )

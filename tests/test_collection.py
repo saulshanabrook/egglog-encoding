@@ -399,6 +399,38 @@ def test_collect_rows_appends_process_and_ruleset_timing_together(
     assert selected == ("success",)
 
 
+def test_preflight_requires_extraction_capability_only_for_fresh_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = make_target(binary_path=ROOT / "egglog-experimental")
+    calls: list[tuple[str, ...]] = []
+    success = processes.TimingResult("success", processes.TimingRow(wall_sec=0.01), None)
+    failure = processes.TimingResult(
+        "failure",
+        processes.TimingRow(wall_sec=0.01),
+        processes.ErrorRow("successful process output did not contain '--proof-extraction'"),
+    )
+
+    def preflight(
+        _binary_path: Path,
+        _checkout_path: Path,
+        _timeout_sec: int,
+        required_outputs: tuple[str, ...],
+    ) -> processes.TimingResult:
+        calls.append(required_outputs)
+        return failure if "--proof-extraction" in required_outputs else success
+
+    monkeypatch.setattr(collection, "run_preflight", preflight)
+    cached = planned_run(treatment="proof-extraction", cached=("success",), required=1)
+    collection.preflight_collection(collection.CollectionPlan(target, (cached, planned_run(required=1))), 120)
+
+    fresh = planned_run(treatment="proof-extraction", required=1)
+    with pytest.raises(ValueError, match=r"preflight failed.*--proof-extraction"):
+        collection.preflight_collection(collection.CollectionPlan(target, (fresh,)), 120)
+
+    assert calls == [("--timing-summary",), ("--timing-summary", "--proof-extraction")]
+
+
 def test_collect_rows_rejects_unsupported_timing_summary_before_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

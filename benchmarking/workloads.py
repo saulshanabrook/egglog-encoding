@@ -168,5 +168,5 @@ def validate_workloads(files: Sequence[FileSpec]) -> None:
         if file_contains_executable_prove_command(file_spec.absolute_path):
             raise ValueError(
                 f"{file_spec.display_path} contains an explicit prove command; "
-                "benchmark files should use check so proof extraction is not included in timed runs"
+                "benchmark files should use check so the selected treatment controls proof extraction"
             )
