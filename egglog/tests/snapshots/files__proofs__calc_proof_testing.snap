@@ -7,18 +7,15 @@ expression: proof_snapshot
 (Fiat (= t1 t1))
 (let t0 (g* (g* (AConst) (AConst)) (g* (AConst) (AConst))))
 (let t1 (g* t0 t0))
-(let t2 (g* (g* (AConst) (AConst)) (g* (g* (AConst) (AConst)) t0)))
-(Sym
-  (= t1 t2)
-  (Rule
-    (= t2 t1)
-    (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
-    (premises (Fiat (= t1 t1)))
-    (substitution
-      (c t0)
-      (a (g* (AConst) (AConst)))
-      (b (g* (AConst) (AConst)))
-      (@rewrite_var__ t1))))
+(Rule
+  (= t1 (g* (g* (AConst) (AConst)) (g* (g* (AConst) (AConst)) t0)))
+  (name "(birewrite (g* (g* a b) c) (g* a (g* b c)))=>")
+  (premises (Fiat (= t1 t1)))
+  (substitution
+    (c t0)
+    (a (g* (AConst) (AConst)))
+    (b (g* (AConst) (AConst)))
+    (@rewrite_var__ t1)))
 (let t0 (g* (inv (aConst)) (aConst)))
 (let t1 (g* (bConst) t0))
 (let t2 (g* t1 (inv (bConst))))

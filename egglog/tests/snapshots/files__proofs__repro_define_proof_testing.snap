@@ -2,5 +2,4 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(let t0 (S (S (S (ZeroConst)))))
-(Sym (= (S (S (ZeroConst))) t0) (Fiat (= t0 (S (S (ZeroConst))))))
+(Fiat (= (S (S (ZeroConst))) (S (S (S (ZeroConst))))))

@@ -1,0 +1,529 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (premises (Fiat (= (Go) (Go)))))
+(let t1 (set-of (Id (N 1)) (Id (N 2)) (N 3)))
+(let t2 (HoldsSet t1))
+(let t3 (set-of (N 1) (N 2)))
+(let t4 (set-of (Id (N 1)) (Id (N 2)) (N 1)))
+(let prf0
+  (Congr
+            (= t1 t4)
+            (Rule
+              (= t1 t1)
+              (name
+                "(rule ((Go))
+        ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+           )")
+              t0
+              (substitution))
+            (Sym
+              (= (N 3) (N 1))
+              (Rule
+                (= (N 1) (N 3))
+                (name
+                  "(rule ((Go))
+        ((union (N 1) (N 3)))
+           )")
+                t0
+                (substitution)))
+            2))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Rule
+      (= (N 1) (N 1))
+      (name
+        "(rule ((Go))
+      ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+         )")
+      t0
+      (substitution))
+    (Rule
+      (= (N 2) (N 2))
+      (name
+        "(rule ((Go))
+      ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+         )")
+      t0
+      (substitution))
+    (Eval)
+    (Congr
+      (= t2 (HoldsSet t3))
+      (Congr
+        (= t2 (HoldsSet t4))
+        (Rule
+          (= t2 t2)
+          (name
+            "(rule ((Go))
+      ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+         )")
+          t0
+          (substitution))
+        prf0
+        0)
+      (ContainerNormalize
+        (= t4 t3)
+        (Congr
+          (= t4 (set-of (N 1) (N 2) (N 1)))
+          (Congr
+            (= t4 (set-of (N 1) (Id (N 2)) (N 1)))
+            (Trans (= t4 t4) (Sym (= t4 t1) prf0) prf0)
+            (Rule
+              (= (Id (N 1)) (N 1))
+              (name "(rewrite (Id x) x)")
+              (premises
+                (Rule
+                  (= (Id (N 1)) (Id (N 1)))
+                  (name
+                    "(rule ((Go))
+      ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+         )")
+                  t0
+                  (substitution)))
+              (substitution (x (N 1)) (@rewrite_var__ (Id (N 1)))))
+            0)
+          (Rule
+            (= (Id (N 2)) (N 2))
+            (name "(rewrite (Id x) x)")
+            (premises
+              (Rule
+                (= (Id (N 2)) (Id (N 2)))
+                (name
+                  "(rule ((Go))
+      ((HoldsSet (set-of (Id (N 1)) (Id (N 2)) (N 3))))
+         )")
+                t0
+                (substitution)))
+            (substitution (x (N 2)) (@rewrite_var__ (Id (N 2)))))
+          1))
+      0))
+  (substitution (@v901 (N 2)) (@v900 (N 1)) (@v902 t3)))
+(let t0 (Add (Num 51) (Num 52)))
+(let t1 (Add (Num 52) (Num 51)))
+(let t2 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Sym
+        (= t0 t1)
+        (Rule
+          (= t1 t0)
+          (name
+            "(rule ((Go))
+        ((union (Add (Num 52) (Num 51)) (Add (Num 51) (Num 52))))
+           )")
+          t2
+          (substitution))))
+(let t3 (set-of t0))
+(let t4 (HoldsExpr t3))
+(let t5 (set-of t1))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    prf0
+    (Eval)
+    (Congr
+      (= t4 (HoldsExpr t5))
+      (Rule
+        (= t4 t4)
+        (name
+          "(rule ((Go))
+      ((HoldsExpr (set-of (Add (Num 51) (Num 52)))))
+         )")
+        t2
+        (substitution))
+      (Congr
+        (= t3 t5)
+        (Rule
+          (= t3 t3)
+          (name
+            "(rule ((Go))
+      ((HoldsExpr (set-of (Add (Num 51) (Num 52)))))
+         )")
+          t2
+          (substitution))
+        prf0
+        0)
+      0))
+  (substitution (@v949 t5) (@v948 t1)))
+(let t0 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Rule
+        (= (N 11) (N 11))
+        (name
+          "(rule ((Go))
+        ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+           )")
+        t0
+        (substitution)))
+(let t1 (multiset-of (Id (N 11)) (Id (N 12)) (N 13)))
+(let t2 (HoldsBag t1))
+(let t3 (multiset-of (N 11) (N 11) (N 12)))
+(let t4 (multiset-of (Id (N 11)) (Id (N 12)) (N 11)))
+(let prf1
+  (Congr
+            (= t1 t4)
+            (Rule
+              (= t1 t1)
+              (name
+                "(rule ((Go))
+        ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+           )")
+              t0
+              (substitution))
+            (Sym
+              (= (N 13) (N 11))
+              (Rule
+                (= (N 11) (N 13))
+                (name
+                  "(rule ((Go))
+        ((union (N 11) (N 13)))
+           )")
+                t0
+                (substitution)))
+            2))
+(Rule
+  (= (@ExistsConstructor2) (@ExistsConstructor2))
+  (name "@prove_exists_rule2")
+  (premises
+    prf0
+    prf0
+    (Rule
+      (= (N 12) (N 12))
+      (name
+        "(rule ((Go))
+      ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+         )")
+      t0
+      (substitution))
+    (Eval)
+    (Congr
+      (= t2 (HoldsBag t3))
+      (Congr
+        (= t2 (HoldsBag t4))
+        (Rule
+          (= t2 t2)
+          (name
+            "(rule ((Go))
+      ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+         )")
+          t0
+          (substitution))
+        prf1
+        0)
+      (ContainerNormalize
+        (= t4 t3)
+        (Congr
+          (= t4 (multiset-of (N 11) (N 12) (N 11)))
+          (Congr
+            (= t4 (multiset-of (N 11) (Id (N 12)) (N 11)))
+            (Trans (= t4 t4) (Sym (= t4 t1) prf1) prf1)
+            (Rule
+              (= (Id (N 11)) (N 11))
+              (name "(rewrite (Id x) x)")
+              (premises
+                (Rule
+                  (= (Id (N 11)) (Id (N 11)))
+                  (name
+                    "(rule ((Go))
+      ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+         )")
+                  t0
+                  (substitution)))
+              (substitution (x (N 11)) (@rewrite_var__ (Id (N 11)))))
+            0)
+          (Rule
+            (= (Id (N 12)) (N 12))
+            (name "(rewrite (Id x) x)")
+            (premises
+              (Rule
+                (= (Id (N 12)) (Id (N 12)))
+                (name
+                  "(rule ((Go))
+      ((HoldsBag (multiset-of (Id (N 11)) (Id (N 12)) (N 13))))
+         )")
+                t0
+                (substitution)))
+            (substitution (x (N 12)) (@rewrite_var__ (Id (N 12)))))
+          1))
+      0))
+  (substitution (@v998 t3) (@v996 (N 11)) (@v997 (N 12)) (@v995 (N 11))))
+(let t0 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Rule
+        (= (N 23) (N 23))
+        (name
+          "(rule ((Go))
+        ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+           )")
+        t0
+        (substitution)))
+(let t1 (map-of (Id (N 22)) (N 24) (N 21) (N 23)))
+(let t2 (HoldsMap t1))
+(let t3 (map-of (N 21) (N 23) (N 22) (N 23)))
+(let t4 (map-of (Id (N 22)) (N 23) (N 21) (N 23)))
+(let prf1
+  (Congr
+            (= t1 t4)
+            (Rule
+              (= t1 t1)
+              (name
+                "(rule ((Go))
+        ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+           )")
+              t0
+              (substitution))
+            (Sym
+              (= (N 24) (N 23))
+              (Rule
+                (= (N 23) (N 24))
+                (name
+                  "(rule ((Go))
+        ((union (N 23) (N 24)))
+           )")
+                t0
+                (substitution)))
+            1))
+(Rule
+  (= (@ExistsConstructor3) (@ExistsConstructor3))
+  (name "@prove_exists_rule3")
+  (premises
+    (Rule
+      (= (N 21) (N 21))
+      (name
+        "(rule ((Go))
+      ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+         )")
+      t0
+      (substitution))
+    prf0
+    (Rule
+      (= (N 22) (N 22))
+      (name
+        "(rule ((Go))
+      ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+         )")
+      t0
+      (substitution))
+    prf0
+    (Eval)
+    (Congr
+      (= t2 (HoldsMap t3))
+      (Congr
+        (= t2 (HoldsMap t4))
+        (Rule
+          (= t2 t2)
+          (name
+            "(rule ((Go))
+      ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+         )")
+          t0
+          (substitution))
+        prf1
+        0)
+      (ContainerNormalize
+        (= t4 t3)
+        (Congr
+          (= t4 (map-of (N 22) (N 23) (N 21) (N 23)))
+          (Trans (= t4 t4) (Sym (= t4 t1) prf1) prf1)
+          (Rule
+            (= (Id (N 22)) (N 22))
+            (name "(rewrite (Id x) x)")
+            (premises
+              (Rule
+                (= (Id (N 22)) (Id (N 22)))
+                (name
+                  "(rule ((Go))
+      ((HoldsMap (map-of (N 21) (N 23) (Id (N 22)) (N 24))))
+         )")
+                t0
+                (substitution)))
+            (substitution (x (N 22)) (@rewrite_var__ (Id (N 22)))))
+          0))
+      0))
+  (substitution
+    (@v1053 (N 23))
+    (@v1052 (N 22))
+    (@v1050 (N 21))
+    (@v1054 t3)
+    (@v1051 (N 23))))
+(let t0 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Rule
+        (= (N 31) (N 31))
+        (name
+          "(rule ((Go))
+        ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
+           )")
+        t0
+        (substitution)))
+(let t1 (vec-of (Id (N 31)) (Id (N 31)) (N 32)))
+(let t2 (HoldsVec t1))
+(let t3 (vec-of (N 31) (N 31) (N 32)))
+(let prf1
+  (Rule
+              (= (Id (N 31)) (N 31))
+              (name "(rewrite (Id x) x)")
+              (premises
+                (Rule
+                  (= (Id (N 31)) (Id (N 31)))
+                  (name
+                    "(rule ((Go))
+        ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
+           )")
+                  t0
+                  (substitution)))
+              (substitution (x (N 31)) (@rewrite_var__ (Id (N 31))))))
+(Rule
+  (= (@ExistsConstructor4) (@ExistsConstructor4))
+  (name "@prove_exists_rule4")
+  (premises
+    prf0
+    prf0
+    (Rule
+      (= (N 32) (N 32))
+      (name
+        "(rule ((Go))
+      ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
+         )")
+      t0
+      (substitution))
+    (Eval)
+    (Congr
+      (= t2 (HoldsVec t3))
+      (Rule
+        (= t2 t2)
+        (name
+          "(rule ((Go))
+      ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
+         )")
+        t0
+        (substitution))
+      (Congr
+        (= t1 t3)
+        (Congr
+          (= t1 (vec-of (N 31) (Id (N 31)) (N 32)))
+          (Rule
+            (= t1 t1)
+            (name
+              "(rule ((Go))
+      ((HoldsVec (vec-of (Id (N 31)) (Id (N 31)) (N 32))))
+         )")
+            t0
+            (substitution))
+          prf1
+          0)
+        prf1
+        1)
+      0))
+  (substitution (@v1112 (N 31)) (@v1113 (N 31)) (@v1114 (N 32)) (@v1115 t3)))
+(let t0 (premises (Fiat (= (Go) (Go)))))
+(let prf0
+  (Rule
+        (= (N 41) (N 41))
+        (name
+          "(rule ((Go))
+        ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+           )")
+        t0
+        (substitution)))
+(let t1 (set-of (Id (N 41)) (N 42)))
+(let t2 (set-of (set-of (N 43)) t1))
+(let t3 (HoldsNested t2))
+(let t4 (set-of (N 41) (N 42)))
+(let t5 (set-of (set-of (N 41)) t4))
+(let t6 (set-of (set-of (N 41)) t1))
+(let prf1
+  (Congr
+            (= t2 t6)
+            (Rule
+              (= t2 t2)
+              (name
+                "(rule ((Go))
+        ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+           )")
+              t0
+              (substitution))
+            (Congr
+              (= (set-of (N 43)) (set-of (N 41)))
+              (Rule
+                (= (set-of (N 43)) (set-of (N 43)))
+                (name
+                  "(rule ((Go))
+        ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+           )")
+                t0
+                (substitution))
+              (Sym
+                (= (N 43) (N 41))
+                (Rule
+                  (= (N 41) (N 43))
+                  (name
+                    "(rule ((Go))
+        ((union (N 41) (N 43)))
+           )")
+                  t0
+                  (substitution)))
+              0)
+            0))
+(Rule
+  (= (@ExistsConstructor5) (@ExistsConstructor5))
+  (name "@prove_exists_rule5")
+  (premises
+    prf0
+    (Rule
+      (= (N 42) (N 42))
+      (name
+        "(rule ((Go))
+      ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+         )")
+      t0
+      (substitution))
+    prf0
+    (Eval)
+    (Congr
+      (= t3 (HoldsNested t5))
+      (Congr
+        (= t3 (HoldsNested t6))
+        (Rule
+          (= t3 t3)
+          (name
+            "(rule ((Go))
+      ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+         )")
+          t0
+          (substitution))
+        prf1
+        0)
+      (Congr
+        (= t6 t5)
+        (Trans (= t6 t6) (Sym (= t6 t2) prf1) prf1)
+        (Congr
+          (= t1 t4)
+          (Rule
+            (= t1 t1)
+            (name
+              "(rule ((Go))
+      ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+         )")
+            t0
+            (substitution))
+          (Rule
+            (= (Id (N 41)) (N 41))
+            (name "(rewrite (Id x) x)")
+            (premises
+              (Rule
+                (= (Id (N 41)) (Id (N 41)))
+                (name
+                  "(rule ((Go))
+      ((HoldsNested (set-of (set-of (Id (N 41)) (N 42)) (set-of (N 43)))))
+         )")
+                t0
+                (substitution)))
+            (substitution (x (N 41)) (@rewrite_var__ (Id (N 41)))))
+          0)
+        1)
+      0))
+  (substitution (@v1169 (N 41)) (@v1168 (N 42)) (@v1170 t5) (@v1167 (N 41))))

@@ -380,7 +380,7 @@ impl Parser {
                 // (sort <name>)
                 // (sort <name> :internal-uf <uf-function>)
                 // (sort <name> :internal-proof-func <internal-proof-func-name>)
-                // (sort <name> :internal-proof-names <congr> <trans> <sym>)
+                // (sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat>)
                 // (sort <name> (<container sort> <argument sort>*))
                 match tail {
                     [name] => vec![Command::Sort {
@@ -434,7 +434,7 @@ impl Parser {
                     [name, rest @ ..] => {
                         // Parse :internal-uf / :internal-proof-func and the
                         // :internal-proof-names global proof-constructor record.
-                        let mut uf = None;
+                        let mut uf: Option<(String, Option<String>)> = None;
                         let mut proof_func = None;
                         let mut proof_constructors = None;
                         for (key, val) in self.parse_options(rest)? {
@@ -452,19 +452,25 @@ impl Parser {
                                     proof_func =
                                         Some(pf.expect_atom("internal-proof-func function name")?);
                                 }
-                                (":internal-proof-names", [congr, trans, sym, normalize]) => {
+                                (
+                                    ":internal-proof-names",
+                                    [congr, congr_all, trans, sym, normalize, fiat],
+                                ) => {
                                     proof_constructors = Some(ProofConstructorNames {
                                         congr: congr.expect_atom("congr constructor")?,
+                                        congr_all: congr_all
+                                            .expect_atom("congr-all constructor")?,
                                         trans: trans.expect_atom("trans constructor")?,
                                         sym: sym.expect_atom("sym constructor")?,
                                         normalize: normalize
                                             .expect_atom("container-normalize constructor")?,
+                                        fiat: fiat.expect_atom("fiat constructor")?,
                                     });
                                 }
                                 _ => {
                                     return error!(
                                         span,
-                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <trans> <sym> <normalize>)\n(sort <name> (<container sort> <argument sort>*))"
+                                        "usages:\n(sort <name>)\n(sort <name> :internal-uf <uf-constructor> [<uf-index>])\n(sort <name> :internal-proof-func <internal-proof-func-name>)\n(sort <name> :internal-proof-names <congr> <congr-all> <trans> <sym> <normalize> <fiat>)\n(sort <name> (<container sort> <argument sort>*))"
                                     );
                                 }
                             }
@@ -508,6 +514,8 @@ impl Parser {
                     let mut term_constructor = None;
                     let mut unextractable = false;
                     let mut identity_vals = None;
+                    let mut cost = None;
+                    let mut term_node = false;
                     for (key, val) in self.parse_options(rest)? {
                         match (key, val) {
                             (":no-merge", []) => {
@@ -568,6 +576,8 @@ impl Parser {
                                 identity_vals =
                                     Some(k.expect_uint::<usize>("identity value column count")?)
                             }
+                            (":internal-cost", [c]) => cost = Some(c.expect_uint("cost")?),
+                            (":internal-term-node", []) => term_node = true,
                             _ => return error!(span, "could not parse function options"),
                         }
                     }
@@ -589,7 +599,9 @@ impl Parser {
                         term_constructor,
                         unextractable,
                         identity_vals,
+                        cost,
                         span,
+                        term_node,
                     }]
                 }
                 _ => {
@@ -968,16 +980,16 @@ impl Parser {
                 [file] => vec![Command::Include(span, file.expect_string("file name")?)],
                 _ => return error!(span, "usage: (include <file name>)"),
             },
-            "fail" => match tail {
-                [subcommand] => {
-                    let mut cs = self.parse_command(subcommand)?;
-                    if cs.len() != 1 {
-                        todo!("extend Fail to work with multiple parsed commands")
-                    }
-                    vec![Command::Fail(span, Box::new(cs.remove(0)))]
+            "fail" => {
+                if tail.is_empty() {
+                    return error!(span, "usage: (fail <command>+)");
                 }
-                _ => return error!(span, "usage: (fail <command>)"),
-            },
+                let mut cs = vec![];
+                for subcommand in tail {
+                    cs.extend(self.parse_command(subcommand)?);
+                }
+                vec![Command::Fail(span, cs)]
+            }
             _ => self
                 .parse_action(sexp)?
                 .into_iter()

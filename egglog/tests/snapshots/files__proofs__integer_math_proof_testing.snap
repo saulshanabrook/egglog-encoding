@@ -24,13 +24,11 @@ expression: proof_snapshot
         (Congr
           (= t3 (Add (Var "c") (Const 0)))
           (Fiat (= t3 t3))
-          (Sym
+          (Rule
             (= t2 (Const 0))
-            (Rule
-              (= (Const 0) t2)
-              (name "(rewrite (Sub a a) (Const 0))")
-              (premises (Fiat (= t2 t2)))
-              (substitution (a t1) (@rewrite_var__15 t2))))
+            (name "(rewrite (Sub a a) (Const 0))")
+            (premises (Fiat (= t2 t2)))
+            (substitution (a t1) (@rewrite_var__15 t2)))
           1))
       (substitution (a (Var "c")) (@rewrite_var__12 t3)))
     1)
@@ -41,11 +39,13 @@ expression: proof_snapshot
       (Congr
         (= t8 (Div t0 t7))
         (Fiat (= t8 t8))
-        (Rule
+        (Sym
           (= t5 t0)
-          (name "(rewrite (Mul x (Pow (Const 2) y)) (LShift x y))")
-          (premises (Fiat (= t0 t0)))
-          (substitution (y (Const 3)) (@rewrite_var__24 t0) (x (Var "a"))))
+          (Rule
+            (= t0 t5)
+            (name "(rewrite (Mul x (Pow (Const 2) y)) (LShift x y))")
+            (premises (Fiat (= t0 t0)))
+            (substitution (y (Const 3)) (@rewrite_var__24 t0) (x (Var "a")))))
         0)
       (Rule
         (= t7 (Var "c"))

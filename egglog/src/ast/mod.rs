@@ -2,7 +2,6 @@ pub mod check_shadowing;
 pub mod desugar;
 mod expr;
 mod parse;
-pub mod proof_global_remover;
 pub mod remove_globals;
 
 use std::cmp::max;
@@ -48,9 +47,12 @@ impl Display for ContainerRebuildSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProofConstructorNames {
     pub congr: String,
+    pub congr_all: String,
     pub trans: String,
     pub sym: String,
     pub normalize: String,
+    /// The `Fiat` justification constructor.
+    pub fiat: String,
 }
 
 #[derive(Clone, Debug)]
@@ -135,7 +137,10 @@ where
     },
     Push(usize),
     Pop(Span, usize),
-    Fail(Span, Box<GenericNCommand<Head, Leaf>>),
+    /// Assert that at least one of the wrapped commands fails. The commands run
+    /// in order; the first error is swallowed (the `fail` succeeds), and if none
+    /// error the `fail` itself errors.
+    Fail(Span, Vec<GenericNCommand<Head, Leaf>>),
     Input {
         span: Span,
         name: String,
@@ -191,6 +196,8 @@ where
                     term_constructor: f.term_constructor.clone(),
                     unextractable: f.unextractable,
                     identity_vals: f.identity_vals,
+                    cost: f.cost,
+                    term_node: f.internal_term_node,
                 },
             },
             GenericNCommand::AddRuleset(span, name) => {
@@ -227,9 +234,10 @@ where
             },
             GenericNCommand::Push(n) => GenericCommand::Push(*n),
             GenericNCommand::Pop(span, n) => GenericCommand::Pop(span.clone(), *n),
-            GenericNCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span.clone(), Box::new(cmd.to_command()))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span.clone(),
+                cmds.iter().map(|cmd| cmd.to_command()).collect(),
+            ),
             GenericNCommand::Input { span, name, file } => GenericCommand::Input {
                 span: span.clone(),
                 name: name.clone(),
@@ -255,9 +263,12 @@ where
             GenericNCommand::RunSchedule(schedule) => {
                 GenericNCommand::RunSchedule(schedule.visit_queries(f))
             }
-            GenericNCommand::Fail(span, cmd) => {
-                GenericNCommand::Fail(span, Box::new(cmd.visit_queries(f)))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericNCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_queries(&mut *f))
+                    .collect(),
+            ),
             GenericNCommand::Sort { .. }
             | GenericNCommand::Function(..)
             | GenericNCommand::AddRuleset(..)
@@ -339,9 +350,12 @@ where
             },
             GenericNCommand::Push(n) => GenericNCommand::Push(n),
             GenericNCommand::Pop(span, n) => GenericNCommand::Pop(span, n),
-            GenericNCommand::Fail(span, cmd) => {
-                GenericNCommand::Fail(span, Box::new(cmd.visit_exprs(f)))
-            }
+            GenericNCommand::Fail(span, cmds) => GenericNCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_exprs(&mut *f))
+                    .collect(),
+            ),
             GenericNCommand::Input { span, name, file } => {
                 GenericNCommand::Input { span, name, file }
             }
@@ -772,6 +786,13 @@ where
         /// leaves them unchanged is skipped and the existing row kept. Only
         /// valid for merges that are idempotent on equal inputs.
         identity_vals: Option<usize>,
+        /// Extraction head cost, from `:internal-cost`. Used by view tables to
+        /// record the user operation's cost for the extractor.
+        cost: Option<DefaultCost>,
+        /// `:internal-term-node`: an internal term/proof/AST/proof-list node
+        /// relation (minted id as the last input), which proof extraction
+        /// reconstructs. Unset for views and plain bookkeeping relations.
+        term_node: bool,
     },
 
     /// Using the `ruleset` command, defines a new
@@ -987,8 +1008,8 @@ where
     /// `pop` the current egraph, restoring the previous one.
     /// The argument specifies how many egraphs to pop.
     Pop(Span, usize),
-    /// Assert that a command fails with an error.
-    Fail(Span, Box<GenericCommand<Head, Leaf>>),
+    /// Assert that at least one of the wrapped commands fails with an error.
+    Fail(Span, Vec<GenericCommand<Head, Leaf>>),
     /// Include another egglog file directly as text and run it.
     Include(Span, String),
     /// User-defined command.
@@ -1040,8 +1061,8 @@ where
                 if let Some(pc) = proof_constructors {
                     write!(
                         f,
-                        " :internal-proof-names {} {} {} {}",
-                        pc.congr, pc.trans, pc.sym, pc.normalize
+                        " :internal-proof-names {} {} {} {} {} {}",
+                        pc.congr, pc.congr_all, pc.trans, pc.sym, pc.normalize, pc.fiat
                     )?;
                 }
                 write!(f, ")")
@@ -1072,6 +1093,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             } => {
                 write!(f, "(function {name} {schema}")?;
                 if let Some(merge) = &merge {
@@ -1093,6 +1116,12 @@ where
                 }
                 if let Some(k) = identity_vals {
                     write!(f, " :internal-identity-vals {k}")?;
+                }
+                if let Some(c) = cost {
+                    write!(f, " :internal-cost {c}")?;
+                }
+                if *term_node {
+                    write!(f, " :internal-term-node")?;
                 }
                 write!(f, ")")
             }
@@ -1191,7 +1220,7 @@ where
                 file,
                 exprs,
             } => write!(f, "(output {file:?} {})", ListDisplay(exprs, " ")),
-            GenericCommand::Fail(_span, cmd) => write!(f, "(fail {cmd})"),
+            GenericCommand::Fail(_span, cmds) => write!(f, "(fail {})", ListDisplay(cmds, " ")),
             GenericCommand::Include(_span, file) => write!(f, "(include {file:?})"),
             GenericCommand::Datatypes { span: _, datatypes } => {
                 let datatypes: Vec<_> = datatypes
@@ -1358,6 +1387,11 @@ where
     /// columns — a merge that leaves them unchanged is skipped and the existing
     /// row kept. Only valid for merges that are idempotent on equal inputs.
     pub identity_vals: Option<usize>,
+    /// `:internal-term-node`: an internal term/proof/AST/proof-list node relation
+    /// created by the term/proof encoding, with the minted id as its last input.
+    /// Proof extraction reconstructs these; views and plain bookkeeping relations
+    /// (e.g. delete/subsume markers) are unmarked and never read as terms.
+    pub internal_term_node: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1457,6 +1491,7 @@ impl FunctionDecl {
             span,
             term_constructor: None,
             identity_vals: None,
+            internal_term_node: false,
         }
     }
 
@@ -1482,6 +1517,7 @@ impl FunctionDecl {
             span,
             term_constructor: None,
             identity_vals: None,
+            internal_term_node: false,
         }
     }
 }
@@ -1508,6 +1544,7 @@ where
             span: self.span,
             term_constructor: self.term_constructor,
             identity_vals: self.identity_vals,
+            internal_term_node: self.internal_term_node,
         }
     }
 }
@@ -1925,6 +1962,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             } => GenericCommand::Function {
                 span,
                 name: fun(name),
@@ -1938,6 +1977,8 @@ where
                 term_constructor: term_constructor.map(&mut *fun),
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, fun(name)),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
@@ -1995,9 +2036,12 @@ where
             }
             GenericCommand::Push(n) => GenericCommand::Push(n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.map_string_symbols(fun)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.map_string_symbols(&mut *fun))
+                    .collect(),
+            ),
             GenericCommand::Include(span, file) => GenericCommand::Include(span, file),
             GenericCommand::UserDefined(span, name, exprs) => {
                 GenericCommand::UserDefined(span, name, exprs)
@@ -2021,6 +2065,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2031,6 +2077,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             },
             GenericCommand::Rule { rule } => GenericCommand::Rule {
                 rule: rule.visit_exprs(f),
@@ -2084,9 +2132,12 @@ where
             GenericCommand::RunSchedule(schedule) => {
                 GenericCommand::RunSchedule(schedule.visit_exprs(f))
             }
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.visit_exprs(f)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_exprs(&mut *f))
+                    .collect(),
+            ),
             // All other commands don't contain expressions
             cmd => cmd,
         }
@@ -2166,6 +2217,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             } => GenericCommand::Function {
                 span,
                 name,
@@ -2176,6 +2229,8 @@ where
                 term_constructor,
                 unextractable,
                 identity_vals,
+                cost,
+                term_node,
             },
             GenericCommand::AddRuleset(span, name) => GenericCommand::AddRuleset(span, name),
             GenericCommand::UnstableCombinedRuleset(span, name, others) => {
@@ -2238,9 +2293,12 @@ where
             },
             GenericCommand::Push(n) => GenericCommand::Push(n),
             GenericCommand::Pop(span, n) => GenericCommand::Pop(span, n),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.map_symbols(head, leaf)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.map_symbols(&mut *head, &mut *leaf))
+                    .collect(),
+            ),
             GenericCommand::Include(span, file) => GenericCommand::Include(span, file),
             GenericCommand::UserDefined(span, name, exprs) => {
                 GenericCommand::UserDefined(span, name, exprs)
@@ -2264,9 +2322,12 @@ where
                 rule: rule.visit_actions(f),
             },
             GenericCommand::Action(action) => GenericCommand::Action(f(action)),
-            GenericCommand::Fail(span, cmd) => {
-                GenericCommand::Fail(span, Box::new(cmd.visit_actions(f)))
-            }
+            GenericCommand::Fail(span, cmds) => GenericCommand::Fail(
+                span,
+                cmds.into_iter()
+                    .map(|cmd| cmd.visit_actions(&mut *f))
+                    .collect(),
+            ),
             other => other,
         }
     }

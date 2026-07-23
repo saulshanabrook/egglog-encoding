@@ -2,7 +2,7 @@
 source: egglog/tests/files.rs
 expression: proof_snapshot
 ---
-(let prf0 (Fiat (= (B) (A))))
+(let prf0 (Sym (= (B) (A)) (Fiat (= (A) (B)))))
 (let t0 (Holds (set-of (A) (B))))
 (let prf1
   (Congr
@@ -30,8 +30,8 @@ expression: proof_snapshot
       (Sym (= (Holds (set-of (A))) t0) prf1)
       prf1))
   (substitution
-    (@v51 (set-of (A)))
-    (@v47 (A))
-    (@v48 (A))
-    (@v50 (A))
-    (@v49 (set-of (A)))))
+    (@v142 (set-of (A)))
+    (@v144 (set-of (A)))
+    (@v140 (A))
+    (@v143 (A))
+    (@v141 (A))))

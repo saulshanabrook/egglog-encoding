@@ -4,11 +4,32 @@
 //! [`ContainerRebuildSpec`] ([`register_container_rebuild_from_spec`]), and
 //! defines the `ContainerRebuild` / `ContainerRebuildProof` primitives that
 //! canonicalize a container's elements to their union-find leaders (and, in
-//! proof mode, prove the rebuild). The encoder side that *builds* the spec lives
-//! in [`super::proof_encoding`].
+//! proof mode, prove the rebuild). Also holds the encoder-side spec bookkeeping
+//! ([`ProofInstrumentor::build_container_rebuild_spec`] and the primitive-name
+//! lookups).
 
+use super::proof_encoding::ProofInstrumentor;
 use crate::exec_state::{Internal, RegistrySealed};
 use crate::*;
+use egglog_backend_trait::CounterId;
+use egglog_bridge::TableAction;
+use egglog_numeric_id::NumericId;
+
+/// Mint a fresh proof id and assert the relation row `(<action> args… out ())`,
+/// returning `out`. Proof constructors are relations, so a proof node is created
+/// by minting its id rather than by a constructor's lookup-or-insert.
+fn mint_proof_row(
+    state: &mut FullState,
+    action: &TableAction,
+    id_counter: CounterId,
+    args: &[Value],
+) -> Value {
+    let out = Value::from_usize(state.raw_exec_state().inc_counter(id_counter));
+    let unit = state.base_values().get::<()>(());
+    let row: Vec<Value> = args.iter().copied().chain([out, unit]).collect();
+    action.insert(state.raw_exec_state(), row.into_iter());
+    out
+}
 
 /// Register a container sort's rebuild primitives from its
 /// [`ContainerRebuildSpec`]. Called when a container Sort command carrying an
@@ -38,6 +59,11 @@ pub(crate) fn register_container_rebuild_from_spec(
     );
 
     if let Some(proof_prim) = &spec.internal_rebuild_proof_prim {
+        // Proof ids are minted from the backend's id counter; a backend without
+        // one can't run these proofs.
+        let Some(id_counter) = eg.backend.id_counter() else {
+            return;
+        };
         // Each container's `<CSort>Proof` table (this sort + nested containers),
         // recovered from proof_state (filled by `:internal-proof-func`).
         let mut cproof_names = HashMap::default();
@@ -45,7 +71,7 @@ pub(crate) fn register_container_rebuild_from_spec(
         // The global proof constructors, recovered from proof_state (repopulated
         // from the `Proof` sort's `:internal-proof-names` on re-parse).
         let names = &eg.proof_state.proof_names;
-        let congr_name = names.congr_constructor.clone();
+        let congr_all_name = names.congr_all_constructor.clone();
         let trans_name = names.eq_trans_constructor.clone();
         let sym_name = names.eq_sym_constructor.clone();
         let container_normalize_name = names.container_normalize_constructor.clone();
@@ -59,10 +85,11 @@ pub(crate) fn register_container_rebuild_from_spec(
                 proof_sort,
                 uf_names,
                 cproof_names,
-                congr_name,
+                congr_all_name,
                 trans_name,
                 sym_name,
                 container_normalize_name,
+                id_counter,
             },
             None,
         );
@@ -171,7 +198,7 @@ where
 
 /// A term-encoding primitive that canonicalizes a container value's elements to
 /// their union-find leaders (recursing through nested containers). Registered
-/// per container sort by `ensure_container_rebuild` and
+/// per container sort by `container_rebuild_prim` and
 /// invoked from the container-column arm of the rebuild rules. It reads the
 /// single `UF_<E>` tables, so it is only valid in a `:naive` rule (read-context body).
 #[derive(Clone)]
@@ -211,10 +238,10 @@ impl ReadPrim for ContainerRebuild {
     }
 }
 
-/// Proof-mode counterpart of [`ContainerRebuild`]: mints a `Congr` chain
+/// Proof-mode counterpart of [`ContainerRebuild`]: mints a `CongrAll` chain
 /// proving `old_container = rebuilt_container` (recursing through nested
 /// containers). Reads `UF_<E>` (element equality proofs) and `<CSort>Proof`
-/// (reflexive bases), mints `Congr`/`Trans`/`Sym` terms, and anchors a
+/// (reflexive bases), mints `CongrAll`/`Trans`/`Sym` terms, and anchors a
 /// reflexive proof on each rebuilt container so it can be rebuilt again later.
 /// It is a [`FullPrim`], valid only in a `:naive` rule's action.
 #[derive(Clone)]
@@ -226,11 +253,13 @@ struct ContainerRebuildProof {
     uf_names: HashMap<String, String>,
     /// container-sort name -> `<CSort>Proof` table name (all reachable containers)
     cproof_names: HashMap<String, String>,
-    /// `Congr` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
-    congr_name: String,
+    /// `CongrAll` / `Trans` / `Sym` / `ContainerNormalize` proof constructor names
+    congr_all_name: String,
     trans_name: String,
     sym_name: String,
     container_normalize_name: String,
+    /// Counter for minting fresh proof ids (see [`mint_proof_row`]).
+    id_counter: egglog_backend_trait::CounterId,
 }
 
 impl Primitive for ContainerRebuildProof {
@@ -259,9 +288,11 @@ impl FullPrim for ContainerRebuildProof {
 /// Recursively rebuild `value` (of container sort `sort`) and produce a proof
 /// that `value = rebuilt`. Returns `(rebuilt_value, proof)`. Uses the same
 /// per-child resolution as [`rebuild_container_value_rec`], additionally
-/// folding a `Congr` step for every changed child and recording a reflexive
-/// anchor `<CSort>Proof(rebuilt) = Trans(Sym proof, proof)` so the rebuilt
-/// value can itself be rebuilt in a later iteration.
+/// folding a `CongrAll` step for every distinct changed child and recording a
+/// reflexive anchor `<CSort>Proof(rebuilt) = Trans(Sym proof, proof)` so the
+/// rebuilt value can itself be rebuilt in a later iteration. The steps match
+/// elements by term (`CongrAll`), never by position: elements here come in
+/// value order, not the term form's canonical child order.
 fn rebuild_container_proof_rec(
     state: &mut FullState,
     prim: &ContainerRebuildProof,
@@ -277,23 +308,28 @@ fn rebuild_container_proof_rec(
         sort.inner_values(cvs, value)
     };
 
+    // One entry per distinct changed element: `CongrAll` replaces every
+    // occurrence at once, matching `rebuild_with_leaders`.
     let mut leaders: HashMap<Value, Value> = HashMap::default();
-    let mut child_proofs: Vec<(usize, Value)> = vec![];
-    for (j, (esort, eval)) in elements.iter().enumerate() {
+    let mut child_proofs: Vec<Value> = vec![];
+    for (esort, eval) in &elements {
+        if leaders.contains_key(eval) {
+            continue;
+        }
         if esort.is_eq_sort() {
             if let Some((leader, Some(proof))) =
                 lookup_uf_row(state, &prim.uf_names, esort, *eval, true)
                 && leader != *eval
             {
                 leaders.insert(*eval, leader);
-                child_proofs.push((j, proof));
+                child_proofs.push(proof);
             }
         } else if esort.is_eq_container_sort() {
             let (rebuilt_child, child_proof) =
                 rebuild_container_proof_rec(state, prim, esort, *eval)?;
             if rebuilt_child != *eval {
                 leaders.insert(*eval, rebuilt_child);
-                child_proofs.push((j, child_proof));
+                child_proofs.push(child_proof);
             }
         }
     }
@@ -305,16 +341,14 @@ fn rebuild_container_proof_rec(
         rebuild_with_leaders(cvs, es, sort, value, &leaders)
     };
 
-    // Fold a `Congr` step per changed child onto the reflexive base. This
-    // proves `value = raw`, where `raw` is the term with children replaced in
-    // place (it may be in non-canonical order, or have duplicate/clobbering
-    // entries for collapsing containers).
-    let congr_action = state.registry().lookup_table(&prim.congr_name)?.clone();
+    // Fold a `CongrAll` step per changed child onto the reflexive base. This
+    // proves `value = raw`, where `raw` is the term with children replaced by
+    // their leaders (it may be in non-canonical order, or have duplicate/
+    // clobbering entries for collapsing containers).
+    let congr_all_action = state.registry().lookup_table(&prim.congr_all_name)?.clone();
     let mut current = base;
-    for (j, proof) in child_proofs {
-        let j_val = state.base_values().get::<i64>(j as i64);
-        current =
-            congr_action.lookup_or_insert(state.raw_exec_state(), &[current, j_val, proof])?;
+    for proof in child_proofs {
+        current = mint_proof_row(state, &congr_all_action, prim.id_counter, &[current, proof]);
     }
 
     // Bridge the (possibly non-canonical) `raw` term to the canonical `rebuilt`
@@ -327,7 +361,7 @@ fn rebuild_container_proof_rec(
         .registry()
         .lookup_table(&prim.container_normalize_name)?
         .clone();
-    current = normalize_action.lookup_or_insert(state.raw_exec_state(), &[current])?;
+    current = mint_proof_row(state, &normalize_action, prim.id_counter, &[current]);
 
     // Anchor a reflexive proof on the rebuilt value for future rebuilds.
     if rebuilt != value {
@@ -338,10 +372,78 @@ fn rebuild_container_proof_rec(
             .lookup_table(prim.cproof_names.get(sort.name())?)?
             .clone();
         // Sym(current): rebuilt = value;  Trans(Sym(current), current): rebuilt = rebuilt.
-        let sym_p = sym_action.lookup_or_insert(state.raw_exec_state(), &[current])?;
-        let refl = trans_action.lookup_or_insert(state.raw_exec_state(), &[sym_p, current])?;
+        let sym_p = mint_proof_row(state, &sym_action, prim.id_counter, &[current]);
+        let refl = mint_proof_row(state, &trans_action, prim.id_counter, &[sym_p, current]);
         cproof_action.insert(state.raw_exec_state(), [rebuilt, refl].into_iter());
     }
 
     Some((rebuilt, current))
+}
+
+impl ProofInstrumentor<'_> {
+    /// Build the [`ContainerRebuildSpec`] for a container sort: mint and cache
+    /// the fresh rebuild-primitive names. The primitives themselves are
+    /// registered from the spec when the Sort is typechecked (see
+    /// [`register_container_rebuild_from_spec`]).
+    pub(super) fn build_container_rebuild_spec(
+        &mut self,
+        container_sort: &ArcSort,
+    ) -> ContainerRebuildSpec {
+        let sort_name = container_sort.name().to_string();
+        let proof_mode = self.egraph.proof_state.proofs_enabled;
+
+        let internal_rebuild_prim = self.egraph.parser.symbol_gen.fresh("container_rebuild");
+        self.egraph
+            .proof_state
+            .container_rebuild_name
+            .insert(sort_name.clone(), internal_rebuild_prim.clone());
+
+        let internal_rebuild_proof_prim = proof_mode.then(|| {
+            let proof_prim = self
+                .egraph
+                .parser
+                .symbol_gen
+                .fresh("container_rebuild_proof");
+            self.egraph
+                .proof_state
+                .container_rebuild_proof_name
+                .insert(sort_name, proof_prim.clone());
+            proof_prim
+        });
+
+        ContainerRebuildSpec {
+            internal_rebuild_prim,
+            internal_rebuild_proof_prim,
+        }
+    }
+
+    /// The (already-built) container value-rebuild primitive name for a sort.
+    pub(super) fn container_rebuild_prim(&mut self, container_sort: &ArcSort) -> String {
+        self.egraph
+            .proof_state
+            .container_rebuild_name
+            .get(container_sort.name())
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "container rebuild primitive not built for sort {}",
+                    container_sort.name()
+                )
+            })
+    }
+
+    /// The (already-built) container proof-rebuild primitive name for a sort.
+    pub(super) fn container_rebuild_proof_prim(&mut self, container_sort: &ArcSort) -> String {
+        self.egraph
+            .proof_state
+            .container_rebuild_proof_name
+            .get(container_sort.name())
+            .cloned()
+            .unwrap_or_else(|| {
+                panic!(
+                    "container rebuild proof primitive not built for sort {}",
+                    container_sort.name()
+                )
+            })
+    }
 }

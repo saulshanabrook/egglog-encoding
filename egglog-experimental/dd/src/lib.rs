@@ -144,8 +144,11 @@ pub struct EGraph {
     /// A core-relations [`Database`] used purely as the base-value / primitive
     /// engine, so `Value`s are bit-for-bit identical to the reference backend.
     db: Database,
-    /// Monotonic fresh-id counter for `fresh_id` / `add_term`.
-    pub(crate) next_id: u32,
+    /// Monotonic fresh-id counter, shared by the native `FreshId` default
+    /// (`fresh_id_internal`) and the term encoder's `get-fresh!` primitive (via
+    /// [`Backend::id_counter`]) so the two id sources never collide. Lives
+    /// in `db` (survives `db.clone()`); `id_counter` is its handle.
+    pub(crate) id_counter: CounterId,
     /// Atom-less rules (`(rule () …)`) fire ONCE; an entry here marks a rule
     /// index as already fired. The DD dataflow has no input relation to drive an
     /// atom-less body, so this fired-marker is the one piece of seminaive
@@ -170,6 +173,30 @@ pub struct EGraph {
     /// cloned external functions share this channel, matching the reference
     /// bridge's panic-function behavior.
     panic_message: Arc<Mutex<Option<String>>>,
+    /// Relation name → `FunctionId`, populated by `add_table`. Lets the term
+    /// encoder's `set-if-empty` / view-column-read ops (registered by view name before
+    /// the view table exists) resolve their view to a live relation at invoke
+    /// time.
+    pub(crate) table_ids: HashMap<String, FunctionId>,
+    /// `set-if-empty` ops keyed by the `ExternalFunctionId` the frontend resolves
+    /// their call sites to. The interpreter services these against the `mirror`
+    /// instead of calling the (panic) db external function.
+    pub(crate) set_if_empty_ops: HashMap<ExternalFunctionId, ViewOp>,
+    /// View-column reader ops, keyed like `set_if_empty_ops`.
+    pub(crate) view_column_read_ops: HashMap<ExternalFunctionId, ViewOp>,
+}
+
+/// A term-encoding view op (`set-if-empty` or view-column read) the DD interpreter
+/// services against its `mirror`: the FD view table name plus its key/output
+/// column counts.
+#[derive(Clone)]
+pub(crate) struct ViewOp {
+    pub(crate) view_name: String,
+    pub(crate) n_keys: usize,
+    /// Number of output columns to insert (`set-if-empty` only).
+    pub(crate) out_arity: usize,
+    /// Output column to read (view-column read only).
+    pub(crate) col_idx: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,14 +243,17 @@ impl EGraph {
         // `register_type` is idempotent, so a later frontend registration is a
         // no-op that returns the same id.
         db.base_values_mut().register_type::<()>();
+        // Burn the counter's initial 0 so the first minted id is 1, keeping 0 as
+        // a "null"/padding sentinel for the fixed-width DD rows.
+        let id_counter = db.add_counter();
+        db.inc_counter(id_counter);
         EGraph {
             relations: Vec::new(),
             rules: Vec::new(),
             mirror: HashMap::new(),
             subsumed: HashMap::new(),
             db,
-            // Start at 1 so id 0 stays a "null"/padding sentinel.
-            next_id: 1,
+            id_counter,
             seen: HashMap::new(),
             dd_fused: DdWorkers::default(),
             next_row_version: 1,
@@ -232,6 +262,9 @@ impl EGraph {
             subsumed_versions: HashMap::new(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Default::default(),
+            table_ids: HashMap::new(),
+            set_if_empty_ops: HashMap::new(),
+            view_column_read_ops: HashMap::new(),
         }
     }
 
@@ -446,9 +479,7 @@ impl EGraph {
     }
 
     pub(crate) fn fresh_id_internal(&mut self) -> u32 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
+        self.db.inc_counter(self.id_counter) as u32
     }
 
     /// Apply full-row sets in dependency-ordered waves. Merge-generated sets
@@ -634,7 +665,7 @@ struct MergeTransaction<'a> {
 
 impl<'a> MergeTransaction<'a> {
     fn new(eg: &'a mut EGraph, sets: Vec<(FunctionId, Row)>) -> Self {
-        let next_id_at_start = eg.next_id;
+        let next_id_at_start = eg.db.read_counter(eg.id_counter) as u32;
         Self {
             eg,
             pending: sets,
@@ -649,7 +680,9 @@ impl<'a> MergeTransaction<'a> {
     fn run(mut self) -> Result<bool> {
         let result = self.run_inner();
         if result.is_err() {
-            self.eg.next_id = self.next_id_at_start;
+            self.eg
+                .db
+                .set_counter(self.eg.id_counter, self.next_id_at_start as usize);
         }
         result
     }
@@ -689,7 +722,8 @@ impl<'a> MergeTransaction<'a> {
             self.changed |= self.eg.replace_located_rows(function, n_keys, replacements);
         }
 
-        Ok(self.changed || self.eg.next_id != self.next_id_at_start)
+        Ok(self.changed
+            || self.eg.db.read_counter(self.eg.id_counter) as u32 != self.next_id_at_start)
     }
 
     fn ensure_state(&mut self, function: FunctionId, n_keys: usize) {
@@ -889,11 +923,18 @@ impl<'a> MergeTransaction<'a> {
             }),
             MergeFn::Const(value) => Ok(value.rep()),
             MergeFn::Primitive(id, arguments) => {
-                let arguments = self
-                    .eval_args(arguments, owner, old, new, self_col, environment)?
-                    .into_iter()
-                    .map(Value::new)
-                    .collect::<Vec<_>>();
+                let args = self.eval_args(arguments, owner, old, new, self_col, environment)?;
+                // A custom merge lowered into the FD view's `:merge` may build
+                // terms, so the term encoder's `set-if-empty` / view-column-read ops can
+                // be invoked here too. Service them against the transaction's own
+                // view state (the db external function for them only panics).
+                if let Some(op) = self.eg.set_if_empty_ops.get(id).cloned() {
+                    return self.set_if_empty_in_merge(&op, &args);
+                }
+                if let Some(op) = self.eg.view_column_read_ops.get(id).cloned() {
+                    return self.view_column_read_in_merge(&op, &args);
+                }
+                let arguments = args.into_iter().map(Value::new).collect::<Vec<_>>();
                 self.eg
                     .eval_prim_internal(*id, &arguments)?
                     .map(|value| value.rep())
@@ -966,6 +1007,54 @@ impl<'a> MergeTransaction<'a> {
             },
         );
         Ok(Some(values))
+    }
+
+    /// Service a `set-if-empty` op invoked from inside a merge, against the
+    /// transaction's staged view state: return the e-class of the current
+    /// `(view keys)` row, or stage `(keys, default_vals)` and return the default
+    /// e-class. Mirrors [`crate::interpret`]'s action-time handler, but reads and
+    /// writes the transaction so same-transaction inserts and rollback apply.
+    fn set_if_empty_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
+        let view = self.view_op_table(op)?;
+        let n_keys = op.n_keys;
+        let key: Row = args[..n_keys].into();
+        if let Some(current) = self.current_row(view, n_keys, &key) {
+            return Ok(current.values[0]);
+        }
+        let values: Row = args[n_keys..n_keys + op.out_arity].into();
+        let eclass = values[0];
+        self.set_current(
+            view,
+            n_keys,
+            key,
+            CurrentRow {
+                values,
+                location: RowLocation::Live,
+                rows_for_key: 1,
+            },
+        );
+        Ok(eclass)
+    }
+
+    /// Service a view-column read invoked from inside a merge: output column
+    /// `op.col_idx` of the current `(view keys)` row, or the `fallback` arg.
+    fn view_column_read_in_merge(&mut self, op: &ViewOp, args: &[u32]) -> Result<u32> {
+        let view = self.view_op_table(op)?;
+        let n_keys = op.n_keys;
+        let key: Row = args[..n_keys].into();
+        let fallback = args[n_keys];
+        Ok(match self.current_row(view, n_keys, &key) {
+            Some(current) => current.values[op.col_idx],
+            None => fallback,
+        })
+    }
+
+    fn view_op_table(&self, op: &ViewOp) -> Result<FunctionId> {
+        self.eg
+            .table_ids
+            .get(&op.view_name)
+            .copied()
+            .ok_or_else(|| anyhow!("view op table `{}` is not registered", op.view_name))
     }
 }
 
@@ -1567,12 +1656,12 @@ mod tests {
             false,
         );
         eg.insert_live_row(f, row(&[1, 10, 20]));
-        let next_id = eg.next_id;
+        let next_id = eg.db.read_counter(eg.id_counter);
 
         let error = eg.apply_sets(vec![(f, row(&[1, 30, 40]))]).unwrap_err();
 
         assert!(error.to_string().contains("illegal merge attempted"));
-        assert_eq!(eg.next_id, next_id);
+        assert_eq!(eg.db.read_counter(eg.id_counter), next_id);
         assert!(eg.mirror[&fresh].is_empty());
         assert_eq!(eg.mirror[&f], HashSet::from([row(&[1, 10, 20])]));
     }
@@ -1758,7 +1847,7 @@ mod tests {
     fn lookup_or_create_finds_subsumed_rows() {
         let mut eg = EGraph::new();
         let f = id_function(&mut eg, "f", MergeFn::New);
-        eg.next_id = 100;
+        eg.db.set_counter(eg.id_counter, 100);
         eg.subsumed.entry(f).or_default().insert(row(&[42, 7]));
 
         let mut lookup_index = HashMap::new();
@@ -1766,7 +1855,7 @@ mod tests {
             interpret::lookup_or_create(&mut eg, f, &[Value::new(42)], &mut lookup_index).unwrap();
 
         assert_eq!(value[0], 7);
-        assert_eq!(eg.next_id, 100);
+        assert_eq!(eg.db.read_counter(eg.id_counter), 100);
         assert!(eg.mirror[&f].is_empty());
     }
 
@@ -2040,7 +2129,11 @@ mod tests {
         assert_eq!(cloned.rules.len(), eg.rules.len());
         assert_eq!(cloned.mirror, eg.mirror);
         assert_eq!(cloned.subsumed, eg.subsumed);
-        assert_eq!(cloned.next_id, eg.next_id);
+        assert_eq!(cloned.id_counter, eg.id_counter);
+        assert_eq!(
+            cloned.db.read_counter(cloned.id_counter),
+            eg.db.read_counter(eg.id_counter)
+        );
         assert_eq!(cloned.next_row_version, eg.next_row_version);
         assert_eq!(cloned.live_versions, eg.live_versions);
         assert_eq!(cloned.all_versions, eg.all_versions);
@@ -2241,6 +2334,7 @@ impl Backend for EGraph {
                 });
             merge_level = merge_level.max(dependency.merge_level + 1);
         });
+        self.table_ids.insert(config.name.clone(), id);
         self.relations.push(RelationInfo {
             name: config.name,
             arity,
@@ -2357,6 +2451,10 @@ impl Backend for EGraph {
         Some(self.db.add_counter())
     }
 
+    fn id_counter(&self) -> Option<CounterId> {
+        Some(self.id_counter)
+    }
+
     fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
         // The supported proof/term subset interns container values but does not
         // rely on merging distinct ids for one rebuilt value. Keep that subset's
@@ -2377,6 +2475,34 @@ impl Backend for EGraph {
         let id = RuleId::new(self.rules.len() as u32);
         self.rules.push(Some(rule));
         Ok(id)
+    }
+
+    fn fresh_id(&mut self) -> Value {
+        Value::new(self.fresh_id_internal())
+    }
+
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
+        // Route through the merge-aware path (like the reference backend's staged
+        // flush) so that same-key/different-value rows are collapsed by each
+        // function's `:merge` — FD-view congruence unions colliding e-classes, and
+        // a `:no-merge` conflict is rejected — rather than coexisting as raw mirror
+        // rows.
+        let sets: Vec<(FunctionId, Row)> = values
+            .into_iter()
+            .map(|(func, row)| (func, row.iter().map(|v| v.rep()).collect()))
+            .collect();
+        if let Err(err) = self.apply_sets(sets) {
+            // `add_values` cannot return an error; stash it to surface on the next
+            // `run_rules` (the reference backend likewise reports a conflicting
+            // merge lazily rather than at load time).
+            let mut pending = self
+                .panic_message
+                .lock()
+                .expect("DD panic-message side channel must not be poisoned");
+            if pending.is_none() {
+                *pending = Some(err.to_string());
+            }
+        }
     }
 
     fn free_rule(&mut self, id: RuleId) {
@@ -2474,6 +2600,54 @@ impl Backend for EGraph {
             )))
     }
 
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    ) -> ExternalFunctionId {
+        // The interpreter intercepts this id and services it against the mirror
+        // (see `interpret::apply_head`); the registered db function only fires if
+        // that interception is ever missed, so make it a loud error.
+        let id = Backend::new_panic(
+            self,
+            format!("set-if-empty for `{view_name}` reached the db path; DD must intercept it"),
+        );
+        self.set_if_empty_ops.insert(
+            id,
+            ViewOp {
+                view_name,
+                n_keys,
+                out_arity,
+                col_idx: 0,
+            },
+        );
+        id
+    }
+
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        let id = Backend::new_panic(
+            self,
+            format!("view-column read for `{view_name}` reached the db path; DD must intercept it"),
+        );
+        self.view_column_read_ops.insert(
+            id,
+            ViewOp {
+                view_name,
+                n_keys,
+                // A view-column reader never inserts, so out_arity is unused.
+                out_arity: 0,
+                col_idx,
+            },
+        );
+        id
+    }
+
     // -- capability flags ---------------------------------------------------
 
     fn requires_term_encoding(&self) -> bool {
@@ -2516,7 +2690,7 @@ impl Backend for EGraph {
             mirror: self.mirror.clone(),
             subsumed: self.subsumed.clone(),
             db: self.db.clone(),
-            next_id: self.next_id,
+            id_counter: self.id_counter,
             seen: self.seen.clone(),
             dd_fused: DdWorkers::default(),
             next_row_version: self.next_row_version,
@@ -2525,6 +2699,9 @@ impl Backend for EGraph {
             subsumed_versions: self.subsumed_versions.clone(),
             dd_fused_fed_versions: HashMap::new(),
             panic_message: Arc::clone(&self.panic_message),
+            table_ids: self.table_ids.clone(),
+            set_if_empty_ops: self.set_if_empty_ops.clone(),
+            view_column_read_ops: self.view_column_read_ops.clone(),
         })
     }
 

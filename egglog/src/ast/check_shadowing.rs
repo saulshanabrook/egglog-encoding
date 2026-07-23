@@ -70,9 +70,12 @@ impl Names {
                 let mut inner = self.clone();
                 inner.check_shadowing_query(query)
             }
-            ResolvedNCommand::Fail(_span, command) => {
+            ResolvedNCommand::Fail(_span, commands) => {
                 let mut inner = self.clone();
-                inner.check_shadowing(command)
+                for command in commands {
+                    inner.check_shadowing(command)?;
+                }
+                Ok(())
             }
             ResolvedNCommand::Extract(..) => Ok(()),
             ResolvedNCommand::RunSchedule(..) => Ok(()),

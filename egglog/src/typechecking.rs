@@ -383,6 +383,26 @@ impl EGraph {
         });
     }
 
+    /// Register a term-encoding op primitive whose runtime entrypoint the backend
+    /// itself mints. `prim` supplies only the type constraints (its body is never
+    /// invoked); `make_id` asks each backend on the typechecker chain for the
+    /// [`ExternalFunctionId`] that services this op against that backend's own
+    /// storage. Unlike [`Self::register_registry_primitive`], this works on
+    /// backends without an action registry.
+    pub(crate) fn add_backend_op_primitive<T, F>(
+        &mut self,
+        prim: T,
+        valid_ctxs: &[Context],
+        mut make_id: F,
+    ) where
+        T: Primitive + Clone,
+        F: FnMut(&mut dyn Backend, Context) -> ExternalFunctionId,
+    {
+        self.register_per_context(prim, None, valid_ctxs, move |backend, _x, ctx| {
+            make_id(backend, ctx)
+        });
+    }
+
     /// Shared registration engine. Stores one primitive definition, plus
     /// one runtime id per valid [`Context`]. Each wrapper carries its
     /// specific context stamped onto the state wrapper at invoke time.
@@ -454,6 +474,19 @@ impl EGraph {
         let command: ResolvedNCommand = match command {
             NCommand::Function(fdecl) => {
                 let resolved = self.type_info.typecheck_function(symbol_gen, fdecl)?;
+                // An FD view (function carrying `term_constructor` with a tuple
+                // `(eclass, proof)` output) gets a `set-if-empty` primitive (+ a
+                // proof-column reader) so the encoding can canonicalize a term to
+                // the view's e-class at insertion time. Registered here so it
+                // survives re-parse of the desugared program.
+                if resolved.term_constructor.is_some()
+                    && let ResolvedCall::Func(ft) = &resolved.resolved_schema
+                    && ft.outputs.len() >= 2
+                {
+                    let (name, input, outputs) =
+                        (resolved.name.clone(), ft.input.clone(), ft.outputs.clone());
+                    crate::proofs::proof_fresh::register_set_if_empty(self, &name, input, outputs);
+                }
                 // If this is a let binding, add it to global_sorts
                 // This preserves bahavior for lets after desugaring
                 if resolved.internal_let {
@@ -507,6 +540,7 @@ impl EGraph {
                     let names = &mut self.proof_state.proof_names;
                     names.proof_datatype = name.clone();
                     names.congr_constructor = pc.congr.clone();
+                    names.congr_all_constructor = pc.congr_all.clone();
                     names.eq_trans_constructor = pc.trans.clone();
                     names.eq_sym_constructor = pc.sym.clone();
                     names.container_normalize_constructor = pc.normalize.clone();
@@ -594,9 +628,12 @@ impl EGraph {
                 span.clone(),
                 self.type_info.typecheck_facts(symbol_gen, facts)?,
             ),
-            NCommand::Fail(span, cmd) => {
-                ResolvedNCommand::Fail(span.clone(), Box::new(self.typecheck_command(cmd)?))
-            }
+            NCommand::Fail(span, cmds) => ResolvedNCommand::Fail(
+                span.clone(),
+                cmds.iter()
+                    .map(|cmd| self.typecheck_command(cmd))
+                    .collect::<Result<_, _>>()?,
+            ),
             NCommand::RunSchedule(schedule) => ResolvedNCommand::RunSchedule(
                 self.type_info.typecheck_schedule(symbol_gen, schedule)?,
             ),
@@ -629,16 +666,13 @@ impl EGraph {
                 ResolvedNCommand::PrintSize(span.clone(), n.clone())
             }
             NCommand::ProveExists(span, constructor) => {
+                // prove-exists targets a table: a constructor, or its lowering to
+                // a term relation (a function) under the term/proof encoding.
+                // `get_func_type` already rejects primitives/unbound names.
                 let func_type = self
                     .type_info
                     .get_func_type(constructor)
                     .ok_or_else(|| TypeError::UnboundFunction(constructor.clone(), span.clone()))?;
-                if func_type.subtype != FunctionSubtype::Constructor {
-                    return Err(TypeError::ProveExistsRequiresConstructor(
-                        constructor.clone(),
-                        span.clone(),
-                    ));
-                }
                 ResolvedNCommand::ProveExists(span.clone(), ResolvedCall::Func(func_type.clone()))
             }
             NCommand::Output { span, file, exprs } => {
@@ -966,6 +1000,7 @@ impl TypeInfo {
             span: fdecl.span.clone(),
             term_constructor: fdecl.term_constructor.clone(),
             identity_vals: fdecl.identity_vals,
+            internal_term_node: fdecl.internal_term_node,
         })
     }
 
@@ -1388,8 +1423,6 @@ pub enum TypeError {
     UndefinedSort(String, Span),
     #[error("{1}\nUnbound function {0}")]
     UnboundFunction(String, Span),
-    #[error("{1}\nprove-exists requires constructor function, but {0} is not a constructor")]
-    ProveExistsRequiresConstructor(String, Span),
     #[error("{1}\nFunction already bound {0}")]
     FunctionAlreadyBound(String, Span),
     #[error("{1}\nSort {0} already declared.")]

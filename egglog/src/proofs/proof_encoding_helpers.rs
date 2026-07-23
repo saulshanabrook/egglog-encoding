@@ -11,7 +11,7 @@ use crate::{
     },
     core::ResolvedCall,
     proofs::proof_encoding::ProofInstrumentor,
-    util::{FreshGen, HashMap, SymbolGen},
+    util::{FreshGen, HashMap, HashSet, SymbolGen},
 };
 
 /// Holds all the names used in proof encoding.
@@ -24,10 +24,12 @@ pub(crate) struct EncodingNames {
     pub(crate) proof_datatype: String,
     pub(crate) fiat_constructor: String,
     pub(crate) rule_constructor: String,
-    pub(crate) merge_fn_constructor: String,
+    pub(crate) merge_fn_idx_constructor: String,
+    pub(crate) merge_fn_row_constructor: String,
     pub(crate) eq_trans_constructor: String,
     pub(crate) eq_sym_constructor: String,
     pub(crate) congr_constructor: String,
+    pub(crate) congr_all_constructor: String,
     pub(crate) container_normalize_constructor: String,
     pub(crate) eval_constructor: String,
     /// For a given function symbol, the name of the function that converts to the AST type.
@@ -54,7 +56,17 @@ pub(crate) struct EncodingNames {
 pub(crate) enum Justification {
     Rule(String, String), // rule-name expression and proof-list expression
     Fiat,
-    Merge(String, String, String), // function name, proof1, proof2
+    /// Term-free merge justification for a merge-body subexpression: function
+    /// name, the two premise (view) proof expressions, and the pre-order index of
+    /// this subexpression in the merge body (matches `subexpr_at_index` in proof
+    /// conversion). It embeds no AST, so it needs neither the merged term
+    /// nor the function key/children — usable in a `:merge` action.
+    MergeIdx(String, String, String, usize),
+    /// Term-free merge justification for the whole view row (function name + two
+    /// premise proof expressions). The conclusion `f(children, merged)` is
+    /// reconstructed during proof conversion by running the whole merge body on
+    /// the premise outputs; no AST/children needed.
+    MergeRow(String, String, String),
 }
 
 impl EncodingNames {
@@ -65,10 +77,12 @@ impl EncodingNames {
             proof_datatype: symbol_gen.fresh("Proof"),
             fiat_constructor: symbol_gen.fresh("Fiat"),
             rule_constructor: symbol_gen.fresh("Rule"),
-            merge_fn_constructor: symbol_gen.fresh("Merge"),
+            merge_fn_idx_constructor: symbol_gen.fresh("MergeIdx"),
+            merge_fn_row_constructor: symbol_gen.fresh("MergeRow"),
             eq_trans_constructor: symbol_gen.fresh("Trans"),
             eq_sym_constructor: symbol_gen.fresh("Sym"),
             congr_constructor: symbol_gen.fresh("Congr"),
+            congr_all_constructor: symbol_gen.fresh("CongrAll"),
             container_normalize_constructor: symbol_gen.fresh("ContainerNormalize"),
             eval_constructor: symbol_gen.fresh("Eval"),
             sort_to_ast_constructor: HashMap::default(),
@@ -109,13 +123,26 @@ impl ProofInstrumentor<'_> {
         res.unwrap()
     }
 
-    pub(crate) fn format_prooflist(&self, proofs: &[String]) -> String {
-        let pcons = &self.proof_names().pcons;
-        let pnil = &self.proof_names().pnil;
+    /// Build a proof list (`pnil`, then `pcons` folds) by minting a fresh id
+    /// per node and asserting the row, emitting the mints onto `stmts` and
+    /// returning the final list's var.
+    pub(crate) fn format_prooflist(
+        &mut self,
+        stmts: &mut Vec<String>,
+        proofs: &[String],
+    ) -> String {
+        let pcons = self.proof_names().pcons.clone();
+        let pnil = self.proof_names().pnil.clone();
+        let proof_list_sort = self.proof_names().proof_list_sort.clone();
 
-        let mut prooflist = format!("({pnil})");
+        let mut prooflist = self.mint(stmts, &pnil, "", &proof_list_sort);
         for proof in proofs.iter().rev() {
-            prooflist = format!("({pcons} {proof} {prooflist})");
+            prooflist = self.mint(
+                stmts,
+                &pcons,
+                &format!("{proof} {prooflist}"),
+                &proof_list_sort,
+            );
         }
         prooflist
     }
@@ -253,7 +280,9 @@ impl ProofInstrumentor<'_> {
                 .sort_to_ast_constructor
                 .insert(sort.to_string(), to_ast_constructor.clone());
             let ast_sort = &self.proof_names().ast_sort;
-            format!("(constructor {to_ast_constructor} ({sort}) {ast_sort} :internal-hidden)")
+            format!(
+                "(function {to_ast_constructor} ({sort} {ast_sort}) Unit :no-merge :internal-hidden :internal-term-node)"
+            )
         } else {
             "".to_string()
         }
@@ -321,7 +350,7 @@ impl ProofInstrumentor<'_> {
                     .sort_to_ast_constructor
                     .insert(sort_name.clone(), ast_constructor.clone());
                 to_ast_constructors.push(format!(
-                    "(constructor {ast_constructor} ({sort_name} ) {} :internal-hidden)",
+                    "(function {ast_constructor} ({sort_name} {}) Unit :no-merge :internal-hidden :internal-term-node)",
                     self.proof_names().ast_sort
                 ));
             }
@@ -334,10 +363,12 @@ impl ProofInstrumentor<'_> {
             ref proof_datatype,
             ref fiat_constructor,
             ref rule_constructor,
-            ref merge_fn_constructor,
+            ref merge_fn_idx_constructor,
+            ref merge_fn_row_constructor,
             ref eq_trans_constructor,
             ref eq_sym_constructor,
             ref congr_constructor,
+            ref congr_all_constructor,
             ref container_normalize_constructor,
             ref eval_constructor,
             ref pcons,
@@ -351,41 +382,55 @@ impl ProofInstrumentor<'_> {
 (sort {ast_sort}) ;; wrap sorts in this for proofs
 ;; The proof datatype records the global proof constructor names so container
 ;; rebuild can recover them on re-parse (see ContainerRebuildSpec).
-(sort {proof_datatype} :internal-proof-names {congr_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor})
+(sort {proof_datatype} :internal-proof-names {congr_constructor} {congr_all_constructor} {eq_trans_constructor} {eq_sym_constructor} {container_normalize_constructor} {fiat_constructor})
 
-(constructor {pcons} ({proof_datatype} {proof_list_sort}) {proof_list_sort} :internal-hidden)
-(constructor {pnil} () {proof_list_sort} :internal-hidden)
+;; Proof/AST/ProofList terms are relations, not constructors: the encoding mints
+;; a fresh id (`get-fresh!`) and asserts the row, so congruent duplicates are
+;; kept (never merged away) rather than relying on native congruence. The final
+;; column of each relation is the minted output id.
+(function {pcons} ({proof_datatype} {proof_list_sort} {proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
+(function {pnil} ({proof_list_sort}) Unit :no-merge :internal-hidden :internal-term-node)
 
 {to_ast_str}
 
 ;; Fiat justification for globals and primitives, gives two terms t1 = t2 for the proposition being justified
-(constructor {fiat_constructor} ({ast_sort} {ast_sort}) {proof_datatype} :internal-hidden)
+(function {fiat_constructor} ({ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; name of rule, one proof per fact in the query, proposition being proven t1 = t2
-(constructor {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort}) {proof_datatype} :internal-hidden)
+(function {rule_constructor} (String {proof_list_sort} {ast_sort} {ast_sort} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
-;; merge function justification- name of function and two proofs for the two terms being merged,
-;; and the proposition being justified t = t
-(constructor {merge_fn_constructor} (String {proof_datatype} {proof_datatype} {ast_sort}) {proof_datatype} :internal-hidden)
+;; term-free merge justification for an FD custom-function view subexpression:
+;; name of function, two premise proofs, and the pre-order index of the merge-body
+;; subexpression whose conclusion is reconstructed during proof conversion
+(function {merge_fn_idx_constructor} (String {proof_datatype} {proof_datatype} i64 {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+;; term-free merge justification for an FD custom-function view row:
+;; name of function and two premise proofs; the whole-row conclusion is
+;; reconstructed during proof conversion by running the whole merge body
+(function {merge_fn_row_constructor} (String {proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; transitivity of equality proofs
-(constructor {eq_trans_constructor} ({proof_datatype} {proof_datatype}) {proof_datatype} :internal-hidden)
+(function {eq_trans_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; symmetry of equality proofs
-(constructor  {eq_sym_constructor} ({proof_datatype}) {proof_datatype} :internal-hidden)
+(function {eq_sym_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 ;; given a proof that t1 = f(..., ci, ...)
 ;; and the child index i of ci in the term f(..., ci, ...)
 ;; and a proof that ci = c2,
 ;; produces a justification that t1 = f(..., c2, ...)
-(constructor  {congr_constructor} ({proof_datatype} i64 {proof_datatype}) {proof_datatype} :internal-hidden)
+(function {congr_constructor} ({proof_datatype} i64 {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
+
+;; element-matching congruence (used by container rebuilds): given a proof that
+;; t1 = c and a proof that a = b, produces a justification that t1 = c with
+;; every child of c equal to a replaced by b.
+(function {congr_all_constructor} ({proof_datatype} {proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; given a proof that t1 = c, where c is a container term, produces a proof that
 ;; t1 = normalize(c) (the container's canonicalization: sort/dedup for sets,
 ;; last-write-wins for maps, sort for multisets)
-(constructor  {container_normalize_constructor} ({proof_datatype}) {proof_datatype} :internal-hidden)
+(function {container_normalize_constructor} ({proof_datatype} {proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
 
 ;; marks the proof of a container side condition. Carries nothing: the side
 ;; condition is re-evaluated against the rule body when checked.
-(constructor  {eval_constructor} () {proof_datatype} :internal-hidden)
+(function {eval_constructor} ({proof_datatype}) Unit :no-merge :internal-hidden :internal-term-node)
                 "
         )
     }
@@ -448,10 +493,6 @@ pub enum ProofEncodingUnsupportedReason {
     #[error("`fail` wrapping an `input` command is not supported by proof encoding.")]
     FailInputCommand,
     #[error(
-        "`fail` requires exactly one atomic encoded command; wrapped `set` and multi-operation commands are not supported."
-    )]
-    FailNonAtomicCommand,
-    #[error(
         "let binding with a primitive in the body. For silly internal reasons, we don't support primitive bindings for proofs at the moment, sorry."
     )]
     LetBindingWithNonEqSort,
@@ -469,12 +510,37 @@ pub enum ProofEncodingUnsupportedReason {
         "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
     )]
     MergeActionBlock,
+    #[error(
+        "eq-sort-output `:no-merge` functions are not supported by the term/proof encoding (their conflict check needs union-find leaders); run them on the native backend, or give the function a `:merge` (e.g. `:merge old`). Primitive/`Unit`-output `:no-merge` functions are supported."
+    )]
+    NoMergeEqSortFunction,
 }
 
 /// Checks whether a desugared program supports proof encoding.
 pub fn program_supports_proofs(commands: &[ResolvedCommand], type_info: &TypeInfo) -> bool {
+    // Globals defined anywhere in the program, including inside `(push)`/`(pop)`
+    // scopes. `type_info.global_sorts` reflects only the final scope (each `pop`
+    // unregisters its globals), so checking against it alone misreads a popped
+    // global's action-side lookup as an unsupported function lookup.
+    let let_globals: HashSet<String> = commands
+        .iter()
+        .filter_map(|c| match c {
+            GenericCommand::Function {
+                name,
+                let_binding: true,
+                ..
+            } => Some(name.clone()),
+            _ => None,
+        })
+        .collect();
     for command in commands {
-        if command_supports_proof_encoding(command, type_info).is_err() {
+        if let Err(reason) = command_supports_proof_encoding_impl(command, type_info, &let_globals)
+        {
+            let cmd = command.to_string();
+            log::debug!(
+                "program does not support proofs: {reason}\n  command: {}",
+                &cmd[..cmd.len().min(160)]
+            );
             return false;
         }
     }
@@ -501,15 +567,40 @@ fn expr_primitives_have_validators(expr: &ResolvedExpr) -> bool {
 }
 
 /// Check if an action contains non-global function lookups in any of its expressions
-fn action_has_function_lookup(action: &ResolvedAction, type_info: &TypeInfo) -> bool {
+fn action_has_function_lookup(
+    action: &ResolvedAction,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
+) -> bool {
     let mut has_lookup = false;
     action.clone().visit_exprs(&mut |expr| {
-        if type_info.expr_has_function_lookup(&expr).is_some() {
+        if expr_has_non_global_lookup(&expr, type_info, extra_globals) {
             has_lookup = true;
         }
         expr
     });
     has_lookup
+}
+
+/// Like [`TypeInfo::expr_has_function_lookup`], but also treating names in
+/// `extra_globals` as globals (see [`program_supports_proofs`]).
+fn expr_has_non_global_lookup(
+    expr: &ResolvedExpr,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
+) -> bool {
+    use crate::ast::GenericExpr;
+    expr.find(&mut |e| {
+        if let GenericExpr::Call(span, ResolvedCall::Func(func_type), _) = e
+            && func_type.subtype == crate::ast::FunctionSubtype::Custom
+            && !type_info.is_global(&func_type.name)
+            && !extra_globals.contains(&func_type.name)
+        {
+            return Some(span.clone());
+        }
+        None
+    })
+    .is_some()
 }
 
 /// Check if a fact contains a primitive expression whose result needs a stored term proof.
@@ -532,6 +623,17 @@ pub(crate) fn command_supports_proof_encoding(
     command: &ResolvedCommand,
     type_info: &TypeInfo,
 ) -> Result<(), ProofEncodingUnsupportedReason> {
+    command_supports_proof_encoding_impl(command, type_info, &HashSet::default())
+}
+
+/// [`command_supports_proof_encoding`] with `extra_globals`: let-bound names
+/// treated as globals even when out of scope in `type_info` (see
+/// [`program_supports_proofs`]).
+fn command_supports_proof_encoding_impl(
+    command: &ResolvedCommand,
+    type_info: &TypeInfo,
+    extra_globals: &HashSet<String>,
+) -> Result<(), ProofEncodingUnsupportedReason> {
     // `:unsafe-seminaive` rules perform arbitrary reads against the live
     // database; the term/proof encoding can't represent that.
     if let crate::ast::GenericCommand::Rule { rule } = command
@@ -551,6 +653,27 @@ pub(crate) fn command_supports_proof_encoding(
         && schema.is_tuple_output()
     {
         return Err(ProofEncodingUnsupportedReason::TupleOutputFunction);
+    }
+
+    // The conflict check for an eq-sort output needs union-find leaders (raw id
+    // equality is not e-class equality), which the encoding has no eager hook for;
+    // a file using one runs plain only. Primitive/`Unit`-output `:no-merge` is
+    // supported (raw equality is equality there — encoded as an FD view declared
+    // native `:no-merge` + `:internal-identity-vals 1`). Constructors/relations are
+    // `Constructor` commands (not `Function`), and encoded globals (`:internal-let`,
+    // produced by `remove_globals` before this check in the plain-resolve path
+    // `file_supports_proofs` uses) have their own FD-view encoding — both excluded.
+    if let crate::ast::GenericCommand::Function {
+        merge: None,
+        let_binding: false,
+        schema,
+        ..
+    } = command
+        && type_info
+            .get_sort_by_name(schema.output())
+            .is_some_and(|sort| sort.is_eq_sort())
+    {
+        return Err(ProofEncodingUnsupportedReason::NoMergeEqSortFunction);
     }
 
     // A `:merge` action block runs actions before its result; the proof encoding only instruments
@@ -580,7 +703,8 @@ pub(crate) fn command_supports_proof_encoding(
     // (global function calls are allowed - they get desugared to constructors)
     let mut has_function_lookup_in_action = false;
     command.clone().visit_actions(&mut |action| {
-        has_function_lookup_in_action |= action_has_function_lookup(&action, type_info);
+        has_function_lookup_in_action |=
+            action_has_function_lookup(&action, type_info, extra_globals);
         action
     });
 
@@ -590,7 +714,7 @@ pub(crate) fn command_supports_proof_encoding(
     if let GenericCommand::Function {
         merge: Some(merge), ..
     } = command
-        && type_info.expr_has_function_lookup(&merge.result).is_some()
+        && expr_has_non_global_lookup(&merge.result, type_info, extra_globals)
     {
         return Err(ProofEncodingUnsupportedReason::FunctionLookupInAction);
     }
@@ -658,21 +782,23 @@ pub(crate) fn command_supports_proof_encoding(
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)
         GenericCommand::Extract(_, expr, variants) => {
-            if type_info.expr_has_function_lookup(expr).is_some()
-                || type_info.expr_has_function_lookup(variants).is_some()
+            if expr_has_non_global_lookup(expr, type_info, extra_globals)
+                || expr_has_non_global_lookup(variants, type_info, extra_globals)
             {
                 Err(ProofEncodingUnsupportedReason::FunctionLookupInAction)
             } else {
                 Ok(())
             }
         }
-        GenericCommand::Fail(_, command) => match command.as_ref() {
-            GenericCommand::Input { .. } => Err(ProofEncodingUnsupportedReason::FailInputCommand),
-            GenericCommand::Action(ResolvedAction::Set(..)) => {
-                Err(ProofEncodingUnsupportedReason::FailNonAtomicCommand)
+        GenericCommand::Fail(_, commands) => {
+            for command in commands {
+                if let GenericCommand::Input { .. } = command {
+                    return Err(ProofEncodingUnsupportedReason::FailInputCommand);
+                }
+                command_supports_proof_encoding(command, type_info)?;
             }
-            command => command_supports_proof_encoding(command, type_info),
-        },
+            Ok(())
+        }
         // let binding with non-eq sort not supported by proof_global_desugar
         ResolvedCommand::Action(ResolvedAction::Let(_, _, expr)) => {
             // let binding with non-eq sort not supported by proof_global_desugar
@@ -774,6 +900,68 @@ impl crate::constraint::TypeConstraint for OrientProofTypeConstraint {
             crate::constraint::eq(arguments[2].clone(), arguments[0].clone()),
             crate::constraint::eq(arguments[3].clone(), arguments[1].clone()),
             crate::constraint::eq(arguments[4].clone(), arguments[1].clone()),
+        ]
+    }
+}
+
+/// The `select-eq` primitive: `(select-eq test cand if-eq else) -> if-eq` when
+/// `test == cand`, else `else`. Typed `(T T P P) -> P` for any sorts `T` and `P`.
+///
+/// Used by a custom function's FD-view `:merge` to keep its proof column stable:
+/// when the merged output equals a colliding premise's output, reuse that
+/// premise's existing proof rather than mint a fresh one. Without this the proof
+/// column would change on every idempotent merge (`min`/`max`/...), bumping the
+/// row's timestamp and preventing saturation.
+#[derive(Clone)]
+pub(crate) struct SelectEqProof;
+
+impl crate::Primitive for SelectEqProof {
+    fn name(&self) -> &str {
+        "select-eq"
+    }
+
+    fn get_type_constraints(&self, span: &Span) -> Box<dyn crate::constraint::TypeConstraint> {
+        Box::new(SelectEqProofTypeConstraint { span: span.clone() })
+    }
+}
+
+impl crate::PurePrim for SelectEqProof {
+    fn apply<'a, 'db>(&self, _state: crate::PureState<'a, 'db>, args: &[Value]) -> Option<Value> {
+        let [test, cand, if_eq, els] = args else {
+            return None;
+        };
+        Some(if test == cand { *if_eq } else { *els })
+    }
+}
+
+struct SelectEqProofTypeConstraint {
+    span: Span,
+}
+
+impl crate::constraint::TypeConstraint for SelectEqProofTypeConstraint {
+    fn get(
+        &self,
+        arguments: &[crate::core::AtomTerm],
+        _typeinfo: &TypeInfo,
+    ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, crate::ArcSort>>> {
+        // `(test cand if-eq else) -> out`: `test`/`cand` share one sort;
+        // `if-eq`/`else`/`out` another.
+        if arguments.len() != 5 {
+            return vec![crate::constraint::impossible(
+                crate::constraint::ImpossibleConstraint::ArityMismatch {
+                    atom: crate::core::Atom {
+                        span: self.span.clone(),
+                        head: "select-eq".to_string(),
+                        args: arguments.to_vec(),
+                    },
+                    expected: 5,
+                },
+            )];
+        }
+        vec![
+            crate::constraint::eq(arguments[1].clone(), arguments[0].clone()),
+            crate::constraint::eq(arguments[3].clone(), arguments[2].clone()),
+            crate::constraint::eq(arguments[4].clone(), arguments[2].clone()),
         ]
     }
 }

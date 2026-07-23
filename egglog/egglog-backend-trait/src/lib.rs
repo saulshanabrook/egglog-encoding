@@ -87,6 +87,7 @@ use std::any::{Any, TypeId};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Result;
+use egglog_numeric_id::NumericId;
 
 mod backend_impl;
 
@@ -204,6 +205,13 @@ pub type ContainerMergeFn =
 ///
 /// See the crate docs for which methods are required vs. optional and how the
 /// ergonomic sugar on `dyn Backend` relates to the `_dyn` methods here.
+///
+/// Under the term/proof encoding the frontend lowers e-graph constructors to
+/// relation tables plus functional-dependency view functions, and `union` to a
+/// `:merge` on a union-find function. A backend therefore needs no dedicated
+/// `union` or `constructor` operation — generic tables, rules, and `:merge`
+/// suffice. This holds when evaluating actions too: a `union` action becomes a
+/// `:merge` write and a constructor application becomes a table insert.
 pub trait Backend: Send + Sync {
     // -- table lifecycle ----------------------------------------------------
 
@@ -268,12 +276,42 @@ pub trait Backend: Send + Sync {
         None
     }
 
+    /// The counter this backend mints ids from, when its ids come from a monotonic
+    /// counter (the reference bridge); `None` when it assigns ids
+    /// deterministically/structurally. Exposed so the term encoding's `get-fresh!`
+    /// primitive mints from the same counter the backend uses.
+    fn id_counter(&self) -> Option<CounterId> {
+        None
+    }
+
     /// Select the merge policy for a registered container type. Backends that
     /// advertise container support outside the reference bridge must provide
     /// this alongside a container registry and id counter.
     fn container_merge_fn(&self, _container_type: TypeId) -> Option<ContainerMergeFn> {
         None
     }
+
+    // -- native fact loading (`(input …)`) ----------------------------------
+    //
+    // The frontend loads `(input …)` facts by minting ids and inserting the
+    // encoded term/view (and, in proof mode, AST/proof) rows directly, rather
+    // than compiling and running a loader rule. Each backend services these
+    // against its own storage (db buffers for the reference bridge, the
+    // host-side mirror for Differential Dataflow), so input loading never falls
+    // back to rule compilation.
+
+    /// Mint a fresh id: the next unused integer from the backend's counter. A fresh
+    /// id names a term (terms double as their own e-class) or a proof/AST node; the
+    /// id itself is not stored anywhere until the encoding asserts a relation row
+    /// referencing it. Panics on a backend without a counter.
+    fn fresh_id(&mut self) -> Value;
+
+    /// Insert a batch of logical rows and flush. Each `(func, row)` gives a
+    /// function id and its row as keys followed by all value columns (no
+    /// timestamp/subsumption — the backend fills those in). Duplicate keys are
+    /// resolved by the function's `:merge` on flush, so callers plain-insert
+    /// rather than get-or-insert.
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>);
 
     // -- execution state (object-safe; see `with_execution_state` sugar) -----
 
@@ -320,6 +358,66 @@ pub trait Backend: Send + Sync {
     /// site, trigger the backend's normal early-stop path, and make the next
     /// [`Backend::run_rules`] return the provided message as an error.
     fn new_panic(&mut self, message: String) -> ExternalFunctionId;
+
+    // -- term-encoding mint/canonicalize ops --------------------------------
+    //
+    // The term encoder represents terms as relation rows minted with fresh ids
+    // and canonicalized against per-constructor "FD view" tables. These three
+    // ops let each backend service that minting/canonicalization against its
+    // own storage (db tables for the reference bridge; a host-side mirror for a
+    // relational backend), so the encoding does not reach into one backend's
+    // internals directly.
+
+    /// Register the `get-fresh!` mint op. Returns the [`ExternalFunctionId`]
+    /// its mint sites (`(get-fresh! "Sort")`) resolve to. The default mints an
+    /// impure `() -> id` value from the backend's
+    /// [`Backend::id_counter`], so it works for any counter-based
+    /// backend. Called only when [`Backend::id_counter`] is `Some`.
+    fn register_get_fresh(&mut self) -> ExternalFunctionId {
+        let counter = self
+            .id_counter()
+            .expect("register_get_fresh requires an id counter");
+        self.register_external_func(Box::new(egglog_core_relations::make_external_func(
+            move |state: &mut ExecutionState, _args: &[Value]| {
+                Some(Value::from_usize(state.inc_counter(counter)))
+            },
+        )))
+    }
+
+    /// Register the `set-if-empty` canonicalize op for the FD view table named
+    /// `view_name` (`n_keys` key columns, `out_arity` output columns
+    /// `(eclass, …)`). Returns the [`ExternalFunctionId`] its call sites resolve
+    /// to. Semantics at invoke: look up `(view keys)`; if a row exists return its
+    /// first output (the eclass); otherwise insert `(keys, default_vals)` — the
+    /// trailing `out_arity` args — and return `default_vals[0]`. The default
+    /// registers a panic, so a backend that cannot service it fails with a clear
+    /// message rather than silently.
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        _n_keys: usize,
+        _out_arity: usize,
+    ) -> ExternalFunctionId {
+        self.new_panic(format!(
+            "this backend does not support set-if-empty for view `{view_name}`"
+        ))
+    }
+
+    /// Register a reader for output column `col_idx` of the FD view named
+    /// `view_name` (`n_keys` key columns): `(keys, fallback) -> column`, returning
+    /// that output column for `keys` or `fallback` when the key is absent. Generic
+    /// over the column so the backend stays proof-agnostic; the term/proof encoding
+    /// reads its proof column with `col_idx = 1`. The default registers a panic.
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        _n_keys: usize,
+        _col_idx: usize,
+    ) -> ExternalFunctionId {
+        self.new_panic(format!(
+            "this backend does not support view-column reads for view `{view_name}`"
+        ))
+    }
 
     // -- diagnostics --------------------------------------------------------
 

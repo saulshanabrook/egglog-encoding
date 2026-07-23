@@ -1,10 +1,13 @@
 pub(crate) mod proof_checker;
 pub(crate) mod proof_container_rebuild;
 pub(crate) mod proof_encoding;
+pub(crate) mod proof_encoding_facts;
 pub(crate) mod proof_encoding_helpers;
+pub(crate) mod proof_encoding_rebuild;
 pub(crate) mod proof_extraction;
 pub(crate) mod proof_extractor;
 pub(crate) mod proof_format;
+pub(crate) mod proof_fresh;
 pub(crate) mod proof_normal_form;
 pub(crate) mod proof_simplification;
 pub(crate) mod proof_tests;

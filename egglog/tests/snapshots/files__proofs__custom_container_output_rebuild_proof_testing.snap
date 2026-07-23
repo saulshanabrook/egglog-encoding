@@ -1,0 +1,52 @@
+---
+source: egglog/tests/files.rs
+expression: proof_snapshot
+---
+(let t0 (freer (N 0) (set-of (N 1))))
+(let t1 (freer (N 0) (set-of (N 2))))
+(let prf0
+  (Congr
+            (= t1 t0)
+            (Fiat (= t1 t1))
+            (Congr
+              (= (set-of (N 2)) (set-of (N 1)))
+              (Fiat (= (set-of (N 2)) (set-of (N 2))))
+              (Sym (= (N 2) (N 1)) (Fiat (= (N 1) (N 2))))
+              0)
+            1))
+(Rule
+  (= (@ExistsConstructor) (@ExistsConstructor))
+  (name "@prove_exists_rule")
+  (premises
+    (Trans (= t0 t0) (Sym (= t0 t1) prf0) prf0)
+    (Fiat (= (N 1) (N 1)))
+    (Eval))
+  (substitution (@n (set-of (N 1))) (@v107 (N 1))))
+(let t0 (set-of (N 1) (N 3)))
+(let t1 (freer (N 0) t0))
+(let t2 (freer (N 0) (set-of (N 1))))
+(let t3 (freer (N 0) (set-of (N 2))))
+(let prf0
+  (Congr
+              (= t3 t2)
+              (Fiat (= t3 t3))
+              (Congr
+                (= (set-of (N 2)) (set-of (N 1)))
+                (Fiat (= (set-of (N 2)) (set-of (N 2))))
+                (Sym (= (N 2) (N 1)) (Fiat (= (N 1) (N 2))))
+                0)
+              1))
+(let t4 (freer (N 0) (set-of (N 3))))
+(Rule
+  (= (@ExistsConstructor1) (@ExistsConstructor1))
+  (name "@prove_exists_rule1")
+  (premises
+    (Merge
+      (= t1 t1)
+      freer
+      (Trans (= t2 t2) (Sym (= t2 t3) prf0) prf0)
+      (Fiat (= t4 t4)))
+    (Fiat (= (N 1) (N 1)))
+    (Fiat (= (N 3) (N 3)))
+    (Eval))
+  (substitution (@v179 (N 1)) (@v180 (N 3)) (@n1 t0)))

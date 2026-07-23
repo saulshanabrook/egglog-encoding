@@ -4,125 +4,173 @@ expression: proof_snapshot
 ---
 (let t0 (const-prop (L 14) (V "y") (I 10)))
 (let t1 (RProg (L 13) (Ass (V "y") (Const (I 10)))))
-(let t2 (Ass (V "y") (Add (V "x") (V "zero"))))
-(let prf0 (Sym (= (Prog (L 13)) t2) (Fiat (= t2 (Prog (L 13))))))
-(let t3 (const-prop (L 13) (V "x") (I 10)))
+(let prf0 (Fiat (= (Prog (L 13)) (Ass (V "y") (Add (V "x") (V "zero"))))))
+(let t2 (const-prop (L 13) (V "x") (I 10)))
+(let t3 (RProg (L 5) (Prog (L 5))))
 (let t4 (If (V "b") (L 6) (L 13)))
 (let t5 (RProg (L 5) t4))
-(let prop0 (= t5 t5))
-(let prf1 (Fiat (= t4 (Prog (L 5)))))
-(let prf2 (Sym (= (Prog (L 5)) t4) prf1))
+(let prop0 (= t3 t5))
+(let prf1 (Fiat (= (Prog (L 5)) t4)))
 (let t6 (const-prop (L 5) (V "b") (TopConst)))
-(let t7 (Ass (V "x") (Const (I 10))))
-(let t8 (RProg (L 4) t7))
-(let prop1 (= t8 t8))
-(let prf3 (Fiat (= t7 (Prog (L 4)))))
-(let prf4 (Sym (= (Prog (L 4)) t7) prf3))
-(let prf5
+(let t7 (RProg (L 4) (Prog (L 4))))
+(let t8 (Ass (V "x") (Const (I 10))))
+(let t9 (RProg (L 4) t8))
+(let prop1 (= t7 t9))
+(let prf2 (Fiat (= (Prog (L 4)) t8)))
+(let prf3
   (Congr
-                                prop1
-                                (Congr
-                                  (= t8 (RProg (L 4) (Prog (L 4))))
-                                  (Rule
+                                          (= t9 t7)
+                                          (Rule
+                                            (= t9 t9)
+                                            (name
+                                              "(rule ((= (Prog l) (Ass x (Const val))))
+        ((RProg l (Ass x (Const val))))
+           )")
+                                            (premises prf2)
+                                            (substitution
+                                              (val (I 10))
+                                              (l (L 4))
+                                              (x (V "x"))))
+                                          (Sym (= t8 (Prog (L 4))) prf2)
+                                          1))
+(let prf4
+  (Congr
                                     prop1
-                                    (name
-                                      "(rule ((= (Prog l) (Ass x (Const val))))
-        ((RProg l (Ass x (Const val))))
-           )")
-                                    (premises prf4)
-                                    (substitution
-                                      (val (I 10))
-                                      (l (L 4))
-                                      (x (V "x"))))
-                                  prf3
-                                  1)
-                                prf4
-                                1))
-(let t9 (const-prop (L 4) (V "b") (TopConst)))
-(let t10 (Ass (V "zero") (Const (I 0))))
-(let t11 (RProg (L 3) t10))
-(let prop2 (= t11 t11))
-(let prf6 (Fiat (= t10 (Prog (L 3)))))
-(let prf7 (Sym (= (Prog (L 3)) t10) prf6))
-(let prf8
-  (Congr
-                                    prop2
-                                    (Congr
-                                      (= t11 (RProg (L 3) (Prog (L 3))))
-                                      (Rule
-                                        prop2
-                                        (name
-                                          "(rule ((= (Prog l) (Ass x (Const val))))
-        ((RProg l (Ass x (Const val))))
-           )")
-                                        (premises prf7)
-                                        (substitution
-                                          (val (I 0))
-                                          (l (L 3))
-                                          (x (V "zero"))))
-                                      prf6
-                                      1)
-                                    prf7
+                                    (Trans (= t7 t7) (Sym prop1 prf3) prf3)
+                                    prf2
                                     1))
-(let t12 (const-prop (L 3) (V "b") (TopConst)))
-(let t13 (Ass (V "one") (Const (I 1))))
-(let t14 (RProg (L 2) t13))
-(let prop3 (= t14 t14))
-(let prf9 (Fiat (= t13 (Prog (L 2)))))
-(let prf10 (Sym (= (Prog (L 2)) t13) prf9))
-(let t15 (const-prop (L 2) (V "b") (TopConst)))
-(let t16 (Ass (V "ten") (Const (I 10))))
-(let t17 (RProg (L 1) t16))
-(let prop4 (= t17 t17))
-(let prf11 (Fiat (= t16 (Prog (L 1)))))
-(let prf12 (Sym (= (Prog (L 1)) t16) prf11))
+(let t10 (const-prop (L 4) (V "b") (TopConst)))
+(let t11 (RProg (L 3) (Prog (L 3))))
+(let t12 (Ass (V "zero") (Const (I 0))))
+(let t13 (RProg (L 3) t12))
+(let prop2 (= t11 t13))
+(let prf5 (Fiat (= (Prog (L 3)) t12)))
+(let prf6
+  (Congr
+                                              (= t13 t11)
+                                              (Rule
+                                                (= t13 t13)
+                                                (name
+                                                  "(rule ((= (Prog l) (Ass x (Const val))))
+        ((RProg l (Ass x (Const val))))
+           )")
+                                                (premises prf5)
+                                                (substitution
+                                                  (val (I 0))
+                                                  (l (L 3))
+                                                  (x (V "zero"))))
+                                              (Sym (= t12 (Prog (L 3))) prf5)
+                                              1))
+(let prf7
+  (Congr
+                                        prop2
+                                        (Trans (= t11 t11) (Sym prop2 prf6) prf6)
+                                        prf5
+                                        1))
+(let t14 (const-prop (L 3) (V "b") (TopConst)))
+(let t15 (RProg (L 2) (Prog (L 2))))
+(let t16 (Ass (V "one") (Const (I 1))))
+(let t17 (RProg (L 2) t16))
+(let prop3 (= t15 t17))
+(let prf8 (Fiat (= (Prog (L 2)) t16)))
+(let prf9
+  (Congr
+                                                  (= t17 t15)
+                                                  (Rule
+                                                    (= t17 t17)
+                                                    (name
+                                                      "(rule ((= (Prog l) (Ass x (Const val))))
+        ((RProg l (Ass x (Const val))))
+           )")
+                                                    (premises prf8)
+                                                    (substitution
+                                                      (val (I 1))
+                                                      (l (L 2))
+                                                      (x (V "one"))))
+                                                  (Sym (= t16 (Prog (L 2))) prf8)
+                                                  1))
 (let t18
   (const-prop
-                                                (L 1)
+                                                (L 2)
                                                 (V "b")
                                                 (TopConst)))
-(let t19
-  (Ass
-                                                      (V "b")
-                                                      (Const (TopConst))))
-(let t20 (RProg (L 0) t19))
-(let prop5 (= t20 t20))
-(let prf13
+(let t19 (RProg (L 1) (Prog (L 1))))
+(let t20 (Ass (V "ten") (Const (I 10))))
+(let t21 (RProg (L 1) t20))
+(let prop4 (= t19 t21))
+(let prf10
   (Fiat
-                                                          (= t19 (Prog (L 0)))))
-(let prf14
-  (Sym
-                                                        (= (Prog (L 0)) t19)
-                                                        prf13))
-(let prf15 (Fiat (= (TopConst) (TopConst))))
-(let prf16 (Fiat (= () ())))
-(let t21 (e (Const (I 10))))
-(let prf17
+                                                            (= (Prog (L 1)) t20)))
+(let prf11
   (Congr
-                    prop0
-                    (Congr
-                      (= t5 (RProg (L 5) (Prog (L 5))))
-                      (Rule
-                        prop0
-                        (name
-                          "(rule ((= (Prog l) (If b l1 l2))
+                                                      (= t21 t19)
+                                                      (Rule
+                                                        (= t21 t21)
+                                                        (name
+                                                          "(rule ((= (Prog l) (Ass x (Const val))))
+        ((RProg l (Ass x (Const val))))
+           )")
+                                                        (premises prf10)
+                                                        (substitution
+                                                          (val (I 10))
+                                                          (l (L 1))
+                                                          (x (V "ten"))))
+                                                      (Sym
+                                                        (= t20 (Prog (L 1)))
+                                                        prf10)
+                                                      1))
+(let t22
+  (const-prop
+                                                    (L 1)
+                                                    (V "b")
+                                                    (TopConst)))
+(let t23 (RProg (L 0) (Prog (L 0))))
+(let t24
+  (Ass
+                                                          (V "b")
+                                                          (Const (TopConst))))
+(let t25 (RProg (L 0) t24))
+(let prop5 (= t23 t25))
+(let prf12
+  (Fiat
+                                                                (=
+                                                                  (Prog (L 0))
+                                                                  t24)))
+(let prf13
+  (Congr
+                                                          (= t25 t23)
+                                                          (Rule
+                                                            (= t25 t25)
+                                                            (name
+                                                              "(rule ((= (Prog l) (Ass x (Const val))))
+        ((RProg l (Ass x (Const val))))
+           )")
+                                                            (premises prf12)
+                                                            (substitution
+                                                              (val (TopConst))
+                                                              (l (L 0))
+                                                              (x (V "b"))))
+                                                          (Sym
+                                                            (= t24 (Prog (L 0)))
+                                                            prf12)
+                                                          1))
+(let prf14 (Fiat (= (TopConst) (TopConst))))
+(let prf15 (Fiat (= () ())))
+(let t26 (e (Const (I 10))))
+(let prf16
+  (Congr
+                          (= t5 t3)
+                          (Rule
+                            (= t5 t5)
+                            (name
+                              "(rule ((= (Prog l) (If b l1 l2))
          (= $Top (const-prop l b)))
         ((RProg l (If b l1 l2)))
            )")
-                        (premises
-                          prf2
-                          (Rule
-                            (= t6 t6)
-                            (name
-                              "(rule ((RProg (L li) (Ass (V x) e))
-         (= val (const-prop (L li) (V y)))
-         (!= x y))
-        ((set (const-prop (L (+ li 1)) (V y)) val))
-           )")
                             (premises
-                              prf5
+                              prf1
                               (Rule
-                                (= t9 t9)
+                                (= t6 t6)
                                 (name
                                   "(rule ((RProg (L li) (Ass (V x) e))
          (= val (const-prop (L li) (V y)))
@@ -130,9 +178,9 @@ expression: proof_snapshot
         ((set (const-prop (L (+ li 1)) (V y)) val))
            )")
                                 (premises
-                                  prf8
+                                  prf4
                                   (Rule
-                                    (= t12 t12)
+                                    (= t10 t10)
                                     (name
                                       "(rule ((RProg (L li) (Ass (V x) e))
          (= val (const-prop (L li) (V y)))
@@ -140,27 +188,9 @@ expression: proof_snapshot
         ((set (const-prop (L (+ li 1)) (V y)) val))
            )")
                                     (premises
-                                      (Congr
-                                        prop3
-                                        (Congr
-                                          (= t14 (RProg (L 2) (Prog (L 2))))
-                                          (Rule
-                                            prop3
-                                            (name
-                                              "(rule ((= (Prog l) (Ass x (Const val))))
-        ((RProg l (Ass x (Const val))))
-           )")
-                                            (premises prf10)
-                                            (substitution
-                                              (val (I 1))
-                                              (l (L 2))
-                                              (x (V "one"))))
-                                          prf9
-                                          1)
-                                        prf10
-                                        1)
+                                      prf7
                                       (Rule
-                                        (= t15 t15)
+                                        (= t14 t14)
                                         (name
                                           "(rule ((RProg (L li) (Ass (V x) e))
          (= val (const-prop (L li) (V y)))
@@ -169,108 +199,100 @@ expression: proof_snapshot
            )")
                                         (premises
                                           (Congr
-                                            prop4
-                                            (Congr
-                                              (= t17 (RProg (L 1) (Prog (L 1))))
-                                              (Rule
-                                                prop4
-                                                (name
-                                                  "(rule ((= (Prog l) (Ass x (Const val))))
-        ((RProg l (Ass x (Const val))))
-           )")
-                                                (premises prf12)
-                                                (substitution
-                                                  (val (I 10))
-                                                  (l (L 1))
-                                                  (x (V "ten"))))
-                                              prf11
-                                              1)
-                                            prf12
+                                            prop3
+                                            (Trans
+                                              (= t15 t15)
+                                              (Sym prop3 prf9)
+                                              prf9)
+                                            prf8
                                             1)
                                           (Rule
                                             (= t18 t18)
                                             (name
-                                              "(rule ((RProg (L li) (Ass x (Const k))))
-        ((set (const-prop (L (+ li 1)) x) k))
+                                              "(rule ((RProg (L li) (Ass (V x) e))
+         (= val (const-prop (L li) (V y)))
+         (!= x y))
+        ((set (const-prop (L (+ li 1)) (V y)) val))
            )")
                                             (premises
                                               (Congr
-                                                prop5
-                                                (Congr
-                                                  (=
-                                                    t20
-                                                    (RProg (L 0) (Prog (L 0))))
-                                                  (Rule
-                                                    prop5
-                                                    (name
-                                                      "(rule ((= (Prog l) (Ass x (Const val))))
-        ((RProg l (Ass x (Const val))))
+                                                prop4
+                                                (Trans
+                                                  (= t19 t19)
+                                                  (Sym prop4 prf11)
+                                                  prf11)
+                                                prf10
+                                                1)
+                                              (Rule
+                                                (= t22 t22)
+                                                (name
+                                                  "(rule ((RProg (L li) (Ass x (Const k))))
+        ((set (const-prop (L (+ li 1)) x) k))
            )")
-                                                    (premises prf14)
-                                                    (substitution
-                                                      (val (TopConst))
-                                                      (l (L 0))
-                                                      (x (V "b"))))
-                                                  prf13
-                                                  1)
-                                                prf14
-                                                1))
+                                                (premises
+                                                  (Congr
+                                                    prop5
+                                                    (Trans
+                                                      (= t23 t23)
+                                                      (Sym prop5 prf13)
+                                                      prf13)
+                                                    prf12
+                                                    1))
+                                                (substitution
+                                                  (li 0)
+                                                  (x (V "b"))
+                                                  (k (TopConst))))
+                                              prf14
+                                              prf15)
                                             (substitution
-                                              (li 0)
-                                              (x (V "b"))
-                                              (k (TopConst))))
-                                          prf15
-                                          prf16)
+                                              t26
+                                              (y "b")
+                                              (li 1)
+                                              (@n4 (TopConst))
+                                              (x "ten")
+                                              (val (TopConst))))
+                                          prf14
+                                          prf15)
                                         (substitution
-                                          t21
+                                          (e (Const (I 1)))
                                           (y "b")
-                                          (li 1)
+                                          (li 2)
                                           (@n4 (TopConst))
-                                          (x "ten")
+                                          (x "one")
                                           (val (TopConst))))
-                                      prf15
-                                      prf16)
+                                      prf14
+                                      prf15)
                                     (substitution
-                                      (e (Const (I 1)))
+                                      (e (Const (I 0)))
                                       (y "b")
-                                      (li 2)
+                                      (li 3)
                                       (@n4 (TopConst))
-                                      (x "one")
+                                      (x "zero")
                                       (val (TopConst))))
-                                  prf15
-                                  prf16)
+                                  prf14
+                                  prf15)
                                 (substitution
-                                  (e (Const (I 0)))
+                                  t26
                                   (y "b")
-                                  (li 3)
+                                  (li 4)
                                   (@n4 (TopConst))
-                                  (x "zero")
+                                  (x "x")
                                   (val (TopConst))))
-                              prf15
-                              prf16)
+                              prf14)
                             (substitution
-                              t21
-                              (y "b")
-                              (li 4)
-                              (@n4 (TopConst))
-                              (x "x")
-                              (val (TopConst))))
-                          prf15)
-                        (substitution
-                          (l1 (L 6))
-                          (l (L 5))
-                          (l2 (L 13))
-                          (@n21 (TopConst))
-                          (b (V "b"))))
-                      prf1
-                      1)
-                    prf2
-                    1))
-(let t22 (const-prop (L 5) (V "x") (I 10)))
+                              (l1 (L 6))
+                              (l (L 5))
+                              (l2 (L 13))
+                              (@n21 (TopConst))
+                              (b (V "b"))))
+                          (Sym (= t4 (Prog (L 5))) prf1)
+                          1))
+(let prf17 (Congr prop0 (Trans (= t3 t3) (Sym prop0 prf16) prf16) prf1 1))
+(let t27 (const-prop (L 5) (V "x") (I 10)))
 (let prf18 (Fiat (= (I 10) (I 10))))
 (let prf19
   (Rule
-                (= t3 t3)
+                (= t2 t2)
                 (name
                   "(rule ((RProg l (If b l1 l2))
          (= val (const-prop l x)))
@@ -280,12 +302,12 @@ expression: proof_snapshot
                 (premises
                   prf17
                   (Rule
-                    (= t22 t22)
+                    (= t27 t27)
                     (name
                       "(rule ((RProg (L li) (Ass x (Const k))))
         ((set (const-prop (L (+ li 1)) x) k))
            )")
-                    (premises prf5)
+                    (premises prf4)
                     (substitution (li 4) (x (V "x")) (k (I 10))))
                   prf18)
                 (substitution
@@ -296,13 +318,13 @@ expression: proof_snapshot
                   (val (I 10))
                   (b (V "b"))
                   (@n18 (I 10)))))
-(let t23 (const-prop (L 13) (V "zero") (I 0)))
-(let t24 (const-prop (L 5) (V "zero") (I 0)))
-(let t25 (const-prop (L 4) (V "zero") (I 0)))
+(let t28 (const-prop (L 13) (V "zero") (I 0)))
+(let t29 (const-prop (L 5) (V "zero") (I 0)))
+(let t30 (const-prop (L 4) (V "zero") (I 0)))
 (let prf20 (Fiat (= (I 0) (I 0))))
 (let prf21
   (Rule
-                (= t23 t23)
+                (= t28 t28)
                 (name
                   "(rule ((RProg l (If b l1 l2))
          (= val (const-prop l x)))
@@ -312,7 +334,7 @@ expression: proof_snapshot
                 (premises
                   prf17
                   (Rule
-                    (= t24 t24)
+                    (= t29 t29)
                     (name
                       "(rule ((RProg (L li) (Ass (V x) e))
          (= val (const-prop (L li) (V y)))
@@ -320,19 +342,19 @@ expression: proof_snapshot
         ((set (const-prop (L (+ li 1)) (V y)) val))
            )")
                     (premises
-                      prf5
+                      prf4
                       (Rule
-                        (= t25 t25)
+                        (= t30 t30)
                         (name
                           "(rule ((RProg (L li) (Ass x (Const k))))
         ((set (const-prop (L (+ li 1)) x) k))
            )")
-                        (premises prf8)
+                        (premises prf7)
                         (substitution (li 3) (x (V "zero")) (k (I 0))))
                       prf20
-                      prf16)
+                      prf15)
                     (substitution
-                      t21
+                      t26
                       (y "zero")
                       (li 4)
                       (@n4 (I 0))
@@ -347,7 +369,7 @@ expression: proof_snapshot
                   (val (I 0))
                   (b (V "b"))
                   (@n18 (I 0)))))
-(let t26 (add-val (I 10) (I 0)))
+(let t31 (add-val (I 10) (I 0)))
 (Rule
   (= (@ExistsConstructor) (@ExistsConstructor))
   (name "@prove_exists_rule")
@@ -371,13 +393,13 @@ expression: proof_snapshot
             prf19
             prf21
             (Sym
-              (= (I 10) t26)
+              (= (I 10) t31)
               (Rule
-                (= t26 (I 10))
+                (= t31 (I 10))
                 (name "(rewrite (add-val (I x) (I y)) (I (+ x y)))")
                 (premises
                   (Rule
-                    (= t26 t26)
+                    (= t31 t31)
                     (name
                       "(rule ((= (Prog l) (Ass x (Add x1 x2)))
        (= v1 (const-prop l x1))
@@ -394,7 +416,7 @@ expression: proof_snapshot
                       (@n6 (I 0))
                       (x (V "y"))
                       (v1 (I 10)))))
-                (substitution (@rewrite_var__14 t26) (x 10) (y 0)))))
+                (substitution (@rewrite_var__14 t31) (x 10) (y 0)))))
           (substitution
             (x1 (V "x"))
             (x2 (V "zero"))

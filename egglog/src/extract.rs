@@ -711,24 +711,33 @@ pub(crate) fn find_canonical(egraph: &EGraph, value: Value, sort: &ArcSort) -> V
 }
 
 impl Function {
-    /// Returns the extraction head cost for this table.
-    /// View tables inherit the cost of their referenced hidden term constructor.
-    pub(crate) fn extraction_head_cost(&self, egraph: &EGraph) -> DefaultCost {
-        if let Some(term_constructor) = &self.decl.term_constructor {
-            egraph
-                .functions
-                .get(term_constructor)
-                .and_then(|func| func.decl.cost)
-                .unwrap_or(DefaultCost::unit())
-        } else {
-            self.decl.cost.unwrap_or(DefaultCost::unit())
-        }
+    /// Returns the extraction head cost for this table, whether from a view
+    /// table's `:internal-cost` or an ordinary constructor's `:cost`.
+    pub(crate) fn extraction_head_cost(&self, _egraph: &EGraph) -> DefaultCost {
+        self.decl.cost.unwrap_or(DefaultCost::unit())
     }
 
     /// Whether this is the functional-dependency view `(children) -> (eclass, {Unit|Proof})`,
     /// where the e-class is the first output column rather than the last input column.
-    fn is_fd_view(&self) -> bool {
+    pub(crate) fn is_fd_view(&self) -> bool {
         self.decl.term_constructor.is_some() && self.schema.outputs.len() > 1
+    }
+
+    /// A term/proof/AST/proof-list node relation created by the term/proof
+    /// encoding, marked `:internal-term-node`. Its rows are reconstructed during
+    /// extraction with the minted id as the last input column and the earlier
+    /// inputs as the term's children. Views (which carry `term_constructor` and a
+    /// non-`Unit` output) and plain bookkeeping relations such as the
+    /// delete/subsume markers are unmarked, so extraction never reads them as
+    /// terms.
+    pub(crate) fn is_relation_term(&self) -> bool {
+        self.decl.internal_term_node
+    }
+
+    /// True when the id is the last input column (old-form views and encoding
+    /// relations), rather than a real output column.
+    fn id_is_last_input(&self) -> bool {
+        (self.decl.term_constructor.is_some() && !self.is_fd_view()) || self.is_relation_term()
     }
 
     /// For view tables (with term_constructor), the effective output sort is the last input column
@@ -737,7 +746,7 @@ impl Function {
     pub(crate) fn extraction_output_sort(&self) -> &ArcSort {
         if self.is_fd_view() {
             self.schema.output()
-        } else if self.decl.term_constructor.is_some() {
+        } else if self.id_is_last_input() {
             self.schema.input.last().unwrap()
         } else {
             self.schema.output()
@@ -748,7 +757,7 @@ impl Function {
     /// For old-form view tables, this excludes the last input column (the e-class); FD tuple views
     /// key on children only, so all inputs are children.
     pub(crate) fn extraction_num_children(&self) -> usize {
-        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
+        if self.id_is_last_input() {
             self.schema.input.len() - 1
         } else {
             self.schema.input.len()
@@ -768,8 +777,9 @@ impl Function {
     /// For view tables, the e-class is the last input column (second-to-last in the row).
     /// For regular tables, it's the last column (the actual output).
     pub(crate) fn extraction_output_index(&self) -> usize {
-        if self.decl.term_constructor.is_some() && !self.is_fd_view() {
-            // Old-form view: row is [children..., eclass, view_sort]; eclass at input.len() - 1.
+        if self.id_is_last_input() {
+            // Old-form view / encoding relation: row is [children..., id, ...];
+            // the id is at input.len() - 1.
             self.schema.input.len() - 1
         } else {
             // Regular table: [inputs..., output]. FD view: [children..., eclass, proof]; the eclass

@@ -781,6 +781,8 @@ pub fn add_function(
         term_constructor: None,
         unextractable: false,
         identity_vals: None,
+        cost: None,
+        term_node: false,
     }])
 }
 
@@ -847,6 +849,14 @@ pub trait BaseSort: Any + Send + Sync + Debug {
     fn register_primitives(&self, _eg: &mut EGraph) {}
     fn reconstruct_termdag(&self, _: &BaseValues, _: Value, _: &mut TermDag) -> TermId;
 
+    /// For a base sort whose values termify as an application rather than a
+    /// literal (e.g. a BigInt's `(from-string "…")`): the head of that canonical
+    /// value term (see [`Sort::prim_value_constructor`]). `None` (the default)
+    /// for literal-backed sorts.
+    fn prim_value_constructor(&self) -> Option<String> {
+        None
+    }
+
     fn to_arcsort(self) -> ArcSort
     where
         Self: Sized,
@@ -891,6 +901,10 @@ impl<T: BaseSort> Sort for BaseSortImpl<T> {
         termdag: &mut TermDag,
     ) -> TermId {
         self.0.reconstruct_termdag(base_values, value, termdag)
+    }
+
+    fn prim_value_constructor(&self) -> Option<String> {
+        self.0.prim_value_constructor()
     }
 }
 

@@ -1,8 +1,36 @@
 #[doc = include_str!("proof_encoding.md")]
-use crate::proofs::proof_checker::is_container_side_condition;
 use crate::proofs::proof_encoding_helpers::{EncodingNames, Justification};
 use crate::typechecking::FuncType;
 use crate::*;
+
+/// Term-construction side channel (proof mode): maps a built term's canonical
+/// e-class var to `(natural e-class var, connector proof var)`, where the
+/// connector proves `natural = canonical`. A parent term reads its children's
+/// entries to build the natural term and its `Congr` connector; the root `union`
+/// and a global's `global_value_proof` read it to anchor on the natural form.
+///
+/// Scoped to a single generated program — a rule, a top-level action, or a
+/// custom function's merge body — so each such scope threads a fresh, local map
+/// through the action/term builders.
+pub(crate) type NatConn = HashMap<String, NatEntry>;
+
+/// A [`NatConn`] entry: a built term's natural (as-built) id and the connector
+/// proof `natural = canonical` (`None` when the term needed no
+/// canonicalization).
+#[derive(Clone)]
+pub(crate) struct NatEntry {
+    pub natural: String,
+    pub connector: Option<String>,
+}
+
+/// Which way a pair-valued table's carried proofs point, selecting the
+/// displaced-edge composition in [`ProofInstrumentor::ordered_union_merge`].
+enum CarriedProofs {
+    /// `@UF` rows: the carried proof proves `key = parent`.
+    KeyToParent,
+    /// Congruence views: the carried proof proves `eclass = f(children)`.
+    EclassToTerm,
+}
 
 // TODO refactor so that encoding state is optional on the e-graph, ProofNames not optional on EncodingState. Then we don't have to clone proof names everywhere.
 #[derive(Clone)]
@@ -17,11 +45,6 @@ pub(crate) struct EncodingState {
     /// Maps container sort name -> the name of its registered proof-producing
     /// container-rebuild primitive (`ContainerRebuildProof`). Proof mode only.
     pub container_rebuild_proof_name: HashMap<String, String>,
-    /// Function name -> (hidden current-value function, input arity). The
-    /// current function uses the original eager backend merge, so cleanup can
-    /// discard stale proof-view candidates whenever the current value already
-    /// has a proof witness.
-    pub merge_current: HashMap<String, (String, usize)>,
     pub term_header_added: bool,
     // TODO this is very ugly- we should separate out a typechecking struct
     // since we didn't need an entire e-graph
@@ -45,7 +68,6 @@ impl EncodingState {
             proof_func_parent: HashMap::default(),
             container_rebuild_name: HashMap::default(),
             container_rebuild_proof_name: HashMap::default(),
-            merge_current: HashMap::default(),
             term_header_added: false,
             original_typechecking: None,
             proofs_enabled: false,
@@ -90,13 +112,52 @@ impl<'a> ProofInstrumentor<'a> {
         Ok(lowered)
     }
 
+    /// Mint a `Rule` or `Fiat` proof of the equality `a = b` over the two
+    /// endpoints' ASTs, appending the mints to `stmts`. Panics on merge
+    /// justifications (merge bodies contain no `union` actions).
+    fn edge_proof(
+        &mut self,
+        stmts: &mut Vec<String>,
+        to_ast: &str,
+        a: &str,
+        b: &str,
+        justification: &Justification,
+    ) -> String {
+        let ast_sort = self.proof_names().ast_sort.clone();
+        let proof_sort = self.proof_sort();
+        let a1 = self.mint(stmts, to_ast, a, &ast_sort);
+        let a2 = self.mint(stmts, to_ast, b, &ast_sort);
+        match justification {
+            Justification::Rule(rule_name, proof_list) => {
+                let rule = self.proof_names().rule_constructor.clone();
+                self.mint(
+                    stmts,
+                    &rule,
+                    &format!("{rule_name} {proof_list} {a1} {a2}"),
+                    &proof_sort,
+                )
+            }
+            Justification::Fiat => {
+                let fiat = self.proof_names().fiat_constructor.clone();
+                self.mint(stmts, &fiat, &format!("{a1} {a2}"), &proof_sort)
+            }
+            Justification::MergeIdx(..) | Justification::MergeRow(..) => panic!(
+                "Merge functions do not include union actions, so proof should not be by merge"
+            ),
+        }
+    }
+
     /// Mark two things as equal, adding proof if proofs are enabled.
+    /// Emits any proof-relation mints onto `stmts` and returns the `(set @UF ...)`
+    /// action, which the caller must emit after `stmts`.
     pub(crate) fn union(
         &mut self,
+        stmts: &mut Vec<String>,
         type_name: &str,
         lhs: &str,
         rhs: &str,
         justification: &Justification,
+        nat_conn: &NatConn,
     ) -> String {
         let uf_name = self.uf_name(type_name);
         let smaller = format!("(ordering-min {lhs} {rhs})");
@@ -104,29 +165,90 @@ impl<'a> ProofInstrumentor<'a> {
         // `@UF : (S) -> (S, {Unit|Proof})` is keyed by the larger endpoint; its
         // `:merge` resolves conflicting parents. The second column carries a proof
         // `larger = smaller` (`()` in term mode).
-        let proof = if !self.egraph.proof_state.proofs_enabled {
-            "()".to_string()
-        } else {
-            let to_ast_constructor = self
-                .proof_names()
-                .sort_to_ast_constructor
-                .get(type_name)
-                .unwrap();
-            let rule_constructor = &self.proof_names().rule_constructor;
-            let fiat_constructor = &self.proof_names().fiat_constructor;
-            match justification {
-                Justification::Rule(rule_name, proof_list) => format!(
-                    "({rule_constructor} {rule_name} {proof_list} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
-                Justification::Fiat => format!(
-                    "({fiat_constructor} ({to_ast_constructor} {larger}) ({to_ast_constructor} {smaller}))"
-                ),
-                Justification::Merge(_func_name, _proof1, _proof2) => panic!(
-                    "Merge functions do not include union actions, so proof should not be by merge"
-                ),
-            }
+        if !self.egraph.proof_state.proofs_enabled {
+            return format!("(set ({uf_name} {larger}) (values {smaller} ()))");
+        }
+
+        let to_ast_constructor = self
+            .proof_names()
+            .sort_to_ast_constructor
+            .get(type_name)
+            .unwrap()
+            .clone();
+        let proof_sort = self.proof_sort();
+
+        // Natural id + connector (`natural = deduped`) for each operand, if it was
+        // a canonicalized constructor term. Leaves / body matches have neither.
+        let lhs_info = nat_conn.get(lhs).cloned();
+        let rhs_info = nat_conn.get(rhs).cloned();
+        let lhs_conn = lhs_info.as_ref().and_then(|e| e.connector.clone());
+        let rhs_conn = rhs_info.as_ref().and_then(|e| e.connector.clone());
+
+        // Neither operand was a canonicalized constructor term (no connector), so
+        // both e-classes' ASTs are stable: build the edge proof directly over them.
+        if lhs_conn.is_none() && rhs_conn.is_none() {
+            let proof =
+                self.edge_proof(stmts, &to_ast_constructor, &larger, &smaller, justification);
+            return format!("(set ({uf_name} {larger}) (values {smaller} {proof}))");
+        }
+
+        // A canonicalized operand's deduped e-class may already be unioned with a
+        // differently-shaped term, so its AST floats. Build the base equality over
+        // the *natural* forms (ASTs pinned to the enode the rule built), then route
+        // each deduped e-class to a shared natural form and orient the edge to
+        // `larger = smaller` with proof-of-max/min.
+        let nat_of = |info: &Option<NatEntry>, dedup: &str| {
+            info.as_ref()
+                .map(|e| e.natural.clone())
+                .unwrap_or_else(|| dedup.to_string())
         };
-        format!("(set ({uf_name} {larger}) (values {smaller} {proof}))")
+        let lhs_nat = nat_of(&lhs_info, lhs);
+        let rhs_nat = nat_of(&rhs_info, rhs);
+
+        let base_proof = self.edge_proof(
+            stmts,
+            &to_ast_constructor,
+            &lhs_nat,
+            &rhs_nat,
+            justification,
+        );
+
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        // The shared natural form is the canonicalized side's natural (pinned
+        // AST), so the Trans goes through it rather than through the deduped
+        // e-class.
+        let (lhs_to_shared, rhs_to_shared) = if let Some(rc) = &rhs_conn {
+            let lhs_to = if let Some(lc) = &lhs_conn {
+                let sym_lc = self.mint(stmts, &sym, lc, &proof_sort);
+                self.mint(
+                    stmts,
+                    &trans,
+                    &format!("{sym_lc} {base_proof}"),
+                    &proof_sort,
+                )
+            } else {
+                base_proof.clone()
+            };
+            let rhs_to = self.mint(stmts, &sym, rc, &proof_sort);
+            (lhs_to, rhs_to)
+        } else {
+            let lc = lhs_conn.as_ref().unwrap();
+            let lhs_to = self.mint(stmts, &sym, lc, &proof_sort);
+            let rhs_to = self.mint(stmts, &sym, &base_proof, &proof_sort);
+            (lhs_to, rhs_to)
+        };
+        let max_pf = self.fresh_var();
+        stmts.push(format!(
+            "(let {max_pf} (proof-of-max {lhs} {lhs_to_shared} {rhs} {rhs_to_shared}))"
+        ));
+        let min_pf = self.fresh_var();
+        stmts.push(format!(
+            "(let {min_pf} (proof-of-min {lhs} {lhs_to_shared} {rhs} {rhs_to_shared}))"
+        ));
+        let sym_min = self.mint(stmts, &sym, &min_pf, &proof_sort);
+        let edge = self.mint(stmts, &trans, &format!("{max_pf} {sym_min}"), &proof_sort);
+        format!("(set ({uf_name} {larger}) (values {smaller} {edge}))")
     }
 
     /// The parent table is the database representation of a union-find datastructure.
@@ -149,6 +271,45 @@ impl<'a> ProofInstrumentor<'a> {
             return vec![];
         }
         self.declare_sort_eq(sort_name)
+    }
+
+    /// The shared `:merge` block for a collision that unions two members of one
+    /// e-class: keep `(ordering-min old0 new0)` with the smaller side's carried
+    /// proof, and `set` the displaced larger side's `@UF` edge to the smaller
+    /// with a composed proof of `larger = smaller`. The composition depends on
+    /// which way the two carried proofs point (see [`CarriedProofs`]):
+    /// `key = parent` proofs compose as `Trans (Sym hi_pf_) lo_pf_`,
+    /// `eclass = f(children)` proofs as `Trans hi_pf_ (Sym lo_pf_)`.
+    fn ordered_union_merge(&mut self, uf_name: &str, carried: CarriedProofs) -> String {
+        if !self.proofs_enabled() {
+            return format!(
+                "((set ({uf_name} (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
+                  (values (ordering-min old0 new0) ()))"
+            );
+        }
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let proof_sort = self.proof_sort();
+        let mut mints = vec![];
+        let displaced_pf = match carried {
+            CarriedProofs::KeyToParent => {
+                let sym_pf = self.mint(&mut mints, &sym, "hi_pf_", &proof_sort);
+                self.mint(&mut mints, &trans, &format!("{sym_pf} lo_pf_"), &proof_sort)
+            }
+            CarriedProofs::EclassToTerm => {
+                let sym_pf = self.mint(&mut mints, &sym, "lo_pf_", &proof_sort);
+                self.mint(&mut mints, &trans, &format!("hi_pf_ {sym_pf}"), &proof_sort)
+            }
+        };
+        let mints_str = mints.join("\n                  ");
+        format!(
+            "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
+              (let lo_pf_ (proof-of-min old0 old1 new0 new1))
+              {mints_str}
+              (set ({uf_name} (ordering-max old0 new0))
+                   (values (ordering-min old0 new0) {displaced_pf}))
+              (values (ordering-min old0 new0) lo_pf_))"
+        )
     }
 
     /// Declare a sort's union-find `@UF : (S) -> (S, {Unit|Proof})`, mapping each
@@ -179,32 +340,16 @@ impl<'a> ProofInstrumentor<'a> {
         } else {
             String::new()
         };
-        // On a conflict, keep the smaller parent and union the displaced parent back
-        // into `@UF`. In proof mode the proofs ride along: `hi_pf_`/`lo_pf_` prove
-        // `key = larger parent` / `key = smaller parent`, so the displaced edge's
-        // proof is `Trans (Sym hi_pf_) lo_pf_ : larger = smaller`.
-        let uf_merge = if proofs {
-            let trans = self.proof_names().eq_trans_constructor.clone();
-            let sym = self.proof_names().eq_sym_constructor.clone();
-            format!(
-                "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
-                  (let lo_pf_ (proof-of-min old0 old1 new0 new1))
-                  (set ({uf_name} (ordering-max old0 new0))
-                       (values (ordering-min old0 new0) ({trans} ({sym} hi_pf_) lo_pf_)))
-                  (values (ordering-min old0 new0) lo_pf_))"
-            )
-        } else {
-            format!(
-                "((set ({uf_name} (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
-                  (values (ordering-min old0 new0) ()))"
-            )
-        };
+        let uf_merge = self.ordered_union_merge(&uf_name, CarriedProofs::KeyToParent);
         // path compression: a->b (pb: a=b), b->c (pc: b=c)  =>  a->c (Trans pb pc: a=c)
-        let compressed_proof = if proofs {
+        let (compressed_proof_lets, compressed_proof) = if proofs {
             let trans = self.proof_names().eq_trans_constructor.clone();
-            format!("({trans} {pb} {pc})")
+            let proof_sort = self.proof_sort();
+            let mut mints = vec![];
+            let pf = self.mint(&mut mints, &trans, &format!("{pb} {pc}"), &proof_sort);
+            (mints.join("\n                    "), pf)
         } else {
-            "()".to_string()
+            (String::new(), "()".to_string())
         };
 
         let code = format!(
@@ -213,7 +358,8 @@ impl<'a> ProofInstrumentor<'a> {
              (rule ((= (values {b} {pb}) ({uf_name} {a}))
                     (= (values {c} {pc}) ({uf_name} {b}))
                     (!= {b} {c}))
-                  ((set ({uf_name} {a}) (values {c} {compressed_proof})))
+                  ({compressed_proof_lets}
+                   (set ({uf_name} {a}) (values {c} {compressed_proof})))
                    :ruleset {path_compress_ruleset_name}
                    :name \"{fresh_name}\")
                    "
@@ -222,266 +368,70 @@ impl<'a> ProofInstrumentor<'a> {
         self.parse_program(&code)
     }
 
-    /// Rules that execute deletion and subsumption based on the tables requesting the deletion/subsumption.
-    fn delete_and_subsume(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        let child_names = fdecl
-            .schema
-            .input
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("c{i}_"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let to_delete_name = self.delete_name(&fdecl.name);
-        let subsumed_name = self.subsumed_name(&fdecl.name);
-        let view_name = self.view_name(&fdecl.name);
-        let delete_subsume_ruleset = self.proof_names().delete_subsume_ruleset_name.clone();
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("delete_rule");
-
-        // A constructor's FD tuple view is keyed by children only, so match its value
-        // tuple to delete/subsume by key (the bridge re-reads every value column when
-        // subsuming a tuple-output view).
-        if fdecl.subtype == FunctionSubtype::Constructor {
-            let e = self.fresh_var();
-            let pf = self.fresh_var();
-            let e2 = self.fresh_var();
-            let pf2 = self.fresh_var();
-            // Deletion removes the row by key; subsumption marks it subsumed (kept for size/proofs
-            // but excluded from matching).
-            return format!(
-                "(rule (({to_delete_name} {child_names})
-                        (= (values {e} {pf}) ({view_name} {child_names})))
-                       ((delete ({view_name} {child_names}))
-                        (delete ({to_delete_name} {child_names})))
-                        :ruleset {delete_subsume_ruleset}
-                        :name \"{fresh_name}\")
-                 (rule (({subsumed_name} {child_names})
-                        (= (values {e2} {pf2}) ({view_name} {child_names})))
-                       ((subsume ({view_name} {child_names})))
-                        :ruleset {delete_subsume_ruleset}
-                        :name \"{fresh_name}_subsume\")"
-            );
-        }
-
-        format!(
-            "(rule (({to_delete_name} {child_names})
-                    ({view_name} {child_names} out))
-                   ((delete ({view_name} {child_names} out))
-                    (delete ({to_delete_name} {child_names})))
-                    :ruleset {delete_subsume_ruleset}
-                    :name \"{fresh_name}\")
-             (rule (({subsumed_name} {child_names})
-                    ({view_name} {child_names} out))
-                   ((subsume ({view_name} {child_names} out)))
-                    :ruleset {delete_subsume_ruleset}
-                    :name \"{fresh_name}_subsume\")"
-        )
+    /// A global is a `:internal-let` function; in the encoding it is treated like a
+    /// nullary constructor (FD view, congruence merge, readable value+proof) rather
+    /// than a `:no-merge` custom function.
+    pub(super) fn is_encoded_global(&self, fdecl: &ResolvedFunctionDecl) -> bool {
+        fdecl.internal_let
     }
 
-    /// Generate rules that run a merge function for a custom function.
-    /// One rule runs the merge function when two different values are present for the same children.
-    /// Another rule cleans up old values, necessary because the newly merged value may be equal to one of the old values.
-    fn handle_merge_fn(
-        &mut self,
-        fdecl: &ResolvedFunctionDecl,
-        child_names: &[String],
-        child_names_str: &str,
-        _view_name: &str,
-        rebuilding_ruleset: &str,
-    ) -> String {
-        let name = &fdecl.name;
+    /// Whether the function's output value *is* its e-class, so the term relation
+    /// needs no separate output column and the view is the congruence FD
+    /// `(children) -> (eclass, proof)`. Holds for constructors and encoded globals.
+    pub(super) fn output_is_eclass(&self, fdecl: &ResolvedFunctionDecl) -> bool {
+        fdecl.subtype == FunctionSubtype::Constructor || self.is_encoded_global(fdecl)
+    }
 
-        let merge_fn = &fdecl
+    /// The `:merge` expression for a custom function's FD pair-valued view
+    /// `(children) -> (values output proof)`. On a children-key collision it runs
+    /// the user's merge body once (unlike a constructor's congruence, it performs
+    /// no `@UF` union): `old`/`new` bind to the two colliding output columns
+    /// (`old0`/`new0`) and the carried view proofs to `old1`/`new1`. The result is
+    /// `(values merged rowproof)`, where `merged` is the (canonically-minted) merge
+    /// body and `rowproof` is a children-free `MergeRow` (`()` in term mode).
+    ///
+    /// Running the merge inside the view's `:merge` computes the body exactly
+    /// once; computing it twice mints extra, over-merged term rows.
+    fn custom_view_merge(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
+        // `nat_conn` is scoped to this merge body; the body mints subterms via
+        // `add_term_and_view`, which threads it.
+        let mut nat_conn = NatConn::default();
+        let name = fdecl.name.clone();
+        let merge = fdecl
             .merge
             .as_ref()
-            .unwrap_or_else(|| panic!("Proofs don't support :no-merge"));
+            .expect("custom FD view requires a :merge");
 
-        let current_name = self
-            .egraph
-            .parser
-            .symbol_gen
-            .fresh(&format!("{name}Current"));
-        self.egraph
-            .proof_state
-            .merge_current
-            .insert(name.clone(), (current_name.clone(), child_names.len()));
-
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("merge_rule");
-        let cleanup_name = self.egraph.parser.symbol_gen.fresh("merge_cleanup");
-        let current_cleanup_name = self.egraph.parser.symbol_gen.fresh("merge_current_cleanup");
-
-        let p1_fresh = self.egraph.parser.symbol_gen.fresh("p1");
-        let p2_fresh = self.egraph.parser.symbol_gen.fresh("p2");
-        let view_name = self.view_name(&fdecl.name);
-        let rebuilding_cleanup_ruleset = self.proof_names().rebuilding_cleanup_ruleset_name.clone();
-        let input_sorts = ListDisplay(&fdecl.schema.input, " ");
-        let proof_query = if self.egraph.proof_state.proofs_enabled {
-            // View is a function with proof output; bind proof variables
-            format!(
-                "(= {p1_fresh} ({view_name} {child_names_str} old))
-                     (= {p2_fresh} ({view_name} {child_names_str} new))
-                    "
-            )
-        } else {
-            // View is a function with Unit output; no need to bind the output
-            "".to_string()
-        };
-        let proof_var = if self.egraph.proof_state.proofs_enabled {
-            self.fresh_var()
+        let mut body_code = vec![];
+        let mut idx = 0usize;
+        let merged = self.instrument_merge_body(
+            &merge.result,
+            &mut body_code,
+            &name,
+            &mut idx,
+            &mut nat_conn,
+        );
+        let row_proof = if self.egraph.proof_state.proofs_enabled {
+            let fresh = self.term_proof_for_justification(
+                &mut body_code,
+                "",
+                "",
+                &Justification::MergeRow(name.clone(), "old1".to_string(), "new1".to_string()),
+            );
+            // Keep the proof column stable: when the merged output equals a
+            // colliding premise's output (as with idempotent `min`/`max`/... merges
+            // that keep one input), reuse that premise's existing proof so the row
+            // stays value-identical and the merge saturates. Otherwise the fresh
+            // `MergeRow` justifies the newly-computed output.
+            format!("(select-eq {merged} old0 old1 (select-eq {merged} new0 new1 {fresh}))")
         } else {
             "()".to_string()
         };
-        let mut merge_fn_code = vec![];
-        // Proof instrumentation tracks the merged *value*; a `:merge` action block's effects are
-        // not proof-tracked (action-block merges under proofs are unsupported).
-        let merge_fn_var = self.instrument_action_expr(
-            &merge_fn.result,
-            &mut merge_fn_code,
-            &Justification::Merge(name.clone(), p1_fresh.clone(), p2_fresh.clone()),
-        );
-        let merge_fn_code_str = merge_fn_code.join("\n");
-        let mut updated = child_names.to_vec();
-        updated.push(merge_fn_var.clone());
-        let term = format!("({name} {child_names_str} {merge_fn_var})");
-
-        let rule_proof = if self.egraph.proof_state.proofs_enabled {
-            let to_ast = self.fname_to_ast_name(name);
-            let merge_fn_constructor = self.proof_names().merge_fn_constructor.clone();
-            format!(
-                "(let {proof_var}
-                            ({merge_fn_constructor} \"{name}\"
-                                  {p1_fresh}
-                                  {p2_fresh}
-                                  ({to_ast} {term})))"
-            )
+        let value = format!("(values {merged} {row_proof})");
+        if body_code.is_empty() {
+            value
         } else {
-            "".to_string()
-        };
-        let term_and_proof = self.update_view(name, &updated, &proof_var);
-        let cleanup_constructor = self.egraph.parser.symbol_gen.fresh("mergecleanup");
-        let fresh_sort = self.egraph.parser.symbol_gen.fresh("mergecleanupsort");
-        let output_sort = fdecl.schema.output().clone();
-
-        // The first runs the merge function adding a new row.
-        // The second deletes rows with old values for the old variable, while the third deletes rows with new values for the new variable.
-        format!(
-            "(function {current_name} ({input_sorts}) {output_sort}
-                    :merge {merge_fn}
-                    :unextractable
-                    :internal-hidden)
-                 (sort {fresh_sort})
-                 (constructor {cleanup_constructor} ({output_sort} {output_sort}) {fresh_sort} :internal-hidden)
-                 (rule (({view_name} {child_names_str} old)
-                        ({view_name} {child_names_str} new)
-                        (!= old new)
-                        (= (ordering-max old new) new)
-                        {proof_query})
-                       (
-                        {merge_fn_code_str}
-                        {rule_proof}
-                        {term_and_proof}
-                        ({cleanup_constructor} {merge_fn_var} old)
-                        ({cleanup_constructor} {merge_fn_var} new)
-                       )
-                        :ruleset {rebuilding_ruleset}
-                        :name \"{fresh_name}\")
-                 (rule (({cleanup_constructor} merged old)
-                        ({view_name} {child_names_str} merged)
-                        ({view_name} {child_names_str} old)
-                        (!= merged old))
-                       ((delete ({view_name} {child_names_str} old)))
-                        :ruleset {rebuilding_cleanup_ruleset}
-                        :name \"{cleanup_name}\")
-                 (rule ((= selected ({current_name} {child_names_str}))
-                        ({view_name} {child_names_str} selected)
-                        ({view_name} {child_names_str} old)
-                        (!= selected old))
-                       ((delete ({view_name} {child_names_str} old)))
-                        :ruleset {rebuilding_cleanup_ruleset}
-                        :name \"{current_cleanup_name}\")
-                ",
-        )
-    }
-
-    /// Use native `:no-merge` for primitive outputs and compare UF leaders for eq-sort outputs.
-    fn handle_no_merge_fn(
-        &mut self,
-        fdecl: &ResolvedFunctionDecl,
-        child_names: &[String],
-        child_names_str: &str,
-        rebuilding_ruleset: &str,
-    ) -> String {
-        let name = &fdecl.name;
-        let output_is_eq_sort = fdecl.resolved_schema.output().is_eq_sort();
-
-        if !output_is_eq_sort {
-            let input_sorts = ListDisplay(&fdecl.schema.input, " ");
-            let output_sort = fdecl.schema.output();
-            let current_name = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh(&format!("{name}Current"));
-            self.egraph
-                .proof_state
-                .merge_current
-                .insert(name.clone(), (current_name.clone(), child_names.len()));
-            return format!(
-                "(function {current_name} ({input_sorts}) {output_sort}
-                    :no-merge
-                    :unextractable
-                    :internal-hidden)"
-            );
-        }
-
-        // Distinct encoded values can already belong to the same e-class. Wait
-        // for their encoded UF leaders before deciding whether the conflict is real.
-        let view_name = self.view_name(name);
-        let fresh_name = self.egraph.parser.symbol_gen.fresh("no_merge_rule");
-        let uf_name = self.uf_name(fdecl.resolved_schema.output().name());
-
-        format!(
-            "(rule (({view_name} {child_names_str} old)
-                    ({view_name} {child_names_str} new)
-                    (= (values old_leader_ old_proof_) ({uf_name} old))
-                    (= (values new_leader_ new_proof_) ({uf_name} new))
-                    (!= old_leader_ new_leader_)
-                    (= (ordering-max old new) new))
-                   ((panic \"Illegal merge attempted for function {name}\"))
-                    :ruleset {rebuilding_ruleset}
-                    :name \"{fresh_name}\")"
-        )
-    }
-
-    /// Generate rules that handle merge functions.
-    /// For custom functions, we generate rules that run the merge function.
-    /// Constructors need no rule: congruence is resolved by their view's `:merge`.
-    fn handle_merge_or_congruence(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
-        let child_names = fdecl
-            .schema
-            .input
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("c{i}_"))
-            .collect::<Vec<_>>();
-        let child_names_str = child_names.join(" ");
-        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
-        let view_name = self.view_name(&fdecl.name);
-        if fdecl.subtype == FunctionSubtype::Custom {
-            if fdecl.merge.is_some() {
-                self.handle_merge_fn(
-                    fdecl,
-                    &child_names,
-                    &child_names_str,
-                    &view_name,
-                    &rebuilding_ruleset,
-                )
-            } else {
-                self.handle_no_merge_fn(fdecl, &child_names, &child_names_str, &rebuilding_ruleset)
-            }
-        } else {
-            // Congruence is resolved by the constructor view's `:merge`; no rule needed.
-            String::new()
+            format!("({}\n{value})", body_code.join("\n"))
         }
     }
 
@@ -501,40 +451,34 @@ impl<'a> ProofInstrumentor<'a> {
         let delete_rule = self.delete_and_subsume(fdecl);
         let to_delete_name = self.delete_name(&fdecl.name);
         let subsumed_name = self.subsumed_name(&fdecl.name);
+        // Constructors and encoded globals give the term row `(children eclass)`;
+        // a Custom function returning a distinct value (e.g. `-> i64`) keeps an
+        // output column plus a fresh eclass column.
+        let output_is_eclass = self.output_is_eclass(fdecl);
         let term_sorts = format!(
             "{in_sorts} {}",
-            if fdecl.subtype == FunctionSubtype::Constructor {
+            if output_is_eclass {
                 "".to_string()
             } else {
                 schema.output().to_string()
             }
         );
-        let view_sorts = format!("{in_sorts} {out_type}");
-        let proof_constructors = self.proof_functions(fdecl, &view_sorts);
 
-        let view_sort = if fdecl.subtype == FunctionSubtype::Constructor {
+        let view_sort = if output_is_eclass {
             schema.output().clone()
         } else {
             fresh_sort.clone()
         };
         let to_ast_view_sort = self.add_to_ast(&view_sort);
 
-        if self.egraph.proof_state.proofs_enabled {
-            self.egraph
-                .proof_state
-                .proof_names
-                .fn_to_term_sort
-                .insert(name.clone(), view_sort.clone());
-        }
-        let merge_rule = self.handle_merge_or_congruence(fdecl);
-        // the term table has child_sorts as inputs
-        // the view table has child_sorts + the leader term for the eclass
-        // Propagate cost, unextractable, hidden, and internal_let flags from the original function
-        let mut term_flags = String::new();
-        if let Some(cost) = fdecl.cost {
-            term_flags.push_str(&format!(" :cost {cost}"));
-        }
-        // View is always a function (returning Proof or Unit), with :merge old
+        // Record the term's eclass sort (its `view_sort`) so the creation site
+        // in `add_term_and_view` knows which `get-fresh!` to mint from, in both
+        // term and proof mode.
+        self.egraph
+            .proof_state
+            .proof_names
+            .fn_to_term_sort
+            .insert(name.clone(), view_sort.clone());
         let proof_type = self.proof_type_str().to_string();
         let mut view_flags = String::new();
         if fdecl.unextractable {
@@ -546,552 +490,67 @@ impl<'a> ProofInstrumentor<'a> {
         if fdecl.internal_let {
             view_flags.push_str(" :internal-let");
         }
-        // A constructor's view is a functional-dependency tuple
-        // `(children) -> (eclass, {Unit|Proof})` whose `:merge` resolves congruence:
-        // it keeps the smaller eclass and unions the two eclasses in the sort's
-        // `@UF`. Custom functions keep the `(children eclass) -> {Unit|Proof}` form
-        // with a merge rule.
-        let fd_view = fdecl.subtype == FunctionSubtype::Constructor;
-        let view_decl = if fd_view {
+        // The view carries the user operation's extraction cost (the term table
+        // is a relation and can't carry `:cost`); the extractor reads it here.
+        if let Some(cost) = fdecl.cost {
+            view_flags.push_str(&format!(" :internal-cost {cost}"));
+        }
+        // Every encoded function uses the FD pair-valued view `(children) ->
+        // (output, {Unit|Proof})` keyed on children only; the branches below
+        // differ in how the `:merge` resolves a children-key collision.
+        let view_decl = if output_is_eclass {
             // Two rows conflicting on the same children are congruent: keep the
-            // smaller eclass and union the two eclasses in the sort's `@UF`. In
-            // proof mode the view proofs (`eclass = f(children)`) compose into the
-            // union edge's proof `Trans hi_pf_ (Sym lo_pf_) : larger = smaller`.
-            let congruence_merge = if self.proofs_enabled() {
-                let uf_name = self.uf_name(schema.output());
-                let trans = self.proof_names().eq_trans_constructor.clone();
-                let sym = self.proof_names().eq_sym_constructor.clone();
-                format!(
-                    "((let hi_pf_ (proof-of-max old0 old1 new0 new1))
-                      (let lo_pf_ (proof-of-min old0 old1 new0 new1))
-                      (set ({uf_name} (ordering-max old0 new0))
-                           (values (ordering-min old0 new0) ({trans} hi_pf_ ({sym} lo_pf_))))
-                      (values (ordering-min old0 new0) lo_pf_))"
-                )
-            } else {
-                let uf_name = self.uf_name(schema.output());
-                format!(
-                    "((set ({uf_name} (ordering-max old0 new0)) (values (ordering-min old0 new0) ()))
-                      (values (ordering-min old0 new0) ()))"
-                )
-            };
+            // smaller eclass and union the two eclasses in the sort's `@UF`.
+            let uf_name = self.uf_name(schema.output());
+            let congruence_merge = self.ordered_union_merge(&uf_name, CarriedProofs::EclassToTerm);
             format!(
                 "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {congruence_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
-        } else {
+        } else if fdecl.merge.is_some() {
+            // Custom function with a `:merge`: the view `:merge` runs the user
+            // merge once (see `custom_view_merge`). No `@UF` union.
+            let custom_merge = self.custom_view_merge(fdecl);
             format!(
-                "(function {view_name} ({view_sorts}) {proof_type} :merge old :internal-term-constructor {name}{view_flags})"
+                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :merge {custom_merge} :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
+            )
+        } else {
+            // Primitive/`Unit`-output `:no-merge` custom: the view is declared native
+            // `:no-merge` with `:internal-identity-vals 1` — a children collision
+            // keeps the old row when value column 0 (the output) is unchanged (raw
+            // equality is equality for a primitive output) and panics when it
+            // differs. The proof column (value column 1) is a payload the identity
+            // guard ignores.
+            debug_assert!(
+                !fdecl.resolved_schema.output().is_eq_sort(),
+                "eq-sort `:no-merge` must be rejected by command_supports_proof_encoding"
+            );
+            format!(
+                "(function {view_name} ({in_sorts}) ({out_type} {proof_type}) :no-merge :internal-term-constructor {name}{view_flags} :internal-identity-vals 1)"
             )
         };
+        // `fresh_sort` is the term's e-class sort only for a custom function whose
+        // output is a distinct value (see `view_sort` above); a constructor/global
+        // reuses its output sort, leaving `fresh_sort` unused.
+        let fresh_sort_decl = if output_is_eclass {
+            String::new()
+        } else {
+            format!("(sort {fresh_sort})")
+        };
+        // The term relation is a term node (`:internal-term-node`): its rows are
+        // reconstructed by proof extraction, with the minted id as the last input.
+        // The deferred delete/subsume markers are keyed on children with no output,
+        // so they are plain `Unit` relations (not term nodes) — the encoding mints
+        // no e-class there and extraction never reads them as terms.
         self.parse_program(&format!(
             "
-            (sort {fresh_sort})
+            {fresh_sort_decl}
             {to_ast_view_sort}
-            (constructor {name} ({term_sorts}) {view_sort}{term_flags} :internal-hidden :unextractable)
+            (function {name} ({term_sorts} {view_sort}) Unit :no-merge :internal-hidden :internal-term-node)
             {view_decl}
-            (constructor {to_delete_name} ({in_sorts}) {fresh_sort} :internal-hidden)
-            (constructor {subsumed_name} ({in_sorts}) {fresh_sort} :internal-hidden)
-            {proof_constructors}
-            {merge_rule}
+            (function {to_delete_name} ({in_sorts}) Unit :no-merge :internal-hidden)
+            (function {subsumed_name} ({in_sorts}) Unit :no-merge :internal-hidden)
             {delete_rule}",
         ))
-    }
-
-    fn proof_functions(&mut self, _fdecl: &ResolvedFunctionDecl, _view_sorts: &str) -> String {
-        // ViewProof is now merged into the view table as its output column
-        "".to_string()
-    }
-
-    /// Rebuild rules that keep a table's view canonical, fanned out one rule per
-    /// rebuildable column (a canonical column has no `@UF` row, so it simply
-    /// doesn't match). A stale column is replaced by its `@UF` leader (eq-sorts)
-    /// or its rebuilt container.
-    ///
-    /// A constructor's functional-dependency view `(children) -> (eclass, {Unit|Proof})`
-    /// re-keys the row for a child update — `set` at the canonicalized children
-    /// (congruence resolves collisions), then `delete` — and re-`set`s the same key
-    /// for an eclass update (the view `:merge` keeps the min). A custom function's
-    /// all-key view `(children eclass) -> {Unit|Proof}` re-keys every column.
-    /// In proof mode each rule composes the updated view proof, and a container
-    /// update records the rebuilt container's `<CSort>Proof`.
-    fn rebuilding_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
-        // Constructors use the FD view keyed by children; custom functions the all-key view.
-        let fd = fdecl.subtype == FunctionSubtype::Constructor;
-        let proofs = self.proofs_enabled();
-        let types = fdecl.resolved_schema.view_types();
-        let n = types.len();
-        let child = |i: usize| format!("c{i}_");
-        // Key columns of the view row: children for FD views, every column otherwise.
-        let n_keys = if fd { n - 1 } else { n };
-        let key_vars: Vec<String> = (0..n_keys).map(child).collect();
-        let view_name = self.view_name(&fdecl.name);
-        let keys_str = format!("{}", ListDisplay(&key_vars, " "));
-        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
-
-        let mut rules = String::new();
-        // One rule per rebuildable key column (re-keys the row via set + delete).
-        for (i, ty) in types[..n_keys].iter().enumerate() {
-            let is_container = ty.is_eq_container_sort();
-            if !is_container && !ty.is_eq_sort() {
-                continue;
-            }
-            let ci = child(i);
-            let canon = format!("c{i}_canon_");
-            let (query_view, eclass_var, view_prf) = if fd {
-                let (q, e, p) = self.query_fd_view(&fdecl.name, &key_vars);
-                (q, Some(e), p)
-            } else {
-                let (q, p) = self.query_view_and_get_proof(&fdecl.name, &key_vars);
-                (q, None, p)
-            };
-            // Canonicalize the column with the container rebuild primitive or a `@UF`
-            // lookup, and build the proof pieces. Container-reading rules are `:naive`
-            // (the primitive reads `@UF` tables the rule doesn't join on).
-            let (canon_fact, naive, proof_lets, pf_arg, cproof_set) = if is_container {
-                let value_prim = self.ensure_container_rebuild(ty);
-                let canon_fact = format!("(= {canon} ({value_prim} {ci}))");
-                if proofs {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let trans = self.proof_names().eq_trans_constructor.clone();
-                    let sym = self.proof_names().eq_sym_constructor.clone();
-                    let proof_prim = self.ensure_container_rebuild_proof(ty);
-                    let rebuild_pf = self.fresh_var();
-                    let new_pf = self.fresh_var();
-                    let cproof = self.term_proof_name(ty.name());
-                    (
-                        canon_fact,
-                        ":naive ",
-                        format!(
-                            "(let {rebuild_pf} ({proof_prim} {ci}))
-                             (let {new_pf} ({congr} {view_prf} {i} {rebuild_pf}))"
-                        ),
-                        new_pf,
-                        format!(
-                            "(set ({cproof} {canon}) ({trans} ({sym} {rebuild_pf}) {rebuild_pf}))"
-                        ),
-                    )
-                } else {
-                    (
-                        canon_fact,
-                        ":naive ",
-                        String::new(),
-                        "()".to_string(),
-                        String::new(),
-                    )
-                }
-            } else {
-                let uf_name = self.uf_name(ty.name());
-                let uf_prf = self.fresh_var();
-                let canon_fact = format!("(= (values {canon} {uf_prf}) ({uf_name} {ci}))");
-                if proofs {
-                    let congr = self.proof_names().congr_constructor.clone();
-                    let new_pf = self.fresh_var();
-                    (
-                        canon_fact,
-                        "",
-                        format!("(let {new_pf} ({congr} {view_prf} {i} {uf_prf}))"),
-                        new_pf,
-                        String::new(),
-                    )
-                } else {
-                    (
-                        canon_fact,
-                        "",
-                        String::new(),
-                        "()".to_string(),
-                        String::new(),
-                    )
-                }
-            };
-            let mut updated = key_vars.clone();
-            updated[i] = canon.clone();
-            let updated_view = match &eclass_var {
-                Some(eclass) => self.update_fd_view(&fdecl.name, &updated, eclass, &pf_arg),
-                None => self.update_view(&fdecl.name, &updated, &pf_arg),
-            };
-            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-            rules.push_str(&format!(
-                "(rule ({query_view}
-                        {canon_fact}
-                        (!= {ci} {canon}))
-                     (
-                      {proof_lets}
-                      {updated_view}
-                      {cproof_set}
-                      (delete ({view_name} {keys_str}))
-                     )
-                      :ruleset {rebuilding_ruleset} {naive}:name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
-        }
-        // FD views: one rule for the eclass value (same key, `set` only; the view
-        // merge keeps the min).
-        if fd {
-            let eclass_uf_name = self.uf_name(types[n - 1].name());
-            let (query_view, eclass_var, view_prf) = self.query_fd_view(&fdecl.name, &key_vars);
-            let eclass_canon = self.fresh_var();
-            let uf_prf = self.fresh_var();
-            let (proof_lets, pf_arg) = if proofs {
-                let trans = self.proof_names().eq_trans_constructor.clone();
-                let sym = self.proof_names().eq_sym_constructor.clone();
-                let new_pf = self.fresh_var();
-                (
-                    format!("(let {new_pf} ({trans} ({sym} {uf_prf}) {view_prf}))"),
-                    new_pf,
-                )
-            } else {
-                (String::new(), "()".to_string())
-            };
-            let updated_view = self.update_fd_view(&fdecl.name, &key_vars, &eclass_canon, &pf_arg);
-            let fresh_name = self.egraph.parser.symbol_gen.fresh("rebuild_rule");
-            rules.push_str(&format!(
-                "(rule ({query_view}
-                        (= (values {eclass_canon} {uf_prf}) ({eclass_uf_name} {eclass_var}))
-                        (!= {eclass_var} {eclass_canon}))
-                     (
-                      {proof_lets}
-                      {updated_view}
-                     )
-                      :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
-        }
-        self.parse_program(&rules)
-    }
-
-    /// Rules that update the to_subsume tables when children change. One rule per
-    /// eq-sort child (no proof needed for subsumed rows).
-    fn rebuilding_subsumed_rules(&mut self, fdecl: &ResolvedFunctionDecl) -> Vec<Command> {
-        let ResolvedCall::Func(FuncType { input, .. }) = &fdecl.resolved_schema else {
-            panic!("cannot create subsumed rules for primitives")
-        };
-
-        // Check if there are any eq-sort columns at all; if not, no rebuild rule needed.
-        if !input.iter().any(|t| t.is_eq_sort()) {
-            return vec![];
-        }
-
-        self.rebuilding_subsumed_rules_fanout(fdecl, input.clone())
-    }
-
-    /// Subsumed-table rebuild: one rule per eq-sort column, mirroring
-    /// [`Self::rebuilding_rules`] (the single-key `@UF` has no row for a
-    /// canonical node, so a per-column lookup only fires when there is work).
-    /// The `@UF` proof column is unused for subsumed rows.
-    fn rebuilding_subsumed_rules_fanout(
-        &mut self,
-        fdecl: &ResolvedFunctionDecl,
-        input: Vec<ArcSort>,
-    ) -> Vec<Command> {
-        let subsumed_name = self.subsumed_name(&fdecl.name);
-        let child = |i: usize| format!("c{i}_");
-        let children_vec: Vec<String> = (0..input.len()).map(child).collect();
-        let children = format!("{}", ListDisplay(&children_vec, " "));
-        let rebuilding_ruleset = self.proof_names().rebuilding_ruleset_name.clone();
-
-        let mut rules = String::new();
-        for (i, ty) in input.iter().enumerate() {
-            if !ty.is_eq_sort() {
-                continue;
-            }
-            let ci = child(i);
-            let leader = format!("c{i}_leader_");
-            let uf_name = self.uf_name(ty.name());
-            let uf_lookup = {
-                let proof_var = self.fresh_var();
-                format!("(= (values {leader} {proof_var}) ({uf_name} {ci}))")
-            };
-            let mut updated = children_vec.clone();
-            updated[i] = leader.clone();
-            let updated_view = ListDisplay(&updated, " ");
-            let fresh_name = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh("rebuild_to_subsume_rule");
-            rules.push_str(&format!(
-                "(rule (({subsumed_name} {children})
-                        {uf_lookup}
-                        (!= {ci} {leader}))
-                     (
-                      ({subsumed_name} {updated_view})
-                      (delete ({subsumed_name} {children}))
-                     )
-                      :ruleset {rebuilding_ruleset} :name \"{fresh_name}\" :internal-include-subsumed)\n"
-            ));
-        }
-        self.parse_program(&rules)
-    }
-
-    /// Instrument fact replaces terms with looking up
-    /// canonical versions in the view.
-    /// It also needs to look up references to globals.
-    /// Adds the instrumented fact to `res` and returns a proof that the fact matched.
-    fn instrument_fact(
-        &mut self,
-        fact: &ResolvedFact,
-        res: &mut Vec<String>,
-        action_lookups: &mut Vec<String>,
-    ) -> String {
-        // A container side condition: a fact that builds a container with a
-        // primitive (`(= xs (vec-of e))`, `(= (set-of a) (set-of b))`, or a bare
-        // `(vec-of e)` guard). The container has no carryable proof — emit the
-        // fact as-is so the e-graph computes it (its arguments are already
-        // bound), with the `Eval` marker as its proof; the checker verifies it
-        // by re-evaluation (see `check_side_condition`, which shares this gate).
-        if is_container_side_condition(fact) {
-            res.push(fact.to_string());
-            return format!("({})", self.proof_names().eval_constructor);
-        }
-        match fact {
-            // In proof normal form, this is the only way that function calls appear.
-            ResolvedFact::Eq(
-                _span,
-                ResolvedExpr::Call(
-                    _span2,
-                    head @ ResolvedCall::Func(FuncType {
-                        subtype: FunctionSubtype::Custom,
-                        ..
-                    }),
-                    args,
-                ),
-                // TODO this could actually be arbitrary pretty easily, it's just nested functions that are hard.
-                ResolvedExpr::Var(_span3, v),
-            ) => {
-                let mut new_args = vec![];
-                let mut arg_proofs = vec![];
-                for arg in args {
-                    let (var, proof) = self.instrument_fact_expr(arg, res, action_lookups);
-                    new_args.push(var);
-                    arg_proofs.push(proof);
-                }
-                new_args.push(v.to_string());
-
-                let view_name = self.view_name(head.name());
-                let args_str = ListDisplay(new_args, " ");
-
-                // View is always a function; query it and bind the output
-                let proof_var = self.fresh_var();
-                res.push(format!("(= {proof_var} ({view_name} {args_str}))"));
-
-                if self.egraph.proof_state.proofs_enabled {
-                    let mut proof = proof_var;
-                    for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                        let congr = &self.proof_names().congr_constructor;
-                        proof = format!(
-                            "
-                            ({congr} {proof} {i} {arg_proof})
-                            "
-                        );
-                    }
-                    proof
-                } else {
-                    "()".to_string()
-                }
-            }
-            ResolvedFact::Eq(_span, left_expr, right_expr) => {
-                let (v1, p1) = self.instrument_fact_expr(left_expr, res, action_lookups);
-                let (v2, p2) = self.instrument_fact_expr(right_expr, res, action_lookups);
-                res.push(format!("(= {v1} {v2})"));
-                let sym = &self.proof_names().eq_sym_constructor;
-                let trans = &self.proof_names().eq_trans_constructor;
-
-                format!("({trans} ({sym} {p1}) {p2})",)
-            }
-            ResolvedFact::Fact(generic_expr) => {
-                let (_, proof) = self.instrument_fact_expr(generic_expr, res, action_lookups);
-                if self.proofs_enabled()
-                    && matches!(
-                        generic_expr,
-                        ResolvedExpr::Call(_, ResolvedCall::Primitive(p), _)
-                            if p.output().is_eq_container_sort()
-                    )
-                {
-                    format!("({})", self.proof_names().eval_constructor)
-                } else {
-                    proof
-                }
-            }
-        }
-    }
-
-    /// Instruments a fact expression to use the view tables.
-    /// Assumes there are no function lookups in the term.
-    /// Returns a variable representing the expression and a proof that the expression was matched.
-    /// Proves a ground equality t1 = t2 where t1 is the eclass representative and t2 matches `expr` syntactically.
-    fn instrument_fact_expr(
-        &mut self,
-        expr: &ResolvedExpr,
-        res: &mut Vec<String>,
-        action_lookups: &mut Vec<String>,
-    ) -> (String, String) {
-        match expr {
-            ResolvedExpr::Lit(_, lit) => {
-                let proof_code = if self.egraph.proof_state.proofs_enabled {
-                    let fiat_constructor = &self.proof_names().fiat_constructor;
-                    let lit_sort = literal_sort(lit);
-                    let to_ast = self
-                        .proof_names()
-                        .sort_to_ast_constructor
-                        .get(lit_sort.name())
-                        .unwrap();
-                    format!("({fiat_constructor} ({to_ast} {lit}) ({to_ast} {lit}))")
-                } else {
-                    "()".to_string()
-                };
-
-                (format!("{lit}"), proof_code)
-            }
-            ResolvedExpr::Var(_, resolved_var) => {
-                let var = &resolved_var.name;
-                (
-                    resolved_var.name.clone(),
-                    if !self.egraph.proof_state.proofs_enabled {
-                        "()".to_string()
-                    } else if resolved_var.sort.is_eq_sort()
-                        || resolved_var.sort.is_eq_container_sort()
-                    {
-                        let term_proof_name = self.term_proof_name(resolved_var.sort.name());
-                        let fresh_proof = self.fresh_var();
-                        // Every eq-sort term has its term_proof set at
-                        // constructor-creation time, so this proof is guaranteed
-                        // present when the rule fires. Fetch it directly in the
-                        // action (the rule is then `:unsafe-seminaive`, see
-                        // instrument_rule) instead of as a body join — one fewer
-                        // join per eq-sort body variable. Callers that don't
-                        // build a proof (run :until, check) discard these.
-                        action_lookups
-                            .push(format!("(let {fresh_proof} ({term_proof_name} {var}))"));
-                        fresh_proof
-                    } else {
-                        let fiat_constructor = &self.proof_names().fiat_constructor;
-                        let lit_sort = resolved_var.sort.name();
-                        let to_ast = self
-                            .proof_names()
-                            .sort_to_ast_constructor
-                            .get(lit_sort)
-                            .unwrap();
-                        format!("({fiat_constructor} ({to_ast} {var}) ({to_ast} {var}))")
-                    },
-                )
-            }
-            ResolvedExpr::Call(_, resolved_call, args) => {
-                let mut new_args = vec![];
-                // Variables and constants don't need subproofs, but constructor calls do.
-                let mut arg_proofs: Vec<Option<String>> = vec![];
-                for arg in args {
-                    if matches!(arg, ResolvedExpr::Var(_, _) | ResolvedExpr::Lit(_, _)) {
-                        new_args.push(arg.to_string());
-                        arg_proofs.push(None);
-                    } else {
-                        let (arg_str, proof) = self.instrument_fact_expr(arg, res, action_lookups);
-                        new_args.push(arg_str);
-                        arg_proofs.push(Some(proof));
-                    }
-                }
-                match resolved_call {
-                    ResolvedCall::Func(func_type) => {
-                        assert!(
-                            func_type.subtype == FunctionSubtype::Constructor,
-                            "Only constructor function calls are allowed in fact expressions due to proof normal form. Got {func_type:?}",
-                        );
-
-                        let fv = self.fresh_var();
-                        let view_name = self.view_name(&func_type.name);
-                        let args_str = ListDisplay(new_args, " ");
-
-                        let proof = {
-                            let view_proof_var = self.fresh_var();
-                            // A constructor view is the FD tuple
-                            // `(children) -> (eclass, {Unit|Proof})`: bind the eclass (`fv`)
-                            // and proof from the tuple.
-                            res.push(format!(
-                                "(= (values {fv} {view_proof_var}) ({view_name} {args_str}))"
-                            ));
-                            if self.proofs_enabled() {
-                                let mut proof = view_proof_var;
-                                for (i, arg_proof) in arg_proofs.into_iter().enumerate() {
-                                    if let Some(arg_proof) = arg_proof {
-                                        let congr = &self.proof_names().congr_constructor;
-                                        proof = format!(
-                                            "
-                            ({congr} {proof} {i} {arg_proof})
-                            "
-                                        );
-                                    }
-                                }
-                                proof
-                            } else {
-                                "()".to_string()
-                            }
-                        };
-                        (fv, proof)
-                    }
-                    ResolvedCall::Primitive(specialized_primitive) => {
-                        let fv = self.fresh_var();
-                        res.push(format!(
-                            "(= {fv} ({} {}))",
-                            specialized_primitive.name(),
-                            ListDisplay(new_args, " ")
-                        ));
-
-                        let proof = if !self.proofs_enabled() {
-                            "()".to_string()
-                        } else if specialized_primitive.output().is_eq_container_sort() {
-                            // A container computed in the query/rule body has no
-                            // carryable proof. It only ever appears in a container
-                            // side condition, whose proof is the `Eval` marker
-                            // emitted at the fact level (see `instrument_fact`);
-                            // this per-expression proof is unused.
-                            "()".to_string()
-                        } else if specialized_primitive.output().is_eq_sort() {
-                            // An eq-sort (datatype) result is an existing anchored
-                            // term (e.g. an identity primitive returning its
-                            // input); reuse its term-proof, fetched in the action.
-                            let term_proof_name =
-                                self.term_proof_name(specialized_primitive.output().name());
-                            let fresh_proof = self.fresh_var();
-                            action_lookups
-                                .push(format!("(let {fresh_proof} ({term_proof_name} {fv}))"));
-                            fresh_proof
-                        } else {
-                            // Base primitives produce a literal result; a
-                            // reflexive `Fiat` over a literal is checker-valid.
-                            let fiat_constructor = &self.proof_names().fiat_constructor;
-                            let to_ast = self
-                                .proof_names()
-                                .sort_to_ast_constructor
-                                .get(specialized_primitive.output().name())
-                                .unwrap();
-                            format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))")
-                        };
-
-                        (fv.clone(), proof)
-                    }
-                    ResolvedCall::Values(_) => {
-                        panic!("tuple-output (`values`) functions are not supported in proofs")
-                    }
-                }
-            }
-        }
-    }
-
-    /// Return the instrumented query and a proof that it matched.
-    /// Returns `(body_facts, action_lookups, proof)`. Eq-sort variables'
-    /// `term_proof` fetches are emitted into `action_lookups` as
-    /// `(let p (term_proof v))` lines for the caller to splice into the
-    /// rule's actions (the rule is then `:unsafe-seminaive`). Callers
-    /// that don't build a proof (`run :until`, `check`) discard the
-    /// lookups and the proof.
-    fn instrument_facts(&mut self, facts: &[ResolvedFact]) -> (Vec<String>, Vec<String>, String) {
-        let mut res = vec![];
-        let mut action_lookups = vec![];
-        let mut proof = vec![];
-
-        for fact in facts.iter() {
-            let f_proof = self.instrument_fact(fact, &mut res, &mut action_lookups);
-            proof.push(f_proof);
-        }
-
-        (res, action_lookups, self.format_prooflist(&proof))
     }
 
     // Actions need to be instrumented to add to the view
@@ -1100,27 +559,69 @@ impl<'a> ProofInstrumentor<'a> {
         &mut self,
         action: &ResolvedAction,
         justification: &Justification,
+        nat_conn: &mut NatConn,
     ) -> Vec<String> {
         let mut res = vec![];
 
         match action {
             ResolvedAction::Let(_span, v, generic_expr) => {
-                let v2 = self.instrument_action_expr(generic_expr, &mut res, justification);
+                let v2 =
+                    self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
+                // Carry the canonicalization info onto the let-bound name. `v2` is
+                // the built term's deduped e-class var, keyed in `nat_conn` by that
+                // fresh var; without this, a later reference to `v.name` (e.g. the
+                // `new-e` in `(let new-e (Bop …)) (union e new-e)`) misses in
+                // `nat_conn` and `union` falls into the no-connector branch, whose
+                // bare `@Rule` endpoint extracts the deduped (canonicalized) shape
+                // instead of the natural one the rule head produced.
+                if let Some(info) = nat_conn.get(&v2).cloned() {
+                    nat_conn.insert(v.name.clone(), info);
+                }
                 res.push(format!("(let {} {})", v.name, v2));
             }
             ResolvedAction::Set(_span, h, generic_exprs, generic_expr) => {
-                let mut exprs = vec![];
-                for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
-                    exprs.push(self.instrument_action_expr(e, &mut res, justification));
-                }
-
                 let ResolvedCall::Func(func_type) = h else {
                     panic!(
                         "Set action on non-function, should have been prevented by typechecking"
                     );
                 };
 
-                let (add_code, _fv) = self.add_term_and_view(func_type, &exprs, justification);
+                // Global definition `(set (x) e)`: x is a nullary `:internal-let`
+                // function aliasing e. Store e's value+proof directly in x's FD view
+                // (x's e-class *is* e's) — no term mint, which would use the wrong
+                // arity for x's term relation (its output is the eclass, so it has
+                // no separate output column).
+                if generic_exprs.is_empty() && self.egraph.type_info.is_global(&func_type.name) {
+                    let e_value = self.instrument_action_expr(
+                        generic_expr,
+                        &mut res,
+                        justification,
+                        nat_conn,
+                    );
+                    let proof = if self.proofs_enabled() {
+                        self.global_value_proof(
+                            &mut res,
+                            func_type,
+                            &e_value,
+                            justification,
+                            nat_conn,
+                        )
+                    } else {
+                        "()".to_string()
+                    };
+                    // Term row (`x`'s e-class is e's) + the FD view `() -> (val, proof)`.
+                    res.push(format!("(set ({} {e_value}) ())", func_type.name));
+                    res.push(self.update_fd_view(&func_type.name, &[], &e_value, &proof));
+                    return res;
+                }
+
+                let mut exprs = vec![];
+                for e in generic_exprs.iter().chain(std::iter::once(generic_expr)) {
+                    exprs.push(self.instrument_action_expr(e, &mut res, justification, nat_conn));
+                }
+
+                let (add_code, _fv) =
+                    self.add_term_and_view(func_type, &exprs, justification, nat_conn);
                 res.extend(add_code);
             }
             ResolvedAction::Change(_span, change, h, generic_exprs) => {
@@ -1131,10 +632,15 @@ impl<'a> ProofInstrumentor<'a> {
                     };
                     let children = generic_exprs
                         .iter()
-                        .map(|e| self.instrument_action_expr(e, &mut res, justification))
+                        .map(|e| self.instrument_action_expr(e, &mut res, justification, nat_conn))
                         .collect::<Vec<_>>();
 
-                    res.push(format!("({symbol} {})", ListDisplay(children, " ")));
+                    // The marker is a `Unit` relation, so insert a row keyed on the
+                    // children with `set` (rather than a constructor application).
+                    res.push(format!(
+                        "(set ({symbol} {}) ())",
+                        ListDisplay(children, " ")
+                    ));
                 } else {
                     panic!(
                         "Delete action on non-function, should have been prevented by typechecking"
@@ -1142,18 +648,20 @@ impl<'a> ProofInstrumentor<'a> {
                 }
             }
             ResolvedAction::Union(_span, generic_expr, generic_expr1) => {
-                let v1 = self.instrument_action_expr(generic_expr, &mut res, justification);
-                let v2 = self.instrument_action_expr(generic_expr1, &mut res, justification);
+                let v1 =
+                    self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
+                let v2 =
+                    self.instrument_action_expr(generic_expr1, &mut res, justification, nat_conn);
                 let ot = generic_expr.output_type();
                 let type_name = ot.name();
-                let unioned = self.union(type_name, &v1, &v2, justification);
+                let unioned = self.union(&mut res, type_name, &v1, &v2, justification, nat_conn);
                 res.push(unioned);
             }
             ResolvedAction::Panic(..) => {
                 res.push(format!("{action}"));
             }
             ResolvedAction::Expr(_span, generic_expr) => {
-                self.instrument_action_expr(generic_expr, &mut res, justification);
+                self.instrument_action_expr(generic_expr, &mut res, justification, nat_conn);
             }
         }
 
@@ -1162,146 +670,490 @@ impl<'a> ProofInstrumentor<'a> {
 
     /// Build the proof term that justifies a freshly-created term `fv`
     /// (wrapped by the AST constructor `to_ast`) proving `fv = fv`, from the
-    /// surrounding [`Justification`]. Shared by constructor creation
-    /// (`add_term_and_view`) and container creation.
-    fn term_proof_for_justification(
-        &self,
+    /// surrounding [`Justification`], emitting the proof-relation mints onto
+    /// `stmts` and returning the proof var.
+    /// Anchor a container's term-proof: mint a proof of `fv = fv` under
+    /// `justification` and record it in the container sort's `<CSort>Proof`
+    /// table (the base the container rebuild composes from).
+    fn anchor_container_term_proof(
+        &mut self,
+        stmts: &mut Vec<String>,
+        fv: &str,
+        csort: &str,
+        justification: &Justification,
+    ) {
+        let to_ast = self
+            .proof_names()
+            .sort_to_ast_constructor
+            .get(csort)
+            .unwrap()
+            .clone();
+        let proof_var = self.term_proof_for_justification(stmts, fv, &to_ast, justification);
+        let cproof = self.term_proof_name(csort);
+        stmts.push(format!("(set ({cproof} {fv}) {proof_var})"));
+    }
+
+    pub(super) fn term_proof_for_justification(
+        &mut self,
+        stmts: &mut Vec<String>,
         fv: &str,
         to_ast: &str,
         justification: &Justification,
     ) -> String {
-        let rule_constructor = &self.proof_names().rule_constructor;
-        let fiat_constructor = &self.proof_names().fiat_constructor;
+        let ast_sort = self.proof_names().ast_sort.clone();
+        let proof_sort = self.proof_sort();
         match justification {
-            Justification::Rule(rule_name, rule_proof) => format!(
-                "({rule_constructor} {rule_name} {rule_proof} ({to_ast} {fv}) ({to_ast} {fv}))"
-            ),
+            Justification::Rule(rule_name, rule_proof) => {
+                let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let a2 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let rule = self.proof_names().rule_constructor.clone();
+                self.mint(
+                    stmts,
+                    &rule,
+                    &format!("{rule_name} {rule_proof} {a1} {a2}"),
+                    &proof_sort,
+                )
+            }
             Justification::Fiat => {
-                format!("({fiat_constructor} ({to_ast} {fv}) ({to_ast} {fv}))")
+                let a1 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let a2 = self.mint(stmts, to_ast, fv, &ast_sort);
+                let fiat = self.proof_names().fiat_constructor.clone();
+                self.mint(stmts, &fiat, &format!("{a1} {a2}"), &proof_sort)
             }
-            Justification::Merge(fn_name, p1, p2) => {
-                let merge_constructor = &self.proof_names().merge_fn_constructor;
-                format!("({merge_constructor} \"{fn_name}\" {p1} {p2} ({to_ast} {fv}))")
+            // Term-free: no AST minted (`fv`/`to_ast` unused). The checker
+            // reconstructs the conclusion from the merge body + premise outputs.
+            Justification::MergeIdx(fn_name, p1, p2, idx) => {
+                let merge_idx = self.proof_names().merge_fn_idx_constructor.clone();
+                self.mint(
+                    stmts,
+                    &merge_idx,
+                    &format!("\"{fn_name}\" {p1} {p2} {idx}"),
+                    &proof_sort,
+                )
+            }
+            Justification::MergeRow(fn_name, p1, p2) => {
+                let merge_row = self.proof_names().merge_fn_row_constructor.clone();
+                self.mint(
+                    stmts,
+                    &merge_row,
+                    &format!("\"{fn_name}\" {p1} {p2}"),
+                    &proof_sort,
+                )
             }
         }
     }
 
-    /// Update the view with the given arguments.
-    /// The arguments include the eclass for constructors.
-    /// View is always a function (returning Proof or Unit).
-    fn update_view(&mut self, fname: &str, args: &[String], proof: &str) -> String {
-        let view_name = self.view_name(fname);
-        let view_update = format!("(set ({view_name} {}) {proof})", ListDisplay(args, " "));
-        if let Some((current_name, input_arity)) =
-            self.egraph.proof_state.merge_current.get(fname).cloned()
-            && args.len() == input_arity + 1
+    /// Proof stored in a global's FD view for the value `e` it aliases.
+    ///
+    /// When `e` is a built term (e.g. `(Plus …)`), `add_term_and_view` has already
+    /// proved its *natural* form — the literal term the checker reconstructs from
+    /// the global's `(let x e)` — and recorded a `connector : natural = e_value` in
+    /// `nat_conn`. Anchor the global's proof on that natural form (a reflexive
+    /// `e_value = e_value` routed through it) instead of fiat-ing the canonical
+    /// `e_value` directly: `e_value`'s shape may be a rewritten (canonicalized)
+    /// child the checker cannot establish, whereas the natural form is exactly the
+    /// global definition it can. An atomic value (a literal, or a bare reference to
+    /// another global) has no connector and is fiat-ed directly — a literal is
+    /// self-justifying and a global alias is already established.
+    fn global_value_proof(
+        &mut self,
+        res: &mut Vec<String>,
+        func_type: &FuncType,
+        e_value: &str,
+        justification: &Justification,
+        nat_conn: &NatConn,
+    ) -> String {
+        if let Some(NatEntry {
+            connector: Some(connector),
+            ..
+        }) = nat_conn.get(e_value).cloned()
         {
-            let inputs = ListDisplay(&args[..input_arity], " ");
-            let output = &args[input_arity];
-            return format!("{view_update}\n(set ({current_name} {inputs}) {output})");
+            let proof_sort = self.proof_sort();
+            let sym = self.proof_names().eq_sym_constructor.clone();
+            let trans = self.proof_names().eq_trans_constructor.clone();
+            let sym_conn = self.mint(res, &sym, &connector, &proof_sort);
+            self.mint(res, &trans, &format!("{sym_conn} {connector}"), &proof_sort)
+        } else {
+            let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+            self.term_proof_for_justification(res, e_value, &to_ast, justification)
         }
-        view_update
     }
 
-    /// Write a row into a constructor's functional-dependency view
+    /// Write a row into a functional-dependency view
     /// `(set (@FView children) (values eclass proof))`. Re-setting an existing `children` key with a
-    /// different `eclass` triggers the view's native congruence `:merge`.
-    fn update_fd_view(
+    /// different `eclass` triggers the view's `:merge`.
+    pub(super) fn update_fd_view(
         &mut self,
         fname: &str,
         children: &[String],
-        eclass: &str,
+        value: &str,
         proof: &str,
     ) -> String {
         let view_name = self.view_name(fname);
         format!(
-            "(set ({view_name} {}) (values {eclass} {proof}))",
+            "(set ({view_name} {}) (values {value} {proof}))",
             ListDisplay(children, " ")
         )
     }
 
-    /// Return some code adding to the view and term tables.
-    /// For constructors, `args` should not include the eclass of the resulting term (since it may not exist yet).
-    /// For custom functions, `args` should include all arguments (including the output for the function).
-    ///
-    /// Returns a vector of strings representing code to add and a variable for the created term.
-    /// We could return the term itself, but this might make the encoding blow up the code.
+    /// Mint a fresh id of `out_sort` and assert the relation row
+    /// `({name} {args_joined} <fresh>)`, appending the `let`/`set` onto `stmts`
+    /// and returning the fresh variable. Terms and proofs are relations rather
+    /// than constructors, so an id is minted explicitly here rather than by a
+    /// constructor call; every minted id keeps its row (nothing is merged away).
+    pub(crate) fn mint(
+        &mut self,
+        stmts: &mut Vec<String>,
+        name: &str,
+        args_joined: &str,
+        out_sort: &str,
+    ) -> String {
+        let v = self.fresh_var();
+        // The generic `get-fresh!` takes the target sort as a string literal so it
+        // types its output without per-sort primitives (its runtime ignores the arg).
+        let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
+        stmts.push(format!("(let {v} ({get_fresh} \"{out_sort}\"))"));
+        stmts.push(format!("(set ({name} {args_joined} {v}) ())"));
+        v
+    }
+
+    /// Read an encoded global's value from its FD view `() -> (val, proof)`, for a
+    /// global reference `(x)` appearing in an action. `set-if-empty` returns the
+    /// stored e-class (a global is `set` before it is used, so the fresh fallback is
+    /// dead code that only fires on a malformed program). The value read is already
+    /// the view's canonical e-class, so no natural/deduped connector is recorded.
+    fn lookup_global(&mut self, name: &str, res: &mut Vec<String>) -> String {
+        let view = self.view_name(name);
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
+        let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
+        let view_sort = self
+            .proof_names()
+            .fn_to_term_sort
+            .get(name)
+            .expect("term sort recorded in term_and_view")
+            .clone();
+        let fresh_e = self.fresh_var();
+        res.push(format!("(let {fresh_e} ({get_fresh} \"{view_sort}\"))"));
+        let vx = self.fresh_var();
+        let fallback_proof = if self.proofs_enabled() {
+            let to_ast = self.fname_to_ast_name(name).to_string();
+            self.term_proof_for_justification(res, &fresh_e, &to_ast, &Justification::Fiat)
+        } else {
+            "()".to_string()
+        };
+        res.push(format!(
+            "(let {vx} ({set_if_empty} {fresh_e} {fallback_proof}))"
+        ));
+        vx
+    }
+
+    /// The `Proof` datatype's sort name (mint target for proof relations).
+    pub(crate) fn proof_sort(&self) -> String {
+        self.proof_names().proof_datatype.clone()
+    }
+
+    /// Return some code adding to the term and view tables, and a variable for
+    /// the created term. For constructors, `args` excludes the eclass of the
+    /// resulting term (it may not exist yet); for custom functions, `args`
+    /// includes all arguments, output included.
     fn add_term_and_view(
         &mut self,
         func_type: &FuncType,
         args: &[String],
         justification: &Justification,
+        nat_conn: &mut NatConn,
     ) -> (Vec<String>, String) {
-        // A fresh variable for the new term.
-        let fv = self.fresh_var();
         let mut res = vec![];
-        // TODO might be able to get rid of this intermediate variable in encoding
+        let view_sort = self
+            .egraph
+            .proof_state
+            .proof_names
+            .fn_to_term_sort
+            .get(&func_type.name)
+            .expect("term sort recorded in term_and_view")
+            .clone();
+
+        let var = if func_type.subtype != FunctionSubtype::Constructor {
+            self.add_custom_row(&mut res, func_type, args, justification, &view_sort)
+        } else if !self.egraph.proof_state.proofs_enabled {
+            self.add_constructor_term_only(&mut res, func_type, args, &view_sort)
+        } else {
+            self.add_constructor_with_proof(
+                &mut res,
+                func_type,
+                args,
+                justification,
+                nat_conn,
+                &view_sort,
+            )
+        };
+        (res, var)
+    }
+
+    /// Custom functions: mint the term-relation row and record its term proof.
+    /// No canonicalization threading.
+    fn add_custom_row(
+        &mut self,
+        res: &mut Vec<String>,
+        func_type: &FuncType,
+        args: &[String],
+        justification: &Justification,
+        view_sort: &str,
+    ) -> String {
+        let fv = self.mint(
+            res,
+            &func_type.name,
+            &ListDisplay(args, " ").to_string(),
+            view_sort,
+        );
+        let view_proof_var = if self.egraph.proof_state.proofs_enabled {
+            let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+            self.term_proof_for_justification(res, &fv, &to_ast, justification)
+        } else {
+            "()".to_string()
+        };
+        // `args` ends with the output value (from the `(set (f c..) v)` action);
+        // the FD view is keyed on the children. `view_proof_var` proves the row's
+        // f-application term `f(children, output)` (what `fv` extracts to) — the
+        // premise `MergeRow`/`MergeIdx` reconstruct their conclusion from.
+        let (output, children) = args.split_last().expect("custom set needs an output");
+        let update = self.update_fd_view(&func_type.name, children, output, &view_proof_var);
+        res.push(update);
+        fv
+    }
+
+    /// Term-only constructors: build the term with canonical children and
+    /// canonicalize it to the view's e-class via `set-if-empty`; return that
+    /// canonical id so parents build with canonical children (views stay
+    /// canonical).
+    fn add_constructor_term_only(
+        &mut self,
+        res: &mut Vec<String>,
+        func_type: &FuncType,
+        args: &[String],
+        view_sort: &str,
+    ) -> String {
+        let view = self.view_name(&func_type.name);
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
+        let fv = self.mint(
+            res,
+            &func_type.name,
+            &ListDisplay(args, " ").to_string(),
+            view_sort,
+        );
+        let canon = self.fresh_var();
         res.push(format!(
-            "(let {fv} ({} {}))",
-            func_type.name,
+            "(let {canon} ({set_if_empty} {} {fv} ()))",
             ListDisplay(args, " ")
         ));
+        canon
+    }
 
-        let (proof_str, view_proof_var) = if self.egraph.proof_state.proofs_enabled {
-            let to_ast = self.fname_to_ast_name(&func_type.name);
-            let proof = self.term_proof_for_justification(&fv, to_ast, justification);
+    /// Proof-mode constructors: build the *natural* term (children at their
+    /// as-built ids) and the *canonical* term (children at their view-deduped
+    /// ids), connect them with a `Congr` chain over the changed children, then
+    /// `set-if-empty` to the view's deduped e-class and stitch on the view-dedup
+    /// edge. Return the deduped e-class (so parents and views stay canonical)
+    /// and record `(natural, connector : natural = deduped)` in `nat_conn` for
+    /// the parent's `Congr` and the root `union`.
+    fn add_constructor_with_proof(
+        &mut self,
+        res: &mut Vec<String>,
+        func_type: &FuncType,
+        args: &[String],
+        justification: &Justification,
+        nat_conn: &mut NatConn,
+        view_sort: &str,
+    ) -> String {
+        let view = self.view_name(&func_type.name);
+        let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
+        let to_ast = self.fname_to_ast_name(&func_type.name).to_string();
+        let proof_sort = self.proof_sort();
+        let congr = self.proof_names().congr_constructor.clone();
+        let trans = self.proof_names().eq_trans_constructor.clone();
+        let sym = self.proof_names().eq_sym_constructor.clone();
+        let term_proof_constructor = self.term_proof_name(func_type.output().name());
 
-            let proof_var = self.fresh_var();
-            // add a proof for the constructor if needed
-            let term_proof = if func_type.subtype == FunctionSubtype::Constructor {
-                let term_proof_constructor = self.term_proof_name(func_type.output().name());
-                format!("(set ({term_proof_constructor} {fv}) {proof_var})")
-            } else {
-                "".to_string()
-            };
+        // Each arg is a child's deduped id; look up its natural id + connector.
+        let children: Vec<(String, String, Option<String>)> = args
+            .iter()
+            .map(|a| match nat_conn.get(a) {
+                Some(e) => (a.clone(), e.natural.clone(), e.connector.clone()),
+                None => (a.clone(), a.clone(), None),
+            })
+            .collect();
+        let nat_args: Vec<String> = children.iter().map(|(_, n, _)| n.clone()).collect();
+        let dedup_args: Vec<String> = children.iter().map(|(d, _, _)| d.clone()).collect();
 
-            (
-                format!(
-                    "(let {proof_var} {proof})
-                     {term_proof}"
-                ),
-                proof_var,
-            )
-        } else {
-            ("".to_string(), "()".to_string())
-        };
-
-        res.push(proof_str);
-        if func_type.subtype == FunctionSubtype::Constructor {
-            // FD view: children are the key, the fresh term is the eclass value.
-            res.push(self.update_fd_view(&func_type.name, args, &fv, &view_proof_var));
-        } else {
-            // Custom function: `args` already includes the output column.
-            res.push(self.update_view(&func_type.name, args, &view_proof_var));
+        // `fv_nat` stays *unseeded* (only `fv_can` is written to the view) so it is
+        // never pulled into the view's congruence `:merge`; its `@Rule` endpoint
+        // therefore keeps the as-built shape the rule head produced. `fv_can` is
+        // always a separate node (even when no child changed) with the reflexive
+        // proof `fv_can = fv_can`, exempt from the rule-head check.
+        let fv_nat = self.mint(
+            res,
+            &func_type.name,
+            &ListDisplay(&nat_args, " ").to_string(),
+            view_sort,
+        );
+        let nat_prf = self.term_proof_for_justification(res, &fv_nat, &to_ast, justification);
+        // `Congr` chain: `fv_nat = f(deduped children)`.
+        let mut nat_to_dedup_term = nat_prf.clone();
+        for (i, (_, _, conn)) in children.iter().enumerate() {
+            if let Some(conn) = conn {
+                nat_to_dedup_term = self.mint(
+                    res,
+                    &congr,
+                    &format!("{nat_to_dedup_term} {i} {conn}"),
+                    &proof_sort,
+                );
+            }
         }
+        let fv_can = self.mint(
+            res,
+            &func_type.name,
+            &ListDisplay(&dedup_args, " ").to_string(),
+            view_sort,
+        );
+        let sym_ntd = self.mint(res, &sym, &nat_to_dedup_term, &proof_sort);
+        let can_prf = self.mint(
+            res,
+            &trans,
+            &format!("{sym_ntd} {nat_to_dedup_term}"),
+            &proof_sort,
+        );
 
-        // No self-loop seed: the single-key `@UF` needs none — a root term simply has
-        // no `@UF` row (identity-on-miss), in both term and proof mode.
+        // Anchor both term proofs, dedup `fv_can` to the view e-class, and read the
+        // view's stored proof (`dedup = f(children)`).
+        let dedup = self.fresh_var();
+        let vprf = self.fresh_var();
+        let view_proof = crate::proofs::proof_fresh::view_proof_prim_name(&view);
+        let dedup_args = ListDisplay(&dedup_args, " ");
+        res.push(format!(
+            "(set ({term_proof_constructor} {fv_nat}) {nat_prf})"
+        ));
+        res.push(format!(
+            "(set ({term_proof_constructor} {fv_can}) {can_prf})"
+        ));
+        res.push(format!(
+            "(let {dedup} ({set_if_empty} {dedup_args} {fv_can} {can_prf}))"
+        ));
+        res.push(format!(
+            "(let {vprf} ({view_proof} {dedup_args} {can_prf}))"
+        ));
 
-        (res, fv)
+        // connector `fv_nat = dedup` = Trans(nat_to_dedup, Sym(dedup = f(children))).
+        // `sym_vprf` reads the `vprf` let, so it must follow the statements above.
+        let sym_vprf = self.mint(res, &sym, &vprf, &proof_sort);
+        let connector = self.mint(
+            res,
+            &trans,
+            &format!("{nat_to_dedup_term} {sym_vprf}"),
+            &proof_sort,
+        );
+
+        nat_conn.insert(
+            dedup.clone(),
+            NatEntry {
+                natural: fv_nat,
+                connector: Some(connector),
+            },
+        );
+        dedup
     }
 
-    /// Returns a query for (fname args) and a variable for the proof (or Unit) output.
-    /// View is always a function, so we always use `(= var (view ...))` form.
-    fn query_view_and_get_proof(&mut self, fname: &str, args: &[String]) -> (String, String) {
+    /// Query a functional-dependency view by its `children` key, binding fresh
+    /// variables for the value and proof output columns:
+    /// `(= (values v pf) (@FView children))`. The value is the e-class for
+    /// constructors/globals and the function output for custom `:merge` views.
+    /// Returns `(query, value_var, proof_var)`.
+    pub(super) fn query_fd_view(
+        &mut self,
+        fname: &str,
+        children: &[String],
+    ) -> (String, String, String) {
         let view_name = self.view_name(fname);
-        let pf_var = self.fresh_var();
-        let query = format!("(= {pf_var} ({view_name} {}))", ListDisplay(args, " "));
-        (query, pf_var)
-    }
-
-    /// Query a constructor's functional-dependency view by its `children` key, binding fresh
-    /// variables for the `eclass` and `proof` output columns: `(= (values e pf) (@FView children))`.
-    /// Returns `(query, eclass_var, proof_var)`.
-    fn query_fd_view(&mut self, fname: &str, children: &[String]) -> (String, String, String) {
-        let view_name = self.view_name(fname);
-        let eclass_var = self.fresh_var();
+        let value_var = self.fresh_var();
         let pf_var = self.fresh_var();
         let query = format!(
-            "(= (values {eclass_var} {pf_var}) ({view_name} {}))",
+            "(= (values {value_var} {pf_var}) ({view_name} {}))",
             ListDisplay(children, " ")
         );
-        (query, eclass_var, pf_var)
+        (query, value_var, pf_var)
+    }
+
+    /// Rebuild a custom function's merge body inside its FD view's `:merge` (see
+    /// [`Self::custom_view_merge`]), minting each constructor subterm via
+    /// `add_term_and_view` (so canonical ids are used, like every other term site)
+    /// with a term-free `MergeIdx` proof. `idx` is threaded pre-order (incremented
+    /// once per node, leaves included) to match the checker's `subexpr_at_index`,
+    /// so subexpr `idx` evaluated on the premise outputs reconstructs exactly this
+    /// node's term. `old`/`new` in the body map to the `:merge` output columns
+    /// `old0`/`new0`; the carried view proofs are `old1`/`new1`.
+    fn instrument_merge_body(
+        &mut self,
+        expr: &ResolvedExpr,
+        res: &mut Vec<String>,
+        fname: &str,
+        idx: &mut usize,
+        nat_conn: &mut NatConn,
+    ) -> String {
+        let my_idx = *idx;
+        *idx += 1;
+        match expr {
+            ResolvedExpr::Lit(_, lit) => format!("{lit}"),
+            ResolvedExpr::Var(_, resolved_var) => match resolved_var.name.as_str() {
+                "old" => "old0".to_string(),
+                "new" => "new0".to_string(),
+                other => other.to_string(),
+            },
+            ResolvedExpr::Call(_, ResolvedCall::Func(func_type), args) => {
+                let arg_vars = args
+                    .iter()
+                    .map(|a| self.instrument_merge_body(a, res, fname, idx, nat_conn))
+                    .collect::<Vec<_>>();
+                let just = Justification::MergeIdx(
+                    fname.to_string(),
+                    "old1".to_string(),
+                    "new1".to_string(),
+                    my_idx,
+                );
+                let (code, fv) = self.add_term_and_view(func_type, &arg_vars, &just, nat_conn);
+                res.extend(code);
+                fv
+            }
+            // A container-producing primitive (e.g. `set-intersect`): build the
+            // container over the recursively-built args and anchor a term-free
+            // `MergeIdx` container proof in `<CSort>Proof` (the container rebuild's
+            // anchor). No AST/children needed.
+            ResolvedExpr::Call(_, ResolvedCall::Primitive(sp), args) => {
+                let arg_vars = args
+                    .iter()
+                    .map(|a| self.instrument_merge_body(a, res, fname, idx, nat_conn))
+                    .collect::<Vec<_>>();
+                let prim_name = sp.name().to_string();
+                let out = sp.output();
+                let fv = self.fresh_var();
+                res.push(format!(
+                    "(let {fv} ({prim_name} {}))",
+                    ListDisplay(&arg_vars, " ")
+                ));
+                if self.egraph.proof_state.proofs_enabled && out.is_eq_container_sort() {
+                    let csort = out.name().to_string();
+                    let just = Justification::MergeIdx(
+                        fname.to_string(),
+                        "old1".to_string(),
+                        "new1".to_string(),
+                        my_idx,
+                    );
+                    self.anchor_container_term_proof(res, &fv, &csort, &just);
+                }
+                fv
+            }
+            ResolvedExpr::Call(_, _, _) => {
+                panic!("proof-mode merge body for `{fname}` contains an unsupported call form")
+            }
+        }
     }
 
     // Add to view and term tables, returning a variable for the created term.
@@ -1310,6 +1162,7 @@ impl<'a> ProofInstrumentor<'a> {
         expr: &ResolvedExpr,
         res: &mut Vec<String>,
         proof: &Justification,
+        nat_conn: &mut NatConn,
     ) -> String {
         match expr {
             ResolvedExpr::Lit(_, lit) => format!("{lit}"),
@@ -1317,52 +1170,65 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedExpr::Call(_, resolved_call, args) => {
                 let args = args
                     .iter()
-                    .map(|arg| self.instrument_action_expr(arg, res, proof))
+                    .map(|arg| self.instrument_action_expr(arg, res, proof, nat_conn))
                     .collect::<Vec<_>>();
                 match resolved_call {
                     ResolvedCall::Func(func_type) => {
                         if func_type.subtype == FunctionSubtype::Custom {
-                            // Globals are desugared to no-arg functions (in non-proof mode)
-                            // They're allowed, in proof mode they are constructors.
+                            // Proof normal form bans looking up custom functions in
+                            // actions, except encoded globals: a nullary
+                            // `:internal-let` function whose value is read from its
+                            // FD view (see `lookup_global`). This is the only custom
+                            // lookup allowed here.
                             if self.egraph.type_info.is_global(&func_type.name) {
-                                return format!("({} {})", func_type.name, ListDisplay(&args, " "));
+                                return self.lookup_global(&func_type.name, res);
                             }
                             panic!(
                                 "Found a function lookup in actions, should have been prevented by typechecking"
                             );
                         }
-                        let (add_code, fv) = self.add_term_and_view(func_type, &args, proof);
+                        let (add_code, fv) =
+                            self.add_term_and_view(func_type, &args, proof, nat_conn);
                         res.extend(add_code);
 
                         fv
                     }
                     ResolvedCall::Primitive(specialized_primitive) => {
+                        let prim_name = specialized_primitive.name().to_string();
+                        let out = specialized_primitive.output();
+                        let container_proof =
+                            self.egraph.proof_state.proofs_enabled && out.is_eq_container_sort();
+                        let csort = out.name().to_string();
+                        // Build a container over *natural* element ids where we have
+                        // them (an eq-sort arg with a connector), recording each
+                        // `natural -> (deduped, connector)` edge in the element's
+                        // union-find. The container's term-proof then extracts the
+                        // syntactic shape the rule wrote, and the ordinary container
+                        // rebuild canonicalizes the element (see "Containers" in
+                        // proof_encoding.md).
+                        let mut build_args = Vec::with_capacity(args.len());
+                        for (a, asort) in args.iter().zip(specialized_primitive.input()) {
+                            match nat_conn.get(a).cloned() {
+                                Some(NatEntry {
+                                    natural,
+                                    connector: Some(conn),
+                                }) if container_proof && asort.is_eq_sort() => {
+                                    let uf = self.uf_name(asort.name());
+                                    res.push(format!("(set ({uf} {natural}) (values {a} {conn}))"));
+                                    build_args.push(natural);
+                                }
+                                _ => build_args.push(a.clone()),
+                            }
+                        }
                         let fv = self.fresh_var();
                         res.push(format!(
-                            "(let {} ({} {}))",
-                            fv,
-                            specialized_primitive.name(),
-                            ListDisplay(&args, " ")
+                            "(let {fv} ({prim_name} {}))",
+                            ListDisplay(&build_args, " ")
                         ));
-                        // In proof mode, a primitive that builds a container
-                        // value records a reflexive term-proof in `<CSort>Proof`.
-                        // This is the anchor for the container's rebuild
-                        // congruence proofs (see `rebuilding_rules`).
-                        if self.egraph.proof_state.proofs_enabled {
-                            let out = specialized_primitive.output();
-                            if out.is_eq_container_sort() {
-                                let csort = out.name().to_string();
-                                let to_ast = self
-                                    .proof_names()
-                                    .sort_to_ast_constructor
-                                    .get(&csort)
-                                    .unwrap()
-                                    .clone();
-                                let proof_str =
-                                    self.term_proof_for_justification(&fv, &to_ast, proof);
-                                let cproof = self.term_proof_name(&csort);
-                                res.push(format!("(set ({cproof} {fv}) {proof_str})"));
-                            }
+                        // A container-producing primitive records a term-proof in
+                        // `<CSort>Proof`, the anchor for the container rebuild.
+                        if container_proof {
+                            self.anchor_container_term_proof(res, &fv, &csort, proof);
                         }
                         fv
                     }
@@ -1379,10 +1245,11 @@ impl<'a> ProofInstrumentor<'a> {
         &mut self,
         actions: &[ResolvedAction],
         justification: &Justification,
+        nat_conn: &mut NatConn,
     ) -> Vec<String> {
         let mut res = vec![];
         for action in actions {
-            res.extend(self.instrument_action(action, justification));
+            res.extend(self.instrument_action(action, justification, nat_conn));
         }
         res
     }
@@ -1392,6 +1259,10 @@ impl<'a> ProofInstrumentor<'a> {
     /// When proofs are enabled we query proof tables, then build a proof for the rule in the actions.
     /// Finally, each view update also updates the proof tables.
     fn instrument_rule(&mut self, rule: &ResolvedRule) -> Vec<Command> {
+        // Fresh per generated program (see `NatConn`): a shared map would leak
+        // stale entries keyed by repeated user let names (e.g. `new-e`) from
+        // earlier rules/merges, referencing out-of-scope vars.
+        let mut nat_conn = NatConn::default();
         // term_proofs are fetched as action-side lookups (see instrument_facts),
         // so a rule with any needs a Read/Full action context (`eval_opt` below).
         let (facts, action_lookups, proof_str) = self.instrument_facts(&rule.body);
@@ -1417,7 +1288,7 @@ impl<'a> ProofInstrumentor<'a> {
             "".to_string()
         };
 
-        let actions = self.instrument_actions(&rule.head.0, &proof);
+        let actions = self.instrument_actions(&rule.head.0, &proof, &mut nat_conn);
         let name = &rule.name;
         let ruleset_opt = if rule.ruleset.is_empty() {
             "".to_string()
@@ -1635,8 +1506,9 @@ impl<'a> ProofInstrumentor<'a> {
                 res.extend(self.instrument_rule(rule));
             }
             ResolvedNCommand::CoreAction(action) => {
+                let mut nat_conn = NatConn::default();
                 let instrumented = self
-                    .instrument_action(action, &Justification::Fiat)
+                    .instrument_action(action, &Justification::Fiat, &mut nat_conn)
                     .join("\n");
                 res.extend(self.parse_program(&instrumented));
             }
@@ -1650,30 +1522,37 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::RunSchedule(schedule) => {
                 res.push(Command::RunSchedule(self.instrument_schedule(schedule)));
             }
-            ResolvedNCommand::Fail(span, cmd) => {
+            ResolvedNCommand::Fail(span, cmds) => {
+                // Encode every wrapped command and keep the whole flattened result
+                // inside one `fail` (a single command can encode to several).
                 let mut encoded = vec![];
-                self.term_encode_command(cmd, &mut encoded)?;
-                if encoded.len() != 1 {
-                    return Err(Error::UnsupportedProofCommand {
-                        command: cmd.to_command().to_string(),
-                        reason: ProofEncodingUnsupportedReason::FailNonAtomicCommand,
-                    });
+                for cmd in cmds {
+                    self.term_encode_command(cmd, &mut encoded)?;
                 }
-                res.push(Command::Fail(
-                    span.clone(),
-                    Box::new(encoded.pop().unwrap()),
-                ));
+                res.push(Command::Fail(span.clone(), encoded));
             }
             ResolvedNCommand::Input { .. } => {
-                unreachable!("inputs should be lowered before term/proof instrumentation")
+                // Loaded natively at run time (see `EGraph::native_input`), inserting
+                // straight into the encoded tables. Pass the command through so
+                // `run_command` dispatches it.
+                res.push(command.to_command().make_unresolved());
             }
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
                 let mut action_stmts = vec![];
-                let instrumented_expr =
-                    self.instrument_action_expr(expr, &mut action_stmts, &Justification::Fiat);
-                let instrumented_variants =
-                    self.instrument_action_expr(variants, &mut action_stmts, &Justification::Fiat);
+                let mut nat_conn = NatConn::default();
+                let instrumented_expr = self.instrument_action_expr(
+                    expr,
+                    &mut action_stmts,
+                    &Justification::Fiat,
+                    &mut nat_conn,
+                );
+                let instrumented_variants = self.instrument_action_expr(
+                    variants,
+                    &mut action_stmts,
+                    &Justification::Fiat,
+                    &mut nat_conn,
+                );
 
                 // Add any action statements needed to set up the expressions
                 for stmt in action_stmts {
@@ -1738,79 +1617,40 @@ impl<'a> ProofInstrumentor<'a> {
         for command in program {
             self.term_encode_command(&command, &mut res)?;
 
-            // run rebuilding after every command except a few
-            if let ResolvedNCommand::Function(..)
-            | ResolvedNCommand::NormRule { .. }
-            | ResolvedNCommand::Sort { .. } = &command
-            {
-            } else {
+            if !command_skips_rebuild(&command) {
                 res.push(Command::RunSchedule(self.rebuild()));
             }
         }
 
         Ok(res)
     }
+}
 
-    /// Build the [`ContainerRebuildSpec`] for a container sort: mint and cache
-    /// the fresh rebuild-primitive names. The primitives themselves are
-    /// registered from the spec when the Sort is typechecked (see
-    /// [`crate::proofs::proof_container_rebuild::register_container_rebuild_from_spec`]).
-    fn build_container_rebuild_spec(&mut self, container_sort: &ArcSort) -> ContainerRebuildSpec {
-        let sort_name = container_sort.name().to_string();
-        let proof_mode = self.egraph.proof_state.proofs_enabled;
-
-        let internal_rebuild_prim = self.egraph.parser.symbol_gen.fresh("container_rebuild");
-        self.egraph
-            .proof_state
-            .container_rebuild_name
-            .insert(sort_name.clone(), internal_rebuild_prim.clone());
-
-        let internal_rebuild_proof_prim = proof_mode.then(|| {
-            let proof_prim = self
-                .egraph
-                .parser
-                .symbol_gen
-                .fresh("container_rebuild_proof");
-            self.egraph
-                .proof_state
-                .container_rebuild_proof_name
-                .insert(sort_name, proof_prim.clone());
-            proof_prim
-        });
-
-        ContainerRebuildSpec {
-            internal_rebuild_prim,
-            internal_rebuild_proof_prim,
-        }
+/// Whether no maintenance rebuild is needed after `command`.
+///
+/// Declarations (sorts, functions, rules) run no actions. A `set` (including a
+/// global-let's `(set (g) e)`) or a top-level expression over non-container
+/// sorts builds and dedups terms via `set-if-empty` without merging e-classes
+/// or deferring work, so no maintenance rebuild is needed after it — this is
+/// what stops N global-let `set`s from each triggering a rebuild (quadratic).
+/// Everything else still rebuilds: `union` merges e-classes, `delete`/`subsume`
+/// defer work to the maintenance ruleset, and a container-valued action needs
+/// the (`:naive`) container rebuild to recanonicalize it — all need the
+/// following rebuild to run.
+fn command_skips_rebuild(command: &ResolvedNCommand) -> bool {
+    fn touches_container(e: &ResolvedExpr) -> bool {
+        e.output_type().is_eq_container_sort()
+            || matches!(e, ResolvedExpr::Call(_, _, args) if args.iter().any(touches_container))
     }
-
-    /// The (already-built) container value-rebuild primitive name for a sort.
-    fn ensure_container_rebuild(&mut self, container_sort: &ArcSort) -> String {
-        self.egraph
-            .proof_state
-            .container_rebuild_name
-            .get(container_sort.name())
-            .cloned()
-            .unwrap_or_else(|| {
-                panic!(
-                    "container rebuild primitive not built for sort {}",
-                    container_sort.name()
-                )
-            })
-    }
-
-    /// The (already-built) container proof-rebuild primitive name for a sort.
-    fn ensure_container_rebuild_proof(&mut self, container_sort: &ArcSort) -> String {
-        self.egraph
-            .proof_state
-            .container_rebuild_proof_name
-            .get(container_sort.name())
-            .cloned()
-            .unwrap_or_else(|| {
-                panic!(
-                    "container rebuild proof primitive not built for sort {}",
-                    container_sort.name()
-                )
-            })
+    match command {
+        ResolvedNCommand::Function(..)
+        | ResolvedNCommand::NormRule { .. }
+        | ResolvedNCommand::Sort { .. } => true,
+        ResolvedNCommand::CoreAction(ResolvedAction::Expr(_, e)) => !touches_container(e),
+        ResolvedNCommand::CoreAction(ResolvedAction::Set(_, _, args, rhs)) => !args
+            .iter()
+            .chain(std::iter::once(rhs))
+            .any(touches_container),
+        _ => false,
     }
 }

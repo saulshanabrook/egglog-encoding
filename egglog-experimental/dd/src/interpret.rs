@@ -38,7 +38,7 @@ use hashbrown::{HashMap, HashSet};
 use web_time::{Duration, Instant};
 
 use crate::compile::{ReadKey, Row};
-use crate::{EGraph, TableDefault};
+use crate::{EGraph, TableDefault, ViewOp};
 
 /// Binding environment: variable id → bound `u32` value.
 pub(crate) type Env = HashMap<u32, u32>;
@@ -133,7 +133,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
 
     // Snapshot the fresh-id counter: any hash-cons (`lookup_or_create`) this
     // call advances it, the O(1) signal that a new term row was created.
-    let next_id_at_start = eg.next_id;
+    let next_id_at_start = eg.db.read_counter(eg.id_counter);
 
     let mut writes: Vec<Write> = Vec::new();
     // Iteration-scoped `key -> outputs` index for `lookup_or_create` (eq-sort
@@ -177,7 +177,7 @@ pub fn run_iteration(eg: &mut EGraph, rules: &[(usize, RuleSpec)]) -> Result<Ite
     // always allocates a fresh id, so any term created this call advances
     // `next_id` — that alone is a real mirror change.
     let merge_timer = Instant::now();
-    let mut changed = eg.next_id != next_id_at_start;
+    let mut changed = eg.db.read_counter(eg.id_counter) != next_id_at_start;
     let mut removes_by_func: RemovesByFunc = HashMap::new();
     let mut sets: Vec<(FunctionId, Row)> = Vec::new();
     let mut subsumes: Vec<(FunctionId, Vec<u32>)> = Vec::new();
@@ -493,7 +493,17 @@ fn apply_head(
                             .copied()
                             .map(Value::new)
                             .collect::<Vec<_>>();
-                        eg.eval_prim_internal(*id, &arguments)?
+                        // The term encoder's `set-if-empty` / view-column-read ops are
+                        // serviced against the mirror here (the db external
+                        // function for them only panics); every other primitive
+                        // runs on the embedded db.
+                        if let Some(op) = eg.set_if_empty_ops.get(id).cloned() {
+                            Some(set_if_empty_apply(eg, &op, &arguments, lookup_index)?)
+                        } else if let Some(op) = eg.view_column_read_ops.get(id).cloned() {
+                            Some(view_column_read_apply(eg, &op, &arguments, lookup_index)?)
+                        } else {
+                            eg.eval_prim_internal(*id, &arguments)?
+                        }
                     }
                 };
                 if let Some(result) = result {
@@ -636,6 +646,55 @@ pub(crate) fn lookup_existing(
     });
     let key: Row = key.iter().map(|value| value.rep()).collect();
     idx.get(&key).cloned()
+}
+
+/// Service the term encoder's `set-if-empty` op against the mirror: return the
+/// e-class (output col 0) of the existing `(view keys)` row, or insert
+/// `(keys, default_vals)` — the args after the keys — and return the default
+/// e-class. Writes immediately (like `lookup_or_create`) so repeated term
+/// construction in one iteration dedups to the same e-class.
+fn set_if_empty_apply(
+    eg: &mut EGraph,
+    op: &ViewOp,
+    args: &[Value],
+    index: &mut LookupIndex,
+) -> Result<Value> {
+    let view = *eg
+        .table_ids
+        .get(&op.view_name)
+        .ok_or_else(|| anyhow!("set-if-empty view `{}` is not registered", op.view_name))?;
+    let keys = &args[..op.n_keys];
+    if let Some(values) = lookup_existing(eg, view, keys, index) {
+        return Ok(Value::new(values[0]));
+    }
+    let end = op.n_keys + op.out_arity;
+    let key_row: Row = keys.iter().map(|v| v.rep()).collect();
+    let val_row: Row = args[op.n_keys..end].iter().map(|v| v.rep()).collect();
+    index.entry(view).or_default().insert(key_row, val_row);
+    let full: Row = args[..end].iter().map(|v| v.rep()).collect();
+    eg.insert_live_row(view, full);
+    Ok(args[op.n_keys])
+}
+
+/// Service the term encoder's view-column read against the mirror: output column
+/// `op.col_idx` of the existing `(view keys)` row, or the `fallback` arg (the one
+/// after the keys) when the key is absent.
+fn view_column_read_apply(
+    eg: &mut EGraph,
+    op: &ViewOp,
+    args: &[Value],
+    index: &mut LookupIndex,
+) -> Result<Value> {
+    let view = *eg
+        .table_ids
+        .get(&op.view_name)
+        .ok_or_else(|| anyhow!("view-column read view `{}` is not registered", op.view_name))?;
+    let keys = &args[..op.n_keys];
+    let fallback = args[op.n_keys];
+    Ok(match lookup_existing(eg, view, keys, index) {
+        Some(values) => Value::new(values[op.col_idx]),
+        None => fallback,
+    })
 }
 
 #[cfg(test)]

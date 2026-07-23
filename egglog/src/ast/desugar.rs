@@ -21,12 +21,16 @@ pub(crate) fn desugar_command(
             term_constructor,
             unextractable,
             identity_vals,
+            cost,
+            term_node,
         } => {
             let mut fdecl = FunctionDecl::function(span, name, schema, merge);
             fdecl.internal_hidden = hidden;
             fdecl.internal_let = let_binding;
             fdecl.term_constructor = term_constructor;
             fdecl.identity_vals = identity_vals;
+            fdecl.cost = cost;
+            fdecl.internal_term_node = term_node;
             // Functions with term_constructor are view tables that should be
             // extractable unless explicitly marked unextractable
             if fdecl.term_constructor.is_some() {
@@ -195,12 +199,14 @@ pub(crate) fn desugar_command(
         Command::Pop(span, num) => {
             vec![NCommand::Pop(span, num)]
         }
-        Command::Fail(span, cmd) => {
-            let mut desugared = desugar_command(*cmd, parser, proof_testing)?;
-
-            let last = desugared.pop().unwrap();
-            desugared.push(NCommand::Fail(span, Box::new(last)));
-            return Ok(desugared);
+        Command::Fail(span, cmds) => {
+            // Desugar every wrapped command and wrap the whole flattened result in
+            // one `fail`, so the assertion covers all of them.
+            let mut desugared = vec![];
+            for cmd in cmds {
+                desugared.extend(desugar_command(cmd, parser, proof_testing)?);
+            }
+            return Ok(vec![NCommand::Fail(span, desugared)]);
         }
         Command::Input { span, name, file } => {
             vec![NCommand::Input { span, name, file }]

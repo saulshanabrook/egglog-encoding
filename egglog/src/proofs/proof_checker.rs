@@ -165,7 +165,7 @@ pub(crate) fn process_actions(
 /// Returns Ok((TermId, propositions)) if successful, where propositions include
 /// all reflexive equalities for the term and its subterms.
 /// Returns Err(()) if evaluation fails.
-fn eval_expr_with_subst(
+pub(crate) fn eval_expr_with_subst(
     rule_name: &str,
     expr: &ResolvedExpr,
     dag: &mut TermDag,
@@ -574,6 +574,25 @@ fn format_substitution(term_dag: &TermDag, substitution: &HashMap<String, TermId
 }
 
 impl ProofStore {
+    /// Whether `term` is a termified base value that is self-evident from the
+    /// term alone: a literal, or a sort's canonical value-constructor head
+    /// (`Sort::prim_value_constructor`) applied to such arguments. Since a value
+    /// constructor names exactly one primitive, its head unambiguously marks a
+    /// value term, so the checker ignores it (no re-evaluation needed). A
+    /// reflexive `Fiat` over such a term is self-evident. Terms carrying an
+    /// existence claim never qualify: eq-sort and container heads are not
+    /// value-constructor heads.
+    pub(super) fn reflexive_value_term(&self, term: TermId) -> bool {
+        match self.term_dag.get(term) {
+            Term::Lit(_) => true,
+            Term::Var(_) => false,
+            Term::App(head, args) => {
+                self.prim_value_constructors.contains(head)
+                    && args.iter().all(|a| self.reflexive_value_term(*a))
+            }
+        }
+    }
+
     /// Check that a proof is valid with respect to a typechecked program.
     pub(crate) fn check_proof(
         &mut self,
@@ -599,13 +618,19 @@ impl ProofStore {
         let proof = self.id_to_proof[proof_id].clone();
         let result = match &proof.justification {
             Justification::Fiat => {
-                // if the both terms are primitives and equal, accept
-                let term = self.term_dag.get(proof.lhs());
-                if (matches!(term, Term::Lit(_)) && proof.lhs() == proof.rhs())
+                // Accept a reflexive equality over a literal or a
+                // primitive-closed term (re-evaluated from the term alone), or
+                // any equality established by the global actions.
+                if (proof.lhs() == proof.rhs() && self.reflexive_value_term(proof.lhs()))
                     || ctx.in_globals(proof.lhs(), proof.rhs())
                 {
                     Ok(Proposition::new(proof.lhs(), proof.rhs()))
                 } else {
+                    log::debug!(
+                        "invalid Fiat lhs: {}\ninvalid Fiat rhs: {}",
+                        format_term(&self.term_dag, proof.lhs()),
+                        format_term(&self.term_dag, proof.rhs())
+                    );
                     Err(ProofCheckErrorKind::InvalidFiat {
                         proof_id,
                         lhs: proof.lhs(),

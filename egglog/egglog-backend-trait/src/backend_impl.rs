@@ -195,6 +195,14 @@ impl Backend for EGraph {
         build_rule(self, rule)
     }
 
+    fn fresh_id(&mut self) -> Value {
+        EGraph::fresh_id(self)
+    }
+
+    fn add_values(&mut self, values: Vec<(FunctionId, Vec<Value>)>) {
+        EGraph::add_values(self, values);
+    }
+
     fn free_rule(&mut self, id: RuleId) {
         EGraph::free_rule(self, id);
     }
@@ -222,6 +230,24 @@ impl Backend for EGraph {
         EGraph::new_panic(self, message)
     }
 
+    fn register_set_if_empty(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        out_arity: usize,
+    ) -> ExternalFunctionId {
+        EGraph::register_set_if_empty(self, view_name, n_keys, out_arity)
+    }
+
+    fn register_view_column_read(
+        &mut self,
+        view_name: String,
+        n_keys: usize,
+        col_idx: usize,
+    ) -> ExternalFunctionId {
+        EGraph::register_view_column_read(self, view_name, n_keys, col_idx)
+    }
+
     fn set_report_level(&mut self, level: ReportLevel) {
         EGraph::set_report_level(self, level);
     }
@@ -236,6 +262,10 @@ impl Backend for EGraph {
 
     fn action_registry(&self) -> Option<&Arc<RwLock<ActionRegistry>>> {
         Some(EGraph::action_registry(self))
+    }
+
+    fn id_counter(&self) -> Option<crate::CounterId> {
+        Some(EGraph::id_counter(self))
     }
 
     fn supports_containers(&self) -> bool {
