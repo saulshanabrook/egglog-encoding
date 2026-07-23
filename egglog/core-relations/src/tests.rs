@@ -5497,6 +5497,101 @@ fn call_external_with_fallback_inner() {
 }
 
 #[test]
+fn replay_fallback_promotes_only_primary_successes() {
+    let mut db = Database::default();
+    let input = db.add_table(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "input rows are immutable");
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, input, 2);
+    for (ordinal, value) in [1, 2, 3, 4].into_iter().enumerate() {
+        let value = Value::new(value);
+        let timestamp = Value::from_usize(ordinal + 10);
+        let terms = [value, timestamp].map(|raw| {
+            receipts.intern_literal(
+                TEST_REPLAY_SORT,
+                ReplayLiteral::Internal(raw.index() as u64),
+                raw,
+            )
+        });
+        db.stage_source_row(
+            input,
+            &[value, timestamp],
+            &terms,
+            SourceRef::Synthetic(ordinal as u64),
+        )
+        .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let primary = db.add_external_function(Box::new(make_external_func(|_, args| {
+        let [value] = args else { panic!() };
+        value
+            .index()
+            .is_multiple_of(2)
+            .then(|| Value::from_usize(value.index() + 100))
+    })));
+    let fallback = db.add_external_function(Box::new(make_external_func(|_, args| {
+        let [value] = args else { panic!() };
+        Some(Value::from_usize(value.index() + 200))
+    })));
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    let timestamp = query.new_var_named("timestamp");
+    query
+        .add_atom(input, &[value.into(), timestamp.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    action
+        .call_external_with_fallback_replay(
+            primary,
+            &[value.into()],
+            fallback,
+            &[value.into()],
+            Some(ReplayConstructorSpec::new(
+                TEST_REPLAY_SORT,
+                ReplayOpId::new(700),
+                [TEST_REPLAY_SORT],
+            )),
+        )
+        .unwrap();
+    action.build();
+    let rules = rules.build();
+    assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+
+    for output in [102, 104] {
+        let term = receipts
+            .lookup_term(TEST_REPLAY_SORT, Value::new(output))
+            .expect("a primary result is promoted");
+        assert!(matches!(
+            receipts.replay_term(term),
+            Some(ReplayTerm::Call { op, .. }) if op == ReplayOpId::new(700)
+        ));
+    }
+    for output in [201, 203] {
+        assert_eq!(
+            receipts.lookup_term(TEST_REPLAY_SORT, Value::new(output)),
+            None,
+            "a fallback result must not be mislabeled as the primary call"
+        );
+    }
+}
+
+#[test]
 fn early_stop() {
     run_serial_and_parallel(early_stop_inner);
 }

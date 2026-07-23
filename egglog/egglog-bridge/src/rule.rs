@@ -9,9 +9,10 @@ use std::sync::Arc;
 use crate::core_relations;
 use crate::core_relations::{
     CheckEndpointSource, CheckReceiptSpec as CoreCheckReceiptSpec, ColumnId, Constraint, CounterId,
-    ExternalFunctionId, PlanStrategy, QueryBuilder, ReplaySortId, ReplayTermId, RuleBindingSpec,
-    RuleBuilder as CoreRuleBuilder, RuleReceiptSpec as CoreRuleReceiptSpec, RuleSetBuilder,
-    SourceReceiptSpec, SourceRef, TableId, Value, WriteVal,
+    ExternalFunctionId, PlanStrategy, QueryBuilder, ReplayConstructorSpec, ReplaySortId,
+    ReplayTermId, RuleBindingSpec, RuleBuilder as CoreRuleBuilder,
+    RuleReceiptSpec as CoreRuleReceiptSpec, RuleSetBuilder, SourceReceiptSpec, SourceRef, TableId,
+    Value, WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use anyhow::Context;
@@ -145,6 +146,10 @@ pub(crate) struct Query {
     /// looks like the high-level rule, passing along an environment that keeps
     /// track of the mappings between low and high-level variables.
     add_rule: Vec<BuildRuleCallback>,
+    /// Boundary between body computations/guards and head actions. Deferred
+    /// replay promotions are inserted here so failed body guards allocate no
+    /// structural terms while heads can consume promoted values.
+    head_start: Option<usize>,
     /// If set, execute a single rule (rather than O(atoms.len()) rules) during
     /// seminaive, with the given atom as the focus.
     sole_focus: Option<usize>,
@@ -202,6 +207,7 @@ impl EGraph {
                 vars: Default::default(),
                 atoms: Default::default(),
                 add_rule: Default::default(),
+                head_start: None,
                 plan_strategy: Default::default(),
                 no_decomp: false,
                 source_receipt: None,
@@ -222,6 +228,13 @@ impl EGraph {
 }
 
 impl RuleBuilder<'_> {
+    /// Mark the end of body computations and guards before adding head
+    /// actions. Backend lowering calls this exactly once for each source rule.
+    pub fn finish_query(&mut self) {
+        assert!(self.query.head_start.is_none(), "query boundary set twice");
+        self.query.head_start = Some(self.query.add_rule.len());
+    }
+
     fn new_panic_lazy(
         &mut self,
         message: impl FnOnce() -> String + Send + 'static,
@@ -493,13 +506,25 @@ impl RuleBuilder<'_> {
         ret_ty: ColumnTy,
         panic_msg: impl FnOnce() -> String + 'static + Send,
     ) -> Variable {
+        self.call_external_func_with_replay(func, args, ret_ty, None, panic_msg)
+    }
+
+    pub fn call_external_func_with_replay(
+        &mut self,
+        func: ExternalFunctionId,
+        args: &[QueryEntry],
+        ret_ty: ColumnTy,
+        replay: Option<ReplayConstructorSpec>,
+        panic_msg: impl FnOnce() -> String + 'static + Send,
+    ) -> Variable {
         let args = args.to_vec();
         let res = self.new_var(ret_ty);
         // External functions that fail on the RHS of a rule should cause a panic.
         let panic_fn = self.new_panic_lazy(panic_msg);
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let args = inner.convert_all(&args);
-            let var = rb.call_external_with_fallback(func, &args, panic_fn, &[])?;
+            let var =
+                rb.call_external_with_fallback_replay(func, &args, panic_fn, &[], replay.clone())?;
             inner.mapping.insert(res.id, var.into());
             Ok(())
         }));
@@ -554,6 +579,20 @@ impl RuleBuilder<'_> {
         // NB: not clear if we still need this now that proof checker is in a separate crate.
         _ret_ty: ColumnTy,
     ) -> Result<()> {
+        self.query_prim_with_replay(func, entries, _ret_ty, None)
+    }
+
+    /// Add a primitive query atom and promote its result only when the atom
+    /// binds a new value. Guard-only calls whose output was already known do
+    /// not grow the replay DAG.
+    pub fn query_prim_with_replay(
+        &mut self,
+        func: ExternalFunctionId,
+        entries: &[QueryEntry],
+        // NB: not clear if we still need this now that proof checker is in a separate crate.
+        _ret_ty: ColumnTy,
+        replay: Option<ReplayConstructorSpec>,
+    ) -> Result<()> {
         let entries = entries.to_vec();
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let mut dst_vars = inner.convert_all(&entries);
@@ -563,6 +602,13 @@ impl RuleBuilder<'_> {
                 QueryEntry::Var(Variable { id, .. }) if !inner.grounded.contains(id) => {
                     inner.mapping.insert(*id, var.into());
                     inner.grounded.insert(*id);
+                    if let Some(replay) = replay.clone() {
+                        inner.replay_promotions.push(DeferredReplayCall {
+                            args: dst_vars,
+                            dst: var,
+                            replay,
+                        });
+                    }
                 }
                 _ => rb.assert_eq(var.into(), expected),
             }
@@ -847,6 +893,7 @@ impl Query {
             next_ts: None,
             mapping: Default::default(),
             grounded: Default::default(),
+            replay_promotions: Default::default(),
         };
         for (var, info) in self.vars.iter() {
             let new_var = match info.name.as_ref() {
@@ -867,7 +914,14 @@ impl Query {
     ) -> Result<core_relations::RuleId> {
         let mut rb = qb.build();
         inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
-        self.add_rule
+        let head_start = self.head_start.unwrap_or(self.add_rule.len());
+        self.add_rule[..head_start]
+            .iter()
+            .try_for_each(|f| f(&mut inner, &mut rb))?;
+        for promotion in std::mem::take(&mut inner.replay_promotions) {
+            rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
+        }
+        self.add_rule[head_start..]
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
         Ok(if let Some(source) = &self.source_receipt {
@@ -1031,6 +1085,13 @@ pub(crate) struct Bindings {
     next_ts: Option<DstVar>,
     pub(crate) mapping: DenseIdMap<VariableId, DstVar>,
     grounded: HashSet<VariableId>,
+    replay_promotions: Vec<DeferredReplayCall>,
+}
+
+struct DeferredReplayCall {
+    args: SmallVec<[DstVar; 4]>,
+    dst: core_relations::Variable,
+    replay: ReplayConstructorSpec,
 }
 
 impl Bindings {

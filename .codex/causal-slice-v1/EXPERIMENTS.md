@@ -932,3 +932,45 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   tests passed; `cargo check --workspace`, formatting, and `git diff --check`
   passed. No workload timing has been run because ordinary rule/check/TSV
   receipt production is intentionally not part of this checkpoint.
+
+### 2026-07-23 — checkpoint 4b2k pure primitive replay producers
+
+- Hypothesis: Hardboiled's first missing term (`128` from a rule RHS `/`) and
+  Eggcc's next producer gap came from proof-checkable pure primitives returning
+  native values without installing compact structural replay terms. The
+  bounded treatment reuses the native result and never re-executes the
+  primitive.
+- The frontend registers stable operation IDs by exact source name and logical
+  input/output sort signature. Only specializations with a pure runtime
+  context and a proof validator receive replay metadata; effectful,
+  nondeterministic, and unsupported primitives remain fail-closed.
+- Receipt-enabled rule tapes append one `PromoteReplayCall` after an eligible
+  native external call. It first probes `(logical sort, output value)`, then
+  hash-conses one call node from existing child term IDs only on a miss.
+  Receipt-disabled tapes contain no promotion instruction or receipt branch.
+- Body primitives are promoted only when they bind a previously ungrounded
+  value. Guard-only calls with an already-known output remain ordinary. Bound
+  body promotions are deferred to the existing body/head boundary, after all
+  relational joins and primitive guards, so rejected candidates allocate no
+  permanent DAG nodes and heads can still consume the promoted values.
+- Independent review found and bounded two representation hazards. Replay
+  metadata is shared behind `Arc`, keeping the receipt-disabled logical rule
+  variants pointer-sized instead of growing each call payload from 32 to 56
+  bytes. A distinct fallback-replay instruction also retains the primary-call
+  success mask, so a value returned by a general fallback is never mislabeled
+  as the primary operation.
+- Two frontend canaries cover a direct action primitive and a bound body
+  primitive consumed by a later action primitive. Both retain strict positive
+  checks, resolvable nested call DAGs, and zero unattributed commits.
+- The treatment flipped both observed primitive failures. Eggcc advanced to
+  its next independent planned boundary: container canonicalization performs
+  an effective Set/Pair registry insertion without a container-version cause
+  (`stage_insert` from the bridge Set merge callback during
+  `apply_rebuild_nonincremental`). Hardboiled currently exposes a separate
+  decomposed-witness disagreement before reaching its earlier `/` producer;
+  that regression is being diagnosed independently rather than widened.
+- Validation: `cargo test -p egglog-core-relations --lib` passed all 120 tests;
+  `cargo test -p egglog causal_receipt -- --nocapture` passed all 13 focused
+  frontend canaries; `cargo check --workspace`, formatting, and diff checking
+  passed. The all-five H1 receipt-overhead gate remains unmeasured until every
+  workload reaches an exact root with zero unsupported semantics.

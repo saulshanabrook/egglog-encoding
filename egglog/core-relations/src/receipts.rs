@@ -126,7 +126,7 @@ pub enum ReplayTerm {
     },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ReplayConstructorSpec {
     pub result_sort: ReplaySortId,
     pub op: ReplayOpId,

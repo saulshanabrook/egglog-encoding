@@ -88,11 +88,19 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 body_atom_to_table_premise[body_atom] = Some(next_table_premise);
                 next_table_premise += 1;
             }
-            RuleBodyCall::Primitive { id, output, .. } => {
-                builder.query_prim(*id, &entries, *output)?;
+            RuleBodyCall::Primitive {
+                id, output, replay, ..
+            } => {
+                builder.query_prim_with_replay(
+                    *id,
+                    &entries,
+                    *output,
+                    replay.as_deref().cloned(),
+                )?;
             }
         }
     }
+    builder.finish_query();
 
     for action in &core.head.0 {
         match action {
@@ -109,14 +117,21 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                             .into()
                     }
                     RuleActionCall::Primitive {
-                        id, name, output, ..
+                        id,
+                        name,
+                        output,
+                        replay,
                     } => {
                         let span = span.clone();
                         let name = name.clone();
                         builder
-                            .call_external_func(*id, &entries, *output, move || {
-                                format!("{span}: call of primitive {name} failed")
-                            })
+                            .call_external_func_with_replay(
+                                *id,
+                                &entries,
+                                *output,
+                                replay.as_deref().cloned(),
+                                move || format!("{span}: call of primitive {name} failed"),
+                            )
                             .into()
                     }
                 };

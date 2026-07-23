@@ -388,6 +388,17 @@ impl Default for CausalState {
 }
 
 impl CausalState {
+    fn op_id(&mut self, key: ReplayOpKey) -> ReplayOpId {
+        if let Some(op) = self.op_ids.get(&key) {
+            return *op;
+        }
+        let op = ReplayOpId::new(
+            u32::try_from(self.op_ids.len() + 1).expect("too many replay operations"),
+        );
+        self.op_ids.insert(key, op);
+        op
+    }
+
     fn sort_id(&mut self, name: &str) -> ReplaySortId {
         if let Some(id) = self.sort_ids.get(name) {
             return *id;
@@ -440,18 +451,72 @@ impl CausalState {
                 inputs: input_names,
                 output: output_names[0].clone(),
             };
-            let op = if let Some(op) = self.op_ids.get(&key) {
-                *op
-            } else {
-                let op = ReplayOpId::new(
-                    u32::try_from(self.op_ids.len() + 1).expect("too many replay operations"),
-                );
-                self.op_ids.insert(key, op);
-                op
-            };
+            let op = self.op_id(key);
             ReplayConstructorSpec::new(output_sorts[0], op, input_sorts.iter().copied())
         });
         FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
+    }
+
+    fn primitive_key(primitive: &core::SpecializedPrimitive) -> ReplayOpKey {
+        ReplayOpKey {
+            name: primitive.name().to_owned(),
+            inputs: primitive
+                .input()
+                .iter()
+                .map(|sort| sort.name().to_owned())
+                .collect(),
+            output: primitive.output().name().to_owned(),
+        }
+    }
+
+    fn register_primitive(&mut self, primitive: &core::SpecializedPrimitive) {
+        if !primitive.is_pure() || primitive.validator().is_none() {
+            return;
+        }
+        for sort in primitive
+            .input()
+            .iter()
+            .chain(std::iter::once(primitive.output()))
+        {
+            self.sort_id(sort.name());
+        }
+        self.op_id(Self::primitive_key(primitive));
+    }
+
+    fn primitive_spec(
+        &self,
+        primitive: &core::SpecializedPrimitive,
+    ) -> Option<Arc<ReplayConstructorSpec>> {
+        if !primitive.is_pure() || primitive.validator().is_none() {
+            return None;
+        }
+        let op = *self.op_ids.get(&Self::primitive_key(primitive))?;
+        let result_sort = *self.sort_ids.get(primitive.output().name())?;
+        let child_sorts = primitive
+            .input()
+            .iter()
+            .map(|sort| self.sort_ids.get(sort.name()).copied())
+            .collect::<Option<Vec<_>>>()?;
+        Some(Arc::new(ReplayConstructorSpec::new(
+            result_sort,
+            op,
+            child_sorts,
+        )))
+    }
+
+    fn register_rule_primitives(&mut self, rule: &core::ResolvedCoreRule) {
+        for atom in &rule.body.atoms {
+            if let ResolvedCall::Primitive(primitive) = &atom.head {
+                self.register_primitive(primitive);
+            }
+        }
+        for action in &rule.head.0 {
+            if let core::GenericCoreAction::Let(_, _, ResolvedCall::Primitive(primitive), _) =
+                action
+            {
+                self.register_primitive(primitive);
+            }
+        }
     }
 
     fn next_source(&mut self) -> SourceRef {
@@ -1858,6 +1923,9 @@ impl EGraph {
                 .register_rule(&rule.ruleset, &rule.name, &inputs);
             (id, inputs)
         });
+        if let Some(causal) = self.causal_state.as_mut() {
+            causal.register_rule_primitives(&canonicalized.core);
+        }
         let core_rule = canonicalized.core;
         let (query, actions) = (&core_rule.body, &core_rule.head);
         let rule_id = {
@@ -3732,6 +3800,7 @@ impl<'a> BackendRule<'a> {
             ExternalFunctionId,
             Vec<core::GenericAtomTerm<RuleVar, RuleValue>>,
             ColumnTy,
+            Option<Arc<ReplayConstructorSpec>>,
         ),
         Error,
     > {
@@ -3794,7 +3863,10 @@ impl<'a> BackendRule<'a> {
         }
 
         let output_ty = prim.output().column_ty(self.backend.base_values());
-        Ok((resolved_id, rule_args, output_ty))
+        let replay = self
+            .causal_state
+            .and_then(|causal| causal.primitive_spec(prim));
+        Ok((resolved_id, rule_args, output_ty, replay))
     }
 
     fn args<'b>(
@@ -3824,12 +3896,13 @@ impl<'a> BackendRule<'a> {
                 ),
                 ResolvedCall::Primitive(p) => {
                     let ctx = self.query_context();
-                    let (id, args, output) = self.prim(p, &atom.args, ctx)?;
+                    let (id, args, output, replay) = self.prim(p, &atom.args, ctx)?;
                     (
                         RuleBodyCall::Primitive {
                             id,
                             name: p.name().into(),
                             output,
+                            replay,
                         },
                         args,
                     )
@@ -3861,12 +3934,13 @@ impl<'a> BackendRule<'a> {
                         ),
                         ResolvedCall::Primitive(p) => {
                             let ctx = self.action_context();
-                            let (id, args, output) = self.prim(p, args, ctx)?;
+                            let (id, args, output, replay) = self.prim(p, args, ctx)?;
                             (
                                 RuleActionCall::Primitive {
                                     id,
                                     name: p.name().into(),
                                     output,
+                                    replay,
                                 },
                                 args,
                             )
@@ -4017,6 +4091,7 @@ impl<'a> BackendRule<'a> {
                 id,
                 name: name.into(),
                 output,
+                replay: None,
             },
             arguments,
         ));
@@ -4228,6 +4303,155 @@ mod tests {
             }
         }
         assert!(saw_constructor);
+    }
+
+    #[test]
+    fn causal_receipts_promote_pure_rule_action_result() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 256)\
+                 (rule ((Input l)) ((Done (/ l 2))) :name \"halve\")\
+                 (run 1)\
+                 (check (Done 128))",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        let state = egraph.causal_state.as_ref().unwrap();
+        let divide = state.op_ids[&ReplayOpKey {
+            name: "/".to_owned(),
+            inputs: vec!["i64".to_owned(), "i64".to_owned()],
+            output: "i64".to_owned(),
+        }];
+        assert!(snapshot.facts.iter().any(|fact| {
+            fact.cause.rule_match().is_some()
+                && fact
+                    .terms
+                    .iter()
+                    .copied()
+                    .filter(|term| !term.is_missing())
+                    .any(|term| {
+                        matches!(
+                            egraph.causal_replay_term(term).unwrap(),
+                            Some(ReplayTerm::Call { op, .. }) if op == divide
+                        )
+                    })
+        }));
+        assert_eq!(snapshot.check_roots.len(), 1);
+        assert_eq!(snapshot.counters.unattributed_commits, 0);
+    }
+
+    #[test]
+    fn causal_receipts_promote_bound_body_primitive_for_action_use() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 256)\
+                 (rule ((Input l) (= half (/ l 2))) ((Done (+ half 1))) :name \"halve-plus-one\")\
+                 (run 1)\
+                 (check (Done 129))",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        let state = egraph.causal_state.as_ref().unwrap();
+        let divide = state.op_ids[&ReplayOpKey {
+            name: "/".to_owned(),
+            inputs: vec!["i64".to_owned(), "i64".to_owned()],
+            output: "i64".to_owned(),
+        }];
+        let add = state.op_ids[&ReplayOpKey {
+            name: "+".to_owned(),
+            inputs: vec!["i64".to_owned(), "i64".to_owned()],
+            output: "i64".to_owned(),
+        }];
+        let output_term = snapshot
+            .facts
+            .iter()
+            .filter(|fact| fact.cause.rule_match().is_some())
+            .flat_map(|fact| fact.terms.iter().copied())
+            .find(|term| {
+                matches!(
+                    egraph.causal_replay_term(*term).unwrap(),
+                    Some(ReplayTerm::Call { op, .. }) if op == add
+                )
+            })
+            .expect("derived output has its pure action call term");
+        let Some(ReplayTerm::Call { children, .. }) =
+            egraph.causal_replay_term(output_term).unwrap()
+        else {
+            unreachable!()
+        };
+        assert!(children.iter().any(|child| {
+            matches!(
+                egraph.causal_replay_term(*child).unwrap(),
+                Some(ReplayTerm::Call { op, .. }) if op == divide
+            )
+        }));
+        assert_eq!(snapshot.check_roots.len(), 1);
+        assert_eq!(snapshot.counters.unattributed_commits, 0);
+    }
+
+    #[test]
+    fn causal_receipts_defer_body_primitive_terms_until_all_guards_pass() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 1)\
+                 (rule ((Input x) (= y (+ x 1)) (< y 0)) ((Done y)) :name \"dead\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        assert!(snapshot.matches.is_empty());
+        let state = egraph.causal_state.as_ref().unwrap();
+        let add = state.op_ids[&ReplayOpKey {
+            name: "+".to_owned(),
+            inputs: vec!["i64".to_owned(), "i64".to_owned()],
+            output: "i64".to_owned(),
+        }];
+        let mut ordinal = 1;
+        while let Some(term) = egraph
+            .causal_replay_term(ReplayTermId::new(ordinal))
+            .unwrap()
+        {
+            assert!(!matches!(term, ReplayTerm::Call { op, .. } if op == add));
+            ordinal += 1;
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "has no producer-installed ReplayTermId")]
+    fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(sort Fn (UnstableFn (i64 i64) i64))\
+                 (relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 1)\
+                 (rule ((Input l))\
+                   ((Done (+ (unstable-app (unstable-fn \"+\") l 1) 1)))\
+                   :name \"unsupported-child\")\
+                 (run 1)",
+            )
+            .unwrap();
     }
 
     #[test]

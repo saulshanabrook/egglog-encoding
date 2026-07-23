@@ -190,6 +190,9 @@ pub enum RuleBodyCall {
         id: ExternalFunctionId,
         name: Box<str>,
         output: ColumnTy,
+        /// Typed structural call used only when this primitive binds a new
+        /// value in a receipt-enabled rule.
+        replay: Option<Arc<ReplayConstructorSpec>>,
     },
 }
 
@@ -204,6 +207,9 @@ pub enum RuleActionCall {
         id: ExternalFunctionId,
         name: Box<str>,
         output: ColumnTy,
+        /// Typed structural call recorded only for proof-checkable pure
+        /// primitives while causal receipts are active.
+        replay: Option<Arc<ReplayConstructorSpec>>,
     },
 }
 

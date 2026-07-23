@@ -1337,6 +1337,52 @@ impl ExecutionState<'_> {
                 f1_result.union(&to_call_f2);
                 *mask = f1_result;
             }
+            Instr::ExternalWithFallbackReplay {
+                f1,
+                args1,
+                f2,
+                args2,
+                dst,
+                replay,
+            } => {
+                let receipts = self
+                    .db
+                    .causal_receipts
+                    .cloned()
+                    .expect("primitive replay promotion requires causal receipts");
+                let mut f1_result = mask.clone();
+                invoke_batch(
+                    self.db.external_funcs[*f1].as_ref(),
+                    self,
+                    &mut f1_result,
+                    bindings,
+                    args1,
+                    *dst,
+                );
+                promote_replay_call(&receipts, &mut f1_result, bindings, args1, *dst, replay);
+                let mut to_call_f2 = f1_result.clone();
+                to_call_f2.symmetric_difference(mask);
+                if to_call_f2.is_empty() {
+                    return;
+                }
+                invoke_batch_assign(
+                    self.db.external_funcs[*f2].as_ref(),
+                    self,
+                    &mut to_call_f2,
+                    bindings,
+                    args2,
+                    *dst,
+                );
+                f1_result.union(&to_call_f2);
+                *mask = f1_result;
+            }
+            Instr::PromoteReplayCall { args, dst, replay } => {
+                let receipts = self
+                    .db
+                    .causal_receipts
+                    .expect("primitive replay promotion requires causal receipts");
+                promote_replay_call(receipts, mask, bindings, args, *dst, replay);
+            }
             Instr::AssertAnyNe { ops, divider } => {
                 for_each_binding_with_mask!(mask, ops.as_slice(), bindings, |iter| {
                     iter.retain(|vals| {
@@ -1428,6 +1474,45 @@ impl ExecutionState<'_> {
             }
         }
     }
+}
+
+fn promote_replay_call(
+    receipts: &CausalReceipts,
+    mask: &mut Mask,
+    bindings: &Bindings,
+    args: &[QueryEntry],
+    dst: Variable,
+    replay: &ReplayConstructorSpec,
+) {
+    assert_eq!(
+        replay.child_sorts.len(),
+        args.len(),
+        "primitive replay metadata needs one sort per argument"
+    );
+    mask.iter(&bindings[dst])
+        .for_each_indexed(|offset, output| {
+            if receipts.lookup_term(replay.result_sort, *output).is_some() {
+                return;
+            }
+            let mut children = SmallVec::<[ReplayTermId; 4]>::new();
+            for (argument, (sort, arg)) in
+                replay.child_sorts.iter().copied().zip(args).enumerate()
+            {
+                let value = match arg {
+                    QueryEntry::Const(value) => *value,
+                    QueryEntry::Var(variable) => bindings[*variable][offset],
+                };
+                children.push(receipts.lookup_term(sort, value).unwrap_or_else(|| {
+                    panic!(
+                        "pure primitive {:?} argument {argument} has no producer-installed ReplayTermId for sort {:?}, value {value:?}, output {:?}",
+                        replay.op, sort, output
+                    )
+                }));
+            }
+            receipts
+                .intern_call(replay.result_sort, replay.op, &children, *output)
+                .expect("pure primitive call must install a typed output");
+        });
 }
 
 #[derive(Debug, Clone)]
@@ -1538,6 +1623,27 @@ pub(crate) enum Instr {
         f2: ExternalFunctionId,
         args2: Vec<QueryEntry>,
         dst: Variable,
+    },
+
+    /// Receipt-only fallback call. Only successful lanes from the primary
+    /// primitive are promoted, so a returning fallback cannot be mislabeled as
+    /// an invocation of `f1`.
+    ExternalWithFallbackReplay {
+        f1: ExternalFunctionId,
+        args1: Vec<QueryEntry>,
+        f2: ExternalFunctionId,
+        args2: Vec<QueryEntry>,
+        dst: Variable,
+        replay: Box<ReplayConstructorSpec>,
+    },
+
+    /// Receipt-only promotion of an already-computed pure primitive result to
+    /// one hash-consed structural replay term. This never executes the
+    /// primitive or stages an effect.
+    PromoteReplayCall {
+        args: Vec<QueryEntry>,
+        dst: Variable,
+        replay: Box<ReplayConstructorSpec>,
     },
 
     /// Continue execution iff the two variables are equal.

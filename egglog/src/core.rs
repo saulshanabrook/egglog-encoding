@@ -84,6 +84,13 @@ impl SpecializedPrimitive {
     pub fn validator(&self) -> Option<&PrimitiveValidator> {
         self.prim_with_id.validator.as_ref()
     }
+
+    /// Whether this specialization is backed by a capability-free runtime
+    /// entrypoint. Receipt replay terms are admitted only for such primitives;
+    /// read/write/effectful calls remain unsupported rather than being modeled.
+    pub(crate) fn is_pure(&self) -> bool {
+        self.prim_with_id.context_ids[crate::Context::Pure].is_some()
+    }
 }
 
 impl PartialEq for SpecializedPrimitive {

@@ -1033,6 +1033,17 @@ impl RuleBuilder<'_, '_> {
         func: ExternalFunctionId,
         args: &[QueryEntry],
     ) -> Result<Variable, QueryError> {
+        self.call_external_with_replay(func, args, None)
+    }
+
+    /// Apply an external function, optionally promoting a successful result
+    /// into the compact replay-term DAG without executing the function again.
+    pub fn call_external_with_replay(
+        &mut self,
+        func: ExternalFunctionId,
+        args: &[QueryEntry],
+        replay: Option<ReplayConstructorSpec>,
+    ) -> Result<Variable, QueryError> {
         let res = self.qb.new_var();
         self.qb.instrs.push(Instr::External {
             func,
@@ -1041,7 +1052,32 @@ impl RuleBuilder<'_, '_> {
         });
         self.qb.mark_used(args);
         self.qb.mark_defined(&res.into());
+        self.promote_replay_call(args, res, replay);
         Ok(res)
+    }
+
+    pub fn promote_replay_call(
+        &mut self,
+        args: &[QueryEntry],
+        dst: Variable,
+        replay: Option<ReplayConstructorSpec>,
+    ) {
+        if let Some(replay) = replay {
+            assert_eq!(
+                replay.child_sorts.len(),
+                args.len(),
+                "primitive replay metadata needs one sort per argument"
+            );
+            assert!(
+                self.qb.rsb.db.causal_receipts.is_some(),
+                "primitive replay metadata requires causal receipts"
+            );
+            self.qb.instrs.push(Instr::PromoteReplayCall {
+                args: args.to_vec(),
+                dst,
+                replay: Box::new(replay),
+            });
+        }
     }
 
     /// Look up the given key in the given table. If the lookup fails, then call the given external
@@ -1079,14 +1115,49 @@ impl RuleBuilder<'_, '_> {
         f2: ExternalFunctionId,
         args2: &[QueryEntry],
     ) -> Result<Variable, QueryError> {
+        self.call_external_with_fallback_replay(f1, args1, f2, args2, None)
+    }
+
+    /// Call a primitive through the ordinary instruction, then install a
+    /// compact structural replay term for each successful lane. The replay
+    /// instruction is separate so receipt-disabled rules retain the exact
+    /// native action path.
+    pub fn call_external_with_fallback_replay(
+        &mut self,
+        f1: ExternalFunctionId,
+        args1: &[QueryEntry],
+        f2: ExternalFunctionId,
+        args2: &[QueryEntry],
+        replay: Option<ReplayConstructorSpec>,
+    ) -> Result<Variable, QueryError> {
         let res = self.qb.new_var();
-        self.qb.instrs.push(Instr::ExternalWithFallback {
-            f1,
-            args1: args1.to_vec(),
-            f2,
-            args2: args2.to_vec(),
-            dst: res,
-        });
+        if let Some(replay) = replay {
+            assert_eq!(
+                replay.child_sorts.len(),
+                args1.len(),
+                "primitive replay metadata needs one sort per argument"
+            );
+            assert!(
+                self.qb.rsb.db.causal_receipts.is_some(),
+                "primitive replay metadata requires causal receipts"
+            );
+            self.qb.instrs.push(Instr::ExternalWithFallbackReplay {
+                f1,
+                args1: args1.to_vec(),
+                f2,
+                args2: args2.to_vec(),
+                dst: res,
+                replay: Box::new(replay),
+            });
+        } else {
+            self.qb.instrs.push(Instr::ExternalWithFallback {
+                f1,
+                args1: args1.to_vec(),
+                f2,
+                args2: args2.to_vec(),
+                dst: res,
+            });
+        }
         self.qb.mark_used(args1);
         self.qb.mark_used(args2);
         self.qb.mark_defined(&res.into());
