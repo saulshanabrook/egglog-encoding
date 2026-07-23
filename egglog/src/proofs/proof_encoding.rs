@@ -935,16 +935,25 @@ impl<'a> ProofInstrumentor<'a> {
     ) -> String {
         let view = self.view_name(&func_type.name);
         let set_if_empty = crate::proofs::proof_fresh::set_if_empty_prim_name(&view);
-        let fv = self.mint(
-            res,
-            &func_type.name,
-            &ListDisplay(args, " ").to_string(),
-            view_sort,
-        );
+        // Content-address the mint on `(constructor, children)` — the same key
+        // `set-if-empty` interns on — by passing them to `get-fresh!`, so a
+        // backend can return the same id for the same term (deduplicating the
+        // candidate ids that `set-if-empty` would otherwise discard on a hit,
+        // and giving a stable id under re-derivation). The constructor name is
+        // needed because the sort alone does not identify the term: sibling
+        // constructors of one datatype share it. The generic nullary `mint`
+        // keeps fresh-per-call for the direct-assert and proof-term paths.
+        let args_joined = ListDisplay(args, " ").to_string();
+        let get_fresh = crate::proofs::proof_fresh::GET_FRESH_PRIM_NAME;
+        let fv = self.fresh_var();
+        res.push(format!(
+            "(let {fv} ({get_fresh} \"{view_sort}\" \"{}\" {args_joined}))",
+            func_type.name
+        ));
+        res.push(format!("(set ({} {args_joined} {fv}) ())", func_type.name));
         let canon = self.fresh_var();
         res.push(format!(
-            "(let {canon} ({set_if_empty} {} {fv} ()))",
-            ListDisplay(args, " ")
+            "(let {canon} ({set_if_empty} {args_joined} {fv} ()))"
         ));
         canon
     }

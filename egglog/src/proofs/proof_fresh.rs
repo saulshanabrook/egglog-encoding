@@ -155,10 +155,12 @@ pub(crate) fn register_get_fresh(eg: &mut EGraph) {
     });
 }
 
-/// `get-fresh! "Sort" -> Sort`: mint a fresh id of the named eq-sort from the
-/// shared id counter. Impure — every call returns a new id. The leading
-/// string names the output sort (its runtime ignores the arg and just mints); the
-/// mint itself is serviced by the backend.
+/// `get-fresh! "Sort" ["Ctor" child*] -> Sort`: mint an id of the named eq-sort
+/// from the shared id counter. The leading string names the output sort; the
+/// optional trailing entries are a constructor name and its children, which
+/// content-address the mint (a backend may return the same id for the same
+/// `(constructor, children)` term). The default backend runtime ignores them and
+/// mints fresh; the mint itself is serviced by the backend.
 #[derive(Clone)]
 struct GetFresh;
 
@@ -171,8 +173,10 @@ impl Primitive for GetFresh {
     }
 }
 
-/// `(get-fresh! "Sort") -> Sort`: the leading string literal names the output
-/// eq-sort; the output is constrained to that sort.
+/// `(get-fresh! "Sort" ["Ctor" child*]) -> Sort`: the leading string literal
+/// names the output eq-sort (which constrains the output); any middle entries
+/// (constructor name + children) are the content-addressing key, left
+/// unconstrained here.
 struct GetFreshTypeConstraint {
     span: Span,
 }
@@ -184,7 +188,13 @@ impl TypeConstraint for GetFreshTypeConstraint {
         typeinfo: &TypeInfo,
     ) -> Vec<Box<dyn crate::constraint::Constraint<crate::core::AtomTerm, ArcSort>>> {
         // `("Sort") -> out`: two signature entries (the string arg and the output).
-        let [arg, out] = arguments else {
+        // `("Sort" child*) -> out`: the leading string names the output sort and
+        // the trailing entry is the output; any middle entries (the constructor
+        // name and the term's children, which content-address the mint in term
+        // mode) are left unconstrained here. The nullary-children form
+        // `("Sort") -> out` (proof mode / direct-assert mint) is the two-entry
+        // case.
+        let [arg, .., out] = arguments else {
             return vec![crate::constraint::impossible(
                 crate::constraint::ImpossibleConstraint::ArityMismatch {
                     atom: crate::core::Atom {
