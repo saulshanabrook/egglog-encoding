@@ -9,7 +9,8 @@ use std::sync::Arc;
 use crate::core_relations;
 use crate::core_relations::{
     ColumnId, Constraint, CounterId, ExternalFunctionId, PlanStrategy, QueryBuilder,
-    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, TableId, Value, WriteVal,
+    RuleBuilder as CoreRuleBuilder, RuleSetBuilder, SourceReceiptSpec, SourceRef, TableId, Value,
+    WriteVal,
 };
 use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use anyhow::Context;
@@ -119,6 +120,8 @@ pub(crate) struct Query {
     /// If `true`, skip tree-decomposition during query planning. See
     /// [`core_relations::QueryBuilder::set_no_decomp`].
     no_decomp: bool,
+    /// Stable source identity for an empty-query top-level action.
+    source_receipt: Option<SourceRef>,
 }
 
 pub struct RuleBuilder<'a> {
@@ -164,6 +167,7 @@ impl EGraph {
                 add_rule: Default::default(),
                 plan_strategy: Default::default(),
                 no_decomp: false,
+                source_receipt: None,
             },
         }
     }
@@ -348,6 +352,12 @@ impl RuleBuilder<'_> {
 
     pub(crate) fn set_focus(&mut self, focus: usize) {
         self.query.sole_focus = Some(focus);
+    }
+
+    /// Attribute effective commits from this empty-query action directly to
+    /// one stable source identity.
+    pub fn set_source_receipt(&mut self, source: SourceRef) {
+        self.query.source_receipt = Some(source);
     }
 
     /// Bind a new variable of the given type in the query.
@@ -583,6 +593,10 @@ impl RuleBuilder<'_> {
         let table = info.table;
         let id_counter = self.query.id_counter;
         let schema_math = info.schema_math();
+        let replay = info
+            .replay
+            .as_ref()
+            .and_then(|spec| spec.constructor.clone());
         let cb: BuildRuleCallback = match info.default_val {
             DefaultVal::Const(_) | DefaultVal::FreshId => {
                 let wv: WriteVal = match &info.default_val {
@@ -609,12 +623,18 @@ impl RuleBuilder<'_> {
                 Box::new(move |inner, rb| {
                     let write_vals = get_write_vals(inner);
                     let dst_vars = inner.convert_all(&entries);
-                    let var = rb.lookup_or_insert(
-                        table,
-                        &dst_vars,
-                        &write_vals,
-                        ColumnId::from_usize(schema_math.ret_val_col()),
-                    )?;
+                    let dst_col = ColumnId::from_usize(schema_math.ret_val_col());
+                    let var = if let Some(replay) = &replay {
+                        rb.lookup_or_insert_with_replay(
+                            table,
+                            &dst_vars,
+                            &write_vals,
+                            dst_col,
+                            replay.clone(),
+                        )?
+                    } else {
+                        rb.lookup_or_insert(table, &dst_vars, &write_vals, dst_col)?
+                    };
                     inner.mapping.insert(res.id, var.into());
                     Ok(())
                 })
@@ -786,7 +806,12 @@ impl Query {
         self.add_rule
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
-        Ok(rb.build_with_description(desc))
+        Ok(match &self.source_receipt {
+            Some(source) => {
+                rb.build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))
+            }
+            None => rb.build_with_description(desc),
+        })
     }
 
     pub(crate) fn build_cached_plan(

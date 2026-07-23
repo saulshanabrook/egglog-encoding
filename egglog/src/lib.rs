@@ -42,8 +42,9 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, RuleActionCall, RuleBodyCall, RuleSetRun,
-    RuleSpec, RuleValue, RuleVar,
+    FunctionReplaySpec, GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, ReceiptSnapshot,
+    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId,
+    RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -344,6 +345,114 @@ pub struct EGraph {
     proof_state: EncodingState,
     /// In proof mode, this is the program before proof instrumentation and the version we use for proof checking.
     proof_check_program: Vec<ResolvedNCommand>,
+    /// Frontend-owned stable names for the backend's compact replay DAG.
+    /// Present only while native causal receipt capture is enabled.
+    causal_state: Option<CausalState>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct ReplayOpKey {
+    name: String,
+    inputs: Vec<String>,
+    output: String,
+}
+
+#[derive(Clone)]
+struct CausalState {
+    sort_ids: IndexMap<String, ReplaySortId>,
+    op_ids: IndexMap<ReplayOpKey, ReplayOpId>,
+    next_source: u64,
+}
+
+impl Default for CausalState {
+    fn default() -> Self {
+        let mut state = Self {
+            sort_ids: IndexMap::default(),
+            op_ids: IndexMap::default(),
+            next_source: 0,
+        };
+        for name in ["Unit", "String", "bool", "i64", "f64"] {
+            state.sort_id(name);
+        }
+        state
+    }
+}
+
+impl CausalState {
+    fn sort_id(&mut self, name: &str) -> ReplaySortId {
+        if let Some(id) = self.sort_ids.get(name) {
+            return *id;
+        }
+        let id = ReplaySortId::new(
+            u32::try_from(self.sort_ids.len() + 1).expect("too many replay sorts"),
+        );
+        self.sort_ids.insert(name.to_owned(), id);
+        id
+    }
+
+    fn literal_sort(&self, literal: &Literal) -> ReplaySortId {
+        let name = match literal {
+            Literal::Unit => "Unit",
+            Literal::Bool(_) => "bool",
+            Literal::Int(_) => "i64",
+            Literal::Float(_) => "f64",
+            Literal::String(_) => "String",
+        };
+        self.sort_ids[name]
+    }
+
+    fn function_spec(
+        &mut self,
+        name: &str,
+        schema: &ResolvedSchema,
+        subtype: FunctionSubtype,
+    ) -> FunctionReplaySpec {
+        let input_names = schema
+            .input
+            .iter()
+            .map(|sort| sort.name().to_owned())
+            .collect::<Vec<_>>();
+        let output_names = schema
+            .outputs
+            .iter()
+            .map(|sort| sort.name().to_owned())
+            .collect::<Vec<_>>();
+        let input_sorts = input_names
+            .iter()
+            .map(|name| self.sort_id(name))
+            .collect::<Vec<_>>();
+        let output_sorts = output_names
+            .iter()
+            .map(|name| self.sort_id(name))
+            .collect::<Vec<_>>();
+        let constructor = (subtype == FunctionSubtype::Constructor).then(|| {
+            let key = ReplayOpKey {
+                name: name.to_owned(),
+                inputs: input_names,
+                output: output_names[0].clone(),
+            };
+            let op = if let Some(op) = self.op_ids.get(&key) {
+                *op
+            } else {
+                let op = ReplayOpId::new(
+                    u32::try_from(self.op_ids.len() + 1).expect("too many replay operations"),
+                );
+                self.op_ids.insert(key, op);
+                op
+            };
+            ReplayConstructorSpec::new(output_sorts[0], op, input_sorts.iter().copied())
+        });
+        FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
+    }
+
+    fn next_source(&mut self) -> SourceRef {
+        let ordinal = self.next_source;
+        self.next_source = self
+            .next_source
+            .checked_add(1)
+            .expect("too many causal source commands");
+        SourceRef::Synthetic(ordinal)
+    }
 }
 
 /// A user-defined command allows users to inject custom command that can be called
@@ -469,6 +578,7 @@ impl EGraph {
             command_macros: Default::default(),
             proof_state,
             proof_check_program: vec![],
+            causal_state: None,
         };
         add_base_sort(&mut eg, UnitSort, span!()).unwrap();
         add_base_sort(&mut eg, StringSort, span!()).unwrap();
@@ -663,6 +773,63 @@ impl EGraph {
         }
         self.proof_state.proofs_enabled = true;
         self
+    }
+
+    /// Enable native causal receipt capture before loading facts or compiling
+    /// rule plans.
+    ///
+    /// Structural replay identities are owned by this frontend and registered
+    /// side-band with the backend. Ordinary execution has no catalog and keeps
+    /// its existing instruction tape unchanged.
+    pub fn enable_causal_receipts(&mut self) -> Result<(), Error> {
+        if self.causal_state.is_some() {
+            return Ok(());
+        }
+        if self
+            .rulesets
+            .values()
+            .any(|ruleset| matches!(ruleset, Ruleset::Rules(rules) if !rules.is_empty()))
+        {
+            return Err(Error::BackendError(
+                "causal receipts must be enabled before registering rules".into(),
+            ));
+        }
+        self.backend
+            .enable_causal_receipts()
+            .map_err(|error| Error::BackendError(error.to_string()))?;
+
+        let mut causal = CausalState::default();
+        let registrations = self
+            .functions
+            .values()
+            .map(|function| {
+                (
+                    function.backend_id,
+                    causal.function_spec(function.name(), &function.schema, function.subtype()),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (function, spec) in registrations {
+            self.backend
+                .register_function_replay(function, spec)
+                .map_err(|error| Error::BackendError(error.to_string()))?;
+        }
+        self.causal_state = Some(causal);
+        Ok(())
+    }
+
+    /// Snapshot the compact native receipt DAG.
+    pub fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot, Error> {
+        self.backend
+            .causal_receipt_snapshot()
+            .map_err(|error| Error::BackendError(error.to_string()))
+    }
+
+    /// Resolve one typed structural term from the native replay DAG.
+    pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
+        self.backend
+            .causal_replay_term(id)
+            .map_err(|error| Error::BackendError(error.to_string()))
     }
 
     /// Enable testing of getting proofs for all `check` commands.
@@ -1077,6 +1244,11 @@ impl EGraph {
             .map(get_sort)
             .collect::<Result<Vec<_>, _>>()?;
         let num_outputs = outputs.len();
+        let schema = ResolvedSchema { input, outputs };
+        let replay = self
+            .causal_state
+            .as_mut()
+            .map(|causal| causal.function_spec(&decl.name, &schema, decl.subtype));
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -1100,9 +1272,10 @@ impl EGraph {
             },
         };
         let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
-            schema: input
+            schema: schema
+                .input
                 .iter()
-                .chain(outputs.iter())
+                .chain(schema.outputs.iter())
                 .map(|sort| sort.column_ty(self.backend.base_values()))
                 .collect(),
             n_vals: num_outputs,
@@ -1116,10 +1289,15 @@ impl EGraph {
             can_subsume,
         });
         assert_eq!(backend_id, own_id);
+        if let Some(replay) = replay {
+            self.backend
+                .register_function_replay(backend_id, replay)
+                .map_err(|error| Error::BackendError(error.to_string()))?;
+        }
 
         let function = Function {
             decl: decl.clone(),
-            schema: ResolvedSchema { input, outputs },
+            schema,
             can_subsume,
             backend_id,
         };
@@ -1382,6 +1560,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            self.causal_state.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true,
         );
@@ -1587,6 +1766,7 @@ impl EGraph {
                 &mut *self.backend,
                 &self.functions,
                 &self.type_info,
+                self.causal_state.as_ref(),
                 &mut self.unstable_fn_panic_ids,
                 requires_read_context,
             );
@@ -1623,20 +1803,27 @@ impl EGraph {
         );
         let (actions, _) = actions.to_core_actions(&mut ctx)?;
 
+        let source_receipt = self.causal_state.as_mut().map(CausalState::next_source);
         let mut translator = BackendRule::new(
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            self.causal_state.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
+        translator.source_receipt = source_receipt;
         translator.actions(&actions)?;
         let id = translator.try_build("eval_actions", false, false, Span::Panic)?;
         let result = self.backend.run_rules(RuleSetRun {
             name: None,
             rules: &[id],
         });
+        let finalize = (result.is_ok() && self.causal_state.is_some())
+            .then(|| self.backend.finalize_causal_wave())
+            .transpose();
         self.backend.free_rule(id);
+        finalize.map_err(|error| Error::BackendError(error.to_string()))?;
 
         match result {
             Ok(_) => Ok(()),
@@ -2005,6 +2192,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            self.causal_state.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
@@ -2100,6 +2288,7 @@ impl EGraph {
             &mut *self.backend,
             &self.functions,
             &self.type_info,
+            self.causal_state.as_ref(),
             &mut self.unstable_fn_panic_ids,
             true, // global query: Read context (may read the DB)
         );
@@ -3205,6 +3394,8 @@ struct BackendRule<'a> {
     rollback_external_funcs: Vec<ExternalFunctionId>,
     functions: &'a IndexMap<String, Function>,
     type_info: &'a TypeInfo,
+    causal_state: Option<&'a CausalState>,
+    source_receipt: Option<SourceRef>,
     /// Whether primitives may read the database. When true the per-phase
     /// [`crate::Context`] widens from `Pure`/`Write` to `Read`/`Full` (query
     /// gains reads, action gains reads on top of writes). True for `:naive` /
@@ -3217,6 +3408,7 @@ impl<'a> BackendRule<'a> {
         backend: &'a mut dyn Backend,
         functions: &'a IndexMap<String, Function>,
         type_info: &'a TypeInfo,
+        causal_state: Option<&'a CausalState>,
         unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
         requires_read_context: bool,
     ) -> BackendRule<'a> {
@@ -3226,6 +3418,8 @@ impl<'a> BackendRule<'a> {
             pending_unstable_fn_panic_ids: Default::default(),
             functions,
             type_info,
+            causal_state,
+            source_receipt: None,
             requires_read_context,
             entries: Default::default(),
             next_var: 0,
@@ -3283,10 +3477,22 @@ impl<'a> BackendRule<'a> {
             core::GenericAtomTerm::Var(span, variable) => {
                 core::GenericAtomTerm::Var(span.clone(), self.fresh_var(variable))
             }
-            core::GenericAtomTerm::Literal(span, literal) => core::GenericAtomTerm::Literal(
-                span.clone(),
-                literal_to_rule_value(self.backend.base_values(), literal),
-            ),
+            core::GenericAtomTerm::Literal(span, literal) => {
+                let value = literal_to_rule_value(self.backend.base_values(), literal);
+                if let Some(causal) = self.causal_state {
+                    let replay = match literal {
+                        Literal::Unit => ReplayLiteral::Unit,
+                        Literal::Bool(value) => ReplayLiteral::Bool(*value),
+                        Literal::Int(value) => ReplayLiteral::I64(*value),
+                        Literal::Float(value) => ReplayLiteral::F64(value.0.to_bits()),
+                        Literal::String(value) => ReplayLiteral::String(Arc::from(value.as_str())),
+                    };
+                    self.backend
+                        .intern_replay_literal(causal.literal_sort(literal), replay, value.value)
+                        .map_err(|error| Error::BackendError(error.to_string()))?;
+                }
+                core::GenericAtomTerm::Literal(span.clone(), value)
+            }
             core::GenericAtomTerm::Global(span, variable) => {
                 return Err(Error::BackendError(format!(
                     "{span}: global `{}` was not desugared before backend lowering",
@@ -3625,6 +3831,7 @@ impl<'a> BackendRule<'a> {
                 body: std::mem::take(&mut self.body),
                 head: std::mem::take(&mut self.head),
             },
+            source_receipt: self.source_receipt.take(),
             owned_external_funcs: std::mem::take(&mut self.rollback_external_funcs),
         };
         let result = self
@@ -3763,6 +3970,67 @@ mod tests {
     use crate::*;
 
     use crate::PureState;
+
+    #[test]
+    fn causal_receipts_capture_typed_source_constructor() {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        egraph
+            .parse_and_run_program(None, "(datatype Node (Leaf i64)) (let $root (Leaf 7))")
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        assert!(
+            snapshot
+                .facts
+                .iter()
+                .any(|fact| matches!(fact.cause, core_relations::FactCause::Source(_)))
+        );
+        assert!(snapshot.matches.is_empty());
+        assert_eq!(snapshot.counters.unattributed_commits, 0);
+
+        let mut saw_constructor = false;
+        for fact in &snapshot.facts {
+            for term in fact.terms.iter().copied().filter(|term| !term.is_missing()) {
+                let replay = egraph
+                    .causal_replay_term(term)
+                    .unwrap()
+                    .expect("every recorded term handle resolves");
+                saw_constructor |= matches!(replay, ReplayTerm::Call { .. });
+            }
+        }
+        assert!(saw_constructor);
+    }
+
+    #[test]
+    fn causal_receipts_reject_late_rule_activation_without_switching_modes() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation A (i64)) (relation B (i64))\
+                 (rule ((A x)) ((B x)))",
+            )
+            .unwrap();
+
+        let error = egraph.enable_causal_receipts().unwrap_err();
+        assert!(error.to_string().contains("before registering rules"));
+        egraph
+            .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")
+            .unwrap();
+    }
+
+    #[test]
+    fn causal_receipts_report_late_row_activation_without_switching_modes() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(relation A (i64)) (A 1)")
+            .unwrap();
+
+        let error = egraph.enable_causal_receipts().unwrap_err();
+        assert!(error.to_string().contains("contains rows"));
+        egraph.parse_and_run_program(None, "(check (A 1))").unwrap();
+    }
 
     #[test]
     fn query_error_restores_named_rule_metadata() {

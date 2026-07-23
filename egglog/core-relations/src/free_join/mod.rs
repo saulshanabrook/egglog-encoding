@@ -375,20 +375,25 @@ impl Database {
     /// shared arena. Capture must be enabled before any source rows are loaded:
     /// existing rows have no exact source identity and are never backfilled.
     pub fn enable_causal_receipts(&mut self) -> CausalReceipts {
+        self.try_enable_causal_receipts()
+            .unwrap_or_else(|error| panic!("cannot enable causal receipts: {error}"))
+    }
+
+    /// Fallible counterpart to [`Database::enable_causal_receipts`] for
+    /// embedding APIs that report unsupported late activation as an error.
+    pub fn try_enable_causal_receipts(&mut self) -> Result<CausalReceipts, &'static str> {
         if let Some(receipts) = &self.causal_receipts {
-            return receipts.clone();
+            return Ok(receipts.clone());
         }
         for (_, info) in self.tables.iter() {
-            info.table
-                .preflight_causal_receipt_activation()
-                .unwrap_or_else(|error| panic!("cannot enable causal receipts: {error}"));
+            info.table.preflight_causal_receipt_activation()?;
         }
         for (_, info) in self.tables.iter_mut() {
             info.table.enable_causal_receipts();
         }
         let receipts = CausalReceipts::default();
         self.causal_receipts = Some(receipts.clone());
-        receipts
+        Ok(receipts)
     }
 
     /// Set the globally monotone user-wave stamp inherited by rule effects.

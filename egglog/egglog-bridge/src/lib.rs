@@ -24,6 +24,10 @@ use crate::core_relations::{
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
+pub use egglog_core_relations::{
+    CausalReceipts, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
+    ReplaySortId, ReplayTerm, ReplayTermId,
+};
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
 use hashbrown::HashMap;
@@ -128,6 +132,7 @@ impl Timestamp {
 #[derive(Clone)]
 pub struct EGraph {
     db: Database,
+    causal_receipts: Option<CausalReceipts>,
     uf_table: TableId,
     id_counter: CounterId,
     timestamp_counter: CounterId,
@@ -201,6 +206,7 @@ impl Default for EGraph {
 
         Self {
             db,
+            causal_receipts: None,
             uf_table,
             id_counter,
             timestamp_counter: ts_counter,
@@ -236,6 +242,29 @@ pub struct FunctionConfig {
     pub name: String,
     /// Whether or not subsumption is enabled for this function.
     pub can_subsume: bool,
+}
+
+/// Side-band structural replay metadata for one registered function.
+///
+/// The logical sorts cover only the user-visible key and value columns. The
+/// bridge expands this layout with ignored timestamp and subsumption columns
+/// before registering it with the native receipt store.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunctionReplaySpec {
+    pub logical_sorts: Box<[ReplaySortId]>,
+    pub constructor: Option<ReplayConstructorSpec>,
+}
+
+impl FunctionReplaySpec {
+    pub fn new(
+        logical_sorts: impl IntoIterator<Item = ReplaySortId>,
+        constructor: Option<ReplayConstructorSpec>,
+    ) -> Self {
+        Self {
+            logical_sorts: logical_sorts.into_iter().collect(),
+            constructor,
+        }
+    }
 }
 
 impl EGraph {
@@ -659,6 +688,7 @@ impl EGraph {
             schema: schema.clone(),
             n_keys,
             n_identity_vals,
+            replay: None,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -712,6 +742,125 @@ impl EGraph {
             .unwrap()
             .register_table(table_name, action);
         res
+    }
+
+    /// Enable compact causal receipt capture before any rows are inserted.
+    pub fn enable_causal_receipts(&mut self) -> Result<()> {
+        if self.causal_receipts.is_none() {
+            self.causal_receipts = Some(
+                self.db
+                    .try_enable_causal_receipts()
+                    .map_err(anyhow::Error::msg)?,
+            );
+        }
+        Ok(())
+    }
+
+    /// Register the structural replay layout for a function already added with
+    /// [`EGraph::add_table`].
+    pub fn register_function_replay(
+        &mut self,
+        func: FunctionId,
+        spec: FunctionReplaySpec,
+    ) -> Result<()> {
+        let info = &self.funcs[func];
+        if spec.logical_sorts.len() != info.schema.len() {
+            anyhow::bail!(
+                "function `{}` has {} logical columns but replay metadata supplied {}",
+                info.name,
+                info.schema.len(),
+                spec.logical_sorts.len()
+            );
+        }
+        if let Some(constructor) = &spec.constructor {
+            if !matches!(info.default_val, DefaultVal::FreshId) {
+                anyhow::bail!(
+                    "function `{}` supplied constructor replay metadata without a fresh-id default",
+                    info.name
+                );
+            }
+            if constructor.child_sorts.len() != info.n_keys {
+                anyhow::bail!(
+                    "function `{}` has {} keys but constructor replay metadata supplied {} child sorts",
+                    info.name,
+                    info.n_keys,
+                    constructor.child_sorts.len()
+                );
+            }
+            if spec.logical_sorts[info.n_keys] != constructor.result_sort {
+                anyhow::bail!(
+                    "function `{}` constructor replay result sort does not match its first output",
+                    info.name
+                );
+            }
+            if spec.logical_sorts[..info.n_keys] != *constructor.child_sorts {
+                anyhow::bail!(
+                    "function `{}` constructor replay child sorts do not match its keys",
+                    info.name
+                );
+            }
+        }
+
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        let mut layout = spec
+            .logical_sorts
+            .iter()
+            .copied()
+            .map(Some)
+            .collect::<Vec<_>>();
+        layout.push(None);
+        if info.can_subsume {
+            layout.push(None);
+        }
+        receipts
+            .register_table_layout(info.table, &layout)
+            .map_err(anyhow::Error::msg)?;
+        self.funcs[func].replay = Some(spec);
+        Ok(())
+    }
+
+    /// Intern one typed source literal in the structural replay DAG.
+    pub fn intern_replay_literal(
+        &self,
+        sort: ReplaySortId,
+        literal: ReplayLiteral,
+        value: Value,
+    ) -> Result<ReplayTermId> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        Ok(receipts.intern_literal(sort, literal, value))
+    }
+
+    /// Take a durable snapshot of the current causal receipts.
+    pub fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        Ok(receipts.snapshot())
+    }
+
+    /// Promote the current receipt wave after a synchronous native barrier.
+    pub fn finalize_causal_wave(&mut self) -> Result<()> {
+        if self.causal_receipts.is_none() {
+            anyhow::bail!("causal receipts are not enabled");
+        }
+        self.db.finalize_causal_wave();
+        Ok(())
+    }
+
+    /// Inspect one structural replay node referenced by a receipt snapshot.
+    pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        Ok(receipts.replay_term(id))
     }
 
     /// A handle to the live [`ActionRegistry`] for this EGraph.
@@ -1205,6 +1354,7 @@ struct FunctionInfo {
     n_keys: usize,
     /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
     n_identity_vals: Option<usize>,
+    replay: Option<FunctionReplaySpec>,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,

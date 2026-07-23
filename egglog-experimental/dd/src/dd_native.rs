@@ -858,6 +858,7 @@ mod tests {
             name: name.to_owned(),
             seminaive: true,
             no_decomp: false,
+            source_receipt: None,
             owned_external_funcs: Vec::new(),
             core: GenericCoreRule {
                 span: Span::Panic,

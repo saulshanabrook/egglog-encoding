@@ -417,6 +417,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            egraph.causal_state.as_ref(),
             &mut egraph.unstable_fn_panic_ids,
             false, // seminaive query: Pure/Write contexts
         );
@@ -464,6 +465,7 @@ impl SchedulerRuleInfo {
             &mut *egraph.backend,
             &egraph.functions,
             &egraph.type_info,
+            egraph.causal_state.as_ref(),
             &mut egraph.unstable_fn_panic_ids,
             true, // action rule reads the DB: Read/Full contexts
         );
@@ -550,6 +552,7 @@ mod test {
                         body: Default::default(),
                         head: Default::default(),
                     },
+                    source_receipt: None,
                     owned_external_funcs: Vec::new(),
                 })
                 .unwrap()

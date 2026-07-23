@@ -83,6 +83,9 @@ struct Args {
     /// Enable proof testing, turning all `check` statements into `prove` statements
     #[clap(long)]
     proof_testing: bool,
+    /// Record compact native causal receipts for supported source actions
+    #[clap(long)]
+    causal_receipts: bool,
 }
 
 /// Start a command-line interface for the E-graph.
@@ -128,6 +131,13 @@ where
     if args.proof_testing {
         egraph = egraph.with_proofs_enabled();
         egraph = egraph.with_proof_testing();
+    }
+
+    if args.causal_receipts
+        && let Err(error) = egraph.enable_causal_receipts()
+    {
+        log::error!("{error}");
+        std::process::exit(2);
     }
 
     EGraph::set_num_threads(args.threads);

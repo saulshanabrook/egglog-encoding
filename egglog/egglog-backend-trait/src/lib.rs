@@ -95,12 +95,13 @@ mod backend_impl;
 // ---------------------------------------------------------------------------
 
 pub use egglog_bridge::{
-    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction, MergeFn, RuleId,
-    ScanEntry,
+    ActionRegistry, ColumnTy, DefaultVal, FunctionConfig, FunctionId, FunctionReplaySpec,
+    MergeAction, MergeFn, RuleId, ScanEntry,
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
-    ExternalFunction, ExternalFunctionId, Value,
+    ExternalFunction, ExternalFunctionId, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
+    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
@@ -175,6 +176,12 @@ pub struct RuleSpec {
     pub seminaive: bool,
     pub no_decomp: bool,
     pub core: BackendCoreRule,
+    /// Stable source identity for a top-level action command.
+    ///
+    /// Source actions have an empty query and attribute every effective
+    /// commit directly to this identity rather than manufacturing a rule
+    /// match. Ordinary rules leave this unset.
+    pub source_receipt: Option<SourceRef>,
     /// External-function registrations whose lifetime is owned by this rule.
     ///
     /// [`Backend::add_rule`] takes ownership of these handles, including on
@@ -407,6 +414,62 @@ pub trait Backend: Send + Sync {
     /// (via `EGraph::with_term_encoding`).
     fn requires_term_encoding(&self) -> bool {
         false
+    }
+
+    /// Enable causal receipt capture before input rows or rule plans exist.
+    ///
+    /// This capability is currently provided only by the in-memory reference
+    /// backend.
+    fn enable_causal_receipts(&mut self) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Register structural replay metadata for a function already added with
+    /// [`Backend::add_table`].
+    fn register_function_replay(
+        &mut self,
+        _func: FunctionId,
+        _spec: FunctionReplaySpec,
+    ) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Intern one typed literal used by a receipt-enabled rule plan.
+    fn intern_replay_literal(
+        &self,
+        _sort: ReplaySortId,
+        _literal: ReplayLiteral,
+        _value: Value,
+    ) -> Result<ReplayTermId> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Take one durable snapshot of the backend's causal receipts.
+    fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Promote all effective roots from the completed synchronous causal
+    /// wave. Call only at an existing native merge/rebuild barrier.
+    fn finalize_causal_wave(&mut self) -> Result<()> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
+    }
+
+    /// Inspect one replay node referenced from a causal receipt snapshot.
+    fn causal_replay_term(&self, _id: ReplayTermId) -> Result<Option<ReplayTerm>> {
+        Err(anyhow::anyhow!(
+            "this backend does not support causal receipts"
+        ))
     }
 
     // -- concrete-backend access (escape hatch) -----------------------------

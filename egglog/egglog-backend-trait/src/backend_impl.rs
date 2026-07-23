@@ -16,9 +16,10 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 
 use crate::{
     Backend, BaseValues, ColumnTy, ContainerValues, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, GuardedRuleRun, GuardedRuleRunOutcome,
-    IterationReport, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-    RuleValue, RuleVar, ScanEntry, Value,
+    ExternalFunctionId, FunctionConfig, FunctionId, FunctionReplaySpec, GuardedRuleRun,
+    GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot, ReplayLiteral, ReplaySortId,
+    ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun,
+    RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -56,9 +57,13 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         seminaive,
         no_decomp,
         core,
+        source_receipt,
         owned_external_funcs,
     } = rule;
     let mut builder = egraph.new_rule(&name, seminaive);
+    if let Some(source) = source_receipt {
+        builder.set_source_receipt(source);
+    }
     for func in owned_external_funcs {
         builder.own_external_func(func);
     }
@@ -146,6 +151,39 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
 impl Backend for EGraph {
     fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
         EGraph::add_table(self, config)
+    }
+
+    fn enable_causal_receipts(&mut self) -> Result<()> {
+        EGraph::enable_causal_receipts(self)
+    }
+
+    fn register_function_replay(
+        &mut self,
+        func: FunctionId,
+        spec: FunctionReplaySpec,
+    ) -> Result<()> {
+        EGraph::register_function_replay(self, func, spec)
+    }
+
+    fn intern_replay_literal(
+        &self,
+        sort: ReplaySortId,
+        literal: ReplayLiteral,
+        value: Value,
+    ) -> Result<ReplayTermId> {
+        EGraph::intern_replay_literal(self, sort, literal, value)
+    }
+
+    fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
+        EGraph::causal_receipt_snapshot(self)
+    }
+
+    fn finalize_causal_wave(&mut self) -> Result<()> {
+        EGraph::finalize_causal_wave(self)
+    }
+
+    fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>> {
+        EGraph::causal_replay_term(self, id)
     }
 
     fn peek_next_function_id(&self) -> FunctionId {

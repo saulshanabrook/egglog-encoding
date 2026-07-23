@@ -800,3 +800,32 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - The inspected proof certificate contained 35 `Rule` nodes, 34 of them user
   rule nodes. This calibrates Hardboiled only as evidence that Prefix breadth
   can collapse; it is not an expected exact firing count for the new slice.
+
+### 2026-07-23 — checkpoint 4b2g frontend source-constructor vertical slice
+
+- Status: bounded source-only bridge checkpoint. This is not yet a receipt
+  treatment for ordinary rules, checks, TSV input, primitive outputs, unions,
+  or replay; those remain explicit next stages rather than fallback paths.
+- The frontend now owns stable replay sort and operation catalogs before
+  physical `ColumnTy` erasure. Function layouts are registered side-band on
+  the private bridge `FunctionInfo`; public `FunctionConfig` remains
+  unchanged. Constructor plans select the existing typed receipt instruction
+  only when the catalog is present, so receipt-disabled action tapes remain
+  unchanged.
+- Typed source literals are interned as compact DAG nodes at backend lowering.
+  Empty-query top-level actions carry a stable `SourceRef` through `RuleSpec`
+  and the bridge into the core source-action builder. Successful action
+  barriers finalize their provisional receipt segment before snapshots.
+- Activation is all-or-nothing and fallible through the embedding API. It
+  rejects existing frontend rules before touching the backend and reports
+  pre-existing native rows/queued buffers as an error; the legacy core
+  activation API retains its panic-on-invalid contract for existing callers.
+- The end-to-end canary enables receipts, declares `(Leaf i64)`, evaluates a
+  top-level source construction, and observes source-caused immutable facts,
+  zero synthetic matches, zero unattributed commits, and resolvable typed call
+  terms. Separate canaries prove late-rule and late-row activation leave
+  ordinary mode usable.
+- Regression gate: the three frontend causal canaries passed; all 26 bridge
+  tests passed; `cargo check --workspace`, formatting, and `git diff --check`
+  passed. No workload timing has been run because ordinary rule/check/TSV
+  receipt production is intentionally not part of this checkpoint.
