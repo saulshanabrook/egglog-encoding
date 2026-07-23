@@ -4339,15 +4339,29 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::OnceLock;
+
     use crate::constraint::SimpleTypeConstraint;
     use crate::*;
 
     use crate::PureState;
 
+    fn enable_serial_causal_receipts(egraph: &mut EGraph) -> Result<(), Error> {
+        static SERIAL_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+        SERIAL_POOL
+            .get_or_init(|| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .unwrap()
+            })
+            .install(|| egraph.enable_causal_receipts())
+    }
+
     #[test]
     fn causal_receipts_capture_typed_source_constructor() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(None, "(datatype Node (Leaf i64)) (let $root (Leaf 7))")
             .unwrap();
@@ -4378,7 +4392,7 @@ mod tests {
     #[test]
     fn causal_receipts_promote_pure_rule_action_result() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4419,7 +4433,7 @@ mod tests {
     #[test]
     fn causal_receipts_promote_bound_body_primitive_for_action_use() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4474,7 +4488,7 @@ mod tests {
     #[test]
     fn causal_receipts_defer_body_primitive_terms_until_all_guards_pass() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4508,7 +4522,7 @@ mod tests {
     #[should_panic(expected = "has no producer-installed ReplayTermId")]
     fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4527,7 +4541,7 @@ mod tests {
     #[test]
     fn causal_receipts_capture_exact_rule_premise_and_wave() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4602,7 +4616,7 @@ mod tests {
     #[test]
     fn causal_receipts_preserve_distinct_check_equality_terms() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4658,7 +4672,7 @@ mod tests {
     #[test]
     fn causal_until_propagates_unsupported_equality_layout() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         let error = egraph
             .parse_and_run_program(None, "(run 1 :until (= 1 2))")
             .expect_err("unsupported causal check metadata must not mean `until` is false");
@@ -4673,7 +4687,7 @@ mod tests {
     )]
     fn causal_check_rejects_congruence_collapsed_endpoint_producers() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4692,7 +4706,7 @@ mod tests {
     #[test]
     fn causal_receipt_waves_are_cumulative_across_run_commands() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4735,7 +4749,7 @@ mod tests {
 
         let mut egraph = EGraph::default();
         egraph.fact_directory = Some(directory.clone());
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         let result = egraph.parse_and_run_program(
             None,
             r#"
@@ -4757,7 +4771,7 @@ mod tests {
         std::fs::write(directory.join("bad.tsv"), "1\nnot-an-integer\n").unwrap();
         let mut rejected = EGraph::default();
         rejected.fact_directory = Some(directory.clone());
-        rejected.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut rejected).unwrap();
         let error = rejected
             .parse_and_run_program(
                 None,
@@ -4847,7 +4861,7 @@ mod tests {
     #[test]
     fn causal_wave_spans_multiple_native_rebuild_timestamps() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(
                 None,
@@ -4877,7 +4891,7 @@ mod tests {
     #[test]
     fn causal_receipts_reject_source_run_rule_before_opening_a_wave() {
         let mut egraph = EGraph::default();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         let error = egraph
             .parse_and_run_program(
                 None,
@@ -4907,7 +4921,7 @@ mod tests {
             )
             .unwrap();
 
-        let error = egraph.enable_causal_receipts().unwrap_err();
+        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
         assert!(error.to_string().contains("before registering rules"));
         egraph
             .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")
@@ -4920,7 +4934,7 @@ mod tests {
         egraph
             .parse_and_run_program(None, "(relation A (i64))")
             .unwrap();
-        egraph.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
             .parse_and_run_program(None, "(A 1) (check (A 1))")
             .unwrap();
@@ -4939,7 +4953,7 @@ mod tests {
             )
             .unwrap();
         let mut recording = original.clone();
-        recording.enable_causal_receipts().unwrap();
+        enable_serial_causal_receipts(&mut recording).unwrap();
 
         original
             .parse_and_run_program(
@@ -4961,7 +4975,7 @@ mod tests {
             .parse_and_run_program(None, "(relation A (i64)) (A 1)")
             .unwrap();
 
-        let error = egraph.enable_causal_receipts().unwrap_err();
+        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
         assert!(error.to_string().contains("contains rows"));
         egraph.parse_and_run_program(None, "(check (A 1))").unwrap();
     }

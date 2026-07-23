@@ -25,6 +25,21 @@ use crate::{
 };
 
 #[test]
+fn causal_receipts_reject_parallel_bridge_activation() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        let error = egraph.enable_causal_receipts().unwrap_err();
+        assert!(error.to_string().contains(
+            "causal receipts require a one-thread Rayon pool; parallel causal capture is unsupported"
+        ));
+    });
+}
+
+#[test]
 fn guarded_rule_uses_one_full_search_and_preserves_seminaive_epoch_on_mismatch() {
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();

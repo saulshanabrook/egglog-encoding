@@ -1072,3 +1072,20 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   `cargo test -p egglog-experimental --test files
   'proofs/eggcc_2mm_pass1_proof_testing'`, and
   `cargo test -p egglog --test files hardboiled_conv1d_32`.
+
+### 2026-07-23 — checkpoint 5b serial-only activation boundary
+
+- The benchmark harness invokes every treatment with `-j 1`, and causal
+  capture now makes that evaluation assumption explicit. CLI activation
+  rejects any requested thread count other than one, configures Rayon before
+  enabling receipts, and the public bridge activation independently verifies
+  that the active pool actually has one worker.
+- The lower-level `core-relations::Database` activation seam remains
+  intentionally ungated. Its already-landed parallel fragment, merge-cause,
+  and witness-transport canaries stay intact as dormant future-work coverage;
+  the current experiment adds no parallel recording or parity machinery.
+- The serial restriction is checked at activation. The supported CLI path
+  then owns the same one-thread global pool for the program's lifetime.
+  Embedders must likewise keep execution in the pool used for activation.
+- Canaries cover both the CLI's `--threads 2` rejection and direct bridge
+  activation in a two-thread Rayon pool.

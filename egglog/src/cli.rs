@@ -119,6 +119,12 @@ where
         log::error!("--timing-summary requires --threads 1 for accurate phase timing");
         std::process::exit(2);
     }
+    if args.causal_receipts && args.threads != 1 {
+        log::error!("causal receipts require --threads 1; parallel causal capture is unsupported");
+        std::process::exit(2);
+    }
+
+    EGraph::set_num_threads(args.threads);
 
     if args.term_encoding {
         egraph = egraph.with_term_encoding_enabled();
@@ -140,7 +146,6 @@ where
         std::process::exit(2);
     }
 
-    EGraph::set_num_threads(args.threads);
     egraph.fact_directory.clone_from(&args.fact_directory);
     egraph.seminaive = !args.naive;
     egraph.no_decomp = args.no_decomp;

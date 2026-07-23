@@ -772,6 +772,12 @@ impl EGraph {
     /// Enable compact causal receipt capture before any rows are inserted.
     pub fn enable_causal_receipts(&mut self) -> Result<()> {
         if self.causal_receipts.is_none() {
+            let threads = rayon::current_num_threads();
+            anyhow::ensure!(
+                threads == 1,
+                "causal receipts require a one-thread Rayon pool; \
+                 parallel causal capture is unsupported (active pool has {threads} threads)"
+            );
             self.causal_receipts = Some(
                 self.db
                     .try_enable_causal_receipts()
