@@ -458,7 +458,8 @@ impl Database {
                                     );
                                     let mut materializations = Arc::new(materializations);
                                     let receipt = rule_set.actions[plan.actions].receipt.as_ref();
-                                    let capture_witness = receipt.is_some();
+                                    let capture_witness =
+                                        receipt.is_some_and(|receipt| receipt.captures_witness());
                                     let premise_slots =
                                         receipt.map(|receipt| receipt.premise_slots.clone());
 
@@ -597,7 +598,10 @@ impl Database {
                                     .map(|(i, block)| (MatId::from_usize(i), block.1.clone()))
                                     .collect(),
                                 materializations,
-                                capture_witness: rule_set.actions[plan.actions].receipt.is_some(),
+                                capture_witness: rule_set.actions[plan.actions]
+                                    .receipt
+                                    .as_ref()
+                                    .is_some_and(|receipt| receipt.captures_witness()),
                                 premise_slots: rule_set.actions[plan.actions]
                                     .receipt
                                     .as_ref()
@@ -1359,7 +1363,7 @@ fn push_receipt_witness(
         })
         .collect::<SmallVec<[crate::FactId; 4]>>();
     bindings.push_receipt(
-        layout.rule,
+        &layout.kind,
         exec_state.causal_wave(),
         &premises,
         &layout.binding_sources,
@@ -2751,7 +2755,10 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         'a: 'b;
 
     fn needs_receipt_witness(&self, action: ActionId) -> bool {
-        self.rule_set.actions[action].receipt.is_some()
+        self.rule_set.actions[action]
+            .receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.captures_witness())
     }
 
     fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
@@ -2777,15 +2784,24 @@ impl<'a, 'outer: 'a> ActionBuffer<'a, ActionId> for InPlaceActionBuffer<'outer> 
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
         if let Some(layout) = &action_info.receipt {
-            let witness = witness.expect("receipt action requires a native match witness");
-            debug_assert_ne!(layout.premise_count, 0);
-            push_receipt_witness(
-                action_info,
-                witness,
-                materializations,
-                exec_state,
-                &mut action_state.bindings,
-            );
+            if layout.captures_witness() {
+                let witness = witness.expect("receipt action requires a native match witness");
+                push_receipt_witness(
+                    action_info,
+                    witness,
+                    materializations,
+                    exec_state,
+                    &mut action_state.bindings,
+                );
+            } else {
+                debug_assert!(witness.is_none());
+                action_state.bindings.push_receipt(
+                    &layout.kind,
+                    exec_state.causal_wave(),
+                    &[],
+                    &layout.binding_sources,
+                );
+            }
         }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.
@@ -2859,7 +2875,10 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         'scope: 'a;
 
     fn needs_receipt_witness(&self, action: ActionId) -> bool {
-        self.rule_set.actions[action].receipt.is_some()
+        self.rule_set.actions[action]
+            .receipt
+            .as_ref()
+            .is_some_and(|receipt| receipt.captures_witness())
     }
 
     fn receipt_premise_slot(&self, action: ActionId, atom: AtomId) -> Option<PremiseSlot> {
@@ -2886,15 +2905,24 @@ impl<'scope> ActionBuffer<'scope, ActionId> for ScopedActionBuffer<'_, 'scope> {
         action_state.len += 1;
         let action_info = &self.rule_set.actions[action];
         if let Some(layout) = &action_info.receipt {
-            let witness = witness.expect("receipt action requires a native match witness");
-            debug_assert_ne!(layout.premise_count, 0);
-            push_receipt_witness(
-                action_info,
-                witness,
-                materializations,
-                exec_state,
-                &mut action_state.bindings,
-            );
+            if layout.captures_witness() {
+                let witness = witness.expect("receipt action requires a native match witness");
+                push_receipt_witness(
+                    action_info,
+                    witness,
+                    materializations,
+                    exec_state,
+                    &mut action_state.bindings,
+                );
+            } else {
+                debug_assert!(witness.is_none());
+                action_state.bindings.push_receipt(
+                    &layout.kind,
+                    exec_state.causal_wave(),
+                    &[],
+                    &layout.binding_sources,
+                );
+            }
         }
         // SAFETY: `used_vars` is a constant per-rule. This module only ever calls it with
         // `bindings` produced by the same join.

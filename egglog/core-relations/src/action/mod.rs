@@ -19,12 +19,16 @@ use egglog_concurrency::NotificationList;
 use smallvec::SmallVec;
 
 use crate::{
-    BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, ExternalFunctionId,
-    FactId, ReplayConstructorSpec, ReplaySortId, ReplayTermId, WrappedTable,
+    BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, EqualityEdgeCount,
+    EqualityEndpoint, ExternalFunctionId, FactId, ReplayConstructorSpec, ReplaySortId,
+    ReplayTermId, WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
-    receipts::{CauseCapability, ReplayBindingSource, TypedEqualityProposal},
+    receipts::{
+        ActionReceiptKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
+        ReplayBindingSource, TypedEqualityProposal,
+    },
     table_spec::{ColumnId, MutationBuffer},
 };
 
@@ -123,7 +127,7 @@ pub(crate) struct Bindings {
 }
 
 struct ReceiptBindings {
-    rule: u32,
+    kind: ActionReceiptKind,
     wave: CausalWave,
     premise_arity: usize,
     binding_sources: Box<[ReplayBindingSource]>,
@@ -261,13 +265,13 @@ impl Bindings {
 
     pub(crate) fn push_receipt(
         &mut self,
-        rule: u32,
+        kind: &ActionReceiptKind,
         wave: CausalWave,
         premises: &[FactId],
         binding_sources: &[ReplayBindingSource],
     ) {
         if let Some(existing) = &mut self.receipt {
-            assert_eq!(existing.rule, rule);
+            assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
             assert_eq!(existing.premise_arity, premises.len());
             assert_eq!(existing.binding_sources.as_ref(), binding_sources);
@@ -275,7 +279,7 @@ impl Bindings {
             existing.causes.push(None);
         } else {
             self.receipt = Some(Box::new(ReceiptBindings {
-                rule,
+                kind: kind.clone(),
                 wave,
                 premise_arity: premises.len(),
                 binding_sources: binding_sources.into(),
@@ -300,6 +304,18 @@ impl Bindings {
         if missing.is_empty() {
             return;
         }
+        if let ActionReceiptKind::Source(source) = &state.kind {
+            let registered = receipts.register_source_actions(source, &missing);
+            let state = self.receipt.as_mut().unwrap();
+            for (lane, cause) in registered {
+                state.causes[lane] = Some(cause);
+            }
+            return;
+        }
+        let ActionReceiptKind::Rule(rule) = &state.kind else {
+            panic!("check receipt action cannot stage native effects");
+        };
+        let rule = *rule;
         let current_arity = state
             .binding_sources
             .iter()
@@ -307,7 +323,7 @@ impl Bindings {
             .count();
         let registered = if current_arity == 0 {
             receipts.register_rule_matches(
-                state.rule,
+                rule,
                 state.wave,
                 state.premise_arity,
                 &state.binding_sources,
@@ -331,7 +347,7 @@ impl Bindings {
                 }
             }
             receipts.register_rule_matches(
-                state.rule,
+                rule,
                 state.wave,
                 state.premise_arity,
                 &state.binding_sources,
@@ -348,6 +364,33 @@ impl Bindings {
 
     fn receipt_cause(&self, lane: usize) -> Option<CauseDraftId> {
         self.receipt.as_ref()?.causes[lane]
+    }
+
+    fn receipt_cause_capability(&self, lane: usize) -> Option<CauseCapability> {
+        let state = self.receipt.as_ref()?;
+        let cause = state.causes[lane]?;
+        match &state.kind {
+            ActionReceiptKind::Rule(_) => Some(CauseCapability::rule(cause)),
+            ActionReceiptKind::Source(_) => Some(CauseCapability::source(cause)),
+            ActionReceiptKind::Check => None,
+        }
+    }
+
+    fn check_receipt(&self, lane: usize) -> (CausalWave, &[FactId]) {
+        let state = self
+            .receipt
+            .as_ref()
+            .expect("receipt-aware check requires exact native witnesses");
+        assert_eq!(
+            state.kind,
+            ActionReceiptKind::Check,
+            "check recorder reached non-check receipt metadata"
+        );
+        let start = lane * state.premise_arity;
+        (
+            state.wave,
+            &state.premises[start..start + state.premise_arity],
+        )
     }
 
     /// A method that removes the bindings for the given variable and allows for its values to be
@@ -633,10 +676,6 @@ impl<'a> ExecutionState<'a> {
                 .expect("active receipt cause requires causal receipts")
                 .cause_capability(cause)
         });
-    }
-
-    pub(crate) fn set_active_rule_cause(&mut self, cause: Option<CauseDraftId>) {
-        self.active_cause = cause.map(CauseCapability::rule);
     }
 
     pub(crate) fn set_active_cause_capability(&mut self, cause: Option<CauseCapability>) {
@@ -1135,17 +1174,17 @@ impl ExecutionState<'_> {
                     });
                     bindings.ensure_receipt_causes(&lanes, receipts);
                     let causes = (0..bindings.matches)
-                        .map(|lane| bindings.receipt_cause(lane))
+                        .map(|lane| bindings.receipt_cause_capability(lane))
                         .collect::<Vec<_>>();
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, vals| {
-                            self.set_active_rule_cause(Some(causes[offset].expect(
+                            self.set_active_cause_capability(Some(causes[offset].expect(
                                 "effective action lane is missing its exact receipt cause",
                             )));
                             self.stage_insert(*table, vals.as_slice());
                         })
                     });
-                    self.set_active_rule_cause(None);
+                    self.set_active_cause_capability(None);
                 } else {
                     // Keep the ordinary loop byte-for-byte equivalent to the
                     // pre-receipt action path.
@@ -1178,9 +1217,9 @@ impl ExecutionState<'_> {
                         QueryEntry::Const(value) => value,
                         QueryEntry::Var(variable) => bindings[variable][offset],
                     };
-                    self.set_active_rule_cause(Some(
+                    self.set_active_cause_capability(Some(
                         bindings
-                            .receipt_cause(offset)
+                            .receipt_cause_capability(offset)
                             .expect("typed union lane is missing its exact receipt cause"),
                     ));
                     self.stage_union_with_replay(
@@ -1191,7 +1230,7 @@ impl ExecutionState<'_> {
                         *sort,
                     );
                 });
-                self.set_active_rule_cause(None);
+                self.set_active_cause_capability(None);
             }
             Instr::InsertIfEq { table, l, r, vals } => {
                 assert!(
@@ -1296,6 +1335,77 @@ impl ExecutionState<'_> {
                     })
                 })
             }
+            Instr::RecordCheck {
+                check,
+                equalities,
+                as_of_edges,
+            } => {
+                let receipts = self
+                    .db
+                    .causal_receipts
+                    .expect("receipt-aware check requires causal receipts");
+                let premise_requests = equalities
+                    .iter()
+                    .flat_map(|(left, right)| [left, right])
+                    .filter_map(|endpoint| match endpoint.term {
+                        CheckTermSource::Premise { premise, column } => {
+                            Some((premise, column, endpoint.sort))
+                        }
+                        CheckTermSource::Current => None,
+                    })
+                    .collect::<SmallVec<[(usize, usize, ReplaySortId); 8]>>();
+                let mut winner = None::<(
+                    CausalWave,
+                    SmallVec<[FactId; 4]>,
+                    SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>,
+                )>;
+                mask.empty_iter().for_each_indexed(|offset, ()| {
+                    let (wave, premise_slice) = bindings.check_receipt(offset);
+                    let premises = SmallVec::<[FactId; 4]>::from_slice(premise_slice);
+                    let premise_terms = receipts
+                        .check_premise_terms(&premises, &premise_requests)
+                        .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
+                    let mut premise_terms = premise_terms.into_iter();
+                    let get = |entry| match entry {
+                        QueryEntry::Const(value) => value,
+                        QueryEntry::Var(variable) => bindings[variable][offset],
+                    };
+                    let mut resolve = |endpoint: CheckEndpointSpec| {
+                        let raw = get(endpoint.value);
+                        match endpoint.term {
+                            CheckTermSource::Premise { .. } => EqualityEndpoint {
+                                sort: endpoint.sort,
+                                term: premise_terms
+                                    .next()
+                                    .expect("one term for every premise endpoint"),
+                                raw,
+                            },
+                            CheckTermSource::Current => receipts
+                                .equality_endpoint(endpoint.sort, raw)
+                                .unwrap_or_else(|error| {
+                                    panic!("invalid exact check root: {error}")
+                                }),
+                        }
+                    };
+                    let resolved = equalities
+                        .iter()
+                        .map(|&(left, right)| (resolve(left), resolve(right)))
+                        .collect::<SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>>();
+                    debug_assert!(premise_terms.next().is_none());
+                    let replace = winner.as_ref().is_none_or(|current| {
+                        (wave, premises.as_slice(), resolved.as_slice())
+                            < (current.0, current.1.as_slice(), current.2.as_slice())
+                    });
+                    if replace {
+                        winner = Some((wave, premises, resolved));
+                    }
+                });
+                let (wave, premises, resolved) =
+                    winner.expect("nonempty check mask has one exact candidate");
+                receipts
+                    .record_check_root(*check, wave, &premises, &resolved, *as_of_edges)
+                    .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
+            }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
             Instr::AssertNe(l, r) => assert_impl(bindings, mask, l, r, |l, r| l != r),
             Instr::ReadCounter { counter, dst } => {
@@ -1377,6 +1487,13 @@ pub(crate) enum Instr {
         right: QueryEntry,
         timestamp: QueryEntry,
         sort: ReplaySortId,
+    },
+
+    /// Terminal receipt-only action for one successful positive check.
+    RecordCheck {
+        check: u32,
+        equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
+        as_of_edges: EqualityEdgeCount,
     },
 
     /// Insert `vals` into `table` if `l` and `r` are equal.

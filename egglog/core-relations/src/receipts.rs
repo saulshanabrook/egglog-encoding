@@ -18,7 +18,7 @@ use dashmap::mapref::entry::Entry;
 use smallvec::SmallVec;
 
 use crate::{
-    AtomId, TableId, Value, Variable,
+    AtomId, QueryEntry, TableId, Value, Variable,
     common::{DashMap, HashMap},
     numeric_id::{DenseIdMap, NumericId},
 };
@@ -314,6 +314,79 @@ pub enum SourceRef {
     Synthetic(u64),
 }
 
+/// Static source identity attached to every effective lane of one source
+/// action. Source actions do not manufacture rule matches.
+#[derive(Clone, Debug)]
+pub struct SourceReceiptSpec {
+    pub(crate) source: SourceRef,
+}
+
+impl SourceReceiptSpec {
+    pub fn new(source: SourceRef) -> Self {
+        Self { source }
+    }
+}
+
+/// Static witness and typed-equality layout for one positive check.
+#[derive(Clone, Copy, Debug)]
+pub enum CheckEndpointSource {
+    Premise {
+        premise: usize,
+        column: usize,
+        value: QueryEntry,
+    },
+    Current {
+        value: QueryEntry,
+        sort: ReplaySortId,
+    },
+}
+
+impl CheckEndpointSource {
+    pub fn premise(premise: usize, column: usize, value: QueryEntry) -> Self {
+        Self::Premise {
+            premise,
+            column,
+            value,
+        }
+    }
+
+    pub fn current(value: QueryEntry, sort: ReplaySortId) -> Self {
+        Self::Current { value, sort }
+    }
+
+    pub(crate) fn value(&self) -> &QueryEntry {
+        match self {
+            Self::Premise { value, .. } | Self::Current { value, .. } => value,
+        }
+    }
+}
+
+/// Static witness and typed-equality layout for one positive check.
+#[derive(Clone, Debug)]
+pub struct CheckReceiptSpec {
+    pub(crate) check: u32,
+    pub(crate) premises: Box<[AtomId]>,
+    pub(crate) equalities: Box<[(CheckEndpointSource, CheckEndpointSource)]>,
+}
+
+impl CheckReceiptSpec {
+    pub fn new(check: u32, premises: impl IntoIterator<Item = AtomId>) -> Self {
+        Self {
+            check,
+            premises: premises.into_iter().collect(),
+            equalities: Box::new([]),
+        }
+    }
+
+    pub fn with_equalities(
+        mut self,
+        equalities: impl IntoIterator<Item = (CheckEndpointSource, CheckEndpointSource)>,
+    ) -> Self {
+        self.equalities = equalities.into_iter().collect();
+        self
+    }
+}
+
 /// Static receipt metadata retained with a compiled rule.
 #[derive(Clone, Debug)]
 pub struct RuleReceiptSpec {
@@ -358,13 +431,39 @@ pub(crate) enum ReplayBindingSource {
     },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ActionReceiptKind {
+    Rule(u32),
+    Source(SourceRef),
+    Check,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CheckTermSource {
+    Premise { premise: usize, column: usize },
+    Current,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CheckEndpointSpec {
+    pub(crate) value: QueryEntry,
+    pub(crate) sort: ReplaySortId,
+    pub(crate) term: CheckTermSource,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ActionReceiptSpec {
-    pub(crate) rule: u32,
+    pub(crate) kind: ActionReceiptKind,
     pub(crate) premise_count: usize,
     pub(crate) premise_slots: Arc<DenseIdMap<AtomId, PremiseSlot>>,
     /// One exact term source for every ordinary variable, in source order.
     pub(crate) binding_sources: Box<[ReplayBindingSource]>,
+}
+
+impl ActionReceiptSpec {
+    pub(crate) fn captures_witness(&self) -> bool {
+        self.premise_count != 0
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -532,11 +631,21 @@ impl<'a> Iterator for ReceiptCauseDependencies<'a> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct EqualityEndpoint {
     pub sort: ReplaySortId,
     pub term: ReplayTermId,
     pub raw: crate::Value,
+}
+
+/// Exact native support retained for the first successful match of one check.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheckRoot {
+    pub check: u32,
+    pub wave: CausalWave,
+    pub premises: Box<[FactId]>,
+    pub equalities: Box<[(EqualityEndpoint, EqualityEndpoint)]>,
+    pub as_of_edges: EqualityEdgeCount,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -604,6 +713,7 @@ pub struct ReceiptSnapshot {
     pub equality_nodes: Vec<EqNodeRecord>,
     pub equalities: Vec<EqualityRecord>,
     pub causes: Vec<ReceiptCauseRecord>,
+    pub check_roots: Vec<CheckRoot>,
     pub counters: ReceiptCounters,
 }
 
@@ -1148,6 +1258,17 @@ impl CauseCapability {
         }
     }
 
+    pub(crate) fn source(id: CauseDraftId) -> Self {
+        assert!(
+            !id.is_unattributed(),
+            "source cause capability is missing its exact cause"
+        );
+        Self {
+            id,
+            equality: EqualityCauseSummary::Source,
+        }
+    }
+
     pub(crate) fn id(self) -> CauseDraftId {
         self.id
     }
@@ -1324,6 +1445,7 @@ struct ReceiptArena {
     durable_rebuild_equalities: Vec<TypedCellEquality>,
     durable_causes: Vec<DurableCause>,
     durable_equalities: Vec<DurableEquality>,
+    check_roots: HashMap<u32, CheckRoot>,
     counters: ReceiptCounters,
 }
 
@@ -2034,8 +2156,126 @@ impl CausalReceipts {
     ) -> Result<EqualityEndpoint, &'static str> {
         let term = self
             .lookup_term(sort, raw)
-            .ok_or("union endpoint has no ReplayTermId for its declared sort")?;
+            .ok_or("typed endpoint has no ReplayTermId for its declared sort")?;
         Ok(EqualityEndpoint { sort, term, raw })
+    }
+
+    pub(crate) fn check_premise_terms(
+        &self,
+        premises: &[FactId],
+        requests: &[(usize, usize, ReplaySortId)],
+    ) -> Result<SmallVec<[ReplayTermId; 8]>, &'static str> {
+        let terms = {
+            let arena = self.0.arena.lock().unwrap();
+            let mut terms = SmallVec::<[ReplayTermId; 8]>::new();
+            for &(premise, column, _) in requests {
+                let fact = *premises
+                    .get(premise)
+                    .ok_or("check endpoint cites a missing premise slot")?;
+                terms.push(
+                    arena
+                        .fact_term(fact, column)
+                        .ok_or("check endpoint has no immutable fact-owned ReplayTermId")?,
+                );
+            }
+            terms
+        };
+        for (term, &(_, _, sort)) in terms.iter().zip(requests) {
+            let node = self
+                .0
+                .replay_terms
+                .node(*term)
+                .ok_or("check endpoint fact owns an unknown ReplayTermId")?;
+            if node.sort() != sort {
+                return Err("check endpoint fact term has the wrong declared sort");
+            }
+        }
+        Ok(terms)
+    }
+
+    /// Publish one fully-resolved check root atomically. Runtime values and
+    /// their independently-selected structural terms are validated before the
+    /// applied-equality cutoff or root storage is changed.
+    pub(crate) fn record_check_root(
+        &self,
+        check: u32,
+        wave: CausalWave,
+        premises: &[FactId],
+        equalities: &[(EqualityEndpoint, EqualityEndpoint)],
+        as_of_edges: EqualityEdgeCount,
+    ) -> Result<(), &'static str> {
+        if premises.iter().any(|fact| fact.is_missing()) {
+            return Err("check root has a missing exact premise FactId");
+        }
+        for (left, right) in equalities {
+            if left.sort != right.sort {
+                return Err("one check equality crosses logical sorts");
+            }
+            for endpoint in [left, right] {
+                if endpoint.term.is_missing() {
+                    return Err("check equality endpoint has no exact ReplayTermId");
+                }
+                let node = self
+                    .0
+                    .replay_terms
+                    .node(endpoint.term)
+                    .ok_or("check equality endpoint has an unknown ReplayTermId")?;
+                if node.sort() != endpoint.sort {
+                    return Err("check equality endpoint term has the wrong declared sort");
+                }
+            }
+        }
+        if self.0.next_equality.load(Ordering::Acquire) != as_of_edges.get() {
+            return Err("check equality history changed after its exact cutoff was captured");
+        }
+        let mut arena = self.0.arena.lock().unwrap();
+        if premises.iter().any(|fact| {
+            arena
+                .facts
+                .get((fact.get() - 1) as usize)
+                .and_then(Option::as_ref)
+                .is_none()
+        }) {
+            return Err("check root references an unknown exact premise FactId");
+        }
+        let replace = if let Some(current) = arena.check_roots.get(&check) {
+            if current.premises.len() != premises.len()
+                || current.equalities.len() != equalities.len()
+                || current
+                    .equalities
+                    .iter()
+                    .map(|(left, _)| left.sort)
+                    .ne(equalities.iter().map(|(left, _)| left.sort))
+            {
+                return Err("stable check id was reused with a different receipt layout");
+            }
+            // Parallel query batches may reach this point in any wall-clock
+            // order. "First" is therefore the deterministic native order:
+            // earliest cumulative wave, then the ordered FactId/equality
+            // witness, then its exact equality cutoff.
+            (wave, premises, equalities, as_of_edges)
+                < (
+                    current.wave,
+                    current.premises.as_ref(),
+                    current.equalities.as_ref(),
+                    current.as_of_edges,
+                )
+        } else {
+            true
+        };
+        if replace {
+            arena.check_roots.insert(
+                check,
+                CheckRoot {
+                    check,
+                    wave,
+                    premises: premises.into(),
+                    equalities: equalities.into(),
+                    as_of_edges,
+                },
+            );
+        }
+        Ok(())
     }
 
     pub(crate) fn typed_equality_proposal(
@@ -2106,6 +2346,33 @@ impl CausalReceipts {
         arena.provisional.causes.install(id.get(), cause);
         arena.add_live_bytes(mem::size_of::<CauseDraft>());
         id
+    }
+
+    pub(crate) fn register_source_actions(
+        &self,
+        source: &SourceRef,
+        lanes: &[usize],
+    ) -> Vec<(usize, CauseDraftId)> {
+        if lanes.is_empty() {
+            return Vec::new();
+        }
+        let first = ReceiptShared::alloc_u64(&self.0.next_cause_draft, lanes.len());
+        let mut arena = self.0.arena.lock().unwrap();
+        let result = lanes
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(offset, lane)| {
+                let id = CauseDraftId::new(first + offset as u64);
+                arena
+                    .provisional
+                    .causes
+                    .install(id.get(), CauseDraft::Source(source.clone()));
+                (lane, id)
+            })
+            .collect();
+        arena.add_live_bytes(lanes.len() * mem::size_of::<CauseDraft>());
+        result
     }
 
     /// Register all previously-unregistered action lanes with one arena lock.
@@ -2557,12 +2824,15 @@ impl CausalReceipts {
                 },
             })
             .collect();
+        let mut check_roots = arena.check_roots.values().cloned().collect::<Vec<_>>();
+        check_roots.sort_by_key(|root| root.check);
         ReceiptSnapshot {
             facts,
             matches,
             equality_nodes,
             equalities,
             causes,
+            check_roots,
             counters: arena.counters,
         }
     }

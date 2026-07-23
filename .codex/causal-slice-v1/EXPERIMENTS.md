@@ -755,3 +755,48 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   and 2 doc tests. Focused activation, invalid-union, merge-function, and
   disjoint-sort canaries passed. Workspace checking, formatting, diff checking,
   and independent re-review remain the freeze gate below.
+
+### 2026-07-23 — checkpoint 4b2f exact source causes and check roots
+
+- Status: accepted after one bounded review/repair cycle. This checkpoint adds
+  only the core source-action and positive-check receipt contracts; bridge,
+  frontend, container versions, slicing, and replay remain outside it.
+- Source actions carry `SourceRef` directly and allocate causes only for lanes
+  that commit an effective fact. They create no synthetic `RuleMatch`. The
+  builder rejects any source action with a query body, preventing a
+  query-derived fact from being mislabeled as an input axiom.
+- Positive checks retain the deterministic minimum successful native witness:
+  cumulative wave, ordered premise `FactId`s, exact equality endpoints, and a
+  validated equality-edge cutoff. Every active lane participates, including
+  when sorted scan order opposes `FactId` order.
+- Equality endpoint syntax is independent of the canonical runtime value.
+  Premise endpoints resolve their `ReplayTermId` from the immutable fact-owned
+  column, so two equal e-class values can retain distinct source terms. Typed
+  current endpoints remain an explicit producer-map lookup and fail closed on
+  a miss.
+- Cost shape: the cutoff is captured once when the temporary check rule is
+  built; each surviving lane bulk-resolves premise terms under one arena lock;
+  inline `SmallVec`s choose one local candidate; publication occurs once per
+  action batch and allocates boxed root storage only when the candidate wins.
+  The earlier `batches x equality-prefix` scan is absent.
+- Canaries cover an effective empty-query source action, rejection of a
+  query-derived source action, distinct premise terms for one equal runtime
+  value with reversed scan/FactId order, deterministic root ordering, and a
+  missing current endpoint that publishes no root.
+- Regression gate: `cargo test -p egglog-core-relations --lib` passed all 118
+  tests; `cargo check --workspace`, formatting, and `git diff --check` passed.
+  Independent correctness and cost reviews both passed frozen diff
+  `ecb0c61ccd7c8e75d4b40c01b3afb97be85035c7f9f4ccc1577e8e4d486df35c`.
+
+### Historical v0 profiling figures carried into the active ledger
+
+- The packed report contained 5,119 report occurrences but only about 244
+  distinct report keys. These are not comparable plan counts and must not be
+  presented as such.
+- The sampled profiles attributed about 14.1 seconds to preparation/planning
+  and 11.2 seconds to search. Sampled CPU buckets are not additive wall time.
+- Disabling decomposition made the observed case 16.5x slower, so it is not a
+  general escape hatch for receipt or replay design.
+- The inspected proof certificate contained 35 `Rule` nodes, 34 of them user
+  rule nodes. This calibrates Hardboiled only as evidence that Prefix breadth
+  can collapse; it is not an expected exact firing count for the new slice.

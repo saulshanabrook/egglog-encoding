@@ -9,10 +9,13 @@ use crate::{
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::receipts::{ActionReceiptSpec, PremiseSlot, ReplayBindingSource};
+use crate::receipts::{
+    ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseSlot,
+    ReplayBindingSource,
+};
 use crate::{
-    BaseValueId, CounterId, ExternalFunctionId, PoolSet, ReplayConstructorSpec, ReplaySortId,
-    RuleReceiptSpec,
+    BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, ExternalFunctionId, PoolSet,
+    ReplayConstructorSpec, ReplaySortId, RuleReceiptSpec, SourceReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -521,6 +524,12 @@ pub struct RuleBuilder<'outer, 'a> {
     qb: QueryBuilder<'outer, 'a>,
 }
 
+enum ReceiptBuildSpec {
+    Rule(RuleReceiptSpec),
+    Source(SourceReceiptSpec),
+    Check { premises: Box<[AtomId]> },
+}
+
 impl RuleBuilder<'_, '_> {
     fn table_info(&self, table: TableId) -> &TableInfo {
         self.qb.rsb.db.get_table_info(table)
@@ -559,10 +568,101 @@ impl RuleBuilder<'_, '_> {
     /// source-level rule. Runtime capture copies only FactId/ReplayTermId
     /// handles according to this layout.
     pub fn build_with_receipts(self, desc: impl Into<String>, spec: RuleReceiptSpec) -> RuleId {
-        self.build_impl(desc, Some(spec))
+        self.build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)))
     }
 
-    fn build_impl(mut self, desc: impl Into<String>, receipt: Option<RuleReceiptSpec>) -> RuleId {
+    /// Build a source action whose effective lanes cite one stable source
+    /// identity directly, without allocating synthetic rule matches.
+    pub fn build_source_with_receipts(
+        self,
+        desc: impl Into<String>,
+        spec: SourceReceiptSpec,
+    ) -> RuleId {
+        assert!(
+            self.qb.rsb.db.causal_receipts.is_some(),
+            "source receipt actions require causal receipts"
+        );
+        assert!(
+            self.qb.query.atoms.is_empty(),
+            "source receipt actions require an empty query"
+        );
+        self.build_impl(desc, Some(ReceiptBuildSpec::Source(spec)))
+    }
+
+    /// Append an exact positive-check root action and build its native premise
+    /// witness layout. The recorder runs after every previously-added guard.
+    pub fn build_check_with_receipts(
+        mut self,
+        desc: impl Into<String>,
+        spec: CheckReceiptSpec,
+    ) -> RuleId {
+        assert!(
+            self.qb.rsb.db.causal_receipts.is_some(),
+            "check receipt actions require causal receipts"
+        );
+        for (left, right) in &spec.equalities {
+            self.qb.mark_used([left.value(), right.value()]);
+        }
+        let CheckReceiptSpec {
+            check,
+            premises,
+            equalities,
+        } = spec;
+        let receipts = self.qb.rsb.db.causal_receipts.as_ref().unwrap();
+        let as_of_edges = receipts
+            .equality_edge_count()
+            .unwrap_or_else(|error| panic!("cannot capture exact check cutoff: {error}"));
+        let compile = |endpoint| match endpoint {
+            CheckEndpointSource::Premise {
+                premise,
+                column,
+                value,
+            } => {
+                let atom = *premises
+                    .get(premise)
+                    .unwrap_or_else(|| panic!("check endpoint cites missing premise {premise}"));
+                let table = self.qb.query.atoms[atom].table;
+                let sort = receipts
+                    .table_column_sort(table, column)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "check endpoint premise {premise} column {column} has no replay sort"
+                        )
+                    });
+                CheckEndpointSpec {
+                    value,
+                    sort,
+                    term: CheckTermSource::Premise { premise, column },
+                }
+            }
+            CheckEndpointSource::Current { value, sort } => CheckEndpointSpec {
+                value,
+                sort,
+                term: CheckTermSource::Current,
+            },
+        };
+        let equalities = equalities
+            .into_vec()
+            .into_iter()
+            .map(|(left, right)| {
+                let left = compile(left);
+                let right = compile(right);
+                assert_eq!(
+                    left.sort, right.sort,
+                    "one check equality cannot cross logical sorts"
+                );
+                (left, right)
+            })
+            .collect();
+        self.qb.instrs.push(Instr::RecordCheck {
+            check,
+            equalities,
+            as_of_edges,
+        });
+        self.build_impl(desc, Some(ReceiptBuildSpec::Check { premises }))
+    }
+
+    fn build_impl(mut self, desc: impl Into<String>, receipt: Option<ReceiptBuildSpec>) -> RuleId {
         let var_info = &self.qb.query.var_info;
         let symbol_map = self.build_symbol_map();
         // Generate an id for our actions and slot them in.
@@ -573,58 +673,82 @@ impl RuleBuilder<'_, '_> {
                 None
             }
         }));
-        let receipt = receipt.map(|spec| {
-            let premise_count = spec.premises.len();
-            let premise_slots = Arc::new(
-                spec.premises
-                    .iter()
-                    .enumerate()
-                    .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
-                    .collect(),
-            );
-            let mut binding_sources = Vec::with_capacity(spec.ordinary_vars.len());
-            for var in &spec.ordinary_vars {
-                let premise_cell = spec
-                    .premises
-                    .iter()
-                    .enumerate()
-                    .find_map(|(premise, atom)| {
-                        self.qb.query.atoms[*atom]
-                            .get_col(*var)
-                            .map(|col| (premise, col.index()))
-                    });
-                let source = if let Some((premise, column)) = premise_cell {
-                    if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
-                        let atom = spec.premises[premise];
-                        let table = self.qb.query.atoms[atom].table;
-                        assert!(
-                            receipts.table_column_sort(table, column).is_some(),
-                            "receipt variable {var:?} selects non-replayable table column {column}"
-                        );
-                    }
-                    ReplayBindingSource::Premise { premise, column }
-                } else {
-                    let sort = spec
-                        .current_vars
+        let receipt = receipt.map(|spec| match spec {
+            ReceiptBuildSpec::Rule(spec) => {
+                let premise_count = spec.premises.len();
+                let premise_slots = Arc::new(
+                    spec.premises
                         .iter()
-                        .find_map(|(current, sort)| (*current == *var).then_some(*sort))
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
-                            )
+                        .enumerate()
+                        .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
+                        .collect(),
+                );
+                let mut binding_sources = Vec::with_capacity(spec.ordinary_vars.len());
+                for var in &spec.ordinary_vars {
+                    let premise_cell = spec
+                        .premises
+                        .iter()
+                        .enumerate()
+                        .find_map(|(premise, atom)| {
+                            self.qb.query.atoms[*atom]
+                                .get_col(*var)
+                                .map(|col| (premise, col.index()))
                         });
-                    ReplayBindingSource::Current {
-                        variable: *var,
-                        sort,
-                    }
-                };
-                binding_sources.push(source);
+                    let source = if let Some((premise, column)) = premise_cell {
+                        if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
+                            let atom = spec.premises[premise];
+                            let table = self.qb.query.atoms[atom].table;
+                            assert!(
+                                receipts.table_column_sort(table, column).is_some(),
+                                "receipt variable {var:?} selects non-replayable table column {column}"
+                            );
+                        }
+                        ReplayBindingSource::Premise { premise, column }
+                    } else {
+                        let sort = spec
+                            .current_vars
+                            .iter()
+                            .find_map(|(current, sort)| (*current == *var).then_some(*sort))
+                            .unwrap_or_else(|| {
+                                panic!(
+                                    "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
+                                )
+                            });
+                        ReplayBindingSource::Current {
+                            variable: *var,
+                            sort,
+                        }
+                    };
+                    binding_sources.push(source);
+                }
+                ActionReceiptSpec {
+                    kind: ActionReceiptKind::Rule(spec.rule),
+                    premise_count,
+                    premise_slots,
+                    binding_sources: binding_sources.into_boxed_slice(),
+                }
             }
-            ActionReceiptSpec {
-                rule: spec.rule,
-                premise_count,
-                premise_slots,
-                binding_sources: binding_sources.into_boxed_slice(),
+            ReceiptBuildSpec::Source(spec) => ActionReceiptSpec {
+                kind: ActionReceiptKind::Source(spec.source),
+                premise_count: 0,
+                premise_slots: Arc::new(DenseIdMap::new()),
+                binding_sources: Box::new([]),
+            },
+            ReceiptBuildSpec::Check { premises } => {
+                let premise_count = premises.len();
+                let premise_slots = Arc::new(
+                    premises
+                        .iter()
+                        .enumerate()
+                        .map(|(slot, atom)| (*atom, PremiseSlot::from_usize(slot)))
+                        .collect(),
+                );
+                ActionReceiptSpec {
+                    kind: ActionReceiptKind::Check,
+                    premise_count,
+                    premise_slots,
+                    binding_sources: Box::new([]),
+                }
             }
         });
         let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {

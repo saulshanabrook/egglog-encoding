@@ -13,9 +13,9 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 use crate::numeric_id::NumericId;
 
 use crate::{
-    CausalReceipts, CausalWave, FactId, GuardedRuleSetRunOutcome, PlanStrategy,
-    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, RuleReceiptSpec,
-    SourceRef,
+    CausalReceipts, CausalWave, CheckEndpointSource, CheckReceiptSpec, FactId,
+    GuardedRuleSetRunOutcome, PlanStrategy, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
+    ReplaySortId, ReplayTerm, RuleReceiptSpec, SourceReceiptSpec, SourceRef,
     action::{ExecutionState, Instr, WriteVal},
     common::Value,
     free_join::{
@@ -48,6 +48,313 @@ fn install_test_row_terms(receipts: &CausalReceipts, row: &[Value]) {
             *value,
         );
     }
+}
+
+#[test]
+fn source_receipt_actions_publish_source_causes_without_rule_matches() {
+    let mut db = Database::default();
+    let relation = || {
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "source-action rows are immutable");
+                false
+            }),
+        )
+    };
+    let output = db.add_table(relation(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, output, 2);
+    let value = Value::new(7);
+    let output_timestamp = Value::new(1);
+    for raw in [value, output_timestamp] {
+        receipts.intern_literal(
+            TEST_REPLAY_SORT,
+            ReplayLiteral::Internal(raw.index() as u64),
+            raw,
+        );
+    }
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut action = rules.new_rule().build();
+    action
+        .insert(output, &[value.into(), output_timestamp.into()])
+        .unwrap();
+    action.build_source_with_receipts(
+        "source-action",
+        SourceReceiptSpec::new(SourceRef::Synthetic(401)),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    let output_fact = snapshot
+        .facts
+        .iter()
+        .find(|fact| fact.table == output)
+        .expect("the effective source action must publish one fact");
+    assert_eq!(
+        output_fact.cause,
+        crate::FactCause::Source(SourceRef::Synthetic(401))
+    );
+    assert!(
+        snapshot.matches.is_empty(),
+        "source actions must not manufacture RuleMatch records"
+    );
+}
+
+#[test]
+#[should_panic(expected = "source receipt actions require an empty query")]
+fn source_receipt_actions_reject_query_derived_facts() {
+    let mut db = Database::default();
+    let table = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    db.enable_causal_receipts();
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    query.add_atom(table, &[value.into()], &[]).unwrap();
+    query.build().build_source_with_receipts(
+        "invalid-query-source",
+        SourceReceiptSpec::new(SourceRef::Synthetic(402)),
+    );
+}
+
+#[test]
+fn check_receipts_keep_distinct_premise_terms_for_the_same_runtime_equality_value() {
+    let mut db = Database::default();
+    let relation = || {
+        SortedWritesTable::new(
+            2,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "check premise rows are immutable");
+                false
+            }),
+        )
+    };
+    let left_table = db.add_table(relation(), iter::empty(), iter::empty());
+    let right_table = db.add_table(relation(), iter::empty(), iter::empty());
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(401);
+    receipts
+        .register_table_layout(left_table, &[Some(sort), Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_layout(right_table, &[Some(sort), Some(sort)])
+        .unwrap();
+    let join = Value::new(1);
+    let first_left = Value::new(20);
+    let second_left = Value::new(30);
+    let right = Value::new(10);
+    for raw in [join, first_left, second_left, right] {
+        receipts.intern_literal(sort, ReplayLiteral::Internal(raw.index() as u64), raw);
+    }
+    let term = |raw| receipts.lookup_term(sort, raw).unwrap();
+    // Commit the lexicographically smaller FactId on the row that scans
+    // second. A recorder that inspects only the first lane will choose the
+    // wrong successful match.
+    for (source, table, row) in [
+        (411, left_table, [second_left, join]),
+        (412, right_table, [join, right]),
+    ] {
+        db.stage_source_row(
+            table,
+            &row,
+            &[term(row[0]), term(row[1])],
+            SourceRef::Synthetic(source),
+        )
+        .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let second_left_fact = committed_fact_id_for_key(&db, left_table, &[second_left, join]);
+    let right_fact = committed_fact_id_for_key(&db, right_table, &[join, right]);
+    db.stage_source_row(
+        left_table,
+        &[first_left, join],
+        &[term(first_left), term(join)],
+        SourceRef::Synthetic(410),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let first_left_fact = committed_fact_id_for_key(&db, left_table, &[first_left, join]);
+    assert!(
+        second_left_fact < first_left_fact,
+        "test requires FactId order to oppose table scan order"
+    );
+
+    db.set_causal_wave(CausalWave::new(1));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 500, CausalWave::new(1)),
+        sort,
+        first_left,
+        right,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+    db.set_causal_wave(CausalWave::new(2));
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 501, CausalWave::new(2)),
+        sort,
+        second_left,
+        right,
+        Value::new(2),
+    );
+    assert!(db.merge_all());
+    db.set_causal_wave(CausalWave::new(3));
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    for check in [9, 4] {
+        let mut query = rules.new_rule();
+        let left = query.new_var_named("left");
+        let shared = query.new_var_named("shared");
+        let right = query.new_var_named("right");
+        let left_atom = query
+            .add_atom(left_table, &[left.into(), shared.into()], &[])
+            .unwrap();
+        let right_atom = query
+            .add_atom(right_table, &[shared.into(), right.into()], &[])
+            .unwrap();
+        let mut action = query.build();
+        action.assert_eq(left.into(), left.into());
+        action.build_check_with_receipts(
+            format!("check-{check}"),
+            CheckReceiptSpec::new(check, [left_atom, right_atom]).with_equalities([(
+                CheckEndpointSource::premise(0, 0, right.into()),
+                CheckEndpointSource::premise(1, 1, right.into()),
+            )]),
+        );
+    }
+    let rules = rules.build();
+    assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(
+        snapshot
+            .check_roots
+            .iter()
+            .map(|root| root.check)
+            .collect::<Vec<_>>(),
+        [4, 9],
+        "snapshot root order must depend only on stable check IDs"
+    );
+    for root in &snapshot.check_roots {
+        assert_eq!(root.wave, CausalWave::new(3));
+        assert_eq!(root.premises.as_ref(), &[second_left_fact, right_fact]);
+        assert_eq!(root.as_of_edges, crate::EqualityEdgeCount::new(2));
+        assert_eq!(
+            root.equalities.as_ref(),
+            &[(
+                crate::EqualityEndpoint {
+                    sort,
+                    term: term(second_left),
+                    raw: right,
+                },
+                crate::EqualityEndpoint {
+                    sort,
+                    term: term(right),
+                    raw: right,
+                },
+            )]
+        );
+        assert_eq!(root.equalities[0].0.raw, root.equalities[0].1.raw);
+        assert_ne!(
+            root.equalities[0].0.term, root.equalities[0].1.term,
+            "equal runtime values must retain their distinct premise-owned syntax"
+        );
+    }
+    assert_eq!(
+        snapshot.check_roots,
+        receipts.snapshot().check_roots,
+        "repeated snapshots must preserve exact root contents and order"
+    );
+    assert_eq!(
+        snapshot.matches.len(),
+        2,
+        "only the two effective equality-producing rules should have matches"
+    );
+}
+
+#[test]
+fn check_receipt_missing_equality_term_publishes_no_root() {
+    let mut db = Database::default();
+    let premise = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "check premise rows are immutable");
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(402);
+    receipts
+        .register_table_layout(premise, &[Some(sort)])
+        .unwrap();
+    let present = Value::new(7);
+    let present_term = receipts.intern_literal(sort, ReplayLiteral::Internal(7), present);
+    db.stage_source_row(
+        premise,
+        &[present],
+        &[present_term],
+        SourceRef::Synthetic(420),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let missing = Value::new(99);
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let value = query.new_var_named("value");
+    let atom = query.add_atom(premise, &[value.into()], &[]).unwrap();
+    query.build().build_check_with_receipts(
+        "missing-check-term",
+        CheckReceiptSpec::new(77, [atom]).with_equalities([(
+            CheckEndpointSource::premise(0, 0, value.into()),
+            CheckEndpointSource::current(crate::QueryEntry::Const(missing), sort),
+        )]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    let failed = catch_unwind(AssertUnwindSafe(|| {
+        db.run_rule_set(&rules, ReportLevel::TimeOnly)
+    }));
+    assert!(
+        failed.is_err(),
+        "a check equality without both producer-installed terms must fail"
+    );
+    db.finalize_causal_wave();
+    assert!(
+        receipts.snapshot().check_roots.is_empty(),
+        "term resolution must complete before any check root is published"
+    );
 }
 
 /// On MacOs the system allocator is vulenrable to contention, causing tests to execute quite
