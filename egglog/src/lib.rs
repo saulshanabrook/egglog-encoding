@@ -2243,6 +2243,7 @@ impl EGraph {
                 let mut instrument = ProofInstrumentor {
                     egraph: self,
                     query_term_bindings: Default::default(),
+                    built_terms: Default::default(),
                 };
                 let (proof_store, proof_id) =
                     instrument

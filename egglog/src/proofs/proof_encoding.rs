@@ -29,7 +29,7 @@ pub(crate) struct NatEntry {
 /// `(constructor, instrumented children)`. When the head rebuilds the same
 /// application, its e-class is already interned, so the encoding reuses the
 /// body's binding instead of minting a fresh id and re-`set-if-empty`-ing it
-/// (see proof_encoding.md, "Reusing a body term").
+/// (see proof_encoding.md, "Reusing a built term").
 pub(crate) type QueryTermBindings = HashMap<(String, Vec<String>), QueryTermBinding>;
 
 /// A [`QueryTermBindings`] entry: the body view read's e-class variable and its
@@ -104,6 +104,14 @@ pub(crate) struct ProofInstrumentor<'a> {
     /// instrumented. Empty outside a rule's action instrumentation (top-level
     /// actions and merge bodies have no body query to reuse).
     pub(crate) query_term_bindings: QueryTermBindings,
+    /// Per-scope cache of constructor applications already built (or reused) in
+    /// the current action scope, mapping `(constructor, instrumented children)`
+    /// to the e-class variable that build produced. Consulted before building so
+    /// a repeated application in one rule head / action reuses the first build's
+    /// e-class (and, in proof mode, its live `nat_conn` entry) instead of
+    /// re-interning it. Reset per action scope, alongside `nat_conn` (see
+    /// [`NatConn`]); the map's vars are only in scope within one such scope.
+    pub(crate) built_terms: HashMap<(String, Vec<String>), String>,
 }
 
 impl<'a> ProofInstrumentor<'a> {
@@ -115,6 +123,7 @@ impl<'a> ProofInstrumentor<'a> {
         Self {
             egraph,
             query_term_bindings: QueryTermBindings::default(),
+            built_terms: HashMap::default(),
         }
         .add_term_encoding_helper(program)
     }
@@ -639,7 +648,7 @@ impl<'a> ProofInstrumentor<'a> {
     fn custom_view_merge(&mut self, fdecl: &ResolvedFunctionDecl) -> String {
         // `nat_conn` is scoped to this merge body; the body mints subterms via
         // `add_term_and_view`, which threads it.
-        let mut nat_conn = NatConn::default();
+        let mut nat_conn = self.new_action_scope();
         let name = fdecl.name.clone();
         let merge = fdecl
             .merge
@@ -1099,6 +1108,16 @@ impl<'a> ProofInstrumentor<'a> {
         self.proof_names().proof_datatype.clone()
     }
 
+    /// Begin a fresh action scope: a new `nat_conn` and a cleared per-scope
+    /// term cache. Both are scoped to a single generated program — a rule, a
+    /// top-level action, a merge body, or an extract expression (see
+    /// [`NatConn`] and `built_terms`) — so their entries never leak across
+    /// scopes as out-of-scope variable references.
+    fn new_action_scope(&mut self) -> NatConn {
+        self.built_terms.clear();
+        NatConn::default()
+    }
+
     /// Return some code adding to the term and view tables, and a variable for
     /// the created term. For constructors, `args` excludes the eclass of the
     /// resulting term (it may not exist yet); for custom functions, `args`
@@ -1111,6 +1130,20 @@ impl<'a> ProofInstrumentor<'a> {
         nat_conn: &mut NatConn,
     ) -> (Vec<String>, String) {
         let mut res = vec![];
+
+        // Common-subexpression reuse: the same application built earlier in this
+        // action scope has a live e-class (and `nat_conn` entry, in proof mode),
+        // so return it instead of re-interning (see proof_encoding.md, "Reusing a
+        // built term"). Populated per build below; body matches enter via the
+        // `query_term_bindings` path the first time they are built.
+        let key = (func_type.subtype == FunctionSubtype::Constructor)
+            .then(|| (func_type.name.to_string(), args.to_vec()));
+        if let Some(key) = &key
+            && let Some(existing) = self.built_terms.get(key)
+        {
+            return (res, existing.clone());
+        }
+
         let view_sort = self
             .egraph
             .proof_state
@@ -1120,19 +1153,14 @@ impl<'a> ProofInstrumentor<'a> {
             .expect("term sort recorded in term_and_view")
             .clone();
 
-        let is_constructor = func_type.subtype == FunctionSubtype::Constructor;
         // A constructor application the current rule's body already matched is
         // interned with a known e-class; reuse it rather than minting a fresh id
-        // and re-`set-if-empty`-ing (see proof_encoding.md, "Reusing a body term").
-        let reuse = is_constructor
-            .then(|| {
-                self.query_term_bindings
-                    .get(&(func_type.name.to_string(), args.to_vec()))
-                    .cloned()
-            })
-            .flatten();
+        // and re-`set-if-empty`-ing (see proof_encoding.md, "Reusing a built term").
+        let reuse = key
+            .as_ref()
+            .and_then(|key| self.query_term_bindings.get(key).cloned());
 
-        let var = if !is_constructor {
+        let var = if key.is_none() {
             self.add_custom_row(&mut res, func_type, args, justification, &view_sort)
         } else if let Some(binding) = reuse {
             if self.egraph.proof_state.proofs_enabled {
@@ -1161,6 +1189,11 @@ impl<'a> ProofInstrumentor<'a> {
                 &view_sort,
             )
         };
+        // Cache this constructor build so a later identical application in the
+        // same scope reuses it (`var`'s `nat_conn` entry, in proof mode, is live).
+        if let Some(key) = key {
+            self.built_terms.insert(key, var.clone());
+        }
         (res, var)
     }
 
@@ -1640,7 +1673,7 @@ impl<'a> ProofInstrumentor<'a> {
         // Fresh per generated program (see `NatConn`): a shared map would leak
         // stale entries keyed by repeated user let names (e.g. `new-e`) from
         // earlier rules/merges, referencing out-of-scope vars.
-        let mut nat_conn = NatConn::default();
+        let mut nat_conn = self.new_action_scope();
         // term_proofs are fetched as action-side lookups (see instrument_facts),
         // so a rule with any needs a Read/Full action context (`eval_opt` below).
         let (facts, action_lookups, proof_str, query_term_bindings) =
@@ -1892,7 +1925,7 @@ impl<'a> ProofInstrumentor<'a> {
                 res.extend(self.instrument_rule(rule));
             }
             ResolvedNCommand::CoreAction(action) => {
-                let mut nat_conn = NatConn::default();
+                let mut nat_conn = self.new_action_scope();
                 let instrumented = self
                     .instrument_actions(
                         std::slice::from_ref(action),
@@ -1930,7 +1963,7 @@ impl<'a> ProofInstrumentor<'a> {
             ResolvedNCommand::Extract(span, expr, variants) => {
                 // Instrument the expressions to use view tables (like actions, not facts)
                 let mut action_stmts = vec![];
-                let mut nat_conn = NatConn::default();
+                let mut nat_conn = self.new_action_scope();
                 let instrumented_expr = self.instrument_action_expr(
                     expr,
                     &mut action_stmts,

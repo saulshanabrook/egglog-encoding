@@ -176,21 +176,32 @@ the whole story for `union` — both operands are built and canonicalized so an
 equality proof can be threaded through each step (see
 [Building nested terms with proofs](#building-nested-terms-with-proofs)).
 
-## Reusing a body term
+## Reusing a built term
 
-When the head rebuilds a constructor application the body already matched, its
-e-class is already interned, so the encoder reuses the body view read's e-class
-instead of minting a fresh id and interning it again. A head `(Add a b)` whose
-children match the body's `(AddView a b)` binding lowers to a bare
-`(let ab_canon e)` — no `get-fresh!`, term row, or `set-if-empty`.
+Within one action scope (a rule head, a top-level action, or a merge body) the
+encoder caches each constructor application it builds, keyed by its instrumented
+children, and reuses the cached e-class for any repeat instead of minting a fresh
+id and re-interning it. Two cases feed the cache:
 
-In proof mode the *natural* node `(Add a b)` is still minted (a parent's `Congr`
-and the rule-head check need its as-built shape), but the view dedup is skipped:
-the body view read's proof `e = (Add a b)` stands in for the re-read view proof,
-so the connector `natural = e` composes directly from it.
+- **Body match.** When the head first builds an application the body already
+  matched, its e-class is already interned, so the encoder reuses the body view
+  read's e-class. A head `(Add a b)` whose children match the body's
+  `(AddView a b)` binding lowers to a bare `(let ab_canon e)` — no `get-fresh!`,
+  term row, or `set-if-empty`.
+- **Common subexpression.** A second build of the *same* application reuses the
+  first build's e-class directly, so `(Foo (Bar x) (Bar x))` interns `(Bar x)`
+  once.
 
 The match is keyed on the instrumented (canonical) children, so it composes
 through nested terms — a reused child makes its parent eligible too.
+
+In proof mode a body-match reuse still mints the *natural* node `(Add a b)` (a
+parent's `Congr` and the rule-head check need its as-built shape) but skips the
+view dedup: the body view read's proof `e = (Add a b)` stands in for the re-read
+view proof, so the connector `natural = e` composes directly from it. A
+common-subexpression reuse returns the first build's e-class and its live natural
+node, so the repeats share one natural — a parent's `Congr` applies the shared
+connector at each position.
 
 ## Optimization: building a union operand into an e-class
 
@@ -210,7 +221,7 @@ passes over the rule's actions implement this:
 
 The commutativity rule builds `(Add b a)` into `(Add a b)`'s e-class. Here the
 target `(Add a b)` is also the body match, so it is reused (see
-[Reusing a body term](#reusing-a-body-term)) rather than rebuilt, and its
+[Reusing a built term](#reusing-a-built-term)) rather than rebuilt, and its
 e-class is the body's `e`:
 
 ```text

@@ -1,0 +1,19 @@
+;; Common-subexpression reuse in a rule head: `(Add n n)` is built twice (both
+;; operands of the outer `Add`), so the encoding interns it once and shares one
+;; natural node across the two positions. The proof over the resulting term must
+;; still reconstruct and verify (see proof_encoding.md, "Reusing a built term").
+(datatype Math
+  (Num i64)
+  (Add Math Math))
+
+(Num 7)
+
+(rule ((= n (Num k)))
+      ((Add (Add n n) (Add n n)))
+      :name "dup")
+
+(run 2)
+
+;; the term built over the shared subexpression reconstructs to a checkable proof
+(prove (= (Add (Add (Num 7) (Num 7)) (Add (Num 7) (Num 7)))
+          (Add (Add (Num 7) (Num 7)) (Add (Num 7) (Num 7)))))
