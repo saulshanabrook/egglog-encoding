@@ -1,0 +1,33 @@
+;; The head rebuilds constructor applications the body already matched. Those
+;; e-classes are already interned, so the encoding reuses the body binding
+;; instead of minting a fresh id and re-`set-if-empty`-ing it (see
+;; proof_encoding.md, "Reusing a body term"). Exercises reuse over eq-sort
+;; children (whose connector proof is non-trivial) and nested reuse, where a
+;; reused child makes its parent build eligible too.
+(datatype Math
+  (Num i64)
+  (Neg Math)
+  (Add Math Math))
+
+(Add (Num 1) (Num 2))
+
+;; Commutativity. The head's `(Add x y)` is exactly the body match, so it is
+;; reused; `(Add y x)` is built fresh. `(Neg (Add x y))` additionally rebuilds
+;; `(Add x y)` as a child, exercising nested reuse.
+(rule ((Add x y))
+      ((union (Add x y) (Add y x))
+       (Neg (Add x y)))
+      :name "comm")
+
+;; A reused child under a fresh parent that is itself later matched: `(Neg n)`
+;; is rebuilt on both sides after `n` is bound to a matched `(Add ..)`.
+(rule ((= n (Add x y)))
+      ((union (Neg n) (Neg n)))
+      :name "neg-refl")
+
+(run 3)
+
+;; the operands were unioned via the reused / rebuilt terms
+(prove (= (Add (Num 1) (Num 2)) (Add (Num 2) (Num 1))))
+;; the nested rebuild over the reused child stays congruent
+(prove (= (Neg (Add (Num 1) (Num 2))) (Neg (Add (Num 2) (Num 1)))))
