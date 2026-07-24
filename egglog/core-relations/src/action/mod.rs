@@ -26,9 +26,9 @@ use crate::{
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
     receipts::{
-        ActionReceiptKind, CauseCapability, CauseRef, CheckEndpointSpec, CheckTermSource,
-        DeferredEqualityCause, PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId,
-        TermOriginSiteId, TypedEqualityProposal,
+        ActionReceiptKind, CauseCapability, CauseRef, CheckEndpointOccurrence, CheckEndpointSpec,
+        CheckTermSource, DeferredEqualityCause, FactCellRef, PendingPremiseResolver,
+        ReplayBindingSource, RowOriginSiteId, TermOriginSiteId, TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -1969,6 +1969,7 @@ impl ExecutionState<'_> {
             Instr::RecordCheck {
                 check,
                 equalities,
+                implicit_equalities,
                 as_of_edges,
             } => {
                 let receipts = self
@@ -1977,11 +1978,12 @@ impl ExecutionState<'_> {
                     .expect("receipt-aware check requires causal receipts");
                 let premise_requests = equalities
                     .iter()
+                    .chain(implicit_equalities.iter())
                     .flat_map(|(left, right)| [left, right])
                     .filter_map(|endpoint| match endpoint.term {
                         source @ (CheckTermSource::Premise { .. }
                         | CheckTermSource::Constructor { .. }) => Some((source, endpoint.sort)),
-                        CheckTermSource::Current => None,
+                        CheckTermSource::Constant { .. } | CheckTermSource::Current => None,
                     })
                     .collect::<SmallVec<[(CheckTermSource, ReplaySortId); 8]>>();
                 let mut winner = None::<(
@@ -1997,6 +1999,7 @@ impl ExecutionState<'_> {
                     };
                     let raw_equalities = equalities
                         .iter()
+                        .chain(implicit_equalities.iter())
                         .map(|(left, right)| (get(left.value), get(right.value)))
                         .collect::<SmallVec<[(Value, Value); 4]>>();
                     let replace = winner.as_ref().is_none_or(|current| {
@@ -2024,23 +2027,77 @@ impl ExecutionState<'_> {
                             raw,
                         }
                     }
+                    CheckTermSource::Constant { term } => EqualityEndpoint {
+                        sort: endpoint.sort,
+                        term,
+                        raw,
+                    },
                     CheckTermSource::Current => receipts
                         .equality_endpoint(endpoint.sort, raw)
                         .unwrap_or_else(|error| panic!("invalid exact check root: {error}")),
                 };
-                let resolved = equalities
+                let occurrence = |endpoint: CheckEndpointSpec| match endpoint.term {
+                    CheckTermSource::Premise { premise, column } => {
+                        CheckEndpointOccurrence::FactCell(FactCellRef {
+                            fact: premises[premise],
+                            column: ColumnId::from_usize(column),
+                        })
+                    }
+                    CheckTermSource::Constructor {
+                        premise,
+                        input_columns,
+                        ..
+                    } => CheckEndpointOccurrence::FactCell(FactCellRef {
+                        fact: premises[premise],
+                        column: ColumnId::from_usize(input_columns),
+                    }),
+                    CheckTermSource::Constant { .. } | CheckTermSource::Current => {
+                        CheckEndpointOccurrence::Current
+                    }
+                };
+                let mut resolved = SmallVec::<[(EqualityEndpoint, EqualityEndpoint); 4]>::new();
+                let mut equality_occurrences =
+                    SmallVec::<[(CheckEndpointOccurrence, CheckEndpointOccurrence); 4]>::new();
+                for (&(left, right), implicit) in equalities
                     .iter()
-                    .map(|&(left, right)| {
-                        let (left_raw, right_raw) = raw_equalities
-                            .next()
-                            .expect("one raw pair for every check equality");
-                        (resolve(left, left_raw), resolve(right, right_raw))
-                    })
-                    .collect::<SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>>();
+                    .map(|pair| (pair, false))
+                    .chain(implicit_equalities.iter().map(|pair| (pair, true)))
+                {
+                    let (left_raw, right_raw) = raw_equalities
+                        .next()
+                        .expect("one raw pair for every check equality");
+                    let pair = (resolve(left, left_raw), resolve(right, right_raw));
+                    if implicit && pair.0.term == pair.1.term {
+                        continue;
+                    }
+                    let occurrences = (occurrence(left), occurrence(right));
+                    if implicit
+                        && resolved.iter().zip(&equality_occurrences).any(
+                            |(existing, existing_occurrences)| {
+                                (*existing == pair && *existing_occurrences == occurrences)
+                                    || (existing.0 == pair.1
+                                        && existing.1 == pair.0
+                                        && existing_occurrences.0 == occurrences.1
+                                        && existing_occurrences.1 == occurrences.0)
+                            },
+                        )
+                    {
+                        continue;
+                    }
+                    resolved.push(pair);
+                    equality_occurrences.push(occurrences);
+                }
                 debug_assert!(premise_terms.next().is_none());
                 debug_assert!(raw_equalities.next().is_none());
                 receipts
-                    .record_check_root(*check, wave, &premises, &resolved, *as_of_edges)
+                    .record_check_root(
+                        *check,
+                        wave,
+                        &premises,
+                        &resolved,
+                        &equality_occurrences,
+                        *as_of_edges,
+                    )
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
             }
             Instr::AssertEq(l, r) => assert_impl(bindings, mask, l, r, |l, r| l == r),
@@ -2134,6 +2191,7 @@ pub(crate) enum Instr {
     RecordCheck {
         check: u32,
         equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
+        implicit_equalities: Box<[(CheckEndpointSpec, CheckEndpointSpec)]>,
         as_of_edges: EqualityEdgeCount,
     },
 

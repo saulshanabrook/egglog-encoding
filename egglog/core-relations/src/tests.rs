@@ -1493,11 +1493,25 @@ fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
         term: tc,
         raw: c,
     };
+    let occurrences = [(
+        crate::CheckEndpointOccurrence::FactCell(crate::FactCellRef {
+            fact,
+            column: ColumnId::new(0),
+        }),
+        crate::CheckEndpointOccurrence::Current,
+    )];
     receipts
-        .record_check_root(7900, wave, &[fact], &[(left, right)], cutoff)
+        .record_check_root(7900, wave, &[fact], &[(left, right)], &occurrences, cutoff)
         .unwrap();
     receipts
-        .record_check_root(7900, CausalWave::new(99), &[fact], &[(left, right)], cutoff)
+        .record_check_root(
+            7900,
+            CausalWave::new(99),
+            &[fact],
+            &[(left, right)],
+            &occurrences,
+            cutoff,
+        )
         .unwrap();
     db.finalize_causal_wave();
 

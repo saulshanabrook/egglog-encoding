@@ -870,6 +870,9 @@ impl EGraph {
         receipts
             .register_table_kind(info.table, spec.table_kind)
             .map_err(anyhow::Error::msg)?;
+        receipts
+            .register_table_key_columns(info.table, info.n_keys)
+            .map_err(anyhow::Error::msg)?;
         if let Some(constructor) = spec.constructor.clone() {
             receipts
                 .register_table_constructor(info.table, constructor)
@@ -1007,6 +1010,29 @@ impl EGraph {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
         Ok(receipts.snapshot())
+    }
+
+    /// Inspect finalized raw causal receipts without constructing the
+    /// compatibility snapshot. Borrowed arena data cannot escape `inspect`.
+    pub fn with_causal_receipt_view<R>(
+        &self,
+        inspect: impl for<'view> FnOnce(
+            &mut core_relations::CausalReceiptView<'view>,
+        )
+            -> std::result::Result<R, core_relations::ReceiptViewError>,
+    ) -> std::result::Result<R, core_relations::ReceiptViewError> {
+        let receipts = self.causal_receipts.as_ref().ok_or_else(|| {
+            core_relations::ReceiptViewError::Invalid("causal receipts are not enabled".into())
+        })?;
+        receipts.with_view(inspect)
+    }
+
+    pub fn causal_compatibility_projection_reads(&self) -> Result<u64> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        Ok(receipts.compatibility_projection_reads())
     }
 
     /// Inspect live replay-term and container-anchor cardinalities. Unlike a

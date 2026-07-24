@@ -1912,3 +1912,75 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Uncommitted implementation diff SHA-256 at this review boundary, excluding
   this ledger update and the recorder-cost research report:
   `46bad1d03eb557088e758430b99b0b7b1d355a039e0509c8422accdaa35e4374`.
+
+### 2026-07-24 — lazy raw receipt view and first passive exact slice
+
+- Starting HEAD: `17205c1427ef538001fe6fae17d7564ba7f69b20`.
+- Scope is Checkpoint 2A only: a non-escaping, checked raw receipt view plus a
+  frontend-owned passive backward slice for one repeated-variable/rekey
+  vertical canary. No replay language, CLI, source catalog, deletion
+  interference, sibling-head expansion, benchmark run, or full-cohort claim
+  is included.
+- The falsifier first exposed two representation boundaries:
+  - top-level source unions have no rule cause and therefore remain outside
+    this checkpoint's supported equality path;
+  - equality endpoints that have collapsed to one native value but retain
+    distinct structural terms cannot be explained from values alone. The
+    generic value-level API now fails closed with a typed receipt error, while
+    successful checks preserve exact premise/constructor cell occurrences and
+    the slicer uses those occurrences.
+- `CausalReceipts::with_view` holds the finalized raw arena and static recipes
+  only for the closure lifetime. It rechecks capture state after acquiring the
+  locks, verifies all dense publication/high-water invariants, and projects
+  terms only for selected facts, matches, and equality events. A diagnostic
+  compatibility-projection counter proves the slice path constructs neither a
+  full `ReceiptSnapshot` nor individual compatibility `FactRecord`s.
+- The passive work queue closes the selected check over exact fact causes,
+  ordered rule premises, merge reads, all static repeated-variable premise
+  occurrences, raw applied equality events, rebuild/container landmarks,
+  prior facts, and source references. Static equality recipes come from every
+  replay-typed occurrence of every lowered backend variable, not only named
+  source variables, plus replay-typed `EqConst` constraints. The same recipes
+  are added to selected check roots. This repaired two review falsifiers: a
+  nested-constructor consumer and a shared variable across relational check
+  atoms had both previously omitted their supporting union. It records every
+  support requirement and validates that removing a required applied edge
+  fails with a typed `MissingSupport` error.
+- The repeated-variable canary retains exactly the equality-producing and join
+  matches, one applied equality, and the two relevant source rows while
+  excluding an unrelated rule/source cone. Its source facts are deliberately
+  created before the equality so historical syntax is represented by the
+  existing rekey receipts; reconstructing source syntax created after an
+  earlier equality belongs to the later source-catalog checkpoint.
+- The check-root canary records exact endpoint occurrences after rekey. Its
+  occurrence-aware lazy explanation succeeds, the generic same-value/
+  distinct-term query fails closed, and the selected raw applied-edge IDs
+  exactly match the compatibility snapshot's cold explanation.
+- A review falsifier inserted two source facts only after their structural
+  terms had already been unioned. Their creation rows therefore shared one
+  raw value while retaining distinct exact terms. The original occurrence
+  path incorrectly returned empty support. All fact/fact and mixed
+  fact/current explanations now pass through the same same-raw/distinct-term
+  guard and fail closed until a later checkpoint adds lazy attachment
+  reconstruction; they never silently omit the earlier union. Check endpoint
+  occurrence metadata was reduced to `FactCell(FactCellRef) | Current`, and
+  selected-root construction drops only same-term implicit no-ops and exact
+  duplicates.
+- Validation from this diff:
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-core-relations --lib`:
+    175/175 passed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog --lib`: 110/110 passed;
+  - focused `late_fact_rekey_attachment` and exact-rebuild landmark filters:
+    3/3 passed;
+  - all five `causal_slice::tests` vertical canaries passed, covering the
+    exact repeated-variable slice, source-after-equality fail-closed boundary,
+    lowered nested-constructor obligations, shared-variable check obligations,
+    and the lazy/snapshot root differential;
+  - `cargo clippy -p egglog --lib -- -D warnings`,
+    `cargo fmt --all -- --check`, and `git diff --check` passed.
+- Independent acceptance review returned GO for deletion closure at full diff
+  SHA-256 `488e263a2119bc2b7d51475273847b04b0ccdeb8721b53c7806acb4d61dfcecc`.
+  The next checkpoint must add a constructor delete/recreate plus shared-variable
+  relational-check canary: identical structural terms can denote distinct native
+  versions, so an implicit equality pair is droppable only when both term and raw
+  identity are equal.

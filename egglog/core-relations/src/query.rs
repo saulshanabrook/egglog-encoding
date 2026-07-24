@@ -11,12 +11,13 @@ use thiserror::Error;
 
 use crate::receipts::{
     ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
-    PremiseSlot, ReplayBindingSource, ReplayTerm, RowOriginSpec, TermOriginSpec, TermRecipe,
-    TermTemplate,
+    PremiseSlot, ReplayBindingSource, ReplayEqualitySource, ReplayTerm, RowOriginSpec,
+    TermOriginSpec, TermRecipe, TermTemplate,
 };
 use crate::{
-    BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, ExternalFunctionId, PoolSet,
-    ReplayConstructorSpec, ReplaySortId, RuleBindingSpec, RuleReceiptSpec, SourceReceiptSpec,
+    BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, EqualityEndpoint,
+    ExternalFunctionId, PoolSet, ReplayConstructorSpec, ReplaySortId, RuleBindingSpec,
+    RuleReceiptSpec, SourceReceiptSpec,
     action::{Instr, QueryEntry, WriteVal},
     common::HashMap,
     free_join::{
@@ -909,6 +910,129 @@ impl RuleBuilder<'_, '_> {
         self.qb.rsb.db.get_table_info(table)
     }
 
+    /// Compile every equality that the native query enforces between
+    /// replay-typed premise cells or a premise cell and a typed constant.
+    /// This includes unnamed variables introduced while lowering nested
+    /// source terms; it is deliberately separate from source replay bindings.
+    fn receipt_equality_obligations(
+        &self,
+        premises: &[AtomId],
+    ) -> Vec<(ReplayEqualitySource, ReplayEqualitySource)> {
+        let receipts = self
+            .qb
+            .rsb
+            .db
+            .causal_receipts
+            .as_ref()
+            .expect("receipt equality obligations require causal receipts");
+        let mut obligations = Vec::new();
+        let mut push = |obligation| {
+            if !obligations.contains(&obligation) {
+                obligations.push(obligation);
+            }
+        };
+
+        for (_, info) in self.qb.query.var_info.iter() {
+            let mut occurrences = Vec::<(PremiseOccurrence, ReplaySortId)>::new();
+            for (premise, atom) in premises.iter().copied().enumerate() {
+                let Some(subatom) = info
+                    .occurrences
+                    .iter()
+                    .find(|occurrence| occurrence.atom == atom)
+                else {
+                    continue;
+                };
+                let table = self.qb.query.atoms[atom].table;
+                for column in subatom.vars.iter().copied() {
+                    let Some(sort) = receipts.table_column_sort(table, column.index()) else {
+                        continue;
+                    };
+                    occurrences.push((
+                        PremiseOccurrence {
+                            premise,
+                            column: column.index(),
+                        },
+                        sort,
+                    ));
+                }
+            }
+            let Some((representative, sort)) = occurrences.first().copied() else {
+                continue;
+            };
+            for (occurrence, other_sort) in occurrences.into_iter().skip(1) {
+                assert_eq!(sort, other_sort, "one query variable crosses replay sorts");
+                if occurrence != representative {
+                    push((
+                        ReplayEqualitySource::Premise(representative),
+                        ReplayEqualitySource::Premise(occurrence),
+                    ));
+                }
+            }
+        }
+
+        for (premise, atom_id) in premises.iter().copied().enumerate() {
+            let atom = &self.qb.query.atoms[atom_id];
+            for constraint in atom
+                .constraints
+                .fast
+                .iter()
+                .chain(atom.constraints.slow.iter())
+            {
+                let Constraint::EqConst { col, val } = constraint else {
+                    continue;
+                };
+                let Some(sort) = receipts.table_column_sort(atom.table, col.index()) else {
+                    continue;
+                };
+                let term = receipts.lookup_term(sort, *val).unwrap_or_else(|| {
+                    panic!(
+                        "typed query constant in table {:?} column {} has no replay term",
+                        atom.table,
+                        col.index()
+                    )
+                });
+                push((
+                    ReplayEqualitySource::Premise(PremiseOccurrence {
+                        premise,
+                        column: col.index(),
+                    }),
+                    ReplayEqualitySource::Constant(EqualityEndpoint {
+                        sort,
+                        term,
+                        raw: *val,
+                    }),
+                ));
+            }
+        }
+        obligations
+    }
+
+    fn receipt_occurrence_value(
+        &self,
+        premises: &[AtomId],
+        occurrence: PremiseOccurrence,
+    ) -> QueryEntry {
+        let atom = &self.qb.query.atoms[premises[occurrence.premise]];
+        let column = ColumnId::from_usize(occurrence.column);
+        if let Some(variable) = atom.get_var(column) {
+            return QueryEntry::Var(variable);
+        }
+        atom.constraints
+            .fast
+            .iter()
+            .chain(atom.constraints.slow.iter())
+            .find_map(|constraint| match constraint {
+                Constraint::EqConst { col, val } if *col == column => Some(QueryEntry::Const(*val)),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "receipt premise {} column {} is neither variable nor equality constant",
+                    occurrence.premise, occurrence.column
+                )
+            })
+    }
+
     /// Build the finished query.
     pub fn build(self) -> RuleId {
         self.build_with_description("")
@@ -974,6 +1098,7 @@ impl RuleBuilder<'_, '_> {
             self.qb.rsb.db.causal_receipts.is_some(),
             "check receipt actions require causal receipts"
         );
+        let implicit_equalities = self.receipt_equality_obligations(&spec.premises);
         for (left, right) in &spec.equalities {
             self.qb.mark_used([left.value(), right.value()]);
         }
@@ -1037,10 +1162,42 @@ impl RuleBuilder<'_, '_> {
                 );
                 (left, right)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let compile_implicit = |source| match source {
+            ReplayEqualitySource::Premise(occurrence) => {
+                let atom = premises[occurrence.premise];
+                let table = self.qb.query.atoms[atom].table;
+                let sort = receipts
+                    .table_column_sort(table, occurrence.column)
+                    .expect("receipt equality premise has no replay sort");
+                CheckEndpointSpec {
+                    value: self.receipt_occurrence_value(&premises, occurrence),
+                    sort,
+                    term: CheckTermSource::Premise {
+                        premise: occurrence.premise,
+                        column: occurrence.column,
+                    },
+                }
+            }
+            ReplayEqualitySource::Constant(endpoint) => CheckEndpointSpec {
+                value: QueryEntry::Const(endpoint.raw),
+                sort: endpoint.sort,
+                term: CheckTermSource::Constant {
+                    term: endpoint.term,
+                },
+            },
+        };
+        let implicit_equalities = implicit_equalities
+            .into_iter()
+            .map(|(left, right)| (compile_implicit(left), compile_implicit(right)))
+            .collect::<Vec<_>>();
+        for (left, right) in &implicit_equalities {
+            self.qb.mark_used([&left.value, &right.value]);
+        }
         self.qb.instrs.push(Instr::RecordCheck {
             check,
-            equalities,
+            equalities: equalities.into_boxed_slice(),
+            implicit_equalities: implicit_equalities.into_boxed_slice(),
             as_of_edges,
         });
         self.build_impl(desc, Some(ReceiptBuildSpec::Check { premises }))
@@ -1060,6 +1217,7 @@ impl RuleBuilder<'_, '_> {
         let mut row_origin_inputs = HashMap::default();
         let receipt = receipt.map(|spec| match spec {
             ReceiptBuildSpec::Rule(spec) => {
+                let equality_obligations = self.receipt_equality_obligations(&spec.premises);
                 let premise_count = spec.premises.len();
                 let premise_slots = Arc::new(
                     spec.premises
@@ -1234,6 +1392,7 @@ impl RuleBuilder<'_, '_> {
                     .expect("rule receipt actions require causal receipts")
                     .register_rule_binding_recipe(spec.rule, &binding_sources);
                 let receipts = self.qb.rsb.db.causal_receipts.as_ref().unwrap();
+                receipts.register_rule_equality_recipe(spec.rule, &equality_obligations);
                 let term_recipe = self
                     .qb
                     .recipe_draft

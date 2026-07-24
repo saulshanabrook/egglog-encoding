@@ -73,6 +73,9 @@ handle!(ReplayTermId, u32);
 handle!(ReplaySortId, u32);
 handle!(ReplayOpId, u32);
 handle!(EqNodeId, u64);
+// Dense identity of one effective native union in raw receipt history,
+// including same-syntax alias joins.
+handle!(AppliedEqualityId, u64);
 handle!(EqLeafId, u64);
 handle!(EqualityEdgeCount, u64);
 handle!(CausalWave, u64);
@@ -363,6 +366,7 @@ struct ReplayTermStore {
     original_value_by_term: RwLock<HashMap<(ReplaySortId, ReplayTermId), Value>>,
     table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
     table_kinds: DashMap<TableId, ReplayTableKind>,
+    table_key_columns: DashMap<TableId, u16>,
     table_constructors: DashMap<TableId, ReplayConstructorSpec>,
     table_merge_origins: DashMap<TableId, Arc<[MergeOriginSelector]>>,
     table_merge_identity_guards: DashMap<TableId, (u16, u16)>,
@@ -634,6 +638,24 @@ impl ReplayTermStore {
             Entry::Occupied(_) => Err("table already has a different replay-table kind"),
             Entry::Vacant(entry) => {
                 entry.insert(kind);
+                Ok(())
+            }
+        }
+    }
+
+    fn register_table_key_columns(
+        &self,
+        table: TableId,
+        key_columns: usize,
+    ) -> Result<(), &'static str> {
+        let key_columns = key_columns
+            .try_into()
+            .map_err(|_| "table key arity exceeds u16")?;
+        match self.table_key_columns.entry(table) {
+            Entry::Occupied(entry) if *entry.get() == key_columns => Ok(()),
+            Entry::Occupied(_) => Err("table already has a different key arity"),
+            Entry::Vacant(entry) => {
+                entry.insert(key_columns);
                 Ok(())
             }
         }
@@ -951,6 +973,12 @@ pub(crate) struct PremiseOccurrence {
     pub(crate) column: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplayEqualitySource {
+    Premise(PremiseOccurrence),
+    Constant(EqualityEndpoint),
+}
+
 /// One node in the static source-to-action term recipe. Nodes share producer
 /// subgraphs while a rule is compiled and instantiate only for promoted
 /// observations.
@@ -1049,6 +1077,9 @@ pub(crate) enum CheckTermSource {
         premise: usize,
         input_columns: usize,
         op: ReplayOpId,
+    },
+    Constant {
+        term: ReplayTermId,
     },
     Current,
 }
@@ -1390,6 +1421,12 @@ pub struct EqualityEndpoint {
     pub raw: crate::Value,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckEndpointOccurrence {
+    FactCell(FactCellRef),
+    Current,
+}
+
 /// Exact native support retained for the first successful match of one check.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CheckRoot {
@@ -1398,6 +1435,7 @@ pub struct CheckRoot {
     pub position: HistoryPosition,
     pub premises: Box<[FactId]>,
     pub equalities: Box<[(EqualityEndpoint, EqualityEndpoint)]>,
+    pub equality_occurrences: Box<[(CheckEndpointOccurrence, CheckEndpointOccurrence)]>,
     pub as_of_edges: EqualityEdgeCount,
 }
 
@@ -1559,6 +1597,202 @@ pub struct ReceiptCounters {
     /// Reached slots fail closed during slicing; this counter makes cohort
     /// coverage visible before replay is wired.
     pub missing_current_recipe_roots: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CausalReceiptTotals {
+    pub facts: u64,
+    pub matches: u64,
+    pub causes: u64,
+    pub applied_equalities: u64,
+    pub rekeys: u64,
+    pub removals: u64,
+    pub check_roots: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplayTableSchema {
+    pub table: TableId,
+    pub kind: ReplayTableKind,
+    pub key_columns: usize,
+    pub columns: Arc<[Option<ReplaySortId>]>,
+    pub constructor: Option<ReplayConstructorSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FactCellRef {
+    pub fact: FactId,
+    pub column: crate::ColumnId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoricalFactCell {
+    pub occurrence: FactCellRef,
+    pub created: EqualityEndpoint,
+    pub endpoint: EqualityEndpoint,
+    pub rekeys: Box<[HistoryPosition]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawEqualitySupport {
+    pub applied: Box<[AppliedEqualityId]>,
+    pub facts: Box<[FactId]>,
+    pub causes: Box<[ReceiptCauseRef]>,
+    pub rekeys: Box<[HistoryPosition]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReceiptPremiseOccurrence {
+    pub premise: usize,
+    pub column: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReceiptBindingSource {
+    Premise {
+        representative: ReceiptPremiseOccurrence,
+        occurrences: Box<[ReceiptPremiseOccurrence]>,
+    },
+    Current {
+        sort: ReplaySortId,
+        residual: u32,
+        replay_safe: bool,
+    },
+    Constant {
+        term: ReplayTermId,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptEqualitySource {
+    Premise(ReceiptPremiseOccurrence),
+    Constant(EqualityEndpoint),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RawFactRecord<'a> {
+    pub id: FactId,
+    pub table: TableId,
+    pub position: HistoryPosition,
+    pub cause: ReceiptCauseRef,
+    pub values: &'a [Value],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RawMatchRecord<'a> {
+    pub id: RuleMatchId,
+    pub rule: u32,
+    pub wave: CausalWave,
+    pub position: HistoryPosition,
+    pub as_of_edges: EqualityEdgeCount,
+    pub premises: &'a [FactId],
+    pub merge_reads: &'a [FactId],
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RawReceiptCause<'a> {
+    Source(&'a SourceRef),
+    Rebuild {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        position: HistoryPosition,
+        equalities: &'a [TypedCellEquality],
+    },
+    ContainerCanonicalize {
+        wave: CausalWave,
+        as_of_edges: EqualityEdgeCount,
+        position: HistoryPosition,
+        equalities: &'a [TypedCellEquality],
+    },
+    ContainerRefresh {
+        wave: CausalWave,
+        prior_fact: FactId,
+        as_of_edges: EqualityEdgeCount,
+        position: HistoryPosition,
+        equalities: &'a [TypedCellEquality],
+    },
+    Merge {
+        incoming: ReceiptCauseRef,
+        prior: ReceiptCausePrior,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RawEqualityEndpoint {
+    pub sort: ReplaySortId,
+    pub raw: Value,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawAppliedEquality {
+    pub id: AppliedEqualityId,
+    pub wave: CausalWave,
+    pub position: HistoryPosition,
+    pub left: RawEqualityEndpoint,
+    pub right: RawEqualityEndpoint,
+    pub native_parent: Value,
+    pub native_child: Value,
+    pub reason: EqualityReason,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProjectedAppliedEquality {
+    pub id: AppliedEqualityId,
+    pub wave: CausalWave,
+    pub position: HistoryPosition,
+    pub left: EqualityEndpoint,
+    pub right: EqualityEndpoint,
+    pub native_parent: Value,
+    pub native_child: Value,
+    pub reason: EqualityReason,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RawRekeyRecord<'a> {
+    pub fact: FactId,
+    pub table: TableId,
+    pub wave: CausalWave,
+    pub position: HistoryPosition,
+    pub as_of_edges: EqualityEdgeCount,
+    pub equality_position: HistoryPosition,
+    pub equalities: &'a [TypedCellEquality],
+    pub outcome: RekeyOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ReceiptViewError {
+    #[error("causal receipt history is not finalized: {0}")]
+    NotFinalized(&'static str),
+    #[error("causal receipt lock is poisoned: {0}")]
+    Poisoned(&'static str),
+    #[error("unknown causal fact {0:?}")]
+    UnknownFact(FactId),
+    #[error("unknown causal match {0:?}")]
+    UnknownMatch(RuleMatchId),
+    #[error("unknown causal cause {0:?}")]
+    UnknownCause(ReceiptCauseId),
+    #[error("unknown applied equality {0:?}")]
+    UnknownEquality(AppliedEqualityId),
+    #[error("unknown causal rekey at {0:?}")]
+    UnknownRekey(HistoryPosition),
+    #[error("unknown causal removal {0}")]
+    UnknownRemoval(usize),
+    #[error("unknown successful check {0}")]
+    UnknownCheck(u32),
+    #[error("unknown replay table {0:?}")]
+    UnknownTable(TableId),
+    #[error("invalid causal receipt history: {0}")]
+    Invalid(String),
+    #[error(
+        "causal fact {fact:?} ended at {ended_at:?} with successor {successor:?}; it is not live at {position:?}"
+    )]
+    FactNoLongerLive {
+        fact: FactId,
+        position: HistoryPosition,
+        ended_at: HistoryPosition,
+        successor: FactId,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -4208,6 +4442,745 @@ fn project_fact_cause(
     })
 }
 
+/// Borrowed, non-escaping view of one finalized raw receipt arena.
+///
+/// Accessors project structural terms only for explicitly selected facts,
+/// matches, or equality events. The compatibility [`ReceiptSnapshot`] is
+/// deliberately not constructed here.
+pub struct CausalReceiptView<'a> {
+    arena: &'a ReceiptArena,
+    binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
+    equality_recipes: &'a HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>,
+    term_recipes: &'a StaticTermRecipeStore,
+    replay_terms: &'a ReplayTermStore,
+    projector: TermProjector<'a>,
+    history_boundary: HistoryPosition,
+    equality_indices: HashMap<(EqualityEdgeCount, HistoryPosition, ReplaySortId), RawEqualityIndex>,
+}
+
+struct RawEqualityIndex {
+    parents: HashMap<Value, (Value, AppliedEqualityId)>,
+}
+
+impl<'a> CausalReceiptView<'a> {
+    fn public_cause(cause: CauseRef) -> Result<ReceiptCauseRef, ReceiptViewError> {
+        if cause.is_unattributed() {
+            return Err(ReceiptViewError::Invalid(
+                "durable event has an unattributed cause".into(),
+            ));
+        }
+        if let Some(rule) = cause.rule_match() {
+            return Ok(ReceiptCauseRef::Rule(rule));
+        }
+        let draft = cause.cause_node().ok_or_else(|| {
+            ReceiptViewError::Invalid("durable event has no cause identity".into())
+        })?;
+        let id = u32::try_from(draft.get())
+            .map_err(|_| ReceiptViewError::Invalid("receipt cause identity exceeds u32".into()))?;
+        Ok(ReceiptCauseRef::Cause(ReceiptCauseId::new(id)))
+    }
+
+    pub fn totals(&self) -> CausalReceiptTotals {
+        CausalReceiptTotals {
+            facts: self.arena.published_facts,
+            matches: self.arena.published_matches,
+            causes: self.arena.published_causes,
+            applied_equalities: self.arena.published_equalities,
+            rekeys: self.arena.rekeys.len() as u64,
+            removals: self.arena.removals.len() as u64,
+            check_roots: self.arena.check_roots.len() as u64,
+        }
+    }
+
+    pub fn counters(&self) -> ReceiptCounters {
+        self.arena.counters
+    }
+
+    pub fn fact(&self, id: FactId) -> Result<RawFactRecord<'a>, ReceiptViewError> {
+        if id.is_missing() {
+            return Err(ReceiptViewError::UnknownFact(id));
+        }
+        let fact = self
+            .arena
+            .facts
+            .get((id.get() - 1) as usize)
+            .and_then(Option::as_ref)
+            .ok_or(ReceiptViewError::UnknownFact(id))?;
+        Ok(RawFactRecord {
+            id,
+            table: fact.table,
+            position: fact.position,
+            cause: Self::public_cause(fact.cause)?,
+            values: &self.arena.durable_fact_values[fact.values.as_range()],
+        })
+    }
+
+    pub fn matched(&self, id: RuleMatchId) -> Result<RawMatchRecord<'a>, ReceiptViewError> {
+        if id.get() == 0 {
+            return Err(ReceiptViewError::UnknownMatch(id));
+        }
+        let matched = self
+            .arena
+            .durable_matches
+            .get((id.get() - 1) as usize)
+            .and_then(Option::as_ref)
+            .ok_or(ReceiptViewError::UnknownMatch(id))?;
+        let merge_reads = self
+            .arena
+            .merge_reads
+            .get(&id)
+            .map_or(&[][..], SmallVec::as_slice);
+        Ok(RawMatchRecord {
+            id,
+            rule: matched.rule,
+            wave: matched.wave,
+            position: matched.position,
+            as_of_edges: matched.as_of_edges,
+            premises: &self.arena.durable_premises[matched.premises.as_range()],
+            merge_reads,
+        })
+    }
+
+    pub fn cause(&self, id: ReceiptCauseId) -> Result<RawReceiptCause<'a>, ReceiptViewError> {
+        if id.get() == 0 {
+            return Err(ReceiptViewError::UnknownCause(id));
+        }
+        let cause = self
+            .arena
+            .durable_cause(CauseDraftId::new(id.get() as u64))
+            .ok_or(ReceiptViewError::UnknownCause(id))?;
+        Ok(match cause {
+            DurableCause::Source(source) => RawReceiptCause::Source(source),
+            DurableCause::Rebuild {
+                wave,
+                prior_fact,
+                as_of_edges,
+                position,
+                equalities,
+            } => RawReceiptCause::Rebuild {
+                wave: *wave,
+                prior_fact: *prior_fact,
+                as_of_edges: *as_of_edges,
+                position: *position,
+                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+            },
+            DurableCause::ContainerCanonicalize {
+                wave,
+                as_of_edges,
+                position,
+                equalities,
+            } => RawReceiptCause::ContainerCanonicalize {
+                wave: *wave,
+                as_of_edges: *as_of_edges,
+                position: *position,
+                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+            },
+            DurableCause::ContainerRefresh {
+                wave,
+                prior_fact,
+                as_of_edges,
+                position,
+                equalities,
+            } => RawReceiptCause::ContainerRefresh {
+                wave: *wave,
+                prior_fact: *prior_fact,
+                as_of_edges: *as_of_edges,
+                position: *position,
+                equalities: &self.arena.durable_rebuild_equalities[equalities.as_range()],
+            },
+            DurableCause::Merge { incoming, prior } => RawReceiptCause::Merge {
+                incoming: Self::public_cause(*incoming)?,
+                prior: match prior {
+                    DurablePrior::Fact(fact) => ReceiptCausePrior::Fact(*fact),
+                    DurablePrior::Cause(cause) => {
+                        ReceiptCausePrior::Cause(Self::public_cause(*cause)?)
+                    }
+                },
+            },
+        })
+    }
+
+    pub fn applied_equality(
+        &self,
+        id: AppliedEqualityId,
+    ) -> Result<RawAppliedEquality, ReceiptViewError> {
+        if id.get() == 0 {
+            return Err(ReceiptViewError::UnknownEquality(id));
+        }
+        let event = self
+            .arena
+            .durable_equalities
+            .get((id.get() - 1) as usize)
+            .and_then(Option::as_ref)
+            .ok_or(ReceiptViewError::UnknownEquality(id))?;
+        Ok(RawAppliedEquality {
+            id,
+            wave: event.proposal.wave,
+            position: event.position,
+            left: RawEqualityEndpoint {
+                sort: event.proposal.left.sort,
+                raw: event.proposal.left.raw,
+            },
+            right: RawEqualityEndpoint {
+                sort: event.proposal.right.sort,
+                raw: event.proposal.right.raw,
+            },
+            native_parent: event.native_parent,
+            native_child: event.native_child,
+            reason: event.reason.clone(),
+        })
+    }
+
+    pub fn project_applied_equality(
+        &mut self,
+        id: AppliedEqualityId,
+    ) -> Result<ProjectedAppliedEquality, ReceiptViewError> {
+        if id.get() == 0 {
+            return Err(ReceiptViewError::UnknownEquality(id));
+        }
+        let event = self
+            .arena
+            .durable_equalities
+            .get((id.get() - 1) as usize)
+            .and_then(Option::as_ref)
+            .ok_or(ReceiptViewError::UnknownEquality(id))?;
+        let left = self
+            .projector
+            .equality_endpoint(event.proposal.left, event.cause)
+            .map_err(ReceiptViewError::Invalid)?
+            .endpoint;
+        let right = self
+            .projector
+            .equality_endpoint(event.proposal.right, event.cause)
+            .map_err(ReceiptViewError::Invalid)?
+            .endpoint;
+        Ok(ProjectedAppliedEquality {
+            id,
+            wave: event.proposal.wave,
+            position: event.position,
+            left,
+            right,
+            native_parent: event.native_parent,
+            native_child: event.native_child,
+            reason: event.reason.clone(),
+        })
+    }
+
+    pub fn rekey_at(
+        &self,
+        position: HistoryPosition,
+    ) -> Result<RawRekeyRecord<'a>, ReceiptViewError> {
+        let record = self
+            .arena
+            .rekeys
+            .iter()
+            .find(|record| record.position == position)
+            .ok_or(ReceiptViewError::UnknownRekey(position))?;
+        Ok(RawRekeyRecord {
+            fact: record.fact,
+            table: record.table,
+            wave: record.wave,
+            position: record.position,
+            as_of_edges: record.equalities.as_of_edges,
+            equality_position: record.equalities.position,
+            equalities: &record.equalities.pairs,
+            outcome: record.outcome,
+        })
+    }
+
+    pub fn removal(&self, index: usize) -> Result<&'a RemovalRecord, ReceiptViewError> {
+        self.arena
+            .removals
+            .get(index)
+            .ok_or(ReceiptViewError::UnknownRemoval(index))
+    }
+
+    pub fn check_root(&self, check: u32) -> Result<&'a CheckRoot, ReceiptViewError> {
+        self.arena
+            .check_roots
+            .get(&check)
+            .ok_or(ReceiptViewError::UnknownCheck(check))
+    }
+
+    pub fn check_roots(&self) -> Vec<&'a CheckRoot> {
+        let mut roots = self.arena.check_roots.values().collect::<Vec<_>>();
+        roots.sort_unstable_by_key(|root| root.check);
+        roots
+    }
+
+    pub fn table_schema(&self, table: TableId) -> Result<ReplayTableSchema, ReceiptViewError> {
+        let columns = self
+            .replay_terms
+            .table_layout(table)
+            .ok_or(ReceiptViewError::UnknownTable(table))?;
+        let kind = self
+            .replay_terms
+            .table_kinds
+            .get(&table)
+            .map(|kind| *kind)
+            .ok_or(ReceiptViewError::UnknownTable(table))?;
+        let key_columns = self
+            .replay_terms
+            .table_key_columns
+            .get(&table)
+            .map(|columns| *columns as usize)
+            .ok_or(ReceiptViewError::UnknownTable(table))?;
+        let constructor = self
+            .replay_terms
+            .table_constructors
+            .get(&table)
+            .map(|constructor| constructor.clone());
+        Ok(ReplayTableSchema {
+            table,
+            kind,
+            key_columns,
+            columns,
+            constructor,
+        })
+    }
+
+    pub fn rule_binding_layout(
+        &self,
+        rule: u32,
+    ) -> Result<Box<[ReceiptBindingSource]>, ReceiptViewError> {
+        let bindings = self.binding_recipes.get(&rule).ok_or_else(|| {
+            ReceiptViewError::Invalid(format!("rule {rule} has no binding recipe"))
+        })?;
+        let current_roots = self
+            .term_recipes
+            .rules
+            .get(&rule)
+            .map(|recipe| recipe.current_roots.as_ref())
+            .unwrap_or(&[]);
+        bindings
+            .iter()
+            .map(|binding| {
+                Ok(match binding {
+                    ReplayBindingSource::Premise {
+                        representative,
+                        occurrences,
+                    } => ReceiptBindingSource::Premise {
+                        representative: ReceiptPremiseOccurrence {
+                            premise: representative.premise,
+                            column: representative.column,
+                        },
+                        occurrences: occurrences
+                            .iter()
+                            .map(|occurrence| ReceiptPremiseOccurrence {
+                                premise: occurrence.premise,
+                                column: occurrence.column,
+                            })
+                            .collect(),
+                    },
+                    ReplayBindingSource::Current { sort, residual, .. } => {
+                        ReceiptBindingSource::Current {
+                            sort: *sort,
+                            residual: *residual,
+                            replay_safe: current_roots
+                                .get(*residual as usize)
+                                .is_some_and(Option::is_some),
+                        }
+                    }
+                    ReplayBindingSource::Constant { term } => {
+                        ReceiptBindingSource::Constant { term: *term }
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, ReceiptViewError>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    pub fn rule_equality_layout(
+        &self,
+        rule: u32,
+    ) -> Result<Box<[(ReceiptEqualitySource, ReceiptEqualitySource)]>, ReceiptViewError> {
+        let equalities = self.equality_recipes.get(&rule).ok_or_else(|| {
+            ReceiptViewError::Invalid(format!("rule {rule} has no equality-obligation recipe"))
+        })?;
+        Ok(equalities
+            .iter()
+            .map(|&(left, right)| {
+                let public = |source| match source {
+                    ReplayEqualitySource::Premise(occurrence) => {
+                        ReceiptEqualitySource::Premise(ReceiptPremiseOccurrence {
+                            premise: occurrence.premise,
+                            column: occurrence.column,
+                        })
+                    }
+                    ReplayEqualitySource::Constant(endpoint) => {
+                        ReceiptEqualitySource::Constant(endpoint)
+                    }
+                };
+                (public(left), public(right))
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice())
+    }
+
+    pub fn fact_terms(&mut self, id: FactId) -> Result<Box<[ReplayTermId]>, ReceiptViewError> {
+        let fact = self.fact(id)?;
+        let layout = self
+            .replay_terms
+            .table_layout(fact.table)
+            .ok_or(ReceiptViewError::UnknownTable(fact.table))?;
+        layout
+            .iter()
+            .enumerate()
+            .map(|(column, sort)| {
+                sort.map_or(Ok(ReplayTermId::MISSING), |_| {
+                    self.projector
+                        .fact_term(id, column)
+                        .map_err(ReceiptViewError::Invalid)
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    pub fn match_terms(
+        &mut self,
+        id: RuleMatchId,
+    ) -> Result<Box<[ReplayTermId]>, ReceiptViewError> {
+        let matched = self.matched(id)?;
+        let binding_count = self
+            .binding_recipes
+            .get(&matched.rule)
+            .ok_or_else(|| {
+                ReceiptViewError::Invalid(format!("rule {} has no binding recipe", matched.rule))
+            })?
+            .len();
+        (0..binding_count)
+            .map(|binding| {
+                self.projector
+                    .match_term(id, binding)
+                    .map_err(ReceiptViewError::Invalid)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    pub fn replay_term(&self, term: ReplayTermId) -> Result<ReplayTerm, ReceiptViewError> {
+        self.replay_terms
+            .node(term)
+            .ok_or_else(|| ReceiptViewError::Invalid(format!("unknown replay term {term:?}")))
+    }
+
+    pub fn fact_cell_at(
+        &mut self,
+        occurrence: FactCellRef,
+        position: HistoryPosition,
+    ) -> Result<HistoricalFactCell, ReceiptViewError> {
+        if position > self.history_boundary {
+            return Err(ReceiptViewError::Invalid(
+                "fact-cell query exceeds the captured receipt history".into(),
+            ));
+        }
+        let fact = self.fact(occurrence.fact)?;
+        if fact.position > position {
+            return Err(ReceiptViewError::Invalid(format!(
+                "fact {:?} was created after {:?}",
+                occurrence.fact, position
+            )));
+        }
+        let column = occurrence.column.index();
+        let sort = self
+            .replay_terms
+            .table_layout(fact.table)
+            .ok_or(ReceiptViewError::UnknownTable(fact.table))?
+            .get(column)
+            .copied()
+            .flatten()
+            .ok_or_else(|| {
+                ReceiptViewError::Invalid(format!(
+                    "fact {:?} column {column} has no logical replay sort",
+                    occurrence.fact
+                ))
+            })?;
+        let term = self
+            .projector
+            .fact_term(occurrence.fact, column)
+            .map_err(ReceiptViewError::Invalid)?;
+        let creation_raw = *fact.values.get(column).ok_or_else(|| {
+            ReceiptViewError::Invalid(format!("fact {:?} has no column {column}", occurrence.fact))
+        })?;
+        let mut raw = creation_raw;
+        let mut rekeys = Vec::new();
+        for rekey in self
+            .arena
+            .rekeys
+            .iter()
+            .filter(|rekey| rekey.fact == occurrence.fact && rekey.position <= position)
+        {
+            for pair in rekey
+                .equalities
+                .pairs
+                .iter()
+                .filter(|pair| pair.column == occurrence.column)
+            {
+                if pair.left.raw != raw || pair.left.sort != sort || pair.right.sort != sort {
+                    return Err(ReceiptViewError::Invalid(format!(
+                        "rekey {:?} does not continue fact-cell occurrence {:?}",
+                        rekey.position, occurrence
+                    )));
+                }
+                raw = pair.right.raw;
+                rekeys.push(rekey.position);
+            }
+            if rekey.outcome != RekeyOutcome::Moved {
+                let successor = match rekey.outcome {
+                    RekeyOutcome::Moved => unreachable!(),
+                    RekeyOutcome::Absorbed(fact) | RekeyOutcome::Replaced(fact) => fact,
+                };
+                return Err(ReceiptViewError::FactNoLongerLive {
+                    fact: occurrence.fact,
+                    position,
+                    ended_at: rekey.position,
+                    successor,
+                });
+            }
+        }
+        Ok(HistoricalFactCell {
+            occurrence,
+            created: EqualityEndpoint {
+                sort,
+                term,
+                raw: creation_raw,
+            },
+            endpoint: EqualityEndpoint { sort, term, raw },
+            rekeys: rekeys.into_boxed_slice(),
+        })
+    }
+
+    pub fn fact_key_at(
+        &mut self,
+        fact: FactId,
+        position: HistoryPosition,
+    ) -> Result<Box<[Value]>, ReceiptViewError> {
+        let record = self.fact(fact)?;
+        let schema = self.table_schema(record.table)?;
+        (0..schema.key_columns)
+            .map(|column| {
+                if schema.columns[column].is_some() {
+                    self.fact_cell_at(
+                        FactCellRef {
+                            fact,
+                            column: crate::ColumnId::new(column.try_into().map_err(|_| {
+                                ReceiptViewError::Invalid("table key column exceeds u32".into())
+                            })?),
+                        },
+                        position,
+                    )
+                    .map(|cell| cell.endpoint.raw)
+                } else {
+                    record.values.get(column).copied().ok_or_else(|| {
+                        ReceiptViewError::Invalid(format!(
+                            "fact {fact:?} has no key column {column}"
+                        ))
+                    })
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    fn validate_equality_cutoff(
+        &self,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<usize, ReceiptViewError> {
+        let cutoff: usize = as_of.get().try_into().map_err(|_| {
+            ReceiptViewError::Invalid("equality cutoff exceeds addressable storage".into())
+        })?;
+        if cutoff > self.arena.durable_equalities.len() {
+            return Err(ReceiptViewError::Invalid(
+                "equality cutoff exceeds the raw applied-event history".into(),
+            ));
+        }
+        if position > self.history_boundary {
+            return Err(ReceiptViewError::Invalid(
+                "equality query exceeds the captured receipt history".into(),
+            ));
+        }
+        let mut visible = 0usize;
+        for event in &self.arena.durable_equalities {
+            let event = event.as_ref().ok_or_else(|| {
+                ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
+            })?;
+            if event.position > position {
+                break;
+            }
+            visible += 1;
+        }
+        if visible != cutoff {
+            return Err(ReceiptViewError::Invalid(
+                "equality cutoff disagrees with the global history position".into(),
+            ));
+        }
+        Ok(cutoff)
+    }
+
+    pub fn explain_raw_equality_support_at(
+        &mut self,
+        left: RawEqualityEndpoint,
+        right: RawEqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        if left.sort != right.sort {
+            return Err(ReceiptViewError::Invalid(
+                "cannot explain equality across logical sorts".into(),
+            ));
+        }
+        let cutoff = self.validate_equality_cutoff(as_of, position)?;
+        let key = (as_of, position, left.sort);
+        if !self.equality_indices.contains_key(&key) {
+            let mut parents = HashMap::<Value, (Value, AppliedEqualityId)>::default();
+            for (index, event) in self.arena.durable_equalities[..cutoff].iter().enumerate() {
+                let event = event.as_ref().ok_or_else(|| {
+                    ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
+                })?;
+                if event.proposal.left.sort != event.proposal.right.sort {
+                    return Err(ReceiptViewError::Invalid(
+                        "one applied equality crosses logical sorts".into(),
+                    ));
+                }
+                if event.proposal.left.sort != left.sort {
+                    continue;
+                }
+                if parents
+                    .insert(
+                        event.native_child,
+                        (
+                            event.native_parent,
+                            AppliedEqualityId::new(index as u64 + 1),
+                        ),
+                    )
+                    .is_some()
+                {
+                    return Err(ReceiptViewError::Invalid(
+                        "one native equality child acquired two historical parents".into(),
+                    ));
+                }
+            }
+            self.equality_indices
+                .insert(key, RawEqualityIndex { parents });
+        }
+        let parents = &self
+            .equality_indices
+            .get(&key)
+            .expect("inserted raw equality index disappeared")
+            .parents;
+        let mut left_ancestors = HashMap::<Value, usize>::default();
+        let mut left_edges = Vec::new();
+        let mut cursor = left.raw;
+        loop {
+            left_ancestors.insert(cursor, left_edges.len());
+            let Some((parent, edge)) = parents.get(&cursor).copied() else {
+                break;
+            };
+            left_edges.push(edge);
+            cursor = parent;
+        }
+        let mut right_edges = Vec::new();
+        let mut cursor = right.raw;
+        let left_depth = loop {
+            if let Some(depth) = left_ancestors.get(&cursor).copied() {
+                break depth;
+            }
+            let Some((parent, edge)) = parents.get(&cursor).copied() else {
+                return Err(ReceiptViewError::Invalid(
+                    "equality endpoints were disconnected at the historical landmark".into(),
+                ));
+            };
+            right_edges.push(edge);
+            cursor = parent;
+        };
+        let mut edges = left_edges[..left_depth].to_vec();
+        edges.extend(right_edges);
+        edges.sort_unstable();
+        edges.dedup();
+        Ok(RawEqualitySupport {
+            applied: edges.into_boxed_slice(),
+            facts: Box::new([]),
+            causes: Box::new([]),
+            rekeys: Box::new([]),
+        })
+    }
+
+    pub fn explain_equality_support_at(
+        &mut self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        if left.term.is_missing() || right.term.is_missing() {
+            return Err(ReceiptViewError::Invalid(
+                "cannot explain equality with a missing ReplayTermId".into(),
+            ));
+        }
+        for endpoint in [left, right] {
+            let node = self.replay_terms.node(endpoint.term).ok_or_else(|| {
+                ReceiptViewError::Invalid(format!(
+                    "equality endpoint owns unknown term {:?}",
+                    endpoint.term
+                ))
+            })?;
+            if node.sort() != endpoint.sort {
+                return Err(ReceiptViewError::Invalid(
+                    "equality endpoint term has the wrong logical sort".into(),
+                ));
+            }
+        }
+        if left.raw == right.raw && left.term != right.term {
+            return Err(ReceiptViewError::Invalid(
+                "term-distinct equality at one raw value requires exact occurrence provenance"
+                    .into(),
+            ));
+        }
+        self.explain_raw_equality_support_at(
+            RawEqualityEndpoint {
+                sort: left.sort,
+                raw: left.raw,
+            },
+            RawEqualityEndpoint {
+                sort: right.sort,
+                raw: right.raw,
+            },
+            as_of,
+            position,
+        )
+    }
+
+    pub fn explain_fact_cell_support_at(
+        &mut self,
+        left: FactCellRef,
+        right: FactCellRef,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        let left = self.fact_cell_at(left, position)?;
+        let right = self.fact_cell_at(right, position)?;
+        let support =
+            self.explain_equality_support_at(left.created, right.created, as_of, position)?;
+        let mut facts = vec![left.occurrence.fact, right.occurrence.fact];
+        facts.extend(support.facts);
+        facts.sort_unstable();
+        facts.dedup();
+        let mut rekeys = left.rekeys.into_vec();
+        rekeys.extend(right.rekeys);
+        rekeys.extend(support.rekeys);
+        rekeys.sort_unstable();
+        rekeys.dedup();
+        Ok(RawEqualitySupport {
+            applied: support.applied,
+            facts: facts.into_boxed_slice(),
+            causes: support.causes,
+            rekeys: rekeys.into_boxed_slice(),
+        })
+    }
+}
+
 struct ReceiptShared {
     next_fact: AtomicU64,
     next_rule_match: AtomicU64,
@@ -4219,11 +5192,16 @@ struct ReceiptShared {
     open_native_leases: AtomicUsize,
     abandoned_fragments: AtomicU64,
     poisoned_rule_executions: AtomicU64,
+    compatibility_projection_reads: AtomicU64,
     replay_terms: ReplayTermStore,
     equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
     equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
     /// One canonical source-order binding recipe per source-level rule.
     rule_binding_recipes: RwLock<HashMap<u32, Arc<[ReplayBindingSource]>>>,
+    /// Every exact premise-cell/constant equality enforced by the lowered
+    /// native query, including compiler-generated variables.
+    rule_equality_recipes:
+        RwLock<HashMap<u32, Arc<[(ReplayEqualitySource, ReplayEqualitySource)]>>>,
     /// Cold compile-time recipes shared by every seminaive/decomposed variant.
     static_term_recipes: Mutex<StaticTermRecipeStore>,
     arena: Mutex<ReceiptArena>,
@@ -4242,10 +5220,12 @@ impl Default for ReceiptShared {
             open_native_leases: AtomicUsize::new(0),
             abandoned_fragments: AtomicU64::new(0),
             poisoned_rule_executions: AtomicU64::new(0),
+            compatibility_projection_reads: AtomicU64::new(0),
             replay_terms: ReplayTermStore::default(),
             equality_value_sorts: Mutex::new(HashMap::default()),
             equality_wave_timestamp: Mutex::new(None),
             rule_binding_recipes: RwLock::new(HashMap::default()),
+            rule_equality_recipes: RwLock::new(HashMap::default()),
             static_term_recipes: Mutex::new(StaticTermRecipeStore::default()),
             arena: Mutex::new(ReceiptArena::default()),
         }
@@ -4845,6 +5825,41 @@ impl CausalReceipts {
         recipe
     }
 
+    pub(crate) fn register_rule_equality_recipe(
+        &self,
+        rule: u32,
+        equalities: &[(ReplayEqualitySource, ReplayEqualitySource)],
+    ) -> Arc<[(ReplayEqualitySource, ReplayEqualitySource)]> {
+        for (left, right) in equalities {
+            for source in [left, right] {
+                if let ReplayEqualitySource::Constant(endpoint) = source {
+                    assert!(
+                        !endpoint.term.is_missing(),
+                        "rule equality constant term is missing"
+                    );
+                    assert_eq!(
+                        self.replay_term(endpoint.term).map(|term| term.sort()),
+                        Some(endpoint.sort),
+                        "rule equality constant has the wrong replay sort"
+                    );
+                }
+            }
+        }
+
+        let mut recipes = self.0.rule_equality_recipes.write().unwrap();
+        if let Some(existing) = recipes.get(&rule) {
+            assert_eq!(
+                existing.as_ref(),
+                equalities,
+                "one causal rule registered inconsistent equality recipes"
+            );
+            return Arc::clone(existing);
+        }
+        let recipe: Arc<[(ReplayEqualitySource, ReplayEqualitySource)]> = equalities.into();
+        recipes.insert(rule, Arc::clone(&recipe));
+        recipe
+    }
+
     pub(crate) fn pending_native_lease(&self, wave: CausalWave) -> PendingNativeLease {
         self.0.open_native_leases.fetch_add(1, Ordering::Relaxed);
         PendingNativeLease(Arc::new(PendingNativeLeaseInner {
@@ -4877,6 +5892,24 @@ impl CausalReceipts {
         kind: ReplayTableKind,
     ) -> Result<(), &'static str> {
         self.0.replay_terms.register_table_kind(table, kind)
+    }
+
+    pub fn register_table_key_columns(
+        &self,
+        table: TableId,
+        key_columns: usize,
+    ) -> Result<(), &'static str> {
+        let layout = self
+            .0
+            .replay_terms
+            .table_layout(table)
+            .ok_or("register table layout before key arity")?;
+        if key_columns > layout.len() {
+            return Err("table key arity exceeds the replay layout");
+        }
+        self.0
+            .replay_terms
+            .register_table_key_columns(table, key_columns)
     }
 
     pub fn register_table_constructor(
@@ -6125,9 +7158,9 @@ impl CausalReceipts {
                             op,
                         });
                     }
-                    CheckTermSource::Current => {
+                    CheckTermSource::Constant { .. } | CheckTermSource::Current => {
                         return Err(
-                            "current-value check endpoint was requested as a premise term".into(),
+                            "non-premise check endpoint was requested as a premise term".into()
                         );
                     }
                 }
@@ -6331,6 +7364,7 @@ impl CausalReceipts {
         wave: CausalWave,
         premises: &[FactId],
         equalities: &[(EqualityEndpoint, EqualityEndpoint)],
+        equality_occurrences: &[(CheckEndpointOccurrence, CheckEndpointOccurrence)],
         as_of_edges: EqualityEdgeCount,
     ) -> Result<(), &'static str> {
         if premises.iter().any(|fact| fact.is_missing()) {
@@ -6359,6 +7393,21 @@ impl CausalReceipts {
                 }
             }
         }
+        if equality_occurrences.len() != equalities.len() {
+            return Err("check equality endpoints and occurrence metadata have different arities");
+        }
+        for occurrence in equality_occurrences
+            .iter()
+            .flat_map(|(left, right)| [left, right])
+        {
+            let fact = match occurrence {
+                CheckEndpointOccurrence::FactCell(cell) => Some(cell.fact),
+                CheckEndpointOccurrence::Current => None,
+            };
+            if fact.is_some_and(FactId::is_missing) {
+                return Err("check equality occurrence has a missing premise FactId");
+            }
+        }
         if self.0.next_equality.load(Ordering::Acquire) != as_of_edges.get() {
             return Err("check equality history changed after its exact cutoff was captured");
         }
@@ -6375,6 +7424,7 @@ impl CausalReceipts {
         if let Some(current) = arena.check_roots.get(&check) {
             if current.premises.len() != premises.len()
                 || current.equalities.len() != equalities.len()
+                || current.equality_occurrences.as_ref() != equality_occurrences
                 || current
                     .equalities
                     .iter()
@@ -6397,6 +7447,7 @@ impl CausalReceipts {
                 position,
                 premises: premises.into(),
                 equalities: equalities.into(),
+                equality_occurrences: equality_occurrences.into(),
                 as_of_edges,
             },
         );
@@ -7007,7 +8058,136 @@ impl CausalReceipts {
         );
     }
 
+    /// Borrow a checked view of finalized raw receipts. The closure cannot
+    /// return references tied to the arena guards, so no receipt storage or
+    /// static recipe can escape its read boundary.
+    pub fn with_view<R>(
+        &self,
+        inspect: impl for<'view> FnOnce(&mut CausalReceiptView<'view>) -> Result<R, ReceiptViewError>,
+    ) -> Result<R, ReceiptViewError> {
+        if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
+            return Err(ReceiptViewError::NotFinalized("a rule execution panicked"));
+        }
+        if self.0.open_fragments.load(Ordering::Acquire) != 0 {
+            return Err(ReceiptViewError::NotFinalized(
+                "worker receipt fragments remain open",
+            ));
+        }
+        if self.0.open_native_leases.load(Ordering::Acquire) != 0 {
+            return Err(ReceiptViewError::NotFinalized(
+                "transactional native mutations remain queued",
+            ));
+        }
+        if self.0.abandoned_fragments.load(Ordering::Acquire) != 0 {
+            return Err(ReceiptViewError::NotFinalized(
+                "a worker receipt fragment was abandoned",
+            ));
+        }
+        let recipes = self
+            .0
+            .rule_binding_recipes
+            .read()
+            .map_err(|_| ReceiptViewError::Poisoned("rule binding recipes"))?;
+        let equality_recipes = self
+            .0
+            .rule_equality_recipes
+            .read()
+            .map_err(|_| ReceiptViewError::Poisoned("rule equality recipes"))?;
+        let term_recipes = self
+            .0
+            .static_term_recipes
+            .lock()
+            .map_err(|_| ReceiptViewError::Poisoned("static term recipes"))?;
+        let arena = self
+            .0
+            .arena
+            .lock()
+            .map_err(|_| ReceiptViewError::Poisoned("receipt arena"))?;
+        if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0
+            || self.0.open_fragments.load(Ordering::Acquire) != 0
+            || self.0.open_native_leases.load(Ordering::Acquire) != 0
+            || self.0.abandoned_fragments.load(Ordering::Acquire) != 0
+        {
+            return Err(ReceiptViewError::NotFinalized(
+                "capture state changed while acquiring the receipt view",
+            ));
+        }
+        let expected = [
+            (
+                arena.published_facts,
+                self.0.next_fact.load(Ordering::Acquire),
+                "fact",
+            ),
+            (
+                arena.published_matches,
+                self.0.next_rule_match.load(Ordering::Acquire),
+                "match",
+            ),
+            (
+                arena.published_causes,
+                self.0.next_cause_draft.load(Ordering::Acquire),
+                "cause",
+            ),
+            (
+                arena.published_equalities,
+                self.0.next_equality.load(Ordering::Acquire),
+                "applied equality",
+            ),
+        ];
+        if let Some((_, _, kind)) = expected
+            .into_iter()
+            .find(|(published, allocated, _)| published != allocated)
+        {
+            return Err(ReceiptViewError::NotFinalized(match kind {
+                "fact" => "fact publication has an ID hole",
+                "match" => "match publication has an ID hole",
+                "cause" => "cause publication has an ID hole",
+                _ => "applied-equality publication has an ID hole",
+            }));
+        }
+        let history_boundary = HistoryPosition::new(self.0.next_history.load(Ordering::Acquire));
+        let expected_history = arena
+            .published_facts
+            .checked_add(arena.published_equalities)
+            .and_then(|events| events.checked_add(arena.rekeys.len() as u64))
+            .and_then(|events| events.checked_add(arena.removals.len() as u64))
+            .and_then(|events| events.checked_add(arena.check_roots.len() as u64))
+            .ok_or_else(|| ReceiptViewError::Invalid("receipt history count overflow".into()))?;
+        if history_boundary.get() != expected_history {
+            return Err(ReceiptViewError::NotFinalized(
+                "global history publication has an ID hole",
+            ));
+        }
+        let projector = TermProjector::new(
+            &arena,
+            &recipes,
+            &term_recipes,
+            &self.0.replay_terms,
+            &self.0.next_term,
+        );
+        let mut view = CausalReceiptView {
+            arena: &arena,
+            binding_recipes: &recipes,
+            equality_recipes: &equality_recipes,
+            term_recipes: &term_recipes,
+            replay_terms: &self.0.replay_terms,
+            projector,
+            history_boundary,
+            equality_indices: HashMap::default(),
+        };
+        inspect(&mut view)
+    }
+
+    pub fn compatibility_projection_reads(&self) -> u64 {
+        self.0
+            .compatibility_projection_reads
+            .load(Ordering::Acquire)
+    }
+
     pub fn snapshot(&self) -> ReceiptSnapshot {
+        self.0
+            .compatibility_projection_reads
+            .fetch_add(1, Ordering::Relaxed);
         assert_eq!(
             self.0.poisoned_rule_executions.load(Ordering::Acquire),
             0,
@@ -7300,6 +8480,9 @@ impl CausalReceipts {
 
     /// Dense O(1) lookup used by focused identity canaries.
     pub fn fact_record(&self, id: FactId) -> Option<FactRecord> {
+        self.0
+            .compatibility_projection_reads
+            .fetch_add(1, Ordering::Relaxed);
         if id.is_missing() {
             return None;
         }

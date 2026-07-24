@@ -1,6 +1,10 @@
 #![doc = include_str!("lib.md")]
 pub mod api;
 pub mod ast;
+// Checkpoint 2A deliberately has no production caller until replay consumes
+// the owned passive slice in the next checkpoint.
+#[allow(dead_code)]
+mod causal_slice;
 #[cfg(feature = "bin")]
 mod cli;
 mod command_macro;

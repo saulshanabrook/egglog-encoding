@@ -40,16 +40,21 @@ pub use query::{
     CachedPlan, QueryBuilder, QueryError, RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
 };
 pub use receipts::{
-    CausalReceipts, CausalWave, CauseDraftId, CheckEndpointSource, CheckReceiptSpec, CheckRoot,
+    AppliedEqualityId, CausalReceiptTotals, CausalReceiptView, CausalReceipts, CausalWave,
+    CauseDraftId, CheckEndpointOccurrence, CheckEndpointSource, CheckReceiptSpec, CheckRoot,
     ContainerDependency, DeferredEqualityCause, EqComponentRef, EqLeafId, EqLeafRecord, EqNodeId,
     EqNodeRecord, EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint, EqualityLandmark,
-    EqualityReason, EqualityRecord, EqualitySupport, FactCause, FactId, FactRecord,
-    HistoryPosition, MatchRecord, MergeOriginSelector, NativeAliasRecord, PreparedRekey,
-    RebuildDependency, ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior,
-    ReceiptCauseRecord, ReceiptCauseRef, ReceiptCounters, ReceiptSnapshot, RemovalRecord,
-    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm,
-    ReplayTermCounters, ReplayTermId, RowOriginSiteId, RuleBindingSpec, RuleMatchId,
-    RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality, TypedEqualityProposal,
+    EqualityReason, EqualityRecord, EqualitySupport, FactCause, FactCellRef, FactId, FactRecord,
+    HistoricalFactCell, HistoryPosition, MatchRecord, MergeOriginSelector, NativeAliasRecord,
+    PreparedRekey, ProjectedAppliedEquality, RawAppliedEquality, RawEqualityEndpoint,
+    RawEqualitySupport, RawFactRecord, RawMatchRecord, RawReceiptCause, RawRekeyRecord,
+    RebuildDependency, ReceiptBindingSource, ReceiptCauseDependency, ReceiptCauseId,
+    ReceiptCausePrior, ReceiptCauseRecord, ReceiptCauseRef, ReceiptCounters, ReceiptEqualitySource,
+    ReceiptPremiseOccurrence, ReceiptSnapshot, ReceiptViewError, RekeyOutcome, RemovalRecord,
+    ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind,
+    ReplayTableSchema, ReplayTerm, ReplayTermCounters, ReplayTermId, RowOriginSiteId,
+    RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
+    TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};
