@@ -448,3 +448,19 @@ Clippy is green for this checkpoint after allowing the unrelated, pre-existing
 `prepare_dependencies` recursion-only parameter warning. No `./bench.py` run
 belongs to this checkpoint; the next recording measurement requires explicit
 continuation after review.
+
+#### Checkpoint A review follow-up
+
+Independent review found that the first green implementation compacted durable
+storage but still walked every logical binding during promotion and copied the
+lane's residual slice into `PreparedMatch`. The follow-up makes preparation
+proportional to the actual dependency payload: it validates each resolved
+premise `FactId` once, validates the already-dense residual slice for missing
+handles, and retains only the premise array in `PreparedMatch`. Promotion now
+copies residuals directly from the batch-owned lane slice into the provisional
+arena. It does not inspect `Premise` or `Constant` recipe entries.
+
+The unchanged core-relations suite again passed 147 unit tests and 2 doc tests,
+including the mixed-layout, exact-RHS, primitive-only Current, decomposed, and
+invalid-premise atomicity canaries. Scoped strict Clippy and formatting remain
+green. No benchmark was run for this review fix.

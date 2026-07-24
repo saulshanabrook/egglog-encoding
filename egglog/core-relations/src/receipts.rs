@@ -1624,6 +1624,7 @@ pub(crate) struct PendingMatchBatch {
     wave: CausalWave,
     first_native_ordinal: u64,
     premise_arity: usize,
+    residual_arity: usize,
     binding_sources: Arc<[ReplayBindingSource]>,
     premises: PendingPremises,
     current_terms: Box<[ReplayTermId]>,
@@ -1634,7 +1635,13 @@ pub(crate) struct PendingMatchBatch {
 
 struct PreparedMatch {
     premises: Box<[FactId]>,
-    residual_terms: Box<[ReplayTermId]>,
+}
+
+impl PendingMatchBatch {
+    fn residual_terms(&self, lane: usize) -> &[ReplayTermId] {
+        let start = lane * self.residual_arity;
+        &self.current_terms[start..start + self.residual_arity]
+    }
 }
 
 impl Drop for PendingMatchBatch {
@@ -2242,6 +2249,14 @@ impl ReceiptArena {
             .get(column)
             .copied()
             .filter(|term| !term.is_missing())
+    }
+
+    fn has_fact(&self, id: FactId) -> bool {
+        !id.is_missing()
+            && self
+                .facts
+                .get((id.get() - 1) as usize)
+                .is_some_and(Option::is_some)
     }
 
     fn fact_terms(&self, id: FactId) -> Option<(TableId, &[ReplayTermId])> {
@@ -4008,12 +4023,6 @@ impl CausalReceipts {
             lanes * premise_arity,
             "pending match premises must be dense and lane-aligned"
         );
-        let current_arity = Self::current_term_arity(binding_sources);
-        assert_eq!(
-            flat_current_terms.len(),
-            lanes * current_arity,
-            "pending current terms must be dense and lane-aligned"
-        );
         let first_native_ordinal = self.reserve_native_match_ordinals(lanes);
         let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
         self.pending_rule_batch_at(
@@ -4041,6 +4050,12 @@ impl CausalReceipts {
         lanes: usize,
     ) -> Arc<PendingMatchBatch> {
         assert!(first_native_ordinal > 0);
+        let residual_arity = Self::current_term_arity(&binding_sources);
+        assert_eq!(
+            flat_current_terms.len(),
+            lanes * residual_arity,
+            "pending current terms must be dense and lane-aligned"
+        );
         self.0.open_pending_batches.fetch_add(1, Ordering::Relaxed);
         Arc::new(PendingMatchBatch {
             receipts: self.clone(),
@@ -4048,6 +4063,7 @@ impl CausalReceipts {
             wave,
             first_native_ordinal,
             premise_arity,
+            residual_arity,
             binding_sources,
             premises: PendingPremises::Flat(flat_premises.into()),
             current_terms: flat_current_terms.into(),
@@ -4087,6 +4103,7 @@ impl CausalReceipts {
             wave,
             first_native_ordinal,
             premise_arity,
+            residual_arity: current_arity,
             binding_sources,
             premises: PendingPremises::Lazy {
                 resolver,
@@ -4125,6 +4142,7 @@ impl CausalReceipts {
             .prepare_pending_rule_match(batch, lane)
             .unwrap_or_else(|error| panic!("cannot promote pending rule match: {error}"));
         let premises = &prepared.premises;
+        let residual_terms = batch.residual_terms(lane);
 
         let match_id = MatchDraftId::new(ReceiptShared::alloc_u64(&self.0.next_match_draft, 1));
         let cause_id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
@@ -4135,8 +4153,8 @@ impl CausalReceipts {
         arena
             .provisional
             .residual_terms
-            .extend_from_slice(&prepared.residual_terms);
-        let residual_range = FlatRange::new(residual_start, prepared.residual_terms.len());
+            .extend_from_slice(residual_terms);
+        let residual_range = FlatRange::new(residual_start, residual_terms.len());
         arena.provisional.matches.install(
             match_id.get(),
             MatchDraft {
@@ -4156,13 +4174,13 @@ impl CausalReceipts {
             .causes
             .install(cause_id.get(), CauseDraft::Rule(match_id));
         arena.counters.premise_handles += premises.len() as u64;
-        arena.record_match_term_storage(batch.binding_sources.len(), prepared.residual_terms.len());
+        arena.record_match_term_storage(batch.binding_sources.len(), residual_terms.len());
         arena.counters.provisional_matches += 1;
         arena.add_live_bytes(
             mem::size_of::<MatchDraft>()
                 + mem::size_of::<CauseDraft>()
                 + premises.len() * mem::size_of::<FactId>()
-                + prepared.residual_terms.len() * mem::size_of::<ReplayTermId>(),
+                + mem::size_of_val(residual_terms),
         );
         cause_id
     }
@@ -4178,34 +4196,24 @@ impl CausalReceipts {
         );
         if batch.prepared[lane].get().is_none() {
             let premises = batch.premises.resolve(lane, batch.premise_arity);
-            let current_arity = Self::current_term_arity(&batch.binding_sources);
-            let current_start = lane * current_arity;
-            let current_terms = &batch.current_terms[current_start..current_start + current_arity];
             let arena = self.0.arena.lock().unwrap();
-            for source in batch.binding_sources.iter().copied() {
-                let term = match source {
-                    ReplayBindingSource::Premise { premise, column } => {
-                        let fact = premises[premise];
-                        arena.fact_term(fact, column).ok_or_else(|| {
-                            format!(
-                                "missing producer-installed ReplayTermId for {fact:?} column {column}"
-                            )
-                        })?
-                    }
-                    ReplayBindingSource::Current { residual, .. } => {
-                        current_terms
-                            [usize::try_from(residual).expect("residual term slot exceeds usize")]
-                    }
-                    ReplayBindingSource::Constant { term } => term,
-                };
-                if term.is_missing() {
-                    return Err("pending match prepared a missing ReplayTermId".into());
+            for fact in premises.iter().copied() {
+                if !arena.has_fact(fact) {
+                    return Err(format!(
+                        "pending match references unavailable premise {fact:?}"
+                    ));
                 }
             }
             drop(arena);
+            if batch
+                .residual_terms(lane)
+                .iter()
+                .any(|term| term.is_missing())
+            {
+                return Err("pending match prepared a missing residual ReplayTermId".into());
+            }
             let _ = batch.prepared[lane].set(PreparedMatch {
                 premises: premises.into_vec().into_boxed_slice(),
-                residual_terms: current_terms.into(),
             });
         }
         Ok(batch.prepared[lane]
