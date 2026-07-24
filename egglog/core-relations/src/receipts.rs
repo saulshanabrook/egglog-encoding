@@ -739,10 +739,18 @@ impl RuleReceiptSpec {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PremiseOccurrence {
+    pub(crate) premise: usize,
+    pub(crate) column: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReplayBindingSource {
     Premise {
-        premise: usize,
-        column: usize,
+        /// Every source-ordered body cell containing this variable. The first
+        /// occurrence remains the public binding representative; later
+        /// occurrences are historical equality obligations for slicing.
+        occurrences: Arc<[PremiseOccurrence]>,
     },
     Current {
         variable: Variable,
@@ -753,6 +761,20 @@ pub(crate) enum ReplayBindingSource {
     Constant {
         term: ReplayTermId,
     },
+}
+
+impl ReplayBindingSource {
+    pub(crate) fn premise_occurrences(&self) -> Option<&[PremiseOccurrence]> {
+        match self {
+            Self::Premise { occurrences } => Some(occurrences),
+            Self::Current { .. } | Self::Constant { .. } => None,
+        }
+    }
+
+    fn representative_premise(&self) -> Option<PremiseOccurrence> {
+        self.premise_occurrences()
+            .and_then(|occurrences| occurrences.first().copied())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2883,10 +2905,10 @@ impl CausalReceipts {
     ) -> Arc<[ReplayBindingSource]> {
         let mut next_residual = 0u32;
         for source in sources {
-            match *source {
+            match source {
                 ReplayBindingSource::Current { residual, .. } => {
                     assert_eq!(
-                        residual, next_residual,
+                        *residual, next_residual,
                         "rule receipt Current slots must be dense in source order"
                     );
                     next_residual += 1;
@@ -2894,7 +2916,12 @@ impl CausalReceipts {
                 ReplayBindingSource::Constant { term } => {
                     assert!(!term.is_missing(), "rule receipt constant term is missing");
                 }
-                ReplayBindingSource::Premise { .. } => {}
+                ReplayBindingSource::Premise { occurrences } => {
+                    assert!(
+                        !occurrences.is_empty(),
+                        "rule receipt premise binding has no occurrences"
+                    );
+                }
             }
         }
 
@@ -4258,20 +4285,24 @@ impl CausalReceipts {
             let current_start = offset * current_arity;
             let current_terms = &flat_current_terms[current_start..current_start + current_arity];
             for source in binding_sources.iter() {
-                let term = match *source {
-                    ReplayBindingSource::Premise { premise, column } => {
-                        let fact = premises[premise];
-                        arena.fact_term(fact, column).unwrap_or_else(|| {
+                let term = match source {
+                    ReplayBindingSource::Premise { .. } => {
+                        let representative = source
+                            .representative_premise()
+                            .expect("premise binding has no representative occurrence");
+                        let fact = premises[representative.premise];
+                        arena.fact_term(fact, representative.column).unwrap_or_else(|| {
                             panic!(
-                                "missing producer-installed ReplayTermId for {fact:?} column {column}"
+                                "missing producer-installed ReplayTermId for {fact:?} column {}",
+                                representative.column
                             )
                         })
                     }
                     ReplayBindingSource::Current { residual, .. } => {
                         current_terms
-                            [usize::try_from(residual).expect("residual term slot exceeds usize")]
+                            [usize::try_from(*residual).expect("residual term slot exceeds usize")]
                     }
-                    ReplayBindingSource::Constant { term } => term,
+                    ReplayBindingSource::Constant { term } => *term,
                 };
                 assert!(
                     !term.is_missing(),
@@ -4754,18 +4785,28 @@ impl CausalReceipts {
                 let terms = recipe
                     .iter()
                     .map(|source| {
-                        let term = match *source {
-                            ReplayBindingSource::Premise { premise, column } => arena
-                                .fact_term(premises[premise], column)
+                        let term = match source {
+                            ReplayBindingSource::Premise { .. } => {
+                                let representative = source
+                                    .representative_premise()
+                                    .expect("premise binding has no representative occurrence");
+                                arena
+                                .fact_term(
+                                    premises[representative.premise],
+                                    representative.column,
+                                )
                                 .unwrap_or_else(|| {
                                     panic!(
-                                        "durable match premise {premise} column {column} lost its ReplayTermId"
+                                        "durable match premise {} column {} lost its ReplayTermId",
+                                        representative.premise, representative.column
                                     )
-                                }),
-                            ReplayBindingSource::Current { residual, .. } => residual_terms
-                                [usize::try_from(residual)
-                                    .expect("residual term slot exceeds usize")],
-                            ReplayBindingSource::Constant { term } => term,
+                                })
+                            }
+                            ReplayBindingSource::Current { residual, .. } => {
+                                residual_terms[usize::try_from(*residual)
+                                    .expect("residual term slot exceeds usize")]
+                            }
+                            ReplayBindingSource::Constant { term } => *term,
                         };
                         assert!(
                             !term.is_missing(),
@@ -4994,12 +5035,18 @@ mod tests {
 
         let binding_sources = [
             ReplayBindingSource::Premise {
-                premise: 0,
-                column: 0,
+                occurrences: [PremiseOccurrence {
+                    premise: 0,
+                    column: 0,
+                }]
+                .into(),
             },
             ReplayBindingSource::Premise {
-                premise: 0,
-                column: 1,
+                occurrences: [PremiseOccurrence {
+                    premise: 0,
+                    column: 1,
+                }]
+                .into(),
             },
         ];
         let [(lane, rule_cause)] = receipts
@@ -5085,8 +5132,11 @@ mod tests {
 
         let binding_sources = [
             ReplayBindingSource::Premise {
-                premise: 0,
-                column: 0,
+                occurrences: [PremiseOccurrence {
+                    premise: 0,
+                    column: 0,
+                }]
+                .into(),
             },
             ReplayBindingSource::Constant {
                 term: constant_term,
@@ -5146,8 +5196,11 @@ mod tests {
         let sort = ReplaySortId::new(1);
         let sources = [
             ReplayBindingSource::Premise {
-                premise: 0,
-                column: 1,
+                occurrences: [PremiseOccurrence {
+                    premise: 0,
+                    column: 1,
+                }]
+                .into(),
             },
             ReplayBindingSource::Current {
                 variable: Variable::new(2),

@@ -404,12 +404,12 @@ impl Bindings {
             .expect("native match ordinals must be reserved when head execution starts");
         let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
         for lane in 0..self.matches {
-            for source in binding_sources.iter().copied() {
+            for source in binding_sources.iter() {
                 if let ReplayBindingSource::Current { variable, sort, .. } = source {
                     let _ = sort;
                     let term = state
                         .produced_terms
-                        .get(variable)
+                        .get(*variable)
                         .and_then(|terms| terms.get(lane))
                         .copied()
                         .filter(|term| !term.is_missing())
@@ -486,12 +486,12 @@ impl Bindings {
             .as_ref()?
             .binding_sources
             .iter()
-            .find_map(|source| match *source {
+            .find_map(|source| match source {
                 ReplayBindingSource::Current {
                     variable: current,
                     sort,
                     ..
-                } if current == variable => Some(sort),
+                } if *current == variable => Some(*sort),
                 _ => None,
             })
     }

@@ -2566,8 +2566,11 @@ fn pending_union_preparation_is_atomic_before_receipt_publication() {
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
     let sources = [crate::receipts::ReplayBindingSource::Premise {
-        premise: 0,
-        column: 0,
+        occurrences: [crate::receipts::PremiseOccurrence {
+            premise: 0,
+            column: 0,
+        }]
+        .into(),
     }];
     let pending =
         receipts.pending_rule_batch(199, wave, 1, &sources, &[valid_fact, missing_fact], &[], 2);
@@ -4457,6 +4460,77 @@ fn causal_receipt_metadata_rejects_binding_an_ignored_column() {
     action.build_with_receipts(
         "ignored-column",
         RuleReceiptSpec::new(61, [atom], [ignored]),
+    );
+}
+
+#[test]
+fn causal_receipt_binding_recipe_keeps_every_premise_occurrence() {
+    let mut db = Database::default();
+    let repeated = db.add_table(
+        SortedWritesTable::new(
+            2,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let later = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(212);
+    receipts
+        .register_table_layout(repeated, &[Some(sort), Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_layout(later, &[Some(sort)])
+        .unwrap();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let x = query.new_var_named("x");
+    let repeated_atom = query
+        .add_atom(repeated, &[x.into(), x.into()], &[])
+        .unwrap();
+    let later_atom = query.add_atom(later, &[x.into()], &[]).unwrap();
+    query.build().build_with_receipts(
+        "all-premise-occurrences",
+        RuleReceiptSpec::new(212, [repeated_atom, later_atom], [x]),
+    );
+    let rules = rules.build();
+    let receipt = rules
+        .actions
+        .iter()
+        .next()
+        .and_then(|(_, action)| action.receipt.as_ref())
+        .expect("rule action must retain its receipt recipe");
+    let occurrences = receipt.binding_sources[0]
+        .premise_occurrences()
+        .expect("body-bound variable must have premise occurrences");
+    assert_eq!(
+        occurrences
+            .iter()
+            .map(|occurrence| (occurrence.premise, occurrence.column))
+            .collect::<Vec<_>>(),
+        [(0, 0), (0, 1), (1, 0)],
+        "duplicate columns and later atoms are all part of the static recipe"
     );
 }
 

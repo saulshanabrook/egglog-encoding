@@ -10,8 +10,8 @@ use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::receipts::{
-    ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseSlot,
-    ReplayBindingSource,
+    ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
+    PremiseSlot, ReplayBindingSource,
 };
 use crate::{
     BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, ExternalFunctionId, PoolSet,
@@ -726,25 +726,36 @@ impl RuleBuilder<'_, '_> {
                         binding_sources.push(ReplayBindingSource::Constant { term: *term });
                         continue;
                     };
-                    let premise_cell = spec
-                        .premises
-                        .iter()
-                        .enumerate()
-                        .find_map(|(premise, atom)| {
-                            self.qb.query.atoms[*atom]
-                                .get_col(*var)
-                                .map(|col| (premise, col.index()))
-                        });
-                    let source = if let Some((premise, column)) = premise_cell {
-                        if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
-                            let atom = spec.premises[premise];
-                            let table = self.qb.query.atoms[atom].table;
-                            assert!(
-                                receipts.table_column_sort(table, column).is_some(),
-                                "receipt variable {var:?} selects non-replayable table column {column}"
-                            );
+                    let mut occurrences = Vec::new();
+                    for (premise, atom) in spec.premises.iter().copied().enumerate() {
+                        let Some(subatom) = var_info[*var]
+                            .occurrences
+                            .iter()
+                            .find(|occurrence| occurrence.atom == atom)
+                        else {
+                            continue;
+                        };
+                        let table = self.qb.query.atoms[atom].table;
+                        for column in subatom.vars.iter().copied() {
+                            if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
+                                assert!(
+                                    receipts
+                                        .table_column_sort(table, column.index())
+                                        .is_some(),
+                                    "receipt variable {var:?} selects non-replayable table column {}",
+                                    column.index()
+                                );
+                            }
+                            occurrences.push(PremiseOccurrence {
+                                premise,
+                                column: column.index(),
+                            });
                         }
-                        ReplayBindingSource::Premise { premise, column }
+                    }
+                    let source = if !occurrences.is_empty() {
+                        ReplayBindingSource::Premise {
+                            occurrences: occurrences.into(),
+                        }
                     } else {
                         let sort = current_sort.unwrap_or_else(|| {
                                 panic!(
