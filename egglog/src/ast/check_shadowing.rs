@@ -7,6 +7,12 @@ pub(crate) struct Names {
 }
 
 impl Names {
+    pub(crate) fn contains_canonical(&self, canonical: &str) -> bool {
+        self.seen.contains_key(canonical)
+            || self.seen.contains_key(&format!("${canonical}"))
+            || self.global_aliases.contains_key(canonical)
+    }
+
     fn check(&mut self, name: String, new: Span) -> Result<(), Error> {
         if let Some(old) = self.seen.get(&name) {
             Err(Error::Shadowing(name, old.clone(), new))

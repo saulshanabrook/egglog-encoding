@@ -513,6 +513,7 @@ fn canonical_symbol(name: &str) -> &str {
 }
 
 fn validate_alias_namespace(
+    egraph: &EGraph,
     causal: &CausalState,
     max_aliases: usize,
 ) -> Result<(), CausalReplayError> {
@@ -533,7 +534,7 @@ fn validate_alias_namespace(
     }
     for index in 0..max_aliases {
         let canonical = format!("__causal_replay_{index}");
-        if occupied.contains(&canonical) {
+        if occupied.contains(&canonical) || egraph.names.contains_canonical(&canonical) {
             return Err(CausalReplayError::Invalid(format!(
                 "generated checked alias `${canonical}` collides with a user symbol"
             )));
@@ -689,7 +690,7 @@ fn build_owned(
             bindings: bindings.into_boxed_slice(),
         });
     }
-    validate_alias_namespace(causal, next_alias)?;
+    validate_alias_namespace(egraph, causal, next_alias)?;
     let term_nodes = std::mem::take(&mut terms.nodes);
     drop(terms);
 
@@ -937,12 +938,19 @@ mod tests {
 
     #[test]
     fn owned_ir_rereads_only_selected_input_rows_and_checks_digest() {
-        let dir = temp_fact_dir();
-        let file = dir.join("rows.tsv");
+        static NEXT_RELATIVE: AtomicU64 = AtomicU64::new(0);
+        let relative_dir = PathBuf::from("target").join(format!(
+            "egglog-causal-replay-relative-{}-{}",
+            std::process::id(),
+            NEXT_RELATIVE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let dir = std::env::current_dir().unwrap().join(&relative_dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = relative_dir.join("rows.tsv");
         fs::write(&file, "drop\nkeep\n").unwrap();
 
         let mut egraph = EGraph::default();
-        egraph.fact_directory = Some(dir.clone());
+        egraph.fact_directory = Some(relative_dir);
         serial_pool()
             .install(|| egraph.enable_causal_receipts())
             .unwrap();
@@ -954,6 +962,16 @@ mod tests {
                  (check (R \"keep\"))",
             )
             .unwrap();
+        assert!(
+            egraph
+                .causal_state
+                .as_ref()
+                .unwrap()
+                .input_commands
+                .values()
+                .all(|entry| entry.resolved_path.is_absolute()),
+            "capture must freeze the effective input path independently of later cwd changes"
+        );
         let slice = slice_all_checks(&egraph).unwrap();
         let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
         assert_eq!(ir.stats.input_rows, 1);
@@ -972,6 +990,32 @@ mod tests {
             matches!(error, CausalReplayError::Input(message) if message.contains("changed after receipt capture"))
         );
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn owned_ir_rejects_checked_alias_collisions_with_any_declaration() {
+        let mut egraph = EGraph::default();
+        serial_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(function $__causal_replay_0 (i64) i64 :no-merge)
+                 (datatype E (A i64))
+                 (relation Seed (E))
+                 (relation Out (E))
+                 (Seed (A 1))
+                 (rule ((Seed x)) ((Out x)) :name \"step\")
+                 (run 1)
+                 (check (Out (A 1)))",
+            )
+            .unwrap();
+        let slice = slice_all_checks(&egraph).unwrap();
+        let error = build_causal_replay_ir(&egraph, &slice).unwrap_err();
+        assert!(
+            matches!(error, CausalReplayError::Invalid(message) if message.contains("collides with a user symbol"))
+        );
     }
 
     #[test]

@@ -1172,7 +1172,7 @@ enum PreparedSchedule {
     Saturate(Span, Box<PreparedSchedule>),
     Repeat(Span, usize, Box<PreparedSchedule>),
     Run(Span, ResolvedRunConfig),
-    RunRule(PreparedRunRule),
+    RunRule(Vec<PreparedRunRule>),
     Sequence(Span, Vec<PreparedSchedule>),
 }
 
@@ -1192,7 +1192,17 @@ impl Display for PreparedSchedule {
                 write!(f, "(repeat {limit} {schedule})")
             }
             PreparedSchedule::Run(_, config) => write!(f, "{config}"),
-            PreparedSchedule::RunRule(prepared) => write!(f, "{}", prepared.config),
+            PreparedSchedule::RunRule(prepared) => write!(
+                f,
+                "(run-rule {})",
+                ListDisplay(
+                    &prepared
+                        .iter()
+                        .map(|prepared| &prepared.config)
+                        .collect::<Vec<_>>(),
+                    " "
+                )
+            ),
             PreparedSchedule::Sequence(_, schedules) => {
                 write!(f, "(seq {})", ListDisplay(schedules, " "))
             }
@@ -2111,9 +2121,12 @@ impl EGraph {
             ResolvedSchedule::Run(span, config) => {
                 Ok(PreparedSchedule::Run(span.clone(), config.clone()))
             }
-            ResolvedSchedule::RunRule(span, config) => {
-                let prepared = self.prepare_run_rule(span, config)?;
-                temporary_rules.push(prepared.rule_id);
+            ResolvedSchedule::RunRule(span, configs) => {
+                let prepared = configs
+                    .iter()
+                    .map(|config| self.prepare_run_rule(span, config))
+                    .collect::<Result<Vec<_>, _>>()?;
+                temporary_rules.extend(prepared.iter().map(|prepared| prepared.rule_id));
                 Ok(PreparedSchedule::RunRule(prepared))
             }
             ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
@@ -2138,7 +2151,13 @@ impl EGraph {
     fn run_prepared_schedule(&mut self, sched: &PreparedSchedule) -> Result<RunReport, Error> {
         match sched {
             PreparedSchedule::Run(span, config) => self.run_rules(span, config),
-            PreparedSchedule::RunRule(prepared) => self.run_prepared_rule(prepared),
+            PreparedSchedule::RunRule(prepared) => {
+                let mut report = RunReport::default();
+                for firing in prepared {
+                    report.union(self.run_prepared_rule(firing)?);
+                }
+                Ok(report)
+            }
             PreparedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();
                 for _i in 0..*limit {
@@ -2210,9 +2229,20 @@ impl EGraph {
                 Ruleset::Combined(_) => None,
             })
             .ok_or_else(|| Error::NoSuchRule(config.rule.clone(), span.clone()))?;
+        let selectors = config
+            .bindings
+            .iter()
+            .map(|(target, value)| {
+                ResolvedFact::Eq(
+                    value.span(),
+                    ResolvedExpr::Var(value.span(), target.clone()),
+                    value.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         let core_rule = specialize_core_rule(
             &core_rule,
-            &config.selectors,
+            &selectors,
             &substitutions,
             &self.type_info,
             &mut self.parser.symbol_gen,
@@ -2246,7 +2276,7 @@ impl EGraph {
         self.begin_causal_wave()?;
         let outcome = self.backend.run_rule_guarded(GuardedRuleRun {
             rule: prepared.rule_id,
-            expected_matches: prepared.config.expect,
+            expected_matches: Some(1),
         });
 
         let outcome = outcome.map_err(|error| Error::BackendError(error.to_string()))?;
@@ -3681,6 +3711,13 @@ impl EGraph {
             .clone();
         let parsed_file =
             Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
+        let resolved_input_path = if parsed_file.path.is_absolute() {
+            parsed_file.path.clone()
+        } else {
+            std::env::current_dir()
+                .map_err(|error| Error::IoError(parsed_file.path.clone(), error, span.clone()))?
+                .join(&parsed_file.path)
+        };
         let backend_id = self.functions[func_name].backend_id;
         let unit_val = self.backend.base_values().get(());
         let pending_input_catalog = self.causal_state.as_mut().map(|causal| {
@@ -3695,7 +3732,7 @@ impl EGraph {
                     command: catalog,
                     function: func_name.to_owned(),
                     file: file.clone(),
-                    resolved_path: parsed_file.path.clone(),
+                    resolved_path: resolved_input_path,
                     digest: parsed_file.digest,
                     unsupported: causal
                         .has_run
@@ -6763,7 +6800,7 @@ mod tests {
                  (relation S (i64))\
                  (R 1)\
                  (rule ((R x)) ((S x)) :name \"copy\")\
-                 (run-schedule (run-rule \"copy\" :bind ((x 1)) :expect 1))",
+                 (run-schedule (run-rule (\"copy\" ((x 1)))))",
             )
             .unwrap_err();
         assert!(
@@ -7068,7 +7105,7 @@ mod tests {
         // they neither grow the cache nor take rule-owned references.
         for _ in 0..3 {
             egraph
-                .parse_and_run_program(None, r#"(run-schedule (run-rule "owns-panic" :expect 1))"#)
+                .parse_and_run_program(None, r#"(run-schedule (run-rule ("owns-panic" ())))"#)
                 .unwrap();
             assert_eq!(egraph.unstable_fn_panic_ids.len(), 1);
             assert_eq!(egraph.unstable_fn_panic_ids["id"], panic_id);
