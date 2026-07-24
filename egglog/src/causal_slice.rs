@@ -134,6 +134,8 @@ pub(crate) enum CausalSliceError {
     Receipt(#[from] ReceiptViewError),
     #[error("causal slicing requires the concrete main bridge backend")]
     UnsupportedBackend,
+    #[error("causal slicing cannot use a poisoned capture: {0}")]
+    Poisoned(String),
     #[error("selected causal support is missing {kind} {id}")]
     MissingSupport { kind: &'static str, id: u64 },
 }
@@ -943,6 +945,12 @@ fn slice_all_view(view: &mut CausalReceiptView<'_>) -> Result<CausalSlice, Recei
 }
 
 pub(crate) fn slice_check(egraph: &EGraph, check: u32) -> Result<CausalSlice, CausalSliceError> {
+    egraph
+        .causal_state
+        .as_ref()
+        .ok_or(CausalSliceError::UnsupportedBackend)?
+        .ensure_healthy()
+        .map_err(|error| CausalSliceError::Poisoned(error.to_string()))?;
     let bridge = egraph
         .backend
         .as_any()
@@ -954,6 +962,12 @@ pub(crate) fn slice_check(egraph: &EGraph, check: u32) -> Result<CausalSlice, Ca
 }
 
 pub(crate) fn slice_all_checks(egraph: &EGraph) -> Result<CausalSlice, CausalSliceError> {
+    egraph
+        .causal_state
+        .as_ref()
+        .ok_or(CausalSliceError::UnsupportedBackend)?
+        .ensure_healthy()
+        .map_err(|error| CausalSliceError::Poisoned(error.to_string()))?;
     let bridge = egraph
         .backend
         .as_any()

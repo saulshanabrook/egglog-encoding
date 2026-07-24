@@ -73,6 +73,7 @@ pub mod proof {
 }
 use scheduler::{SchedulerId, SchedulerRecord};
 pub use serialize::{SerializeConfig, SerializeOutput, SerializedNode};
+use sha2::{Digest, Sha256};
 use sort::*;
 use std::any::{Any, TypeId};
 use std::fmt::{Debug, Display, Formatter};
@@ -387,14 +388,96 @@ struct CausalState {
     next_source: u64,
     next_check: u32,
     next_wave: u64,
-    /// Stable replay catalog: ruleset, rule name, then source-ordered
-    /// ordinary variable name and sort pairs.
-    rule_catalog: Vec<(String, String, Box<[(String, String)]>)>,
+    /// Graph-neutral normalized commands in their true expanded execution
+    /// order. These commands never retain an `ArcSort`, backend id, or runtime
+    /// value from the recording graph.
+    command_catalog: Vec<CausalCatalogCommand>,
+    /// Stable replay catalog indexed by the causal rule ordinal carried by
+    /// native match receipts.
+    rule_catalog: Vec<CausalRuleCatalogEntry>,
+    /// Exact command and direct immutable-global dependencies for source
+    /// actions. Input rows use `input_commands` because their physical line is
+    /// already part of `SourceRef`.
+    source_commands: HashMap<SourceRef, CausalSourceCatalogEntry>,
+    /// `(input ...)` source-command ordinal to immutable file identity and
+    /// normalized command. Physical rows remain cold and are reread only for
+    /// selected `SourceRef::InputRow`s.
+    input_commands: HashMap<u64, CausalInputCatalogEntry>,
+    /// Exact normalized command for each successful recorded check.
+    check_commands: HashMap<u32, usize>,
+    /// Command currently crossing the execution boundary. It is set only by
+    /// `process_program_internal` and consumed synchronously by receipt ids.
+    active_command: Option<ActiveCausalCommand>,
+    /// Typechecking is stateful in the current frontend (sort declarations and
+    /// primitive registration mutate the graph). This bit grants that mutation
+    /// only to the normalized `run_program` resolution seam; public
+    /// `resolve_program` is rejected after capture starts.
+    resolving_command: bool,
+    active_rule_anonymous: Option<bool>,
+    immutable_globals: HashMap<String, SourceRef>,
+    has_run: bool,
+    /// Once a command crosses the native execution boundary and then fails,
+    /// its backend effects cannot be rolled back independently of the graph.
+    /// Keep the exact history, consume every reserved identity, and make the
+    /// capture unusable instead of pretending the frontend catalog rolled the
+    /// command back.
+    poisoned: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct CausalCatalogCommand {
+    command: Command,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ActiveCausalCommand {
+    command: usize,
+}
+
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // Consumed by the next, owned replay-IR checkpoint.
+struct CausalRuleCatalogEntry {
+    ruleset: String,
+    native_name: String,
+    replay_name: String,
+    variables: Box<[(String, String)]>,
+    command: usize,
+}
+
+#[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
+#[derive(Clone, Debug)]
+struct CausalInputCatalogEntry {
+    command: usize,
+    function: String,
+    file: String,
+    resolved_path: PathBuf,
+    digest: [u8; 32],
+    unsupported: Option<String>,
+}
+
+#[allow(dead_code)] // consumed by the owned replay IR in the next checkpoint
+#[derive(Clone, Debug)]
+struct CausalSourceCatalogEntry {
+    command: usize,
+    dependencies: Box<[SourceRef]>,
+    unsupported: Option<String>,
+}
+
+struct CausalSourceAnalysis {
+    dependencies: Box<[SourceRef]>,
+    produced_global: Option<String>,
+    unsupported: Option<String>,
 }
 
 struct ParsedInputRow {
     line: u64,
     literals: Vec<Literal>,
+}
+
+struct ParsedInputFile {
+    path: PathBuf,
+    digest: [u8; 32],
+    rows: Vec<ParsedInputRow>,
 }
 
 impl Default for CausalState {
@@ -405,7 +488,17 @@ impl Default for CausalState {
             next_source: 0,
             next_check: 0,
             next_wave: 1,
+            command_catalog: Vec::new(),
             rule_catalog: Vec::new(),
+            source_commands: HashMap::default(),
+            input_commands: HashMap::default(),
+            check_commands: HashMap::default(),
+            active_command: None,
+            resolving_command: false,
+            active_rule_anonymous: None,
+            immutable_globals: HashMap::default(),
+            has_run: false,
+            poisoned: None,
         };
         for name in ["Unit", "String", "bool", "i64", "f64"] {
             state.sort_id(name);
@@ -641,16 +734,53 @@ impl CausalState {
         SourceRef::Synthetic(self.next_source_ordinal())
     }
 
+    fn register_source(&mut self, source: SourceRef, analysis: CausalSourceAnalysis) {
+        let command = self
+            .active_command
+            .expect("causal source receipt requires an active catalog command")
+            .command;
+        self.source_commands.insert(
+            source.clone(),
+            CausalSourceCatalogEntry {
+                command,
+                dependencies: analysis.dependencies,
+                unsupported: analysis.unsupported,
+            },
+        );
+        if let Some(global) = analysis.produced_global {
+            self.immutable_globals.insert(global, source);
+        }
+    }
+
     fn register_rule(&mut self, ruleset: &str, name: &str, inputs: &[ResolvedVar]) -> u32 {
         let id = u32::try_from(self.rule_catalog.len()).expect("too many causal rules");
-        self.rule_catalog.push((
-            ruleset.to_owned(),
-            name.to_owned(),
-            inputs
+        let command = self
+            .active_command
+            .expect("causal rule receipt requires an active catalog command")
+            .command;
+        let replay_name = if self.active_rule_anonymous == Some(true) {
+            format!("__causal_anon_rule_{id}")
+        } else {
+            name.to_owned()
+        };
+        let cataloged = self
+            .command_catalog
+            .get_mut(command)
+            .expect("active causal rule command is not cataloged");
+        let Command::Rule { rule } = &mut cataloged.command else {
+            panic!("causal rule ordinal points at a non-rule command")
+        };
+        rule.name.clone_from(&replay_name);
+        self.rule_catalog.push(CausalRuleCatalogEntry {
+            ruleset: ruleset.to_owned(),
+            native_name: name.to_owned(),
+            replay_name,
+            variables: inputs
                 .iter()
                 .map(|variable| (variable.name.clone(), variable.sort.name().to_owned()))
                 .collect(),
-        ));
+            command,
+        });
         id
     }
 
@@ -660,7 +790,96 @@ impl CausalState {
             .next_check
             .checked_add(1)
             .expect("too many causal checks");
+        let command = self
+            .active_command
+            .expect("causal check receipt requires an active catalog command")
+            .command;
+        self.check_commands.insert(check, command);
         check
+    }
+
+    fn begin_command(
+        &mut self,
+        command: &ResolvedNCommand,
+        anonymous_rule: Option<bool>,
+    ) -> Result<(), Error> {
+        self.ensure_healthy()?;
+        if self.active_command.is_some() || self.resolving_command {
+            return Err(Error::BackendError(
+                "causal replay does not support nested command execution".into(),
+            ));
+        }
+        let command = command.clone().to_command().make_unresolved();
+        let id = self.command_catalog.len();
+        self.command_catalog.push(CausalCatalogCommand { command });
+        self.active_command = Some(ActiveCausalCommand { command: id });
+        self.active_rule_anonymous = anonymous_rule;
+        Ok(())
+    }
+
+    fn begin_resolution(&mut self) -> Result<(), Error> {
+        self.ensure_healthy()?;
+        if self.resolving_command || self.active_command.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support nested command resolution".into(),
+            ));
+        }
+        self.resolving_command = true;
+        Ok(())
+    }
+
+    fn finish_resolution(&mut self, succeeded: bool) {
+        assert!(
+            self.resolving_command,
+            "causal command resolution was not active"
+        );
+        self.resolving_command = false;
+        if !succeeded {
+            self.poison("a command failed during resolution after causal capture began");
+        }
+    }
+
+    fn finish_command(&mut self, succeeded: bool) {
+        let active = self
+            .active_command
+            .take()
+            .expect("causal catalog command was not active");
+        if !succeeded {
+            self.poison(format!(
+                "normalized command {} failed after entering causal capture; its native effects and reserved causal identities cannot be rolled back",
+                active.command
+            ));
+        }
+        self.active_rule_anonymous = None;
+    }
+
+    fn poison(&mut self, reason: impl Into<String>) {
+        if self.poisoned.is_none() {
+            self.poisoned = Some(reason.into());
+        }
+    }
+
+    fn ensure_healthy(&self) -> Result<(), Error> {
+        match &self.poisoned {
+            Some(reason) => Err(Error::BackendError(format!(
+                "causal receipt capture is poisoned: {reason}"
+            ))),
+            None => Ok(()),
+        }
+    }
+
+    #[allow(dead_code)] // enforced when the owned replay IR is constructed
+    fn validate_replay_rule_names(&self) -> Result<(), String> {
+        let mut names = HashMap::default();
+        for (ordinal, rule) in self.rule_catalog.iter().enumerate() {
+            if let Some(previous) = names.insert(rule.replay_name.as_str(), ordinal) {
+                return Err(format!(
+                    "causal replay rule name `{}` collides between rule ordinals {previous} and {ordinal}",
+                    rule.replay_name
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn begin_wave(&mut self) -> u64 {
@@ -686,6 +905,16 @@ fn source_rule_inputs(rule: &ResolvedRule) -> Vec<ResolvedVar> {
     inputs
 }
 
+fn causal_anonymous_rules(command: &Command) -> Vec<bool> {
+    match command {
+        Command::Rule { rule } => vec![rule.name.is_empty()],
+        Command::Rewrite(_, rewrite, _) => vec![rewrite.name.is_empty()],
+        Command::BiRewrite(_, rewrite) => vec![rewrite.name.is_empty(); 2],
+        Command::Fail(_, command) => causal_anonymous_rules(command),
+        _ => Vec::new(),
+    }
+}
+
 /// A user-defined command allows users to inject custom command that can be called
 /// in an egglog program.
 ///
@@ -694,6 +923,35 @@ fn source_rule_inputs(rule: &ResolvedRule) -> Vec<ResolvedVar> {
 pub trait UserDefinedCommand: Send + Sync {
     /// Run the command with the given arguments.
     fn update(&self, egraph: &mut EGraph, args: &[Expr]) -> Result<Vec<CommandOutput>, Error>;
+
+    /// Execute the command while causal capture is active, if this command has
+    /// an implementation over the deliberately restricted schedule surface.
+    /// The context exposes rule stepping only: it cannot evaluate expressions,
+    /// forward commands, or mutate tables directly.
+    #[doc(hidden)]
+    fn update_causal(
+        &self,
+        _context: &mut CausalScheduleContext<'_>,
+        _args: &[Expr],
+    ) -> Option<Result<Vec<CommandOutput>, Error>> {
+        None
+    }
+}
+
+/// Restricted execution authority for a user-defined schedule while causal
+/// capture is active. Extensions can compose native ruleset steps without
+/// receiving `&mut EGraph` and thereby bypassing the normalized command
+/// catalog.
+#[doc(hidden)]
+pub struct CausalScheduleContext<'a> {
+    egraph: &'a mut EGraph,
+}
+
+impl CausalScheduleContext<'_> {
+    /// Run one native ruleset step and record its cumulative causal wave.
+    pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
+        self.egraph.step_rules(ruleset)
+    }
 }
 
 /// A function in the e-graph.
@@ -971,6 +1229,10 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_term_encoding_enabled(mut self) -> Self {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay recording graph cannot enable term encoding"
+        );
         self.proof_state.original_typechecking = Some(Box::new(self.clone()));
         self
     }
@@ -983,6 +1245,10 @@ impl EGraph {
     /// union-find. Re-typechecking after the encoder runs uses a default
     /// (bridge-backed) e-graph, so this backend need not implement typechecking.
     pub fn with_term_encoding(mut self) -> Self {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay recording graph cannot enable term encoding"
+        );
         self.proof_state.original_typechecking = Some(Box::new(EGraph::default()));
         self
     }
@@ -991,6 +1257,10 @@ impl EGraph {
     /// bridge-backed e-graph for parsing/typechecking before instrumentation.
     #[doc(hidden)]
     pub fn with_term_encoding_typechecker(mut self, typechecker: EGraph) -> Self {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay recording graph cannot enable term encoding"
+        );
         self.proof_state.original_typechecking = Some(Box::new(typechecker));
         self
     }
@@ -1000,6 +1270,10 @@ impl EGraph {
     /// This method is to support the current CLI implementation with egglog-experimental (https://github.com/egraphs-good/egglog/issues/768)
     #[doc(hidden)]
     pub fn with_proofs_enabled(mut self) -> Self {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay recording graph cannot enable proofs"
+        );
         if self.proof_state.original_typechecking.is_none() {
             self = self.with_term_encoding_enabled();
         }
@@ -1016,6 +1290,34 @@ impl EGraph {
     pub fn enable_causal_receipts(&mut self) -> Result<(), Error> {
         if self.causal_state.is_some() {
             return Ok(());
+        }
+        if self.proof_state.original_typechecking.is_some() {
+            return Err(Error::BackendError(
+                "causal receipts must run on the ordinary, non-proof graph".into(),
+            ));
+        }
+        if self.pushed_egraph.is_some() {
+            return Err(Error::BackendError(
+                "causal receipts cannot be enabled inside push/pop state".into(),
+            ));
+        }
+        // `Rational` is installed by the standard experimental graph factory
+        // before causal capture is enabled, and the fresh proof factory
+        // installs the identical extension again for replay.
+        let builtin_sorts = [
+            "Unit", "String", "bool", "i64", "f64", "BigInt", "BigRat", "Rational",
+        ];
+        if !self.functions.is_empty()
+            || self
+                .type_info
+                .sorts
+                .keys()
+                .any(|name| !builtin_sorts.contains(&name.as_str()))
+        {
+            return Err(Error::BackendError(
+                "causal receipts must be enabled before user declarations so the replay catalog is complete"
+                    .into(),
+            ));
         }
         if self
             .rulesets
@@ -1072,6 +1374,10 @@ impl EGraph {
 
     /// Snapshot the compact native receipt DAG.
     pub fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot, Error> {
+        self.causal_state
+            .as_ref()
+            .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
+            .ensure_healthy()?;
         self.backend
             .causal_receipt_snapshot()
             .map_err(|error| Error::BackendError(error.to_string()))
@@ -1091,6 +1397,10 @@ impl EGraph {
 
     /// Resolve one typed structural term from the native replay DAG.
     pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
+        self.causal_state
+            .as_ref()
+            .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
+            .ensure_healthy()?;
         self.backend
             .causal_replay_term(id)
             .map_err(|error| Error::BackendError(error.to_string()))
@@ -1100,16 +1410,24 @@ impl EGraph {
         let Some(causal) = self.causal_state.as_mut() else {
             return Ok(());
         };
+        causal.ensure_healthy()?;
         let wave = causal.begin_wave();
         self.backend
             .set_causal_wave(wave)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
+    pub(crate) fn causal_registration_is_allowed(&self) -> bool {
+        self.causal_state
+            .as_ref()
+            .is_none_or(|causal| causal.resolving_command || causal.active_command.is_some())
+    }
+
     fn finalize_causal_wave(&mut self) -> Result<(), Error> {
-        if self.causal_state.is_none() {
+        let Some(causal) = self.causal_state.as_ref() else {
             return Ok(());
-        }
+        };
+        causal.ensure_healthy()?;
         self.backend
             .finalize_causal_wave()
             .map_err(|error| Error::BackendError(error.to_string()))
@@ -1117,6 +1435,10 @@ impl EGraph {
 
     /// Enable testing of getting proofs for all `check` commands.
     pub fn with_proof_testing(mut self) -> Self {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay recording graph cannot enable proof testing"
+        );
         self.proof_state.proof_testing = true;
         self
     }
@@ -1174,6 +1496,10 @@ impl EGraph {
     where
         T: Default + Clone + Send + Sync + 'static,
     {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support mutable extension state after capture starts"
+        );
         let value = self
             .extension_state
             .entry(TypeId::of::<T>())
@@ -1186,6 +1512,10 @@ impl EGraph {
     /// Add a user-defined command to the e-graph
     /// Get the type information for this e-graph
     pub fn type_info(&mut self) -> &mut TypeInfo {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support mutable type information after capture starts"
+        );
         &mut self.type_info
     }
 
@@ -1196,6 +1526,10 @@ impl EGraph {
 
     /// Get mutable access to the command macro registry
     pub fn command_macros_mut(&mut self) -> &mut CommandMacroRegistry {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support registering macros after capture starts"
+        );
         &mut self.command_macros
     }
 
@@ -1204,6 +1538,11 @@ impl EGraph {
         name: String,
         command: Arc<dyn UserDefinedCommand>,
     ) -> Result<(), Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support registering commands after capture starts".into(),
+            ));
+        }
         if self.commands.contains_key(&name)
             || self.functions.contains_key(&name)
             || self.type_info.get_prims(&name).is_some()
@@ -1217,6 +1556,10 @@ impl EGraph {
 
     /// Configure whether globals missing the required `$` prefix are treated as errors.
     pub fn set_strict_mode(&mut self, strict_mode: bool) {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support changing strict mode after capture starts"
+        );
         self.strict_mode = strict_mode;
     }
 
@@ -1230,6 +1573,10 @@ impl EGraph {
     /// Public so files.rs can use it, hidden from documentation because it is not intended for general use.
     #[doc(hidden)]
     pub fn ensure_no_reserved_symbols(&mut self, should_ensure: bool) {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support changing parser symbol policy after capture starts"
+        );
         self.parser.ensure_no_reserved_symbols = should_ensure;
     }
 
@@ -1294,6 +1641,10 @@ impl EGraph {
     ///
     /// See [`EGraph::pop`].
     pub fn push(&mut self) {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support EGraph::push"
+        );
         let prev_prev: Option<Box<Self>> = self.pushed_egraph.take();
         let mut prev = self.clone();
         prev.pushed_egraph = prev_prev;
@@ -1305,6 +1656,11 @@ impl EGraph {
     /// It preserves the run report and messages from the popped
     /// egraph.
     pub fn pop(&mut self) -> Result<(), Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::pop".into(),
+            ));
+        }
         match self.pushed_egraph.take() {
             Some(mut e) => {
                 // Preserve the overall report from the popped egraph
@@ -1657,6 +2013,12 @@ impl EGraph {
         prog: Vec<Command>,
         proof_testing: bool,
     ) -> Result<(), Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support installing a proof-check program on the recording graph"
+                    .into(),
+            ));
+        }
         // make a new e-graph, desugar the program in proof mode
         let mut proof_check_eg = EGraph::new_with_proofs();
         if proof_testing {
@@ -1987,6 +2349,16 @@ impl EGraph {
     ///
     /// This will return an error if an egglog primitive returns None in an action.
     pub fn step_rules(&mut self, ruleset: &str) -> Result<RunReport, Error> {
+        if self
+            .causal_state
+            .as_ref()
+            .is_some_and(|causal| causal.active_command.is_none())
+        {
+            return Err(Error::BackendError(
+                "causal replay requires ruleset steps to run inside a cataloged schedule command"
+                    .into(),
+            ));
+        }
         fn collect_rule_ids(
             ruleset: &str,
             rulesets: &IndexMap<String, Ruleset>,
@@ -2010,14 +2382,31 @@ impl EGraph {
         collect_rule_ids(ruleset, &self.rulesets, &mut rule_ids);
 
         self.begin_causal_wave()?;
-        let iteration_report = self
-            .backend
-            .run_rules(RuleSetRun {
-                name: Some(ruleset),
-                rules: &rule_ids,
-            })
-            .map_err(|e| Error::BackendError(e.to_string()))?;
-        self.finalize_causal_wave()?;
+        let iteration_report = match self.backend.run_rules(RuleSetRun {
+            name: Some(ruleset),
+            rules: &rule_ids,
+        }) {
+            Ok(report) => report,
+            Err(error) => {
+                if let Some(causal) = self.causal_state.as_mut() {
+                    causal.poison(format!(
+                        "ruleset `{ruleset}` failed after entering causal wave execution"
+                    ));
+                }
+                return Err(Error::BackendError(error.to_string()));
+            }
+        };
+        if let Err(error) = self.finalize_causal_wave() {
+            if let Some(causal) = self.causal_state.as_mut() {
+                causal.poison(format!(
+                    "ruleset `{ruleset}` failed while finalizing its causal wave"
+                ));
+            }
+            return Err(error);
+        }
+        if let Some(causal) = self.causal_state.as_mut() {
+            causal.has_run = true;
+        }
 
         Ok(RunReport::singleton(ruleset, iteration_report))
     }
@@ -2118,7 +2507,166 @@ impl EGraph {
         Ok(rule_name)
     }
 
+    fn visit_causal_source_expr(
+        &self,
+        causal: &CausalState,
+        root: &ResolvedExpr,
+        dependencies: &mut IndexSet<SourceRef>,
+        unsupported: &mut Option<String>,
+    ) {
+        let mut pending = vec![root];
+        while let Some(expr) = pending.pop() {
+            let GenericExpr::Call(_, call, children) = expr else {
+                continue;
+            };
+            pending.extend(children.iter());
+            match call {
+                ResolvedCall::Func(function) => {
+                    let immutable = function.input.is_empty()
+                        && self
+                            .functions
+                            .get(&function.name)
+                            .is_some_and(|entry| entry.decl.internal_let);
+                    if immutable {
+                        if let Some(source) = causal.immutable_globals.get(&function.name) {
+                            dependencies.insert(source.clone());
+                        } else {
+                            unsupported.get_or_insert_with(|| {
+                                format!(
+                                    "immutable global `{}` has no source receipt",
+                                    function.name
+                                )
+                            });
+                        }
+                    } else if function.subtype != FunctionSubtype::Constructor {
+                        unsupported.get_or_insert_with(|| {
+                            format!(
+                                "top-level source action reads custom function `{}`",
+                                function.name
+                            )
+                        });
+                    }
+                }
+                ResolvedCall::Primitive(primitive)
+                    if primitive.is_pure() && primitive.validator().is_some() => {}
+                ResolvedCall::Primitive(primitive) => {
+                    unsupported.get_or_insert_with(|| {
+                        format!(
+                            "top-level source action calls effectful primitive `{}`",
+                            primitive.name()
+                        )
+                    });
+                }
+                ResolvedCall::Values(_) => {}
+            }
+        }
+    }
+
+    fn analyze_causal_source(&self, actions: &ResolvedActions) -> CausalSourceAnalysis {
+        let causal = self
+            .causal_state
+            .as_ref()
+            .expect("causal source analysis requires active causal state");
+        let mut dependencies = IndexSet::default();
+        let mut unsupported = causal
+            .has_run
+            .then(|| "source action executed after a run command".to_owned());
+        let mut produced_global = None;
+
+        for action in &actions.0 {
+            match action {
+                GenericAction::Let(_, _, _) => {
+                    unsupported.get_or_insert_with(|| {
+                        "top-level let reached source execution without global lowering".into()
+                    });
+                }
+                GenericAction::Set(_, function, keys, value) => {
+                    for key in keys {
+                        self.visit_causal_source_expr(
+                            causal,
+                            key,
+                            &mut dependencies,
+                            &mut unsupported,
+                        );
+                    }
+                    self.visit_causal_source_expr(
+                        causal,
+                        value,
+                        &mut dependencies,
+                        &mut unsupported,
+                    );
+                    if let ResolvedCall::Func(function) = function
+                        && keys.is_empty()
+                        && self
+                            .functions
+                            .get(&function.name)
+                            .is_some_and(|entry| entry.decl.internal_let)
+                    {
+                        produced_global = Some(function.name.clone());
+                    }
+                }
+                GenericAction::Change(_, change, _, keys) => {
+                    for key in keys {
+                        self.visit_causal_source_expr(
+                            causal,
+                            key,
+                            &mut dependencies,
+                            &mut unsupported,
+                        );
+                    }
+                    unsupported.get_or_insert_with(|| {
+                        format!("top-level source `{change:?}` is not replayable")
+                    });
+                }
+                GenericAction::Union(_, left, right) => {
+                    let defined_global = match left {
+                        GenericExpr::Call(_, ResolvedCall::Func(function), children)
+                            if children.is_empty()
+                                && self
+                                    .functions
+                                    .get(&function.name)
+                                    .is_some_and(|entry| entry.decl.internal_let) =>
+                        {
+                            Some(function.name.clone())
+                        }
+                        _ => None,
+                    };
+                    if let Some(global) = defined_global {
+                        produced_global = Some(global);
+                    } else {
+                        self.visit_causal_source_expr(
+                            causal,
+                            left,
+                            &mut dependencies,
+                            &mut unsupported,
+                        );
+                    }
+                    self.visit_causal_source_expr(
+                        causal,
+                        right,
+                        &mut dependencies,
+                        &mut unsupported,
+                    );
+                }
+                GenericAction::Panic(_, _) => {}
+                GenericAction::Expr(_, expr) => {
+                    self.visit_causal_source_expr(causal, expr, &mut dependencies, &mut unsupported)
+                }
+            }
+        }
+
+        CausalSourceAnalysis {
+            dependencies: dependencies.into_iter().collect(),
+            produced_global,
+            unsupported,
+        }
+    }
+
     fn eval_actions(&mut self, actions: &ResolvedActions) -> Result<(), Error> {
+        let source_analysis = self
+            .causal_state
+            .as_ref()
+            .map(|_| self.analyze_causal_source(actions));
         let mut binding = IndexSet::default();
         let mut ctx = CoreActionContext::new(
             &self.type_info,
@@ -2140,7 +2688,7 @@ impl EGraph {
             &mut self.unstable_fn_panic_ids,
             true, // global action: Read/Full contexts (may read the DB)
         );
-        translator.source_receipt = source_receipt;
+        translator.source_receipt = source_receipt.clone();
         translator.actions(&actions)?;
         let id = translator.try_build("eval_actions", false, false, Span::Panic)?;
         let result = self.backend.run_rules(RuleSetRun {
@@ -2154,7 +2702,15 @@ impl EGraph {
         finalize.map_err(|error| Error::BackendError(error.to_string()))?;
 
         match result {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                if let (Some(source), Some(analysis)) = (source_receipt, source_analysis) {
+                    self.causal_state
+                        .as_mut()
+                        .expect("source receipt lost causal state")
+                        .register_source(source, analysis);
+                }
+                Ok(())
+            }
             Err(e) => Err(Error::BackendError(e.to_string())),
         }
     }
@@ -2310,6 +2866,11 @@ impl EGraph {
     ///
     /// Raises an error if the function does not exist.
     pub fn clear_function(&mut self, func_name: &str) -> Result<(), Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::clear_function".into(),
+            ));
+        }
         let backend_id = self
             .functions
             .get(func_name)
@@ -2321,6 +2882,11 @@ impl EGraph {
 
     /// Evaluates an expression, returns the sort of the expression and the evaluation result.
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<(ArcSort, Value), Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::eval_expr".into(),
+            ));
+        }
         let span = expr.span();
         let command = Command::Action(Action::Expr(span.clone(), expr.clone()));
         let resolved = self.resolve_command(command)?;
@@ -2775,6 +3341,9 @@ impl EGraph {
             }
             ResolvedNCommand::RunSchedule(sched) => {
                 let report = self.run_schedule(&sched)?;
+                if let Some(causal) = self.causal_state.as_mut() {
+                    causal.has_run = true;
+                }
                 log::info!("Ran schedule {sched}.");
                 log::info!("Report: {report}");
                 self.overall_run_report.union(report.clone());
@@ -2852,10 +3421,20 @@ impl EGraph {
                 };
             }
             ResolvedNCommand::Push(n) => {
+                if self.causal_state.is_some() {
+                    return Err(Error::BackendError(
+                        "causal replay does not support push/pop state".into(),
+                    ));
+                }
                 (0..n).for_each(|_| self.push());
                 log::info!("Pushed {n} levels.")
             }
             ResolvedNCommand::Pop(span, n) => {
+                if self.causal_state.is_some() {
+                    return Err(Error::BackendError(
+                        "causal replay does not support push/pop state".into(),
+                    ));
+                }
                 for _ in 0..n {
                     self.pop().map_err(|err| {
                         if let Error::Pop(_) = err {
@@ -2896,6 +3475,11 @@ impl EGraph {
                 return Ok(vec![res]);
             }
             ResolvedNCommand::Fail(span, c) => {
+                if self.causal_state.is_some() {
+                    return Err(Error::BackendError(
+                        "causal replay does not support nested fail commands".into(),
+                    ));
+                }
                 let result = self.run_command(*c);
                 if let Err(e) = result {
                     log::info!("Command failed as expected: {e}");
@@ -2946,6 +3530,16 @@ impl EGraph {
                         NotFoundError(format!("Unrecognized user-defined command: {name}"))
                     })?
                     .clone();
+                if self.causal_state.is_some() {
+                    let mut context = CausalScheduleContext { egraph: self };
+                    return command
+                        .update_causal(&mut context, &exprs)
+                        .unwrap_or_else(|| {
+                            Err(Error::BackendError(format!(
+                                "causal replay does not support user-defined command `{name}`"
+                            )))
+                        });
+                }
                 return command.update(self, &exprs);
             }
 
@@ -2973,10 +3567,43 @@ impl EGraph {
         function_type: &FuncType,
         span: &Span,
         file: &str,
-    ) -> Result<Vec<ParsedInputRow>, Error> {
+    ) -> Result<ParsedInputFile, Error> {
         let mut filename = fact_directory.map_or_else(PathBuf::new, PathBuf::from);
         filename.push(file);
 
+        let row_schema = Self::input_row_schema(function_type);
+
+        log::info!("Opening file '{filename:?}'...");
+        let bytes = std::fs::read(&filename)
+            .map_err(|error| Error::IoError(filename.clone(), error, span.clone()))?;
+        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let contents = String::from_utf8(bytes).map_err(|error| {
+            Error::IoError(
+                filename.clone(),
+                std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                span.clone(),
+            )
+        })?;
+
+        let mut rows = Vec::with_capacity(contents.lines().count());
+        for (line_index, line) in contents.lines().enumerate() {
+            if let Some(row) = Self::parse_input_line(
+                &row_schema,
+                file,
+                u64::try_from(line_index + 1).expect("input file has too many lines"),
+                line,
+            )? {
+                rows.push(row);
+            }
+        }
+        Ok(ParsedInputFile {
+            path: filename,
+            digest,
+            rows,
+        })
+    }
+
+    fn input_row_schema(function_type: &FuncType) -> Vec<ArcSort> {
         for sort in &function_type.input {
             match sort.name() {
                 "i64" | "f64" | "String" => {}
@@ -2992,54 +3619,56 @@ impl EGraph {
             }
         }
 
-        log::info!("Opening file '{filename:?}'...");
-        let contents = std::fs::read_to_string(&filename)
-            .map_err(|error| Error::IoError(filename, error, span.clone()))?;
         let mut row_schema = function_type.input.clone();
         // Relations desugar to constructors, so their implicit output is not a TSV column.
         if function_type.subtype == FunctionSubtype::Custom {
             row_schema.extend(function_type.outputs.iter().cloned());
         }
 
-        let mut rows = Vec::with_capacity(contents.lines().count());
-        for (line_index, line) in contents.lines().enumerate() {
-            let mut fields = line.split('\t').map(str::trim);
-            let mut row = Vec::with_capacity(row_schema.len());
-            for sort in &row_schema {
-                if sort.name() == "Unit" {
-                    row.push(Literal::Unit);
-                    continue;
-                }
-                let Some(raw) = fields.next() else {
-                    break;
-                };
-                let literal = match sort.name() {
-                    "i64" => raw
-                        .parse()
-                        .map(Literal::Int)
-                        .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
-                    "f64" => raw
-                        .parse::<f64>()
-                        .map(ordered_float::OrderedFloat)
-                        .map(Literal::Float)
-                        .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
-                    "String" => Literal::String(raw.to_owned()),
-                    _ => unreachable!(),
-                };
-                row.push(literal);
-            }
-            if row.is_empty() {
+        row_schema
+    }
+
+    fn parse_input_line(
+        row_schema: &[ArcSort],
+        file: &str,
+        line_number: u64,
+        line: &str,
+    ) -> Result<Option<ParsedInputRow>, Error> {
+        let mut fields = line.split('\t').map(str::trim);
+        let mut row = Vec::with_capacity(row_schema.len());
+        for sort in row_schema {
+            if sort.name() == "Unit" {
+                row.push(Literal::Unit);
                 continue;
             }
-            if row.len() != row_schema.len() || fields.next().is_some() {
-                return Err(Error::InputFileFormatError(file.to_owned()));
-            }
-            rows.push(ParsedInputRow {
-                line: u64::try_from(line_index + 1).expect("input file has too many lines"),
-                literals: row,
-            });
+            let Some(raw) = fields.next() else {
+                break;
+            };
+            let literal = match sort.name() {
+                "i64" => raw
+                    .parse()
+                    .map(Literal::Int)
+                    .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
+                "f64" => raw
+                    .parse::<f64>()
+                    .map(ordered_float::OrderedFloat)
+                    .map(Literal::Float)
+                    .map_err(|_| Error::InputFileFormatError(file.to_owned()))?,
+                "String" => Literal::String(raw.to_owned()),
+                _ => unreachable!(),
+            };
+            row.push(literal);
         }
-        Ok(rows)
+        if row.is_empty() {
+            return Ok(None);
+        }
+        if row.len() != row_schema.len() || fields.next().is_some() {
+            return Err(Error::InputFileFormatError(file.to_owned()));
+        }
+        Ok(Some(ParsedInputRow {
+            line: line_number,
+            literals: row,
+        }))
     }
 
     fn input_file(&mut self, span: Span, func_name: &str, file: String) -> Result<(), Error> {
@@ -3048,14 +3677,32 @@ impl EGraph {
             .get_func_type(func_name)
             .unwrap_or_else(|| panic!("Unrecognized function name {func_name}"))
             .clone();
-        let parsed_contents =
+        let parsed_file =
             Self::read_input_file(self.fact_directory.as_deref(), &function_type, &span, &file)?;
         let backend_id = self.functions[func_name].backend_id;
         let unit_val = self.backend.base_values().get(());
-        let source_command = self
-            .causal_state
-            .as_mut()
-            .map(CausalState::next_source_ordinal);
+        let pending_input_catalog = self.causal_state.as_mut().map(|causal| {
+            let command = causal.next_source_ordinal();
+            let catalog = causal
+                .active_command
+                .expect("causal input receipt requires an active catalog command")
+                .command;
+            (
+                command,
+                CausalInputCatalogEntry {
+                    command: catalog,
+                    function: func_name.to_owned(),
+                    file: file.clone(),
+                    resolved_path: parsed_file.path.clone(),
+                    digest: parsed_file.digest,
+                    unsupported: causal
+                        .has_run
+                        .then(|| "input command executed after a run command".to_owned()),
+                },
+            )
+        });
+        let source_command = pending_input_catalog.as_ref().map(|(command, _)| *command);
+        let parsed_contents = parsed_file.rows;
         let (values, causal_rows) = if let Some(command) = source_command {
             let mut causal_rows = Vec::with_capacity(parsed_contents.len());
             for parsed in parsed_contents {
@@ -3154,6 +3801,13 @@ impl EGraph {
             self.backend
                 .finalize_causal_wave()
                 .map_err(|error| Error::BackendError(error.to_string()))?;
+        }
+        if let Some((command, entry)) = pending_input_catalog {
+            self.causal_state
+                .as_mut()
+                .expect("input receipt lost causal state")
+                .input_commands
+                .insert(command, entry);
         }
 
         log::info!("Read {num_facts} facts into {func_name} from '{file}'.");
@@ -3280,6 +3934,22 @@ impl EGraph {
             )?;
 
             for command in macro_expanded {
+                // Reject `fail` before resolve/desugar: both desugaring and
+                // global lowering may lift mutation prefixes out of the
+                // nested command, so guarding only the final normalized
+                // `ResolvedNCommand::Fail` is too late.
+                if self.causal_state.is_some() {
+                    let unsupported = match &command {
+                        Command::Fail(_, _) => Some("nested fail commands"),
+                        Command::Push(_) | Command::Pop(_, _) => Some("push/pop state"),
+                        _ => None,
+                    };
+                    if let Some(unsupported) = unsupported {
+                        return Err(Error::BackendError(format!(
+                            "causal replay does not support {unsupported}"
+                        )));
+                    }
+                }
                 // handle include specially- we keep them as-is for desugaring
                 if let Command::Include(span, file) = &command {
                     let s = std::fs::read_to_string(file)
@@ -3293,6 +3963,10 @@ impl EGraph {
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
+                    let causal_rule_origins = self
+                        .causal_state
+                        .is_some()
+                        .then(|| causal_anonymous_rules(&command));
                     let relation_name = match &command {
                         Command::Relation { name, .. } => Some(name.clone()),
                         _ => None,
@@ -3300,7 +3974,29 @@ impl EGraph {
                     let inserted_relation = relation_name
                         .as_ref()
                         .is_some_and(|name| self.relation_names.insert(name.clone()));
-                    let resolved = match self.resolve_command(command) {
+                    if let Some(causal) = self.causal_state.as_mut() {
+                        causal.begin_resolution()?;
+                    }
+                    let resolved_result = if self.causal_state.is_some() {
+                        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.resolve_command(command)
+                        })) {
+                            Ok(result) => result,
+                            Err(payload) => {
+                                self.causal_state
+                                    .as_mut()
+                                    .expect("causal resolution lost state while unwinding")
+                                    .finish_resolution(false);
+                                std::panic::resume_unwind(payload);
+                            }
+                        }
+                    } else {
+                        self.resolve_command(command)
+                    };
+                    if let Some(causal) = self.causal_state.as_mut() {
+                        causal.finish_resolution(resolved_result.is_ok());
+                    }
+                    let resolved = match resolved_result {
                         Ok(resolved) => resolved,
                         Err(error) => {
                             if inserted_relation {
@@ -3310,6 +4006,28 @@ impl EGraph {
                             return Err(error);
                         }
                     };
+                    if let Some(origins) = &causal_rule_origins {
+                        let normalized_rules = resolved
+                            .desugared
+                            .iter()
+                            .filter(|command| matches!(command, ResolvedNCommand::NormRule { .. }))
+                            .count();
+                        if origins.len() != normalized_rules {
+                            self.causal_state
+                                .as_mut()
+                                .expect("causal rule origins lost state")
+                                .poison(format!(
+                                    "surface rule-origin count {} does not match {normalized_rules} normalized rules",
+                                    origins.len()
+                                ));
+                            return Err(Error::BackendError(
+                                "causal rule-origin catalog did not match normalized expansion"
+                                    .into(),
+                            ));
+                        }
+                    }
+                    let mut causal_rule_origins =
+                        causal_rule_origins.map(|origins| origins.into_iter());
                     if run_commands && self.are_proofs_enabled() {
                         self.proof_check_program
                             .extend(resolved.desugared_before_proofs.clone());
@@ -3319,6 +4037,12 @@ impl EGraph {
                     desugared.extend(resolved.desugared.clone());
 
                     for processed in resolved.desugared {
+                        let anonymous_rule =
+                            if matches!(processed, ResolvedNCommand::NormRule { .. }) {
+                                causal_rule_origins.as_mut().and_then(Iterator::next)
+                            } else {
+                                None
+                            };
                         // even in desugar mode we still run push and pop
                         if run_commands
                             || matches!(
@@ -3326,7 +4050,29 @@ impl EGraph {
                                 ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
                             )
                         {
-                            match self.run_command(processed) {
+                            if let Some(causal) = self.causal_state.as_mut() {
+                                causal.begin_command(&processed, anonymous_rule)?;
+                            }
+                            let result = if self.causal_state.is_some() {
+                                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    self.run_command(processed)
+                                })) {
+                                    Ok(result) => result,
+                                    Err(payload) => {
+                                        self.causal_state
+                                            .as_mut()
+                                            .expect("causal command lost state while unwinding")
+                                            .finish_command(false);
+                                        std::panic::resume_unwind(payload);
+                                    }
+                                }
+                            } else {
+                                self.run_command(processed)
+                            };
+                            if let Some(causal) = self.causal_state.as_mut() {
+                                causal.finish_command(result.is_ok());
+                            }
+                            match result {
                                 Ok(result) => outputs.extend(result),
                                 Err(error) => {
                                     if inserted_relation
@@ -3343,6 +4089,18 @@ impl EGraph {
                             }
                         }
                     }
+                    if causal_rule_origins
+                        .as_mut()
+                        .is_some_and(|origins| origins.next().is_some())
+                    {
+                        self.causal_state
+                            .as_mut()
+                            .expect("causal rule origins lost state")
+                            .poison("causal rule-origin iterator was not fully consumed");
+                        return Err(Error::BackendError(
+                            "causal rule-origin catalog did not match normalized expansion".into(),
+                        ));
+                    }
                 }
             }
         }
@@ -3357,6 +4115,9 @@ impl EGraph {
     /// Run a program, represented as an AST.
     /// Return a list of messages.
     pub fn run_program(&mut self, program: Vec<Command>) -> Result<Vec<CommandOutput>, Error> {
+        if let Some(causal) = self.causal_state.as_ref() {
+            causal.ensure_healthy()?;
+        }
         if self.backend.requires_term_encoding() && self.proof_state.original_typechecking.is_none()
         {
             return Err(Error::BackendRequiresTermEncoding);
@@ -3373,6 +4134,11 @@ impl EGraph {
         filename: Option<String>,
         input: &str,
     ) -> Result<Vec<ResolvedCommand>, Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support resolve_program after capture starts".into(),
+            ));
+        }
         let parsed = self.parser.get_program_from_string(filename, input)?;
         let res = self.process_program_internal(parsed, false)?;
         Ok(res.resolved.into_iter().map(|c| c.to_command()).collect())
@@ -3482,6 +4248,10 @@ impl EGraph {
 
     /// Convert from a Rust container type to an egglog value.
     pub fn container_to_value<T: ContainerValue>(&mut self, x: T) -> Value {
+        assert!(
+            self.causal_state.is_none(),
+            "causal replay does not support direct container interning on the recording graph"
+        );
         self.backend.with_execution_state(|state| {
             self.backend.container_values().register_val::<T>(x, state)
         })
@@ -3525,6 +4295,11 @@ impl EGraph {
         name: &str,
         args: &[Expr],
     ) -> Result<Vec<CommandOutput>, Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support direct user-defined command execution".into(),
+            ));
+        }
         self.run_command(ResolvedNCommand::UserDefined(
             span!(),
             name.to_string(),
@@ -3581,6 +4356,11 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::update".into(),
+            ));
+        }
         if self.are_proofs_enabled() {
             return Err(Error::ProofsIncompatibleApi {
                 api: "EGraph::update",
@@ -3598,6 +4378,11 @@ impl EGraph {
         &mut self,
         f: impl FnOnce(FullState<'_, '_>) -> Result<R, Error>,
     ) -> Result<R, Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::update".into(),
+            ));
+        }
         let registry = self.backend.action_registry().cloned().ok_or_else(|| {
             Error::BackendError("EGraph::update requires a backend action registry".into())
         })?;
@@ -3627,6 +4412,11 @@ impl EGraph {
         vars: &[(&str, ArcSort)],
         facts: ast::Facts<String, String>,
     ) -> Result<Vec<HashMap<String, Value>>, Error> {
+        if self.causal_state.is_some() {
+            return Err(Error::BackendError(
+                "causal replay does not support EGraph::query".into(),
+            ));
+        }
         // Fail fast under proofs — otherwise the failure would
         // surface through `rust_rule`'s check below with a misleading
         // api: "rust_rule" in the error message.
@@ -5038,14 +5828,10 @@ mod tests {
                      (sort ExprVec (Vec Expr))\
                      (sort ExprSet (Set Expr))\
                      (relation Go (Unit))\
-                     (relation Again (Unit))\
                      (let $low-vec (vec-of (Wrap (A 1))))\
                      (let $high-vec (vec-of (A 1)))\
                      (let $bad-set (set-of (Wrap (A 1))))\
-                     (let $again-left (A 2))\
-                     (let $again-right (A 3))\
-                     (Go ())\
-                     (Again ())",
+                     (Go ())",
                 )
                 .unwrap();
             let low_vec = get_value(&egraph, "$low-vec");
@@ -5065,53 +5851,51 @@ mod tests {
                 .clone();
             let receipt_state_before = egraph.causal_replay_term_counters().unwrap();
 
-            let mut first_panic = None;
-            for attempt in 0..2 {
-                let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let program = if attempt == 0 {
+            let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                egraph
+                    .parse_and_run_program(
+                        None,
                         "(rule ((Go u))\
                            ((union (Wrap (A 1)) (A 1))) :name \"merge-child\")\
-                         (run 1)"
-                    } else {
-                        "(rule ((Again u))\
-                           ((union (A 2) (A 3))) :name \"merge-again\")\
-                         (run 1)"
-                    };
-                    egraph.parse_and_run_program(None, program).unwrap();
-                }))
-                .expect_err("unsupported Set rebuild unexpectedly succeeded");
-                let message = panic_message(failed.as_ref()).to_owned();
-                assert!(
-                    message.contains("SetContainer"),
-                    "unexpected container-rebuild panic: {message}"
-                );
-                if let Some(first) = &first_panic {
-                    assert_eq!(&message, first, "rejected rebuild must repeat identically");
-                } else {
-                    first_panic = Some(message);
-                }
+                         (run 1)",
+                    )
+                    .unwrap();
+            }))
+            .expect_err("unsupported Set rebuild unexpectedly succeeded");
+            let message = panic_message(failed.as_ref()).to_owned();
+            assert!(
+                message.contains("SetContainer"),
+                "unexpected container-rebuild panic: {message}"
+            );
 
-                let low_after = egraph
-                    .value_to_container::<VecContainer>(low_vec)
-                    .expect("caught rebuild panic dropped the low Vec")
-                    .clone();
-                let high_after = egraph
-                    .value_to_container::<VecContainer>(high_vec)
-                    .expect("caught rebuild panic dropped the high Vec")
-                    .clone();
-                let set_after = egraph
-                    .value_to_container::<SetContainer>(bad_set)
-                    .expect("caught rebuild panic dropped the Set")
-                    .clone();
-                assert_eq!(low_after, low_before);
-                assert_eq!(high_after, high_before);
-                assert_eq!(set_after, set_before);
-                assert_eq!(
-                    egraph.causal_replay_term_counters().unwrap(),
-                    receipt_state_before,
-                    "rejected rebuild published anchors, first-wins mappings, or term nodes"
-                );
-            }
+            let low_after = egraph
+                .value_to_container::<VecContainer>(low_vec)
+                .expect("caught rebuild panic dropped the low Vec")
+                .clone();
+            let high_after = egraph
+                .value_to_container::<VecContainer>(high_vec)
+                .expect("caught rebuild panic dropped the high Vec")
+                .clone();
+            let set_after = egraph
+                .value_to_container::<SetContainer>(bad_set)
+                .expect("caught rebuild panic dropped the Set")
+                .clone();
+            assert_eq!(low_after, low_before);
+            assert_eq!(high_after, high_before);
+            assert_eq!(set_after, set_before);
+            assert_eq!(
+                egraph.causal_replay_term_counters().unwrap(),
+                receipt_state_before,
+                "rejected rebuild published anchors, first-wins mappings, or term nodes"
+            );
+            assert!(
+                egraph
+                    .causal_receipt_snapshot()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("poisoned"),
+                "an unwound native command cannot be retried against the same causal capture"
+            );
         });
     }
 
@@ -5335,17 +6119,16 @@ mod tests {
                 literal: ReplayLiteral::I64(7),
             })
         );
+        let cataloged_rule = &egraph.causal_state.as_ref().unwrap().rule_catalog[0];
+        assert_eq!(cataloged_rule.ruleset, "");
+        assert_eq!(cataloged_rule.native_name, "derive");
+        assert_eq!(cataloged_rule.replay_name, "derive");
         assert_eq!(
-            egraph.causal_state.as_ref().unwrap().rule_catalog[0],
-            (
-                "".to_owned(),
-                "derive".to_owned(),
-                vec![
-                    ("y".to_owned(), "i64".to_owned()),
-                    ("x".to_owned(), "i64".to_owned()),
-                ]
-                .into_boxed_slice(),
-            )
+            &*cataloged_rule.variables,
+            &[
+                ("y".to_owned(), "i64".to_owned()),
+                ("x".to_owned(), "i64".to_owned()),
+            ]
         );
         let premise = snapshot
             .facts
@@ -5565,29 +6348,12 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, Error::InputFileFormatError(_)));
         assert!(
-            rejected.causal_receipt_snapshot().unwrap().facts.is_empty(),
-            "full-file validation must reject the batch before staging its valid prefix"
-        );
-        rejected
-            .parse_and_run_program(None, "(input BadLeaf \"leaf.tsv\")")
-            .unwrap();
-        let recovered = rejected
-            .causal_receipt_snapshot()
-            .unwrap()
-            .facts
-            .iter()
-            .filter_map(|fact| match &fact.cause {
-                core_relations::FactCause::Source(source) => Some(source),
-                _ => None,
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        assert!(!recovered.is_empty());
-        assert!(
-            recovered
-                .iter()
-                .all(|source| matches!(source, SourceRef::InputRow { command: 0, .. })),
-            "a rejected file must not consume the next source command ordinal"
+            rejected
+                .causal_receipt_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned"),
+            "a command that fails after entering causal execution must make the capture unusable instead of reusing reserved identities"
         );
         std::fs::remove_dir_all(&directory).ok();
 
@@ -5644,6 +6410,310 @@ mod tests {
     }
 
     #[test]
+    fn causal_source_catalog_tracks_expanded_order_and_anonymous_rule_identity() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                    (datatype Expr (Num i64))
+                    (let $seed (Num 1))
+                    (relation Seen (i64))
+                    (Seen 1)
+                    (rule ((Seen x)) ((Seen x)))
+                    (run 1)
+                    (check (Seen 1))
+                "#,
+            )
+            .unwrap();
+
+        let causal = egraph.causal_state.as_ref().unwrap();
+        let commands = causal
+            .command_catalog
+            .iter()
+            .map(|entry| entry.command.to_string())
+            .collect::<Vec<_>>();
+        assert!(
+            commands
+                .windows(2)
+                .any(|pair| pair[0].starts_with("(sort Expr")
+                    && pair[1].starts_with("(constructor Num")),
+            "datatype expansion must be cataloged in execution order: {commands:#?}"
+        );
+        assert_eq!(causal.rule_catalog.len(), 1);
+        assert_eq!(causal.rule_catalog[0].replay_name, "__causal_anon_rule_0");
+        let rule_command = &causal.command_catalog[causal.rule_catalog[0].command].command;
+        let Command::Rule { rule } = rule_command else {
+            panic!("cataloged causal rule is not a normalized rule: {rule_command}")
+        };
+        assert_eq!(rule.name, "__causal_anon_rule_0");
+        assert!(
+            causal
+                .source_commands
+                .contains_key(&SourceRef::Synthetic(0))
+        );
+        assert!(
+            causal
+                .source_commands
+                .contains_key(&SourceRef::Synthetic(1))
+        );
+        assert!(causal.check_commands.contains_key(&0));
+    }
+
+    #[test]
+    fn causal_source_catalog_keeps_transitive_global_edges_and_marks_late_sources() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                    (let $a 1)
+                    (let $b (+ $a 1))
+                    (relation Seed (i64))
+                    (Seed $b)
+                    (rule ((Seed x)) ((Seed x)) :name "observe")
+                    (run 1)
+                    (Seed 3)
+                    (check (Seed 3))
+                "#,
+            )
+            .unwrap();
+
+        let causal = egraph.causal_state.as_ref().unwrap();
+        let source = |ordinal| &causal.source_commands[&SourceRef::Synthetic(ordinal)];
+        assert!(source(0).dependencies.is_empty());
+        assert_eq!(
+            &*source(1).dependencies,
+            &[SourceRef::Synthetic(0)],
+            "the second global directly depends on the first"
+        );
+        assert_eq!(
+            &*source(2).dependencies,
+            &[SourceRef::Synthetic(1)],
+            "the source assertion directly depends on the second global"
+        );
+        assert!(source(0).unsupported.is_none());
+        assert!(source(1).unsupported.is_none());
+        assert!(source(2).unsupported.is_none());
+        assert!(
+            source(3)
+                .unsupported
+                .as_deref()
+                .is_some_and(|reason| reason.contains("after a run command")),
+            "a selected late source must make replay fail closed"
+        );
+    }
+
+    #[test]
+    fn causal_source_catalog_detects_generated_rule_name_collision() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                    (relation R (i64))
+                    (rule ((R x)) ((R x)))
+                    (rule ((R x)) ((R x)) :name "__causal_anon_rule_0")
+                "#,
+            )
+            .unwrap();
+        let error = egraph
+            .causal_state
+            .as_ref()
+            .unwrap()
+            .validate_replay_rule_names()
+            .unwrap_err();
+        assert!(error.contains("collides between rule ordinals 0 and 1"));
+    }
+
+    #[test]
+    fn causal_source_catalog_rejects_stateful_command_boundaries_before_mutation() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        let push = egraph.parse_and_run_program(None, "(push)").unwrap_err();
+        assert!(push.to_string().contains("does not support push/pop"));
+        assert!(egraph.pushed_egraph.is_none());
+
+        let catalog_len = egraph.causal_state.as_ref().unwrap().command_catalog.len();
+        let nested = egraph
+            .parse_and_run_program(None, "(fail (let $causal_leak 1))")
+            .unwrap_err();
+        assert!(nested.to_string().contains("nested fail commands"));
+        assert_eq!(
+            egraph.causal_state.as_ref().unwrap().command_catalog.len(),
+            catalog_len,
+            "fail must be rejected before global lowering can lift a declaration"
+        );
+        assert!(
+            egraph
+                .get_function_names()
+                .iter()
+                .all(|name| !name.contains("causal_leak"))
+        );
+        let datatype = egraph
+            .parse_and_run_program(None, "(fail (datatype CausalLeaked (CausalLeak)))")
+            .unwrap_err();
+        assert!(datatype.to_string().contains("nested fail commands"));
+        assert!(egraph.get_sort_by_name("CausalLeaked").is_none());
+        assert!(
+            !egraph
+                .get_function_names()
+                .iter()
+                .any(|name| name == "CausalLeak")
+        );
+        let resolve = egraph
+            .resolve_program(None, "(relation CausalHidden (i64))")
+            .unwrap_err();
+        assert!(resolve.to_string().contains("resolve_program"));
+        assert!(egraph.get_function("CausalHidden").is_none());
+        let sort = egraph
+            .declare_sort("CausalDirectSort", &None, span!())
+            .unwrap_err();
+        assert!(sort.to_string().contains("registration after capture"));
+        assert!(egraph.get_sort_by_name("CausalDirectSort").is_none());
+        assert!(egraph.causal_receipt_snapshot().is_ok());
+
+        let mut proof = EGraph::new_with_proofs();
+        let proof_error = enable_serial_causal_receipts(&mut proof).unwrap_err();
+        assert!(
+            proof_error
+                .to_string()
+                .contains("ordinary, non-proof graph")
+        );
+    }
+
+    #[test]
+    fn causal_user_command_authority_is_not_granted_by_name() {
+        struct Impostor(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl UserDefinedCommand for Impostor {
+            fn update(
+                &self,
+                _egraph: &mut EGraph,
+                _args: &[Expr],
+            ) -> Result<Vec<CommandOutput>, Error> {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+        }
+
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut egraph = EGraph::default();
+        egraph
+            .add_command(
+                "run-schedule".into(),
+                std::sync::Arc::new(Impostor(called.clone())),
+            )
+            .unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        let error = egraph
+            .parse_and_run_program(None, "(run-schedule safe-looking-ruleset)")
+            .unwrap_err();
+        assert!(error.to_string().contains("does not support user-defined"));
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            egraph
+                .causal_receipt_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned")
+        );
+    }
+
+    #[test]
+    fn causal_direct_mutation_apis_fail_before_effects() {
+        struct Noop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl UserDefinedCommand for Noop {
+            fn update(
+                &self,
+                _egraph: &mut EGraph,
+                _args: &[Expr],
+            ) -> Result<Vec<CommandOutput>, Error> {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(Vec::new())
+            }
+        }
+
+        let command_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let update_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut egraph = EGraph::default();
+        egraph
+            .add_command(
+                "causal-noop".into(),
+                std::sync::Arc::new(Noop(command_called.clone())),
+            )
+            .unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(None, "(relation R (i64)) (ruleset rs)")
+            .unwrap();
+
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| egraph.push())).is_err());
+        assert!(egraph.pushed_egraph.is_none());
+        assert!(
+            egraph
+                .pop()
+                .unwrap_err()
+                .to_string()
+                .contains("EGraph::pop")
+        );
+        assert!(
+            egraph
+                .step_rules("rs")
+                .unwrap_err()
+                .to_string()
+                .contains("cataloged schedule")
+        );
+        assert!(
+            egraph
+                .clear_function("R")
+                .unwrap_err()
+                .to_string()
+                .contains("clear_function")
+        );
+        assert!(
+            egraph
+                .eval_expr(&Expr::Lit(span!(), Literal::Int(1)))
+                .unwrap_err()
+                .to_string()
+                .contains("eval_expr")
+        );
+        assert!(
+            egraph
+                .run_user_defined_command("causal-noop", &[])
+                .unwrap_err()
+                .to_string()
+                .contains("direct user-defined")
+        );
+        assert!(!command_called.load(std::sync::atomic::Ordering::SeqCst));
+        let update_called_in_closure = update_called.clone();
+        assert!(
+            egraph
+                .update(move |_state| {
+                    update_called_in_closure.store(true, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                })
+                .unwrap_err()
+                .to_string()
+                .contains("EGraph::update")
+        );
+        assert!(!update_called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            egraph
+                .query(&[], ast::Facts(Vec::new()))
+                .unwrap_err()
+                .to_string()
+                .contains("EGraph::query")
+        );
+        assert_eq!(egraph.get_size("R"), 0);
+        assert!(egraph.causal_receipt_snapshot().is_ok());
+    }
+
+    #[test]
     fn causal_wave_spans_multiple_native_rebuild_timestamps() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -5692,7 +6762,13 @@ mod tests {
                 .to_string()
                 .contains("causal receipt recording does not support source run-rule schedules")
         );
-        assert!(egraph.causal_receipt_snapshot().is_ok());
+        assert!(
+            egraph
+                .causal_receipt_snapshot()
+                .unwrap_err()
+                .to_string()
+                .contains("poisoned")
+        );
     }
 
     #[test]
@@ -5707,48 +6783,23 @@ mod tests {
             .unwrap();
 
         let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
-        assert!(error.to_string().contains("before registering rules"));
+        assert!(error.to_string().contains("replay catalog is complete"));
         egraph
             .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")
             .unwrap();
     }
 
     #[test]
-    fn causal_receipts_allow_activation_after_empty_function_declarations() {
+    fn causal_receipts_reject_activation_after_declarations_without_replay_template() {
         let mut egraph = EGraph::default();
         egraph
             .parse_and_run_program(None, "(relation A (i64))")
             .unwrap();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
+        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
+        assert!(error.to_string().contains("replay catalog is complete"));
         egraph
             .parse_and_run_program(None, "(A 1) (check (A 1))")
             .unwrap();
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert_eq!(snapshot.check_roots.len(), 1);
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
-    }
-
-    #[test]
-    fn causal_relation_origin_survives_desugaring_and_late_activation() {
-        let mut egraph = EGraph::default();
-        egraph
-            .parse_and_run_program(None, "(relation R (i64))")
-            .unwrap();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(R 1)\
-                 (rule ((R x)) ((delete (R x))) :name \"delete-r\")\
-                 (run 1)",
-            )
-            .unwrap();
-
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert!(snapshot.removals.is_empty());
-        assert!(snapshot.matches.is_empty());
-        assert_eq!(snapshot.counters.effective_removals, 0);
-        assert_eq!(snapshot.counters.relation_removals, 1);
     }
 
     #[test]
@@ -5822,7 +6873,8 @@ mod tests {
             )
             .unwrap();
         let mut recording = original.clone();
-        enable_serial_causal_receipts(&mut recording).unwrap();
+        let error = enable_serial_causal_receipts(&mut recording).unwrap_err();
+        assert!(error.to_string().contains("replay catalog is complete"));
 
         original
             .parse_and_run_program(
@@ -5845,7 +6897,7 @@ mod tests {
             .unwrap();
 
         let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
-        assert!(error.to_string().contains("contains rows"));
+        assert!(error.to_string().contains("replay catalog is complete"));
         egraph.parse_and_run_program(None, "(check (A 1))").unwrap();
     }
 

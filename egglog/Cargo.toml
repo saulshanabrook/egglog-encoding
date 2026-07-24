@@ -71,6 +71,7 @@ egglog-reports = { workspace = true }
 egglog-backend-trait = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [build-dependencies]
 chrono = { workspace = true, features = ["now"], optional = true }

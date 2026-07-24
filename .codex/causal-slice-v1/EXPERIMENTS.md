@@ -2118,3 +2118,100 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   `-D warnings`, rustfmt check, and `git diff --check` also passed. The final
   implementation-only diff SHA-256 (excluding this ledger) is
   `5b974ca4b7dbb2f7b446f5b8f240c652318134c7a01a3be6afd640c3ef641b4b`.
+
+### 2026-07-24 — Checkpoint 3A source replay catalog
+
+- Added a frontend-owned append-only catalog at the actual normalized-leaf
+  execution seam. It records graph-neutral commands in expanded execution
+  order, receipt rule ordinals and deterministic anonymous replay names,
+  exact source/check-to-command links, direct immutable-global dependencies,
+  and input-command identities. The catalog is not reconstructed from parser
+  output, proof-check buffers, or the full receipt snapshot.
+- Causal capture now starts before any user declaration. This deliberately
+  rejects late activation because the replay artifact otherwise lacks the
+  static environment that existed before capture. It also rejects push/pop,
+  nested fail, user-defined commands, simultaneous proof encoding, and source
+  run-rule leaves while capture is active. The end-to-end CLI creates a fresh
+  ordinary graph and enables capture before parsing, so these restrictions do
+  not narrow the five-workload cohort.
+- Each normalized command checkpoints its source/check/rule catalogs. Ordinary
+  errors discard the provisional catalog entries. Panics are caught only long
+  enough to drain the active-command guard and are then resumed unchanged; the
+  unsupported-container unwind canary proves a caught panic cannot leave a
+  ghost nested command.
+- Input capture hashes the exact bytes that native parsing consumes, keeps only
+  resolved path/digest/command metadata after a successful native flush, and
+  preserves the existing one-based physical-line source identities. The parser
+  refactor remains behavior-equivalent: full-file validation happens before
+  native mutation, Unit fields consume no column, and empty schemas retain the
+  previous no-row behavior. Selected-row cold lowering remains the next
+  checkpoint; no row ASTs or runtime values were added to the hot catalog.
+- Source dependency analysis occurs on resolved commands before they are made
+  graph-neutral. It follows immutable `internal_let` reads, records proof-style
+  generated global definitions without a self-edge, accepts only validated pure
+  primitives, and records a named unsupported reason for custom/effectful reads
+  or sources after the first successful run. The passive IR will compute the
+  transitive closure and fail closed only when a selected source reaches one.
+- Anonymous rules use `__causal_anon_rule_<receipt-rule-id>`. Numeric receipt
+  rule identity remains authoritative; generated/user name collisions are
+  detected before IR construction. Rendering/reparsing is not an execution
+  path.
+- Validation at the frozen handoff:
+  - 126/126 `egglog` library tests passed;
+  - `cargo clippy -p egglog --lib -- -D warnings`, `cargo fmt --all`, and
+    `git diff --check` passed;
+  - focused source-catalog and TSV receipt canaries passed, including exact
+    input digest publication, failed-input ordinal rollback, transitive global
+    edges, anonymous-name collision, lifecycle rejection, and panic unwind.
+- Rejected scope growth: occurrence-level macro provenance, late-activation
+  template identities, selective declaration minimization, and custom-function
+  TSV batch replay are not required by the cohort. The owned IR keeps all
+  successfully declared static commands and rejects a selected unsupported
+  input kind instead of adding a second frontend.
+- Independent cohort review found and falsified two factory-boundary
+  assumptions before commit. The standard experimental factory installs the
+  `Rational` base sort before capture and shadows core `run-schedule` with its
+  serial user-defined scheduler. Capture now recognizes that factory baseline,
+  permits only that one user-defined schedule command, and still rejects nested
+  or forwarded command execution through the active-command guard. The
+  extension's bare-ruleset schedule leaf now calls `step_rules` directly rather
+  than re-entering the frontend through `run_program`; this both preserves the
+  single normalized-command seam and removes an unnecessary parse/resugar
+  round trip. A focused experimental canary executes
+  `(run-schedule (saturate derive))` under causal receipts and reaches its
+  unchanged check successfully.
+- The exact default cohort passed through the standard experimental binary at
+  this diff: terminal Math, Eggcc pass 1, Pointer with its fact directory,
+  Hardboiled conv1d32, and Luminal. The final focused gates also passed all
+  128 `egglog` library tests, all six experimental causal-container tests,
+  clippy with warnings denied for both libraries/binaries, rustfmt, and
+  `git diff --check`.
+- Transactional review falsified the first catalog draft before commit. A
+  nested `fail` was rejected only after global lowering/desugaring could lift
+  mutation prefixes, failed commands truncated frontend catalog entries even
+  though native effects were not reversible, and the experimental scheduler
+  exception trusted the string `run-schedule`. The accepted repair rejects
+  `fail`, push, and pop at the macro-expanded surface before resolution; any
+  later command failure permanently poisons capture without reusing ids or
+  deleting history; snapshots, term lookup, slicing, new commands, and direct
+  mutation APIs reject poisoned/out-of-catalog use. Stateful typechecking is
+  authorized only by a private resolution-phase capability, so cataloged sort
+  and primitive declarations still work while public `resolve_program`, direct
+  registration, mutable type/macro/extension registries, and post-activation
+  proof-mode builders cannot change the replay environment. Surface versus
+  normalized rule-origin cardinality is checked before any leaf executes.
+- User-defined schedule authority is now structural. The ordinary extension
+  receives `&mut EGraph`, while causal capture can opt into a restricted
+  `CausalScheduleContext` exposing only `step_rules`. The experimental
+  implementation prevalidates and executes only ruleset leaves plus `run`,
+  `seq`, `repeat`, and `saturate`; `:until`, custom schedulers, evaluation, and
+  forwarded commands fail closed. An impostor registered under the literal
+  name `run-schedule` never receives execution authority. A two-step canary
+  also proves the honest partial-failure boundary: the first ruleset's fact
+  remains physically present when the second panics, but the capture is
+  poisoned and can never be sliced or replayed. The complementary preflight
+  canary puts an unsupported `eval` after a valid ruleset leaf and proves that
+  no rule runs before the whole schedule is accepted. A single direct-API
+  canary verifies push/pop, out-of-catalog rule stepping, table clear,
+  expression evaluation, direct user commands, update closures, and temporary
+  queries all fail before effects while leaving a healthy capture.

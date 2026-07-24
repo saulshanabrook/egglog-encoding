@@ -183,6 +183,100 @@ mod causal_container_tests {
     }
 
     #[test]
+    fn causal_receipts_accept_the_standard_extended_run_schedule() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Seed (i64))\
+                     (relation Done (i64))\
+                     (ruleset derive)\
+                     (Seed 1)\
+                     (rule ((Seed x)) ((Done x)) :ruleset derive :name \"derive-rule\")\
+                     (run-schedule (saturate derive))\
+                     (check (Done 1))",
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn failed_extended_schedule_poisons_partial_causal_history() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            let error = egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Seed (i64))\
+                     (relation Done (i64))\
+                     (ruleset derive)\
+                     (ruleset bad)\
+                     (Seed 1)\
+                     (rule ((Seed x)) ((Done x)) :ruleset derive :name \"derive-rule\")\
+                     (rule ((Seed x)) ((panic \"boom\")) :ruleset bad :name \"bad-rule\")\
+                     (run-schedule (seq derive bad))",
+                )
+                .unwrap_err();
+            assert!(error.to_string().contains("boom"));
+            assert_eq!(
+                egraph.get_size("Done"),
+                1,
+                "the first schedule step is deliberately not rolled back"
+            );
+            assert!(
+                egraph
+                    .causal_receipt_snapshot()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("poisoned"),
+                "partial native history must never be paired with a rolled-back catalog"
+            );
+        });
+    }
+
+    #[test]
+    fn unsupported_extended_schedule_is_preflighted_before_rules_run() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Seed (i64))\
+                     (relation Done (i64))\
+                     (ruleset derive)\
+                     (Seed 1)\
+                     (rule ((Seed x)) ((Done x)) :ruleset derive :name \"derive-rule\")",
+                )
+                .unwrap();
+            let error = egraph
+                .parse_and_run_program(None, "(run-schedule (seq derive (eval 1)))")
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported during causal capture")
+            );
+            assert_eq!(
+                egraph.get_size("Done"),
+                0,
+                "whole-schedule validation must run before the first native step"
+            );
+            assert!(
+                egraph
+                    .causal_receipt_snapshot()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("poisoned"),
+                "the conservative transaction boundary poisons any entered command error"
+            );
+        });
+    }
+
+    #[test]
     fn causal_receipts_refresh_either_variant_by_its_logical_child_slot() {
         serial_pool().install(|| {
             let mut egraph = new_experimental_egraph();

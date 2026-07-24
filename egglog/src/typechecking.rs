@@ -298,6 +298,9 @@ impl EGraph {
         presort_and_args: &Option<(String, Vec<Expr>)>,
         span: Span,
     ) -> Result<(), TypeError> {
+        if !self.causal_registration_is_allowed() {
+            return Err(TypeError::CausalRegistrationAfterCapture { kind: "sort", span });
+        }
         let name = name.into();
         if self.type_info.func_types.contains_key(&name) {
             return Err(TypeError::FunctionAlreadyBound(name, span));
@@ -319,6 +322,9 @@ impl EGraph {
 
     /// Add a user-defined sort to the e-graph.
     pub fn add_arcsort(&mut self, sort: ArcSort, span: Span) -> Result<(), TypeError> {
+        if !self.causal_registration_is_allowed() {
+            return Err(TypeError::CausalRegistrationAfterCapture { kind: "sort", span });
+        }
         sort.register_type(self.backend.as_mut());
 
         let name = sort.name();
@@ -361,6 +367,10 @@ impl EGraph {
     where
         T: PurePrim + Clone,
     {
+        assert!(
+            self.causal_registration_is_allowed(),
+            "causal replay does not support primitive registration after capture starts"
+        );
         self.register_per_context(
             x,
             validator,
@@ -377,6 +387,10 @@ impl EGraph {
     where
         T: WritePrim + Clone,
     {
+        assert!(
+            self.causal_registration_is_allowed(),
+            "causal replay does not support primitive registration after capture starts"
+        );
         self.register_registry_primitive::<T, WrapWrite>(
             x,
             validator,
@@ -390,6 +404,10 @@ impl EGraph {
     where
         T: ReadPrim + Clone,
     {
+        assert!(
+            self.causal_registration_is_allowed(),
+            "causal replay does not support primitive registration after capture starts"
+        );
         self.register_registry_primitive::<T, WrapRead>(x, validator, ReadState::valid_contexts());
     }
 
@@ -399,6 +417,10 @@ impl EGraph {
     where
         T: FullPrim + Clone,
     {
+        assert!(
+            self.causal_registration_is_allowed(),
+            "causal replay does not support primitive registration after capture starts"
+        );
         self.register_registry_primitive::<T, WrapFull>(x, validator, FullState::valid_contexts());
     }
 
@@ -1596,6 +1618,8 @@ pub enum TypeError {
     SortAlreadyBound(String, Span),
     #[error("{1}\nPrimitive {0} already declared.")]
     PrimitiveAlreadyBound(String, Span),
+    #[error("{span}\nCausal replay does not support {kind} registration after capture starts")]
+    CausalRegistrationAfterCapture { kind: &'static str, span: Span },
     #[error("Function type mismatch: expected {} => {}, actual {} => {}", .1.iter().map(|s| s.name().to_string()).collect::<Vec<_>>().join(", "), .0.name(), .3.iter().map(|s| s.name().to_string()).collect::<Vec<_>>().join(", "), .2.name())]
     FunctionTypeMismatch(ArcSort, Vec<ArcSort>, ArcSort, Vec<ArcSort>),
     #[error("{1}\nPresort {0} not found.")]

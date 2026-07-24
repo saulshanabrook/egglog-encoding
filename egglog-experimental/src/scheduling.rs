@@ -52,9 +52,9 @@
 use std::{collections::HashMap, sync::Mutex};
 
 use egglog::{
-    CommandOutput, UserDefinedCommand,
+    CausalScheduleContext, CommandOutput, UserDefinedCommand,
     ast::{Command, Expr, Fact, Literal, ParseError},
-    prelude::{Span, run_ruleset},
+    prelude::Span,
     scheduler::{Scheduler, SchedulerId},
     span,
 };
@@ -140,14 +140,8 @@ impl ScheduleState {
         };
 
         if let Expr::Var(_, ruleset) = arg {
-            let output = run_ruleset(egraph, ruleset.as_str())?;
-            if let [CommandOutput::RunSchedule(report)] = output.as_slice() {
-                return Ok((vec![], report.clone()));
-            }
-            return Err(egglog::Error::ParseError(ParseError(
-                arg.span(),
-                format!("Expected ruleset {ruleset} to produce one RunSchedule output"),
-            )));
+            let report = egraph.step_rules(ruleset)?;
+            return Ok((vec![], report));
         }
 
         let Expr::Call(span, head, exprs) = arg else {
@@ -348,6 +342,105 @@ impl ScheduleState {
             _ => err(),
         }
     }
+
+    /// Causal capture deliberately receives a capability-limited context. The
+    /// benchmark schedules need only structural composition and native
+    /// ruleset steps; expression evaluation, forwarded commands, custom
+    /// schedulers, and `:until` would bypass the normalized replay catalog and
+    /// are rejected before they can mutate the graph.
+    fn run_causal(
+        context: &mut CausalScheduleContext<'_>,
+        arg: &Expr,
+    ) -> Result<RunReport, egglog::Error> {
+        let invalid = || {
+            egglog::Error::ParseError(ParseError(
+                arg.span(),
+                "schedule form is unsupported during causal capture".into(),
+            ))
+        };
+
+        if let Expr::Var(_, ruleset) = arg {
+            return context.step_rules(ruleset);
+        }
+
+        let Expr::Call(_, head, exprs) = arg else {
+            return Err(invalid());
+        };
+        match head.as_str() {
+            "run" => {
+                let ruleset = match exprs.as_slice() {
+                    [] => "",
+                    [Expr::Var(_, ruleset)] if ruleset != ":until" => ruleset,
+                    _ => return Err(invalid()),
+                };
+                context.step_rules(ruleset)
+            }
+            "saturate" => {
+                let mut report = RunReport::default();
+                loop {
+                    let mut iteration = RunReport::default();
+                    for expr in exprs {
+                        iteration.union(Self::run_causal(context, expr)?);
+                    }
+                    let should_stop = iteration.can_stop;
+                    report.union(iteration);
+                    if should_stop {
+                        return Ok(report);
+                    }
+                }
+            }
+            "seq" => {
+                let mut report = RunReport::default();
+                for expr in exprs {
+                    report.union(Self::run_causal(context, expr)?);
+                }
+                Ok(report)
+            }
+            "repeat" => match exprs.as_slice() {
+                [Expr::Lit(_, Literal::Int(count)), rest @ ..] if *count >= 0 => {
+                    let mut report = RunReport::default();
+                    for _ in 0..*count {
+                        for expr in rest {
+                            report.union(Self::run_causal(context, expr)?);
+                        }
+                    }
+                    Ok(report)
+                }
+                _ => Err(invalid()),
+            },
+            _ => Err(invalid()),
+        }
+    }
+
+    fn validate_causal(arg: &Expr) -> Result<(), egglog::Error> {
+        let invalid = || {
+            egglog::Error::ParseError(ParseError(
+                arg.span(),
+                "schedule form is unsupported during causal capture".into(),
+            ))
+        };
+        if matches!(arg, Expr::Var(_, _)) {
+            return Ok(());
+        }
+        let Expr::Call(_, head, exprs) = arg else {
+            return Err(invalid());
+        };
+        match head.as_str() {
+            "run" => match exprs.as_slice() {
+                [] => Ok(()),
+                [Expr::Var(_, ruleset)] if ruleset != ":until" => Ok(()),
+                _ => Err(invalid()),
+            },
+            "saturate" | "seq" => exprs.iter().try_for_each(Self::validate_causal),
+            "repeat" => match exprs.as_slice() {
+                [Expr::Lit(_, Literal::Int(count)), rest @ ..] if *count >= 0 => {
+                    rest.iter().try_for_each(Self::validate_causal)
+                }
+                _ => Err(invalid()),
+            },
+            _ => Err(invalid()),
+        }
+    }
 }
 
 impl UserDefinedCommand for RunExtendedSchedule {
@@ -366,6 +459,22 @@ impl UserDefinedCommand for RunExtendedSchedule {
         }
         outputs.push(CommandOutput::RunSchedule(report));
         Ok(outputs)
+    }
+
+    fn update_causal(
+        &self,
+        context: &mut CausalScheduleContext<'_>,
+        args: &[Expr],
+    ) -> Option<Result<Vec<CommandOutput>, egglog::Error>> {
+        let result = (|| {
+            args.iter().try_for_each(ScheduleState::validate_causal)?;
+            let mut report = RunReport::default();
+            for arg in args {
+                report.union(ScheduleState::run_causal(context, arg)?);
+            }
+            Ok(vec![CommandOutput::RunSchedule(report)])
+        })();
+        Some(result)
     }
 }
 
