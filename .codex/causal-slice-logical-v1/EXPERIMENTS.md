@@ -464,3 +464,52 @@ The unchanged core-relations suite again passed 147 unit tests and 2 doc tests,
 including the mixed-layout, exact-RHS, primitive-only Current, decomposed, and
 invalid-premise atomicity canaries. Scoped strict Clippy and formatting remain
 green. No benchmark was run for this review fix.
+
+### Checkpoint A measured gate: insufficient (2026-07-24)
+
+**Status:** the compaction is coherent but fails the recording-cost gate. Move
+directly to Checkpoint B; do not spend an A-only tuning cycle.
+
+The normal append-only `.reports.jsonl` lines 31–32 measure clean commit
+`84fb6f730a387036415112d6b725c0cd4b04a507`, main backend, terminal Math,
+one round, and a 120-second timeout. Both rows have `status=success`, binary
+SHA-256
+`70bb5f6c5fc0f99f87996d51d242538b9cb20e8c47b6d26e0f8d7a8d03c5e696`,
+fixture SHA-256
+`7303e72d4870a2855682d21a30fc3b0237dfe1c650def398b7da83472505ef1f`,
+and no fact directory.
+
+| Treatment | Wall | Peak RSS | Search | Apply | Merge | Rebuild |
+|---|---:|---:|---:|---:|---:|---:|
+| off | 0.425444 s | 258.031 MiB | 0.095037 s | 0.098011 s | 0.047577 s | 0.137520 s |
+| causal-receipts | 2.031365 s | 1488.750 MiB | 0.158733 s | 0.761436 s | 0.592153 s | 0.343844 s |
+
+With one observation per endpoint, confidence intervals are undefined. The
+point ratios are 4.77469x wall time and 5.76965x peak RSS. Relative to the
+previous accepted full-receipt three-round mean of 2.2305 s (5.29x native),
+the current one-round receipt time is descriptively 8.93% lower. This is a
+modest improvement, not evidence that match-payload compaction is sufficient:
+the result remains far above the 1.5x screen, and the current-versus-prior
+comparison mixes a single observation with an earlier three-round mean.
+
+A 10-second `./bench.py profile` sample on the current causal-receipts target
+puts the remaining self CPU in the shadow structural recorder rather than
+match expansion:
+
+| Self sample | Share |
+|---|---:|
+| `ReplayTermStore::node` | 6.8% |
+| `ReplayTermStore::install_value` | 5.2% |
+| `ReplayTermStore::intern` | 3.8% |
+| `ReplayTermStore::lookup` | 2.6% |
+| `ReplayTermStore::intern_call` | 1.5% |
+| `ReceiptBatch::record_fact_with_terms` | 2.5% |
+| `CausalReceipts::constructor_row_terms` | 1.7% |
+| `CausalReceipts::finalize_wave` | 3.7% |
+
+These sampled self percentages are not additive wall-time accounting. They are
+directional evidence for Checkpoint B's fact-graph-as-term-graph change: remove
+the parallel `ReplayTermStore`/eager fact-term construction rather than tuning
+the now-compact match payload. Checkpoint A remains landed because it removes
+real per-match storage and preserves exact Current handles, but it is rejected
+as the sufficient performance intervention.
