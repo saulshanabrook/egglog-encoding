@@ -33,11 +33,13 @@ use crate::{
     offsets::{OffsetRange, Offsets, RowId, Subset, SubsetRef},
     parallel_heuristics::parallelize_table_op,
     pool::with_pool_set,
-    receipts::{CauseRef, PendingNativeLease, PreparedRekey, RekeyOutcome, RowOriginRef},
+    receipts::{
+        CauseRef, PendingNativeLease, PreparedRekey, PreparedRemoval, RekeyOutcome, RowOriginRef,
+    },
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
-        ColumnId, Constraint, Generation, MutationBuffer, MutationTransaction, Offset, Row, Table,
-        TableSpec, TableVersion,
+        ColumnId, Constraint, Generation, MaintenanceRemoval, MutationBuffer, MutationTransaction,
+        Offset, Row, Table, TableSpec, TableVersion,
     },
 };
 
@@ -209,6 +211,7 @@ pub type MergeFn =
 
 pub struct SortedWritesTable {
     table_id: TableId,
+    receipts_enabled: bool,
     generation: Generation,
     data: Rows,
     hash: ShardedHashTable<TableEntry>,
@@ -231,6 +234,7 @@ impl Clone for SortedWritesTable {
         SortedWritesTable {
             generation: self.generation,
             table_id: self.table_id,
+            receipts_enabled: self.receipts_enabled,
             data: self.data.clone(),
             hash: self.hash.clone(),
             n_keys: self.n_keys,
@@ -308,6 +312,7 @@ struct Buffer {
     n_cols: u32,
     n_keys: u32,
     shard_data: ShardData,
+    receipts_enabled: bool,
 }
 
 struct ReceiptBuffer {
@@ -316,6 +321,7 @@ struct ReceiptBuffer {
     rekeys: DenseIdMap<ShardId, Vec<StagedRekey>>,
     rekey_equalities: DenseIdMap<ShardId, Vec<TypedCellEquality>>,
     origins: DenseIdMap<ShardId, Vec<Option<RowOriginRef>>>,
+    removal_causes: DenseIdMap<ShardId, Vec<DeferredEqualityCause>>,
     transaction: Option<MutationTransaction>,
 }
 
@@ -347,6 +353,7 @@ impl MutationBuffer for Buffer {
                 rekeys: DenseIdMap::default(),
                 rekey_equalities: DenseIdMap::default(),
                 origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -378,6 +385,7 @@ impl MutationBuffer for Buffer {
                 rekeys: DenseIdMap::default(),
                 rekey_equalities: DenseIdMap::default(),
                 origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -413,6 +421,7 @@ impl MutationBuffer for Buffer {
                 rekeys: DenseIdMap::default(),
                 rekey_equalities: DenseIdMap::default(),
                 origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -452,6 +461,7 @@ impl MutationBuffer for Buffer {
                 rekeys: DenseIdMap::default(),
                 rekey_equalities: DenseIdMap::default(),
                 origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -482,6 +492,7 @@ impl MutationBuffer for Buffer {
                 rekeys: DenseIdMap::default(),
                 rekey_equalities: DenseIdMap::default(),
                 origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
                 transaction: None,
             })
         });
@@ -519,10 +530,48 @@ impl MutationBuffer for Buffer {
         origins.push(None);
     }
     fn stage_remove(&mut self, key: &[Value]) {
+        assert!(
+            !self.receipts_enabled,
+            "causal receipts require an exact rule cause or native maintenance capability for removal"
+        );
         let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
         self.pending_removals
             .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
             .add_row(key);
+    }
+    fn stage_remove_maintenance(&mut self, key: &[Value], _capability: MaintenanceRemoval) {
+        let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
+        self.pending_removals
+            .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
+            .add_row(key);
+    }
+    fn stage_remove_deferred(&mut self, key: &[Value], cause: DeferredEqualityCause) {
+        let (shard, _) = hash_code(self.shard_data, key, self.n_keys as _);
+        let rows = self
+            .pending_removals
+            .get_or_insert(shard, || ArbitraryRowBuffer::new(self.n_keys as _))
+            .len();
+        let receipt = self.receipt.get_or_insert_with(|| {
+            Box::new(ReceiptBuffer {
+                causes: DenseIdMap::default(),
+                row_rekeys: DenseIdMap::default(),
+                rekeys: DenseIdMap::default(),
+                rekey_equalities: DenseIdMap::default(),
+                origins: DenseIdMap::default(),
+                removal_causes: DenseIdMap::default(),
+                transaction: None,
+            })
+        });
+        let causes = receipt.removal_causes.get_or_insert(shard, || {
+            assert_eq!(
+                rows, 0,
+                "receipt causes were enabled after ordinary removals"
+            );
+            Vec::new()
+        });
+        debug_assert_eq!(causes.len(), rows);
+        self.pending_removals[shard].add_row(key);
+        causes.push(cause);
     }
     fn fresh_handle(&self) -> Box<dyn MutationBuffer> {
         Box::new(Buffer {
@@ -535,6 +584,7 @@ impl MutationBuffer for Buffer {
                         rekeys: DenseIdMap::default(),
                         rekey_equalities: DenseIdMap::default(),
                         origins: DenseIdMap::default(),
+                        removal_causes: DenseIdMap::default(),
                         transaction: Some(transaction.clone()),
                     })
                 })
@@ -544,6 +594,7 @@ impl MutationBuffer for Buffer {
             n_cols: self.n_cols,
             n_keys: self.n_keys,
             shard_data: self.shard_data,
+            receipts_enabled: self.receipts_enabled,
         })
     }
 }
@@ -606,7 +657,18 @@ impl Drop for Buffer {
                         continue;
                     };
                     removal_count += rows.len();
-                    pending_removals.push((shard, rows));
+                    let causes = self
+                        .receipt
+                        .as_mut()
+                        .and_then(|receipt| receipt.removal_causes.take(shard));
+                    pending_removals.push((
+                        shard,
+                        PendingRemovalBatch {
+                            rows,
+                            causes,
+                            _native_lease: native_lease.clone(),
+                        },
+                    ));
                 }
                 if row_count == 0 && removal_count == 0 {
                     return;
@@ -616,8 +678,8 @@ impl Drop for Buffer {
                         state.pending_rows[shard].push(batch);
                     }
                     state.total_rows.fetch_add(row_count, Ordering::Relaxed);
-                    for (shard, rows) in pending_removals {
-                        state.pending_removals[shard].push(rows);
+                    for (shard, batch) in pending_removals {
+                        state.pending_removals[shard].push(batch);
                     }
                     state
                         .total_removals
@@ -672,7 +734,15 @@ impl Drop for Buffer {
                     continue;
                 };
                 rows += buf.len();
-                state.pending_removals[shard].push(buf);
+                let causes = self
+                    .receipt
+                    .as_mut()
+                    .and_then(|receipt| receipt.removal_causes.take(shard));
+                state.pending_removals[shard].push(PendingRemovalBatch {
+                    rows: buf,
+                    causes,
+                    _native_lease: None,
+                });
             }
             state.total_removals.fetch_add(rows, Ordering::Relaxed);
         }
@@ -689,6 +759,9 @@ impl Table for SortedWritesTable {
     fn set_table_id(&mut self, table: TableId) {
         self.table_id = table;
     }
+    fn enable_causal_receipts(&mut self) {
+        self.receipts_enabled = true;
+    }
     fn preflight_causal_receipt_activation(&self) -> Result<(), &'static str> {
         if self.len() != 0 {
             return Err("table already contains rows without exact source identities");
@@ -704,6 +777,10 @@ impl Table for SortedWritesTable {
         Ok(())
     }
     fn clear(&mut self) {
+        assert!(
+            !self.receipts_enabled,
+            "causal receipts do not support unattributed table clear; failing closed"
+        );
         self.pending_state.clear();
         if self.data.data.len() == 0 {
             return;
@@ -954,11 +1031,12 @@ impl Table for SortedWritesTable {
             n_keys: u32::try_from(self.n_keys).expect("n_keys should fit in u32"),
             n_cols: u32::try_from(self.n_columns).expect("n_columns should fit in u32"),
             shard_data: self.hash.shard_data(),
+            receipts_enabled: self.receipts_enabled,
         })
     }
 
     fn merge(&mut self, exec_state: &mut ExecutionState) -> TableChange {
-        let removed = self.do_delete();
+        let removed = self.do_delete(exec_state);
         let added = self.do_insert(exec_state);
         self.maybe_rehash();
         TableChange { removed, added }
@@ -1025,6 +1103,7 @@ impl SortedWritesTable {
         let rebuild_index = Index::new(to_rebuild.clone(), ColumnIndex::new());
         SortedWritesTable {
             table_id: TableId::dummy(),
+            receipts_enabled: false,
             generation: Generation::new(0),
             data: Rows::new(RowBuffer::new(n_columns)),
             hash,
@@ -1058,8 +1137,9 @@ impl SortedWritesTable {
             .map(|(shard_id, shard)| {
                 let queue = &self.pending_state.pending_removals[shard_id];
                 let mut marked_stale = 0;
-                while let Some(buf) = queue.pop() {
-                    buf.for_each(|to_remove| {
+                while let Some(batch) = queue.pop() {
+                    debug_assert!(batch.causes.is_none());
+                    batch.rows.for_each(|to_remove| {
                         let (actual_shard, hc) = hash_code(shard_data, to_remove, self.n_keys);
                         assert_eq!(actual_shard, shard_id);
                         if let Ok(entry) = shard.find_entry(hc, |entry| {
@@ -1087,42 +1167,105 @@ impl SortedWritesTable {
         self.data.stale_rows += stale_delta;
         stale_delta > 0
     }
-    fn serial_delete(&mut self) -> bool {
+    fn serial_delete(&mut self, exec_state: &ExecutionState) -> bool {
         let shard_data = self.hash.shard_data();
-        let mut changed = false;
-        self.hash
-            .mut_shards()
-            .iter_mut()
-            .enumerate()
-            .for_each(|(shard_id, shard)| {
-                let shard_id = ShardId::from_usize(shard_id);
-                let queue = &self.pending_state.pending_removals[shard_id];
-                while let Some(buf) = queue.pop() {
-                    buf.for_each(|to_remove| {
-                        let (actual_shard, hc) = hash_code(shard_data, to_remove, self.n_keys);
-                        assert_eq!(actual_shard, shard_id);
-                        if let Ok(entry) = shard.find_entry(hc, |entry| {
-                            entry.hashcode == (hc as HashCode)
-                                && &self.data.get_row(entry.row).unwrap()[0..self.n_keys]
-                                    == to_remove
-                        }) {
-                            let (ent, _) = entry.remove();
-                            self.data.set_stale(ent.row);
-                            changed = true;
-                        }
-                    })
+        let receipts = exec_state.causal_receipts();
+        assert_eq!(
+            self.receipts_enabled,
+            receipts.is_some(),
+            "table and execution state disagree about causal removal mode"
+        );
+
+        // Drain and validate every effective candidate against the common
+        // pre-delete state. No hash entry or stale bit changes until every
+        // tracked cause and victim FactId has been proven exact.
+        let mut candidates = Vec::<(ShardId, u64, RowId, Option<PreparedRemoval>)>::new();
+        let mut seen = HashSet::<RowId>::default();
+        for shard_index in 0..self.hash.shard_data().n_shards() {
+            let shard_id = ShardId::from_usize(shard_index);
+            let shard = self.hash.get_shard(shard_id);
+            let queue = &self.pending_state.pending_removals[shard_id];
+            while let Some(batch) = queue.pop() {
+                let causes = batch.causes.as_deref();
+                if receipts.is_some() && causes.is_some() {
+                    batch.receipt_causes();
                 }
-            });
-        changed
+                let mut index = 0;
+                batch.rows.for_each(|to_remove| {
+                    let cause = causes.map(|causes| &causes[index]);
+                    index += 1;
+                    let (actual_shard, hc) = hash_code(shard_data, to_remove, self.n_keys);
+                    assert_eq!(actual_shard, shard_id);
+                    let Some(entry) = shard.find(hc, |entry| {
+                        entry.hashcode == (hc as HashCode)
+                            && &self.data.get_row(entry.row).unwrap()[0..self.n_keys] == to_remove
+                    }) else {
+                        return;
+                    };
+                    let row = entry.row;
+                    if !seen.insert(row) {
+                        return;
+                    }
+                    let prepared = match (receipts, cause) {
+                        (Some(receipts), Some(cause)) => {
+                            let fact = self
+                                .data
+                                .fact_id(row)
+                                .expect("receipt removal victim has no immutable FactId");
+                            Some(
+                                receipts
+                                    .prepare_removal(
+                                        self.table_id,
+                                        exec_state.causal_wave(),
+                                        fact,
+                                        cause,
+                                    )
+                                    .unwrap_or_else(|error| {
+                                        panic!("cannot prepare exact removal: {error}")
+                                    }),
+                            )
+                        }
+                        // Rebuild/rekey maintenance removals deliberately have
+                        // no rule cause and remain covered by rekey receipts.
+                        (Some(_), None) | (None, None) => None,
+                        (None, Some(_)) => {
+                            panic!("ordinary deletion unexpectedly carried a receipt cause")
+                        }
+                    };
+                    candidates.push((shard_id, hc, row, prepared));
+                });
+                debug_assert_eq!(index, batch.rows.len());
+            }
+        }
+
+        for (shard_id, hc, row, _) in &candidates {
+            let shard = &mut self.hash.mut_shards()[shard_id.index()];
+            let entry = shard
+                .find_entry(*hc, |entry| {
+                    entry.hashcode == (*hc as HashCode) && entry.row == *row
+                })
+                .expect("preflighted removal disappeared before serial publication");
+            let (entry, _) = entry.remove();
+            self.data.set_stale(entry.row);
+        }
+        if let Some(receipts) = receipts {
+            receipts.record_removals(
+                exec_state.causal_wave(),
+                candidates
+                    .iter()
+                    .filter_map(|(_, _, _, prepared)| *prepared),
+            );
+        }
+        !candidates.is_empty()
     }
 
-    fn do_delete(&mut self) -> bool {
+    fn do_delete(&mut self, exec_state: &ExecutionState) -> bool {
         let total = self.pending_state.total_removals.swap(0, Ordering::Relaxed);
 
-        if self.data.fact_ids.is_none() && parallelize_table_op(total) {
+        if !self.receipts_enabled && parallelize_table_op(total) {
             self.parallel_delete()
         } else {
-            self.serial_delete()
+            self.serial_delete(exec_state)
         }
     }
 
@@ -1256,13 +1399,27 @@ impl SortedWritesTable {
                                 )
                             });
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
+                            let logical_changed = if RECEIPTS && merged {
+                                exec_state
+                                    .causal_receipts()
+                                    .expect("receipt merge has no arena")
+                                    .logical_row_changed(self.table_id, cur, &scratch)
+                                    .unwrap_or_else(|error| {
+                                        panic!(
+                                            "cannot classify causal merge for {:?}: {error}",
+                                            self.table_id
+                                        )
+                                    })
+                            } else {
+                                merged
+                            };
                             let merge_cause = previous_cause.map(|previous| {
                                 exec_state
-                                    .end_deferred_merge_cause(previous, merged)
-                                    .filter(|_| merged)
+                                    .end_deferred_merge_cause(previous, logical_changed)
+                                    .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = RECEIPTS.then(|| {
+                                let prepared_origin = (RECEIPTS && logical_changed).then(|| {
                                     exec_state
                                         .causal_receipts()
                                         .expect("receipt merge has no arena")
@@ -1286,7 +1443,9 @@ impl SortedWritesTable {
                                     .map(|cause| cause.promote())
                                     .unwrap_or(CauseRef::UNATTRIBUTED);
                                 let sort_val = query[sort_by.index()];
-                                let fact =
+                                let fact = if RECEIPTS && !logical_changed {
+                                    prior_fact
+                                } else {
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                         batch.record_merged_fact(
                                             self.table_id,
@@ -1295,7 +1454,8 @@ impl SortedWritesTable {
                                             prepared_origin
                                                 .expect("receipt merge has no prepared origin"),
                                         )
-                                    });
+                                    })
+                                };
                                 if let Some(rekey) = prepared_rekey.take() {
                                     exec_state
                                         .causal_receipts()
@@ -1474,13 +1634,27 @@ impl SortedWritesTable {
                                 )
                             });
                             let merged = (self.merge)(exec_state, cur, query, &mut scratch);
+                            let logical_changed = if RECEIPTS && merged {
+                                exec_state
+                                    .causal_receipts()
+                                    .expect("receipt merge has no arena")
+                                    .logical_row_changed(self.table_id, cur, &scratch)
+                                    .unwrap_or_else(|error| {
+                                        panic!(
+                                            "cannot classify causal merge for {:?}: {error}",
+                                            self.table_id
+                                        )
+                                    })
+                            } else {
+                                merged
+                            };
                             let merge_cause = previous_cause.map(|previous| {
                                 exec_state
-                                    .end_deferred_merge_cause(previous, merged)
-                                    .filter(|_| merged)
+                                    .end_deferred_merge_cause(previous, logical_changed)
+                                    .filter(|_| logical_changed)
                             });
                             if merged {
-                                let prepared_origin = RECEIPTS.then(|| {
+                                let prepared_origin = (RECEIPTS && logical_changed).then(|| {
                                     exec_state
                                         .causal_receipts()
                                         .expect("receipt merge has no arena")
@@ -1503,7 +1677,9 @@ impl SortedWritesTable {
                                     .flatten()
                                     .map(|cause| cause.promote())
                                     .unwrap_or(CauseRef::UNATTRIBUTED);
-                                let fact =
+                                let fact = if RECEIPTS && !logical_changed {
+                                    prior_fact
+                                } else {
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                         batch.record_merged_fact(
                                             self.table_id,
@@ -1512,7 +1688,8 @@ impl SortedWritesTable {
                                             prepared_origin
                                                 .expect("receipt merge has no prepared origin"),
                                         )
-                                    });
+                                    })
+                                };
                                 if let Some(rekey) = prepared_rekey.take() {
                                     exec_state
                                         .causal_receipts()
@@ -2322,7 +2499,7 @@ fn hash_code(shard_data: ShardData, row: &[Value], n_keys: usize) -> (ShardId, u
 /// A simple struct for packaging up pending mutations to a `SortedWritesTable`.
 struct PendingState {
     pending_rows: DenseIdMap<ShardId, SegQueue<PendingRowBatch>>,
-    pending_removals: DenseIdMap<ShardId, SegQueue<ArbitraryRowBuffer>>,
+    pending_removals: DenseIdMap<ShardId, SegQueue<PendingRemovalBatch>>,
     total_removals: AtomicUsize,
     total_rows: AtomicUsize,
 }
@@ -2336,6 +2513,28 @@ struct PendingRowBatch {
     rekey_equalities: Option<Vec<TypedCellEquality>>,
     origins: Option<Vec<Option<RowOriginRef>>>,
     _native_lease: Option<PendingNativeLease>,
+}
+
+#[derive(Clone)]
+struct PendingRemovalBatch {
+    rows: ArbitraryRowBuffer,
+    causes: Option<Vec<DeferredEqualityCause>>,
+    _native_lease: Option<PendingNativeLease>,
+}
+
+impl PendingRemovalBatch {
+    fn receipt_causes(&self) -> &[DeferredEqualityCause] {
+        let causes = self
+            .causes
+            .as_deref()
+            .expect("receipt-enabled removal batch has no cause sidecar");
+        assert_eq!(
+            causes.len(),
+            self.rows.len(),
+            "receipt-enabled removal batch has incomplete cause sidecar"
+        );
+        causes
+    }
 }
 
 impl PendingRowBatch {

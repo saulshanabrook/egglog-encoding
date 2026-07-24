@@ -82,6 +82,18 @@ handle!(TermOriginSiteId, u32);
 handle!(CauseDraftId, u64);
 handle!(ReceiptCauseId, u32);
 
+/// Replay-observable keyed-table semantics.
+///
+/// Constructor and value-function removals can change a later grounded write
+/// or lookup-or-insert. Presence relations have no merge-bearing cell, so
+/// their removals are retained only as diagnostics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ReplayTableKind {
+    PresenceRelation,
+    Constructor,
+    ValueFunction,
+}
+
 /// Stable index into the snapshot-owned, shared causal DAG.
 /// A dependency can point directly at an observed rule match or at a shared
 /// non-rule cause node. Keeping the tagged distinction public avoids
@@ -350,6 +362,7 @@ struct ReplayTermStore {
     container_anchors: RwLock<HashMap<(ReplaySortId, Value), SmallVec<[ReplayTermId; 2]>>>,
     original_value_by_term: RwLock<HashMap<(ReplaySortId, ReplayTermId), Value>>,
     table_layouts: DashMap<TableId, Arc<[Option<ReplaySortId>]>>,
+    table_kinds: DashMap<TableId, ReplayTableKind>,
     table_constructors: DashMap<TableId, ReplayConstructorSpec>,
     table_merge_origins: DashMap<TableId, Arc<[MergeOriginSelector]>>,
     table_merge_identity_guards: DashMap<TableId, (u16, u16)>,
@@ -606,6 +619,21 @@ impl ReplayTermStore {
             Entry::Occupied(_) => Err("table already has a different replay-term layout"),
             Entry::Vacant(entry) => {
                 entry.insert(sorts.into());
+                Ok(())
+            }
+        }
+    }
+
+    fn register_table_kind(
+        &self,
+        table: TableId,
+        kind: ReplayTableKind,
+    ) -> Result<(), &'static str> {
+        match self.table_kinds.entry(table) {
+            Entry::Occupied(entry) if *entry.get() == kind => Ok(()),
+            Entry::Occupied(_) => Err("table already has a different replay-table kind"),
+            Entry::Vacant(entry) => {
+                entry.insert(kind);
                 Ok(())
             }
         }
@@ -1373,6 +1401,20 @@ pub struct CheckRoot {
     pub as_of_edges: EqualityEdgeCount,
 }
 
+/// One effective replay-observable keyed-row removal.
+///
+/// The immutable victim fact retains the historical table/key row, so the
+/// event needs no copied key payload. `cause` is the exact rule lane whose
+/// head staged the removal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemovalRecord {
+    pub wave: CausalWave,
+    pub position: HistoryPosition,
+    pub as_of_edges: EqualityEdgeCount,
+    pub removed_fact: FactId,
+    pub cause: RuleMatchId,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TypedCellEquality {
     pub column: crate::ColumnId,
@@ -1495,6 +1537,10 @@ pub struct ReceiptCounters {
     pub redundant_unions: u64,
     /// Effective native unions that added no logical equality edge.
     pub native_alias_unions: u64,
+    /// Effective constructor/value-function removals retained for slicing.
+    pub effective_removals: u64,
+    /// Effective presence-relation removals observed but not retained.
+    pub relation_removals: u64,
     /// Semantic rows for which an exact rebuild cause was captured.
     pub rebuild_causes: u64,
     /// Changed typed cells stored across those rebuild causes.
@@ -1524,6 +1570,7 @@ pub struct ReceiptSnapshot {
     pub equalities: Vec<EqualityRecord>,
     pub native_aliases: Vec<NativeAliasRecord>,
     pub rekeys: Vec<RekeyRecord>,
+    pub removals: Vec<RemovalRecord>,
     pub causes: Vec<ReceiptCauseRecord>,
     pub check_roots: Vec<CheckRoot>,
     pub counters: ReceiptCounters,
@@ -2344,6 +2391,14 @@ impl DeferredEqualityCause {
         }
     }
 
+    fn originating_rule(&self) -> Option<RuleMatchId> {
+        match &self.0 {
+            DeferredEqualityCauseKind::Ready { cause, .. } => cause.rule_match(),
+            DeferredEqualityCauseKind::Pending(cause) => Some(cause.matched),
+            DeferredEqualityCauseKind::Merge(cause) => cause.incoming.originating_rule(),
+        }
+    }
+
     pub(crate) fn pending(cause: PendingRuleCause) -> Self {
         Self(DeferredEqualityCauseKind::Pending(cause))
     }
@@ -2412,6 +2467,15 @@ impl DeferredEqualityCause {
             }
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PreparedRemoval {
+    Tracked {
+        removed_fact: FactId,
+        cause: RuleMatchId,
+    },
+    PresenceRelation,
 }
 
 #[derive(Clone, Debug)]
@@ -2703,6 +2767,7 @@ struct ReceiptArena {
     cause_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     durable_equalities: Vec<Option<DurableEquality>>,
     rekeys: Vec<RekeyRecord>,
+    removals: Vec<RemovalRecord>,
     check_roots: HashMap<u32, CheckRoot>,
     published_facts: u64,
     published_matches: u64,
@@ -2883,6 +2948,11 @@ impl ReceiptArena {
         for root in self.check_roots.values() {
             stack.extend(root.premises.iter().copied().map(Item::Fact));
         }
+        stack.extend(
+            self.removals
+                .iter()
+                .map(|removal| Item::Matched(removal.cause)),
+        );
 
         let mut facts = HashSet::default();
         let mut causes = HashSet::default();
@@ -4801,6 +4871,14 @@ impl CausalReceipts {
         self.0.replay_terms.register_table_layout(table, sorts)
     }
 
+    pub fn register_table_kind(
+        &self,
+        table: TableId,
+        kind: ReplayTableKind,
+    ) -> Result<(), &'static str> {
+        self.0.replay_terms.register_table_kind(table, kind)
+    }
+
     pub fn register_table_constructor(
         &self,
         table: TableId,
@@ -4905,6 +4983,14 @@ impl CausalReceipts {
         self.0.replay_terms.table_layout(table)
     }
 
+    pub(crate) fn table_kind(&self, table: TableId) -> Option<ReplayTableKind> {
+        self.0
+            .replay_terms
+            .table_kinds
+            .get(&table)
+            .map(|kind| *kind)
+    }
+
     pub(crate) fn table_constructor(&self, table: TableId) -> Option<ReplayConstructorSpec> {
         self.0
             .replay_terms
@@ -4965,6 +5051,33 @@ impl CausalReceipts {
         layout.iter().zip(origins.iter()).any(|(sort, origin)| {
             sort.is_some() && matches!(origin, MergeOriginSelector::Unsupported)
         })
+    }
+
+    /// Whether an effective physical row replacement changes any
+    /// replay-visible logical column. Timestamp and subsumption columns have
+    /// no replay sort, so a mark-only subsume keeps the prior immutable
+    /// FactId and does not promote its rule match.
+    pub(crate) fn logical_row_changed(
+        &self,
+        table: TableId,
+        prior: &[Value],
+        next: &[Value],
+    ) -> Result<bool, &'static str> {
+        if prior.len() != next.len() {
+            return Err("logical row comparison has different arities");
+        }
+        let layout = self
+            .0
+            .replay_terms
+            .table_layout(table)
+            .ok_or("logical row comparison table has no replay layout")?;
+        if layout.len() != prior.len() {
+            return Err("logical row comparison and replay layout have different arities");
+        }
+        Ok(layout
+            .iter()
+            .enumerate()
+            .any(|(column, sort)| sort.is_some() && prior[column] != next[column]))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -5141,6 +5254,85 @@ impl CausalReceipts {
         cause: &DeferredEqualityCause,
     ) -> Result<(), &'static str> {
         cause.equality_summary(self).validate()
+    }
+
+    /// Validate one effective keyed-row removal before native state changes.
+    /// Missing rows never reach this method. Source/top-level removals have no
+    /// originating rule and therefore fail closed before staging can commit.
+    pub(crate) fn prepare_removal(
+        &self,
+        table: TableId,
+        wave: CausalWave,
+        removed_fact: FactId,
+        cause: &DeferredEqualityCause,
+    ) -> Result<PreparedRemoval, String> {
+        if removed_fact.is_missing() {
+            return Err("effective removal has no immutable victim FactId".into());
+        }
+        cause.prepare(self, wave)?;
+        let cause = cause.originating_rule().ok_or_else(|| {
+            "causal receipts support named-rule removals only; source/top-level removal is unsupported"
+                .to_owned()
+        })?;
+        let arena = self.0.arena.lock().unwrap();
+        let victim = arena
+            .facts
+            .get((removed_fact.get() - 1) as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| "effective removal references an unknown victim FactId".to_owned())?;
+        if victim.table != table {
+            return Err("effective removal victim belongs to another table".into());
+        }
+        drop(arena);
+        match self
+            .table_kind(table)
+            .ok_or_else(|| "effective removal table has no ReplayTableKind metadata".to_owned())?
+        {
+            ReplayTableKind::PresenceRelation => Ok(PreparedRemoval::PresenceRelation),
+            ReplayTableKind::Constructor | ReplayTableKind::ValueFunction => {
+                Ok(PreparedRemoval::Tracked {
+                    removed_fact,
+                    cause,
+                })
+            }
+        }
+    }
+
+    /// Publish a prevalidated serial removal batch after native deletion and
+    /// before the table's pending writes are merged.
+    pub(crate) fn record_removals(
+        &self,
+        wave: CausalWave,
+        removals: impl IntoIterator<Item = PreparedRemoval>,
+    ) {
+        let as_of_edges = self.equality_boundary();
+        let mut tracked = Vec::new();
+        let mut relation_count = 0_u64;
+        for removal in removals {
+            match removal {
+                PreparedRemoval::Tracked {
+                    removed_fact,
+                    cause,
+                } => tracked.push(RemovalRecord {
+                    wave,
+                    position: HistoryPosition::new(ReceiptShared::alloc_u64(
+                        &self.0.next_history,
+                        1,
+                    )),
+                    as_of_edges,
+                    removed_fact,
+                    cause,
+                }),
+                PreparedRemoval::PresenceRelation => relation_count += 1,
+            }
+        }
+        if tracked.is_empty() && relation_count == 0 {
+            return;
+        }
+        let mut arena = self.0.arena.lock().unwrap();
+        arena.counters.effective_removals += tracked.len() as u64;
+        arena.counters.relation_removals += relation_count;
+        arena.removals.extend(tracked);
     }
 
     pub(crate) fn pending_merge_cause(
@@ -7092,6 +7284,7 @@ impl CausalReceipts {
             equalities,
             native_aliases,
             rekeys,
+            removals: arena.removals.clone(),
             causes,
             check_roots,
             counters,

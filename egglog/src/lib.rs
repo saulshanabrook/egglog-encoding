@@ -44,8 +44,8 @@ pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
     CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec,
     GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, ReceiptSnapshot, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, RuleActionCall,
-    RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, SourceRef,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermId,
+    RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -340,6 +340,9 @@ pub struct EGraph {
     /// Pop reverts the egraph to the last pushed egraph.
     pushed_egraph: Option<Box<Self>>,
     functions: IndexMap<String, Function>,
+    /// Surface declarations that originated from `(relation ...)` before
+    /// desugaring rewrote them to non-unionable constructors.
+    relation_names: HashSet<String>,
     rulesets: IndexMap<String, Ruleset>,
     /// Panic callbacks embedded in `FunctionContainer` values must remain live
     /// for as long as the e-graph can retain those values. Cache one callback
@@ -477,6 +480,7 @@ impl CausalState {
         name: &str,
         schema: &ResolvedSchema,
         subtype: FunctionSubtype,
+        is_relation: bool,
     ) -> FunctionReplaySpec {
         let input_names = schema
             .input
@@ -515,7 +519,13 @@ impl CausalState {
                 replay
             }
         });
+        let table_kind = match (is_relation, subtype) {
+            (true, _) => ReplayTableKind::PresenceRelation,
+            (false, FunctionSubtype::Constructor) => ReplayTableKind::Constructor,
+            (false, FunctionSubtype::Custom) => ReplayTableKind::ValueFunction,
+        };
         FunctionReplaySpec::new(input_sorts.into_iter().chain(output_sorts), constructor)
+            .with_table_kind(table_kind)
     }
 
     fn primitive_key(primitive: &core::SpecializedPrimitive) -> ReplayOpKey {
@@ -780,6 +790,7 @@ impl EGraph {
             names: Default::default(),
             pushed_egraph: Default::default(),
             functions: Default::default(),
+            relation_names: Default::default(),
             rulesets: Default::default(),
             unstable_fn_panic_ids: Default::default(),
             fact_directory: None,
@@ -1037,7 +1048,12 @@ impl EGraph {
             .map(|function| {
                 (
                     function.backend_id,
-                    causal.function_spec(function.name(), &function.schema, function.subtype()),
+                    causal.function_spec(
+                        function.name(),
+                        &function.schema,
+                        function.subtype(),
+                        self.relation_names.contains(function.name()),
+                    ),
                 )
             })
             .collect::<Vec<_>>();
@@ -1516,10 +1532,11 @@ impl EGraph {
             .collect::<Result<Vec<_>, _>>()?;
         let num_outputs = outputs.len();
         let schema = ResolvedSchema { input, outputs };
+        let is_relation = self.relation_names.contains(&decl.name);
         let replay = self
             .causal_state
             .as_mut()
-            .map(|causal| causal.function_spec(&decl.name, &schema, decl.subtype));
+            .map(|causal| causal.function_spec(&decl.name, &schema, decl.subtype, is_relation));
 
         let can_subsume = match decl.subtype {
             FunctionSubtype::Constructor => true,
@@ -3272,7 +3289,23 @@ impl EGraph {
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
-                    let resolved = self.resolve_command(command)?;
+                    let relation_name = match &command {
+                        Command::Relation { name, .. } => Some(name.clone()),
+                        _ => None,
+                    };
+                    let inserted_relation = relation_name
+                        .as_ref()
+                        .is_some_and(|name| self.relation_names.insert(name.clone()));
+                    let resolved = match self.resolve_command(command) {
+                        Ok(resolved) => resolved,
+                        Err(error) => {
+                            if inserted_relation {
+                                self.relation_names
+                                    .remove(relation_name.as_ref().expect("missing relation name"));
+                            }
+                            return Err(error);
+                        }
+                    };
                     if run_commands && self.are_proofs_enabled() {
                         self.proof_check_program
                             .extend(resolved.desugared_before_proofs.clone());
@@ -3289,8 +3322,21 @@ impl EGraph {
                                 ResolvedNCommand::Push(_) | ResolvedNCommand::Pop(_, _)
                             )
                         {
-                            let result = self.run_command(processed)?;
-                            outputs.extend(result);
+                            match self.run_command(processed) {
+                                Ok(result) => outputs.extend(result),
+                                Err(error) => {
+                                    if inserted_relation
+                                        && relation_name
+                                            .as_ref()
+                                            .is_some_and(|name| !self.functions.contains_key(name))
+                                    {
+                                        self.relation_names.remove(
+                                            relation_name.as_ref().expect("missing relation name"),
+                                        );
+                                    }
+                                    return Err(error);
+                                }
+                            }
                         }
                     }
                 }
@@ -5673,6 +5719,90 @@ mod tests {
         let snapshot = egraph.causal_receipt_snapshot().unwrap();
         assert_eq!(snapshot.check_roots.len(), 1);
         assert_eq!(snapshot.counters.unattributed_commits, 0);
+    }
+
+    #[test]
+    fn causal_relation_origin_survives_desugaring_and_late_activation() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(relation R (i64))")
+            .unwrap();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(R 1)\
+                 (rule ((R x)) ((delete (R x))) :name \"delete-r\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        assert!(snapshot.removals.is_empty());
+        assert!(snapshot.matches.is_empty());
+        assert_eq!(snapshot.counters.effective_removals, 0);
+        assert_eq!(snapshot.counters.relation_removals, 1);
+    }
+
+    #[test]
+    fn causal_relation_origin_is_registered_when_declared_after_activation() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation R (i64))\
+                 (R 1)\
+                 (rule ((R x)) ((delete (R x))) :name \"delete-r\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let snapshot = egraph.causal_receipt_snapshot().unwrap();
+        assert!(snapshot.removals.is_empty());
+        assert!(snapshot.matches.is_empty());
+        assert_eq!(snapshot.counters.effective_removals, 0);
+        assert_eq!(snapshot.counters.relation_removals, 1);
+    }
+
+    #[test]
+    fn failed_relation_declaration_does_not_poison_origin_catalog() {
+        let mut egraph = EGraph::default();
+        let error = egraph
+            .parse_and_run_program(None, "(relation Broken (MissingSort))")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("MissingSort"));
+        assert!(!egraph.relation_names.contains("Broken"));
+    }
+
+    #[test]
+    fn causal_subsume_mark_only_transition_records_no_specialized_receipt() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Expr (A))\
+                 (relation Go ())\
+                 (let $a (A))\
+                 (Go)",
+            )
+            .unwrap();
+        let before = egraph.causal_receipt_snapshot().unwrap();
+
+        egraph
+            .parse_and_run_program(
+                None,
+                "(rule ((Go)) ((subsume (A))) :name \"subsume-existing\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let after = egraph.causal_receipt_snapshot().unwrap();
+        assert!(after.removals.is_empty());
+        assert!(after.matches.is_empty());
+        assert_eq!(after.facts, before.facts);
     }
 
     #[test]

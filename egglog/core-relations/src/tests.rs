@@ -17,8 +17,8 @@ use crate::receipts::{RowOriginSpec, TermOriginSpec, TermTemplate};
 use crate::{
     CausalReceipts, CausalWave, CheckEndpointSource, CheckReceiptSpec, FactId,
     GuardedRuleSetRunOutcome, MergeOriginSelector, PlanStrategy, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, RowOriginSiteId, RuleReceiptSpec,
-    SourceReceiptSpec, SourceRef,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, RowOriginSiteId,
+    RuleReceiptSpec, SourceReceiptSpec, SourceRef,
     action::{ExecutionState, Instr, WriteVal},
     common::Value,
     free_join::{
@@ -41,6 +41,15 @@ use crate::{
 const TEST_REPLAY_SORT: ReplaySortId = ReplaySortId::new(0);
 
 fn register_test_receipt_table(receipts: &CausalReceipts, table: TableId, columns: usize) {
+    register_test_receipt_table_kind(receipts, table, columns, ReplayTableKind::ValueFunction);
+}
+
+fn register_test_receipt_table_kind(
+    receipts: &CausalReceipts,
+    table: TableId,
+    columns: usize,
+    kind: ReplayTableKind,
+) {
     receipts
         .register_table_layout(table, &vec![Some(TEST_REPLAY_SORT); columns])
         .unwrap();
@@ -54,6 +63,7 @@ fn register_test_receipt_table(receipts: &CausalReceipts, table: TableId, column
                 .collect::<Vec<_>>(),
         )
         .unwrap();
+    receipts.register_table_kind(table, kind).unwrap();
 }
 
 fn install_test_row_terms(receipts: &CausalReceipts, row: &[Value]) {
@@ -7434,6 +7444,7 @@ fn low_level_remove_fails_before_staging_when_receipts_are_enabled() {
     );
     let receipts = db.enable_causal_receipts();
     register_test_receipt_table(&receipts, table, 2);
+    let mut raw_buffer = db.new_buffer(table);
     let one = receipts.intern_test_term("one");
     let zero = receipts.intern_test_term("zero");
     db.stage_source_row(
@@ -7457,6 +7468,309 @@ fn low_level_remove_fails_before_staging_when_receipts_are_enabled() {
         1,
         "unsupported deletion must fail before a mutation buffer is staged"
     );
+    let raw_failure = catch_unwind(AssertUnwindSafe(|| {
+        raw_buffer.stage_remove(&[Value::new(1)]);
+    }));
+    assert!(
+        raw_failure.is_err(),
+        "a raw table buffer must not disguise an unattributed delete as rebuild maintenance"
+    );
+    assert_eq!(db.get_table(table).len(), 1);
+    let clear_failure = catch_unwind(AssertUnwindSafe(|| {
+        db.get_table_mut(table).clear();
+    }));
+    assert!(clear_failure.is_err());
+    assert_eq!(db.get_table(table).len(), 1);
+}
+
+#[test]
+fn causal_rule_remove_commits_the_native_delete() {
+    let mut db = Database::default();
+    let table = db.add_table_named(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "test rows are immutable");
+                false
+            }),
+        ),
+        "TrackedDelete".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, table, 2);
+    let key = Value::new(1);
+    let timestamp = Value::new(0);
+    install_test_row_terms(&receipts, &[key, timestamp]);
+    db.stage_source_row(
+        table,
+        &[key, timestamp],
+        &[
+            receipts.lookup_term(TEST_REPLAY_SORT, key).unwrap(),
+            receipts.lookup_term(TEST_REPLAY_SORT, timestamp).unwrap(),
+        ],
+        SourceRef::Synthetic(740),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let removed_fact = committed_fact_id(&db, table, key);
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let matched_key = query.new_var_named("key");
+    let matched_timestamp = query.new_var_named("timestamp");
+    let atom = query
+        .add_atom(table, &[matched_key.into(), matched_timestamp.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    action.remove(table, &[matched_key.into()]).unwrap();
+    action.remove(table, &[matched_key.into()]).unwrap();
+    action.build_with_receipts(
+        "tracked-delete",
+        RuleReceiptSpec::new(740, [atom], [matched_key]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    db.run_rule_set(&rules, ReportLevel::TimeOnly);
+    db.finalize_causal_wave();
+    assert!(db.get_table(table).get_row(&[key]).is_none());
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.removals.len(), 1);
+    let removal = &snapshot.removals[0];
+    assert_eq!(removal.wave, CausalWave::new(1));
+    assert_eq!(removal.removed_fact, removed_fact);
+    let match_record = snapshot
+        .matches
+        .iter()
+        .find(|record| record.id == removal.cause)
+        .expect("an effective rule removal must retain its exact match");
+    assert_eq!(match_record.premises.as_ref(), &[removed_fact]);
+    assert_eq!(snapshot.counters.effective_removals, 1);
+    assert_eq!(snapshot.counters.relation_removals, 0);
+}
+
+#[test]
+fn causal_missing_rule_remove_records_nothing() {
+    let mut db = Database::default();
+    let trigger = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let target = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, trigger, 1);
+    register_test_receipt_table(&receipts, target, 1);
+    let trigger_value = Value::new(7410);
+    let missing_key = Value::new(7411);
+    install_test_row_terms(&receipts, &[trigger_value, missing_key]);
+    db.stage_source_row(
+        trigger,
+        &[trigger_value],
+        &[receipts
+            .lookup_term(TEST_REPLAY_SORT, trigger_value)
+            .unwrap()],
+        SourceRef::Synthetic(741),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let matched = query.new_var_named("matched");
+    let atom = query.add_atom(trigger, &[matched.into()], &[]).unwrap();
+    let mut action = query.build();
+    action.remove(target, &[missing_key.into()]).unwrap();
+    action.build_with_receipts(
+        "missing-delete",
+        RuleReceiptSpec::new(741, [atom], [matched]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    db.run_rule_set(&rules, ReportLevel::TimeOnly);
+    db.finalize_causal_wave();
+    let snapshot = receipts.snapshot();
+    assert!(snapshot.removals.is_empty());
+    assert!(snapshot.matches.is_empty());
+    assert_eq!(snapshot.counters.effective_removals, 0);
+    assert_eq!(snapshot.counters.relation_removals, 0);
+}
+
+#[test]
+fn causal_presence_relation_remove_is_diagnostics_only() {
+    let mut db = Database::default();
+    let relation = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table_kind(&receipts, relation, 1, ReplayTableKind::PresenceRelation);
+    let key = Value::new(7420);
+    install_test_row_terms(&receipts, &[key]);
+    db.stage_source_row(
+        relation,
+        &[key],
+        &[receipts.lookup_term(TEST_REPLAY_SORT, key).unwrap()],
+        SourceRef::Synthetic(742),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let matched = query.new_var_named("matched");
+    let atom = query.add_atom(relation, &[matched.into()], &[]).unwrap();
+    let mut action = query.build();
+    action.remove(relation, &[matched.into()]).unwrap();
+    action.build_with_receipts(
+        "relation-delete",
+        RuleReceiptSpec::new(742, [atom], [matched]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    db.run_rule_set(&rules, ReportLevel::TimeOnly);
+    db.finalize_causal_wave();
+    assert!(db.get_table(relation).get_row(&[key]).is_none());
+    let snapshot = receipts.snapshot();
+    assert!(snapshot.removals.is_empty());
+    assert!(snapshot.matches.is_empty());
+    assert_eq!(snapshot.counters.effective_removals, 0);
+    assert_eq!(snapshot.counters.relation_removals, 1);
+}
+
+#[test]
+fn causal_remove_batch_preflights_all_causes_before_native_mutation() {
+    let mut db = Database::default();
+    let table = db.add_table(
+        SortedWritesTable::new(1, 1, None, vec![], Box::new(|_, _, _, _| false)),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, table, 1);
+    let first = Value::new(7430);
+    let second = Value::new(7431);
+    install_test_row_terms(&receipts, &[first, second]);
+    for (source, value) in [(743, first), (744, second)] {
+        db.stage_source_row(
+            table,
+            &[value],
+            &[receipts.lookup_term(TEST_REPLAY_SORT, value).unwrap()],
+            SourceRef::Synthetic(source),
+        )
+        .unwrap();
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let valid = crate::DeferredEqualityCause::ready(empty_rule_cause(&receipts, 743, wave));
+    let foreign_receipts = CausalReceipts::default();
+    let foreign_batch = foreign_receipts.pending_rule_batch(744, wave, 0, &[], &[], 1);
+    let foreign = crate::DeferredEqualityCause::pending(
+        foreign_receipts.pending_rule_cause(&foreign_batch, 0),
+    );
+    {
+        let mut buffer = db.new_buffer(table);
+        buffer.stage_remove_deferred(&[first], valid);
+        buffer.stage_remove_deferred(&[second], foreign);
+    }
+
+    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(failed.is_err(), "a foreign removal cause must fail closed");
+    assert!(db.get_table(table).get_row(&[first]).is_some());
+    assert!(db.get_table(table).get_row(&[second]).is_some());
+}
+
+#[test]
+fn causal_same_wave_remove_precedes_replacement_write() {
+    let mut db = Database::default();
+    let table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(
+                    left, right,
+                    "replacement must not collide with the stale row"
+                );
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    register_test_receipt_table(&receipts, table, 2);
+    let key = Value::new(7450);
+    let old_value = Value::new(7451);
+    let new_value = Value::new(7452);
+    install_test_row_terms(&receipts, &[key, old_value, new_value]);
+    db.stage_source_row(
+        table,
+        &[key, old_value],
+        &[
+            receipts.lookup_term(TEST_REPLAY_SORT, key).unwrap(),
+            receipts.lookup_term(TEST_REPLAY_SORT, old_value).unwrap(),
+        ],
+        SourceRef::Synthetic(745),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let removed_fact = committed_fact_id(&db, table, key);
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let matched_key = query.new_var_named("key");
+    let matched_value = query.new_var_named("value");
+    let atom = query
+        .add_atom(table, &[matched_key.into(), matched_value.into()], &[])
+        .unwrap();
+    let mut action = query.build();
+    // Intentionally stage the write first. Native publication still applies
+    // the common-prestate delete phase before the write phase.
+    action
+        .insert(table, &[matched_key.into(), new_value.into()])
+        .unwrap();
+    action.remove(table, &[matched_key.into()]).unwrap();
+    action.build_with_receipts(
+        "replace-after-delete",
+        RuleReceiptSpec::new(745, [atom], [matched_key, matched_value]),
+    );
+    let rules = rules.build();
+
+    db.set_causal_wave(CausalWave::new(1));
+    db.run_rule_set(&rules, ReportLevel::TimeOnly);
+    db.finalize_causal_wave();
+    let row = db
+        .get_table(table)
+        .get_row(&[key])
+        .expect("the replacement row must be committed");
+    assert_eq!(row.vals.as_slice(), &[key, new_value]);
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.removals.len(), 1);
+    assert_eq!(snapshot.removals[0].removed_fact, removed_fact);
+    assert_eq!(snapshot.facts.len(), 2);
+    assert_eq!(snapshot.matches.len(), 1);
 }
 
 #[test]

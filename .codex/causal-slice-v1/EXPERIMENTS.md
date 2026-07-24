@@ -10,19 +10,19 @@
 - Non-goals: Prefix or conservative recovery, selector rules, partial
   bindings, query planning, source projection, proof-database translation, a
   second evaluator, proof extraction, Herbie, or workload-specific behavior.
-- Current frontier: the logical-row/lazy-projection receipt redesign is green
-  at its focused semantic gate and frozen for independent review. Its
-  receipt-only Math/Eggcc cost gate comes next. Deletion, slicing, and replay
-  remain blocked until that gate passes.
+- Current frontier: exact deletion receipts are green on all five cohort
+  workloads and the recorder is frozen under the final-proof headroom
+  decision. The next checkpoint is the check-root-seeded lazy receipt view and
+  passive slicer; no further recorder optimization precedes end-to-end replay.
 
 ## Roster
 
 | Agent | Circle/domain | Aim | Status | Output | Stop |
 |---|---|---|---|---|---|
 | root | coordinator | Preserve scope, integrate, and own final gates | active | accepted checkpoints and final handoff | gates pass or user decision is needed |
-| implementation worker | Rust/Python implementation | Build the accepted design serially | checkpoint 1-2 accepted; receipt kernel pending | reviewable diff and targeted tests | checkpoint passes, path is disproved, or two cycles show no movement |
-| proof reviewer | read-only proof boundary | Verify exact-one replay and unchanged proof checking | pending | evidence-backed findings | criteria pass or one blocking objection remains |
-| benchmark verifier | read-only benchmark gate | Own broad benchmark commands and endpoint identity | checkpoint 1-2 passed | per-file measurements with SHAs | comparison completes or validity fails |
+| implementation worker | Rust/Python implementation | Build the accepted design serially | deletion checkpoint accepted; slicer next | reviewable diff and targeted tests | checkpoint passes, path is disproved, or two cycles show no movement |
+| proof reviewer | read-only proof boundary | Verify exact-one replay and unchanged proof checking | replay map complete; implementation pending | evidence-backed findings | criteria pass or one blocking objection remains |
+| benchmark verifier | read-only benchmark gate | Own broad benchmark commands and endpoint identity | benchmark surface green; final gate pending | per-file measurements with SHAs | comparison completes or validity fails |
 
 All sub-agents use `gpt-5.6-sol` at `ultra` reasoning effort. Only the
 implementation worker writes feature code. Reviewers are read-only.
@@ -80,7 +80,9 @@ implementation worker writes feature code. Reviewers are read-only.
     executed as `Vec<Command>` through existing proof mode; rendering is for
     inspection only.
 
-Unsupported retained delete/subsume/absence, effectful or nondeterministic
+Constructor and value-function removals are recorded exactly and will be
+retained only for proven replay interference; relation removals are diagnostic.
+Subsume marks need no receipt. Absence, effectful or nondeterministic
 primitives, unsupported containers, custom stateful merges, missing causes, or
 order-dependent replay divergence fail closed.
 
@@ -1863,3 +1865,50 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   or a third architecture from this checkpoint. Preserve the coherent,
   semantically reviewed direct-ID experiment as the final commit and report
   the measured boundary honestly.
+
+### 2026-07-24 — exact named-rule deletion checkpoint
+
+- User consent superseded the preceding performance stop: accept the current
+  recorder under the headroom-relative screen and proceed end-to-end. This
+  checkpoint implements only the deletion boundary needed by Luminal; it does
+  not begin slicing, replay, or another recorder optimization cycle.
+- Starting HEAD: `deb2ecfea5782c3c3c754f04c7355bac36251d1e`.
+- Effective deletes of constructor and value-function keyed rows now retain
+  `RemovalRecord { wave, position, as_of_edges, removed_fact, cause }` at the
+  native delete barrier. Missing and duplicate deletes record nothing.
+  Presence-relation deletes are diagnostics-only. Surface relation origin is
+  recorded before desugaring, so classification is exact both before and after
+  causal activation; Unit-returning ordinary functions are not mistaken for
+  relations.
+- Every supported rule delete carries its deferred match cause to the table.
+  The table preflights the complete per-table batch against one pre-delete
+  state, including immutable victim FactIds and causes, before mutating any
+  row. Cross-table preflight is intentionally not a second transaction system:
+  the supported frontend constructs every delete cause from the current
+  arena/wave and registers every user table before rule execution, making the
+  remaining validation failures internal/low-level misuse. Those low-level
+  failures remain fail-closed per table and have an explicit foreign-arena
+  canary.
+- Receipt-neutral removals now require a private native-maintenance capability
+  used only by rebuild/rekey. Direct `ExecutionState`, raw table-buffer, and
+  direct table-clear removal APIs fail before mutation under causal capture.
+  Custom `run-with` schedulers also fail before creating their unattributed
+  internal worklist table.
+- A falsifying subsume canary found that a mark-only transition was publishing
+  a new fact and retaining its match. Physical replacements that change only
+  ignored timestamp/subsumption columns now preserve the immutable logical
+  FactId and promote no match, fact, or specialized subsume receipt.
+- Validation:
+  - 175/175 `egglog-core-relations` library tests passed;
+  - 104/104 frontend `egglog` library tests passed;
+  - 28/28 `egglog-bridge` library tests passed;
+  - the focused causal subsets passed 31/31 core and 32/32 frontend tests;
+  - `cargo fmt --all -- --check` and `git diff --check` passed;
+  - freshly rebuilt CLI SHA-256:
+    `2933ddd436db7b075432db58ed680f8684fb53ae181d2ee2d6a6bdb328d99606`;
+  - `target/debug/egglog -j 1 --causal-receipts
+    benchmarks/luminal-llama.egg` exited successfully with only the existing
+    global-name warning.
+- Uncommitted implementation diff SHA-256 at this review boundary, excluding
+  this ledger update and the recorder-cost research report:
+  `46bad1d03eb557088e758430b99b0b7b1d355a039e0509c8422accdaa35e4374`.

@@ -27,7 +27,7 @@ use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
     CausalReceipts, CausalWave, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermCounters, ReplayTermId,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
@@ -257,6 +257,7 @@ pub struct FunctionConfig {
 pub struct FunctionReplaySpec {
     pub logical_sorts: Box<[ReplaySortId]>,
     pub constructor: Option<ReplayConstructorSpec>,
+    pub table_kind: ReplayTableKind,
 }
 
 /// One fully parsed source row ready for causal input staging.
@@ -288,8 +289,18 @@ impl FunctionReplaySpec {
     ) -> Self {
         Self {
             logical_sorts: logical_sorts.into_iter().collect(),
+            table_kind: if constructor.is_some() {
+                ReplayTableKind::Constructor
+            } else {
+                ReplayTableKind::ValueFunction
+            },
             constructor,
         }
+    }
+
+    pub fn with_table_kind(mut self, table_kind: ReplayTableKind) -> Self {
+        self.table_kind = table_kind;
+        self
     }
 }
 
@@ -855,6 +866,9 @@ impl EGraph {
         }
         receipts
             .register_table_layout(info.table, &layout)
+            .map_err(anyhow::Error::msg)?;
+        receipts
+            .register_table_kind(info.table, spec.table_kind)
             .map_err(anyhow::Error::msg)?;
         if let Some(constructor) = spec.constructor.clone() {
             receipts

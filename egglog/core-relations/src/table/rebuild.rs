@@ -12,7 +12,9 @@ use crate::{
     hash_index::{ColumnIndex, Index},
     offsets::Offsets,
     parallel_heuristics::parallelize_rebuild,
-    table_spec::{MutationBuffer, MutationTransaction, Rebuilder, WrappedTableRef},
+    table_spec::{
+        MAINTENANCE_REMOVAL, MutationBuffer, MutationTransaction, Rebuilder, WrappedTableRef,
+    },
 };
 
 use super::SortedWritesTable;
@@ -65,10 +67,12 @@ impl SortedWritesTable {
                     equality_cutoff.expect("receipt rebuild is missing its equality landmark"),
                 )
                 .unwrap_or_else(|error| panic!("cannot record exact table rebuild: {error}"));
-            mutation_buf.stage_remove(&current_row[0..self.n_keys]);
+            mutation_buf
+                .stage_remove_maintenance(&current_row[0..self.n_keys], MAINTENANCE_REMOVAL);
             mutation_buf.stage_rekey(rebuilt_row, rekey);
         } else {
-            mutation_buf.stage_remove(&current_row[0..self.n_keys]);
+            mutation_buf
+                .stage_remove_maintenance(&current_row[0..self.n_keys], MAINTENANCE_REMOVAL);
             mutation_buf.stage_insert(rebuilt_row);
         }
         true
@@ -327,7 +331,8 @@ impl SortedWritesTable {
             };
             // Preserve the logical row and only advance its sort/timestamp
             // column, so seminaive treats this as a fresh parent-row delta.
-            mutation_buf.stage_remove(&current_row[0..self.n_keys]);
+            mutation_buf
+                .stage_remove_maintenance(&current_row[0..self.n_keys], MAINTENANCE_REMOVAL);
             refreshed_row.clear();
             refreshed_row.extend_from_slice(current_row);
             if let Some(sort_by) = self.sort_by {

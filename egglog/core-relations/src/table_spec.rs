@@ -315,6 +315,19 @@ pub struct Row {
     pub vals: Pooled<Vec<Value>>,
 }
 
+/// Capability for receipt-neutral removals that are part of native table
+/// maintenance (rekey/rebuild), not user-visible delete actions.
+///
+/// The private field prevents source and downstream callers from disguising
+/// an unattributed delete as maintenance.
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct MaintenanceRemoval {
+    _private: (),
+}
+
+pub(crate) const MAINTENANCE_REMOVAL: MaintenanceRemoval = MaintenanceRemoval { _private: () };
+
 /// An interface for a table.
 pub trait Table: Any + Send + Sync {
     /// A variant of clone that returns a boxed trait object; this trait object
@@ -660,6 +673,19 @@ pub trait MutationBuffer: Any + Send + Sync {
     /// this buffer is dropped, and after `merge` is called on the underlying
     /// table.
     fn stage_remove(&mut self, key: &[Value]);
+
+    /// Stage a receipt-neutral native maintenance removal. Only core rebuild
+    /// code can obtain the capability.
+    #[doc(hidden)]
+    fn stage_remove_maintenance(&mut self, key: &[Value], _capability: MaintenanceRemoval) {
+        self.stage_remove(key);
+    }
+
+    /// Stage a named-rule removal whose exact cause is validated only if the
+    /// keyed row still exists at the native delete barrier.
+    fn stage_remove_deferred(&mut self, _key: &[Value], _cause: DeferredEqualityCause) {
+        panic!("deferred receipt removal staged into a table without receipt support")
+    }
 
     /// Get a fresh handle to the same table.
     fn fresh_handle(&self) -> Box<dyn MutationBuffer>;

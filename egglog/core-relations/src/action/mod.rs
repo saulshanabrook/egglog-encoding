@@ -832,6 +832,16 @@ impl<'a> MutationBuffers<'a> {
         self.buffers[table_id].stage_remove(key);
         self.note_changed(table_id);
     }
+
+    fn stage_remove_deferred(
+        &mut self,
+        table_id: TableId,
+        key: &[Value],
+        cause: DeferredEqualityCause,
+    ) {
+        self.buffers[table_id].stage_remove_deferred(key, cause);
+        self.note_changed(table_id);
+    }
 }
 
 impl Clone for ExecutionState<'_> {
@@ -1826,15 +1836,34 @@ impl ExecutionState<'_> {
                 }
             }
             Instr::Remove { table, args } => {
-                assert!(
-                    self.db.causal_receipts.is_none(),
-                    "causal receipts do not support removal; failing closed"
-                );
-                for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
-                    iter.for_each(|args| {
-                        self.stage_remove(*table, args.as_slice());
-                    })
-                });
+                if let Some(receipts) = self.db.causal_receipts {
+                    let mut causes = vec![None; bindings.matches];
+                    let mut cause_mask = mask.clone();
+                    cause_mask.empty_iter().for_each_indexed(|offset, ()| {
+                        causes[offset] = Some(bindings.deferred_equality_cause(offset, receipts));
+                    });
+                    for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
+                        iter.for_each_indexed(|offset, args| {
+                            self.buffers.lazy_init(*table, || {
+                                self.db.table_info[*table].table.new_buffer()
+                            });
+                            self.buffers.stage_remove_deferred(
+                                *table,
+                                args.as_slice(),
+                                causes[offset]
+                                    .clone()
+                                    .expect("receipt removal lane has no exact cause"),
+                            );
+                            self.changed = true;
+                        })
+                    });
+                } else {
+                    for_each_binding_with_mask!(mask, args.as_slice(), bindings, |iter| {
+                        iter.for_each(|args| {
+                            self.stage_remove(*table, args.as_slice());
+                        })
+                    });
+                }
             }
             Instr::External { func, args, dst } => {
                 invoke_batch(

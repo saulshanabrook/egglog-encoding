@@ -101,7 +101,7 @@ pub use egglog_bridge::{
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
     ExternalFunction, ExternalFunctionId, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
-    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermId, SourceRef, Value,
+    ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermId, SourceRef, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
