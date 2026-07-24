@@ -18,8 +18,8 @@ use crate::numeric_id::{DenseIdMap, NumericId, define_id};
 use smallvec::SmallVec;
 
 use crate::{
-    CausalReceipts, CausalWave, CauseDraftId, EqualityEdgeCount, FactId, QueryEntry, TableId,
-    TypedEqualityProposal, Variable,
+    CausalReceipts, CausalWave, CauseDraftId, EqualityEdgeCount, FactId, QueryEntry,
+    ReceiptCauseRef, TableId, TypedEqualityProposal, Variable,
     action::{
         Bindings, ExecutionState,
         mask::{Mask, MaskIter, ValueSource},
@@ -639,7 +639,7 @@ pub trait MutationBuffer: Any + Send + Sync {
     fn stage_typed_union(
         &mut self,
         _row: &[Value],
-        _cause: CauseDraftId,
+        _cause: ReceiptCauseRef,
         _proposal: TypedEqualityProposal,
     ) {
         panic!("typed union staged into a non-equality table")

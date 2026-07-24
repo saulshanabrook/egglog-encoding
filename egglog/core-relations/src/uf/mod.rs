@@ -10,7 +10,7 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    CauseDraftId, TableChange, TaggedRowBuffer,
+    CauseDraftId, ReceiptCauseRef, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
@@ -351,7 +351,7 @@ impl MutationBuffer for UfBuffer {
     fn stage_typed_union(
         &mut self,
         row: &[Value],
-        cause: CauseDraftId,
+        cause: ReceiptCauseRef,
         proposal: TypedEqualityProposal,
     ) {
         self.stage_typed_union_deferred(row, DeferredEqualityCause::ready(cause), proposal);
@@ -783,7 +783,7 @@ impl DisplacedTable {
         // Validate every effective cause, including deferred merge summaries,
         // before publishing any draft or touching native state.
         for cause in &effective_causes {
-            if let Err(error) = cause.prepare(receipts) {
+            if let Err(error) = cause.prepare(receipts, current_wave) {
                 panic!("{error}");
             }
         }

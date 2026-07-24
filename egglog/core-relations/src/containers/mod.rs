@@ -726,7 +726,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         container: C,
         value: Value,
         exec_state: &mut ExecutionState,
-        mut journal: Option<&mut ContainerAnchorJournal>,
+        journal: Option<&mut ContainerAnchorJournal>,
     ) -> Value {
         let hc = hash_container(&container);
         let target_map = self.to_id.determine_map(&container);
@@ -762,9 +762,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 }
                 let old_val = *occ.get();
                 if let Some(receipts) = exec_state.causal_receipts() {
-                    let journal = journal
-                        .as_deref_mut()
-                        .expect("causal container collision has no anchor overlay");
+                    let journal =
+                        journal.expect("causal container collision has no anchor overlay");
                     for source in [old_val, value] {
                         receipts
                             .stage_container_anchor_transfer(

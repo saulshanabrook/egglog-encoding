@@ -46,10 +46,10 @@ pub use receipts::{
     EqualityReason, EqualityRecord, EqualitySupport, FactCause, FactId, FactRecord,
     HistoryPosition, MatchRecord, MergeOriginSelector, NativeAliasRecord, PreparedRekey,
     RebuildDependency, ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior,
-    ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
-    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId, RowOriginSiteId,
-    RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
-    TypedEqualityProposal,
+    ReceiptCauseRecord, ReceiptCauseRef, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    RowOriginSiteId, RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef,
+    TypedCellEquality, TypedEqualityProposal,
 };
 pub use row_buffer::TaggedRowBuffer;
 pub use table::{MergeFn, SortedWritesTable};

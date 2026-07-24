@@ -33,7 +33,7 @@ use crate::{
     offsets::{OffsetRange, Offsets, RowId, Subset, SubsetRef},
     parallel_heuristics::parallelize_table_op,
     pool::with_pool_set,
-    receipts::{PendingNativeLease, PreparedRekey, RekeyOutcome, RowOriginRef},
+    receipts::{CauseRef, PendingNativeLease, PreparedRekey, RekeyOutcome, RowOriginRef},
     row_buffer::{ParallelRowBufWriter, RowBuffer},
     table_spec::{
         ColumnId, Constraint, Generation, MutationBuffer, MutationTransaction, Offset, Row, Table,
@@ -1284,7 +1284,7 @@ impl SortedWritesTable {
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
-                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
+                                    .unwrap_or(CauseRef::UNATTRIBUTED);
                                 let sort_val = query[sort_by.index()];
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
@@ -1345,7 +1345,7 @@ impl SortedWritesTable {
                                 let incoming_cause = incoming_cause
                                     .as_ref()
                                     .map(DeferredEqualityCause::promote)
-                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
+                                    .unwrap_or(CauseRef::UNATTRIBUTED);
                                 receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                     match buf.receipt_origin(proposal_index) {
                                         Some(RowOriginRef::Site(origin)) => batch
@@ -1502,7 +1502,7 @@ impl SortedWritesTable {
                                 let merge_cause = merge_cause
                                     .flatten()
                                     .map(|cause| cause.promote())
-                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
+                                    .unwrap_or(CauseRef::UNATTRIBUTED);
                                 let fact =
                                     receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                         batch.record_merged_fact(
@@ -1550,7 +1550,7 @@ impl SortedWritesTable {
                                 let incoming_cause = incoming_cause
                                     .as_ref()
                                     .map(DeferredEqualityCause::promote)
-                                    .unwrap_or(CauseDraftId::UNATTRIBUTED);
+                                    .unwrap_or(CauseRef::UNATTRIBUTED);
                                 receipt_batch.as_mut().map_or(FactId::MISSING, |batch| {
                                     match buf.receipt_origin(proposal_index) {
                                         Some(RowOriginRef::Site(origin)) => batch
@@ -1807,7 +1807,7 @@ impl SortedWritesTable {
                                                     .expect(
                                                         "receipt merge is missing its capability",
                                                     )
-                                                    .id(),
+                                                    .cause_ref(),
                                                 row,
                                             );
                                             assignments.insert(cur_row, fact);
@@ -1877,7 +1877,7 @@ impl SortedWritesTable {
                         let cause = if RECEIPTS {
                             ready_causes.as_ref().unwrap()[proposal_index]
                         } else {
-                            CauseDraftId::UNATTRIBUTED
+                            CauseRef::UNATTRIBUTED
                         };
                         staged.insert::<RECEIPTS>(
                             row,
@@ -1901,7 +1901,7 @@ impl SortedWritesTable {
                             }
                             (
                                 changed,
-                                merge_cause.map_or(CauseDraftId::UNATTRIBUTED, |cause| cause.id()),
+                                merge_cause.map_or(CauseRef::UNATTRIBUTED, |cause| cause.cause_ref()),
                             )
                         });
                         if staged.len() >= BATCH_SIZE {
@@ -2396,7 +2396,7 @@ impl PendingRowBatch {
         ))
     }
 
-    fn promoted_receipt_causes(&self) -> Vec<CauseDraftId> {
+    fn promoted_receipt_causes(&self) -> Vec<CauseRef> {
         self.receipt_causes()
             .iter()
             .map(|cause| {
@@ -2599,7 +2599,7 @@ struct StagedOutputs {
     rows: RowBuffer,
     // Receipt causes are a lazy sidecar. The ordinary monomorphization keeps
     // this `None`, so it neither allocates nor writes causal metadata.
-    causes: Option<Vec<CauseDraftId>>,
+    causes: Option<Vec<CauseRef>>,
     n_stale: usize,
     scratch: Pooled<Vec<Value>>,
 }
@@ -2609,13 +2609,13 @@ impl StagedOutputs {
         self.rows.iter().enumerate()
     }
 
-    fn cause<const RECEIPTS: bool>(&self, row_index: usize) -> CauseDraftId {
+    fn cause<const RECEIPTS: bool>(&self, row_index: usize) -> CauseRef {
         if RECEIPTS {
             self.causes
                 .as_ref()
                 .expect("receipt staging requires a cause sidecar")[row_index]
         } else {
-            CauseDraftId::UNATTRIBUTED
+            CauseRef::UNATTRIBUTED
         }
     }
 
@@ -2652,14 +2652,14 @@ impl StagedOutputs {
     fn insert<const RECEIPTS: bool>(
         &mut self,
         row: &[Value],
-        cause: CauseDraftId,
+        cause: CauseRef,
         mut merge_fn: impl FnMut(
             &[Value],
-            CauseDraftId,
+            CauseRef,
             &[Value],
-            CauseDraftId,
+            CauseRef,
             &mut Vec<Value>,
-        ) -> (bool, CauseDraftId),
+        ) -> (bool, CauseRef),
     ) {
         if row[0].is_stale() {
             return;
@@ -2683,7 +2683,7 @@ impl StagedOutputs {
                         .as_ref()
                         .expect("receipt staging requires a cause sidecar")[prior_row.index()]
                 } else {
-                    CauseDraftId::UNATTRIBUTED
+                    CauseRef::UNATTRIBUTED
                 };
                 let (changed, merged_cause) =
                     merge_fn(cur, prior_cause, row, cause, &mut self.scratch);

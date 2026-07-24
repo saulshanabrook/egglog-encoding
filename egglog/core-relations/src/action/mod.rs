@@ -26,9 +26,9 @@ use crate::{
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
     receipts::{
-        ActionReceiptKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
-        DeferredEqualityCause, PendingMatchBatch, PendingPremiseResolver, ReplayBindingSource,
-        RowOriginSiteId, TermOriginSiteId, TypedEqualityProposal,
+        ActionReceiptKind, CauseCapability, CauseRef, CheckEndpointSpec, CheckTermSource,
+        DeferredEqualityCause, PendingPremiseResolver, ReplayBindingSource, RowOriginSiteId,
+        TermOriginSiteId, TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -132,9 +132,27 @@ struct ReceiptBindings {
     wave: CausalWave,
     binding_sources: Arc<[ReplayBindingSource]>,
     premises: ReceiptPremises,
-    causes: Vec<Option<CauseDraftId>>,
-    pending_rule_batch: Option<Arc<PendingMatchBatch>>,
-    first_native_ordinal: Option<u64>,
+    causes: Vec<Option<CauseRef>>,
+    observed: Option<crate::receipts::ObservedMatchBatch>,
+}
+
+struct RuleReceiptExecutionGuard {
+    receipts: CausalReceipts,
+    completed: bool,
+}
+
+impl RuleReceiptExecutionGuard {
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for RuleReceiptExecutionGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.receipts.poison_rule_execution();
+        }
+    }
 }
 
 enum ReceiptPremises {
@@ -330,8 +348,7 @@ impl Bindings {
                     facts: premises.into(),
                 },
                 causes: vec![None],
-                pending_rule_batch: None,
-                first_native_ordinal: None,
+                observed: None,
             }));
         }
     }
@@ -375,18 +392,17 @@ impl Bindings {
                     lanes: vec![witness_lane],
                 },
                 causes: vec![None],
-                pending_rule_batch: None,
-                first_native_ordinal: None,
+                observed: None,
             }));
         }
     }
 
-    fn ensure_pending_rule_batch(&mut self, receipts: &CausalReceipts) {
+    fn ensure_observed_rule_batch(&mut self, receipts: &CausalReceipts) {
         let state = self
             .receipt
             .as_ref()
             .expect("receipt-enabled action requires exact match witnesses");
-        if state.pending_rule_batch.is_some() {
+        if state.observed.is_some() {
             return;
         }
         let ActionReceiptKind::Rule(rule) = &state.kind else {
@@ -396,11 +412,9 @@ impl Bindings {
         let wave = state.wave;
         let premise_arity = state.premises.arity();
         let binding_sources = state.binding_sources.clone();
-        let first_native_ordinal = state
-            .first_native_ordinal
-            .expect("native match ordinals must be reserved when head execution starts");
-        let batch = match &state.premises {
-            ReceiptPremises::Flat { facts, .. } => receipts.pending_rule_batch_at(
+        let first_native_ordinal = receipts.reserve_native_match_ordinals(self.matches);
+        let observed = match &state.premises {
+            ReceiptPremises::Flat { facts, .. } => receipts.observe_rule_batch_at(
                 rule,
                 wave,
                 first_native_ordinal,
@@ -411,7 +425,7 @@ impl Bindings {
             ),
             ReceiptPremises::Lazy {
                 resolver, lanes, ..
-            } => receipts.pending_rule_batch_lazy(
+            } => receipts.observe_rule_batch_lazy(
                 rule,
                 wave,
                 first_native_ordinal,
@@ -421,21 +435,31 @@ impl Bindings {
                 lanes,
             ),
         };
-        self.receipt.as_mut().unwrap().pending_rule_batch = Some(batch);
+        self.receipt.as_mut().unwrap().observed = Some(observed);
     }
 
-    fn begin_receipt_execution(&mut self, receipts: &CausalReceipts) {
-        let Some(state) = self.receipt.as_mut() else {
-            return;
-        };
-        if !matches!(state.kind, ActionReceiptKind::Rule(_)) {
-            return;
+    fn begin_receipt_execution(
+        &mut self,
+        receipts: &CausalReceipts,
+    ) -> Option<RuleReceiptExecutionGuard> {
+        {
+            let state = self.receipt.as_mut()?;
+            if !matches!(state.kind, ActionReceiptKind::Rule(_)) {
+                return None;
+            }
+            assert!(
+                state.observed.is_none(),
+                "one receipt binding batch executed more than once"
+            );
         }
-        assert!(
-            state.first_native_ordinal.is_none(),
-            "one receipt binding batch executed more than once"
-        );
-        state.first_native_ordinal = Some(receipts.reserve_native_match_ordinals(self.matches));
+        let guard = RuleReceiptExecutionGuard {
+            receipts: receipts.clone(),
+            completed: false,
+        };
+        // Record every normal input lane before effects select the reachable
+        // subset. RuleMatchId is therefore the dense native observation id.
+        self.ensure_observed_rule_batch(receipts);
+        Some(guard)
     }
 
     fn deferred_equality_cause(
@@ -456,15 +480,10 @@ impl Bindings {
                     .expect("source effect is missing its exact receipt cause"),
             );
         }
-        self.ensure_pending_rule_batch(receipts);
-        let batch = self
-            .receipt
-            .as_ref()
-            .unwrap()
-            .pending_rule_batch
-            .as_ref()
-            .unwrap();
-        DeferredEqualityCause::pending(receipts.pending_rule_cause(batch, lane))
+        self.ensure_observed_rule_batch(receipts);
+        let state = self.receipt.as_ref().unwrap();
+        let observed = state.observed.as_ref().unwrap();
+        DeferredEqualityCause::pending(receipts.pending_rule_cause(observed, lane))
     }
 
     fn ensure_receipt_causes(&mut self, lanes: &[usize], receipts: &CausalReceipts) {
@@ -482,12 +501,12 @@ impl Bindings {
         if missing.is_empty() {
             return;
         }
-        if let Some(batch) = state.pending_rule_batch.clone() {
+        if let Some(observed) = state.observed.as_ref() {
             let registered = missing
                 .iter()
                 .copied()
-                .map(|lane| (lane, receipts.pending_rule_cause(&batch, lane).promote()))
-                .collect::<SmallVec<[(usize, CauseDraftId); 16]>>();
+                .map(|lane| (lane, receipts.pending_rule_cause(observed, lane).promote()))
+                .collect::<SmallVec<[(usize, CauseRef); 16]>>();
             let state = self.receipt.as_mut().unwrap();
             for (lane, cause) in registered {
                 state.causes[lane] = Some(cause);
@@ -498,7 +517,7 @@ impl Bindings {
             let registered = receipts.register_source_actions(source, &missing);
             let state = self.receipt.as_mut().unwrap();
             for (lane, cause) in registered {
-                state.causes[lane] = Some(cause);
+                state.causes[lane] = Some(cause.into());
             }
             return;
         }
@@ -508,7 +527,7 @@ impl Bindings {
         panic!("rule causes must be promoted through their pending match batch")
     }
 
-    fn receipt_cause(&self, lane: usize) -> Option<CauseDraftId> {
+    fn receipt_cause(&self, lane: usize) -> Option<CauseRef> {
         self.receipt.as_ref()?.causes[lane]
     }
 
@@ -623,6 +642,8 @@ impl PredictedVals {
 #[derive(Clone)]
 pub(crate) enum ActiveCause {
     Ready(CauseCapability),
+    #[cfg(test)]
+    Direct(CauseRef),
     DeferredMerge {
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
@@ -636,6 +657,8 @@ impl ActiveCause {
     fn deferred(&mut self, receipts: &CausalReceipts) -> DeferredEqualityCause {
         match self {
             Self::Ready(cause) => DeferredEqualityCause::capability(*cause),
+            #[cfg(test)]
+            Self::Direct(cause) => DeferredEqualityCause::ready(*cause),
             Self::DeferredMerge {
                 incoming,
                 prior_fact,
@@ -650,6 +673,8 @@ impl ActiveCause {
     fn ready_capability(&self) -> Option<CauseCapability> {
         match self {
             Self::Ready(cause) => Some(*cause),
+            #[cfg(test)]
+            Self::Direct(_) => None,
             Self::DeferredMerge { .. } => None,
         }
     }
@@ -1035,6 +1060,11 @@ impl<'a> ExecutionState<'a> {
         });
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_active_cause_ref(&mut self, cause: Option<crate::ReceiptCauseRef>) {
+        self.active_cause = cause.map(|cause| ActiveCause::Direct(cause.into()));
+    }
+
     pub(crate) fn set_active_cause_capability(&mut self, cause: Option<CauseCapability>) {
         self.active_cause = cause.map(ActiveCause::Ready);
     }
@@ -1352,19 +1382,24 @@ impl ExecutionState<'_> {
             // If we have no variables, we want to run the rules once.
             bindings.matches = 1;
         }
-        if let Some(receipts) = self.db.causal_receipts {
-            bindings.begin_receipt_execution(receipts);
-        }
+        let mut receipt_guard = self
+            .db
+            .causal_receipts
+            .and_then(|receipts| bindings.begin_receipt_execution(receipts));
 
         // Vectorized execution for larger batch sizes
         let mut mask = with_pool_set(|ps| Mask::new(0..bindings.matches, ps));
         for instr in instrs {
             if mask.is_empty() {
-                return 0;
+                break;
             }
             self.run_instr(&mut mask, instr, bindings);
         }
-        mask.count_ones()
+        let succeeded = mask.count_ones();
+        if let Some(guard) = &mut receipt_guard {
+            guard.complete();
+        }
+        succeeded
     }
     fn run_instr(&mut self, mask: &mut Mask, inst: &Instr, bindings: &mut Bindings) {
         fn assert_impl(

@@ -655,7 +655,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         "match terms are counted once; fact-owned term ranges are separate storage"
     );
     assert_eq!(snapshot.counters.live_provisional_bytes, 0);
-    assert!(snapshot.counters.peak_provisional_bytes > 0);
+    assert_eq!(snapshot.counters.peak_provisional_bytes, 0);
     assert_eq!(snapshot.counters.promotion_misses, 0);
     assert_eq!(
         receipts.fact_record(source.id).unwrap(),
@@ -733,21 +733,27 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     );
 }
 
-fn empty_rule_cause(receipts: &CausalReceipts, rule: u32, wave: CausalWave) -> crate::CauseDraftId {
-    receipts.register_rule_matches(rule, wave, 0, &[], &[], &[0])[0].1
+fn empty_rule_cause(
+    receipts: &CausalReceipts,
+    rule: u32,
+    wave: CausalWave,
+) -> crate::ReceiptCauseRef {
+    receipts.register_rule_matches(rule, wave, 0, &[], &[], &[0])[0]
+        .1
+        .public()
 }
 
 fn stage_test_union(
     db: &Database,
     table: TableId,
-    cause: crate::CauseDraftId,
+    cause: crate::ReceiptCauseRef,
     sort: ReplaySortId,
     left: Value,
     right: Value,
     timestamp: Value,
 ) {
     db.with_execution_state(|state| {
-        state.set_active_cause(Some(cause));
+        state.set_active_cause_ref(Some(cause));
         state.stage_union_with_replay(table, left, right, timestamp, sort);
     });
 }
@@ -773,7 +779,7 @@ struct TestCauseDependencies {
 
 fn test_cause_dependencies(
     snapshot: &crate::ReceiptSnapshot,
-    root: crate::ReceiptCauseId,
+    root: impl Into<crate::ReceiptCauseRef>,
 ) -> TestCauseDependencies {
     let mut result = TestCauseDependencies::default();
     for dependency in snapshot.cause_dependencies(root) {
@@ -1224,7 +1230,7 @@ fn capture_same_wave_rebuild_collision(
         db.set_causal_wave(CausalWave::new(1));
         let union_cause = empty_rule_cause(&receipts, 781, CausalWave::new(1));
         db.with_execution_state(|state| {
-            state.set_active_cause(Some(union_cause));
+            state.set_active_cause_ref(Some(union_cause));
             for index in 0..row_count {
                 state.stage_union_with_replay(
                     uf,
@@ -1385,6 +1391,15 @@ fn causal_receipt_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
 
 #[test]
 fn late_fact_rekey_attachment_is_visible_only_at_the_check_position() {
+    late_fact_rekey_attachment_case(false);
+}
+
+#[test]
+fn late_fact_rekey_attachment_is_independent_of_equality_endpoint_order() {
+    late_fact_rekey_attachment_case(true);
+}
+
+fn late_fact_rekey_attachment_case(reverse_equality_endpoints: bool) {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let rebuilt = db.add_table(
@@ -1419,13 +1434,26 @@ fn late_fact_rekey_attachment_is_visible_only_at_the_check_position() {
     };
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
+    let (proposal_left, proposal_left_term, proposal_right, proposal_right_term) =
+        if reverse_equality_endpoints {
+            (c, tc, a, ta)
+        } else {
+            (a, ta, c, tc)
+        };
     let equality = receipts
-        .typed_equality_proposal_from_sites(wave, sort, a, site(ta), c, site(tc))
+        .typed_equality_proposal_from_sites(
+            wave,
+            sort,
+            proposal_left,
+            site(proposal_left_term),
+            proposal_right,
+            site(proposal_right_term),
+        )
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
         buffer.stage_typed_union(
-            &[a, c, Value::new(1)],
+            &[proposal_left, proposal_right, Value::new(1)],
             empty_rule_cause(&receipts, 7900, wave),
             equality,
         );
@@ -2051,7 +2079,7 @@ fn causal_receipt_serial_rebuild_congruence_keeps_only_applied_leaves() {
         .expect("the applied serial congruence must retain its two causal leaves");
     let facts = &dependencies.facts;
     assert_eq!(facts.len(), 2);
-    let leaf_facts = facts.iter().copied().collect::<Vec<_>>();
+    let leaf_facts = facts.to_vec();
     assert!(leaf_facts.iter().all(|fact| old_facts.contains(fact)));
     assert_eq!(
         old_facts
@@ -2741,7 +2769,10 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
                 buffer.stage_insert(&[left, right, Value::new(1)]);
             } else if case == "raw-with-cause" {
                 let mut buffer = db.new_buffer(uf);
-                buffer.stage_insert_with_cause(&[left, right, Value::new(1)], cause);
+                buffer.stage_insert_deferred(
+                    &[left, right, Value::new(1)],
+                    crate::DeferredEqualityCause::ready(cause),
+                );
             } else if case == "token-row-mismatch" {
                 let proposal = receipts
                     .typed_equality_proposal(CausalWave::new(1), sort, left, right)
@@ -2762,6 +2793,154 @@ fn invalid_typed_union_staging_fails_before_native_mutation() {
         assert!(snapshot.equality_nodes.is_empty());
         assert!(snapshot.equalities.is_empty());
     }
+}
+
+#[test]
+fn forged_direct_rule_match_fails_before_native_union() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(901);
+    let left = Value::new(9010);
+    let right = Value::new(9011);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9010), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9011), right);
+
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let proposal = receipts
+        .typed_equality_proposal(wave, sort, left, right)
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[left, right, Value::new(1)],
+            crate::ReceiptCauseRef::Rule(crate::RuleMatchId::new(999)),
+            proposal,
+        );
+    }
+
+    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(
+        failed.is_err(),
+        "a direct RuleMatchId without a durable observation must fail preflight"
+    );
+    assert_eq!(native_uf_root(&db, uf, left), left);
+    assert_eq!(native_uf_root(&db, uf, right), right);
+}
+
+#[test]
+fn direct_rule_match_cannot_cross_a_causal_wave() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(902);
+    let left = Value::new(9020);
+    let right = Value::new(9021);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9020), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9021), right);
+
+    let first_wave = CausalWave::new(1);
+    db.set_causal_wave(first_wave);
+    let stale = empty_rule_cause(&receipts, 902, first_wave);
+    db.finalize_causal_wave();
+
+    let second_wave = CausalWave::new(2);
+    db.set_causal_wave(second_wave);
+    let proposal = receipts
+        .typed_equality_proposal(second_wave, sort, left, right)
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(&[left, right, Value::new(2)], stale, proposal);
+    }
+
+    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(
+        failed.is_err(),
+        "a direct RuleMatchId from an earlier wave must fail preflight"
+    );
+    assert_eq!(native_uf_root(&db, uf, left), left);
+    assert_eq!(native_uf_root(&db, uf, right), right);
+}
+
+#[test]
+fn pending_rule_cause_cannot_cross_receipt_arenas() {
+    let foreign = CausalReceipts::default();
+    let wave = CausalWave::new(1);
+    let observed = foreign.pending_rule_batch(903, wave, 0, &[], &[], 1);
+    let foreign_cause =
+        crate::DeferredEqualityCause::pending(foreign.pending_rule_cause(&observed, 0));
+
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(903);
+    let left = Value::new(9030);
+    let right = Value::new(9031);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9030), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9031), right);
+    db.set_causal_wave(wave);
+    let proposal = receipts
+        .typed_equality_proposal(wave, sort, left, right)
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union_deferred(&[left, right, Value::new(1)], foreign_cause, proposal);
+    }
+
+    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(
+        failed.is_err(),
+        "a pending rule cause owned by another receipt arena must fail preflight"
+    );
+    assert_eq!(native_uf_root(&db, uf, left), left);
+    assert_eq!(native_uf_root(&db, uf, right), right);
+}
+
+#[test]
+fn pending_rule_cause_rejects_a_missing_same_arena_match() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let wave = CausalWave::new(1);
+    let sort = ReplaySortId::new(904);
+    let left = Value::new(9040);
+    let right = Value::new(9041);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9040), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9041), right);
+    db.set_causal_wave(wave);
+    let forged = receipts.observed_match_batch_for_test(crate::RuleMatchId::new(999), 1, wave);
+    let failed = catch_unwind(AssertUnwindSafe(|| receipts.pending_rule_cause(&forged, 0)));
+    assert!(
+        failed.is_err(),
+        "a pending cause must not manufacture a missing same-arena match"
+    );
+    assert_eq!(native_uf_root(&db, uf, left), left);
+    assert_eq!(native_uf_root(&db, uf, right), right);
+}
+
+#[test]
+fn pending_rule_cause_rejects_a_lane_outside_its_observed_batch() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let wave = CausalWave::new(1);
+    let first = receipts.pending_rule_batch(905, wave, 0, &[], &[], 1);
+    let _adjacent = receipts.pending_rule_batch(906, wave, 0, &[], &[], 1);
+    let sort = ReplaySortId::new(905);
+    let left = Value::new(9050);
+    let right = Value::new(9051);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9050), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(9051), right);
+    db.set_causal_wave(wave);
+    let failed = catch_unwind(AssertUnwindSafe(|| receipts.pending_rule_cause(&first, 1)));
+    assert!(
+        failed.is_err(),
+        "a lane beyond its observed batch must not alias an adjacent match"
+    );
+    assert_eq!(native_uf_root(&db, uf, left), left);
+    assert_eq!(native_uf_root(&db, uf, right), right);
 }
 
 #[test]
@@ -2814,7 +2993,6 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
             );
         }
     }
-    drop(pending);
     assert!(!db.merge_all());
     db.stage_source_row(
         marker,
@@ -2840,6 +3018,111 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
         snapshot.facts[0].position.get(),
         snapshot.equalities[0].position.get() + 1,
         "redundant proposals must allocate no global history positions"
+    );
+}
+
+#[test]
+fn observed_match_ids_are_dense_before_effect_reachability() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(200);
+    let left = Value::new(2000);
+    let right = Value::new(2001);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2000), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2001), right);
+
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let observed = receipts.pending_rule_batch(200, wave, 0, &[], &[], 4);
+    let proposal = receipts
+        .typed_equality_proposal(wave, sort, left, right)
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union_deferred(
+            &[left, right, Value::new(1)],
+            crate::DeferredEqualityCause::pending(receipts.pending_rule_cause(&observed, 3)),
+            proposal,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(
+        snapshot.counters.observed_matches, 4,
+        "every normal-return native input lane must have one dense observation"
+    );
+    assert_eq!(
+        snapshot.matches.len(),
+        1,
+        "the compatibility snapshot should project only effect-reachable observations"
+    );
+    assert_eq!(
+        snapshot.equalities[0].reason.rule_match(),
+        Some(snapshot.matches[0].id),
+        "only the effective fourth observation should be reachable from an effect"
+    );
+    assert_eq!(snapshot.matches[0].id.get(), 4);
+}
+
+#[test]
+fn one_firing_fact_and_union_share_direct_match_without_rule_cause_node() {
+    let mut db = Database::default();
+    let fact_table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    receipts.register_table_layout(fact_table, &[None]).unwrap();
+    let origin = receipts.register_row_origin(RowOriginSpec {
+        table: fact_table,
+        cells: [None].into(),
+    });
+    let sort = ReplaySortId::new(201);
+    let left = Value::new(2010);
+    let right = Value::new(2011);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2010), left);
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2011), right);
+
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let observed = receipts.pending_rule_batch(201, wave, 0, &[], &[], 1);
+    let cause = crate::DeferredEqualityCause::pending(receipts.pending_rule_cause(&observed, 0));
+    {
+        let mut facts = db.new_buffer(fact_table);
+        facts.stage_insert_deferred_with_origin(&[Value::new(2012)], cause.clone(), origin);
+    }
+    let proposal = receipts
+        .typed_equality_proposal(wave, sort, left, right)
+        .unwrap();
+    {
+        let mut unions = db.new_buffer(uf);
+        unions.stage_typed_union_deferred(&[left, right, Value::new(1)], cause, proposal);
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.matches.len(), 1);
+    let matched = snapshot.matches[0].id;
+    assert_eq!(snapshot.facts[0].cause.rule_match(), Some(matched));
+    assert_eq!(snapshot.equalities[0].reason.rule_match(), Some(matched));
+    assert!(
+        snapshot.causes.is_empty(),
+        "a direct rule match must not allocate a generic cause node"
     );
 }
 
@@ -2915,7 +3198,6 @@ fn noop_constructor_collisions_copy_no_prior_terms_or_promote_matches() {
             );
         }
     }
-    drop(pending);
     assert!(!db.merge_all());
     db.finalize_causal_wave();
 
@@ -2952,7 +3234,6 @@ fn effective_pending_union_effects_share_one_promoted_match() {
             );
         }
     }
-    drop(pending);
     assert!(db.merge_all());
     db.finalize_causal_wave();
 
@@ -3025,26 +3306,9 @@ fn pending_batch_preflight_failure_is_atomic() {
         }]
         .into(),
     }];
-    let pending =
-        receipts.pending_rule_batch(199, wave, 1, &sources, &[valid_fact, missing_fact], 2);
-    {
-        let mut buffer = db.new_buffer(uf);
-        for (lane, (left, right)) in [(values[0], values[1]), (values[2], values[3])]
-            .into_iter()
-            .enumerate()
-        {
-            let proposal = receipts
-                .typed_equality_proposal(wave, sort, left, right)
-                .unwrap();
-            buffer.stage_typed_union_deferred(
-                &[left, right, Value::new(1)],
-                crate::DeferredEqualityCause::pending(receipts.pending_rule_cause(&pending, lane)),
-                proposal,
-            );
-        }
-    }
-    drop(pending);
-    let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    let failed = catch_unwind(AssertUnwindSafe(|| {
+        receipts.pending_rule_batch(199, wave, 1, &sources, &[valid_fact, missing_fact], 2)
+    }));
     assert!(failed.is_err());
     for value in values {
         assert_eq!(native_uf_root(&db, uf, value), value);
@@ -3093,8 +3357,6 @@ fn promoted_match_ids_follow_native_batch_order_not_union_order() {
             );
         }
     }
-    drop(earlier);
-    drop(later);
     assert!(db.merge_all());
     db.finalize_causal_wave();
     let snapshot = receipts.snapshot();
@@ -3232,22 +3494,6 @@ fn promoted_match_order_follows_full_batch_then_tail_execution() {
         [FULL_RULE, TAIL_RULE],
         "native ordinals are reserved when each action batch actually starts"
     );
-}
-
-#[test]
-fn causal_wave_barriers_reject_live_pending_match_batches() {
-    let mut db = Database::default();
-    let receipts = db.enable_causal_receipts();
-    db.set_causal_wave(CausalWave::new(1));
-    let pending = receipts.pending_rule_batch(196, CausalWave::new(1), 0, &[], &[], 1);
-    let failed = catch_unwind(AssertUnwindSafe(|| db.finalize_causal_wave()));
-    assert!(failed.is_err());
-    assert_eq!(
-        receipts.equality_edge_count(),
-        Err("cannot start rebuild with unresolved pending match batches")
-    );
-    drop(pending);
-    db.finalize_causal_wave();
 }
 
 #[test]
@@ -3486,7 +3732,7 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
     assert_eq!(proposal.left().sort, container_sort);
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(&[left, right, Value::new(1)], cause.id(), proposal);
+        buffer.stage_typed_union(&[left, right, Value::new(1)], cause.id().into(), proposal);
     }
     assert!(db.merge_all());
     db.finalize_causal_wave();
@@ -3763,7 +4009,7 @@ fn native_alias_preserves_an_existing_logical_component() {
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
-        buffer.stage_typed_union(&[left, alias, Value::new(2)], cause.id(), proposal);
+        buffer.stage_typed_union(&[left, alias, Value::new(2)], cause.id().into(), proposal);
     }
     assert!(db.merge_all());
     db.finalize_causal_wave();
@@ -4642,7 +4888,11 @@ fn deep_same_wave_merge_union_reuses_one_shared_cause_dag() {
     let snapshot = receipts.snapshot();
     assert_eq!(snapshot.equalities.len(), PROPOSALS - 1);
     assert_eq!(snapshot.matches.len(), PROPOSALS);
-    assert_eq!(snapshot.causes.len(), PROPOSALS * 2 - 1);
+    assert_eq!(
+        snapshot.causes.len(),
+        PROPOSALS - 1,
+        "direct RuleMatchId causes leave only the shared merge nodes"
+    );
     assert!(
         std::mem::size_of::<crate::EqualityReason>() <= 32,
         "each equality reason must retain only a constant-size shared root"
@@ -4860,7 +5110,7 @@ fn unsupported_equality_cause_fails_before_native_union() {
         let mut buffer = uf.new_buffer();
         buffer.stage_typed_union(
             &[left, right, Value::new(1)],
-            receipts.source_draft(SourceRef::Synthetic(130)),
+            receipts.source_draft(SourceRef::Synthetic(130)).into(),
             receipts
                 .typed_equality_proposal(CausalWave::new(1), sort, left, right)
                 .unwrap(),
@@ -4901,7 +5151,7 @@ fn pending_union_can_make_an_unsupported_cause_redundant() {
         );
         buffer.stage_typed_union(
             &[left, right, Value::new(1)],
-            receipts.source_draft(SourceRef::Synthetic(135)),
+            receipts.source_draft(SourceRef::Synthetic(135)).into(),
             proposal,
         );
     }
@@ -4943,7 +5193,7 @@ fn invalid_union_late_in_batch_leaves_native_union_find_untouched() {
         );
         buffer.stage_typed_union(
             &[values[2], values[3], Value::new(1)],
-            receipts.source_draft(SourceRef::Synthetic(131)),
+            receipts.source_draft(SourceRef::Synthetic(131)).into(),
             receipts
                 .typed_equality_proposal(CausalWave::new(1), sort, values[2], values[3])
                 .unwrap(),
@@ -5055,7 +5305,7 @@ fn invalid_union_batch_does_not_compress_existing_native_paths() {
         );
         buffer.stage_typed_union(
             &[Value::new(4), Value::new(3), Value::new(3)],
-            receipts.source_draft(SourceRef::Synthetic(134)),
+            receipts.source_draft(SourceRef::Synthetic(134)).into(),
             receipts
                 .typed_equality_proposal(CausalWave::new(3), sort, Value::new(4), Value::new(3))
                 .unwrap(),
@@ -6788,8 +7038,8 @@ fn decomposed_projected_receipt_case(retain_existential: bool) {
     db.finalize_causal_wave();
     assert_eq!(
         pending_witness_resolution_count(),
-        if retain_existential { 2 } else { 1 },
-        "only effective lanes should resolve their exact decomposed witnesses"
+        2,
+        "every normal-return observed lane resolves one exact decomposed witness"
     );
     let snapshot = receipts.snapshot();
     let matches = snapshot

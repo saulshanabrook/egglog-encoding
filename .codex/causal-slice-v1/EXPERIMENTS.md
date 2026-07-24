@@ -1782,3 +1782,84 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   third architecture from this failed gate. The result supports the previous
   conclusion that Math's remaining cost is distributed exact-event shadow
   work, not the eliminated per-lane preparation representation.
+
+### 2026-07-24 — direct-ID logical-support checkpoint and final Math gate
+
+- Stable review boundary before the benchmark:
+  - committed base/HEAD:
+    `6606c5253488eeecf0a954abf19385c2d958984d`;
+  - SHA-256 of the frozen dirty binary diff (`git diff --binary`):
+    `3c2db889ea2d286a0adc6e63cf5d5664caed3db86d224eb197839163c7c8acb7`;
+  - benchmark binary SHA-256:
+    `0d4fc16fe28b2fd6f280178128310a0d467188e879095c849359a10530856361`;
+  - Math fixture SHA-256:
+    `7303e72d4870a2855682d21a30fc3b0237dfe1c650def398b7da83472505ef1f`.
+- This bounded cycle replaced candidate-scale finalization and one generic
+  cause node per native rule observation with direct stable `RuleMatchId`
+  attribution. All normal-return lanes are installed once in dense native
+  order, effects cite an 8-byte tagged rule-or-node cause, merge reads remain
+  sparse, facts and applied equalities publish directly, and `finalize_wave`
+  performs only scalar counter/barrier checks. The compatibility snapshot
+  computes the cited subset cold; the future slicer is contracted to consume
+  the raw arena rather than projecting every observed match.
+- The semantic review produced and fixed these falsifying canaries before any
+  timing run:
+  - forged, stale cross-wave, and foreign-arena rule causes fail before native
+    UF mutation;
+  - an opaque observed-batch token rejects an unreserved same-arena match and
+    an out-of-range lane without a hot arena lock;
+  - cold cited-match traversal names and rejects a dangling
+    `RuleMatchId(999)` instead of silently skipping it;
+  - equality support is invariant to swapping the first equality proposal's
+    endpoint order, using raw-specific historical anchors rather than a
+    component's arbitrary left anchor;
+  - dropping a redundant-only receipt fragment poisons the snapshot just like
+    dropping any other nonempty unpublished fragment;
+  - direct fact and union effects from one firing share the same match without
+    a generic rule-cause node, and dense observation IDs precede reachability.
+- Validation at the frozen boundary:
+  - core-relations: 170 unit tests and 2 doctests passed;
+  - frontend `egglog`: 100 library tests passed;
+  - egglog bridge: 28 library tests passed;
+  - egglog experimental: 3 library tests passed;
+  - formatting, package-scoped checking, applicable doctests, and
+    `git diff --check` passed without warnings.
+- Final nits cleanup mechanically removed the three test-only dead-code
+  warnings and six Clippy-only style warnings without changing behavior.
+  Package-scoped Clippy with `-D warnings` then passed for core-relations,
+  bridge, frontend, and experimental, followed by the same 170, 28, 100, and
+  3 library-test counts and 2 core doctests. Root `make nits` passes the Python
+  lock, Ruff format/lint, mypy, Rust formatting, and every touched Rust crate,
+  then reaches the already-recorded out-of-scope DD compile gap: three
+  non-exhaustive matches for `MergeFn::InputChoicePrimitive` in
+  `egglog-experimental/dd`. This experiment does not modify the unsupported DD
+  backend merely to make a workspace-wide validation target green.
+- The final one-round gate used the normal append-only `.reports.jsonl`, no
+  `--force-run`, no explicit report override, the default main backend, and
+  the same frozen dirty binary for both treatments:
+
+  ```sh
+  ./bench.py egglog/tests/math-microbenchmark.egg \
+    --target . --treatment causal-receipts --compare-target . \
+    --compare-treatment off --rounds 1 --timeout-sec 60 \
+    --detail phases --format markdown
+  ```
+
+  | Treatment | Wall | Peak RSS |
+  | --- | ---: | ---: |
+  | Native/off | 453.355ms | 259.2 MiB |
+  | Causal receipts | 962.878ms | 879.1 MiB |
+
+  Causal receipts are 2.12x native wall time and 3.39x native peak RSS, so
+  the checkpoint fails both the 1.8x first-screen cutoff and the intended
+  approximately 1.5x recording bound. Candidate-minus-native phase deltas
+  are search +54.543ms, apply +79.892ms, merge +199.676ms, rebuild
+  +173.181ms, and outside measured ruleset phases +2.308ms. The ruleset's
+  unattributed phase itself decreased by 0.077ms.
+- Decision: stop this performance cycle at the falsified first-round gate.
+  Do not run three rounds, profile, or attempt another optimization. Do not
+  implement deletion, passive slicing, grounded replay, proof integration,
+  Prefix, projection fallback, selector search, workload-specific handling,
+  or a third architecture from this checkpoint. Preserve the coherent,
+  semantically reviewed direct-ID experiment as the final commit and report
+  the measured boundary honestly.
