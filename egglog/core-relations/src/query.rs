@@ -753,7 +753,15 @@ impl RuleBuilder<'_, '_> {
                         }
                     }
                     let source = if !occurrences.is_empty() {
+                        let first_premise = occurrences[0].premise;
+                        let representative = occurrences
+                            .iter()
+                            .copied()
+                            .take_while(|occurrence| occurrence.premise == first_premise)
+                            .last()
+                            .expect("nonempty premise occurrences have a representative");
                         ReplayBindingSource::Premise {
+                            representative,
                             occurrences: occurrences.into(),
                         }
                     } else {

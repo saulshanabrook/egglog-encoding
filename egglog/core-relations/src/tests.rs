@@ -2566,6 +2566,10 @@ fn pending_union_preparation_is_atomic_before_receipt_publication() {
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
     let sources = [crate::receipts::ReplayBindingSource::Premise {
+        representative: crate::receipts::PremiseOccurrence {
+            premise: 0,
+            column: 0,
+        },
         occurrences: [crate::receipts::PremiseOccurrence {
             premise: 0,
             column: 0,
@@ -4531,6 +4535,86 @@ fn causal_receipt_binding_recipe_keeps_every_premise_occurrence() {
             .collect::<Vec<_>>(),
         [(0, 0), (0, 1), (1, 0)],
         "duplicate columns and later atoms are all part of the static recipe"
+    );
+}
+
+#[test]
+fn duplicate_premise_columns_keep_the_legacy_public_representative() {
+    let mut db = Database::default();
+    let immutable = |columns| {
+        SortedWritesTable::new(
+            columns,
+            columns,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        )
+    };
+    let input = db.add_table(immutable(2), iter::empty(), iter::empty());
+    let output = db.add_table(immutable(1), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let child_sort = ReplaySortId::new(213);
+    let sort = ReplaySortId::new(214);
+    receipts
+        .register_table_layout(input, &[Some(sort), Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_layout(output, &[Some(sort)])
+        .unwrap();
+
+    let raw = Value::new(2130);
+    let first_child =
+        receipts.intern_literal(child_sort, ReplayLiteral::Internal(2131), Value::new(2131));
+    let last_child =
+        receipts.intern_literal(child_sort, ReplayLiteral::Internal(2132), Value::new(2132));
+    let first = receipts
+        .intern_call(sort, ReplayOpId::new(213), &[first_child], raw)
+        .unwrap();
+    let last = receipts
+        .intern_call(sort, ReplayOpId::new(213), &[last_child], raw)
+        .unwrap();
+    assert_ne!(first, last, "the canary requires competing exact syntax");
+    let row = [raw, raw];
+    let terms = [first, last];
+    receipts.install_source_row(input, &row, &terms).unwrap();
+    let mut source = db.new_buffer(input);
+    source.stage_insert_with_cause_and_terms(
+        &row,
+        receipts.source_draft(SourceRef::Synthetic(213)),
+        &terms,
+    );
+    drop(source);
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut query = rules.new_rule();
+    let x = query.new_var_named("x");
+    let atom = query.add_atom(input, &[x.into(), x.into()], &[]).unwrap();
+    let mut action = query.build();
+    action.insert(output, &[x.into()]).unwrap();
+    action.build_with_receipts(
+        "duplicate-public-representative",
+        RuleReceiptSpec::new(213, [atom], [x]),
+    );
+    let rules = rules.build();
+    db.set_causal_wave(CausalWave::new(1));
+    assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    let matched = snapshot
+        .matches
+        .iter()
+        .find(|matched| matched.rule == 213)
+        .expect("effective output must promote the duplicate-column match");
+    assert_eq!(
+        matched.terms.as_ref(),
+        &[last],
+        "public MatchRecord compatibility keeps Atom::get_col's last duplicate column"
     );
 }
 

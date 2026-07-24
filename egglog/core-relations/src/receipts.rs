@@ -748,8 +748,9 @@ pub(crate) struct PremiseOccurrence {
 pub(crate) enum ReplayBindingSource {
     Premise {
         /// Every source-ordered body cell containing this variable. The first
-        /// occurrence remains the public binding representative; later
-        /// occurrences are historical equality obligations for slicing.
+        /// premise containing the variable remains the public binding source;
+        /// all occurrences are historical equality obligations for slicing.
+        representative: PremiseOccurrence,
         occurrences: Arc<[PremiseOccurrence]>,
     },
     Current {
@@ -766,14 +767,16 @@ pub(crate) enum ReplayBindingSource {
 impl ReplayBindingSource {
     pub(crate) fn premise_occurrences(&self) -> Option<&[PremiseOccurrence]> {
         match self {
-            Self::Premise { occurrences } => Some(occurrences),
+            Self::Premise { occurrences, .. } => Some(occurrences),
             Self::Current { .. } | Self::Constant { .. } => None,
         }
     }
 
     fn representative_premise(&self) -> Option<PremiseOccurrence> {
-        self.premise_occurrences()
-            .and_then(|occurrences| occurrences.first().copied())
+        match self {
+            Self::Premise { representative, .. } => Some(*representative),
+            Self::Current { .. } | Self::Constant { .. } => None,
+        }
     }
 }
 
@@ -2916,10 +2919,17 @@ impl CausalReceipts {
                 ReplayBindingSource::Constant { term } => {
                     assert!(!term.is_missing(), "rule receipt constant term is missing");
                 }
-                ReplayBindingSource::Premise { occurrences } => {
+                ReplayBindingSource::Premise {
+                    representative,
+                    occurrences,
+                } => {
                     assert!(
                         !occurrences.is_empty(),
                         "rule receipt premise binding has no occurrences"
+                    );
+                    assert!(
+                        occurrences.contains(representative),
+                        "rule receipt representative is not one of its premise occurrences"
                     );
                 }
             }
@@ -5035,6 +5045,10 @@ mod tests {
 
         let binding_sources = [
             ReplayBindingSource::Premise {
+                representative: PremiseOccurrence {
+                    premise: 0,
+                    column: 0,
+                },
                 occurrences: [PremiseOccurrence {
                     premise: 0,
                     column: 0,
@@ -5042,6 +5056,10 @@ mod tests {
                 .into(),
             },
             ReplayBindingSource::Premise {
+                representative: PremiseOccurrence {
+                    premise: 0,
+                    column: 1,
+                },
                 occurrences: [PremiseOccurrence {
                     premise: 0,
                     column: 1,
@@ -5132,6 +5150,10 @@ mod tests {
 
         let binding_sources = [
             ReplayBindingSource::Premise {
+                representative: PremiseOccurrence {
+                    premise: 0,
+                    column: 0,
+                },
                 occurrences: [PremiseOccurrence {
                     premise: 0,
                     column: 0,
@@ -5196,6 +5218,10 @@ mod tests {
         let sort = ReplaySortId::new(1);
         let sources = [
             ReplayBindingSource::Premise {
+                representative: PremiseOccurrence {
+                    premise: 0,
+                    column: 1,
+                },
                 occurrences: [PremiseOccurrence {
                     premise: 0,
                     column: 1,
