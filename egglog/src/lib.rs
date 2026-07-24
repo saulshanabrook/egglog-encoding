@@ -4,6 +4,8 @@ pub mod ast;
 // Checkpoint 2A deliberately has no production caller until replay consumes
 // the owned passive slice in the next checkpoint.
 #[allow(dead_code)]
+mod causal_replay;
+#[allow(dead_code)]
 mod causal_slice;
 #[cfg(feature = "bin")]
 mod cli;
@@ -3697,7 +3699,14 @@ impl EGraph {
                     digest: parsed_file.digest,
                     unsupported: causal
                         .has_run
-                        .then(|| "input command executed after a run command".to_owned()),
+                        .then(|| "input command executed after a run command".to_owned())
+                        .or_else(|| {
+                            (function_type.subtype == FunctionSubtype::Custom).then(|| {
+                                format!(
+                                    "input into value function `{func_name}` requires set/merge replay semantics"
+                                )
+                            })
+                        }),
                 },
             )
         });

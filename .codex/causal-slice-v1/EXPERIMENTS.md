@@ -2226,3 +2226,35 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   2.14x, 1.36x, 1.41x, and 1.17x respectively. These are point estimates,
   not confidence claims. The accepted headroom gate remains end-to-end versus
   proofs; recorder work stays frozen while the slice/replay cost is measured.
+
+## 2026-07-24: owned replay IR checkpoint
+
+- Added a cold `causal_replay` boundary built only through
+  `with_causal_receipt_view`; it never constructs `ReceiptSnapshot`. A focused
+  counter canary proves compatibility/full-projection reads do not increase
+  across slicing plus IR construction.
+- The IR remaps only selected match roots into a child-first owned term arena.
+  Its durable payload is strings, literals, local term ids, source commands,
+  selected rules, grounded bindings, and checks. No recording-graph `Value`,
+  backend id, `ReplayTermId`, receipt handle, or borrow escapes construction.
+- Selected sources close transitively through the source catalog. Static
+  declarations and selected named rules are inert setup; source actions and
+  exact TSV rows remain chronological events. This preserves the falsifying
+  `source v1 -> check v1 -> source v2 -> check v2` case instead of moving both
+  sources before both checks.
+- Selected TSV rows are reread once per input command, exact raw bytes are
+  SHA-256 checked before UTF-8/parsing, and only selected one-based physical
+  lines are parsed. The original `(input ...)` command is never retained.
+  Selected custom/value-function TSV input fails closed; an unreachable one
+  remains harmless. Pointer's supported relation inputs use the constructor
+  path.
+- Grounded firings are grouped by cumulative wave and ordered by dense native
+  `RuleMatchId`. Each ordinary source variable is strict-zipped with its exact
+  projected term and sort. Call aliases use the reserved
+  `$__causal_replay_*` namespace, are child-first, and are checked against all
+  cataloged rule variables and globals.
+- Focused validation: four IR canaries pass (owned binding/check chronology,
+  pre-run source/check interleaving, exact selected TSV row plus digest drift,
+  and selected-only unsupported input). `cargo fmt --all` and
+  `git diff --check` pass. A concurrent list-form `run-rule` checkpoint was
+  intentionally excluded from this commit and owns its separate validation.
