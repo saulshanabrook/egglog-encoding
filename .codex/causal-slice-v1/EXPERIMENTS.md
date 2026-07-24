@@ -10,8 +10,10 @@
 - Non-goals: Prefix or conservative recovery, selector rules, partial
   bindings, query planning, source projection, proof-database translation, a
   second evaluator, proof extraction, Herbie, or workload-specific behavior.
-- Current frontier: benchmark surface and receipt-only capture. Replay work is
-  blocked until the receipt gate passes.
+- Current frontier: the logical-row/lazy-projection receipt redesign is green
+  at its focused semantic gate and frozen for independent review. Its
+  receipt-only Math/Eggcc cost gate comes next. Deletion, slicing, and replay
+  remain blocked until that gate passes.
 
 ## Roster
 
@@ -28,23 +30,42 @@ implementation worker writes feature code. Reviewers are read-only.
 ## Accepted contract
 
 1. Native execution records exact receipts. No Prefix or fallback exists.
-2. Effective facts receive immutable `FactId`s. Matches record rule, cumulative
-   wave, ordered premise FactIds, and one compact `ReplayTermId` for every
-   ordinary variable. Match capture copies handles only: no tree walks, ASTs,
-   strings, or source rendering.
-3. `ReplayTermId` refers into a shared hash-consed structural DAG installed at
-   semantic producer sites. Missing O(1) producer mappings fail closed.
-4. Applied equality edges have exact immutable reasons. Rebuild and
-   congruence store endpoint pairs and explain them lazily during slicing.
-5. Merge receipts cite the match and prior fact. Decomposed joins carry exact
-   premise FactIds through materialized intermediates.
-6. Pair, Vec, Maybe, and Either canonicalization creates an immutable
-   container-version receipt at the registry rebuild site, linked to the prior
-   fact version and changed child equality or nested-version causes. Raw
-   container IDs are candidate indexes only; exact ancestry is checked against
-   current registry contents and logical child-sort slots.
+2. Effective facts receive immutable `FactId`s and store their physical
+   creation rows in flat value slabs addressed by compact ranges; there is no
+   per-fact boxed row. Pure table rekeys preserve the same `FactId`. Effective
+   merges and stable-id container refreshes create new fact versions whose
+   compact origin is a static mutation site, a prior `FactId`, or per-cell
+   prior/incoming selectors.
+3. The fact graph is the ordinary term graph. Each rule owns a static binding
+   and producer recipe: source variables cite ordered premise cells or
+   constants, generated body variables cite exact `PremiseCell`s, and only
+   irreducible match-time current values occupy sparse residual slots. A cold
+   `TermProjector` reconstructs structural terms from immutable facts and
+   these recipes only for a snapshot/slice. Ordinary effective commits do not
+   eagerly construct a parallel structural DAG.
+4. Applied native unions append one immutable raw event containing typed raw
+   endpoints, compact endpoint-origin references, native parent/child,
+   chronological history position, and the exact cause. Record time builds no
+   second union forest. Cold projection resolves endpoint terms, separates
+   logical equality edges from same-term/native-alias navigation, and builds a
+   cutoff-bounded immutable explanation forest. Rebuild and congruence retain
+   only changed endpoint pairs plus the raw-edge cutoff.
+5. Merge receipts cite the match and prior fact. Static per-cell merge-origin
+   selectors prove whether each typed result came from the incoming or prior
+   row; general computed merge syntax is unsupported. Decomposed joins carry
+   exact premise `FactId`s through materialized intermediates.
+6. Runtime structural anchoring is restricted to registry-mutating Pair, Vec,
+   Maybe, and Either producers. They reuse the compact `Call` DAG/by-value map
+   needed to identify registry versions; ordinary pure primitives and
+   constructors are reconstructed from static recipes instead. Container
+   canonicalization records changed child endpoints lazily. Stable-id Vec
+   parent refreshes create a new fact version with `FactOrigin::Fact(prior)` so
+   two-or-more refreshes preserve one exact historical chain.
 7. Successful checks record exact fact premises plus equality endpoints as
-   roots. Leaf FactIds map to source assertions, TSV rows, or globals.
+   roots. Leaf FactIds map to source assertions, TSV rows, or globals. Missing
+   static structural recipes are permitted while unreachable and fail closed
+   during cold projection if a selected effective fact or binding reaches
+   them.
 8. Replay uses top-level `(let-check name expr)` aliases and list-form
    `(run-rule ("name" ((var expr) ...)) ...)`. Every ordinary variable is bound.
    `run-rule` means exact one: point-probe all premises and guards against one
@@ -67,11 +88,12 @@ order-dependent replay divergence fail closed.
 
 ### H1: compact receipt capture is cheap
 
-- Prediction: producer-side term promotion plus per-effect handle copies costs
-  about 1.3x native and remains below 1.5x on each cohort workload, including
-  Math's high match-to-retained ratio.
-- Disconfirmation: match-time reconstruction/rendering occurs, any exact cause
-  is missing, or a workload remains above 1.5x after a three-round screen.
+- Prediction: one flat fact-row append, sparse match residuals, and one compact
+  raw event per applied union costs about 1.3x native and remains below 1.5x on
+  each cohort workload, including Math's dense effective history.
+- Disconfirmation: record-time term/explanation reconstruction occurs, any
+  exact cause is missing, or a workload remains above 1.5x after a three-round
+  screen.
 
 ### H2: exact recording removes Hardboiled breadth
 
@@ -1438,3 +1460,325 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   experiment and the replay-independent debugging artifact; reaching the full
   plan now requires an explicit decision to relax the 1.5x screen or change
   the recording contract, not another unmeasured tuning pass.
+
+### 2026-07-24 — logical-row/lazy-projection redesign
+
+- Status: focused semantic gate is green and production edits are frozen for
+  independent review. This checkpoint deliberately does not claim a receipt
+  performance win: the next evidence is the contracted Math+Eggcc receipt-only
+  gate, not another implementation change.
+- Falsifying premise: the failed Math gate showed that recording only effective
+  events was insufficient when 85.98% of native matches had effective effects.
+  The recorder's eager structural term DAG, fact versions for pure rekeys, and
+  record-time equality forest were a shadow e-graph. This redesign tests the
+  narrower hypothesis that exact causal capture can approach one flat row
+  append plus one raw equality event per effective native mutation.
+- Logical-row storage:
+  - every effective fact owns one immutable `FactId`, compact cause/origin, and
+    a `FlatRange` into wave-local then durable `Vec<Value>` slabs;
+  - no fact owns a boxed row or eager per-column term vector;
+  - pure table rekeys preserve the existing `FactId`; collisions alone create
+    a replacement fact, while the rekey landmark stores raw changed cells and
+    a historical equality cutoff;
+  - merges use exact static per-cell selectors (`Incoming`, `Prior`, or native
+    minimum where proved) plus immutable prior FactIds. A computed structural
+    result with no exact selector remains unsupported rather than consulting a
+    by-value fallback.
+- Static producer recipes replace per-event term capture. One rule catalog
+  maps ordinary bindings to premise cells, constants, or sparse current-value
+  residuals. `TermTemplate::{Binding, PremiseCell, Static, Call}` represents
+  supported action producers once per compiled rule. Generated/internal body
+  variables cite the exact premise FactId and physical column already present
+  in the witness. A cold, memoized `TermProjector` walks fact origins and these
+  recipes only for retained snapshots. An ephemeral-`Arc` regression canary
+  guards the discovery that short-lived leaf allocation addresses cannot be
+  used as recipe memo identities.
+- Equality capture is one chronological raw log beside the native compressed
+  UF. Each applied union stores typed raw endpoints, compact exact endpoint
+  origins, native parent/child, cause, wave, and dense history position. No
+  hot term-owner map, equality-component forest, or explanation walk remains.
+  Cold projection resolves endpoints, then builds the immutable logical forest
+  and classifies same-term events as native alias navigation. Historical
+  cutoffs map raw history length to logical forest length, so rebuild and
+  container explanations cannot observe later edges.
+- Alias navigation accounting is derivable rather than duplicated:
+  `ReceiptCounters::native_alias_unions` reports the cold-classified event
+  count; retained bytes are that count multiplied by the applicable compact
+  raw `DurableEquality`/rendered `NativeAliasRecord` size. The later receipt
+  reporting integration must print this derived byte value alongside the
+  count. No separate mutable byte counter is added.
+- Container exception: only registry-mutating Pair, Vec, Maybe, and Either
+  producers use immediate runtime anchors. They reuse compact hash-consed
+  `Call` nodes and by-value registry identity; broad pure primitives do not
+  regain eager promotion. Container rebuild stores positional raw child pairs
+  and resolves their terms at the cutoff during cold projection. A stable-id
+  Vec parent refresh now stages its replacement row with
+  `RowOriginRef::Fact(prior_fact)`, so the new FactId inherits exact historical
+  syntax and a second refresh follows the immutable chain. Fact records and
+  shared cause records both use the same projected landmark rather than
+  exposing raw missing-term endpoints.
+- Source/check integration is exact and narrow. Constructor source batches,
+  including TSV rows, register one static row origin before native insertion.
+  Equality checks project their cited constructor fact rather than searching a
+  global call map. Unsupported pure producers may remain dormant, but an
+  effective fact reached by cold snapshot/slicing fails with
+  `reached unsupported causal row origin`.
+- Native-table provenance was rejected deliberately. Ordinary native tables
+  participate in canonicalization and rebuild; storing historical provenance
+  there would rewrite the match-time row forms this contract needs and force
+  per-rekey transition records back into the design. Exempting such tables
+  from rebuild would reduce them to a more expensive side arena. Immutable
+  flat slabs therefore keep history outside the database while retaining the
+  native-table advantage that matters: batched contiguous publication.
+- Focused failures found and resolved during integration:
+  - source constructor outputs initially predicted values before installing
+    their structural origin; the source API now stages origin and cause
+    together without broadening shared state;
+  - generated Vec inputs initially used the wrong global binding mechanism;
+    exact `PremiseCell` recipes now reuse witness FactIds;
+  - first stable-id Vec refreshes created a fact with no origin, breaking both
+    observers and a second refresh; prior-fact origin inheritance fixes the
+    shared root rather than adding a lookup fallback;
+  - fact-local container causes initially exposed raw endpoint placeholders
+    while the shared cause table exposed projected endpoints; both now use the
+    same cutoff-bounded cold projector.
+- Validation from worktree
+  `/Users/saul/p/wt/egglog-encoding/causal-slice-logical-v1`, starting from
+  committed recipe checkpoint `367eb78`:
+  - `cargo test -p egglog --lib causal_receipt -- --nocapture`: 22 passed,
+    0 failed;
+  - `cargo test -p egglog-core-relations --lib -- --nocapture`: 149 passed,
+    0 failed;
+  - `cargo test -p egglog-bridge --lib -- --nocapture`: 27 passed, 0 failed;
+  - the focused canaries cover no-op/effective promotion, decomposed witnesses,
+    static recipes, pure rekey identity, cold equality/alias classification,
+    Pair canonicalization, one- and two-refresh Vec chains, nested Vec parents,
+    unsupported Set rollback, source/TSV rows, and reached-only unsupported
+    primitive failure.
+- Scope freeze: deletion/timeline recording, passive slicing, grounded replay,
+  proof integration, and benchmarking are untouched. Already-landed dormant
+  parallel receipt plumbing remains; public causal activation is still
+  serial-only. No Prefix, selector search, source projection, cross-database
+  translation, or workload-specific case was introduced.
+
+### 2026-07-24 — exact chronology and multi-anchor container checkpoint
+
+- Cross-kind history now uses one global `HistoryPosition` for fact commits,
+  applied equalities, rekeys, promoted matches, container landmarks, and check
+  roots. Cold equality projection uses occurrence leaves rather than treating
+  one hash-consed `ReplayTermId` as a globally unique native occurrence. This
+  fixes the falsifying `equality -> later fact -> rekey -> check` ordering case
+  without promoting redundant union proposals.
+- Ordered containers keep a sparse multi-anchor side index:
+  `(logical sort, raw value) -> [ReplayTermId]`. Generic value lookup remains
+  first-wins, while Pair/Vec/Maybe/Either rebuild enumerates every exact Call
+  anchor of the matching physical `TypeId`. Same-sort structural aliases are
+  therefore retained; nominally distinct logical sorts still fail closed.
+- Container rebuild uses one forward-only transaction-local anchor journal.
+  It copies existing immutable anchors only, is visible to collision
+  attribution and nested dirty-parent closure, and publishes once after every
+  registry environment validates. Abort drops the cloned registry, staged UF
+  writes, and journal together. A collision transfers both the occupied and
+  incoming histories to whichever raw id the native merge chooses; source
+  mappings remain historical.
+- `ReplayTermCounters` now includes `container_anchor_keys` and
+  `container_anchor_terms`. The mixed Vec-then-unsupported-Set canary reads
+  these counters without finalizing the rejected wave and proves, twice, that
+  registry contents, term nodes, first-wins mappings, and container anchors do
+  not change on abort.
+- Focused canaries additionally cover either collision winner, journal drop
+  versus publication, two stable Vec refreshes, nested Vec closure, unrelated
+  raw Set ids, Maybe-Some, Either-Left, and Either-Right. The now-total
+  `container_refresh_draft` returns one exact cause or errors; its stale
+  optional/continue branch was removed.
+- Final local validation before independent review:
+  - `cargo fmt --all -- --check`: passed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-core-relations -p
+    egglog-bridge -p egglog -p egglog-experimental --lib`: 158 core-relations,
+    28 bridge, 100 frontend, and 3 experimental tests passed; zero failed.
+- Deletion/timeline recording and direct cohort execution remain untouched.
+  The next action is independent review of this frozen container checkpoint,
+  not a benchmark or a new mechanism.
+
+### 2026-07-24 — bounded Eggcc hot-path recovery
+
+- Falsifying observation: the first direct Eggcc causal-receipts run after the
+  multi-anchor checkpoint exceeded two minutes. The macOS sample at
+  `/tmp/egglog-experimental_2026-07-24_100115_eA1M.sample.txt` placed all
+  7,022 sampled main-thread stacks under
+  `Bindings::structural_binding_terms -> CausalReceipts::project_fact_term ->
+  TermProjector`. The working hypothesis was narrower than a storage redesign:
+  immediate container anchoring eagerly projected every ordinary binding and
+  created a fresh projector for duplicate leaves, although its static
+  `TermTemplate` names the exact subset it consumes.
+- Bounded optimization 1 makes container anchoring instantiate only referenced
+  template leaves. One `TermProjector`, memo, recipe read guard, recipe-store
+  lock, and arena lock now cover the complete native instruction batch.
+  `ReplayBindingSource::Premise` resolves through its exact FactId/cell,
+  constants use their installed term, and a reached `Current` binding fails
+  closed; supported pure Current producers are already expanded into nested
+  `Call` templates by static recipe lowering. The old
+  `structural_binding_terms` eager scan is removed.
+- Red/green canary
+  `container_anchor_projects_only_referenced_bindings_and_memoizes_repeated_leaves`
+  supplies one used premise, a 32-version unused premise chain, an unused
+  Current binding, and an immediate container template that references the
+  same nested pure call twice. It observes exactly one fact expansion. This
+  distinguishes the new path from both the old eager scan (which expands the
+  unused chain) and per-leaf projectors (which expand the used fact twice).
+- The first controlled measurement used the normal append-only
+  `.reports.jsonl`, one round, a 60-second timeout, and the same dirty final
+  binary for `main/off` and `main/causal-receipts`:
+
+  ```sh
+  ./bench.py egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg \
+    --target . --treatment causal-receipts --compare-target . \
+    --compare-treatment off --rounds 1 --timeout-sec 60 \
+    --detail phases --format markdown
+  ```
+
+  Native completed in 1.186s and causal receipts in 1.932s (1.63x), with
+  124.7 MiB versus 239.7 MiB peak RSS. This converted the timeout into a
+  bounded run, but remained above the 1.5x wall screen.
+- The contracted profiler command then recorded four iterations:
+
+  ```sh
+  ./bench.py profile \
+    egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg \
+    --target . --treatment causal-receipts --profile-seconds 10 \
+    --timeout-sec 60 --top 30 --format markdown
+  ```
+
+  Artifact:
+  `.profiles/v3/6bcf78aec970ce267e40bf0b0b4fad7e662e22278d69b3156a95922ce4f7e4fa/fcbaaa9d8910edb5b8f1e1304458288fa5c437e86c4c0da99faec20a0d333e9e/no-facts/main-causal-receipts-auto10s.json.gz`.
+  `CausalReceipts::finalize_wave` was the largest self symbol at 1.608 CPU
+  seconds, 24.8% of application CPU. Code inspection found four
+  `arena.facts` scans per wave, making finalization
+  O(total durable fact history times waves) merely to rediscover current
+  Pending slots.
+- Bounded optimization 2 adds a wave-local pending-fact slot vector populated
+  at fragment publication. Finalization validates, roots, and durabilizes only
+  those exact slots; global FactIds and immutable historical rows are
+  unchanged, and dormant out-of-order fragment publication remains supported.
+  The vector's bytes are included in provisional-memory counters. The
+  `wave_finalization_visits_only_current_pending_facts` canary failed red with
+  404 slot visits for one new fact after 100 durable facts and passes green
+  with two visits.
+- Repeating the identical one-round benchmark after optimization 2 produced
+  native 1.171s and causal receipts 1.428s (1.22x), clearing the 1.5x screen;
+  peak RSS was 120.4 MiB versus 231.0 MiB (1.92x). The candidate-minus-native
+  outside-ruleset wall delta fell from +518ms after optimization 1 to +39ms;
+  the total wall delta is now +256ms.
+- Validation at this uncommitted review checkpoint:
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-core-relations --lib`:
+    160 passed, 0 failed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-bridge --lib`: 28 passed,
+    0 failed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog --lib`: 100 passed, 0
+    failed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-experimental --lib`: 3
+    passed, 0 failed;
+  - `cargo fmt --all -- --check` and package-scoped `cargo check` for those
+    four crates passed.
+- A workspace-wide `cargo check --workspace` still reaches the pre-existing
+  DD backend exhaustiveness gap for `MergeFn::InputChoicePrimitive`; this
+  checkpoint does not broaden into the unsupported DD backend. Deletion,
+  passive slicing, grounded replay, proof integration, and full cohort
+  benchmarking remain untouched pending independent review.
+- Independent frozen review found one test-only race in the two diagnostic
+  canary counters. Process-global Atomics let concurrent receipt tests add to
+  another test's observation: the exact falsifier
+  `cargo test -p egglog-core-relations receipts::tests:: --lib --
+  --test-threads=32 --nocapture` observed three fact expansions where the lazy
+  anchor canary requires one. Both counters now use thread-local `Cell<usize>`,
+  matching the existing pending-witness diagnostics. The same 32-thread
+  command passes all 10 receipt-module tests, and the two focused canaries,
+  all 160 core tests, 28 bridge tests, 100 frontend tests, and 3 experimental
+  tests pass afterward. Formatting, package-scoped checking, and
+  `git diff --check` remain green.
+- The coordinator then ran the contracted three-round Math+Eggcc receipt gate
+  through `./bench.py` and the normal `.reports.jsonl`. Per-round observations
+  were:
+
+  | Workload | Native wall | Receipts wall | Wall ratio | Native RSS | Receipts RSS |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | Math | 388-454ms | 1.03-1.22s | 2.38-3.00x | 257.7-262.3 MiB | 1.2-1.3 GiB |
+  | Eggcc | 1.07-1.18s | 1.36-1.38s | 1.16-1.28x | not restated | not restated |
+
+  Eggcc consistently clears the 1.5x wall screen after both bounded fixes.
+  Math remains decisively above it, so the combined checkpoint-1 gate remains
+  failed; no deletion, slicer, replay, or further optimization starts from
+  this evidence.
+- Fresh Math profiles for the final code are:
+  - causal receipts:
+    `.profiles/v3/5289007ffa02cef8fbf9d20d189888be15ce0e8f83358f7b6cee3e6fb3ed62c6/7303e72d4870a2855682d21a30fc3b0237dfe1c650def398b7da83472505ef1f/no-facts/main-causal-receipts-auto10s.json.gz`;
+  - native control: the same directory with
+    `main-off-auto10s.json.gz`.
+
+  Causal top self symbols are distributed: `serial_insert_mode` 0.603s,
+  `finalize_wave` 0.506s, pending-witness resolution 0.245s, and
+  `ReceiptBatch::publish` 0.158s. The former Eggcc catastrophes are gone; the
+  remaining Math boundary is broad exact-event recording cost rather than one
+  newly identified runaway path.
+
+### 2026-07-24 — bounded Math flat-batch witness experiment
+
+- Hypothesis: Math promotes roughly 86% of candidate lanes, so lazy per-lane
+  `PreparedMatch` state was unlikely to save enough work to repay approximately
+  810,853 premise boxes and per-lane `OnceLock`s. Resolving a decomposed batch
+  once into one lane-major flat `FactId` slab, validating it under one arena
+  lock, and indexing slices by lane might materially reduce the remaining
+  pending-witness cost without changing receipt semantics.
+- The falsifying canary extends the decomposed projected-support case to two
+  candidate lanes whose head effects collide. Both lanes must be resolved at
+  batch construction, exactly one batch-resolution call may occur, repeated
+  preparation/promotion must not resolve again, and only the effective first
+  lane may appear as a durable match. Before the change the new batch counter
+  observed one lane rather than the required two; after the change it observes
+  two lanes in one batch and one durable match. A two-union head additionally
+  proves that multiple effective effects share that promoted match.
+- `PendingMatchBatch` now owns a flat `Box<[FactId]>` and slices it using the
+  fixed premise arity. The production decomposed resolver takes one witness-map
+  lock for all lanes and builds one flat allocation. Batch construction
+  validates every referenced fact under one arena lock. `PreparedMatch`, its
+  per-lane premise allocation and `OnceLock`, and
+  `prepare_pending_rule_match` are removed; cause memoization, native ordinals,
+  effective-only promotion, merge-read behavior, and fail-closed validation are
+  unchanged. Pending witnesses remain owned materialization references rather
+  than borrowed table rows.
+- Validation:
+  - focused decomposed and pending-validation canaries passed;
+  - `CARGO_PROFILE_TEST_DEBUG=0 cargo test -p egglog-core-relations --lib`:
+    160 passed, 0 failed;
+  - corresponding bridge, frontend, and experimental library suites: 28, 100,
+    and 3 passed respectively, with zero failures;
+  - `cargo fmt --all -- --check`, package-scoped `cargo check`, and
+    `git diff --check` passed.
+- The required one-round measurement used the normal append-only
+  `.reports.jsonl`, the same dirty binary for both endpoints, and no forced
+  cache bypass:
+
+  ```sh
+  ./bench.py egglog/tests/math-microbenchmark.egg \
+    egglog-experimental/tests/fixtures/eggcc-2mm-pass1.egg \
+    --target . --treatment causal-receipts --compare-target . \
+    --compare-treatment off --rounds 1 --timeout-sec 60 \
+    --detail phases --format markdown
+  ```
+
+  | Workload | Native wall | Receipts wall | Wall ratio | Native RSS | Receipts RSS |
+  | --- | ---: | ---: | ---: | ---: | ---: |
+  | Math | 525ms | 1.294s | 2.47x | 259.9 MiB | 1.2 GiB |
+  | Eggcc | 1.234s | 1.475s | 1.20x | 125.0 MiB | 237.9 MiB |
+
+  Math's candidate time does not materially improve on the preceding
+  1.03-1.22s three-round range and remains far above the 1.5x recording screen.
+  Eggcc remains below the screen. The phase deltas are broad on Math (search
+  +101ms, apply +109ms, merge +280ms, rebuild +132ms, and outside recorded
+  rulesets +148ms), not a new isolated witness-resolution hotspot.
+- Decision: freeze this coherent flat-batch checkpoint and stop the bounded
+  Math optimization cycle. Do not start deletion, passive slicing, grounded
+  replay, full-event recording, a projection fallback, selector search, or a
+  third architecture from this failed gate. The result supports the previous
+  conclusion that Math's remaining cost is distributed exact-event shadow
+  work, not the eliminated per-lane preparation representation.

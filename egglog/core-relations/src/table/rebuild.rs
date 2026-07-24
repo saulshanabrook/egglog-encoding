@@ -54,8 +54,8 @@ impl SortedWritesTable {
                 .causal_receipts()
                 .expect("receipt rebuild mode requires an enabled arena");
             let prior_fact = self.data.fact_id(row_id).unwrap_or(FactId::MISSING);
-            let cause = receipts
-                .rebuild_draft(
+            let rekey = receipts
+                .prepare_rekey(
                     self.table_id,
                     exec_state.causal_wave(),
                     prior_fact,
@@ -66,12 +66,67 @@ impl SortedWritesTable {
                 )
                 .unwrap_or_else(|error| panic!("cannot record exact table rebuild: {error}"));
             mutation_buf.stage_remove(&current_row[0..self.n_keys]);
-            mutation_buf.stage_insert_with_cause(rebuilt_row, cause);
+            mutation_buf.stage_rekey(rebuilt_row, rekey);
         } else {
             mutation_buf.stage_remove(&current_row[0..self.n_keys]);
             mutation_buf.stage_insert(rebuilt_row);
         }
         true
+    }
+
+    /// Fail closed before publishing any receipt-mode rebuild mutation when a
+    /// collision would reach missing or unsupported merge-origin semantics.
+    /// Serial rebuild has already materialized the complete changed-row batch,
+    /// so one outgoing-row set plus one proposed-key set covers both a live
+    /// occupant and two rows that first collide inside this batch.
+    fn preflight_rebuild_collisions<const RECEIPTS: bool>(
+        &self,
+        rebuilt: &mut TaggedRowBuffer,
+        next_ts: Value,
+        exec_state: &ExecutionState,
+    ) {
+        if !RECEIPTS {
+            return;
+        }
+        let receipts = exec_state
+            .causal_receipts()
+            .expect("receipt rebuild mode requires an enabled arena");
+        if !receipts.requires_collision_preflight(self.table_id) {
+            return;
+        }
+
+        if let Some(sort_by) = self.sort_by {
+            for (_, row) in rebuilt.non_stale_mut() {
+                row[sort_by.index()] = next_ts;
+            }
+        }
+        let outgoing = rebuilt
+            .non_stale()
+            .map(|(row_id, _)| row_id)
+            .collect::<HashSet<_>>();
+        let mut proposed = HashSet::<&[Value]>::default();
+        let mut collision = false;
+        for (row_id, row) in rebuilt.non_stale() {
+            let key = &row[..self.n_keys];
+            if !proposed.insert(key) {
+                collision = true;
+                break;
+            }
+            if self
+                .get_row(key)
+                .is_some_and(|occupant| occupant.id != row_id && !outgoing.contains(&occupant.id))
+            {
+                collision = true;
+                break;
+            }
+        }
+        if collision {
+            receipts
+                .validate_merge_origin(self.table_id, true)
+                .unwrap_or_else(|error| {
+                    panic!("cannot record exact table rebuild collision: {error}")
+                });
+        }
     }
 
     fn refresh_rebuild_index(&mut self) {
@@ -223,7 +278,7 @@ impl SortedWritesTable {
             let Some(current_row) = self.data.get_row(row_id) else {
                 continue;
             };
-            let cause = if let Some(exec_state) = exec_state {
+            let (cause, prior_fact) = if let Some(exec_state) = exec_state {
                 let receipts = exec_state
                     .causal_receipts()
                     .expect("receipt container refresh requires the receipt arena");
@@ -261,20 +316,14 @@ impl SortedWritesTable {
                     continue;
                 }
                 let prior_fact = self.data.fact_id(row_id).unwrap_or(FactId::MISSING);
-                let Some(cause) = receipts
+                let cause = receipts
                     .container_refresh_draft(prior_fact, &candidates)
                     .unwrap_or_else(|error| {
                         panic!("cannot record exact container refresh: {error}")
-                    })
-                else {
-                    // The row owns another structural version of the same raw
-                    // container candidate. It is unaffected by this exact
-                    // dependency.
-                    continue;
-                };
-                Some(cause)
+                    });
+                (Some(cause), Some(prior_fact))
             } else {
-                None
+                (None, None)
             };
             // Preserve the logical row and only advance its sort/timestamp
             // column, so seminaive treats this as a fresh parent-row delta.
@@ -285,7 +334,11 @@ impl SortedWritesTable {
                 refreshed_row[sort_by.index()] = next_ts;
             }
             if let Some(cause) = cause {
-                mutation_buf.stage_insert_with_cause(&refreshed_row, cause);
+                mutation_buf.stage_insert_deferred_from_fact(
+                    &refreshed_row,
+                    crate::DeferredEqualityCause::ready(cause),
+                    prior_fact.expect("container refresh has no prior FactId"),
+                );
             } else {
                 mutation_buf.stage_insert(&refreshed_row);
             }
@@ -369,6 +422,7 @@ impl SortedWritesTable {
                 changed |= subset.size() > 0;
             }
             if !scratch.is_empty() {
+                self.preflight_rebuild_collisions::<RECEIPTS>(&mut scratch, next_ts, exec_state);
                 let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in scratch.non_stale_mut() {
                     self.stage_rebuilt_row::<RECEIPTS>(
@@ -450,6 +504,7 @@ impl SortedWritesTable {
                 );
             }
             if !buf.is_empty() {
+                self.preflight_rebuild_collisions::<RECEIPTS>(&mut buf, next_ts, exec_state);
                 let mut write_buf = self.new_rebuild_buffer(transaction);
                 for (row_id, row) in buf.non_stale_mut() {
                     changed |= self.stage_rebuilt_row::<RECEIPTS>(

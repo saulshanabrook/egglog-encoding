@@ -1,4 +1,5 @@
 use std::{
+    any::TypeId,
     iter,
     ops::Range,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -12,11 +13,12 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 
 use crate::numeric_id::NumericId;
 
-use crate::receipts::TermTemplate;
+use crate::receipts::{RowOriginSpec, TermOriginSpec, TermTemplate};
 use crate::{
     CausalReceipts, CausalWave, CheckEndpointSource, CheckReceiptSpec, FactId,
-    GuardedRuleSetRunOutcome, PlanStrategy, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTerm, RuleReceiptSpec, SourceReceiptSpec, SourceRef,
+    GuardedRuleSetRunOutcome, MergeOriginSelector, PlanStrategy, ReplayConstructorSpec,
+    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, RowOriginSiteId, RuleReceiptSpec,
+    SourceReceiptSpec, SourceRef,
     action::{ExecutionState, Instr, WriteVal},
     common::Value,
     free_join::{
@@ -42,6 +44,16 @@ fn register_test_receipt_table(receipts: &CausalReceipts, table: TableId, column
     receipts
         .register_table_layout(table, &vec![Some(TEST_REPLAY_SORT); columns])
         .unwrap();
+    receipts
+        .register_table_merge_origins(
+            table,
+            &(0..columns)
+                .map(|column| MergeOriginSelector::Incoming {
+                    column: column.try_into().unwrap(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
 }
 
 fn install_test_row_terms(receipts: &CausalReceipts, row: &[Value]) {
@@ -52,6 +64,41 @@ fn install_test_row_terms(receipts: &CausalReceipts, row: &[Value]) {
             *value,
         );
     }
+}
+
+fn install_test_row_origin(
+    receipts: &CausalReceipts,
+    table: TableId,
+    row: &[Value],
+    terms: &[crate::ReplayTermId],
+) -> RowOriginSiteId {
+    receipts.install_source_row(table, row, terms).unwrap()
+}
+
+fn register_test_merge_origins(
+    receipts: &CausalReceipts,
+    table: TableId,
+    origins: &[MergeOriginSelector],
+) {
+    receipts
+        .register_table_merge_origins(table, origins)
+        .unwrap();
+}
+
+fn leaf_term(snapshot: &crate::ReceiptSnapshot, leaf: crate::EqLeafId) -> crate::ReplayTermId {
+    snapshot.equality_leaves[(leaf.get() - 1) as usize]
+        .endpoint
+        .term
+}
+
+fn component_leaf_term(
+    snapshot: &crate::ReceiptSnapshot,
+    component: crate::EqComponentRef,
+) -> crate::ReplayTermId {
+    let crate::EqComponentRef::Leaf(leaf) = component else {
+        panic!("expected an occurrence leaf, got {component:?}")
+    };
+    leaf_term(snapshot, leaf)
 }
 
 #[test]
@@ -382,8 +429,8 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     let mut db = Database::default();
     let relation = || {
         SortedWritesTable::new(
-            1,
             2,
+            3,
             None,
             vec![],
             Box::new(|_, left, right, _| {
@@ -451,7 +498,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     let node_sort = ReplaySortId::new(21);
     let node_op = ReplayOpId::new(20);
     receipts
-        .register_table_layout(input, &[Some(value_sort), None])
+        .register_table_layout(input, &[Some(value_sort), Some(node_sort), None])
         .unwrap();
     receipts
         .register_table_layout(constructor, &[Some(value_sort), Some(node_sort), None])
@@ -466,8 +513,8 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         receipts.intern_literal(node_sort, ReplayLiteral::Internal(7), Value::new(7));
     db.stage_source_row(
         input,
-        &[Value::new(7), Value::new(0)],
-        &[input_term, crate::ReplayTermId::MISSING],
+        &[Value::new(7), Value::new(7), Value::new(0)],
+        &[input_term, input_as_node_term, crate::ReplayTermId::MISSING],
         SourceRef::Synthetic(0),
     )
     .unwrap();
@@ -476,9 +523,14 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     let mut rules = RuleSetBuilder::new(&mut db);
     let mut query = rules.new_rule();
     let value = query.new_var_named("value");
+    let source_node = query.new_var_named("source_node");
     let input_ts = query.new_var_named("input_ts");
     let input_atom = query
-        .add_atom(input, &[value.into(), input_ts.into()], &[])
+        .add_atom(
+            input,
+            &[value.into(), source_node.into(), input_ts.into()],
+            &[],
+        )
         .unwrap();
     let mut action = query.build();
     let node = action
@@ -497,7 +549,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         .union_with_replay(
             uf,
             node.into(),
-            value.into(),
+            source_node.into(),
             Value::new(1).into(),
             node_sort,
         )
@@ -509,7 +561,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
             [input_atom],
             [
                 crate::RuleBindingSpec::variable(value, None),
-                crate::RuleBindingSpec::constant(input_term, value_sort),
+                crate::RuleBindingSpec::variable(source_node, None),
             ],
         ),
     );
@@ -545,7 +597,10 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
         .expect("effective constructor must promote its match");
     assert_eq!(match_record.wave, CausalWave::new(1));
     assert_eq!(match_record.premises.as_ref(), &[source.id]);
-    assert_eq!(match_record.terms.as_ref(), &[input_term, input_term]);
+    assert_eq!(
+        match_record.terms.as_ref(),
+        &[input_term, input_as_node_term]
+    );
     assert_eq!(derived_fact.cause.rule_match(), Some(match_record.id));
     let node_term = constructor_fact.terms[1];
     assert_eq!(
@@ -581,12 +636,12 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
     assert_eq!(snapshot.equality_nodes[0].id, equality.id);
     assert_eq!(snapshot.equality_nodes[0].edge, equality.id);
     assert_eq!(
-        snapshot.equality_nodes[0].left,
-        crate::EqComponentRef::Term(node_term)
+        component_leaf_term(&snapshot, snapshot.equality_nodes[0].left),
+        node_term
     );
     assert_eq!(
-        snapshot.equality_nodes[0].right,
-        crate::EqComponentRef::Term(input_as_node_term)
+        component_leaf_term(&snapshot, snapshot.equality_nodes[0].right),
+        input_as_node_term
     );
     assert_eq!(
         equality.reason,
@@ -679,7 +734,7 @@ fn causal_receipts_record_only_effective_constructor_and_union_commits() {
 }
 
 fn empty_rule_cause(receipts: &CausalReceipts, rule: u32, wave: CausalWave) -> crate::CauseDraftId {
-    receipts.register_rule_matches(rule, wave, 0, &[], &[], &[], &[0])[0].1
+    receipts.register_rule_matches(rule, wave, 0, &[], &[], &[0])[0].1
 }
 
 fn stage_test_union(
@@ -732,6 +787,7 @@ fn test_cause_dependencies(
                 wave,
                 prior_fact,
                 as_of_edges,
+                position,
                 equalities,
             } => {
                 result.facts.push(prior_fact);
@@ -740,6 +796,7 @@ fn test_cause_dependencies(
                     prior_fact,
                     equalities: crate::EqualityLandmark {
                         as_of_edges,
+                        position,
                         pairs: equalities.into(),
                     },
                 });
@@ -747,6 +804,7 @@ fn test_cause_dependencies(
             crate::ReceiptCauseDependency::ContainerCanonicalize {
                 wave,
                 as_of_edges,
+                position,
                 equalities,
             } => {
                 result
@@ -755,6 +813,7 @@ fn test_cause_dependencies(
                         wave,
                         equalities: crate::EqualityLandmark {
                             as_of_edges,
+                            position,
                             pairs: equalities.into(),
                         },
                     });
@@ -763,6 +822,7 @@ fn test_cause_dependencies(
                 wave,
                 prior_fact,
                 as_of_edges,
+                position,
                 equalities,
             } => {
                 result.facts.push(prior_fact);
@@ -772,6 +832,7 @@ fn test_cause_dependencies(
                         wave,
                         equalities: crate::EqualityLandmark {
                             as_of_edges,
+                            position,
                             pairs: equalities.into(),
                         },
                     },
@@ -790,6 +851,7 @@ fn test_congruence_dependencies(
         cause,
         wave,
         as_of_edges,
+        position,
     } = reason
     else {
         panic!("expected a congruence reason, got {reason:?}")
@@ -805,6 +867,7 @@ fn test_congruence_dependencies(
         dependencies,
         crate::EqualityLandmark {
             as_of_edges: *as_of_edges,
+            position: *position,
             pairs: pairs.into_boxed_slice(),
         },
     )
@@ -820,10 +883,7 @@ fn causal_receipt_rebuild_cutoff_failure_preserves_canonicalizer_table() {
             2,
             Some(ColumnId::new(1)),
             vec![ColumnId::new(0)],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
+            Box::new(|_, _, _, _| false),
         ),
         iter::once(uf),
         iter::empty(),
@@ -858,17 +918,14 @@ fn causal_receipt_incremental_rebuild_retry_keeps_uncommitted_subset_cursor() {
             2,
             Some(ColumnId::new(1)),
             vec![ColumnId::new(0)],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
+            Box::new(|_, _, _, _| false),
         ),
         iter::once(uf),
         iter::empty(),
     );
     let receipts = db.enable_causal_receipts();
     let table_sort = ReplaySortId::new(113);
-    let uf_sort = ReplaySortId::new(114);
+    let uf_sort = table_sort;
     receipts
         .register_table_layout(rebuilt, &[Some(table_sort), None])
         .unwrap();
@@ -884,18 +941,34 @@ fn causal_receipt_incremental_rebuild_retry_keeps_uncommitted_subset_cursor() {
             ReplayLiteral::Internal(value.index() as u64),
             value,
         );
-        receipts
+        let origin = receipts
             .install_source_row(
                 rebuilt,
                 &[value, Value::new(0)],
                 &[term, crate::ReplayTermId::MISSING],
             )
             .unwrap();
-        source_rows.stage_insert_with_cause(&[value, Value::new(0)], source_cause);
+        source_rows.stage_insert_deferred_with_origin(
+            &[value, Value::new(0)],
+            crate::DeferredEqualityCause::ready(source_cause),
+            origin,
+        );
     }
     drop(source_rows);
     assert!(db.merge_all());
     let prior_fact = committed_fact_id(&db, rebuilt, old);
+
+    let new_term =
+        receipts.intern_literal(table_sort, ReplayLiteral::Internal(new.index() as u64), new);
+    db.stage_source_row(
+        rebuilt,
+        &[new, Value::new(0)],
+        &[new_term, crate::ReplayTermId::MISSING],
+        SourceRef::Synthetic(114),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    let canonical_fact = committed_fact_id(&db, rebuilt, new);
 
     receipts.intern_literal(uf_sort, ReplayLiteral::Internal(old.index() as u64), old);
     receipts.intern_literal(uf_sort, ReplayLiteral::Internal(new.index() as u64), new);
@@ -917,15 +990,21 @@ fn causal_receipt_incremental_rebuild_retry_keeps_uncommitted_subset_cursor() {
     }));
     assert!(failed.is_err());
     assert_eq!(committed_fact_id(&db, rebuilt, old), prior_fact);
+    assert_eq!(committed_fact_id(&db, rebuilt, new), canonical_fact);
 
-    receipts.intern_literal(table_sort, ReplayLiteral::Internal(new.index() as u64), new);
-    assert!(
-        db.apply_rebuild(uf, &[rebuilt], Value::new(2)),
-        "retry must rescan the UF delta rejected before cursor commit"
+    register_test_merge_origins(
+        &receipts,
+        rebuilt,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Unsupported,
+        ],
     );
+    db.apply_rebuild(uf, &[rebuilt], Value::new(2));
     db.finalize_causal_wave();
     assert!(db.get_table(rebuilt).get_row(&[old]).is_none());
     assert!(db.get_table(rebuilt).get_row(&[new]).is_some());
+    assert_eq!(committed_fact_id(&db, rebuilt, new), canonical_fact);
     assert_eq!(receipts.snapshot().counters.rebuild_causes, 1);
 }
 
@@ -945,17 +1024,14 @@ fn causal_receipt_incremental_rebuild_retry_rolls_back_every_target_cursor() {
                     2,
                     Some(ColumnId::new(1)),
                     vec![ColumnId::new(0)],
-                    Box::new(|_, left, right, _| {
-                        assert_eq!(left, right);
-                        false
-                    }),
+                    Box::new(|_, _, _, _| false),
                 )
             };
             let first = db.add_table(relation(), iter::once(uf), iter::empty());
             let second = db.add_table(relation(), iter::once(uf), iter::empty());
             let receipts = db.enable_causal_receipts();
             let table_sort = ReplaySortId::new(115);
-            let uf_sort = ReplaySortId::new(116);
+            let uf_sort = table_sort;
             for table in [first, second] {
                 receipts
                     .register_table_layout(table, &[Some(table_sort), None])
@@ -976,46 +1052,58 @@ fn causal_receipt_incremental_rebuild_retry_rolls_back_every_target_cursor() {
                         ReplayLiteral::Internal(value.index() as u64),
                         value,
                     );
-                    receipts
+                    let origin = receipts
                         .install_source_row(
                             table,
                             &[value, Value::new(0)],
                             &[term, crate::ReplayTermId::MISSING],
                         )
                         .unwrap();
-                    rows.stage_insert_with_cause(&[value, Value::new(0)], source_cause);
+                    rows.stage_insert_deferred_with_origin(
+                        &[value, Value::new(0)],
+                        crate::DeferredEqualityCause::ready(source_cause),
+                        origin,
+                    );
                 }
             }
             assert!(db.merge_all());
             let first_fact = committed_fact_id(&db, first, first_old);
             let second_fact = committed_fact_id(&db, second, second_old);
 
-            // The first target can rekey exactly, while the second target is
-            // deliberately missing the replay term for its canonical value.
-            receipts.intern_literal(
-                table_sort,
-                ReplayLiteral::Internal(first_new.index() as u64),
-                first_new,
-            );
             for value in [first_old, first_new, second_old, second_new] {
                 receipts.intern_literal(
-                    uf_sort,
+                    table_sort,
                     ReplayLiteral::Internal(value.index() as u64),
                     value,
                 );
             }
+            for (table, value, source) in [(first, first_new, 116), (second, second_new, 117)] {
+                db.stage_source_row(
+                    table,
+                    &[value, Value::new(0)],
+                    &[
+                        receipts.lookup_term(table_sort, value).unwrap(),
+                        crate::ReplayTermId::MISSING,
+                    ],
+                    SourceRef::Synthetic(source),
+                )
+                .unwrap();
+            }
+            assert!(db.merge_all());
+            let first_canonical = committed_fact_id(&db, first, first_new);
+            let second_canonical = committed_fact_id(&db, second, second_new);
+            register_test_merge_origins(
+                &receipts,
+                first,
+                &[
+                    MergeOriginSelector::Prior { column: 0 },
+                    MergeOriginSelector::Unsupported,
+                ],
+            );
             db.set_causal_wave(CausalWave::new(1));
             let union_cause = empty_rule_cause(&receipts, 115, CausalWave::new(1));
             for (old, new) in [(first_old, first_new), (second_old, second_new)] {
-                stage_test_union(
-                    &db,
-                    uf,
-                    union_cause,
-                    uf_sort,
-                    old,
-                    new,
-                    Value::new(1),
-                );
+                stage_test_union(&db, uf, union_cause, uf_sort, old, new, Value::new(1));
             }
             assert!(db.merge_all());
             db.set_causal_wave(CausalWave::new(2));
@@ -1026,18 +1114,18 @@ fn causal_receipt_incremental_rebuild_retry_rolls_back_every_target_cursor() {
             assert!(failed.is_err());
             assert_eq!(committed_fact_id(&db, first, first_old), first_fact);
             assert_eq!(committed_fact_id(&db, second, second_old), second_fact);
-            assert!(db.get_table(first).get_row(&[first_new]).is_none());
-            assert!(db.get_table(second).get_row(&[second_new]).is_none());
+            assert_eq!(committed_fact_id(&db, first, first_new), first_canonical);
+            assert_eq!(committed_fact_id(&db, second, second_new), second_canonical);
 
-            receipts.intern_literal(
-                table_sort,
-                ReplayLiteral::Internal(second_new.index() as u64),
-                second_new,
+            register_test_merge_origins(
+                &receipts,
+                second,
+                &[
+                    MergeOriginSelector::Prior { column: 0 },
+                    MergeOriginSelector::Unsupported,
+                ],
             );
-            assert!(
-                db.apply_rebuild(uf, &[first, second], Value::new(2)),
-                "retry must rescan the successful first target as well as the rejected second target"
-            );
+            db.apply_rebuild(uf, &[first, second], Value::new(2));
             db.finalize_causal_wave();
             for (table, old, new) in [
                 (first, first_old, first_new),
@@ -1046,6 +1134,8 @@ fn causal_receipt_incremental_rebuild_retry_rolls_back_every_target_cursor() {
                 assert!(db.get_table(table).get_row(&[old]).is_none());
                 assert!(db.get_table(table).get_row(&[new]).is_some());
             }
+            assert_eq!(committed_fact_id(&db, first, first_new), first_canonical);
+            assert_eq!(committed_fact_id(&db, second, second_new), second_canonical);
             assert_eq!(receipts.snapshot().counters.rebuild_causes, 2);
         });
 }
@@ -1053,11 +1143,10 @@ fn causal_receipt_incremental_rebuild_retry_rolls_back_every_target_cursor() {
 fn capture_same_wave_rebuild_collision(
     row_count: u32,
     collision_count: u32,
-    threads: usize,
 ) -> (crate::ReceiptSnapshot, Vec<FactId>) {
     assert!(row_count >= collision_count && collision_count >= 2);
     let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(threads)
+        .num_threads(1)
         .build()
         .unwrap();
     pool.install(|| {
@@ -1083,6 +1172,15 @@ fn capture_same_wave_rebuild_collision(
         receipts
             .register_table_layout(rebuilt, &[Some(sort), Some(sort), None])
             .unwrap();
+        register_test_merge_origins(
+            &receipts,
+            rebuilt,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::Incoming { column: 1 },
+                MergeOriginSelector::Unsupported,
+            ],
+        );
 
         let old_key = |index: u32| Value::new(1_000_000 + index);
         let new_key = |index: u32| {
@@ -1100,12 +1198,22 @@ fn capture_same_wave_rebuild_collision(
         }
 
         let lanes = (0..row_count as usize).collect::<Vec<_>>();
-        let causes =
-            receipts.register_rule_matches(780, CausalWave::new(0), 0, &[], &[], &[], &lanes);
+        let causes = receipts.register_rule_matches(780, CausalWave::new(0), 0, &[], &[], &lanes);
         let mut initial = db.new_buffer(rebuilt);
         for (index, (_, cause)) in causes.into_iter().enumerate() {
             let index = index as u32;
-            initial.stage_insert_with_cause(&[old_key(index), output(index), Value::new(0)], cause);
+            let row = [old_key(index), output(index), Value::new(0)];
+            let terms = [
+                receipts.lookup_term(sort, row[0]).unwrap(),
+                receipts.lookup_term(sort, row[1]).unwrap(),
+                crate::ReplayTermId::MISSING,
+            ];
+            let origin = install_test_row_origin(&receipts, rebuilt, &row, &terms);
+            initial.stage_insert_deferred_with_origin(
+                &row,
+                crate::DeferredEqualityCause::ready(cause),
+                origin,
+            );
         }
         drop(initial);
         assert!(db.merge_all());
@@ -1189,17 +1297,34 @@ fn causal_receipt_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
     assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
     db.finalize_causal_wave();
     let rebuilt_fact = committed_fact_id(&db, rebuilt, new);
-    assert_ne!(
+    assert_eq!(
         rebuilt_fact, prior_fact,
-        "a semantic rekey creates one immutable fact version"
+        "a pure rekey must preserve the immutable logical FactId"
     );
     assert_eq!(
+        receipts.fact_record(rebuilt_fact).unwrap().terms.as_ref(),
+        &[old_term, crate::ReplayTermId::MISSING],
+        "a pure rekey cannot rewrite the fact's historical creation syntax"
+    );
+
+    let after_rekey = receipts.snapshot();
+    assert_eq!(after_rekey.facts.len(), 1, "a pure rekey creates no fact");
+    assert_eq!(
         receipts.fact_record(rebuilt_fact).unwrap().cause,
-        crate::FactCause::Rebuild {
+        crate::FactCause::Source(SourceRef::Synthetic(79)),
+        "a pure rekey cannot replace the logical fact's creator"
+    );
+    assert_eq!(after_rekey.rekeys.len(), 1);
+    assert_eq!(
+        after_rekey.rekeys[0],
+        crate::receipts::RekeyRecord {
+            fact: prior_fact,
+            table: rebuilt,
             wave: CausalWave::new(2),
-            prior_fact,
+            position: after_rekey.rekeys[0].position,
             equalities: crate::EqualityLandmark {
                 as_of_edges: crate::EqualityEdgeCount::new(1),
+                position: after_rekey.equalities[0].position,
                 pairs: vec![crate::TypedCellEquality {
                     column: ColumnId::new(0),
                     left: crate::EqualityEndpoint {
@@ -1215,10 +1340,9 @@ fn causal_receipt_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
                 }]
                 .into_boxed_slice(),
             },
+            outcome: crate::receipts::RekeyOutcome::Moved,
         }
     );
-
-    let after_rekey = receipts.snapshot();
     let fact_count = after_rekey.facts.len();
     assert_eq!(after_rekey.counters.rebuild_causes, 1);
     assert_eq!(after_rekey.counters.rebuild_equalities, 1);
@@ -1252,16 +1376,299 @@ fn causal_receipt_rebuild_rekeys_with_exact_landmark_and_noop_preserves_fact() {
     );
     assert!(db.merge_all());
     db.finalize_causal_wave();
-    let crate::FactCause::Rebuild { equalities, .. } =
-        receipts.fact_record(rebuilt_fact).unwrap().cause
-    else {
-        panic!("rebuilt fact lost its direct rebuild cause")
-    };
     assert_eq!(
-        equalities.as_of_edges,
+        receipts.snapshot().rekeys[0].equalities.as_of_edges,
         crate::EqualityEdgeCount::new(1),
         "a later equality edge cannot justify an earlier table rekey"
     );
+}
+
+#[test]
+fn late_fact_rekey_attachment_is_visible_only_at_the_check_position() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let rebuilt = db.add_table(
+        SortedWritesTable::new(
+            1,
+            2,
+            Some(ColumnId::new(1)),
+            vec![ColumnId::new(0)],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "the chronology canary performs a pure rekey");
+                false
+            }),
+        ),
+        iter::once(uf),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(7900);
+    receipts
+        .register_table_layout(rebuilt, &[Some(sort), None])
+        .unwrap();
+    let a = Value::new(20);
+    let c = Value::new(10);
+    let ta = receipts.intern_literal(sort, ReplayLiteral::Internal(1), a);
+    let tb = receipts.intern_literal(sort, ReplayLiteral::Internal(2), Value::new(200));
+    let tc = receipts.intern_literal(sort, ReplayLiteral::Internal(3), c);
+    let site = |term| {
+        receipts.register_term_origin(TermOriginSpec {
+            sort,
+            term: Arc::new(TermTemplate::Static { term }),
+        })
+    };
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let equality = receipts
+        .typed_equality_proposal_from_sites(wave, sort, a, site(ta), c, site(tc))
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[a, c, Value::new(1)],
+            empty_rule_cause(&receipts, 7900, wave),
+            equality,
+        );
+    }
+    assert!(db.merge_all());
+
+    db.stage_source_row(
+        rebuilt,
+        &[a, Value::new(0)],
+        &[tb, crate::ReplayTermId::MISSING],
+        SourceRef::Synthetic(7900),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    let fact = committed_fact_id(&db, rebuilt, a);
+    assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
+    assert_eq!(committed_fact_id(&db, rebuilt, c), fact);
+
+    let cutoff = receipts.equality_edge_count().unwrap();
+    let left = crate::EqualityEndpoint {
+        sort,
+        term: tb,
+        raw: c,
+    };
+    let right = crate::EqualityEndpoint {
+        sort,
+        term: tc,
+        raw: c,
+    };
+    receipts
+        .record_check_root(7900, wave, &[fact], &[(left, right)], cutoff)
+        .unwrap();
+    receipts
+        .record_check_root(7900, CausalWave::new(99), &[fact], &[(left, right)], cutoff)
+        .unwrap();
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    let edge_position = snapshot.equalities[0].position;
+    let fact_position = snapshot.facts[0].position;
+    let rekey = snapshot
+        .rekeys
+        .iter()
+        .find(|rekey| rekey.fact == fact)
+        .unwrap();
+    let root = snapshot
+        .check_roots
+        .iter()
+        .find(|root| root.check == 7900)
+        .unwrap();
+    assert_eq!(snapshot.equalities[0].wave, wave);
+    assert_eq!(
+        snapshot.facts[0].cause,
+        crate::FactCause::Source(SourceRef::Synthetic(7900))
+    );
+    assert_eq!(rekey.wave, wave);
+    assert_eq!(root.wave, wave);
+    assert!(edge_position < fact_position);
+    assert!(fact_position < rekey.position);
+    assert!(rekey.position < root.position);
+    assert_eq!(
+        root.wave, wave,
+        "a later successful witness must not replace the first native check root"
+    );
+
+    assert!(
+        snapshot
+            .equality_explanation_index_at(crate::EqualityEdgeCount::new(0), root.position)
+            .is_err(),
+        "an exact global position must reject a mismatched applied-edge high-water mark"
+    );
+
+    assert!(
+        snapshot
+            .explain_equality_support_at(left, right, cutoff, fact_position)
+            .is_err(),
+        "the creation attachment still names raw A before the pure rekey"
+    );
+    let support = snapshot
+        .explain_equality_support_at(left, right, cutoff, root.position)
+        .unwrap();
+    assert_eq!(support.edges.as_ref(), &[crate::EqualityEdgeId::new(1)]);
+    assert_eq!(support.facts.as_ref(), &[fact]);
+    assert!(support.causes.is_empty());
+    assert_eq!(support.rekeys.as_ref(), &[rekey.position]);
+}
+
+#[test]
+fn exact_catch_up_into_occupied_component_fails_closed_without_published_cold_state() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(7901);
+
+    let a = Value::new(100);
+    let x = Value::new(90);
+    let b = Value::new(80);
+    let c = Value::new(70);
+    let d = Value::new(60);
+    let shared = receipts.intern_literal(sort, ReplayLiteral::Internal(1), a);
+    assert_eq!(
+        receipts
+            .install_trusted_value_term(sort, b, shared)
+            .unwrap(),
+        shared,
+        "the same certified structural term can name another current value"
+    );
+    receipts.intern_literal(sort, ReplayLiteral::Internal(2), x);
+    let b_site_term = receipts.intern_literal(sort, ReplayLiteral::Internal(3), Value::new(1_000));
+    let c_site_term = receipts.intern_literal(sort, ReplayLiteral::Internal(4), c);
+    let d_term = receipts.intern_literal(sort, ReplayLiteral::Internal(5), d);
+    let site = |term| {
+        receipts.register_term_origin(TermOriginSpec {
+            sort,
+            term: Arc::new(TermTemplate::Static { term }),
+        })
+    };
+
+    let first_wave = CausalWave::new(1);
+    db.set_causal_wave(first_wave);
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 7901, first_wave),
+        sort,
+        a,
+        x,
+        Value::new(1),
+    );
+    assert!(db.merge_all());
+
+    let second_wave = CausalWave::new(2);
+    db.set_causal_wave(second_wave);
+    let second = receipts
+        .typed_equality_proposal_from_sites(
+            second_wave,
+            sort,
+            b,
+            site(b_site_term),
+            c,
+            site(c_site_term),
+        )
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[b, c, Value::new(2)],
+            empty_rule_cause(&receipts, 7902, second_wave),
+            second,
+        );
+    }
+    assert!(db.merge_all());
+
+    let third_wave = CausalWave::new(3);
+    db.set_causal_wave(third_wave);
+    stage_test_union(
+        &db,
+        uf,
+        empty_rule_cause(&receipts, 7903, third_wave),
+        sort,
+        b,
+        d,
+        Value::new(3),
+    );
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    assert_eq!(native_uf_root(&db, uf, b), native_uf_root(&db, uf, d));
+    assert_ne!(b_site_term, c_site_term);
+    assert_ne!(c_site_term, d_term);
+    let edge_count = receipts.equality_edge_count().unwrap();
+    assert_eq!(edge_count, crate::EqualityEdgeCount::new(3));
+    for _ in 0..2 {
+        let failure = catch_unwind(AssertUnwindSafe(|| receipts.snapshot()))
+            .expect_err("occupied Exact catch-up must fail closed during cold projection");
+        let message = failure
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| failure.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic");
+        assert!(
+            message.contains(
+                "trusted exact occurrence collides with an independently recorded native component"
+            ),
+            "unexpected cold-projection error: {message}"
+        );
+        assert_eq!(
+            receipts.equality_edge_count().unwrap(),
+            edge_count,
+            "failed cold projection must not publish or consume receipt history"
+        );
+    }
+}
+
+#[test]
+fn trusted_exact_component_can_extend_from_both_native_roots() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let child_sort = ReplaySortId::new(7902);
+    let sort = ReplaySortId::new(7903);
+    let child = receipts.intern_literal(child_sort, ReplayLiteral::Internal(7), Value::new(7));
+    let a = Value::new(50);
+    let b = Value::new(40);
+    let x = Value::new(30);
+    let y = Value::new(20);
+    let z = Value::new(10);
+    let shared = receipts
+        .intern_call(sort, ReplayOpId::new(7902), &[child], a)
+        .unwrap();
+    assert_eq!(
+        receipts
+            .intern_call(sort, ReplayOpId::new(7902), &[child], b)
+            .unwrap(),
+        shared,
+        "the production Call interner certifies the same term at both raw ids"
+    );
+    for (op, raw) in [(7903, x), (7904, y), (7905, z)] {
+        receipts
+            .intern_call(sort, ReplayOpId::new(op), &[child], raw)
+            .unwrap();
+    }
+
+    for (wave, left, right) in [(1, a, x), (2, b, y), (3, a, z)] {
+        let wave = CausalWave::new(wave);
+        db.set_causal_wave(wave);
+        stage_test_union(
+            &db,
+            uf,
+            empty_rule_cause(&receipts, 7903 + wave.get() as u32, wave),
+            sort,
+            left,
+            right,
+            Value::new(wave.get() as u32),
+        );
+        assert!(db.merge_all());
+    }
+    db.finalize_causal_wave();
+
+    receipts
+        .snapshot()
+        .equality_explanation_index_at_end(crate::EqualityEdgeCount::new(3))
+        .expect("one trusted exact component must retain one logical parent after both roots grow");
 }
 
 #[test]
@@ -1346,19 +1753,26 @@ fn effective_constructor_rebuild_inherits_prior_terms_over_competing_alias() {
     db.finalize_causal_wave();
 
     let rebuilt_fact = committed_fact_id(&db, constructor, canonical_child);
-    assert_ne!(rebuilt_fact, prior_fact);
+    assert_eq!(rebuilt_fact, prior_fact);
     let rebuilt = receipts.fact_record(rebuilt_fact).unwrap();
     assert_eq!(rebuilt.terms.as_ref(), exact_terms.as_slice());
-    assert!(matches!(
-        rebuilt.cause,
-        crate::FactCause::Rebuild {
-            prior_fact: recorded,
-            ..
-        } if recorded == prior_fact
-    ));
     assert_eq!(
-        receipts.snapshot().counters.merge_prior_term_copies,
-        0,
+        rebuilt.cause,
+        crate::FactCause::Source(SourceRef::Synthetic(791)),
+        "pure rekeying preserves the immutable fact's original creator"
+    );
+    let snapshot = receipts.snapshot();
+    let rekey = snapshot
+        .rekeys
+        .iter()
+        .find(|rekey| rekey.fact == prior_fact)
+        .expect("stable fact must retain an exact rekey landmark");
+    assert_eq!(rekey.outcome, crate::receipts::RekeyOutcome::Moved);
+    assert_eq!(rekey.equalities.pairs.len(), 1);
+    assert_eq!(rekey.equalities.pairs[0].left.term, exact_child_term);
+    assert_eq!(rekey.equalities.pairs[0].right.raw, canonical_child);
+    assert_eq!(
+        snapshot.counters.merge_prior_term_copies, 0,
         "effective rebuild inheritance is not candidate merge-copy work"
     );
 }
@@ -1386,6 +1800,15 @@ fn causal_receipt_rebuild_collision_records_exact_congruence() {
     receipts
         .register_table_layout(rebuilt, &[Some(sort), Some(sort), None])
         .unwrap();
+    register_test_merge_origins(
+        &receipts,
+        rebuilt,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Prior { column: 1 },
+            MergeOriginSelector::Unsupported,
+        ],
+    );
 
     let old_key = Value::new(30);
     let target_key = Value::new(20);
@@ -1476,7 +1899,7 @@ fn causal_receipt_rebuild_collision_records_exact_congruence() {
 
 #[test]
 fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
-    let (serial, serial_old) = capture_same_wave_rebuild_collision(2, 2, 1);
+    let (serial, serial_old) = capture_same_wave_rebuild_collision(2, 2);
     let serial_equality = serial
         .equalities
         .iter()
@@ -1487,25 +1910,31 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
     let facts = &serial_dependencies.facts;
     assert_eq!(equalities.pairs.len(), 1);
     assert_eq!(facts.len(), 2);
-    let prior_rebuild = serial
-        .facts
+    let serial_rekeys = facts
         .iter()
-        .find(|fact| fact.id == facts[0])
-        .expect("serial congruence prior version must be an immutable fact");
-    let crate::FactCause::Rebuild {
-        prior_fact,
-        equalities: prior_equalities,
-        ..
-    } = &prior_rebuild.cause
-    else {
-        panic!("serial congruence prior fact must retain its rebuild cause")
-    };
-    assert_eq!(prior_equalities.pairs.len(), 1);
-    assert_eq!(equalities.as_of_edges, prior_equalities.as_of_edges);
-    for (fact_id, pair) in [
-        (facts[1], &equalities.pairs[0]),
-        (*prior_fact, &prior_equalities.pairs[0]),
-    ] {
+        .map(|fact| {
+            serial
+                .rekeys
+                .iter()
+                .find(|rekey| rekey.fact == *fact)
+                .expect("each congruence input must retain its stable-fact rekey landmark")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        serial_rekeys
+            .iter()
+            .any(|rekey| rekey.outcome == crate::receipts::RekeyOutcome::Moved)
+    );
+    assert!(
+        serial_rekeys
+            .iter()
+            .any(|rekey| matches!(rekey.outcome, crate::receipts::RekeyOutcome::Replaced(_)))
+    );
+    for rekey in &serial_rekeys {
+        assert_eq!(rekey.equalities.pairs.len(), 1);
+        assert_eq!(equalities.as_of_edges, rekey.equalities.as_of_edges);
+        let fact_id = rekey.fact;
+        let pair = &rekey.equalities.pairs[0];
         let fact = serial.facts.iter().find(|fact| fact.id == fact_id).unwrap();
         assert_eq!(pair.column, ColumnId::new(0));
         assert_eq!(pair.left.sort, ReplaySortId::new(78));
@@ -1514,21 +1943,25 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
         assert_eq!(pair.right.raw, Value::new(100_000));
         assert!(
             serial
-                .explain_equality(pair.left, pair.right, equalities.as_of_edges)
+                .explain_equality_at(
+                    pair.left,
+                    pair.right,
+                    equalities.as_of_edges,
+                    rekey.equalities.position,
+                )
                 .is_ok()
         );
     }
-    let mut serial_priors = [facts[1].get(), prior_fact.get()];
+    let mut serial_priors = [facts[0].get(), facts[1].get()];
     let mut expected_serial = [serial_old[0].get(), serial_old[1].get()];
     serial_priors.sort_unstable();
     expected_serial.sort_unstable();
     assert_eq!(serial_priors, expected_serial);
 
-    // Cross both the real rebuild and table thresholds inside a four-thread
-    // pool. Receipt rebuild scanning and table publication remain serial: the
-    // first rebuilt proposal gets a FactId, and the second proposal's applied
-    // equality cites that immutable version.
-    let (threshold, threshold_old) = capture_same_wave_rebuild_collision(20_001, 2, 4);
+    // Cross both the real rebuild and table thresholds in the supported
+    // serial receipt mode. The first rekey keeps its stable FactId, and the
+    // second proposal's applied equality cites both immutable inputs.
+    let (threshold, threshold_old) = capture_same_wave_rebuild_collision(20_001, 2);
     let threshold_equality = threshold
         .equalities
         .iter()
@@ -1538,39 +1971,35 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
         test_congruence_dependencies(&threshold, &threshold_equality.reason);
     let facts = &threshold_dependencies.facts;
     assert_eq!(facts.len(), 2);
-    let rebuilt_dependency = facts
+    let threshold_rekeys = facts
         .iter()
-        .find_map(|fact| {
-            let record = threshold.facts.iter().find(|record| record.id == *fact)?;
-            let crate::FactCause::Rebuild {
-                prior_fact,
-                equalities,
-                ..
-            } = &record.cause
-            else {
-                return None;
-            };
-            Some((record.id, *prior_fact, equalities))
+        .map(|fact| {
+            threshold
+                .rekeys
+                .iter()
+                .find(|rekey| rekey.fact == *fact)
+                .expect("each threshold input must retain its stable-fact rekey landmark")
         })
-        .expect("threshold predecessor must retain its own rebuild landmark");
-    let direct_old = facts
-        .iter()
-        .copied()
-        .find(|fact| *fact != rebuilt_dependency.0)
-        .expect("incoming rebuild cause must cite its old fact");
-    let mut threshold_priors = [direct_old.get(), rebuilt_dependency.1.get()];
+        .collect::<Vec<_>>();
+    let mut threshold_priors = [facts[0].get(), facts[1].get()];
     let mut expected_threshold = [threshold_old[0].get(), threshold_old[1].get()];
     threshold_priors.sort_unstable();
     expected_threshold.sort_unstable();
     assert_eq!(threshold_priors, expected_threshold);
     assert_eq!(equalities.pairs.len(), 1);
-    assert_eq!(rebuilt_dependency.2.pairs.len(), 1);
     assert_eq!(
         equalities.as_of_edges,
         crate::EqualityEdgeCount::new(20_001)
     );
-    assert_eq!(rebuilt_dependency.2.as_of_edges, equalities.as_of_edges);
-    let pairs = [&equalities.pairs[0], &rebuilt_dependency.2.pairs[0]];
+    assert!(
+        threshold_rekeys
+            .iter()
+            .all(|rekey| rekey.equalities.as_of_edges == equalities.as_of_edges)
+    );
+    let pairs = threshold_rekeys
+        .iter()
+        .map(|rekey| &rekey.equalities.pairs[0])
+        .collect::<Vec<_>>();
     let mut changed_from = pairs
         .iter()
         .map(|pair| pair.left.raw.index())
@@ -1583,9 +2012,10 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
             .all(|pair| pair.right.raw == Value::new(100_000))
     );
     let explanation_index = threshold
-        .equality_explanation_index(equalities.as_of_edges)
+        .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
         .unwrap();
-    for (fact_id, pair) in [(direct_old, pairs[0]), (rebuilt_dependency.1, pairs[1])] {
+    let target_endpoint = pairs[0].right;
+    for (fact_id, pair) in facts.iter().copied().zip(pairs.iter().copied()) {
         let fact = threshold
             .facts
             .iter()
@@ -1595,7 +2025,7 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
         assert_eq!(pair.left.sort, ReplaySortId::new(78));
         assert_eq!(pair.right.sort, ReplaySortId::new(78));
         assert_eq!(pair.left.term, fact.terms[0]);
-        assert_eq!(pair.right, pairs[0].right);
+        assert_eq!(pair.right, target_endpoint);
         assert!(
             explanation_index
                 .explain_equality(pair.left, pair.right)
@@ -1606,7 +2036,7 @@ fn causal_receipt_same_wave_rebuild_congruence_is_exact_across_threshold() {
 
 #[test]
 fn causal_receipt_serial_rebuild_congruence_keeps_only_applied_leaves() {
-    let (snapshot, old_facts) = capture_same_wave_rebuild_collision(20_001, 3, 4);
+    let (snapshot, old_facts) = capture_same_wave_rebuild_collision(20_001, 3);
     let (_equality, dependencies, equalities) = snapshot
         .equalities
         .iter()
@@ -1621,20 +2051,7 @@ fn causal_receipt_serial_rebuild_congruence_keeps_only_applied_leaves() {
         .expect("the applied serial congruence must retain its two causal leaves");
     let facts = &dependencies.facts;
     assert_eq!(facts.len(), 2);
-    let leaf_facts = facts
-        .iter()
-        .map(|fact| {
-            let record = snapshot
-                .facts
-                .iter()
-                .find(|record| record.id == *fact)
-                .expect("congruence dependency must name a durable fact");
-            match record.cause {
-                crate::FactCause::Rebuild { prior_fact, .. } => prior_fact,
-                _ => record.id,
-            }
-        })
-        .collect::<Vec<_>>();
+    let leaf_facts = facts.iter().copied().collect::<Vec<_>>();
     assert!(leaf_facts.iter().all(|fact| old_facts.contains(fact)));
     assert_eq!(
         old_facts
@@ -1649,35 +2066,24 @@ fn causal_receipt_serial_rebuild_congruence_keeps_only_applied_leaves() {
         equalities.as_of_edges,
         crate::EqualityEdgeCount::new(20_001)
     );
-    let rebuilt_dependency = facts
+    let rekeys = facts
         .iter()
-        .find_map(|fact| {
-            let record = snapshot.facts.iter().find(|record| record.id == *fact)?;
-            let crate::FactCause::Rebuild {
-                prior_fact,
-                equalities,
-                ..
-            } = &record.cause
-            else {
-                return None;
-            };
-            Some((record.id, *prior_fact, equalities))
+        .map(|fact| {
+            snapshot
+                .rekeys
+                .iter()
+                .find(|rekey| rekey.fact == *fact)
+                .expect("each applied leaf must retain its stable-fact rekey landmark")
         })
-        .expect("serial predecessor must retain its own rebuild landmark");
-    assert_eq!(rebuilt_dependency.2.pairs.len(), 1);
-    assert_eq!(rebuilt_dependency.2.as_of_edges, equalities.as_of_edges);
-    let direct_old = facts
-        .iter()
-        .copied()
-        .find(|fact| *fact != rebuilt_dependency.0)
-        .expect("incoming rebuild cause must cite its old fact");
+        .collect::<Vec<_>>();
+    assert!(rekeys.iter().all(|rekey| rekey.equalities.pairs.len() == 1
+        && rekey.equalities.as_of_edges == equalities.as_of_edges));
     let explanation_index = snapshot
-        .equality_explanation_index(equalities.as_of_edges)
+        .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
         .unwrap();
-    for (fact_id, pair) in [
-        (direct_old, &equalities.pairs[0]),
-        (rebuilt_dependency.1, &rebuilt_dependency.2.pairs[0]),
-    ] {
+    for rekey in rekeys {
+        let fact_id = rekey.fact;
+        let pair = &rekey.equalities.pairs[0];
         let fact = snapshot
             .facts
             .iter()
@@ -1752,16 +2158,20 @@ fn causal_receipt_rebuild_records_only_changed_columns_in_table_order() {
     assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
     db.finalize_causal_wave();
     let rebuilt_fact = committed_fact_id_for_key(&db, rebuilt, &[new_a, new_b, unchanged]);
-    let crate::FactCause::Rebuild {
-        wave,
-        prior_fact: actual_prior,
-        equalities,
-    } = receipts.fact_record(rebuilt_fact).unwrap().cause
-    else {
-        panic!("multi-column rekey must have a direct rebuild cause")
-    };
-    assert_eq!(wave, CausalWave::new(2));
-    assert_eq!(actual_prior, prior_fact);
+    assert_eq!(rebuilt_fact, prior_fact);
+    assert_eq!(
+        receipts.fact_record(rebuilt_fact).unwrap().cause,
+        crate::FactCause::Source(SourceRef::Synthetic(84))
+    );
+    let snapshot = receipts.snapshot();
+    let rekey = snapshot
+        .rekeys
+        .iter()
+        .find(|rekey| rekey.fact == prior_fact)
+        .expect("multi-column rekey must retain a direct landmark");
+    assert_eq!(rekey.wave, CausalWave::new(2));
+    assert_eq!(rekey.outcome, crate::receipts::RekeyOutcome::Moved);
+    let equalities = &rekey.equalities;
     assert_eq!(equalities.as_of_edges, crate::EqualityEdgeCount::new(2));
     assert_eq!(
         equalities.pairs.as_ref(),
@@ -1797,7 +2207,7 @@ fn causal_receipt_rebuild_records_only_changed_columns_in_table_order() {
 }
 
 #[test]
-fn causal_receipt_rebuild_missing_typed_endpoint_fails_before_staging() {
+fn causal_receipt_rebuild_missing_typed_endpoint_fails_during_cold_projection() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let rebuilt = db.add_table(
@@ -1806,10 +2216,7 @@ fn causal_receipt_rebuild_missing_typed_endpoint_fails_before_staging() {
             2,
             Some(ColumnId::new(1)),
             vec![ColumnId::new(0)],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
+            Box::new(|_, _, _, _| false),
         ),
         iter::once(uf),
         iter::empty(),
@@ -1847,33 +2254,24 @@ fn causal_receipt_rebuild_missing_typed_endpoint_fails_before_staging() {
     );
     assert!(db.merge_all());
     db.set_causal_wave(CausalWave::new(2));
-    let before = receipts.snapshot();
-
-    let failed = catch_unwind(AssertUnwindSafe(|| {
-        db.apply_rebuild(uf, &[rebuilt], Value::new(2));
-    }));
-    assert!(failed.is_err());
+    assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
     assert_eq!(
         native_uf_root(&db, uf, old),
         new,
-        "UF table was not restored"
+        "native rebuilding remains independent of cold receipt projection"
     );
-    assert_eq!(committed_fact_id(&db, rebuilt, old), prior_fact);
-    assert!(db.get_table(rebuilt).get_row(&[new]).is_none());
-    assert!(
-        !db.merge_all(),
-        "a failed rebuild left a staged removal or insertion behind"
-    );
+    assert!(db.get_table(rebuilt).get_row(&[old]).is_none());
+    assert_eq!(committed_fact_id(&db, rebuilt, new), prior_fact);
     db.finalize_causal_wave();
-    let after = receipts.snapshot();
-    assert_eq!(after.facts, before.facts);
-    assert_eq!(after.equalities, before.equalities);
-    assert_eq!(after.counters.rebuild_causes, 0);
-    assert_eq!(after.counters.rebuild_equalities, 0);
+    let failed = catch_unwind(AssertUnwindSafe(|| receipts.snapshot()));
+    assert!(
+        failed.is_err(),
+        "cold projection must fail closed when the rekey's logical sort has no exact endpoint"
+    );
 }
 
 #[test]
-fn causal_receipt_rebuild_abort_discards_earlier_rows_before_later_merge() {
+fn causal_receipt_same_batch_rebuild_collision_is_atomic_and_retryable() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
     let rebuilt = db.add_table(
@@ -1882,106 +2280,83 @@ fn causal_receipt_rebuild_abort_discards_earlier_rows_before_later_merge() {
             2,
             Some(ColumnId::new(1)),
             vec![ColumnId::new(0)],
-            Box::new(|_, left, right, _| {
-                assert_eq!(left, right);
-                false
-            }),
+            Box::new(|_, _, _, _| false),
         ),
         iter::once(uf),
         iter::empty(),
     );
     let receipts = db.enable_causal_receipts();
-    let table_sort = ReplaySortId::new(89);
-    let uf_sort = ReplaySortId::new(90);
+    let sort = ReplaySortId::new(89);
     receipts
-        .register_table_layout(rebuilt, &[Some(table_sort), None])
+        .register_table_layout(rebuilt, &[Some(sort), None])
         .unwrap();
 
-    let valid_old = Value::new(100);
-    let valid_new = Value::new(90);
-    let invalid_old = Value::new(80);
-    let invalid_new = Value::new(70);
-    let recovery = Value::new(200);
-    for raw in [100, 90, 80, 200] {
-        receipts.intern_literal(
-            table_sort,
-            ReplayLiteral::Internal(raw),
-            Value::new(raw as u32),
-        );
-    }
-    for raw in [100, 90, 80, 70] {
-        receipts.intern_literal(
-            uf_sort,
-            ReplayLiteral::Internal(raw),
-            Value::new(raw as u32),
-        );
+    let first_old = Value::new(100);
+    let second_old = Value::new(80);
+    let target = Value::new(70);
+    for value in [first_old, second_old, target] {
+        receipts.intern_literal(sort, ReplayLiteral::Internal(value.index() as u64), value);
     }
     let stage_source = |db: &Database, value: Value, source| {
         db.stage_source_row(
             rebuilt,
             &[value, Value::new(0)],
             &[
-                receipts.lookup_term(table_sort, value).unwrap(),
+                receipts.lookup_term(sort, value).unwrap(),
                 crate::ReplayTermId::MISSING,
             ],
             SourceRef::Synthetic(source),
         )
         .unwrap();
     };
-    // Separate barriers make row order deterministic: the first row is fully
-    // validated and staged before the second row discovers its missing term.
-    stage_source(&db, valid_old, 890);
+    stage_source(&db, first_old, 890);
+    stage_source(&db, second_old, 891);
     assert!(db.merge_all());
-    stage_source(&db, invalid_old, 891);
-    assert!(db.merge_all());
-    let valid_fact = committed_fact_id(&db, rebuilt, valid_old);
-    let invalid_fact = committed_fact_id(&db, rebuilt, invalid_old);
+    let first_fact = committed_fact_id(&db, rebuilt, first_old);
+    let second_fact = committed_fact_id(&db, rebuilt, second_old);
 
     db.set_causal_wave(CausalWave::new(1));
     let union_cause = empty_rule_cause(&receipts, 89, CausalWave::new(1));
-    stage_test_union(
-        &db,
-        uf,
-        union_cause,
-        uf_sort,
-        valid_old,
-        valid_new,
-        Value::new(1),
-    );
-    stage_test_union(
-        &db,
-        uf,
-        union_cause,
-        uf_sort,
-        invalid_old,
-        invalid_new,
-        Value::new(1),
-    );
+    for old in [first_old, second_old] {
+        stage_test_union(&db, uf, union_cause, sort, old, target, Value::new(1));
+    }
     assert!(db.merge_all());
     db.set_causal_wave(CausalWave::new(2));
-    let before = receipts.snapshot();
 
     let failed = catch_unwind(AssertUnwindSafe(|| {
         db.apply_rebuild(uf, &[rebuilt], Value::new(2));
     }));
     assert!(failed.is_err());
+    assert_eq!(committed_fact_id(&db, rebuilt, first_old), first_fact);
+    assert_eq!(committed_fact_id(&db, rebuilt, second_old), second_fact);
+    assert!(db.get_table(rebuilt).get_row(&[target]).is_none());
+    assert!(
+        !db.merge_all(),
+        "failed preflight published a native mutation"
+    );
 
-    // A later ordinary notification drains the rejected guarded batches. If
-    // the first staged rekey leaked, this merge would make it observable.
-    stage_source(&db, recovery, 892);
-    assert!(db.merge_all());
-    assert_eq!(committed_fact_id(&db, rebuilt, valid_old), valid_fact);
-    assert_eq!(committed_fact_id(&db, rebuilt, invalid_old), invalid_fact);
-    assert!(db.get_table(rebuilt).get_row(&[valid_new]).is_none());
-    assert!(db.get_table(rebuilt).get_row(&[invalid_new]).is_none());
-    assert!(db.get_table(rebuilt).get_row(&[recovery]).is_some());
+    register_test_merge_origins(
+        &receipts,
+        rebuilt,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Unsupported,
+        ],
+    );
+    assert!(db.apply_rebuild(uf, &[rebuilt], Value::new(2)));
+    assert!(db.get_table(rebuilt).get_row(&[first_old]).is_none());
+    assert!(db.get_table(rebuilt).get_row(&[second_old]).is_none());
+    assert!(db.get_table(rebuilt).get_row(&[target]).is_some());
 
     db.finalize_causal_wave();
-    let after = receipts.snapshot();
-    assert_eq!(after.equalities, before.equalities);
-    assert_eq!(after.facts.len(), before.facts.len() + 1);
-    assert_eq!(after.counters.rebuild_causes, 0);
-    assert_eq!(after.counters.rebuild_equalities, 0);
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.rekeys.len(), 2);
+    assert!(
+        snapshot
+            .rekeys
+            .iter()
+            .all(|rekey| { rekey.fact == first_fact || rekey.fact == second_fact })
+    );
 }
 
 #[test]
@@ -2004,19 +2379,35 @@ fn causal_receipt_rebuild_abort_is_atomic_across_target_tables() {
     let second = db.add_table(relation(), iter::once(uf), iter::empty());
     let receipts = db.enable_causal_receipts();
     let table_sort = ReplaySortId::new(91);
-    let uf_sort = ReplaySortId::new(92);
+    let uf_sort = table_sort;
     for table in [first, second] {
         receipts
             .register_table_layout(table, &[Some(table_sort), None])
             .unwrap();
     }
+    register_test_merge_origins(
+        &receipts,
+        first,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Unsupported,
+        ],
+    );
+    register_test_merge_origins(
+        &receipts,
+        second,
+        &[
+            MergeOriginSelector::Unsupported,
+            MergeOriginSelector::Unsupported,
+        ],
+    );
 
     let first_old = Value::new(120);
     let first_new = Value::new(110);
     let second_old = Value::new(90);
     let second_new = Value::new(80);
     let recovery = Value::new(200);
-    for raw in [120, 110, 90, 200] {
+    for raw in [120, 110, 90, 80, 200] {
         receipts.intern_literal(
             table_sort,
             ReplayLiteral::Internal(raw),
@@ -2042,9 +2433,20 @@ fn causal_receipt_rebuild_abort_is_atomic_across_target_tables() {
         )
         .unwrap();
     }
+    db.stage_source_row(
+        second,
+        &[second_new, Value::new(0)],
+        &[
+            receipts.lookup_term(table_sort, second_new).unwrap(),
+            crate::ReplayTermId::MISSING,
+        ],
+        SourceRef::Synthetic(913),
+    )
+    .unwrap();
     assert!(db.merge_all());
     let first_fact = committed_fact_id(&db, first, first_old);
     let second_fact = committed_fact_id(&db, second, second_old);
+    let second_canonical_fact = committed_fact_id(&db, second, second_new);
 
     db.set_causal_wave(CausalWave::new(1));
     let union_cause = empty_rule_cause(&receipts, 91, CausalWave::new(1));
@@ -2088,7 +2490,10 @@ fn causal_receipt_rebuild_abort_is_atomic_across_target_tables() {
     assert_eq!(committed_fact_id(&db, first, first_old), first_fact);
     assert_eq!(committed_fact_id(&db, second, second_old), second_fact);
     assert!(db.get_table(first).get_row(&[first_new]).is_none());
-    assert!(db.get_table(second).get_row(&[second_new]).is_none());
+    assert_eq!(
+        committed_fact_id(&db, second, second_new),
+        second_canonical_fact
+    );
     assert!(db.get_table(first).get_row(&[recovery]).is_some());
 
     db.finalize_causal_wave();
@@ -2239,7 +2644,7 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     let endpoint = |term, raw| crate::EqualityEndpoint { sort, term, raw };
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 endpoint(a_term, a),
                 endpoint(c_term, c),
                 crate::EqualityEdgeCount::new(2),
@@ -2250,7 +2655,7 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     );
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 endpoint(b_term, b),
                 endpoint(c_term, c),
                 crate::EqualityEdgeCount::new(2),
@@ -2261,7 +2666,7 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     );
     assert!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 endpoint(a_term, a),
                 endpoint(c_term, c),
                 crate::EqualityEdgeCount::new(1),
@@ -2273,12 +2678,12 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     let second = &snapshot.equality_nodes[1];
     assert_eq!(first.id, crate::EqNodeId::new(1));
     assert_eq!(first.edge, first.id);
-    assert_eq!(first.left, crate::EqComponentRef::Term(a_term));
-    assert_eq!(first.right, crate::EqComponentRef::Term(b_term));
+    assert_eq!(component_leaf_term(&snapshot, first.left), a_term);
+    assert_eq!(component_leaf_term(&snapshot, first.right), b_term);
     assert_eq!(second.id, crate::EqNodeId::new(2));
     assert_eq!(second.edge, second.id);
     assert_eq!(second.left, crate::EqComponentRef::Node(first.id));
-    assert_eq!(second.right, crate::EqComponentRef::Term(c_term));
+    assert_eq!(component_leaf_term(&snapshot, second.right), c_term);
     assert_eq!(
         (
             snapshot.equalities[0].wave,
@@ -2299,8 +2704,8 @@ fn typed_union_forest_is_immutable_across_native_path_compression_and_redundancy
     assert_eq!(native_uf_root(&db, uf, b), c);
     assert_eq!(native_uf_root(&db, uf, c), c);
     assert_eq!(
-        snapshot.equality_nodes[0].left,
-        crate::EqComponentRef::Term(a_term),
+        component_leaf_term(&snapshot, snapshot.equality_nodes[0].left),
+        a_term,
         "native path compression must not rewrite immutable join topology"
     );
 }
@@ -2364,7 +2769,22 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
     const REDUNDANT: usize = 100_000;
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let marker = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
     let receipts = db.enable_causal_receipts();
+    receipts.register_table_layout(marker, &[None]).unwrap();
     let sort = ReplaySortId::new(191);
     let left = Value::new(1910);
     let right = Value::new(1911);
@@ -2380,7 +2800,7 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
 
     let second_wave = CausalWave::new(2);
     db.set_causal_wave(second_wave);
-    let pending = receipts.pending_rule_batch(192, second_wave, 0, &[], &[], &[], REDUNDANT);
+    let pending = receipts.pending_rule_batch(192, second_wave, 0, &[], &[], REDUNDANT);
     let proposal = receipts
         .typed_equality_proposal(second_wave, sort, left, right)
         .unwrap();
@@ -2396,6 +2816,14 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
     }
     drop(pending);
     assert!(!db.merge_all());
+    db.stage_source_row(
+        marker,
+        &[Value::new(1920)],
+        &[crate::ReplayTermId::MISSING],
+        SourceRef::Synthetic(192),
+    )
+    .unwrap();
+    assert!(db.merge_all());
     db.finalize_causal_wave();
 
     let snapshot = receipts.snapshot();
@@ -2407,6 +2835,12 @@ fn redundant_rule_unions_discard_pending_matches_without_promotion() {
     assert_eq!(snapshot.matches[0].rule, 191);
     assert_eq!(snapshot.counters.promoted_matches, 1);
     assert_eq!(snapshot.counters.redundant_unions, REDUNDANT as u64);
+    assert_eq!(snapshot.facts.len(), 1);
+    assert_eq!(
+        snapshot.facts[0].position.get(),
+        snapshot.equalities[0].position.get() + 1,
+        "redundant proposals must allocate no global history positions"
+    );
 }
 
 #[test]
@@ -2441,6 +2875,19 @@ fn noop_constructor_collisions_copy_no_prior_terms_or_promote_matches() {
             ReplayConstructorSpec::new(result_sort, op, [child_sort]),
         )
         .unwrap();
+    receipts
+        .register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::NativeMin {
+                    incoming_column: 1,
+                    prior_column: 1,
+                },
+                MergeOriginSelector::Unsupported,
+            ],
+        )
+        .unwrap();
     let child_value = Value::new(1920);
     let output_value = Value::new(1921);
     let child = receipts.intern_literal(child_sort, ReplayLiteral::Internal(1920), child_value);
@@ -2456,14 +2903,15 @@ fn noop_constructor_collisions_copy_no_prior_terms_or_promote_matches() {
 
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
-    let pending = receipts.pending_rule_batch(192, wave, 0, &[], &[], &[], COLLISIONS);
+    let pending = receipts.pending_rule_batch(192, wave, 0, &[], &[], COLLISIONS);
+    let origin = receipts.install_source_row(table, &row, &terms).unwrap();
     {
         let mut updates = db.new_buffer(table);
         for lane in 0..COLLISIONS {
-            updates.stage_insert_deferred_with_terms(
+            updates.stage_insert_deferred_with_origin(
                 &row,
                 crate::DeferredEqualityCause::pending(receipts.pending_rule_cause(&pending, lane)),
-                &terms,
+                origin,
             );
         }
     }
@@ -2490,7 +2938,7 @@ fn effective_pending_union_effects_share_one_promoted_match() {
     }
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
-    let pending = receipts.pending_rule_batch(193, wave, 0, &[], &[], &[], 1);
+    let pending = receipts.pending_rule_batch(193, wave, 0, &[], &[], 1);
     {
         let mut buffer = db.new_buffer(uf);
         for (left, right) in [(values[0], values[1]), (values[1], values[2])] {
@@ -2517,7 +2965,7 @@ fn effective_pending_union_effects_share_one_promoted_match() {
 }
 
 #[test]
-fn pending_union_preparation_is_atomic_before_receipt_publication() {
+fn pending_batch_preflight_failure_is_atomic() {
     let mut db = Database::default();
     let premise_table = db.add_table_named(
         SortedWritesTable::new(
@@ -2578,25 +3026,26 @@ fn pending_union_preparation_is_atomic_before_receipt_publication() {
         .into(),
     }];
     let pending =
-        receipts.pending_rule_batch(199, wave, 1, &sources, &[valid_fact, missing_fact], &[], 2);
+        receipts.pending_rule_batch(199, wave, 1, &sources, &[valid_fact, missing_fact], 2);
     {
         let mut buffer = db.new_buffer(uf);
         for (lane, (left, right)) in [(values[0], values[1]), (values[2], values[3])]
             .into_iter()
             .enumerate()
         {
+            let proposal = receipts
+                .typed_equality_proposal(wave, sort, left, right)
+                .unwrap();
             buffer.stage_typed_union_deferred(
                 &[left, right, Value::new(1)],
                 crate::DeferredEqualityCause::pending(receipts.pending_rule_cause(&pending, lane)),
-                receipts
-                    .typed_equality_proposal(wave, sort, left, right)
-                    .unwrap(),
+                proposal,
             );
         }
     }
+    drop(pending);
     let failed = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
     assert!(failed.is_err());
-    drop(pending);
     for value in values {
         assert_eq!(native_uf_root(&db, uf, value), value);
     }
@@ -2626,8 +3075,8 @@ fn promoted_match_ids_follow_native_batch_order_not_union_order() {
     }
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
-    let earlier = receipts.pending_rule_batch(194, wave, 0, &[], &[], &[], 1);
-    let later = receipts.pending_rule_batch(195, wave, 0, &[], &[], &[], 1);
+    let earlier = receipts.pending_rule_batch(194, wave, 0, &[], &[], 1);
+    let later = receipts.pending_rule_batch(195, wave, 0, &[], &[], 1);
     {
         let mut buffer = db.new_buffer(uf);
         for (batch, left, right) in [
@@ -2790,7 +3239,7 @@ fn causal_wave_barriers_reject_live_pending_match_batches() {
     let mut db = Database::default();
     let receipts = db.enable_causal_receipts();
     db.set_causal_wave(CausalWave::new(1));
-    let pending = receipts.pending_rule_batch(196, CausalWave::new(1), 0, &[], &[], &[], 1);
+    let pending = receipts.pending_rule_batch(196, CausalWave::new(1), 0, &[], &[], 1);
     let failed = catch_unwind(AssertUnwindSafe(|| db.finalize_causal_wave()));
     assert!(failed.is_err());
     assert_eq!(
@@ -2843,6 +3292,14 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
     receipts
         .register_table_layout(proposal, &[Some(sort), Some(sort)])
         .unwrap();
+    register_test_merge_origins(
+        &receipts,
+        target,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Prior { column: 1 },
+        ],
+    );
     let key = Value::new(1);
     let prior = Value::new(30);
     let incoming = Value::new(20);
@@ -2997,23 +3454,36 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
     let call = receipts
         .intern_call(container_sort, op, &[child_term], left)
         .unwrap();
-    assert_eq!(
-        receipts
-            .install_value_term(container_sort, right, call)
-            .unwrap(),
-        call
-    );
+    for value in [left, right] {
+        assert_eq!(
+            receipts
+                .install_test_container_anchor(
+                    container_sort,
+                    TypeId::of::<Vec<Value>>(),
+                    &[child_sort],
+                    value,
+                    call,
+                )
+                .unwrap(),
+            call
+        );
+    }
 
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
-    let proposal = receipts
-        .typed_equality_proposal(wave, container_sort, left, right)
-        .unwrap();
     let cutoff = receipts.equality_edge_count().unwrap();
-    let (cause, cause_sort) = receipts
-        .container_canonicalization_cause(wave, left, right, cutoff)
+    let journal = crate::receipts::ContainerAnchorJournal::default();
+    let (cause, proposal) = receipts
+        .container_canonicalization_cause(
+            &journal,
+            TypeId::of::<Vec<Value>>(),
+            wave,
+            left,
+            right,
+            cutoff,
+        )
         .unwrap();
-    assert_eq!(cause_sort, container_sort);
+    assert_eq!(proposal.left().sort, container_sort);
     {
         let mut buffer = db.new_buffer(uf);
         buffer.stage_typed_union(&[left, right, Value::new(1)], cause.id(), proposal);
@@ -3042,6 +3512,7 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
         cause,
         wave: reason_wave,
         as_of_edges,
+        position: reason_position,
     } = alias.reason
     else {
         panic!("container native alias lost its congruence cause")
@@ -3054,10 +3525,17 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
         [crate::ReceiptCauseDependency::ContainerCanonicalize {
             wave: dependency_wave,
             as_of_edges: dependency_cutoff,
+            position: dependency_position,
             equalities: []
-        }] if *dependency_wave == wave && *dependency_cutoff == cutoff
+        }] if *dependency_wave == wave
+            && *dependency_cutoff == cutoff
+            && *dependency_position == reason_position
     ));
-    assert_eq!(receipts.equality_edge_count().unwrap(), cutoff);
+    assert_eq!(
+        receipts.equality_edge_count().unwrap(),
+        crate::EqualityEdgeCount::new(cutoff.get() + 1),
+        "the historical cutoff counts every applied native union, including aliases"
+    );
 
     // The component mirror must survive the native-only alias. A later real
     // equality reached through the former child id still joins the shared
@@ -3086,7 +3564,7 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
     assert_eq!(snapshot.equality_nodes.len(), 1);
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 crate::EqualityEndpoint {
                     sort: container_sort,
                     term: call,
@@ -3097,7 +3575,7 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
                     term: other_term,
                     raw: other,
                 },
-                crate::EqualityEdgeCount::new(1),
+                crate::EqualityEdgeCount::new(2),
             )
             .unwrap()
             .as_ref(),
@@ -3106,7 +3584,7 @@ fn causal_receipts_record_same_term_native_alias_without_equality_edge() {
 }
 
 #[test]
-fn third_term_owner_root_fails_before_the_union_batch_mutates() {
+fn trusted_exact_term_catches_up_two_simultaneous_native_occurrences() {
     let mut db = Database::default();
     let receipts = db.enable_causal_receipts();
     let mut uf = DisplacedTable::default();
@@ -3122,7 +3600,7 @@ fn third_term_owner_root_fails_before_the_union_batch_mutates() {
         .intern_call(container_sort, ReplayOpId::new(111), &[child], a)
         .unwrap();
     receipts
-        .install_value_term(container_sort, b, shared)
+        .install_trusted_value_term(container_sort, b, shared)
         .unwrap();
     receipts
         .intern_call(container_sort, ReplayOpId::new(112), &[child], x)
@@ -3152,30 +3630,76 @@ fn third_term_owner_root_fails_before_the_union_batch_mutates() {
             by,
         );
     }
-    let native_before = uf.underlying_uf().clone();
-    let failed = catch_unwind(AssertUnwindSafe(|| {
+    let changed = {
         let mut state = ExecutionState::new(db.read_only_view(), Default::default());
         uf.merge(&mut state)
-    }));
-    assert!(failed.is_err());
-    assert_eq!(
-        uf.len(),
-        0,
-        "an earlier valid alias row leaked from the batch"
-    );
-    assert!(
-        uf.underlying_uf() == &native_before,
-        "alias preflight reserved or rewrote native union-find state"
-    );
-    for value in [a, b, x, y] {
-        assert_eq!(uf.underlying_uf().find_naive(value), value);
-    }
+    };
+    assert!(changed.added);
+    // These endpoints are explicitly staged as Exact current-value aliases,
+    // so the recorder may trust the pre-event mapping of the same Call to
+    // both raw ids. Fact/Cell terms do not receive this catch-up privilege.
     db.finalize_causal_wave();
     let snapshot = receipts.snapshot();
-    assert!(snapshot.equalities.is_empty());
-    assert!(snapshot.equality_nodes.is_empty());
-    assert!(snapshot.native_aliases.is_empty());
-    assert!(snapshot.matches.is_empty());
+    assert_eq!(snapshot.equality_nodes.len(), 2);
+    assert_eq!(snapshot.equality_leaves.len(), 3);
+    assert_eq!(
+        snapshot
+            .explain_equality_at_end(
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: shared,
+                    raw: a,
+                },
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: receipts.lookup_term(container_sort, x).unwrap(),
+                    raw: x,
+                },
+                crate::EqualityEdgeCount::new(2),
+            )
+            .unwrap()
+            .as_ref(),
+        &[crate::EqualityEdgeId::new(1)]
+    );
+    assert_eq!(
+        snapshot
+            .explain_equality_at_end(
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: shared,
+                    raw: b,
+                },
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: receipts.lookup_term(container_sort, y).unwrap(),
+                    raw: y,
+                },
+                crate::EqualityEdgeCount::new(2),
+            )
+            .unwrap()
+            .as_ref(),
+        &[crate::EqualityEdgeId::new(2)]
+    );
+    assert_eq!(
+        snapshot
+            .explain_equality_at_end(
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: shared,
+                    raw: a,
+                },
+                crate::EqualityEndpoint {
+                    sort: container_sort,
+                    term: shared,
+                    raw: b,
+                },
+                crate::EqualityEdgeCount::new(2),
+            )
+            .unwrap()
+            .as_ref(),
+        &[],
+        "an explicitly trusted Exact mapping catches the later raw id up to the same occurrence"
+    );
 }
 
 #[test]
@@ -3192,9 +3716,17 @@ fn native_alias_preserves_an_existing_logical_component() {
     let shared = receipts
         .intern_call(container_sort, ReplayOpId::new(114), &[child], left)
         .unwrap();
-    receipts
-        .install_value_term(container_sort, alias, shared)
-        .unwrap();
+    for value in [left, alias] {
+        receipts
+            .install_test_container_anchor(
+                container_sort,
+                TypeId::of::<Vec<Value>>(),
+                &[child_sort],
+                value,
+                shared,
+            )
+            .unwrap();
+    }
     let other_term = receipts
         .intern_call(container_sort, ReplayOpId::new(115), &[child], other)
         .unwrap();
@@ -3218,8 +3750,16 @@ fn native_alias_preserves_an_existing_logical_component() {
         .typed_equality_proposal(second_wave, container_sort, left, alias)
         .unwrap();
     let cutoff = receipts.equality_edge_count().unwrap();
+    let journal = crate::receipts::ContainerAnchorJournal::default();
     let (cause, _) = receipts
-        .container_canonicalization_cause(second_wave, left, alias, cutoff)
+        .container_canonicalization_cause(
+            &journal,
+            TypeId::of::<Vec<Value>>(),
+            second_wave,
+            left,
+            alias,
+            cutoff,
+        )
         .unwrap();
     {
         let mut buffer = db.new_buffer(uf);
@@ -3236,7 +3776,7 @@ fn native_alias_preserves_an_existing_logical_component() {
     assert_eq!(snapshot.native_aliases[0].right.term, shared);
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 crate::EqualityEndpoint {
                     sort: container_sort,
                     term: shared,
@@ -3256,6 +3796,515 @@ fn native_alias_preserves_an_existing_logical_component() {
 }
 
 #[test]
+fn same_term_native_bridge_joins_distinct_historical_components() {
+    let mut db = Database::default();
+    let fact_table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(214);
+    let child_sort = ReplaySortId::new(215);
+    let child = receipts.intern_literal(child_sort, ReplayLiteral::Internal(1), Value::new(1));
+    let left = Value::new(80);
+    let right = Value::new(100);
+    let other = Value::new(90);
+    let prior_right_term = receipts
+        .intern_call(sort, ReplayOpId::new(214), &[child], right)
+        .unwrap();
+    let other_term = receipts
+        .intern_call(sort, ReplayOpId::new(215), &[child], other)
+        .unwrap();
+    let shared = receipts
+        .intern_call(sort, ReplayOpId::new(216), &[child], left)
+        .unwrap();
+    receipts
+        .register_table_layout(fact_table, &[Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_merge_origins(fact_table, &[MergeOriginSelector::Incoming { column: 0 }])
+        .unwrap();
+    db.stage_source_row(fact_table, &[right], &[shared], SourceRef::Synthetic(214))
+        .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let prior_fact = committed_fact_id_for_key(&db, fact_table, &[right]);
+    let site = |term| {
+        receipts.register_term_origin(TermOriginSpec {
+            sort,
+            term: Arc::new(TermTemplate::Static { term }),
+        })
+    };
+    let prior_right_site = site(prior_right_term);
+    let other_site = site(other_term);
+    let incoming_origin = receipts.register_row_origin(RowOriginSpec {
+        table: fact_table,
+        cells: [Some(Arc::new(TermTemplate::Static { term: shared }))].into(),
+    });
+
+    let first_wave = CausalWave::new(1);
+    db.set_causal_wave(first_wave);
+    let first = receipts
+        .typed_equality_proposal_from_sites(
+            first_wave,
+            sort,
+            right,
+            prior_right_site,
+            other,
+            other_site,
+        )
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[right, other, Value::new(1)],
+            empty_rule_cause(&receipts, 214, first_wave),
+            first,
+        );
+    }
+    assert!(db.merge_all());
+
+    let second_wave = CausalWave::new(2);
+    db.set_causal_wave(second_wave);
+    let bridge = receipts
+        .typed_merge_equality_proposal(
+            second_wave,
+            sort,
+            right,
+            left,
+            fact_table,
+            0,
+            prior_fact,
+            crate::receipts::RowOriginRef::Site(incoming_origin),
+        )
+        .unwrap();
+    let incoming = empty_rule_cause(&receipts, 215, second_wave);
+    let merge_cause =
+        receipts.pending_merge_cause(crate::DeferredEqualityCause::ready(incoming), prior_fact);
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union_deferred(&[right, left, Value::new(2)], merge_cause, bridge);
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equalities.len(), 2);
+    assert!(snapshot.native_aliases.is_empty());
+    assert_eq!(snapshot.equalities[1].left.term, shared);
+    assert_eq!(snapshot.equalities[1].right.term, shared);
+    assert_eq!(
+        leaf_term(&snapshot, snapshot.equality_nodes[1].left_anchor),
+        shared
+    );
+    assert_eq!(
+        leaf_term(&snapshot, snapshot.equality_nodes[1].right_anchor),
+        shared
+    );
+    let first_support = snapshot
+        .explain_equality_support_at(
+            crate::EqualityEndpoint {
+                sort,
+                term: prior_right_term,
+                raw: right,
+            },
+            crate::EqualityEndpoint {
+                sort,
+                term: other_term,
+                raw: other,
+            },
+            crate::EqualityEdgeCount::new(1),
+            snapshot.equalities[0].position,
+        )
+        .unwrap();
+    assert_eq!(
+        first_support.edges.as_ref(),
+        &[crate::EqualityEdgeId::new(1)]
+    );
+    assert_eq!(first_support.facts.as_ref(), &[prior_fact]);
+    assert_eq!(first_support.causes.len(), 1);
+    let introduced = test_cause_dependencies(&snapshot, first_support.causes[0]);
+    assert_eq!(introduced.rules.len(), 1);
+    assert_eq!(
+        snapshot
+            .matches
+            .iter()
+            .find(|matched| matched.id == introduced.rules[0])
+            .unwrap()
+            .rule,
+        214
+    );
+    let crate::EqualityReason::MergeFn { cause } = snapshot.equalities[1].reason else {
+        panic!("same-term bridge lost its merge attribution")
+    };
+    let dependencies = test_cause_dependencies(&snapshot, cause);
+    assert_eq!(dependencies.facts, [prior_fact]);
+    assert_eq!(dependencies.rules.len(), 1);
+    assert_eq!(
+        snapshot
+            .matches
+            .iter()
+            .find(|matched| matched.id == dependencies.rules[0])
+            .unwrap()
+            .rule,
+        215
+    );
+    assert_eq!(
+        snapshot
+            .explain_equality_at_end(
+                crate::EqualityEndpoint {
+                    sort,
+                    term: shared,
+                    raw: left,
+                },
+                crate::EqualityEndpoint {
+                    sort,
+                    term: other_term,
+                    raw: other,
+                },
+                crate::EqualityEdgeCount::new(2),
+            )
+            .unwrap()
+            .as_ref(),
+        &[crate::EqualityEdgeId::new(2), crate::EqualityEdgeId::new(1)]
+    );
+}
+
+#[test]
+fn witnessed_same_term_singletons_remain_distinct_occurrence_leaves() {
+    let mut db = Database::default();
+    let fact_table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            1,
+            None,
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right);
+                false
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(2170);
+    let child_sort = ReplaySortId::new(2171);
+    let child = receipts.intern_literal(child_sort, ReplayLiteral::Internal(1), Value::new(1));
+    let incoming_raw = Value::new(80);
+    let prior_raw = Value::new(100);
+    let shared = receipts
+        .intern_call(sort, ReplayOpId::new(2170), &[child], incoming_raw)
+        .unwrap();
+    receipts
+        .register_table_layout(fact_table, &[Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_merge_origins(fact_table, &[MergeOriginSelector::Incoming { column: 0 }])
+        .unwrap();
+    db.stage_source_row(
+        fact_table,
+        &[prior_raw],
+        &[shared],
+        SourceRef::Synthetic(2170),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let prior_fact = committed_fact_id_for_key(&db, fact_table, &[prior_raw]);
+    let incoming_origin = receipts.register_row_origin(RowOriginSpec {
+        table: fact_table,
+        cells: [Some(Arc::new(TermTemplate::Static { term: shared }))].into(),
+    });
+
+    let wave = CausalWave::new(1);
+    db.set_causal_wave(wave);
+    let proposal = receipts
+        .typed_merge_equality_proposal(
+            wave,
+            sort,
+            prior_raw,
+            incoming_raw,
+            fact_table,
+            0,
+            prior_fact,
+            crate::receipts::RowOriginRef::Site(incoming_origin),
+        )
+        .unwrap();
+    let incoming = empty_rule_cause(&receipts, 2171, wave);
+    let cause =
+        receipts.pending_merge_cause(crate::DeferredEqualityCause::ready(incoming), prior_fact);
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union_deferred(
+            &[prior_raw, incoming_raw, Value::new(1)],
+            cause,
+            proposal,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let snapshot = receipts.snapshot();
+    assert_eq!(snapshot.equalities.len(), 1);
+    assert_eq!(snapshot.equality_nodes.len(), 1);
+    let node = &snapshot.equality_nodes[0];
+    let (crate::EqComponentRef::Leaf(left), crate::EqComponentRef::Leaf(right)) =
+        (node.left, node.right)
+    else {
+        panic!("singleton bridge did not preserve occurrence leaves")
+    };
+    assert_ne!(left, right);
+    assert_eq!(leaf_term(&snapshot, left), shared);
+    assert_eq!(leaf_term(&snapshot, right), shared);
+    let support = snapshot
+        .explain_equality_support_at(
+            crate::EqualityEndpoint {
+                sort,
+                term: shared,
+                raw: prior_raw,
+            },
+            crate::EqualityEndpoint {
+                sort,
+                term: shared,
+                raw: incoming_raw,
+            },
+            crate::EqualityEdgeCount::new(1),
+            snapshot.equalities[0].position,
+        )
+        .unwrap();
+    assert_eq!(support.edges.as_ref(), &[crate::EqualityEdgeId::new(1)]);
+    assert_eq!(support.facts.as_ref(), &[prior_fact]);
+}
+
+#[test]
+fn same_term_native_bridge_without_fact_rule_witness_fails_closed() {
+    let mut db = Database::default();
+    let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(220);
+    let first = Value::new(100);
+    let second = Value::new(90);
+    let outsider = Value::new(80);
+    let first_term = receipts.intern_literal(sort, ReplayLiteral::Internal(1), first);
+    let second_term = receipts.intern_literal(sort, ReplayLiteral::Internal(2), second);
+    let shared = receipts.intern_literal(sort, ReplayLiteral::Internal(3), outsider);
+    let site = |term| {
+        receipts.register_term_origin(TermOriginSpec {
+            sort,
+            term: Arc::new(TermTemplate::Static { term }),
+        })
+    };
+
+    db.set_causal_wave(CausalWave::new(1));
+    let initial = receipts
+        .typed_equality_proposal_from_sites(
+            CausalWave::new(1),
+            sort,
+            first,
+            site(first_term),
+            second,
+            site(second_term),
+        )
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[first, second, Value::new(1)],
+            empty_rule_cause(&receipts, 220, CausalWave::new(1)),
+            initial,
+        );
+    }
+    assert!(db.merge_all());
+
+    db.set_causal_wave(CausalWave::new(2));
+    let bridge = receipts
+        .typed_equality_proposal_from_sites(
+            CausalWave::new(2),
+            sort,
+            outsider,
+            site(shared),
+            first,
+            site(shared),
+        )
+        .unwrap();
+    {
+        let mut buffer = db.new_buffer(uf);
+        buffer.stage_typed_union(
+            &[outsider, first, Value::new(2)],
+            empty_rule_cause(&receipts, 221, CausalWave::new(2)),
+            bridge,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    assert!(
+        catch_unwind(AssertUnwindSafe(|| receipts.snapshot())).is_err(),
+        "an applied event cannot self-prove a new same-term component attachment"
+    );
+}
+
+#[test]
+fn container_anchor_preserves_two_calls_for_one_same_sort_value() {
+    let receipts = CausalReceipts::default();
+    let child_sort = ReplaySortId::new(218);
+    let container_sort = ReplaySortId::new(219);
+    let op = ReplayOpId::new(218);
+    let first_value = Value::new(2180);
+    let second_value = Value::new(2181);
+    let container_value = Value::new(2182);
+    let first = receipts.intern_literal(child_sort, ReplayLiteral::Internal(2180), first_value);
+    let second = receipts.intern_literal(child_sort, ReplayLiteral::Internal(2181), second_value);
+    let replay = ReplayConstructorSpec::new(container_sort, op, [child_sort])
+        .with_immediate_promotion()
+        .with_container_type(TypeId::of::<Vec<Value>>());
+    let site = |term| {
+        receipts.register_term_origin(TermOriginSpec {
+            sort: container_sort,
+            term: Arc::new(TermTemplate::Call {
+                sort: container_sort,
+                op,
+                children: [Arc::new(TermTemplate::Static { term })].into(),
+            }),
+        })
+    };
+    let first_site = site(first);
+    let second_site = site(second);
+    let first_call = receipts
+        .intern_call(container_sort, op, &[first], container_value)
+        .unwrap();
+    let second_call = receipts
+        .intern_call(container_sort, op, &[second], container_value)
+        .unwrap();
+    receipts
+        .with_container_anchor_installer(first_site, &replay, |install| {
+            install(&[], &[], &[first_value], container_value)
+        })
+        .unwrap()
+        .unwrap();
+    receipts
+        .with_container_anchor_installer(second_site, &replay, |install| {
+            install(&[], &[], &[second_value], container_value)
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        receipts.lookup_term(container_sort, container_value),
+        Some(first_call),
+        "ordinary value lookup remains first-wins"
+    );
+    assert_eq!(
+        receipts
+            .test_container_anchors(container_sort, container_value)
+            .as_slice(),
+        &[first_call, second_call],
+        "all exact structural versions remain available to container rebuild"
+    );
+}
+
+#[test]
+fn container_anchor_journal_transfers_both_sides_to_either_winner_atomically() {
+    let receipts = CausalReceipts::default();
+    let container_type = TypeId::of::<Vec<Value>>();
+
+    for (case, incoming_wins) in [false, true].into_iter().enumerate() {
+        let case = case as u32;
+        let child_sort = ReplaySortId::new(230 + case * 2);
+        let container_sort = ReplaySortId::new(231 + case * 2);
+        let op = ReplayOpId::new(230 + case);
+        let occupied = Value::new(2300 + case * 10);
+        let incoming = Value::new(2301 + case * 10);
+        let occupied_child = receipts.intern_literal(
+            child_sort,
+            ReplayLiteral::Internal(2300 + case as u64 * 10),
+            Value::new(2310 + case * 10),
+        );
+        let incoming_child = receipts.intern_literal(
+            child_sort,
+            ReplayLiteral::Internal(2301 + case as u64 * 10),
+            Value::new(2311 + case * 10),
+        );
+        let occupied_term = receipts
+            .intern_call(container_sort, op, &[occupied_child], occupied)
+            .unwrap();
+        let incoming_term = receipts
+            .intern_call(container_sort, op, &[incoming_child], incoming)
+            .unwrap();
+        receipts
+            .install_test_container_anchor(
+                container_sort,
+                container_type,
+                &[child_sort],
+                occupied,
+                occupied_term,
+            )
+            .unwrap();
+        receipts
+            .install_test_container_anchor(
+                container_sort,
+                container_type,
+                &[child_sort],
+                incoming,
+                incoming_term,
+            )
+            .unwrap();
+
+        let winner = if incoming_wins { incoming } else { occupied };
+        let original_winner_anchors = receipts.test_container_anchors(container_sort, winner);
+        let stage = |journal: &mut crate::receipts::ContainerAnchorJournal| {
+            for source in [occupied, incoming] {
+                receipts
+                    .stage_container_anchor_transfer(journal, container_type, source, winner)
+                    .unwrap();
+            }
+        };
+
+        let mut aborted = crate::receipts::ContainerAnchorJournal::default();
+        stage(&mut aborted);
+        assert_eq!(
+            receipts.test_container_anchors(container_sort, winner),
+            original_winner_anchors,
+            "a staged overlay must not mutate the committed anchor store"
+        );
+        drop(aborted);
+        assert_eq!(
+            receipts.test_container_anchors(container_sort, winner),
+            original_winner_anchors,
+            "dropping an aborted overlay must leave committed anchors unchanged"
+        );
+
+        let mut committed = crate::receipts::ContainerAnchorJournal::default();
+        stage(&mut committed);
+        receipts
+            .validate_container_anchor_journal(&committed)
+            .unwrap();
+        receipts.publish_container_anchor_journal(committed);
+        let mut expected = [occupied_term, incoming_term];
+        expected.sort_unstable_by_key(|term| term.get());
+        assert_eq!(
+            receipts
+                .test_container_anchors(container_sort, winner)
+                .as_slice(),
+            expected.as_slice(),
+            "the chosen winner must retain both colliding structural histories"
+        );
+    }
+}
+
+#[test]
 fn native_catch_up_reuses_existing_component_for_distinct_endpoint_terms() {
     let mut db = Database::default();
     let uf = db.add_table(DisplacedTable::default(), iter::empty(), iter::empty());
@@ -3270,7 +4319,7 @@ fn native_catch_up_reuses_existing_component_for_distinct_endpoint_terms() {
         .intern_call(container_sort, ReplayOpId::new(116), &[child], owner)
         .unwrap();
     receipts
-        .install_value_term(container_sort, alias, shared)
+        .install_trusted_value_term(container_sort, alias, shared)
         .unwrap();
     let other_term = receipts
         .intern_call(container_sort, ReplayOpId::new(117), &[child], other)
@@ -3316,7 +4365,7 @@ fn native_catch_up_reuses_existing_component_for_distinct_endpoint_terms() {
     assert_ne!(catch_up.left.term, catch_up.right.term);
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 crate::EqualityEndpoint {
                     sort: container_sort,
                     term: shared,
@@ -3350,7 +4399,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
         .intern_call(container_sort, ReplayOpId::new(118), &[child], owner)
         .unwrap();
     receipts
-        .install_value_term(container_sort, alias, shared)
+        .install_trusted_value_term(container_sort, alias, shared)
         .unwrap();
     let other_term = receipts
         .intern_call(container_sort, ReplayOpId::new(119), &[child], other)
@@ -3387,7 +4436,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
     );
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 crate::EqualityEndpoint {
                     sort: container_sort,
                     term: shared,
@@ -3407,7 +4456,7 @@ fn same_batch_native_catch_up_matches_durable_component_behavior() {
 }
 
 #[test]
-fn repeated_structural_term_cannot_enter_a_second_component_in_a_later_wave() {
+fn trusted_exact_term_catches_up_a_later_native_occurrence() {
     let mut db = Database::default();
     let receipts = db.enable_causal_receipts();
     let mut uf = DisplacedTable::default();
@@ -3423,9 +4472,9 @@ fn repeated_structural_term_cannot_enter_a_second_component_in_a_later_wave() {
         .intern_call(container_sort, ReplayOpId::new(116), &[child], a)
         .unwrap();
     receipts
-        .install_value_term(container_sort, b, shared)
+        .install_trusted_value_term(container_sort, b, shared)
         .unwrap();
-    let x_term = receipts
+    receipts
         .intern_call(container_sort, ReplayOpId::new(117), &[child], x)
         .unwrap();
     receipts
@@ -3459,25 +4508,19 @@ fn repeated_structural_term_cannot_enter_a_second_component_in_a_later_wave() {
                 .unwrap(),
         );
     }
-    let failed = catch_unwind(AssertUnwindSafe(|| {
-        let mut state = ExecutionState::new(db.read_only_view(), Default::default());
-        uf.merge(&mut state)
-    }));
-    assert!(failed.is_err());
-    assert_eq!(uf.len(), 1);
+    let mut state = ExecutionState::new(db.read_only_view(), Default::default());
+    assert!(uf.merge(&mut state).added);
+    assert_eq!(uf.len(), 2);
     assert_eq!(uf.underlying_uf().find_naive(a), x);
     assert_eq!(uf.underlying_uf().find_naive(x), x);
-    assert_eq!(uf.underlying_uf().find_naive(b), b);
+    assert_eq!(uf.underlying_uf().find_naive(b), y);
     assert_eq!(uf.underlying_uf().find_naive(y), y);
     db.finalize_causal_wave();
 
     let snapshot = receipts.snapshot();
-    assert_eq!(snapshot.equalities.len(), 1);
-    assert_eq!(snapshot.equality_nodes.len(), 1);
-    assert_eq!(snapshot.matches.len(), 1);
     assert_eq!(
         snapshot
-            .explain_equality(
+            .explain_equality_at_end(
                 crate::EqualityEndpoint {
                     sort: container_sort,
                     term: shared,
@@ -3485,15 +4528,18 @@ fn repeated_structural_term_cannot_enter_a_second_component_in_a_later_wave() {
                 },
                 crate::EqualityEndpoint {
                     sort: container_sort,
-                    term: x_term,
-                    raw: x,
+                    term: shared,
+                    raw: b,
                 },
-                crate::EqualityEdgeCount::new(1),
+                crate::EqualityEdgeCount::new(2),
             )
             .unwrap()
             .as_ref(),
-        &[crate::EqualityEdgeId::new(1)]
+        &[],
+        "an explicitly trusted Exact mapping catches the later raw id up to the existing occurrence"
     );
+    assert_eq!(snapshot.equality_nodes.len(), 2);
+    assert_eq!(snapshot.equality_leaves.len(), 3);
 }
 
 #[test]
@@ -4189,7 +5235,10 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
         .unwrap();
     assert_eq!(matched.terms.as_ref(), &[value_term, primitive_term]);
     assert_eq!(snapshot.counters.logical_match_term_handles, 2);
-    assert_eq!(snapshot.counters.stored_match_term_handles, 1);
+    assert_eq!(
+        snapshot.counters.stored_match_term_handles, 0,
+        "static Current recipes replace per-match runtime term handles"
+    );
 }
 
 #[test]
@@ -4291,7 +5340,10 @@ fn causal_receipts_capture_exact_rhs_producer_term_not_global_alias() {
     assert_eq!(snapshot.matches.len(), 1);
     assert_eq!(snapshot.matches[0].terms.as_ref(), &[exact_call]);
     assert_eq!(snapshot.counters.logical_match_term_handles, 1);
-    assert_eq!(snapshot.counters.stored_match_term_handles, 1);
+    assert_eq!(
+        snapshot.counters.stored_match_term_handles, 0,
+        "exact RHS syntax is reconstructed from the static mutation site"
+    );
     assert_eq!(
         receipts.replay_term(exact_call),
         Some(crate::ReplayTerm::Call {
@@ -4619,14 +5671,8 @@ fn duplicate_premise_columns_keep_the_legacy_public_representative() {
     assert_ne!(first, last, "the canary requires competing exact syntax");
     let row = [raw, raw];
     let terms = [first, last];
-    receipts.install_source_row(input, &row, &terms).unwrap();
-    let mut source = db.new_buffer(input);
-    source.stage_insert_with_cause_and_terms(
-        &row,
-        receipts.source_draft(SourceRef::Synthetic(213)),
-        &terms,
-    );
-    drop(source);
+    db.stage_source_row(input, &row, &terms, SourceRef::Synthetic(213))
+        .unwrap();
     assert!(db.merge_all());
     db.finalize_causal_wave();
 
@@ -4696,6 +5742,14 @@ fn conditional_insert_records_only_true_effective_lanes() {
     receipts
         .register_table_layout(output, &[Some(sort), Some(sort)])
         .unwrap();
+    register_test_merge_origins(
+        &receipts,
+        output,
+        &[
+            MergeOriginSelector::Prior { column: 0 },
+            MergeOriginSelector::Prior { column: 1 },
+        ],
+    );
     let true_value = Value::new(1);
     let false_value = Value::new(0);
     let output_value = Value::new(9);
@@ -4799,15 +5853,18 @@ fn conditional_insert_records_only_true_effective_lanes() {
 }
 
 #[test]
-fn causal_receipts_serial_merge_records_final_output_row_terms() {
+fn causal_receipts_reject_unsupported_merge_before_callback_effects() {
     let mut db = Database::default();
+    let callbacks = Arc::new(AtomicUsize::new(0));
+    let callback_count = Arc::clone(&callbacks);
     let table = db.add_table(
         SortedWritesTable::new(
             1,
             2,
             None,
             vec![],
-            Box::new(|_, left, right, out| {
+            Box::new(move |_, left, right, out| {
+                callback_count.fetch_add(1, Ordering::SeqCst);
                 if left != right {
                     out.extend_from_slice(&[right[0], Value::new(9)]);
                     true
@@ -4820,7 +5877,18 @@ fn causal_receipts_serial_merge_records_final_output_row_terms() {
         iter::empty(),
     );
     let receipts = db.enable_causal_receipts();
-    register_test_receipt_table(&receipts, table, 2);
+    receipts
+        .register_table_layout(table, &[Some(TEST_REPLAY_SORT), Some(TEST_REPLAY_SORT)])
+        .unwrap();
+    receipts
+        .register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::Unsupported,
+            ],
+        )
+        .unwrap();
     for value in [Value::new(0), Value::new(1), Value::new(2), Value::new(9)] {
         install_test_row_terms(&receipts, &[value]);
     }
@@ -4830,10 +5898,13 @@ fn causal_receipts_serial_merge_records_final_output_row_terms() {
     let zero = receipts
         .lookup_term(TEST_REPLAY_SORT, Value::new(0))
         .unwrap();
+    let two = receipts
+        .lookup_term(TEST_REPLAY_SORT, Value::new(2))
+        .unwrap();
     db.stage_source_row(
         table,
-        &[Value::new(1), Value::new(0)],
-        &[one, zero],
+        &[Value::new(2), Value::new(0)],
+        &[two, zero],
         SourceRef::Synthetic(90),
     )
     .unwrap();
@@ -4841,121 +5912,328 @@ fn causal_receipts_serial_merge_records_final_output_row_terms() {
     db.finalize_causal_wave();
 
     db.set_causal_wave(CausalWave::new(1));
-    let cause = receipts.register_rule_matches(62, CausalWave::new(1), 0, &[], &[], &[], &[0])[0].1;
+    let cause = receipts.register_rule_matches(62, CausalWave::new(1), 0, &[], &[], &[0])[0].1;
+    let absent_origin = receipts.register_row_origin(RowOriginSpec {
+        table,
+        cells: [
+            Some(Arc::new(TermTemplate::Static { term: one })),
+            Some(Arc::new(TermTemplate::Static { term: one })),
+        ]
+        .into(),
+    });
+    let collision_origin = receipts.register_row_origin(RowOriginSpec {
+        table,
+        cells: [
+            Some(Arc::new(TermTemplate::Static { term: two })),
+            Some(Arc::new(TermTemplate::Static { term: two })),
+        ]
+        .into(),
+    });
     let mut update = db.new_buffer(table);
-    update.stage_insert_with_cause(&[Value::new(1), Value::new(2)], cause);
+    update.stage_insert_deferred_with_origin(
+        &[Value::new(1), Value::new(1)],
+        crate::DeferredEqualityCause::ready(cause),
+        absent_origin,
+    );
+    update.stage_insert_deferred_with_origin(
+        &[Value::new(2), Value::new(2)],
+        crate::DeferredEqualityCause::ready(cause),
+        collision_origin,
+    );
     drop(update);
-    assert!(db.merge_all());
-    db.finalize_causal_wave();
-
-    let latest = receipts.snapshot().facts.pop().unwrap();
+    let error = catch_unwind(AssertUnwindSafe(|| db.merge_all()));
+    assert!(error.is_err(), "unsupported merge origin must fail closed");
+    assert_eq!(
+        callbacks.load(Ordering::SeqCst),
+        0,
+        "merge support must be validated before the callback can stage effects"
+    );
+    assert!(
+        db.get_table(table).get_row(&[Value::new(1)]).is_none(),
+        "a preceding absent-key insert must not leak from a rejected receipt batch"
+    );
     assert_eq!(
         db.get_table(table)
-            .get_row(&[Value::new(1)])
+            .get_row(&[Value::new(2)])
             .unwrap()
             .vals
             .as_slice(),
-        &[Value::new(1), Value::new(9)]
-    );
-    assert_eq!(
-        latest.terms.as_ref(),
-        &[
-            one,
-            receipts
-                .lookup_term(TEST_REPLAY_SORT, Value::new(9))
-                .unwrap(),
-        ],
-        "serial FactId terms must use merge output scratch, not the proposal row"
+        &[Value::new(2), Value::new(0)],
+        "the colliding live row must remain unchanged"
     );
 }
 
 #[test]
-fn causal_receipts_preserve_constructor_term_sidecar_above_parallel_threshold() {
-    const N_ROWS: usize = 20_001;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
+fn causal_receipts_merge_origin_selects_each_cell_without_value_alias_lookup() {
+    let mut db = Database::default();
+    let table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            3,
+            None,
+            vec![],
+            Box::new(|_, prior, incoming, out| {
+                out.extend_from_slice(&[incoming[0], prior[1], incoming[2]]);
+                out.as_slice() != prior
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let value_sort = ReplaySortId::new(198);
+    let alias_sort = ReplaySortId::new(199);
+    let alias_op = ReplayOpId::new(198);
+    receipts
+        .register_table_layout(
+            table,
+            &[Some(value_sort), Some(alias_sort), Some(value_sort)],
+        )
         .unwrap();
-    pool.install(|| {
-        let mut db = Database::default();
-        let table = db.add_table_named(
-            SortedWritesTable::new(
-                1,
-                3,
-                None,
-                vec![],
-                Box::new(|_, left, right, _| {
-                    assert_eq!(left, right, "constructor rows are immutable");
-                    false
-                }),
-            ),
-            "ParallelConstructor".into(),
-            iter::empty(),
-            iter::empty(),
-        );
-        let receipts = db.enable_causal_receipts();
-        let child_sort = ReplaySortId::new(140);
-        let result_sort = ReplaySortId::new(141);
-        let constructor_op = ReplayOpId::new(140);
-        receipts
-            .register_table_layout(table, &[Some(child_sort), Some(result_sort), None])
-            .unwrap();
-        receipts
-            .register_table_constructor(
-                table,
-                ReplayConstructorSpec::new(result_sort, constructor_op, [child_sort]),
-            )
-            .unwrap();
+    receipts
+        .register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::Prior { column: 1 },
+                MergeOriginSelector::Incoming { column: 2 },
+            ],
+        )
+        .unwrap();
 
-        // Install a competing structural alias first for the same native
-        // output. Falling back through the global value map selects
-        // `wrong_call`; the row sidecar must retain `exact_call`.
-        let wrong_child_value = Value::new(1);
-        let exact_child_value = Value::new(2);
-        let output_value = Value::new(100);
-        let wrong_child =
-            receipts.intern_literal(child_sort, ReplayLiteral::Internal(1), wrong_child_value);
-        let exact_child =
-            receipts.intern_literal(child_sort, ReplayLiteral::Internal(2), exact_child_value);
-        let wrong_call = receipts
-            .intern_call(result_sort, constructor_op, &[wrong_child], output_value)
-            .unwrap();
-        let exact_call = receipts
-            .intern_call(result_sort, constructor_op, &[exact_child], output_value)
-            .unwrap();
-        assert_ne!(wrong_call, exact_call);
-        assert_eq!(
-            receipts.lookup_term(result_sort, output_value),
-            Some(wrong_call),
-            "the global current-value map must expose the competing alias"
-        );
+    let key_value = Value::new(1980);
+    let shared_alias_value = Value::new(1981);
+    let old_child_value = Value::new(1982);
+    let new_child_value = Value::new(1983);
+    let old_tail_value = Value::new(1984);
+    let new_tail_value = Value::new(1985);
+    let key_term = receipts.intern_literal(value_sort, ReplayLiteral::Internal(1980), key_value);
+    let old_child =
+        receipts.intern_literal(value_sort, ReplayLiteral::Internal(1982), old_child_value);
+    let new_child =
+        receipts.intern_literal(value_sort, ReplayLiteral::Internal(1983), new_child_value);
+    let old_alias = receipts
+        .intern_call(alias_sort, alias_op, &[old_child], shared_alias_value)
+        .unwrap();
+    let old_tail =
+        receipts.intern_literal(value_sort, ReplayLiteral::Internal(1984), old_tail_value);
+    let new_tail =
+        receipts.intern_literal(value_sort, ReplayLiteral::Internal(1985), new_tail_value);
+    let prior_row = [key_value, shared_alias_value, old_tail_value];
+    db.stage_source_row(
+        table,
+        &prior_row,
+        &[key_term, old_alias, old_tail],
+        SourceRef::Synthetic(198),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
 
-        db.set_causal_wave(CausalWave::new(1));
-        let cause = empty_rule_cause(&receipts, 140, CausalWave::new(1));
-        let row = [exact_child_value, output_value, Value::new(1)];
-        let exact_terms = [exact_child, exact_call, crate::ReplayTermId::MISSING];
-        let mut updates = db.new_buffer(table);
-        for _ in 0..N_ROWS {
-            updates.stage_insert_with_cause_and_terms(&row, cause, &exact_terms);
-        }
-        drop(updates);
-
-        assert!(db.merge_all());
-        db.finalize_causal_wave();
-
-        let snapshot = receipts.snapshot();
-        let facts = snapshot
-            .facts
-            .iter()
-            .filter(|fact| fact.table == table)
-            .collect::<Vec<_>>();
-        assert_eq!(facts.len(), 1);
-        assert_eq!(
-            facts[0].terms.as_ref(),
-            exact_terms.as_slice(),
-            "the effective fact must retain the exact constructor sidecar"
-        );
+    let incoming_origin = receipts.register_row_origin(RowOriginSpec {
+        table,
+        cells: [
+            Some(Arc::new(TermTemplate::Static { term: key_term })),
+            Some(Arc::new(TermTemplate::Call {
+                sort: alias_sort,
+                op: alias_op,
+                children: [Arc::new(TermTemplate::Static { term: new_child })].into(),
+            })),
+            Some(Arc::new(TermTemplate::Static { term: new_tail })),
+        ]
+        .into(),
     });
+    db.set_causal_wave(CausalWave::new(1));
+    let cause = empty_rule_cause(&receipts, 198, CausalWave::new(1));
+    let incoming_row = [key_value, shared_alias_value, new_tail_value];
+    {
+        let mut updates = db.new_buffer(table);
+        updates.stage_insert_deferred_with_origin(
+            &incoming_row,
+            crate::DeferredEqualityCause::ready(cause),
+            incoming_origin,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+
+    let latest = receipts
+        .snapshot()
+        .facts
+        .into_iter()
+        .filter(|fact| fact.table == table)
+        .max_by_key(|fact| fact.id)
+        .unwrap();
+    assert_eq!(
+        latest.values.as_ref(),
+        &[key_value, shared_alias_value, new_tail_value]
+    );
+    assert_eq!(latest.terms[0], key_term);
+    assert_eq!(
+        latest.terms[1], old_alias,
+        "the Prior selector must preserve the exact prior alias even when incoming has the same native value"
+    );
+    assert_eq!(latest.terms[2], new_tail);
+    assert_eq!(
+        receipts.lookup_term(alias_sort, shared_alias_value),
+        Some(old_alias),
+        "the canary deliberately leaves global lookup unable to name the incoming alias"
+    );
+}
+
+#[test]
+fn prior_or_incoming_uses_callback_result_not_opaque_value_order() {
+    let mut db = Database::default();
+    let table = db.add_table(
+        SortedWritesTable::new(
+            1,
+            2,
+            None,
+            vec![],
+            Box::new(|_, prior, incoming, out| {
+                out.extend_from_slice(incoming);
+                out.as_slice() != prior
+            }),
+        ),
+        iter::empty(),
+        iter::empty(),
+    );
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(216);
+    receipts
+        .register_table_layout(table, &[Some(sort), Some(sort)])
+        .unwrap();
+    receipts
+        .register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::PriorOrIncoming {
+                    incoming_column: 1,
+                    prior_column: 1,
+                },
+            ],
+        )
+        .unwrap();
+
+    let key = Value::new(2160);
+    let prior = Value::new(10);
+    let incoming = Value::new(20);
+    let key_term = receipts.intern_literal(sort, ReplayLiteral::Internal(2160), key);
+    let prior_term = receipts.intern_literal(sort, ReplayLiteral::Internal(10), prior);
+    let incoming_term = receipts.intern_literal(sort, ReplayLiteral::Internal(20), incoming);
+    db.stage_source_row(
+        table,
+        &[key, prior],
+        &[key_term, prior_term],
+        SourceRef::Synthetic(216),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let prior_fact = committed_fact_id_for_key(&db, table, &[key]);
+
+    let incoming_origin = receipts.register_row_origin(RowOriginSpec {
+        table,
+        cells: [
+            Some(Arc::new(TermTemplate::Static { term: key_term })),
+            Some(Arc::new(TermTemplate::Static {
+                term: incoming_term,
+            })),
+        ]
+        .into(),
+    });
+    db.set_causal_wave(CausalWave::new(1));
+    {
+        let mut updates = db.new_buffer(table);
+        updates.stage_insert_deferred_with_origin(
+            &[key, incoming],
+            crate::DeferredEqualityCause::ready(empty_rule_cause(
+                &receipts,
+                216,
+                CausalWave::new(1),
+            )),
+            incoming_origin,
+        );
+    }
+    assert!(db.merge_all());
+    db.finalize_causal_wave();
+    let latest = receipts
+        .snapshot()
+        .facts
+        .into_iter()
+        .filter(|fact| fact.table == table)
+        .max_by_key(|fact| fact.id)
+        .unwrap();
+    assert_eq!(latest.values.as_ref(), &[key, incoming]);
+    assert_eq!(latest.terms.as_ref(), &[key_term, incoming_term]);
+
+    let tie_origin = receipts.register_row_origin(RowOriginSpec {
+        table,
+        cells: [
+            Some(Arc::new(TermTemplate::Static { term: key_term })),
+            Some(Arc::new(TermTemplate::Call {
+                sort,
+                op: ReplayOpId::new(217),
+                children: Arc::from([]),
+            })),
+        ]
+        .into(),
+    });
+    let prepared = receipts
+        .prepare_merged_fact_origin(
+            table,
+            &[key, prior],
+            &[key, prior],
+            &[key, prior],
+            prior_fact,
+            Some(crate::receipts::RowOriginRef::Site(tie_origin)),
+        )
+        .unwrap();
+    assert!(matches!(
+        prepared,
+        crate::receipts::PreparedFactOrigin::Merge {
+            prior: fact,
+            cells,
+            ..
+        } if fact == prior_fact
+            && cells.as_slice()
+                == [
+                    crate::receipts::MergeCellOrigin::Incoming(0),
+                    crate::receipts::MergeCellOrigin::Prior(1),
+                ]
+    ));
+}
+
+#[test]
+fn merge_origin_catalog_rejects_out_of_range_and_cross_sort_sources() {
+    let receipts = CausalReceipts::default();
+    let table = TableId::new_const(198);
+    let left = ReplaySortId::new(198);
+    let right = ReplaySortId::new(199);
+    receipts
+        .register_table_layout(table, &[Some(left), Some(right)])
+        .unwrap();
+    assert_eq!(
+        receipts.register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 2 },
+                MergeOriginSelector::Incoming { column: 1 },
+            ],
+        ),
+        Err("merge-origin source column exceeds the table layout")
+    );
+    assert_eq!(
+        receipts.register_table_merge_origins(
+            table,
+            &[
+                MergeOriginSelector::Incoming { column: 0 },
+                MergeOriginSelector::Prior { column: 0 },
+            ],
+        ),
+        Err("merge-origin source and destination have different replay sorts")
+    );
 }
 
 #[test]
@@ -5046,10 +6324,16 @@ fn transactional_table_lease_survives_buffer_publication_until_queue_drain() {
     let wave = CausalWave::new(1);
     db.set_causal_wave(wave);
     let cause = empty_rule_cause(&receipts, 144, wave);
+    let term = receipts.lookup_term(TEST_REPLAY_SORT, value).unwrap();
+    let origin = install_test_row_origin(&receipts, table, &[value], &[term]);
     let transaction = MutationTransaction::pending_causal(&receipts, wave);
     let mut buffer = db.new_buffer(table);
     buffer.defer_until(transaction.clone());
-    buffer.stage_insert_with_cause(&[value], cause);
+    buffer.stage_insert_deferred_with_origin(
+        &[value],
+        crate::DeferredEqualityCause::ready(cause),
+        origin,
+    );
     transaction.commit();
     drop(transaction);
 
@@ -5065,179 +6349,6 @@ fn transactional_table_lease_survives_buffer_publication_until_queue_drain() {
     let snapshot = receipts.snapshot();
     assert_eq!(snapshot.matches.len(), 1);
     assert_eq!(snapshot.facts.len(), 1);
-}
-
-#[test]
-fn causal_receipts_select_serial_table_merge_in_multithread_pool() {
-    const N_KEYS: u32 = 20_001;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    pool.install(|| {
-        let mut db = Database::default();
-        let table = db.add_table_named(
-            SortedWritesTable::new(
-                1,
-                2,
-                None,
-                vec![],
-                Box::new(|_, left, right, out| {
-                    if right[1] > left[1] {
-                        out.extend_from_slice(&[right[0], Value::from_usize(right[1].index() + 1)]);
-                        true
-                    } else {
-                        false
-                    }
-                }),
-            ),
-            "ParallelMerge".into(),
-            iter::empty(),
-            iter::empty(),
-        );
-        let receipts = db.enable_causal_receipts();
-        register_test_receipt_table(&receipts, table, 2);
-        for value in 0..=N_KEYS + 5 {
-            install_test_row_terms(&receipts, &[Value::new(value)]);
-        }
-        db.set_causal_wave(CausalWave::new(1));
-
-        // The total exceeds `parallelize_table_op`'s real threshold. Receipt
-        // capture must nevertheless use serial publication: key zero first
-        // receives an immutable FactId, then the second proposal cites it.
-        let key_zero =
-            receipts.register_rule_matches(10, CausalWave::new(1), 0, &[], &[], &[], &[0])[0].1;
-        let ordinary_lanes = (0..(N_KEYS as usize - 1)).collect::<Vec<_>>();
-        let ordinary = receipts
-            .register_rule_matches(1, CausalWave::new(1), 0, &[], &[], &[], &ordinary_lanes)
-            .into_iter()
-            .map(|(_, cause)| cause)
-            .collect::<Vec<_>>();
-        let replacement =
-            receipts.register_rule_matches(11, CausalWave::new(1), 0, &[], &[], &[], &[0])[0].1;
-        let mut first = db.new_buffer(table);
-        first.stage_insert_with_cause(&[Value::new(0), Value::new(0)], key_zero);
-        for (key, cause) in (1..N_KEYS).zip(ordinary) {
-            first.stage_insert_with_cause(&[Value::new(key), Value::new(key)], cause);
-        }
-        first.stage_insert_with_cause(&[Value::new(0), Value::new(N_KEYS + 1)], replacement);
-        drop(first);
-        assert!(db.merge_all());
-        db.finalize_causal_wave();
-
-        let first_snapshot = receipts.snapshot();
-        assert_eq!(first_snapshot.facts.len(), N_KEYS as usize + 1);
-        let same_wave_fact = first_snapshot
-            .facts
-            .iter()
-            .find(|fact| {
-                let crate::FactCause::Merge { cause } = &fact.cause else {
-                    return false;
-                };
-                let dependencies = test_cause_dependencies(&first_snapshot, *cause);
-                dependencies.rules.len() == 1 && dependencies.facts.len() == 1
-            })
-            .expect("serial same-wave merge must retain its incoming match and prior fact");
-        let crate::FactCause::Merge { cause } = &same_wave_fact.cause else {
-            panic!("same-wave fold must be represented as a merge")
-        };
-        let same_wave_dependencies = test_cause_dependencies(&first_snapshot, *cause);
-        let incoming_match = first_snapshot
-            .matches
-            .iter()
-            .find(|record| record.id == same_wave_dependencies.rules[0])
-            .unwrap();
-        assert_eq!(incoming_match.rule, 11);
-        let prior_fact = first_snapshot
-            .facts
-            .iter()
-            .find(|fact| fact.id == same_wave_dependencies.facts[0])
-            .expect("same-wave predecessor FactId must remain durable");
-        assert_eq!(
-            prior_fact.cause.rule_match().and_then(|id| first_snapshot
-                .matches
-                .iter()
-                .find(|record| record.id == id)
-                .map(|record| record.rule)),
-            Some(10)
-        );
-        let same_wave_fact_id = same_wave_fact.id;
-
-        // Cross the parallel threshold again. All but key zero are no-ops; key
-        // zero becomes one new immutable version that cites its prior FactId.
-        db.set_causal_wave(CausalWave::new(2));
-        let noop_lanes = (0..(N_KEYS as usize - 1)).collect::<Vec<_>>();
-        let noops = receipts
-            .register_rule_matches(20, CausalWave::new(2), 0, &[], &[], &[], &noop_lanes)
-            .into_iter()
-            .map(|(_, cause)| cause)
-            .collect::<Vec<_>>();
-        let update =
-            receipts.register_rule_matches(21, CausalWave::new(2), 0, &[], &[], &[], &[0])[0].1;
-        let duplicate_noop =
-            receipts.register_rule_matches(22, CausalWave::new(2), 0, &[], &[], &[], &[0])[0].1;
-        let mut second = db.new_buffer(table);
-        for (key, cause) in (1..N_KEYS).zip(noops) {
-            second.stage_insert_with_cause(&[Value::new(key), Value::new(key)], cause);
-        }
-        second.stage_insert_with_cause(&[Value::new(0), Value::new(N_KEYS + 4)], update);
-        // Keep the count above the strict `> 20_000` threshold.
-        second.stage_insert_with_cause(&[Value::new(1), Value::new(1)], duplicate_noop);
-        drop(second);
-        assert!(db.merge_all());
-        db.finalize_causal_wave();
-
-        let final_snapshot = receipts.snapshot();
-        assert_eq!(final_snapshot.facts.len(), N_KEYS as usize + 2);
-        let latest = final_snapshot.facts.last().unwrap();
-        let crate::FactCause::Merge { cause } = &latest.cause else {
-            panic!("committed update must retain its merge dependencies")
-        };
-        let dependencies = test_cause_dependencies(&final_snapshot, *cause);
-        assert_eq!(dependencies.rules.len(), 1);
-        assert_eq!(dependencies.facts.as_slice(), &[same_wave_fact_id]);
-        assert!(dependencies.rebuilds.is_empty());
-        let committed = db
-            .get_table(table)
-            .get_row(&[Value::new(0)])
-            .expect("updated key zero must be committed");
-        assert_eq!(
-            committed.vals.as_slice(),
-            &[Value::new(0), Value::new(N_KEYS + 5)],
-            "record the row the native serial table actually publishes, not merge scratch"
-        );
-        assert_eq!(
-            latest.terms.as_ref(),
-            &[
-                receipts
-                    .lookup_term(TEST_REPLAY_SORT, Value::new(0))
-                    .unwrap(),
-                receipts
-                    .lookup_term(TEST_REPLAY_SORT, Value::new(N_KEYS + 5))
-                    .unwrap(),
-            ],
-            "serial FactId terms must align with the physical committed row"
-        );
-        let update_match = final_snapshot
-            .matches
-            .iter()
-            .find(|record| record.id == dependencies.rules[0])
-            .unwrap();
-        assert_eq!(update_match.rule, 21);
-        assert_eq!(update_match.wave, CausalWave::new(2));
-        assert_eq!(
-            final_snapshot
-                .matches
-                .iter()
-                .filter(|record| record.wave == CausalWave::new(2))
-                .count(),
-            1,
-            "wave-2 no-op match drafts must be reclaimed, not promoted"
-        );
-        assert_eq!(final_snapshot.counters.provisional_matches, 0);
-        assert_eq!(final_snapshot.counters.live_provisional_bytes, 0);
-        assert_eq!(final_snapshot.counters.unattributed_commits, 0);
-    });
 }
 
 fn committed_fact_id_for_key(db: &Database, table: TableId, key: &[Value]) -> FactId {
@@ -5306,7 +6417,7 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
     db.set_causal_wave(CausalWave::new(1));
     let lanes = (0..40).collect::<Vec<_>>();
     let causes = receipts
-        .register_rule_matches(30, CausalWave::new(1), 0, &[], &[], &[], &lanes)
+        .register_rule_matches(30, CausalWave::new(1), 0, &[], &[], &lanes)
         .into_iter()
         .map(|(_, cause)| cause)
         .collect::<Vec<_>>();
@@ -5314,7 +6425,14 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
     for (index, cause) in causes.into_iter().enumerate() {
         let key = 1 + index / 4;
         let value = 1 + index % 4;
-        updates.stage_insert_with_cause(&[Value::from_usize(key), Value::from_usize(value)], cause);
+        let row = [Value::from_usize(key), Value::from_usize(value)];
+        let terms = row.map(|raw| receipts.lookup_term(TEST_REPLAY_SORT, raw).unwrap());
+        let origin = install_test_row_origin(&receipts, table, &row, &terms);
+        updates.stage_insert_deferred_with_origin(
+            &row,
+            crate::DeferredEqualityCause::ready(cause),
+            origin,
+        );
     }
     drop(updates);
     assert!(db.merge_all());
@@ -5345,104 +6463,6 @@ fn serial_compaction_preserves_live_and_historical_fact_ids() {
         historical,
         "a compacted-away historical row must remain addressable in the receipt arena"
     );
-}
-
-#[test]
-fn parallel_compaction_preserves_live_and_historical_fact_ids() {
-    const INITIAL_ROWS: usize = 20_001;
-    const UPDATED_KEYS: usize = 10_001;
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(4)
-        .build()
-        .unwrap();
-    pool.install(|| {
-        let mut db = Database::default();
-        let table = db.add_table_named(
-            SortedWritesTable::new(
-                1,
-                3,
-                Some(ColumnId::new(2)),
-                vec![],
-                Box::new(|_, left, right, out| {
-                    if right[1] > left[1] {
-                        out.extend_from_slice(right);
-                        true
-                    } else {
-                        false
-                    }
-                }),
-            ),
-            "ParallelCompaction".into(),
-            iter::empty(),
-            iter::empty(),
-        );
-        let receipts = db.enable_causal_receipts();
-        register_test_receipt_table(&receipts, table, 3);
-        for value in 0..INITIAL_ROWS {
-            install_test_row_terms(&receipts, &[Value::from_usize(value)]);
-        }
-        db.set_causal_wave(CausalWave::new(1));
-        let initial_lanes = (0..INITIAL_ROWS).collect::<Vec<_>>();
-        let initial_causes = receipts
-            .register_rule_matches(40, CausalWave::new(1), 0, &[], &[], &[], &initial_lanes)
-            .into_iter()
-            .map(|(_, cause)| cause)
-            .collect::<Vec<_>>();
-        let mut initial = db.new_buffer(table);
-        for (key, cause) in initial_causes.into_iter().enumerate() {
-            initial.stage_insert_with_cause(
-                &[Value::from_usize(key), Value::new(0), Value::new(0)],
-                cause,
-            );
-        }
-        drop(initial);
-        assert!(db.merge_all());
-        db.finalize_causal_wave();
-
-        let survivor = Value::from_usize(INITIAL_ROWS - 1);
-        let target_before = committed_fact_id(&db, table, survivor);
-        let target_row_before = committed_row_id(&db, table, survivor);
-        let historical = committed_fact_id(&db, table, Value::new(1));
-        let version_before = db.get_table(table).version();
-        db.set_causal_wave(CausalWave::new(2));
-        let update_count = UPDATED_KEYS * 2;
-        let update_lanes = (0..update_count).collect::<Vec<_>>();
-        let update_causes = receipts
-            .register_rule_matches(41, CausalWave::new(2), 0, &[], &[], &[], &update_lanes)
-            .into_iter()
-            .map(|(_, cause)| cause)
-            .collect::<Vec<_>>();
-        let mut updates = db.new_buffer(table);
-        for (index, cause) in update_causes.into_iter().enumerate() {
-            let key = 1 + index / 2;
-            let value = 1 + index % 2;
-            updates.stage_insert_with_cause(
-                &[
-                    Value::from_usize(key),
-                    Value::from_usize(value),
-                    Value::new(1),
-                ],
-                cause,
-            );
-        }
-        drop(updates);
-        assert!(db.merge_all());
-        db.finalize_causal_wave();
-
-        let version_after = db.get_table(table).version();
-        assert_ne!(
-            version_before.major, version_after.major,
-            "the canary must cross the parallel physical rekey path"
-        );
-        assert_eq!(committed_fact_id(&db, table, survivor), target_before);
-        assert_ne!(
-            committed_row_id(&db, table, survivor),
-            target_row_before,
-            "the untouched canary row must physically move during parallel compaction"
-        );
-        assert_ne!(committed_fact_id(&db, table, Value::new(1)), historical);
-        assert_eq!(receipts.fact_record(historical).unwrap().id, historical);
-    });
 }
 
 fn decomposed_receipt_materialization_case(force_scoped_execution: bool) {
@@ -5769,7 +6789,7 @@ fn decomposed_projected_receipt_case(retain_existential: bool) {
     assert_eq!(
         pending_witness_resolution_count(),
         if retain_existential { 2 } else { 1 },
-        "decomposed witness unfolding must scale with effective promoted rows"
+        "only effective lanes should resolve their exact decomposed witnesses"
     );
     let snapshot = receipts.snapshot();
     let matches = snapshot
@@ -5786,16 +6806,16 @@ fn decomposed_projected_receipt_case(retain_existential: bool) {
             .collect::<Vec<_>>();
         assert_eq!(derived_facts.len(), 2);
         for fact in derived_facts {
+            let matched = matches
+                .iter()
+                .find(|record| Some(record.id) == fact.cause.rule_match())
+                .expect("each derived row must cite its own exact native match");
             let expected = if fact.terms[4] == existential_100_term {
                 [r_first, s_first, t_fact, u_fact]
             } else {
                 assert_eq!(fact.terms[4], existential_101_term);
                 [r_second, s_second, t_fact, u_fact]
             };
-            let matched = matches
-                .iter()
-                .find(|record| Some(record.id) == fact.cause.rule_match())
-                .expect("each derived row must cite its own exact native match");
             assert_eq!(matched.premises.as_ref(), expected);
         }
     } else {
@@ -7558,7 +8578,7 @@ fn call_external_with_fallback_inner() {
 }
 
 #[test]
-fn replay_fallback_promotes_only_primary_successes() {
+fn mixed_fallback_does_not_eagerly_install_a_structural_origin() {
     let mut db = Database::default();
     let input = db.add_table(
         SortedWritesTable::new(
@@ -7634,20 +8654,11 @@ fn replay_fallback_promotes_only_primary_successes() {
     let rules = rules.build();
     assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
 
-    for output in [102, 104] {
-        let term = receipts
-            .lookup_term(TEST_REPLAY_SORT, Value::new(output))
-            .expect("a primary result is promoted");
-        assert!(matches!(
-            receipts.replay_term(term),
-            Some(ReplayTerm::Call { op, .. }) if op == ReplayOpId::new(700)
-        ));
-    }
-    for output in [201, 203] {
+    for output in [102, 104, 201, 203] {
         assert_eq!(
             receipts.lookup_term(TEST_REPLAY_SORT, Value::new(output)),
             None,
-            "a fallback result must not be mislabeled as the primary call"
+            "mixed fallbacks cannot assign one static producer and must stay lazy"
         );
     }
 }

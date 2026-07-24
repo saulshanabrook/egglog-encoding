@@ -526,8 +526,12 @@ impl RuleBuilder<'_> {
         let panic_fn = self.new_panic_lazy(panic_msg);
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let args = inner.convert_all(&args);
-            let var =
-                rb.call_external_with_fallback_replay(func, &args, panic_fn, &[], replay.clone())?;
+            // `panic_fn` never produces a value: a lane either receives the
+            // primary result or aborts. Record the static primary recipe only
+            // after lowering the ordinary fallback instruction; generic
+            // value-producing fallbacks deliberately have no such recipe.
+            let var = rb.call_external_with_fallback(func, &args, panic_fn, &[])?;
+            rb.promote_replay_call(&args, var, replay.clone());
             inner.mapping.insert(res.id, var.into());
             Ok(())
         }));

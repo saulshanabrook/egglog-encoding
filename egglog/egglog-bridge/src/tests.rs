@@ -25,6 +25,25 @@ use crate::{
 };
 
 #[test]
+fn only_explicit_input_choice_primitives_receive_structural_selector() {
+    let primitive = ExternalFunctionId::new_const(0);
+    let generic = MergeFn::Primitive(primitive, vec![MergeFn::Old, MergeFn::New]);
+    assert_eq!(
+        generic.structural_origin_selector(1, 0),
+        core_relations::MergeOriginSelector::Unsupported,
+        "a generic binary primitive such as addition must fail before its callback"
+    );
+    let choice = MergeFn::InputChoicePrimitive(primitive, vec![MergeFn::Old, MergeFn::New]);
+    assert_eq!(
+        choice.structural_origin_selector(1, 0),
+        core_relations::MergeOriginSelector::PriorOrIncoming {
+            incoming_column: 1,
+            prior_column: 1,
+        }
+    );
+}
+
+#[test]
 fn causal_receipts_reject_parallel_bridge_activation() {
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(2)

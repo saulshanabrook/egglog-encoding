@@ -100,6 +100,21 @@ use crate::proofs::proof_normal_form::proof_form;
 
 pub const GLOBAL_NAME_PREFIX: &str = "$";
 
+/// Whether a merge primitive is semantically guaranteed to return exactly one of its two
+/// arguments. Causal receipts use this narrow opt-in to attribute the selected input without
+/// recording or re-running an arbitrary primitive. Keep the default closed: a primitive belongs
+/// here only when its implementation has that exact contract.
+fn primitive_merge_returns_one_input(name: &str) -> bool {
+    matches!(
+        name,
+        "min"
+            | "max"
+            | "pair-min-by-second-i64"
+            | "maybe-either-i64-bool-min"
+            | "maybe-either-i64-bool-max"
+    )
+}
+
 pub type ArcSort = Arc<dyn Sort>;
 
 /// Methods shared by every kind-specific primitive trait.
@@ -1042,6 +1057,18 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
+    #[cfg(test)]
+    fn causal_replay_term_counters(&self) -> Result<core_relations::ReplayTermCounters, Error> {
+        self.backend
+            .as_any()
+            .downcast_ref::<egglog_bridge::EGraph>()
+            .ok_or_else(|| {
+                Error::BackendError("test backend has no native causal receipts".into())
+            })?
+            .causal_replay_term_counters()
+            .map_err(|error| Error::BackendError(error.to_string()))
+    }
+
     /// Resolve one typed structural term from the native replay DAG.
     pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
         self.backend
@@ -1345,10 +1372,18 @@ impl EGraph {
                     translated_args[0] =
                         egglog_bridge::MergeFn::Const(self.backend.base_values().get(resolved));
                 }
-                Ok(egglog_bridge::MergeFn::Primitive(
-                    p.external_id(crate::Context::Write),
-                    translated_args,
-                ))
+                let primitive = p.external_id(crate::Context::Write);
+                if primitive_merge_returns_one_input(p.name()) {
+                    Ok(egglog_bridge::MergeFn::InputChoicePrimitive(
+                        primitive,
+                        translated_args,
+                    ))
+                } else {
+                    Ok(egglog_bridge::MergeFn::Primitive(
+                        primitive,
+                        translated_args,
+                    ))
+                }
             }
             // `(values ...)` never legitimately reaches here: a top-level tuple merge is
             // destructured per column in `declare_function`, and any other `(values ...)` is
@@ -4481,6 +4516,30 @@ mod tests {
     }
 
     #[test]
+    fn causal_merge_input_choice_opt_in_is_explicit() {
+        for name in [
+            "min",
+            "max",
+            "pair-min-by-second-i64",
+            "maybe-either-i64-bool-min",
+            "maybe-either-i64-bool-max",
+        ] {
+            assert!(primitive_merge_returns_one_input(name), "{name}");
+        }
+        for name in ["+", "pair", "unstable-fn", "clamp"] {
+            assert!(!primitive_merge_returns_one_input(name), "{name}");
+        }
+    }
+
+    fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+        payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload")
+    }
+
+    #[test]
     fn causal_receipts_capture_typed_source_constructor() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -4545,7 +4604,7 @@ mod tests {
             egraph.parse_and_run_program(None, &program).unwrap();
 
             let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            let (cause, wave, as_of_edges) = snapshot
+            let (cause, wave, as_of_edges, position) = snapshot
                 .equalities
                 .iter()
                 .find_map(|edge| match edge.reason {
@@ -4553,7 +4612,8 @@ mod tests {
                         cause,
                         wave,
                         as_of_edges,
-                    } => Some((cause, wave, as_of_edges)),
+                        position,
+                    } => Some((cause, wave, as_of_edges, position)),
                     _ => None,
                 })
                 .expect("Pair collision should retain one exact container-congruence edge");
@@ -4563,17 +4623,21 @@ mod tests {
                     core_relations::ReceiptCauseDependency::ContainerCanonicalize {
                         wave,
                         as_of_edges,
+                        position,
                         equalities,
-                    } => Some((wave, as_of_edges, equalities)),
+                    } => Some((wave, as_of_edges, position, equalities)),
                     _ => None,
                 })
                 .expect("Pair congruence should unfold to its container collision");
-            assert_eq!((dependency.0, dependency.1), (wave, as_of_edges));
-            assert!(!dependency.2.is_empty());
+            assert_eq!(
+                (dependency.0, dependency.1, dependency.2),
+                (wave, as_of_edges, position)
+            );
+            assert!(!dependency.3.is_empty());
             let explanation = snapshot
-                .equality_explanation_index(as_of_edges)
+                .equality_explanation_index_at(as_of_edges, position)
                 .expect("container landmark should be a complete equality prefix");
-            for pair in dependency.2 {
+            for pair in dependency.3 {
                 assert!(
                     !explanation
                         .explain_equality(pair.left, pair.right)
@@ -4644,7 +4708,7 @@ mod tests {
             );
             assert!(!equalities.pairs.is_empty());
             let explanation = snapshot
-                .equality_explanation_index(equalities.as_of_edges)
+                .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
                 .expect("container refresh landmark should be complete");
             for pair in &equalities.pairs {
                 assert!(
@@ -4815,7 +4879,7 @@ mod tests {
             assert_ne!(middle_landmark.as_of_edges, latest_landmark.as_of_edges);
             for landmark in [middle_landmark, latest_landmark] {
                 let explanation = snapshot
-                    .equality_explanation_index(landmark.as_of_edges)
+                    .equality_explanation_index_at(landmark.as_of_edges, landmark.position)
                     .unwrap();
                 for pair in &landmark.pairs {
                     assert!(
@@ -4875,7 +4939,7 @@ mod tests {
             };
             assert!(!equalities.pairs.is_empty());
             let explanation = snapshot
-                .equality_explanation_index(equalities.as_of_edges)
+                .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
                 .unwrap();
             for pair in &equalities.pairs {
                 assert!(
@@ -4920,38 +4984,84 @@ mod tests {
             egraph
                 .parse_and_run_program(
                     None,
-                    "(datatype Expr (A i64) (B i64))\
-                     (sort Exprs (Set Expr))\
-                     (datatype Root (Hold Exprs))\
+                    "(datatype Expr (A i64) (Wrap Expr))\
+                     (sort ExprVec (Vec Expr))\
+                     (sort ExprSet (Set Expr))\
                      (relation Go (Unit))\
-                     (let $kept-set (set-of (A 99)))\
-                     (Go ())",
+                     (relation Again (Unit))\
+                     (let $low-vec (vec-of (Wrap (A 1))))\
+                     (let $high-vec (vec-of (A 1)))\
+                     (let $bad-set (set-of (Wrap (A 1))))\
+                     (let $again-left (A 2))\
+                     (let $again-right (A 3))\
+                     (Go ())\
+                     (Again ())",
                 )
                 .unwrap();
-            let kept = get_value(&egraph, "$kept-set");
-            let before = egraph
-                .value_to_container::<SetContainer>(kept)
-                .expect("kept Set must exist before the rejected rebuild")
+            let low_vec = get_value(&egraph, "$low-vec");
+            let high_vec = get_value(&egraph, "$high-vec");
+            let bad_set = get_value(&egraph, "$bad-set");
+            let low_before = egraph
+                .value_to_container::<VecContainer>(low_vec)
+                .expect("low Vec must exist before the rejected rebuild")
                 .clone();
+            let high_before = egraph
+                .value_to_container::<VecContainer>(high_vec)
+                .expect("high Vec must exist before the rejected rebuild")
+                .clone();
+            let set_before = egraph
+                .value_to_container::<SetContainer>(bad_set)
+                .expect("Set must exist before the rejected rebuild")
+                .clone();
+            let receipt_state_before = egraph.causal_replay_term_counters().unwrap();
 
-            let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                egraph
-                    .parse_and_run_program(
-                        None,
+            let mut first_panic = None;
+            for attempt in 0..2 {
+                let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let program = if attempt == 0 {
                         "(rule ((Go u))\
-                           ((Hold (set-of (A 1)))\
-                            (Hold (set-of (B 2)))\
-                            (union (A 1) (B 2))) :name \"merge-child\")\
-                         (run 1)",
-                    )
-                    .unwrap();
-            }));
-            assert!(failed.is_err());
-            let after = egraph
-                .value_to_container::<SetContainer>(kept)
-                .expect("caught rebuild panic dropped the container registry")
-                .clone();
-            assert_eq!(after, before);
+                           ((union (Wrap (A 1)) (A 1))) :name \"merge-child\")\
+                         (run 1)"
+                    } else {
+                        "(rule ((Again u))\
+                           ((union (A 2) (A 3))) :name \"merge-again\")\
+                         (run 1)"
+                    };
+                    egraph.parse_and_run_program(None, program).unwrap();
+                }))
+                .expect_err("unsupported Set rebuild unexpectedly succeeded");
+                let message = panic_message(failed.as_ref()).to_owned();
+                assert!(
+                    message.contains("SetContainer"),
+                    "unexpected container-rebuild panic: {message}"
+                );
+                if let Some(first) = &first_panic {
+                    assert_eq!(&message, first, "rejected rebuild must repeat identically");
+                } else {
+                    first_panic = Some(message);
+                }
+
+                let low_after = egraph
+                    .value_to_container::<VecContainer>(low_vec)
+                    .expect("caught rebuild panic dropped the low Vec")
+                    .clone();
+                let high_after = egraph
+                    .value_to_container::<VecContainer>(high_vec)
+                    .expect("caught rebuild panic dropped the high Vec")
+                    .clone();
+                let set_after = egraph
+                    .value_to_container::<SetContainer>(bad_set)
+                    .expect("caught rebuild panic dropped the Set")
+                    .clone();
+                assert_eq!(low_after, low_before);
+                assert_eq!(high_after, high_before);
+                assert_eq!(set_after, set_before);
+                assert_eq!(
+                    egraph.causal_replay_term_counters().unwrap(),
+                    receipt_state_before,
+                    "rejected rebuild published anchors, first-wins mappings, or term nodes"
+                );
+            }
         });
     }
 
@@ -5110,7 +5220,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "has no producer-installed ReplayTermId")]
     fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -5127,6 +5236,15 @@ mod tests {
                  (run 1)",
             )
             .unwrap();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = egraph.causal_receipt_snapshot();
+        }))
+        .expect_err("cold causal projection accepted an unsupported primitive producer");
+        assert!(
+            panic_message(failure.as_ref()).contains("reached unsupported causal row origin"),
+            "unexpected cold-projection panic: {}",
+            panic_message(failure.as_ref())
+        );
     }
 
     #[test]
@@ -5205,6 +5323,20 @@ mod tests {
     }
 
     #[test]
+    fn causal_receipts_run_terminal_math_check() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    Some("math-microbenchmark.egg".to_owned()),
+                    include_str!("../tests/math-microbenchmark.egg"),
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
     fn causal_receipts_preserve_distinct_check_equality_terms() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -5251,7 +5383,7 @@ mod tests {
             Some(ReplayTerm::Call { op, .. }) if op == b
         ));
         let explanation = snapshot
-            .explain_equality(left, right, root.as_of_edges)
+            .explain_equality_at(left, right, root.as_of_edges, root.position)
             .unwrap();
         assert_eq!(explanation.as_ref(), [snapshot.equalities[0].id]);
         assert!(matches!(

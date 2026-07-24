@@ -10,7 +10,7 @@ use crate::numeric_id::{DenseIdMap, NumericId};
 use crossbeam_queue::SegQueue;
 
 use crate::{
-    CauseDraftId, EqComponentRef, TableChange, TaggedRowBuffer,
+    CauseDraftId, TableChange, TaggedRowBuffer,
     action::ExecutionState,
     common::{HashMap, Value},
     offsets::{OffsetRange, RowId, Subset, SubsetRef},
@@ -62,13 +62,6 @@ pub struct DisplacedTable {
     lookup_table: HashMap<Value, RowId>,
     buffered_writes: Arc<SegQueue<UfPendingBatch>>,
     receipts_enabled: bool,
-    /// Receipt-only mirror from current native roots to immutable explanation
-    /// components. This never answers equality or performs a find.
-    equality_components: Option<Box<HashMap<Value, TypedComponent>>>,
-    /// One native member for every structural term already present in an
-    /// explanation component. Native find resolves the member's current root;
-    /// keeping one member avoids rewriting the whole component after unions.
-    equality_term_owners: Option<Box<HashMap<crate::ReplayTermId, Value>>>,
 }
 
 struct Canonicalizer<'a> {
@@ -212,8 +205,6 @@ impl Default for DisplacedTable {
             lookup_table: HashMap::default(),
             buffered_writes: Arc::new(SegQueue::new()),
             receipts_enabled: false,
-            equality_components: None,
-            equality_term_owners: None,
         }
     }
 }
@@ -228,8 +219,6 @@ impl Clone for DisplacedTable {
             lookup_table: self.lookup_table.clone(),
             buffered_writes: Default::default(),
             receipts_enabled: self.receipts_enabled,
-            equality_components: self.equality_components.clone(),
-            equality_term_owners: self.equality_term_owners.clone(),
         }
     }
 }
@@ -245,21 +234,8 @@ struct UfBuffer {
 #[derive(Clone)]
 struct UfProposalReceipt {
     cause: DeferredEqualityCause,
-    sort: crate::ReplaySortId,
-    left_term: crate::ReplayTermId,
-    right_term: crate::ReplayTermId,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TypedComponent {
-    sort: crate::ReplaySortId,
-    component: EqComponentRef,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PreflightComponent {
-    Durable(EqComponentRef),
-    Pending(u64),
+    left: crate::receipts::PendingEqualityEndpoint,
+    right: crate::receipts::PendingEqualityEndpoint,
 }
 
 /// Transaction-local union overlay used to validate an entire receipt-mode
@@ -269,10 +245,6 @@ enum PreflightComponent {
 #[derive(Default)]
 struct UnionPreflight {
     parents: HashMap<Value, Value>,
-    sorts: HashMap<Value, crate::ReplaySortId>,
-    components: HashMap<Value, PreflightComponent>,
-    term_owners: HashMap<crate::ReplayTermId, Value>,
-    next_component: u64,
     highest_timestamp: Option<Value>,
 }
 
@@ -297,165 +269,11 @@ impl UnionPreflight {
         root
     }
 
-    fn validate_component(
-        &self,
-        existing: Option<&HashMap<Value, TypedComponent>>,
-        root: Value,
-        endpoint: Value,
-        sort: crate::ReplaySortId,
-    ) {
-        let known_sort = self
-            .sorts
-            .get(&root)
-            .copied()
-            .or_else(|| existing.and_then(|components| components.get(&root).map(|c| c.sort)));
-        if let Some(known_sort) = known_sort {
-            assert_eq!(
-                known_sort, sort,
-                "native equality component was reached through a different logical sort"
-            );
-        } else {
-            assert_eq!(
-                root, endpoint,
-                "non-singleton native root is missing its equality component"
-            );
-        }
-    }
-
-    fn component_for(
-        &self,
-        existing: Option<&HashMap<Value, TypedComponent>>,
-        root: Value,
-        endpoint: Value,
-        sort: crate::ReplaySortId,
-        term: crate::ReplayTermId,
-    ) -> PreflightComponent {
-        self.validate_component(existing, root, endpoint, sort);
-        self.components
-            .get(&root)
-            .copied()
-            .or_else(|| {
-                existing.and_then(|components| {
-                    components
-                        .get(&root)
-                        .map(|component| PreflightComponent::Durable(component.component))
-                })
-            })
-            .unwrap_or(PreflightComponent::Durable(EqComponentRef::Term(term)))
-    }
-
-    fn logical_owner_root(
-        &mut self,
-        existing: Option<&HashMap<crate::ReplayTermId, Value>>,
-        native: &UnionFind,
-        term: crate::ReplayTermId,
-        root: Value,
-        other_root: Value,
-    ) -> Value {
-        let owner = self
-            .term_owners
-            .get(&term)
-            .copied()
-            .or_else(|| existing.and_then(|owners| owners.get(&term).copied()));
-        let Some(owner) = owner else {
-            return root;
-        };
-        let owner_root = self.find(native.find_naive(owner));
-        assert!(
-            owner_root == root || owner_root == other_root,
-            "one structural equality term {term:?} would enter two distinct logical components: \
-             existing owner {owner:?} has root {owner_root:?}, endpoint root is {root:?}, \
-             and other endpoint root is {other_root:?}"
-        );
-        owner_root
-    }
-
-    fn native_alias_component(
-        left: PreflightComponent,
-        right: PreflightComponent,
-        term: crate::ReplayTermId,
-    ) -> PreflightComponent {
-        match (left, right) {
-            (
-                PreflightComponent::Durable(EqComponentRef::Term(left)),
-                PreflightComponent::Durable(EqComponentRef::Term(right)),
-            ) => {
-                assert_eq!(left, term, "native alias left leaf changed terms");
-                assert_eq!(right, term, "native alias right leaf changed terms");
-                PreflightComponent::Durable(EqComponentRef::Term(term))
-            }
-            (
-                node @ (PreflightComponent::Durable(EqComponentRef::Node(_))
-                | PreflightComponent::Pending(_)),
-                PreflightComponent::Durable(EqComponentRef::Term(right)),
-            ) => {
-                assert_eq!(right, term, "native alias singleton changed terms");
-                node
-            }
-            (
-                PreflightComponent::Durable(EqComponentRef::Term(left)),
-                node @ (PreflightComponent::Durable(EqComponentRef::Node(_))
-                | PreflightComponent::Pending(_)),
-            ) => {
-                assert_eq!(left, term, "native alias singleton changed terms");
-                node
-            }
-            (left, right) => {
-                assert_eq!(
-                    left, right,
-                    "distinct native roots claim different logical components for one term"
-                );
-                left
-            }
-        }
-    }
-
-    fn new_component(&mut self) -> PreflightComponent {
-        self.next_component = self
-            .next_component
-            .checked_add(1)
-            .expect("one union publication exceeded u64 component identities");
-        PreflightComponent::Pending(self.next_component)
-    }
-
-    fn validate_redundant_component(
-        &self,
-        existing: Option<&HashMap<Value, TypedComponent>>,
-        root: Value,
-        sort: crate::ReplaySortId,
-    ) {
-        if let Some(known_sort) = self
-            .sorts
-            .get(&root)
-            .copied()
-            .or_else(|| existing.and_then(|components| components.get(&root).map(|c| c.sort)))
-        {
-            assert_eq!(
-                known_sort, sort,
-                "native equality component was reached through a different logical sort"
-            );
-        }
-    }
-
-    fn union(
-        &mut self,
-        left: Value,
-        right: Value,
-        sort: crate::ReplaySortId,
-        component: PreflightComponent,
-    ) -> (Value, Value) {
+    fn union(&mut self, left: Value, right: Value) -> (Value, Value) {
         let parent = left.min(right);
         let child = left.max(right);
         self.parents.insert(child, parent);
-        self.sorts.remove(&child);
-        self.sorts.insert(parent, sort);
-        self.components.remove(&child);
-        self.components.insert(parent, component);
         (parent, child)
-    }
-
-    fn note_term_owner(&mut self, term: crate::ReplayTermId, member: Value) {
-        self.term_owners.entry(term).or_insert(member);
     }
 }
 
@@ -582,12 +400,7 @@ impl MutationBuffer for UfBuffer {
             "cannot add typed receipts after ordinary union proposals"
         );
         self.to_insert.add_row(row);
-        receipts.push(UfProposalReceipt {
-            cause,
-            sort: left.sort,
-            left_term: left.term,
-            right_term: right.term,
-        });
+        receipts.push(UfProposalReceipt { cause, left, right });
     }
     fn stage_remove(&mut self, _: &[Value]) {
         panic!("attempting to remove data from a DisplacedTable")
@@ -650,8 +463,6 @@ impl Table for DisplacedTable {
     fn clear(&mut self) {
         self.uf.reset();
         self.displaced.clear();
-        self.equality_components = None;
-        self.equality_term_owners = None;
     }
 
     fn all(&self) -> Subset {
@@ -847,59 +658,21 @@ impl Table for DisplacedTable {
                 for (index, row) in batch.rows.iter().enumerate() {
                     let UfProposalReceipt {
                         ref cause,
-                        sort,
-                        left_term,
-                        right_term,
+                        left,
+                        right,
+                        ..
                     } = proposal_receipts[index];
                     assert_eq!(row.len(), 3, "attempt to insert a row with the wrong arity");
                     let left_root = self.uf.find_naive(row[0]);
                     let right_root = self.uf.find_naive(row[1]);
                     if left_root == right_root {
-                        Self::validate_component_sort(
-                            self.equality_components.as_deref(),
-                            left_root,
-                            sort,
-                        );
                         receipt_batch.record_redundant_union();
                         continue;
                     }
                     let cause = cause
                         .ready_id()
                         .expect("union preflight did not promote an effective cause");
-                    let proposal = AppliedEqualityProposal {
-                        wave,
-                        left: crate::EqualityEndpoint {
-                            sort,
-                            term: left_term,
-                            raw: row[0],
-                        },
-                        right: crate::EqualityEndpoint {
-                            sort,
-                            term: right_term,
-                            raw: row[1],
-                        },
-                    };
-                    let left_owner_root =
-                        self.logical_owner_root(proposal.left.term, left_root, right_root);
-                    let right_owner_root =
-                        self.logical_owner_root(proposal.right.term, right_root, left_root);
-                    let (left_component, right_component) = {
-                        let components = self.equality_components.get_or_insert_with(Box::default);
-                        components.reserve(1);
-                        (
-                            Self::component_for(components, left_owner_root, proposal.left),
-                            Self::component_for(components, right_owner_root, proposal.right),
-                        )
-                    };
-                    let native_alias_component = (proposal.left.term == proposal.right.term
-                        || left_owner_root == right_owner_root)
-                        .then(|| {
-                            Self::native_alias_component(
-                                left_component,
-                                right_component,
-                                proposal.left.term,
-                            )
-                        });
+                    let proposal = AppliedEqualityProposal { wave, left, right };
                     let (parent, child) = self.uf.union(row[0], row[1]);
                     assert!(
                         (parent == left_root && child == right_root)
@@ -907,40 +680,7 @@ impl Table for DisplacedTable {
                         "native union parent/child do not match the captured pre-roots"
                     );
                     self.finish_receipt_insert(row, parent, child);
-                    let term_owners = self.equality_term_owners.get_or_insert_with(Box::default);
-                    term_owners.entry(proposal.left.term).or_insert(row[0]);
-                    term_owners.entry(proposal.right.term).or_insert(row[1]);
-                    if let Some(component) = native_alias_component {
-                        receipt_batch.record_native_alias(proposal, parent, child, cause);
-                        let components = self
-                            .equality_components
-                            .as_mut()
-                            .expect("native alias initialized its component mirror");
-                        components.insert(parent, TypedComponent { sort, component });
-                        components.remove(&child);
-                        self.changed = true;
-                        continue;
-                    }
-                    let node = receipt_batch.record_applied_union(
-                        proposal,
-                        left_component,
-                        right_component,
-                        parent,
-                        child,
-                        cause,
-                    );
-                    let components = self
-                        .equality_components
-                        .as_mut()
-                        .expect("applied typed union initialized its component mirror");
-                    components.insert(
-                        parent,
-                        TypedComponent {
-                            sort,
-                            component: EqComponentRef::Node(node),
-                        },
-                    );
-                    components.remove(&child);
+                    receipt_batch.record_applied_union(proposal, parent, child, cause);
                     self.changed = true;
                 }
             }
@@ -989,19 +729,6 @@ impl DisplacedTable {
         let vals = self.expand(row);
         eval_constraint(&vals, constraint)
     }
-    fn validate_component_sort(
-        components: Option<&HashMap<Value, TypedComponent>>,
-        root: Value,
-        sort: crate::ReplaySortId,
-    ) {
-        if let Some(component) = components.and_then(|components| components.get(&root)) {
-            assert_eq!(
-                component.sort, sort,
-                "native equality component was reached through a different logical sort"
-            );
-        }
-    }
-
     fn preflight_receipt_batches(
         &self,
         batches: &mut [UfPendingBatch],
@@ -1038,11 +765,6 @@ impl DisplacedTable {
                 let left_root = overlay.find(self.uf.find_naive(row[0]));
                 let right_root = overlay.find(self.uf.find_naive(row[1]));
                 if left_root == right_root {
-                    overlay.validate_redundant_component(
-                        self.equality_components.as_deref(),
-                        left_root,
-                        proposal.sort,
-                    );
                     continue;
                 }
 
@@ -1054,48 +776,7 @@ impl DisplacedTable {
                 }
                 effective.push((batch_index, index));
                 effective_causes.push(proposal.cause.clone());
-                let left_owner_root = overlay.logical_owner_root(
-                    self.equality_term_owners.as_deref(),
-                    &self.uf,
-                    proposal.left_term,
-                    left_root,
-                    right_root,
-                );
-                let right_owner_root = overlay.logical_owner_root(
-                    self.equality_term_owners.as_deref(),
-                    &self.uf,
-                    proposal.right_term,
-                    right_root,
-                    left_root,
-                );
-                let left_component = overlay.component_for(
-                    self.equality_components.as_deref(),
-                    left_owner_root,
-                    row[0],
-                    proposal.sort,
-                    proposal.left_term,
-                );
-                let right_component = overlay.component_for(
-                    self.equality_components.as_deref(),
-                    right_owner_root,
-                    row[1],
-                    proposal.sort,
-                    proposal.right_term,
-                );
-                let same_term_alias = proposal.left_term == proposal.right_term;
-                let native_only = same_term_alias || left_owner_root == right_owner_root;
-                let component = if native_only {
-                    UnionPreflight::native_alias_component(
-                        left_component,
-                        right_component,
-                        proposal.left_term,
-                    )
-                } else {
-                    overlay.new_component()
-                };
-                let (parent, _) = overlay.union(left_root, right_root, proposal.sort, component);
-                overlay.note_term_owner(proposal.left_term, parent);
-                overlay.note_term_owner(proposal.right_term, parent);
+                overlay.union(left_root, right_root);
                 overlay.highest_timestamp = Some(row[2]);
             }
         }
@@ -1115,77 +796,6 @@ impl DisplacedTable {
                 .expect("effective union proposal disappeared after preflight");
             let cause = proposal.cause.promote();
             proposal.cause = DeferredEqualityCause::ready(cause);
-        }
-    }
-
-    fn logical_owner_root(
-        &self,
-        term: crate::ReplayTermId,
-        root: Value,
-        other_root: Value,
-    ) -> Value {
-        let Some(owner) = self
-            .equality_term_owners
-            .as_deref()
-            .and_then(|owners| owners.get(&term).copied())
-        else {
-            return root;
-        };
-        let owner_root = self.uf.find_naive(owner);
-        assert!(
-            owner_root == root || owner_root == other_root,
-            "one structural equality term {term:?} would enter two distinct logical components: \
-             existing owner {owner:?} has root {owner_root:?}, endpoint root is {root:?}, \
-             and other endpoint root is {other_root:?}"
-        );
-        owner_root
-    }
-
-    fn component_for(
-        components: &HashMap<Value, TypedComponent>,
-        root: Value,
-        endpoint: crate::EqualityEndpoint,
-    ) -> EqComponentRef {
-        if let Some(component) = components.get(&root) {
-            assert_eq!(
-                component.sort, endpoint.sort,
-                "native equality component was reached through a different logical sort"
-            );
-            return component.component;
-        }
-        assert_eq!(
-            root, endpoint.raw,
-            "non-singleton native root is missing its equality component"
-        );
-        EqComponentRef::Term(endpoint.term)
-    }
-
-    fn native_alias_component(
-        left: EqComponentRef,
-        right: EqComponentRef,
-        term: crate::ReplayTermId,
-    ) -> EqComponentRef {
-        match (left, right) {
-            (EqComponentRef::Term(left), EqComponentRef::Term(right)) => {
-                assert_eq!(left, term, "native alias left leaf changed terms");
-                assert_eq!(right, term, "native alias right leaf changed terms");
-                EqComponentRef::Term(term)
-            }
-            (node @ EqComponentRef::Node(_), EqComponentRef::Term(right)) => {
-                assert_eq!(right, term, "native alias singleton changed terms");
-                node
-            }
-            (EqComponentRef::Term(left), node @ EqComponentRef::Node(_)) => {
-                assert_eq!(left, term, "native alias singleton changed terms");
-                node
-            }
-            (EqComponentRef::Node(left), EqComponentRef::Node(right)) => {
-                assert_eq!(
-                    left, right,
-                    "distinct native roots claim different logical components for one term"
-                );
-                EqComponentRef::Node(left)
-            }
         }
     }
 

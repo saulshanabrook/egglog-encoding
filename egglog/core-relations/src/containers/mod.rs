@@ -12,6 +12,7 @@ use std::{
     any::{Any, TypeId},
     hash::{Hash, Hasher},
     ops::Deref,
+    sync::Arc,
 };
 
 use crate::numeric_id::{DenseIdMap, IdVec, NumericId, define_id};
@@ -29,8 +30,8 @@ use crate::{
     TaggedRowBuffer, Value, WrappedTable,
     common::{DashMap, HashMap, IndexSet, SubsetTracker},
     parallel_heuristics::{parallelize_inter_container_op, parallelize_intra_container_op},
-    receipts::ContainerVersionDependency,
-    table_spec::{Rebuilder, ValueRebuilder},
+    receipts::{ContainerAnchorJournal, ContainerVersionDependency},
+    table_spec::{MutationTransaction, Rebuilder, ValueRebuilder},
 };
 
 #[cfg(test)]
@@ -96,6 +97,9 @@ pub struct ContainerRebuildSummary {
     // fresh parent-row delta during ordinary table rebuild.
     dirty_ids: IndexSet<Value>,
     dirty_dependencies: HashMap<(ReplaySortId, Value), SmallVec<[ContainerVersionDependency; 1]>>,
+    /// Forward-only receipt overlay published only if the cloned-registry
+    /// transaction commits.
+    anchor_journal: ContainerAnchorJournal,
 }
 
 impl ContainerRebuildSummary {
@@ -139,29 +143,14 @@ impl ContainerRebuildSummary {
             hashbrown::hash_map::Entry::Occupied(mut entry) => {
                 let dependencies = entry.get_mut();
                 if let Some(current) = dependencies
-                    .iter_mut()
+                    .iter()
                     .find(|current| current.outer.term == dependency.outer.term)
                 {
                     assert_eq!(
-                        (
-                            current.dependency.wave,
-                            current.dependency.equalities.as_of_edges,
-                        ),
-                        (
-                            dependency.dependency.wave,
-                            dependency.dependency.equalities.as_of_edges,
-                        ),
+                        current.dependency, dependency.dependency,
                         "one container rebuild pass produced incompatible dependency landmarks"
                     );
-                    let prior_len = current.dependency.equalities.pairs.len();
-                    let mut pairs = current.dependency.equalities.pairs.to_vec();
-                    for pair in dependency.dependency.equalities.pairs {
-                        if !pairs.contains(&pair) {
-                            pairs.push(pair);
-                        }
-                    }
-                    current.dependency.equalities.pairs = pairs.into_boxed_slice();
-                    current.dependency.equalities.pairs.len() != prior_len
+                    false
                 } else {
                     dependencies.push(dependency);
                     true
@@ -170,9 +159,28 @@ impl ContainerRebuildSummary {
         }
     }
 
+    pub(crate) fn defer_anchor_publication(
+        &mut self,
+        receipts: &CausalReceipts,
+        transaction: &MutationTransaction,
+    ) {
+        if self.anchor_journal.is_empty() {
+            return;
+        }
+        receipts
+            .validate_container_anchor_journal(&self.anchor_journal)
+            .unwrap_or_else(|error| panic!("invalid container anchor journal: {error}"));
+        let receipts = receipts.clone();
+        let journal = std::mem::take(&mut self.anchor_journal);
+        transaction.defer_publication(move || {
+            receipts.publish_container_anchor_journal(journal);
+        });
+    }
+
     fn extend(&mut self, other: Self) {
         self.changed |= other.changed;
         self.dirty_ids.extend(other.dirty_ids);
+        self.anchor_journal.extend(other.anchor_journal);
         for (_, dependencies) in other.dirty_dependencies {
             for dependency in dependencies {
                 self.note_dirty_dependency(dependency);
@@ -261,7 +269,9 @@ impl ContainerValues {
             // We may attempt an incremental rebuild.
             self.subset_tracker.recent_updates(table_id, table)
         });
-        let mut summary = if parallelize_inter_container_op(self.data.next_id().index()) {
+        let mut summary = if exec_state.causal_receipts().is_none()
+            && parallelize_inter_container_op(self.data.next_id().index())
+        {
             self.data
                 .iter_mut()
                 .zip(std::iter::repeat_with(|| exec_state.clone()))
@@ -272,6 +282,7 @@ impl ContainerValues {
                         &*rebuilder,
                         to_scan.as_ref().map(|x| x.as_ref()),
                         &mut exec_state,
+                        None,
                     )
                 })
                 .reduce(ContainerRebuildSummary::default, |mut acc, summary| {
@@ -281,12 +292,15 @@ impl ContainerValues {
         } else {
             let mut summary = ContainerRebuildSummary::default();
             for (_, env) in self.data.iter_mut() {
-                summary.extend(env.apply_rebuild(
+                let causal = exec_state.causal_receipts().is_some();
+                let env_summary = env.apply_rebuild(
                     table,
                     &*rebuilder,
                     to_scan.as_ref().map(|x| x.as_ref()),
                     exec_state,
-                ));
+                    causal.then_some(&mut summary.anchor_journal),
+                );
+                summary.extend(env_summary);
             }
             summary
         };
@@ -328,8 +342,12 @@ impl ContainerValues {
                         let mut parents = IndexSet::default();
                         env.extend_containers_containing(&child_set, &mut parents);
                         for parent in parents {
-                            let mut parent_endpoints = receipts
-                                .container_parent_candidates(env.container_type_id(), parent)
+                            let parent_candidates = receipts
+                                .container_parent_candidates(
+                                    &summary.anchor_journal,
+                                    env.container_type_id(),
+                                    parent,
+                                )
                                 .into_iter()
                                 .filter(|candidate| {
                                     env.contains_typed_child(
@@ -339,32 +357,36 @@ impl ContainerValues {
                                         &candidate.child_sorts,
                                     )
                                 })
-                                .map(|candidate| candidate.endpoint);
-                            let Some(parent_endpoint) = parent_endpoints.next() else {
+                                .collect::<SmallVec<[_; 4]>>();
+                            let Some(first) = parent_candidates.first() else {
                                 // The raw reverse index is only a candidate
                                 // generator. A value collision in another
                                 // logical sort is not ancestry.
                                 continue;
                             };
-                            assert!(
-                                parent_endpoints.next().is_none(),
-                                "container parent has multiple exact logical replay sorts"
-                            );
-                            if parent_endpoint == child {
-                                continue;
-                            }
                             if env.causal_receipt_kind().is_none() {
                                 panic!(
                                     "causal container rebuild does not support {}",
                                     env.container_type_name()
                                 );
                             }
-                            let propagated = ContainerVersionDependency {
-                                outer: parent_endpoint,
-                                dependency: dependency.dependency.clone(),
-                            };
-                            if summary.note_dirty_dependency(propagated.clone()) {
-                                next.push(propagated);
+                            assert!(
+                                parent_candidates
+                                    .iter()
+                                    .all(|candidate| candidate.endpoint.sort == first.endpoint.sort),
+                                "container parent has multiple exact logical replay sorts"
+                            );
+                            for candidate in parent_candidates {
+                                if candidate.endpoint == child {
+                                    continue;
+                                }
+                                let propagated = ContainerVersionDependency {
+                                    outer: candidate.endpoint,
+                                    dependency: Arc::clone(&dependency.dependency),
+                                };
+                                if summary.note_dirty_dependency(propagated.clone()) {
+                                    next.push(propagated);
+                                }
                             }
                         }
                     }
@@ -470,7 +492,7 @@ pub trait ContainerValue: Hash + Eq + Clone + Send + Sync + 'static {
     fn iter(&self) -> impl Iterator<Item = Value> + '_;
 }
 
-pub trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
+pub(crate) trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn container_type_id(&self) -> TypeId;
     fn causal_receipt_kind(&self) -> Option<CausalContainerKind>;
@@ -488,6 +510,7 @@ pub trait DynamicContainerEnv: Any + dyn_clone::DynClone + Send + Sync {
         rebuilder: &dyn Rebuilder,
         subset: Option<SubsetRef>,
         exec_state: &mut ExecutionState,
+        journal: Option<&mut ContainerAnchorJournal>,
     ) -> ContainerRebuildSummary;
     /// Add ids for containers in this environment that contain any `values`.
     ///
@@ -577,6 +600,7 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
         rebuilder: &dyn Rebuilder,
         subset: Option<SubsetRef>,
         exec_state: &mut ExecutionState,
+        journal: Option<&mut ContainerAnchorJournal>,
     ) -> ContainerRebuildSummary {
         let use_incremental = subset.is_some_and(|subset| {
             incremental_rebuild(
@@ -596,11 +620,16 @@ impl<C: ContainerValue> DynamicContainerEnv for ContainerEnv<C> {
                     table,
                     rebuilder,
                     exec_state,
+                    journal.expect("causal container rebuild has no anchor journal"),
                     subset.expect("incremental rebuild requires a recent-update subset"),
                     rebuilder.hint_col().unwrap(),
                 );
             }
-            return self.apply_rebuild_nonincremental_receipts(rebuilder, exec_state);
+            return self.apply_rebuild_nonincremental_receipts(
+                rebuilder,
+                exec_state,
+                journal.expect("causal container rebuild has no anchor journal"),
+            );
         }
         if use_incremental {
             return self.apply_rebuild_incremental(
@@ -692,7 +721,13 @@ impl<C: ContainerValue> ContainerEnv<C> {
         }
     }
 
-    fn insert_owned(&self, container: C, value: Value, exec_state: &mut ExecutionState) -> Value {
+    fn insert_owned(
+        &self,
+        container: C,
+        value: Value,
+        exec_state: &mut ExecutionState,
+        mut journal: Option<&mut ContainerAnchorJournal>,
+    ) -> Value {
         let hc = hash_container(&container);
         let target_map = self.to_id.determine_map(&container);
         match self.to_id.entry(container) {
@@ -707,6 +742,10 @@ impl<C: ContainerValue> ContainerEnv<C> {
                     });
                     let prepared = receipts
                         .container_canonicalization_cause(
+                            journal
+                                .as_deref()
+                                .expect("causal container collision has no anchor overlay"),
+                            TypeId::of::<C>(),
                             exec_state.causal_wave(),
                             *occ.get(),
                             value,
@@ -722,6 +761,23 @@ impl<C: ContainerValue> ContainerEnv<C> {
                     exec_state.set_active_container_canonicalization(None);
                 }
                 let old_val = *occ.get();
+                if let Some(receipts) = exec_state.causal_receipts() {
+                    let journal = journal
+                        .as_deref_mut()
+                        .expect("causal container collision has no anchor overlay");
+                    for source in [old_val, value] {
+                        receipts
+                            .stage_container_anchor_transfer(
+                                journal,
+                                TypeId::of::<C>(),
+                                source,
+                                result,
+                            )
+                            .unwrap_or_else(|error| {
+                                panic!("cannot stage collision-winner container anchors: {error}")
+                            });
+                    }
+                }
                 if result != old_val {
                     self.to_container.remove(&old_val);
                     self.to_container.insert(result, (hc as usize, target_map));
@@ -762,7 +818,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             // we only need an explicit refresh when the outer id stayed stable.
             self.to_container.remove(&old_id);
         }
-        let actual = self.insert_owned(container, rebuilt_id, exec_state);
+        let actual = self.insert_owned(container, rebuilt_id, exec_state, None);
         if container_changed && rebuilt_id == old_id && actual == old_id {
             summary.note_dirty_id(old_id);
         }
@@ -772,6 +828,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         &mut self,
         rebuilder: &dyn Rebuilder,
         exec_state: &mut ExecutionState,
+        journal: &mut ContainerAnchorJournal,
     ) -> ContainerRebuildSummary {
         struct Prepared<C> {
             before: C,
@@ -779,12 +836,13 @@ impl<C: ContainerValue> ContainerEnv<C> {
             old_id: Value,
             rebuilt_id: Value,
             contents_changed: bool,
-            dependency: Option<ContainerVersionDependency>,
+            dependencies: SmallVec<[ContainerVersionDependency; 2]>,
         }
 
         let receipts = exec_state
             .causal_receipts()
-            .expect("receipt container rebuild requires the receipt arena");
+            .expect("receipt container rebuild requires the receipt arena")
+            .clone();
         let cutoff = receipts
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
@@ -809,28 +867,29 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .unwrap_or_else(|error| panic!("{error}"));
             kind.validate_arity(after.iter().count())
                 .unwrap_or_else(|error| panic!("{error}"));
-            let dependency = if contents_changed {
+            let dependencies = if contents_changed {
                 let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
                 let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
-                Some(
-                    receipts
-                        .container_dependency(
-                            TypeId::of::<C>(),
-                            old_id,
-                            wave,
-                            &before_children,
-                            &after_children,
-                            cutoff,
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!("cannot record exact positional container rebuild: {error}")
-                        })
-                        .expect(
-                            "container reported changed contents without a positional child change",
-                        ),
-                )
+                let dependencies = receipts
+                    .container_dependency(
+                        journal,
+                        TypeId::of::<C>(),
+                        old_id,
+                        wave,
+                        &before_children,
+                        &after_children,
+                        cutoff,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("cannot record exact positional container rebuild: {error}")
+                    });
+                assert!(
+                    !dependencies.is_empty(),
+                    "container reported changed contents without a positional child change"
+                );
+                dependencies
             } else {
-                None
+                SmallVec::new()
             };
             prepared.push(Prepared {
                 before,
@@ -838,7 +897,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 old_id,
                 rebuilt_id,
                 contents_changed,
-                dependency,
+                dependencies,
             });
         }
 
@@ -852,16 +911,33 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .remove_entry(hc, |(_, value)| *value.get() == change.old_id)
                 .expect("prepared container disappeared before serial publication");
             self.to_container.remove(&change.old_id);
-            let actual = self.insert_owned(change.after, change.rebuilt_id, exec_state);
+            receipts
+                .stage_container_anchor_transfer(
+                    journal,
+                    TypeId::of::<C>(),
+                    change.old_id,
+                    change.rebuilt_id,
+                )
+                .unwrap_or_else(|error| panic!("cannot stage container rekey anchors: {error}"));
+            let actual =
+                self.insert_owned(change.after, change.rebuilt_id, exec_state, Some(journal));
+            receipts
+                .stage_container_anchor_transfer(
+                    journal,
+                    TypeId::of::<C>(),
+                    change.rebuilt_id,
+                    actual,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("cannot stage canonical container anchors: {error}")
+                });
             if change.contents_changed
                 && change.rebuilt_id == change.old_id
                 && actual == change.old_id
             {
-                summary.note_dirty_dependency(
-                    change
-                        .dependency
-                        .expect("stable changed container has no dependency"),
-                );
+                for dependency in change.dependencies {
+                    summary.note_dirty_dependency(dependency);
+                }
             }
         }
         summary
@@ -929,6 +1005,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
         table: &WrappedTable,
         rebuilder: &dyn Rebuilder,
         exec_state: &mut ExecutionState,
+        journal: &mut ContainerAnchorJournal,
         to_scan: SubsetRef,
         search_col: ColumnId,
     ) -> ContainerRebuildSummary {
@@ -938,7 +1015,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             old_id: Value,
             rebuilt_id: Value,
             contents_changed: bool,
-            dependency: Option<ContainerVersionDependency>,
+            dependencies: SmallVec<[ContainerVersionDependency; 2]>,
         }
 
         // Preserve the ordinary incremental candidate scan and insertion
@@ -964,7 +1041,8 @@ impl<C: ContainerValue> ContainerEnv<C> {
 
         let receipts = exec_state
             .causal_receipts()
-            .expect("receipt container rebuild requires the receipt arena");
+            .expect("receipt container rebuild requires the receipt arena")
+            .clone();
         let cutoff = receipts
             .equality_edge_count()
             .unwrap_or_else(|error| panic!("cannot start exact container rebuild: {error}"));
@@ -993,28 +1071,29 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 .unwrap_or_else(|error| panic!("{error}"));
             kind.validate_arity(after.iter().count())
                 .unwrap_or_else(|error| panic!("{error}"));
-            let dependency = if contents_changed {
+            let dependencies = if contents_changed {
                 let before_children = before.iter().collect::<SmallVec<[Value; 4]>>();
                 let after_children = after.iter().collect::<SmallVec<[Value; 4]>>();
-                Some(
-                    receipts
-                        .container_dependency(
-                            TypeId::of::<C>(),
-                            old_id,
-                            wave,
-                            &before_children,
-                            &after_children,
-                            cutoff,
-                        )
-                        .unwrap_or_else(|error| {
-                            panic!("cannot record exact positional container rebuild: {error}")
-                        })
-                        .expect(
-                            "container reported changed contents without a positional child change",
-                        ),
-                )
+                let dependencies = receipts
+                    .container_dependency(
+                        journal,
+                        TypeId::of::<C>(),
+                        old_id,
+                        wave,
+                        &before_children,
+                        &after_children,
+                        cutoff,
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("cannot record exact positional container rebuild: {error}")
+                    });
+                assert!(
+                    !dependencies.is_empty(),
+                    "container reported changed contents without a positional child change"
+                );
+                dependencies
             } else {
-                None
+                SmallVec::new()
             };
             prepared.push(Prepared {
                 before,
@@ -1022,7 +1101,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
                 old_id,
                 rebuilt_id,
                 contents_changed,
-                dependency,
+                dependencies,
             });
         }
 
@@ -1046,16 +1125,33 @@ impl<C: ContainerValue> ContainerEnv<C> {
             );
             self.to_container.remove(&change.old_id);
             summary.note_change();
-            let actual = self.insert_owned(change.after, change.rebuilt_id, exec_state);
+            receipts
+                .stage_container_anchor_transfer(
+                    journal,
+                    TypeId::of::<C>(),
+                    change.old_id,
+                    change.rebuilt_id,
+                )
+                .unwrap_or_else(|error| panic!("cannot stage container rekey anchors: {error}"));
+            let actual =
+                self.insert_owned(change.after, change.rebuilt_id, exec_state, Some(journal));
+            receipts
+                .stage_container_anchor_transfer(
+                    journal,
+                    TypeId::of::<C>(),
+                    change.rebuilt_id,
+                    actual,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("cannot stage canonical container anchors: {error}")
+                });
             if change.contents_changed
                 && change.rebuilt_id == change.old_id
                 && actual == change.old_id
             {
-                summary.note_dirty_dependency(
-                    change
-                        .dependency
-                        .expect("stable changed container has no dependency"),
-                );
+                for dependency in change.dependencies {
+                    summary.note_dirty_dependency(dependency);
+                }
             }
         }
         summary
@@ -1102,7 +1198,7 @@ impl<C: ContainerValue> ContainerEnv<C> {
             }
         }
         for (container, val, stable_id) in to_reinsert {
-            let actual = self.insert_owned(container, val, exec_state);
+            let actual = self.insert_owned(container, val, exec_state, None);
             // Refresh only when rebuild changed container semantics in place.
             // If the outer id changed, ordinary table rebuild already creates a
             // fresh parent-row delta for seminaive to follow.

@@ -41,12 +41,13 @@ pub use query::{
 };
 pub use receipts::{
     CausalReceipts, CausalWave, CauseDraftId, CheckEndpointSource, CheckReceiptSpec, CheckRoot,
-    ContainerDependency, DeferredEqualityCause, EqComponentRef, EqNodeId, EqNodeRecord,
-    EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint, EqualityLandmark, EqualityReason,
-    EqualityRecord, FactCause, FactId, FactRecord, MatchRecord, NativeAliasRecord,
-    RebuildDependency, ReceiptCauseDependencies, ReceiptCauseDependency, ReceiptCauseId,
-    ReceiptCausePrior, ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    ContainerDependency, DeferredEqualityCause, EqComponentRef, EqLeafId, EqLeafRecord, EqNodeId,
+    EqNodeRecord, EqualityEdgeCount, EqualityEdgeId, EqualityEndpoint, EqualityLandmark,
+    EqualityReason, EqualityRecord, EqualitySupport, FactCause, FactId, FactRecord,
+    HistoryPosition, MatchRecord, MergeOriginSelector, NativeAliasRecord, PreparedRekey,
+    RebuildDependency, ReceiptCauseDependency, ReceiptCauseId, ReceiptCausePrior,
+    ReceiptCauseRecord, ReceiptCounters, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
+    ReplayOpId, ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId, RowOriginSiteId,
     RuleBindingSpec, RuleMatchId, RuleReceiptSpec, SourceReceiptSpec, SourceRef, TypedCellEquality,
     TypedEqualityProposal,
 };

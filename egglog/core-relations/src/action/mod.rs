@@ -21,14 +21,14 @@ use smallvec::SmallVec;
 use crate::{
     BaseValues, CausalReceipts, CausalWave, CauseDraftId, ContainerValues, EqualityEdgeCount,
     EqualityEndpoint, ExternalFunctionId, FactId, ReplayConstructorSpec, ReplaySortId,
-    ReplayTermId, WrappedTable,
+    WrappedTable,
     common::Value,
     free_join::{CounterId, Counters, ExternalFunctions, TableId, TableInfo, Variable},
     pool::{Clear, Pooled, with_pool_set},
     receipts::{
         ActionReceiptKind, CauseCapability, CheckEndpointSpec, CheckTermSource,
         DeferredEqualityCause, PendingMatchBatch, PendingPremiseResolver, ReplayBindingSource,
-        TypedEqualityProposal,
+        RowOriginSiteId, TermOriginSiteId, TypedEqualityProposal,
     },
     table_spec::{ColumnId, MutationBuffer},
 };
@@ -135,7 +135,6 @@ struct ReceiptBindings {
     causes: Vec<Option<CauseDraftId>>,
     pending_rule_batch: Option<Arc<PendingMatchBatch>>,
     first_native_ordinal: Option<u64>,
-    produced_terms: DenseIdMap<Variable, Vec<ReplayTermId>>,
 }
 
 enum ReceiptPremises {
@@ -333,7 +332,6 @@ impl Bindings {
                 causes: vec![None],
                 pending_rule_batch: None,
                 first_native_ordinal: None,
-                produced_terms: DenseIdMap::new(),
             }));
         }
     }
@@ -379,7 +377,6 @@ impl Bindings {
                 causes: vec![None],
                 pending_rule_batch: None,
                 first_native_ordinal: None,
-                produced_terms: DenseIdMap::new(),
             }));
         }
     }
@@ -402,22 +399,6 @@ impl Bindings {
         let first_native_ordinal = state
             .first_native_ordinal
             .expect("native match ordinals must be reserved when head execution starts");
-        let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
-        for lane in 0..self.matches {
-            for source in binding_sources.iter() {
-                if let ReplayBindingSource::Current { variable, sort, .. } = source {
-                    let _ = sort;
-                    let term = state
-                        .produced_terms
-                        .get(*variable)
-                        .and_then(|terms| terms.get(lane))
-                        .copied()
-                        .filter(|term| !term.is_missing())
-                        .unwrap_or(ReplayTermId::MISSING);
-                    current_terms.push(term);
-                }
-            }
-        }
         let batch = match &state.premises {
             ReceiptPremises::Flat { facts, .. } => receipts.pending_rule_batch_at(
                 rule,
@@ -426,7 +407,6 @@ impl Bindings {
                 premise_arity,
                 Arc::clone(&binding_sources),
                 facts,
-                &current_terms,
                 self.matches,
             ),
             ReceiptPremises::Lazy {
@@ -439,7 +419,6 @@ impl Bindings {
                 Arc::clone(&binding_sources),
                 Arc::clone(resolver),
                 lanes,
-                &current_terms,
             ),
         };
         self.receipt.as_mut().unwrap().pending_rule_batch = Some(batch);
@@ -457,70 +436,6 @@ impl Bindings {
             "one receipt binding batch executed more than once"
         );
         state.first_native_ordinal = Some(receipts.reserve_native_match_ordinals(self.matches));
-    }
-
-    fn record_produced_term(&mut self, variable: Variable, lane: usize, term: ReplayTermId) {
-        if self.receipt.is_none() {
-            return;
-        }
-        assert!(
-            !term.is_missing(),
-            "producer captured a missing replay term"
-        );
-        let state = self.receipt.as_mut().unwrap();
-        let terms = state.produced_terms.get_or_default(variable);
-        if terms.is_empty() {
-            terms.resize(self.matches, ReplayTermId::MISSING);
-        }
-        assert_eq!(terms.len(), self.matches);
-        let slot = &mut terms[lane];
-        assert!(
-            slot.is_missing() || *slot == term,
-            "one current variable lane acquired conflicting producer terms"
-        );
-        *slot = term;
-    }
-
-    fn current_binding_sort(&self, variable: Variable) -> Option<ReplaySortId> {
-        self.receipt
-            .as_ref()?
-            .binding_sources
-            .iter()
-            .find_map(|source| match source {
-                ReplayBindingSource::Current {
-                    variable: current,
-                    sort,
-                    ..
-                } if *current == variable => Some(*sort),
-                _ => None,
-            })
-    }
-
-    fn replay_term_for_entry(
-        &self,
-        entry: QueryEntry,
-        sort: ReplaySortId,
-        lane: usize,
-        receipts: &CausalReceipts,
-    ) -> ReplayTermId {
-        if let QueryEntry::Var(variable) = entry
-            && let Some(term) = self
-                .receipt
-                .as_ref()
-                .and_then(|state| state.produced_terms.get(variable))
-                .and_then(|terms| terms.get(lane))
-                .copied()
-                .filter(|term| !term.is_missing())
-        {
-            return term;
-        }
-        let value = match entry {
-            QueryEntry::Const(value) => value,
-            QueryEntry::Var(variable) => self[variable][lane],
-        };
-        receipts.lookup_term(sort, value).unwrap_or_else(|| {
-            panic!("value {value:?} has no producer-installed ReplayTermId for sort {sort:?}")
-        })
     }
 
     fn deferred_equality_cause(
@@ -610,6 +525,22 @@ impl Bindings {
         (state.wave, state.premises.resolve(lane))
     }
 
+    fn container_anchor_binding_sources(&self) -> Result<Arc<[ReplayBindingSource]>, String> {
+        let state = self
+            .receipt
+            .as_ref()
+            .ok_or_else(|| "container anchor has no exact receipt bindings".to_owned())?;
+        Ok(Arc::clone(&state.binding_sources))
+    }
+
+    fn container_anchor_premises(&self, lane: usize) -> Result<SmallVec<[FactId; 4]>, String> {
+        let state = self
+            .receipt
+            .as_ref()
+            .ok_or_else(|| "container anchor has no exact receipt bindings".to_owned())?;
+        Ok(state.premises.resolve(lane))
+    }
+
     /// A method that removes the bindings for the given variable and allows for its values to be
     /// used independently from the [`Bindings`] struct. This is helpful when an operation needs to
     /// mutably borrow the values for one value while reading the values for another.
@@ -692,10 +623,11 @@ impl PredictedVals {
 #[derive(Clone)]
 pub(crate) enum ActiveCause {
     Ready(CauseCapability),
-    Deferred(DeferredEqualityCause),
     DeferredMerge {
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
+        table: TableId,
+        incoming_origin: Option<crate::receipts::RowOriginRef>,
         shared: Option<DeferredEqualityCause>,
     },
 }
@@ -704,11 +636,11 @@ impl ActiveCause {
     fn deferred(&mut self, receipts: &CausalReceipts) -> DeferredEqualityCause {
         match self {
             Self::Ready(cause) => DeferredEqualityCause::capability(*cause),
-            Self::Deferred(cause) => cause.clone(),
             Self::DeferredMerge {
                 incoming,
                 prior_fact,
                 shared,
+                ..
             } => shared
                 .get_or_insert_with(|| receipts.pending_merge_cause(incoming.clone(), *prior_fact))
                 .clone(),
@@ -718,7 +650,7 @@ impl ActiveCause {
     fn ready_capability(&self) -> Option<CauseCapability> {
         match self {
             Self::Ready(cause) => Some(*cause),
-            Self::Deferred(_) | Self::DeferredMerge { .. } => None,
+            Self::DeferredMerge { .. } => None,
         }
     }
 }
@@ -773,8 +705,10 @@ pub struct ExecutionState<'a> {
     /// lane or merge callback. It is state-local so parallel execution cannot
     /// cross-attribute proposals.
     active_cause: Option<ActiveCause>,
-    /// Logical sort selected for a prepared container-registry union.
-    active_container_union_sort: Option<ReplaySortId>,
+    /// Exact structural endpoints selected during container collision
+    /// preflight. Registry callbacks must stage this proposal directly rather
+    /// than reselecting through the generic first-wins value map.
+    active_container_union: Option<TypedEqualityProposal>,
 }
 
 /// A basic wrapper around an map from table id to a mutation buffer for that table that also
@@ -847,24 +781,14 @@ impl<'a> MutationBuffers<'a> {
         self.note_changed(table_id);
     }
 
-    fn stage_insert_deferred(
+    fn stage_insert_deferred_with_origin(
         &mut self,
         table_id: TableId,
         row: &[Value],
         cause: DeferredEqualityCause,
+        origin: RowOriginSiteId,
     ) {
-        self.buffers[table_id].stage_insert_deferred(row, cause);
-        self.note_changed(table_id);
-    }
-
-    fn stage_insert_deferred_with_terms(
-        &mut self,
-        table_id: TableId,
-        row: &[Value],
-        cause: DeferredEqualityCause,
-        terms: &[ReplayTermId],
-    ) {
-        self.buffers[table_id].stage_insert_deferred_with_terms(row, cause, terms);
+        self.buffers[table_id].stage_insert_deferred_with_origin(row, cause, origin);
         self.note_changed(table_id);
     }
 
@@ -894,7 +818,7 @@ impl Clone for ExecutionState<'_> {
             changed: false,
             stop_match: Arc::clone(&self.stop_match),
             active_cause: self.active_cause.clone(),
-            active_container_union_sort: self.active_container_union_sort,
+            active_container_union: self.active_container_union,
         }
     }
 }
@@ -911,7 +835,7 @@ impl<'a> ExecutionState<'a> {
             changed: false,
             stop_match: Arc::new(AtomicBool::new(false)),
             active_cause: None,
-            active_container_union_sort: None,
+            active_container_union: None,
         }
     }
 
@@ -931,31 +855,44 @@ impl<'a> ExecutionState<'a> {
     ///
     /// If you are using `egglog`, consider using `egglog_bridge::TableAction`.
     pub fn stage_insert(&mut self, table: TableId, row: &[Value]) {
+        assert!(
+            self.db.causal_receipts.is_none(),
+            "receipt-enabled insertion requires an exact static row origin"
+        );
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
-        if let Some(receipts) = self.db.causal_receipts {
-            let cause = self
-                .active_cause
-                .as_mut()
-                .expect("receipt-enabled native insertion reached an uninstrumented action")
-                .deferred(receipts);
-            match receipts
-                .constructor_row_terms(table, row)
-                .unwrap_or_else(|error| panic!("cannot stage exact constructor row terms: {error}"))
-            {
-                Some(terms) => self
-                    .buffers
-                    .stage_insert_deferred_with_terms(table, row, cause, &terms),
-                None => self.buffers.stage_insert_deferred(table, row, cause),
-            }
-        } else {
-            self.buffers.stage_insert(table, row);
-        }
+        self.buffers.stage_insert(table, row);
         self.changed = true;
     }
 
-    /// Stage one equality proposal with an explicit logical sort. Endpoint
-    /// terms are resolved before the native union-find buffer is touched.
+    /// Stage one row with an exact static structural origin. Source ingestion
+    /// uses this cold boundary; rule actions carry the same compact site on
+    /// their compiled instruction.
+    pub fn stage_insert_with_origin(
+        &mut self,
+        table: TableId,
+        row: &[Value],
+        origin: RowOriginSiteId,
+    ) {
+        self.buffers
+            .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("origin-attributed insertion requires causal receipts");
+        let cause = self
+            .active_cause
+            .as_mut()
+            .expect("origin-attributed insertion has no active cause")
+            .deferred(receipts);
+        self.buffers
+            .stage_insert_deferred_with_origin(table, row, cause, origin);
+        self.changed = true;
+    }
+
+    /// Stage one equality proposal with an explicit logical sort. Direct rule
+    /// endpoints already own exact terms; merge callbacks use the structural
+    /// cell-reference variant below.
     pub fn stage_union_with_replay(
         &mut self,
         table: TableId,
@@ -998,6 +935,75 @@ impl<'a> ExecutionState<'a> {
         let proposal = receipts
             .typed_equality_proposal(self.db.causal_wave, sort, left, right)
             .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
+        self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
+    }
+
+    #[doc(hidden)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_merge_union_with_replay(
+        &mut self,
+        table: TableId,
+        merge_table: TableId,
+        merge_column: ColumnId,
+        left: Value,
+        right: Value,
+        timestamp: Value,
+        sort: ReplaySortId,
+    ) {
+        let (active_table, prior_fact, incoming_origin) = match self.active_cause.as_ref() {
+            Some(ActiveCause::DeferredMerge {
+                table,
+                prior_fact,
+                incoming_origin,
+                ..
+            }) => (*table, *prior_fact, *incoming_origin),
+            _ => panic!("merge union has no active exact merge context"),
+        };
+        assert_eq!(
+            active_table, merge_table,
+            "merge union structural context belongs to another table"
+        );
+        let incoming_origin =
+            incoming_origin.expect("merge union incoming row has no exact structural origin");
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("typed merge union staging requires causal receipts");
+        let cause = self
+            .active_cause
+            .as_mut()
+            .expect("merge union lost its active cause")
+            .deferred(receipts);
+        receipts
+            .validate_deferred_equality_cause(&cause)
+            .unwrap_or_else(|error| panic!("invalid equality cause: {error}"));
+        receipts
+            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+            .unwrap_or_else(|error| panic!("invalid equality timestamp: {error}"));
+        let proposal = receipts
+            .typed_merge_equality_proposal(
+                self.db.causal_wave,
+                sort,
+                left,
+                right,
+                merge_table,
+                merge_column.index(),
+                prior_fact,
+                incoming_origin,
+            )
+            .unwrap_or_else(|error| panic!("invalid typed merge union proposal: {error}"));
+        self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
+    }
+
+    fn stage_typed_union_proposal(
+        &mut self,
+        table: TableId,
+        left: Value,
+        right: Value,
+        timestamp: Value,
+        cause: DeferredEqualityCause,
+        proposal: TypedEqualityProposal,
+    ) {
         let row = [left, right, timestamp];
         self.buffers
             .lazy_init(table, || self.db.table_info[table].table.new_buffer());
@@ -1033,10 +1039,6 @@ impl<'a> ExecutionState<'a> {
         self.active_cause = cause.map(ActiveCause::Ready);
     }
 
-    fn set_active_deferred_cause(&mut self, cause: Option<DeferredEqualityCause>) {
-        self.active_cause = cause.map(ActiveCause::Deferred);
-    }
-
     pub(crate) fn active_cause_capability(&self) -> Option<CauseCapability> {
         self.active_cause
             .as_ref()
@@ -1047,10 +1049,14 @@ impl<'a> ExecutionState<'a> {
         &mut self,
         incoming: DeferredEqualityCause,
         prior_fact: FactId,
+        table: TableId,
+        incoming_origin: Option<crate::receipts::RowOriginRef>,
     ) -> Option<ActiveCause> {
         self.active_cause.replace(ActiveCause::DeferredMerge {
             incoming,
             prior_fact,
+            table,
+            incoming_origin,
             shared: None,
         })
     }
@@ -1077,16 +1083,16 @@ impl<'a> ExecutionState<'a> {
 
     pub(crate) fn set_active_container_canonicalization(
         &mut self,
-        cause: Option<(CauseCapability, ReplaySortId)>,
+        cause: Option<(CauseCapability, TypedEqualityProposal)>,
     ) {
         match cause {
-            Some((cause, sort)) => {
+            Some((cause, proposal)) => {
                 self.active_cause = Some(ActiveCause::Ready(cause));
-                self.active_container_union_sort = Some(sort);
+                self.active_container_union = Some(proposal);
             }
             None => {
                 self.active_cause = None;
-                self.active_container_union_sort = None;
+                self.active_container_union = None;
             }
         }
     }
@@ -1100,10 +1106,27 @@ impl<'a> ExecutionState<'a> {
         right: Value,
         timestamp: Value,
     ) {
-        let sort = self
-            .active_container_union_sort
-            .expect("container union has no prepared logical sort");
-        self.stage_union_with_replay(table, left, right, timestamp, sort);
+        let proposal = self
+            .active_container_union
+            .expect("container union has no prepared structural proposal");
+        assert_eq!(proposal.wave(), self.db.causal_wave);
+        assert_eq!((proposal.left().raw, proposal.right().raw), (left, right));
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("container union staging requires causal receipts");
+        let cause = self
+            .active_cause
+            .as_mut()
+            .expect("container union lost its active cause")
+            .deferred(receipts);
+        receipts
+            .validate_deferred_equality_cause(&cause)
+            .unwrap_or_else(|error| panic!("invalid container equality cause: {error}"));
+        receipts
+            .validate_equality_wave_timestamp(self.db.causal_wave, timestamp)
+            .unwrap_or_else(|error| panic!("invalid container equality timestamp: {error}"));
+        self.stage_typed_union_proposal(table, left, right, timestamp, cause, proposal);
     }
 
     pub(crate) fn causal_receipts(&self) -> Option<&CausalReceipts> {
@@ -1187,12 +1210,10 @@ impl<'a> ExecutionState<'a> {
         if let Some(row) = self.db.table_info[table].table.get_row(key) {
             return row.vals;
         }
-        let cause = self.db.causal_receipts.map(|receipts| {
-            self.active_cause
-                .as_mut()
-                .expect("receipt-enabled predicted insertion is missing its match cause")
-                .deferred(receipts)
-        });
+        assert!(
+            self.db.causal_receipts.is_none(),
+            "receipt-enabled prediction requires an exact static row origin"
+        );
         Pooled::cloned(
             self.predicted
                 .get_val(table, key, || {
@@ -1203,11 +1224,55 @@ impl<'a> ExecutionState<'a> {
                         table,
                         key,
                         vals,
-                        cause,
                     )
                 })
                 .deref(),
         )
+    }
+
+    /// Source-ingestion prediction with one exact structural origin. The
+    /// active source cause and row are staged only for the first missing key;
+    /// duplicate TSV rows retain native prediction ownership semantics.
+    #[doc(hidden)]
+    pub fn predict_val_with_origin(
+        &mut self,
+        table: TableId,
+        key: &[Value],
+        vals: impl ExactSizeIterator<Item = MergeVal>,
+        origin: RowOriginSiteId,
+    ) -> Pooled<Vec<Value>> {
+        if let Some(row) = self.db.table_info[table].table.get_row(key) {
+            return row.vals;
+        }
+        let prediction_key = (table, SmallVec::<[Value; 3]>::from_slice(key));
+        if let Some(row) = self.predicted.data.get(&prediction_key) {
+            return Pooled::cloned(row);
+        }
+        let receipts = self
+            .db
+            .causal_receipts
+            .expect("origin-attributed prediction requires causal receipts");
+        let cause = self
+            .active_cause
+            .as_mut()
+            .expect("origin-attributed prediction has no active source cause")
+            .deferred(receipts);
+        let mut row = with_pool_set(|ps| ps.get::<Vec<Value>>());
+        row.reserve(key.len() + vals.len());
+        row.extend_from_slice(key);
+        for value in vals {
+            row.push(match value {
+                MergeVal::Counter(counter) => Value::from_usize(self.db.counters.inc(counter)),
+                MergeVal::Constant(value) => value,
+            });
+        }
+        self.buffers
+            .lazy_init(table, || self.db.table_info[table].table.new_buffer());
+        self.buffers
+            .stage_insert_deferred_with_origin(table, &row, cause, origin);
+        self.changed = true;
+        let row = self.predicted.data.entry(prediction_key).or_insert(row);
+        Pooled::cloned(row)
     }
 
     fn construct_new_row(
@@ -1217,7 +1282,6 @@ impl<'a> ExecutionState<'a> {
         table: TableId,
         key: &[Value],
         vals: impl ExactSizeIterator<Item = MergeVal>,
-        cause: Option<DeferredEqualityCause>,
     ) -> Pooled<Vec<Value>> {
         with_pool_set(|ps| {
             let mut new = ps.get::<Vec<Value>>();
@@ -1230,22 +1294,8 @@ impl<'a> ExecutionState<'a> {
                 })
             }
             buffers.lazy_init(table, || db.table_info[table].table.new_buffer());
-            if let Some(receipts) = db.causal_receipts {
-                let cause =
-                    cause.expect("receipt-enabled predicted insertion is missing its match cause");
-                match receipts
-                    .constructor_row_terms(table, &new)
-                    .unwrap_or_else(|error| {
-                        panic!("cannot stage exact constructor row terms: {error}")
-                    }) {
-                    Some(terms) => {
-                        buffers.stage_insert_deferred_with_terms(table, &new, cause, &terms)
-                    }
-                    None => buffers.stage_insert_deferred(table, &new, cause),
-                }
-            } else {
-                buffers.stage_insert(table, &new);
-            }
+            debug_assert!(db.causal_receipts.is_none());
+            buffers.stage_insert(table, &new);
             *changed = true;
             new
         })
@@ -1263,12 +1313,10 @@ impl<'a> ExecutionState<'a> {
         if let Some(val) = self.db.table_info[table].table.get_row_column(key, col) {
             return val;
         }
-        let cause = self.db.causal_receipts.map(|receipts| {
-            self.active_cause
-                .as_mut()
-                .expect("receipt-enabled predicted insertion is missing its match cause")
-                .deferred(receipts)
-        });
+        assert!(
+            self.db.causal_receipts.is_none(),
+            "receipt-enabled prediction requires an exact static row origin"
+        );
         self.predicted.get_val(table, key, || {
             Self::construct_new_row(
                 &self.db,
@@ -1277,7 +1325,6 @@ impl<'a> ExecutionState<'a> {
                 table,
                 key,
                 vals,
-                cause,
             )
         })[col.index()]
     }
@@ -1352,6 +1399,7 @@ impl ExecutionState<'_> {
                 default,
                 dst_col,
                 dst_var,
+                origin,
             } => {
                 let pool = with_pool_set(|ps| ps.get_pool::<Vec<Value>>().clone());
                 self.buffers.lazy_init(*table_id, || {
@@ -1420,11 +1468,14 @@ impl ExecutionState<'_> {
                                     row.push(val)
                                 }
                                 if let Some(causes) = &deferred_causes {
-                                    buffers.stage_insert_deferred(
+                                    buffers.stage_insert_deferred_with_origin(
                                         *table_id,
                                         &row,
                                         causes[offset].clone().expect(
                                             "constructor lane is missing its exact receipt cause",
+                                        ),
+                                        origin.expect(
+                                            "receipt lookup/insert has no static row origin",
                                         ),
                                     );
                                 } else {
@@ -1443,7 +1494,7 @@ impl ExecutionState<'_> {
                 default,
                 dst_col,
                 dst_var,
-                replay,
+                origin,
             } => {
                 let receipts = self
                     .db
@@ -1499,33 +1550,9 @@ impl ExecutionState<'_> {
                     bindings.replace(out);
                 }
 
-                // Snapshot the exact producer term for every active lane,
-                // including lookup hits. A native value may already have a
-                // different structural alias in the global current map.
-                let active_lanes = {
-                    let mut lanes = Vec::new();
-                    let mut active = mask.clone();
-                    active
-                        .empty_iter()
-                        .for_each_indexed(|lane, ()| lanes.push(lane));
-                    lanes
-                };
-                for lane in active_lanes {
-                    let mut children = SmallVec::<[ReplayTermId; 4]>::new();
-                    for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
-                        children.push(bindings.replay_term_for_entry(*arg, sort, lane, receipts));
-                    }
-                    let output = bindings[*dst_var][lane];
-                    let call = receipts
-                        .intern_spec_call(replay, &children, output)
-                        .expect("constructor producer must install a typed output");
-                    bindings.record_produced_term(*dst_var, lane, call);
-                }
-
-                // Phase 2: only distinct missing rows are effects. Preserve
-                // the exact Call node assembled for each owner beside its
-                // staged row; a global current-value lookup can select a
-                // different structural alias by commit time.
+                // Phase 2: only distinct missing rows are effects. The compact
+                // static origin site names their exact syntax; no lane builds
+                // a replay term on the native execution path.
                 if !owners.is_empty() {
                     let predicted = &self.predicted.data;
                     let buffers = &mut self.buffers;
@@ -1533,27 +1560,11 @@ impl ExecutionState<'_> {
                         let row = predicted
                             .get(&(*table_id, key))
                             .expect("new constructor prediction disappeared");
-                        let mut terms = vec![ReplayTermId::MISSING; row.len()];
-                        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
-                        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
-                            children
-                                .push(bindings.replay_term_for_entry(*arg, sort, lane, receipts));
-                        }
-                        let call = bindings
-                            .receipt
-                            .as_ref()
-                            .and_then(|state| state.produced_terms.get(*dst_var))
-                            .and_then(|terms| terms.get(lane))
-                            .copied()
-                            .filter(|term| !term.is_missing())
-                            .expect("constructor output is missing its producer term");
-                        terms[..children.len()].copy_from_slice(&children);
-                        terms[children.len()] = call;
-                        buffers.stage_insert_deferred_with_terms(
+                        buffers.stage_insert_deferred_with_origin(
                             *table_id,
                             row,
                             bindings.deferred_equality_cause(lane, receipts),
-                            &terms,
+                            origin.expect("receipt constructor has no static row origin"),
                         );
                     }
                 }
@@ -1617,7 +1628,11 @@ impl ExecutionState<'_> {
                 lookup_result.union(&to_call_func);
                 *mask = lookup_result;
             }
-            Instr::Insert { table, vals } => {
+            Instr::Insert {
+                table,
+                vals,
+                origin,
+            } => {
                 if let Some(receipts) = self.db.causal_receipts {
                     let mut causes = vec![None; bindings.matches];
                     let mut cause_mask = mask.clone();
@@ -1626,11 +1641,20 @@ impl ExecutionState<'_> {
                     });
                     for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                         iter.for_each_indexed(|offset, vals| {
-                            self.set_active_deferred_cause(causes[offset].clone());
-                            self.stage_insert(*table, vals.as_slice());
+                            self.buffers.lazy_init(*table, || {
+                                self.db.table_info[*table].table.new_buffer()
+                            });
+                            self.buffers.stage_insert_deferred_with_origin(
+                                *table,
+                                vals.as_slice(),
+                                causes[offset]
+                                    .clone()
+                                    .expect("receipt insert lane has no exact cause"),
+                                origin.expect("receipt insert has no static row origin"),
+                            );
+                            self.changed = true;
                         })
                     });
-                    self.set_active_deferred_cause(None);
                 } else {
                     // Keep the ordinary loop byte-for-byte equivalent to the
                     // pre-receipt action path.
@@ -1647,6 +1671,8 @@ impl ExecutionState<'_> {
                 right,
                 timestamp,
                 sort,
+                left_origin,
+                right_origin,
             } => {
                 let receipts = self
                     .db
@@ -1661,12 +1687,28 @@ impl ExecutionState<'_> {
                     let right = get(*right);
                     let timestamp = get(*timestamp);
                     let cause = bindings.deferred_equality_cause(offset, receipts);
-                    self.stage_union_with_deferred_cause(
-                        *table, left, right, timestamp, *sort, cause,
+                    let proposal = receipts
+                        .typed_equality_proposal_from_sites(
+                            self.db.causal_wave,
+                            *sort,
+                            left,
+                            left_origin.expect("typed union has no left structural origin"),
+                            right,
+                            right_origin.expect("typed union has no right structural origin"),
+                        )
+                        .unwrap_or_else(|error| panic!("invalid typed union proposal: {error}"));
+                    self.stage_typed_union_proposal(
+                        *table, left, right, timestamp, cause, proposal,
                     );
                 });
             }
-            Instr::InsertIfEq { table, l, r, vals } => {
+            Instr::InsertIfEq {
+                table,
+                l,
+                r,
+                vals,
+                origin,
+            } => {
                 if let Some(receipts) = self.db.causal_receipts {
                     fn get(bindings: &Bindings, entry: QueryEntry, offset: usize) -> Value {
                         match entry {
@@ -1690,13 +1732,24 @@ impl ExecutionState<'_> {
                         for_each_binding_with_mask!(mask, vals.as_slice(), bindings, |iter| {
                             iter.for_each_indexed(|offset, vals| {
                                 if get(bindings, *l, offset) == get(bindings, *r, offset) {
-                                    self.set_active_deferred_cause(causes[offset].clone());
-                                    self.stage_insert(*table, vals.as_slice());
+                                    self.buffers.lazy_init(*table, || {
+                                        self.db.table_info[*table].table.new_buffer()
+                                    });
+                                    self.buffers.stage_insert_deferred_with_origin(
+                                        *table,
+                                        vals.as_slice(),
+                                        causes[offset]
+                                            .clone()
+                                            .expect("receipt conditional insert has no cause"),
+                                        origin.expect(
+                                            "receipt conditional insert has no static row origin",
+                                        ),
+                                    );
+                                    self.changed = true;
                                 }
                             })
                         });
                     }
-                    self.set_active_deferred_cause(None);
                 } else {
                     match (l, r) {
                         (QueryEntry::Var(v1), QueryEntry::Var(v2)) => {
@@ -1792,51 +1845,52 @@ impl ExecutionState<'_> {
                 f1_result.union(&to_call_f2);
                 *mask = f1_result;
             }
-            Instr::ExternalWithFallbackReplay {
-                f1,
-                args1,
-                f2,
-                args2,
+            Instr::PromoteReplayCall {
+                args,
                 dst,
                 replay,
+                origin,
             } => {
                 let receipts = self
                     .db
                     .causal_receipts
-                    .cloned()
-                    .expect("primitive replay promotion requires causal receipts");
-                let mut f1_result = mask.clone();
-                invoke_batch(
-                    self.db.external_funcs[*f1].as_ref(),
-                    self,
-                    &mut f1_result,
-                    bindings,
-                    args1,
-                    *dst,
+                    .expect("container replay promotion requires causal receipts");
+                assert!(
+                    replay.promote_immediately,
+                    "runtime replay promotion is reserved for registry-mutating containers"
                 );
-                promote_replay_call(&receipts, &mut f1_result, bindings, args1, *dst, replay);
-                let mut to_call_f2 = f1_result.clone();
-                to_call_f2.symmetric_difference(mask);
-                if to_call_f2.is_empty() {
-                    return;
-                }
-                invoke_batch_assign(
-                    self.db.external_funcs[*f2].as_ref(),
-                    self,
-                    &mut to_call_f2,
-                    bindings,
-                    args2,
-                    *dst,
-                );
-                f1_result.union(&to_call_f2);
-                *mask = f1_result;
-            }
-            Instr::PromoteReplayCall { args, dst, replay } => {
-                let receipts = self
-                    .db
-                    .causal_receipts
-                    .expect("primitive replay promotion requires causal receipts");
-                promote_replay_call(receipts, mask, bindings, args, *dst, replay);
+                let outputs = bindings[*dst].to_vec();
+                let binding_sources = bindings
+                    .container_anchor_binding_sources()
+                    .unwrap_or_else(|error| panic!("cannot resolve container anchor: {error}"));
+                receipts
+                    .with_container_anchor_installer(
+                        origin.expect("container replay call has no static term origin"),
+                        replay,
+                        |install| {
+                            mask.iter(&outputs).for_each_indexed(|lane, output| {
+                                let child_values = args
+                                    .iter()
+                                    .map(|entry| match entry {
+                                        QueryEntry::Const(value) => *value,
+                                        QueryEntry::Var(variable) => bindings[*variable][lane],
+                                    })
+                                    .collect::<SmallVec<[Value; 4]>>();
+                                let premises = bindings
+                                    .container_anchor_premises(lane)
+                                    .unwrap_or_else(|error| {
+                                        panic!("cannot resolve container anchor inputs: {error}")
+                                    });
+                                install(&binding_sources, &premises, &child_values, *output)
+                                    .unwrap_or_else(|error| {
+                                        panic!("cannot install exact container anchor: {error}")
+                                    });
+                            });
+                        },
+                    )
+                    .unwrap_or_else(|error| {
+                        panic!("cannot prepare exact container anchor: {error}")
+                    });
             }
             Instr::AssertAnyNe { ops, divider } => {
                 for_each_binding_with_mask!(mask, ops.as_slice(), bindings, |iter| {
@@ -1869,51 +1923,58 @@ impl ExecutionState<'_> {
                 let mut winner = None::<(
                     CausalWave,
                     SmallVec<[FactId; 4]>,
-                    SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>,
+                    SmallVec<[(Value, Value); 4]>,
                 )>;
                 mask.empty_iter().for_each_indexed(|offset, ()| {
                     let (wave, premises) = bindings.check_receipt(offset);
-                    let premise_terms = receipts
-                        .check_premise_terms(&premises, &premise_requests)
-                        .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
-                    let mut premise_terms = premise_terms.into_iter();
                     let get = |entry| match entry {
                         QueryEntry::Const(value) => value,
                         QueryEntry::Var(variable) => bindings[variable][offset],
                     };
-                    let mut resolve = |endpoint: CheckEndpointSpec| {
-                        let raw = get(endpoint.value);
-                        match endpoint.term {
-                            CheckTermSource::Premise { .. }
-                            | CheckTermSource::Constructor { .. } => EqualityEndpoint {
-                                sort: endpoint.sort,
-                                term: premise_terms
-                                    .next()
-                                    .expect("one term for every premise endpoint"),
-                                raw,
-                            },
-                            CheckTermSource::Current => receipts
-                                .equality_endpoint(endpoint.sort, raw)
-                                .unwrap_or_else(|error| {
-                                    panic!("invalid exact check root: {error}")
-                                }),
-                        }
-                    };
-                    let resolved = equalities
+                    let raw_equalities = equalities
                         .iter()
-                        .map(|&(left, right)| (resolve(left), resolve(right)))
-                        .collect::<SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>>();
-                    debug_assert!(premise_terms.next().is_none());
+                        .map(|(left, right)| (get(left.value), get(right.value)))
+                        .collect::<SmallVec<[(Value, Value); 4]>>();
                     let replace = winner.as_ref().is_none_or(|current| {
-                        (wave, premises.as_slice(), resolved.as_slice())
+                        (wave, premises.as_slice(), raw_equalities.as_slice())
                             < (current.0, current.1.as_slice(), current.2.as_slice())
                     });
                     if replace {
-                        winner = Some((wave, premises, resolved));
+                        winner = Some((wave, premises, raw_equalities));
                     }
                 });
-                let (wave, premises, resolved) =
+                let (wave, premises, raw_equalities) =
                     winner.expect("nonempty check mask has one exact candidate");
+                let premise_terms = receipts
+                    .check_premise_terms(&premises, &premise_requests)
+                    .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
+                let mut premise_terms = premise_terms.into_iter();
+                let mut raw_equalities = raw_equalities.into_iter();
+                let mut resolve = |endpoint: CheckEndpointSpec, raw| match endpoint.term {
+                    CheckTermSource::Premise { .. } | CheckTermSource::Constructor { .. } => {
+                        EqualityEndpoint {
+                            sort: endpoint.sort,
+                            term: premise_terms
+                                .next()
+                                .expect("one term for every premise endpoint"),
+                            raw,
+                        }
+                    }
+                    CheckTermSource::Current => receipts
+                        .equality_endpoint(endpoint.sort, raw)
+                        .unwrap_or_else(|error| panic!("invalid exact check root: {error}")),
+                };
+                let resolved = equalities
+                    .iter()
+                    .map(|&(left, right)| {
+                        let (left_raw, right_raw) = raw_equalities
+                            .next()
+                            .expect("one raw pair for every check equality");
+                        (resolve(left, left_raw), resolve(right, right_raw))
+                    })
+                    .collect::<SmallVec<[(EqualityEndpoint, EqualityEndpoint); 4]>>();
+                debug_assert!(premise_terms.next().is_none());
+                debug_assert!(raw_equalities.next().is_none());
                 receipts
                     .record_check_root(*check, wave, &premises, &resolved, *as_of_edges)
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
@@ -1925,48 +1986,9 @@ impl ExecutionState<'_> {
                 let ctr_val = Value::from_usize(self.read_counter(*counter));
                 vals.resize(bindings.matches, ctr_val);
                 bindings.insert(*dst, &vals);
-                if let (Some(receipts), Some(sort)) =
-                    (self.db.causal_receipts, bindings.current_binding_sort(*dst))
-                {
-                    let term = receipts.lookup_term(sort, ctr_val).unwrap_or_else(|| {
-                        panic!("counter value has no producer-installed ReplayTermId")
-                    });
-                    for lane in 0..bindings.matches {
-                        bindings.record_produced_term(*dst, lane, term);
-                    }
-                }
             }
         }
     }
-}
-
-fn promote_replay_call(
-    receipts: &CausalReceipts,
-    mask: &mut Mask,
-    bindings: &mut Bindings,
-    args: &[QueryEntry],
-    dst: Variable,
-    replay: &ReplayConstructorSpec,
-) {
-    assert_eq!(
-        replay.child_sorts.len(),
-        args.len(),
-        "primitive replay metadata needs one sort per argument"
-    );
-    receipts
-        .register_spec_container_type(replay)
-        .expect("pure primitive replay sort has conflicting container metadata");
-    let outputs = bindings[dst].to_vec();
-    mask.iter(&outputs).for_each_indexed(|offset, output| {
-        let mut children = SmallVec::<[ReplayTermId; 4]>::new();
-        for (sort, arg) in replay.child_sorts.iter().copied().zip(args) {
-            children.push(bindings.replay_term_for_entry(*arg, sort, offset, receipts));
-        }
-        let term = receipts
-            .intern_spec_call(replay, &children, *output)
-            .expect("pure primitive call must install a typed output");
-        bindings.record_produced_term(dst, offset, term);
-    });
 }
 
 #[derive(Debug, Clone)]
@@ -1979,6 +2001,7 @@ pub(crate) enum Instr {
         default: Vec<WriteVal>,
         dst_col: ColumnId,
         dst_var: Variable,
+        origin: Option<RowOriginSiteId>,
     },
 
     /// Receipt-only constructor producer. Ordinary rules use the distinct
@@ -1989,7 +2012,7 @@ pub(crate) enum Instr {
         default: Vec<WriteVal>,
         dst_col: ColumnId,
         dst_var: Variable,
-        replay: Box<ReplayConstructorSpec>,
+        origin: Option<RowOriginSiteId>,
     },
 
     /// Look up the value of the given table; if the value is not there, use the
@@ -2029,6 +2052,7 @@ pub(crate) enum Instr {
     Insert {
         table: TableId,
         vals: Vec<QueryEntry>,
+        origin: Option<RowOriginSiteId>,
     },
 
     /// Receipt-only typed staging for the native equality table.
@@ -2038,6 +2062,8 @@ pub(crate) enum Instr {
         right: QueryEntry,
         timestamp: QueryEntry,
         sort: ReplaySortId,
+        left_origin: Option<TermOriginSiteId>,
+        right_origin: Option<TermOriginSiteId>,
     },
 
     /// Terminal receipt-only action for one successful positive check.
@@ -2053,6 +2079,7 @@ pub(crate) enum Instr {
         l: QueryEntry,
         r: QueryEntry,
         vals: Vec<QueryEntry>,
+        origin: Option<RowOriginSiteId>,
     },
 
     /// Remove the entry corresponding to `args` in `func`.
@@ -2079,25 +2106,13 @@ pub(crate) enum Instr {
         dst: Variable,
     },
 
-    /// Receipt-only fallback call. Only successful lanes from the primary
-    /// primitive are promoted, so a returning fallback cannot be mislabeled as
-    /// an invocation of `f1`.
-    ExternalWithFallbackReplay {
-        f1: ExternalFunctionId,
-        args1: Vec<QueryEntry>,
-        f2: ExternalFunctionId,
-        args2: Vec<QueryEntry>,
-        dst: Variable,
-        replay: Box<ReplayConstructorSpec>,
-    },
-
-    /// Receipt-only promotion of an already-computed pure primitive result to
-    /// one hash-consed structural replay term. This never executes the
-    /// primitive or stages an effect.
+    /// Container-only anchoring of one registry-mutating pure call. Ordinary
+    /// primitives remain static recipes and perform no runtime term work.
     PromoteReplayCall {
         args: Vec<QueryEntry>,
         dst: Variable,
         replay: Box<ReplayConstructorSpec>,
+        origin: Option<TermOriginSiteId>,
     },
 
     /// Continue execution iff the two variables are equal.

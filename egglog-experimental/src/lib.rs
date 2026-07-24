@@ -210,4 +210,62 @@ mod causal_container_tests {
                 .unwrap();
         });
     }
+
+    #[test]
+    fn causal_receipts_refresh_either_right_by_its_logical_child_slot() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Choice (Either i64 Expr))\
+                     (function Hold (Unit) Choice :no-merge)\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (let $a (A 1))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((set (Hold ()) (either-right (B 2)))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)\
+                     (rule ((= v (Hold ()))\
+                            (= v (either-right (A 1))))\
+                       ((Done ())) :name \"observe-refresh\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn causal_receipts_refresh_maybe_some_by_its_logical_child_slot() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort Choice (Maybe Expr))\
+                     (function Hold (Unit) Choice :no-merge)\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (let $a (A 1))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((set (Hold ()) (maybe-some (B 2)))\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)\
+                     (rule ((= v (Hold ()))\
+                            (= v (maybe-some (A 1))))\
+                       ((Done ())) :name \"observe-refresh\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+        });
+    }
 }

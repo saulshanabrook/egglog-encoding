@@ -20,14 +20,14 @@ use std::{
 use crate::core_relations::{
     BaseValue, BaseValueId, BaseValues, ColumnId, Constraint, ContainerValue, ContainerValues,
     CounterId, Database, DisplacedTable, ExecutionState, ExternalFunction, ExternalFunctionId,
-    MergeVal, Offset, PlanStrategy, SortedWritesTable, TableId, TaggedRowBuffer, Value,
-    WrappedTable,
+    MergeOriginSelector, MergeVal, Offset, PlanStrategy, RowOriginSiteId, SortedWritesTable,
+    TableId, TaggedRowBuffer, Value, WrappedTable,
 };
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
     CausalReceipts, CausalWave, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTerm, ReplayTermId,
+    ReplaySortId, ReplayTerm, ReplayTermCounters, ReplayTermId,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, ReportLevel, RuleSetReport};
@@ -703,6 +703,7 @@ impl EGraph {
         };
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
+        let merge_origins = merge.origin_selectors(&schema, n_keys);
         let next_func_id = self.funcs.next_id();
         let name: Arc<str> = name.into();
         // Knot-tying for a self-referential merge (e.g. the term encoder's single-table UF `@UF`,
@@ -719,6 +720,7 @@ impl EGraph {
             n_keys,
             n_identity_vals,
             replay: None,
+            merge_origins,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -859,6 +861,16 @@ impl EGraph {
                 .register_table_constructor(info.table, constructor)
                 .map_err(anyhow::Error::msg)?;
         }
+        let mut merge_origins = info.merge_origins.to_vec();
+        merge_origins.resize(layout.len(), MergeOriginSelector::Unsupported);
+        receipts
+            .register_table_merge_origins(info.table, &merge_origins)
+            .map_err(anyhow::Error::msg)?;
+        if let Some(identity_columns) = info.n_identity_vals {
+            receipts
+                .register_table_merge_identity_guard(info.table, info.n_keys, identity_columns)
+                .map_err(anyhow::Error::msg)?;
+        }
         self.funcs[func].replay = Some(spec);
         Ok(())
     }
@@ -920,6 +932,17 @@ impl EGraph {
                 }
             }
         }
+        let constructor_origins = constructor
+            .map(|constructor| {
+                rows.iter()
+                    .map(|row| {
+                        receipts
+                            .source_constructor_origin(info.table, &row.terms, constructor)
+                            .map_err(anyhow::Error::msg)
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?;
 
         let sources = rows
             .iter()
@@ -931,13 +954,19 @@ impl EGraph {
                 let row = &rows[row_index];
                 if let Some(constructor) = constructor {
                     let output = action
-                        .lookup_or_insert(state, &row.values)
+                        .lookup_or_insert_with_origin(
+                            state,
+                            &row.values,
+                            constructor_origins.as_ref().unwrap()[row_index],
+                        )
                         .expect("constructor source insertion must return its result value");
                     receipts
                         .intern_spec_call(constructor, &row.terms, output)
                         .expect("prevalidated constructor source terms must form a replay call");
                 } else {
-                    action.insert(state, row.values.iter().copied());
+                    action
+                        .insert_source_row(state, &row.values, &row.terms, receipts)
+                        .expect("prevalidated source row must have an exact structural origin");
                 }
             })
             .map_err(anyhow::Error::msg)
@@ -964,6 +993,17 @@ impl EGraph {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
         Ok(receipts.snapshot())
+    }
+
+    /// Inspect live replay-term and container-anchor cardinalities. Unlike a
+    /// durable receipt snapshot, this remains valid while a rejected causal
+    /// wave is being diagnosed.
+    pub fn causal_replay_term_counters(&self) -> Result<ReplayTermCounters> {
+        let receipts = self
+            .causal_receipts
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
+        Ok(receipts.replay_term_counters())
     }
 
     /// Promote the current receipt wave after a synchronous native barrier.
@@ -1483,6 +1523,7 @@ struct FunctionInfo {
     /// Opt-in identity-column guard (see [`FunctionConfig::n_identity_vals`]).
     n_identity_vals: Option<usize>,
     replay: Option<FunctionReplaySpec>,
+    merge_origins: Box<[MergeOriginSelector]>,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
@@ -1527,6 +1568,12 @@ pub enum MergeFn {
     /// The output of a merge is determined by applying the given ExternalFunction to the result
     /// of the argument merge functions.
     Primitive(ExternalFunctionId, Vec<MergeFn>),
+    /// A frontend-verified pure primitive whose result is always one of its
+    /// two inputs. The current whitelist contains numeric `min`/`max` and the
+    /// three input-selecting container helpers used by the supported cohort.
+    /// Execution is identical to `Primitive`; the marker only permits exact
+    /// structural-origin selection from the observed callback result.
+    InputChoicePrimitive(ExternalFunctionId, Vec<MergeFn>),
     /// The output of a merge is determined by looking up the value for the given function and the
     /// given arguments in the egraph.
     Function(FunctionId, Vec<MergeFn>),
@@ -1580,6 +1627,98 @@ pub enum MergeAction {
 }
 
 impl MergeFn {
+    fn origin_selectors(&self, schema: &[ColumnTy], n_keys: usize) -> Box<[MergeOriginSelector]> {
+        let result = match self {
+            MergeFn::Block { actions, result } if actions.is_empty() => result.as_ref(),
+            MergeFn::Block { .. } => {
+                let mut selectors = (0..n_keys)
+                    .map(|column| MergeOriginSelector::Incoming {
+                        column: u16::try_from(column).expect("function has more than u16 columns"),
+                    })
+                    .collect::<Vec<_>>();
+                selectors.resize(schema.len(), MergeOriginSelector::Unsupported);
+                return selectors.into_boxed_slice();
+            }
+            other => other,
+        };
+        let columns = result.columns();
+        assert_eq!(columns.len(), schema.len() - n_keys);
+        let mut selectors = (0..n_keys)
+            .map(|column| MergeOriginSelector::Incoming {
+                column: u16::try_from(column).expect("function has more than u16 columns"),
+            })
+            .collect::<Vec<_>>();
+        for (value_column, (ty, merge)) in schema[n_keys..].iter().copied().zip(columns).enumerate()
+        {
+            let _ = ty;
+            let selector = merge.structural_origin_selector(n_keys, value_column);
+            selectors.push(selector);
+        }
+        selectors.into_boxed_slice()
+    }
+
+    fn structural_origin_selector(&self, n_keys: usize, self_column: usize) -> MergeOriginSelector {
+        let current =
+            u16::try_from(n_keys + self_column).expect("function has more than u16 columns");
+        let value_column = |column: usize| {
+            u16::try_from(n_keys + column).expect("function has more than u16 columns")
+        };
+        match self {
+            MergeFn::Old | MergeFn::AssertEq => MergeOriginSelector::Prior { column: current },
+            MergeFn::New => MergeOriginSelector::Incoming { column: current },
+            MergeFn::OldCol(column) => MergeOriginSelector::Prior {
+                column: value_column(*column),
+            },
+            MergeFn::NewCol(column) => MergeOriginSelector::Incoming {
+                column: value_column(*column),
+            },
+            MergeFn::UnionId => MergeOriginSelector::NativeMin {
+                incoming_column: current,
+                prior_column: current,
+            },
+            MergeFn::InputChoicePrimitive(_, args) if args.len() == 2 => {
+                let left = args[0].structural_origin_selector(n_keys, self_column);
+                let right = args[1].structural_origin_selector(n_keys, self_column);
+                match (left, right) {
+                    (
+                        MergeOriginSelector::Prior {
+                            column: prior_column,
+                        },
+                        MergeOriginSelector::Incoming {
+                            column: incoming_column,
+                        },
+                    )
+                    | (
+                        MergeOriginSelector::Incoming {
+                            column: incoming_column,
+                        },
+                        MergeOriginSelector::Prior {
+                            column: prior_column,
+                        },
+                    ) => MergeOriginSelector::PriorOrIncoming {
+                        incoming_column,
+                        prior_column,
+                    },
+                    _ => MergeOriginSelector::Unsupported,
+                }
+            }
+            MergeFn::Block { actions, result } if actions.is_empty() => {
+                result.structural_origin_selector(n_keys, self_column)
+            }
+            MergeFn::Block { .. } => MergeOriginSelector::Unsupported,
+            MergeFn::Columns(columns) if columns.len() == 1 => {
+                columns[0].structural_origin_selector(n_keys, self_column)
+            }
+            MergeFn::Primitive(..)
+            | MergeFn::InputChoicePrimitive(..)
+            | MergeFn::Function(..)
+            | MergeFn::Lookup(..)
+            | MergeFn::LetVar(..)
+            | MergeFn::Const(..)
+            | MergeFn::Columns(..) => MergeOriginSelector::Unsupported,
+        }
+    }
+
     fn fill_deps(
         &self,
         egraph: &EGraph,
@@ -1588,7 +1727,7 @@ impl MergeFn {
     ) {
         use MergeFn::*;
         match self {
-            Primitive(_, args) => {
+            Primitive(_, args) | InputChoicePrimitive(_, args) => {
                 args.iter()
                     .for_each(|arg| arg.fill_deps(egraph, read_deps, write_deps));
                 write_deps.insert(egraph.uf_table);
@@ -1636,7 +1775,11 @@ impl MergeFn {
         match self {
             OldCol(i) => check(*i, "OldCol"),
             NewCol(i) => check(*i, "NewCol"),
-            Primitive(_, args) | Function(_, args) | Columns(args) | Lookup(_, args) => args
+            Primitive(_, args)
+            | InputChoicePrimitive(_, args)
+            | Function(_, args)
+            | Columns(args)
+            | Lookup(_, args) => args
                 .iter()
                 .for_each(|a| a.check_value_col_indices(n_vals, name)),
             Block { actions, result } => {
@@ -1797,16 +1940,18 @@ impl MergeFn {
             // for each layer of nesting. This introduces a bit of overhead, particularly for cases
             // that look like `(f old new)` or `(f new old)`. We could special-case common cases in
             // this function if that overhead shows up.
-            MergeFn::Primitive(prim, args) => ResolvedMergeFn::Primitive {
-                prim: *prim,
-                args: args
-                    .iter()
-                    .map(|arg| arg.resolve(function_name, egraph))
-                    .collect::<Vec<_>>(),
-                panic: egraph.new_panic(format!(
-                    "Merge function for {function_name} primitive call failed"
-                )),
-            },
+            MergeFn::Primitive(prim, args) | MergeFn::InputChoicePrimitive(prim, args) => {
+                ResolvedMergeFn::Primitive {
+                    prim: *prim,
+                    args: args
+                        .iter()
+                        .map(|arg| arg.resolve(function_name, egraph))
+                        .collect::<Vec<_>>(),
+                    panic: egraph.new_panic(format!(
+                        "Merge function for {function_name} primitive call failed"
+                    )),
+                }
+            }
             MergeFn::Function(func, args) => {
                 let func_info = &egraph.funcs[*func];
                 assert_eq!(
@@ -2042,7 +2187,15 @@ impl ResolvedMergeFn {
                             .expect(
                                 "receipt-enabled merge is missing its logical replay-sort layout",
                             );
-                        state.stage_union_with_replay(*uf_table, cur, new, ts, sort);
+                        state.stage_merge_union_with_replay(
+                            *uf_table,
+                            merge_table,
+                            ColumnId::from_usize(n_keys + self_col),
+                            cur,
+                            new,
+                            ts,
+                            sort,
+                        );
                     } else {
                         state.stage_insert(*uf_table, &[cur, new, ts]);
                     }
@@ -2273,6 +2426,46 @@ impl TableAction {
         }
     }
 
+    fn lookup_or_insert_with_origin(
+        &self,
+        state: &mut ExecutionState,
+        key: &[Value],
+        origin: RowOriginSiteId,
+    ) -> Option<Value> {
+        match self.default {
+            Some(default) => {
+                let timestamp =
+                    MergeVal::Constant(Value::from_usize(state.read_counter(self.timestamp)));
+                let mut merge_vals = SmallVec::<[MergeVal; 3]>::new();
+                SchemaMath {
+                    n_keys: 0,
+                    func_cols: 1,
+                    ..self.table_math
+                }
+                .write_table_row(
+                    &mut merge_vals,
+                    RowVals {
+                        timestamp,
+                        subsume: self
+                            .table_math
+                            .subsume
+                            .then_some(MergeVal::Constant(NOT_SUBSUMED)),
+                        ret_val: Some(default),
+                    },
+                );
+                Some(
+                    state.predict_val_with_origin(
+                        self.table,
+                        key,
+                        merge_vals.iter().copied(),
+                        origin,
+                    )[self.table_math.ret_val_col()],
+                )
+            }
+            None => self.lookup(state, key),
+        }
+    }
+
     /// Multi-value variant of [`TableAction::lookup_or_insert`] for a value-tuple constructor
     /// `(children) -> (output, extra...)`: the first value column (`output`) is minted (the
     /// configured `FreshId` default) and the rest are written from `provided_vals` (e.g. a proof).
@@ -2327,6 +2520,42 @@ impl TableAction {
             },
         );
         state.stage_insert(self.table, &scratch);
+    }
+
+    fn insert_source_row(
+        &self,
+        state: &mut ExecutionState,
+        row: &[Value],
+        terms: &[ReplayTermId],
+        receipts: &CausalReceipts,
+    ) -> Result<()> {
+        if row.len() != terms.len() {
+            anyhow::bail!("source row values and structural terms have different arities");
+        }
+        let ts = Value::from_usize(state.read_counter(self.timestamp));
+        let mut scratch = SmallVec::<[Value; 8]>::from_slice(row);
+        self.table_math.write_table_row(
+            &mut scratch,
+            RowVals {
+                timestamp: ts,
+                subsume: self.table_math.subsume.then_some(NOT_SUBSUMED),
+                ret_val: None,
+            },
+        );
+        let mut structural = SmallVec::<[ReplayTermId; 8]>::from_slice(terms);
+        self.table_math.write_table_row(
+            &mut structural,
+            RowVals {
+                timestamp: ReplayTermId::MISSING,
+                subsume: self.table_math.subsume.then_some(ReplayTermId::MISSING),
+                ret_val: None,
+            },
+        );
+        let origin = receipts
+            .install_source_row(self.table, &scratch, &structural)
+            .map_err(anyhow::Error::msg)?;
+        state.stage_insert_with_origin(self.table, &scratch, origin);
+        Ok(())
     }
 
     /// Delete a row from this table.

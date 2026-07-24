@@ -16,20 +16,12 @@ fn v(x: usize) -> Value {
 fn displaced() {
     empty_execution_state!(e);
     let mut d = DisplacedTable::default();
-    assert!(
-        d.equality_components.is_none(),
-        "ordinary UF starts without a receipt component sidecar"
-    );
     {
         let mut buf = d.new_buffer();
         buf.stage_insert(&[v(0), v(1), v(0)]);
         buf.stage_insert(&[v(2), v(3), v(0)]);
     }
     d.merge(&mut e);
-    assert!(
-        d.equality_components.is_none(),
-        "ordinary UF insertion must not allocate a receipt component sidecar"
-    );
     let all = d.all();
     let mut updates = Vec::new();
     d.scan_generic(all.as_ref(), |_, row| {
@@ -54,10 +46,6 @@ fn displaced() {
 
     d.new_buffer().stage_insert(&[v(1), v(3), v(1)]);
     d.merge(&mut e);
-    assert!(
-        d.equality_components.is_none(),
-        "ordinary UF merges keep the receipt component sidecar absent"
-    );
 
     let all = d.all();
     let mut updates_2 = Vec::new();
@@ -78,5 +66,4 @@ fn ordinary_caused_staging_preserves_native_union_behavior() {
         table.underlying_uf().find_naive(v(4)),
         table.underlying_uf().find_naive(v(5))
     );
-    assert!(table.equality_components.is_none());
 }

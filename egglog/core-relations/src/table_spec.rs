@@ -605,25 +605,33 @@ pub trait MutationBuffer: Any + Send + Sync {
         panic!("deferred receipt insertion staged into a table without receipt support")
     }
 
-    fn stage_insert_deferred_with_terms(
+    fn stage_insert_deferred_with_origin(
         &mut self,
         _row: &[Value],
         _cause: DeferredEqualityCause,
-        _terms: &[crate::ReplayTermId],
+        _origin: crate::RowOriginSiteId,
     ) {
-        panic!("deferred structural insertion staged into a table without receipt support")
+        panic!("origin-attributed insertion staged into a table without receipt support")
     }
 
-    /// Stage an insertion together with the coherent structural terms that
-    /// produced this exact row. Constructor actions use this when a current
-    /// e-class value already has other structural aliases.
-    fn stage_insert_with_cause_and_terms(
+    /// Stage a new immutable fact version whose structural row is inherited
+    /// from a prior fact. Stable-id container refreshes use this path: the
+    /// native row is republished at a later timestamp, while its historical
+    /// term remains the exact term owned by `prior_fact`.
+    fn stage_insert_deferred_from_fact(
         &mut self,
         _row: &[Value],
-        _cause: CauseDraftId,
-        _terms: &[crate::ReplayTermId],
+        _cause: DeferredEqualityCause,
+        _prior_fact: FactId,
     ) {
-        panic!("structural row terms staged into a table without receipt support")
+        panic!("fact-attributed insertion staged into a table without receipt support")
+    }
+
+    /// Stage one validated logical-row rekey. The table decides at commit
+    /// whether the source fact moved, was absorbed by a collision, or was
+    /// replaced by an effective merge.
+    fn stage_rekey(&mut self, _row: &[Value], _rekey: crate::PreparedRekey) {
+        panic!("prepared rekey staged into a table without receipt support")
     }
 
     /// Stage a typed equality proposal. Only the native equality table

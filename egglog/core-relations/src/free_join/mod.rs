@@ -436,11 +436,11 @@ impl Database {
         let Some(receipts) = &self.causal_receipts else {
             return Err("causal receipts are not enabled");
         };
-        receipts.install_source_row(table, row, terms)?;
+        let origin = receipts.install_source_row(table, row, terms)?;
         let cause = receipts.source_draft(source);
         let mut state = ExecutionState::new(self.read_only_view(), Default::default());
         state.set_active_cause(Some(cause));
-        state.stage_insert(table, row);
+        state.stage_insert_with_origin(table, row, origin);
         Ok(())
     }
 
@@ -518,13 +518,20 @@ impl Database {
                 })
             }));
             return match rebuilt {
-                Ok(summary) => {
-                    self.container_values = working;
+                Ok(mut summary) => {
+                    summary.defer_anchor_publication(
+                        self.causal_receipts.as_ref().unwrap(),
+                        &transaction,
+                    );
                     let committed = transaction.commit();
                     assert!(
                         committed.rebuild_cursors.is_empty(),
                         "container rebuild transaction recorded a table-rebuild cursor"
                     );
+                    // The registry and its just-published anchor overlay are
+                    // one committed state. Install the validated working
+                    // registry before exposing changed-table notifications.
+                    self.container_values = working;
                     for table in committed.changed_tables {
                         self.notification_list.notify(table);
                     }
