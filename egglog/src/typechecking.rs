@@ -270,6 +270,9 @@ pub struct TypeInfo {
     pub(crate) global_sorts: HashMap<String, ArcSort>,
     /// Sorts that do not allow union (e.g., from `:no-union` sorts or relations).
     pub(crate) non_unionable_sorts: HashSet<String>,
+    /// Container sort instances whose presort has an explicitly replay-safe,
+    /// idempotent registry representation for checked aliases.
+    pub(crate) checked_alias_container_sorts: HashSet<String>,
     /// Typechecking metadata for globally named rules. Runtime rule templates
     /// live with their compiled ruleset entries.
     named_rules: IndexMap<String, NamedRuleTypeInfo>,
@@ -302,6 +305,9 @@ impl EGraph {
             return Err(TypeError::FunctionAlreadyBound(name, span));
         }
 
+        let checked_alias_container = presort_and_args.as_ref().is_some_and(|(presort, _)| {
+            matches!(presort.as_str(), "Pair" | "Vec" | "Maybe" | "Either")
+        });
         let sort = match presort_and_args {
             None => Arc::new(EqSort { name }),
             Some((presort, args)) => {
@@ -313,7 +319,14 @@ impl EGraph {
             }
         };
 
-        self.add_arcsort(sort, span)
+        let sort_name = sort.name().to_owned();
+        self.add_arcsort(sort, span)?;
+        if checked_alias_container {
+            self.type_info
+                .checked_alias_container_sorts
+                .insert(sort_name);
+        }
+        Ok(())
     }
 
     /// Add a user-defined sort to the e-graph.
@@ -499,6 +512,87 @@ impl EGraph {
     }
 }
 
+fn expand_checked_alias_expr(expr: &Expr, aliases: &IndexMap<String, CheckedAliasType>) -> Expr {
+    match expr {
+        GenericExpr::Lit(span, literal) => GenericExpr::Lit(span.clone(), literal.clone()),
+        GenericExpr::Var(span, variable) => aliases
+            .get(variable)
+            .map(|alias| alias.closed_expr.clone())
+            .unwrap_or_else(|| GenericExpr::Var(span.clone(), variable.clone())),
+        GenericExpr::Call(span, head, children) => GenericExpr::Call(
+            span.clone(),
+            head.clone(),
+            children
+                .iter()
+                .map(|child| expand_checked_alias_expr(child, aliases))
+                .collect(),
+        ),
+    }
+}
+
+fn expand_checked_alias_fact(fact: &Fact, aliases: &IndexMap<String, CheckedAliasType>) -> Fact {
+    match fact {
+        GenericFact::Eq(span, left, right) => GenericFact::Eq(
+            span.clone(),
+            expand_checked_alias_expr(left, aliases),
+            expand_checked_alias_expr(right, aliases),
+        ),
+        GenericFact::Fact(expr) => GenericFact::Fact(expand_checked_alias_expr(expr, aliases)),
+    }
+}
+
+fn expand_checked_alias_schedule(
+    schedule: &Schedule,
+    aliases: &IndexMap<String, CheckedAliasType>,
+) -> Schedule {
+    match schedule {
+        Schedule::Saturate(span, nested) => Schedule::Saturate(
+            span.clone(),
+            Box::new(expand_checked_alias_schedule(nested, aliases)),
+        ),
+        Schedule::Repeat(span, count, nested) => Schedule::Repeat(
+            span.clone(),
+            *count,
+            Box::new(expand_checked_alias_schedule(nested, aliases)),
+        ),
+        Schedule::Run(span, config) => Schedule::Run(
+            span.clone(),
+            RunConfig {
+                ruleset: config.ruleset.clone(),
+                until: config.until.as_ref().map(|facts| {
+                    facts
+                        .iter()
+                        .map(|fact| expand_checked_alias_fact(fact, aliases))
+                        .collect()
+                }),
+            },
+        ),
+        Schedule::RunRule(span, configs) => Schedule::RunRule(
+            span.clone(),
+            configs
+                .iter()
+                .map(|config| RunRuleConfig {
+                    rule: config.rule.clone(),
+                    bindings: config
+                        .bindings
+                        .iter()
+                        .map(|(variable, expr)| {
+                            (variable.clone(), expand_checked_alias_expr(expr, aliases))
+                        })
+                        .collect(),
+                })
+                .collect(),
+        ),
+        Schedule::Sequence(span, schedules) => Schedule::Sequence(
+            span.clone(),
+            schedules
+                .iter()
+                .map(|schedule| expand_checked_alias_schedule(schedule, aliases))
+                .collect(),
+        ),
+    }
+}
+
 impl EGraph {
     pub(crate) fn typecheck_program(
         &mut self,
@@ -512,6 +606,31 @@ impl EGraph {
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
+        // Checked aliases are query constants, not local variables. Expand
+        // their already-closed source expression before constraint solving so
+        // a later check cannot accidentally bind `$alias` as a free variable.
+        let expanded_let_check_expr = match command {
+            NCommand::LetCheck { expr, .. } => {
+                Some(expand_checked_alias_expr(expr, &self.checked_alias_types))
+            }
+            _ => None,
+        };
+        let expanded_check_facts = match command {
+            NCommand::Check(_, facts) => Some(
+                facts
+                    .iter()
+                    .map(|fact| expand_checked_alias_fact(fact, &self.checked_alias_types))
+                    .collect::<Vec<_>>(),
+            ),
+            _ => None,
+        };
+        let expanded_schedule = match command {
+            NCommand::RunSchedule(schedule) => Some(expand_checked_alias_schedule(
+                schedule,
+                &self.checked_alias_types,
+            )),
+            _ => None,
+        };
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
@@ -618,6 +737,66 @@ impl EGraph {
                     Context::Full,
                 )?)
             }
+            NCommand::LetCheck {
+                span,
+                name,
+                expr: _,
+                expected_sort,
+            } => {
+                if !name.starts_with(crate::GLOBAL_NAME_PREFIX) {
+                    return Err(TypeError::CheckedAliasMissingPrefix {
+                        name: name.clone(),
+                        span: span.clone(),
+                    });
+                }
+                if let Some(previous) = self.checked_alias_types.get(name) {
+                    return Err(TypeError::CheckedAliasAlreadyBound {
+                        name: name.clone(),
+                        first: previous.declaration_span.clone(),
+                        duplicate: span.clone(),
+                    });
+                }
+
+                let closed_expr = expanded_let_check_expr
+                    .as_ref()
+                    .expect("let-check expression was not expanded");
+                let expected = expected_sort
+                    .as_ref()
+                    .map(|sort| {
+                        self.type_info
+                            .get_sort_by_name(sort)
+                            .cloned()
+                            .ok_or_else(|| TypeError::UndefinedSort(sort.clone(), span.clone()))
+                    })
+                    .transpose()?;
+                let resolved_expr = if let Some(expected) = expected {
+                    self.type_info.typecheck_expr_with_output(
+                        symbol_gen,
+                        closed_expr,
+                        &Default::default(),
+                        expected,
+                        Context::Pure,
+                    )?
+                } else {
+                    self.type_info.typecheck_standalone_expr(
+                        symbol_gen,
+                        closed_expr,
+                        &Default::default(),
+                        Context::Pure,
+                    )?
+                };
+                let resolved_var = ResolvedVar {
+                    name: name.clone(),
+                    sort: resolved_expr.output_type(),
+                    is_global_ref: false,
+                };
+                ResolvedNCommand::LetCheck {
+                    span: span.clone(),
+                    name: resolved_var,
+                    expr: resolved_expr,
+                    expected_sort: expected_sort.clone(),
+                }
+            }
             NCommand::Extract(span, expr, variants) => {
                 // A tuple-output function returns more than one value, so it can't be extracted as a
                 // single term; surface a clear error instead of a confusing arity mismatch.
@@ -655,15 +834,25 @@ impl EGraph {
 
                 ResolvedNCommand::Extract(span.clone(), res_expr, res_variants)
             }
-            NCommand::Check(span, facts) => ResolvedNCommand::Check(
+            NCommand::Check(span, _) => ResolvedNCommand::Check(
                 span.clone(),
-                self.type_info.typecheck_facts(symbol_gen, facts)?,
+                self.type_info.typecheck_facts(
+                    symbol_gen,
+                    expanded_check_facts
+                        .as_deref()
+                        .expect("check facts were not expanded"),
+                )?,
             ),
             NCommand::Fail(span, cmd) => {
                 ResolvedNCommand::Fail(span.clone(), Box::new(self.typecheck_command(cmd)?))
             }
-            NCommand::RunSchedule(schedule) => ResolvedNCommand::RunSchedule(
-                self.type_info.typecheck_schedule(symbol_gen, schedule)?,
+            NCommand::RunSchedule(_) => ResolvedNCommand::RunSchedule(
+                self.type_info.typecheck_schedule(
+                    symbol_gen,
+                    expanded_schedule
+                        .as_ref()
+                        .expect("schedule was not expanded"),
+                )?,
             ),
             NCommand::Pop(span, n) => ResolvedNCommand::Pop(span.clone(), *n),
             NCommand::Push(n) => ResolvedNCommand::Push(*n),
@@ -1582,6 +1771,19 @@ pub enum TypeError {
         rule: String,
         variable: String,
         span: Span,
+    },
+    #[error(
+        "{span}\nChecked alias {name} must start with `{}`",
+        crate::GLOBAL_NAME_PREFIX
+    )]
+    CheckedAliasMissingPrefix { name: String, span: Span },
+    #[error(
+        "{duplicate}\nChecked alias {name} was already declared at {first}; checked aliases cannot be rebound"
+    )]
+    CheckedAliasAlreadyBound {
+        name: String,
+        first: Span,
+        duplicate: Span,
     },
     #[error(
         "{1}\nVariable {0} is ungrounded. A variable is grounded when it appears as an argument to a constructor or function in the query, not just under primitives or equalities."

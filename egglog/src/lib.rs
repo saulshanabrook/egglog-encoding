@@ -338,6 +338,24 @@ impl<T> ExtensionStateValue for T where T: Any + Clone + Send + Sync {}
 
 dyn_clone::clone_trait_object!(ExtensionStateValue);
 
+/// A frontend-only replay alias. Unlike an ordinary global `let`, this owns no
+/// backend function row and contributes no proof or causal fact.
+#[derive(Clone, Debug)]
+struct CheckedAlias {
+    value: Value,
+}
+
+#[derive(Clone, Debug)]
+struct CheckedAliasType {
+    declaration_span: Span,
+    sort: ArcSort,
+    /// Fully expanded source expression for grounding this alias in later
+    /// query-shaped commands. Keeping source syntax here lets proof encoding
+    /// instrument the constructor reads normally without copying a backend
+    /// `Value` between the execution and source-typechecking e-graphs.
+    closed_expr: Expr,
+}
+
 #[derive(Clone)]
 pub struct EGraph {
     backend: Box<dyn egglog_backend_trait::Backend>,
@@ -347,6 +365,10 @@ pub struct EGraph {
     /// Pop reverts the egraph to the last pushed egraph.
     pushed_egraph: Option<Box<Self>>,
     functions: IndexMap<String, Function>,
+    checked_aliases: IndexMap<String, CheckedAlias>,
+    /// Type-only mirror used while resolving later proof-mode commands on the
+    /// original typechecking graph. It deliberately contains no backend Value.
+    checked_alias_types: IndexMap<String, CheckedAliasType>,
     /// Surface declarations that originated from `(relation ...)` before
     /// desugaring rewrote them to non-unionable constructors.
     relation_names: HashSet<String>,
@@ -1054,6 +1076,8 @@ impl EGraph {
             names: Default::default(),
             pushed_egraph: Default::default(),
             functions: Default::default(),
+            checked_aliases: Default::default(),
+            checked_alias_types: Default::default(),
             relation_names: Default::default(),
             rulesets: Default::default(),
             unstable_fn_panic_ids: Default::default(),
@@ -3167,6 +3191,234 @@ impl EGraph {
         Ok(result)
     }
 
+    fn checked_alias_error(span: &Span, alias: &str, reason: impl Into<String>) -> Error {
+        Error::CheckedAlias {
+            alias: alias.to_owned(),
+            reason: reason.into(),
+            span: span.clone(),
+        }
+    }
+
+    fn canonical_checked_value(&self, sort: &ArcSort, value: Value) -> Value {
+        self.backend
+            .get_canon_repr(value, sort.column_ty(self.backend.base_values()))
+    }
+
+    /// Evaluate the deliberately closed `let-check` expression subset. This is
+    /// intentionally separate from `eval_resolved_expr`: the ordinary evaluator
+    /// compiles a global action and gives constructors lookup-or-insert semantics.
+    fn eval_checked_expr(&self, alias_name: &str, expr: &ResolvedExpr) -> Result<Value, Error> {
+        match expr {
+            ResolvedExpr::Lit(_, literal) => {
+                Ok(literal_to_value(self.backend.base_values(), literal))
+            }
+            ResolvedExpr::Var(span, variable) => {
+                if variable.is_global_ref {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!("global `{}` is not a checked alias", variable.name),
+                    ));
+                }
+                let checked = self.checked_aliases.get(&variable.name).ok_or_else(|| {
+                    Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!("checked alias `{}` is unavailable", variable.name),
+                    )
+                })?;
+                let checked_type =
+                    self.checked_alias_types
+                        .get(&variable.name)
+                        .ok_or_else(|| {
+                            Self::checked_alias_error(
+                                span,
+                                alias_name,
+                                format!("checked alias `{}` has no type", variable.name),
+                            )
+                        })?;
+                if checked_type.sort.name() != variable.sort.name() {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "checked alias `{}` has runtime sort `{}` but expression expects `{}`",
+                            variable.name,
+                            checked_type.sort.name(),
+                            variable.sort.name()
+                        ),
+                    ));
+                }
+                Ok(self.canonical_checked_value(&checked_type.sort, checked.value))
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Values(_), _) => Err(Self::checked_alias_error(
+                span,
+                alias_name,
+                "tuple values are not supported",
+            )),
+            ResolvedExpr::Call(span, ResolvedCall::Func(function), children) => {
+                if function.subtype != FunctionSubtype::Constructor
+                    || function.outputs.len() != 1
+                    || !function.output().is_eq_sort()
+                {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "function `{}` is not a single-output EqSort constructor",
+                            function.name
+                        ),
+                    ));
+                }
+                let mut arguments = children
+                    .iter()
+                    .map(|child| self.eval_checked_expr(alias_name, child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (argument, sort) in arguments.iter_mut().zip(&function.input) {
+                    *argument = self.canonical_checked_value(sort, *argument);
+                }
+
+                // Under term/proof encoding the original constructor name is the
+                // term table. The existing eclass lives in the FD view whose
+                // `term_constructor` points back to that source constructor.
+                let entry = if self.proof_state.original_typechecking.is_some() {
+                    self.functions.values().find(|candidate| {
+                        candidate.decl.subtype == FunctionSubtype::Custom
+                            && candidate.decl.term_constructor.as_deref()
+                                == Some(function.name.as_str())
+                            && candidate.schema.input.len() == function.input.len()
+                            && candidate
+                                .schema
+                                .input
+                                .iter()
+                                .zip(&function.input)
+                                .all(|(left, right)| left.name() == right.name())
+                            && candidate.schema.output().name() == function.output().name()
+                    })
+                } else {
+                    self.functions.get(&function.name)
+                }
+                .ok_or_else(|| {
+                    Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!("constructor `{}` has no readable table", function.name),
+                    )
+                })?;
+                let value = self
+                    .backend
+                    .lookup_id(entry.backend_id, &arguments)
+                    .ok_or_else(|| {
+                        Self::checked_alias_error(
+                            span,
+                            alias_name,
+                            format!("lookup of constructor `{}` failed", function.name),
+                        )
+                    })?;
+                Ok(self.canonical_checked_value(function.output(), value))
+            }
+            ResolvedExpr::Call(span, ResolvedCall::Primitive(primitive), children) => {
+                if !primitive.is_pure() || primitive.validator().is_none() {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "primitive `{}` is not replay-safe and pure",
+                            primitive.name()
+                        ),
+                    ));
+                }
+                if primitive.output().is_eq_sort() {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "primitive `{}` produces EqSort `{}`; EqSort values require constructor lookup",
+                            primitive.name(),
+                            primitive.output().name()
+                        ),
+                    ));
+                }
+                if primitive.output().is_container_sort()
+                    && !self
+                        .type_info
+                        .checked_alias_container_sorts
+                        .contains(primitive.output().name())
+                {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "primitive `{}` returns unsupported container sort `{}`",
+                            primitive.name(),
+                            primitive.output().name()
+                        ),
+                    ));
+                }
+                let mut arguments = children
+                    .iter()
+                    .map(|child| self.eval_checked_expr(alias_name, child))
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (argument, sort) in arguments.iter_mut().zip(primitive.input()) {
+                    *argument = self.canonical_checked_value(sort, *argument);
+                }
+                let external = primitive.external_id(Context::Pure);
+                let (value, mutated) = self.backend.with_execution_state_tracked(|state| {
+                    state.call_external_func(external, &arguments)
+                });
+                if mutated {
+                    return Err(Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!(
+                            "primitive `{}` staged a database mutation",
+                            primitive.name()
+                        ),
+                    ));
+                }
+                let value = value.ok_or_else(|| {
+                    Self::checked_alias_error(
+                        span,
+                        alias_name,
+                        format!("primitive `{}` failed", primitive.name()),
+                    )
+                })?;
+                Ok(self.canonical_checked_value(primitive.output(), value))
+            }
+        }
+    }
+
+    /// Publish only the static half of a checked alias while resolving a
+    /// program without executing it (notably the source program retained for
+    /// proof checking). Runtime `Value`s are intentionally never synthesized
+    /// or copied by this path.
+    fn record_checked_alias_type_only(
+        &mut self,
+        span: &Span,
+        name: &ResolvedVar,
+        expr: &ResolvedExpr,
+    ) -> Result<(), Error> {
+        if let Some(previous) = self.checked_alias_types.get(&name.name) {
+            return Err(TypeError::CheckedAliasAlreadyBound {
+                name: name.name.clone(),
+                first: previous.declaration_span.clone(),
+                duplicate: span.clone(),
+            }
+            .into());
+        }
+        self.names.check_checked_alias_available(&name.name, span)?;
+        self.checked_alias_types.insert(
+            name.name.clone(),
+            CheckedAliasType {
+                declaration_span: span.clone(),
+                sort: name.sort.clone(),
+                closed_expr: expr.clone().make_unresolved(),
+            },
+        );
+        self.names.record_checked_alias(&name.name, span);
+        Ok(())
+    }
+
     fn add_combined_ruleset(&mut self, name: String, rulesets: Vec<String>) {
         match self.rulesets.entry(name.clone()) {
             Entry::Occupied(_) => panic!("Ruleset '{name}' was already present"),
@@ -3400,6 +3652,49 @@ impl EGraph {
             ResolvedNCommand::Check(span, facts) => {
                 self.check_facts(&span, &facts, true)?;
                 log::info!("Checked fact {facts:?}.");
+            }
+            ResolvedNCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort: _,
+            } => {
+                if self.causal_state.is_some() {
+                    return Err(Self::checked_alias_error(
+                        &span,
+                        &name.name,
+                        "checked aliases are replay-only and cannot be recorded as causal sources",
+                    ));
+                }
+                if self.checked_aliases.contains_key(&name.name) {
+                    let first = self.checked_alias_types[&name.name]
+                        .declaration_span
+                        .clone();
+                    return Err(TypeError::CheckedAliasAlreadyBound {
+                        name: name.name,
+                        first,
+                        duplicate: span,
+                    }
+                    .into());
+                }
+                self.names
+                    .check_checked_alias_available(&name.name, &span)?;
+                let value = self.eval_checked_expr(&name.name, &expr)?;
+                let value = self.canonical_checked_value(&name.sort, value);
+                let closed_expr = expr.make_unresolved();
+                let alias = name.name.clone();
+                self.checked_aliases
+                    .insert(alias.clone(), CheckedAlias { value });
+                self.checked_alias_types.insert(
+                    alias.clone(),
+                    CheckedAliasType {
+                        declaration_span: span.clone(),
+                        sort: name.sort,
+                        closed_expr,
+                    },
+                );
+                self.names.record_checked_alias(&alias, &span);
+                log::info!("Checked replay alias {alias}.");
             }
             ResolvedNCommand::CoreAction(action) => match &action {
                 ResolvedAction::Let(_, name, contents) => {
@@ -3870,7 +4165,45 @@ impl EGraph {
         command: Command,
     ) -> Result<Vec<ResolvedNCommand>, Error> {
         let desugared = desugar_command(command, &mut self.parser, self.proof_state.proof_testing)?;
+        let checked_alias_types = self
+            .checked_alias_types
+            .iter()
+            .map(|(name, alias)| {
+                (
+                    name.clone(),
+                    alias.declaration_span.clone(),
+                    alias.sort.name().to_owned(),
+                    alias.closed_expr.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
+            // Values are backend-local. Only mirror the successfully published
+            // alias types needed to resolve this next source command. Rebind
+            // each sort by name so even the type object comes from the source
+            // typechecking graph.
+            original_typechecking.checked_alias_types = checked_alias_types
+                .into_iter()
+                .map(|(name, declaration_span, sort_name, closed_expr)| {
+                    let sort = original_typechecking
+                        .type_info
+                        .get_sort_by_name(&sort_name)
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "checked alias sort `{sort_name}` missing from source typechecker"
+                            )
+                        })
+                        .clone();
+                    (
+                        name,
+                        CheckedAliasType {
+                            declaration_span,
+                            sort,
+                            closed_expr,
+                        },
+                    )
+                })
+                .collect();
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
             let typechecked = original_typechecking.typecheck_program(&desugared)?;
@@ -4074,7 +4407,17 @@ impl EGraph {
                     }
                     let mut causal_rule_origins =
                         causal_rule_origins.map(|origins| origins.into_iter());
-                    if run_commands && self.are_proofs_enabled() {
+                    let defer_checked_alias_proof_program = (run_commands
+                        && self.are_proofs_enabled()
+                        && resolved
+                            .desugared_before_proofs
+                            .iter()
+                            .any(|command| matches!(command, ResolvedNCommand::LetCheck { .. })))
+                    .then(|| resolved.desugared_before_proofs.clone());
+                    if run_commands
+                        && self.are_proofs_enabled()
+                        && defer_checked_alias_proof_program.is_none()
+                    {
                         self.proof_check_program
                             .extend(resolved.desugared_before_proofs.clone());
                     }
@@ -4133,7 +4476,17 @@ impl EGraph {
                                     return Err(error);
                                 }
                             }
+                        } else if let ResolvedNCommand::LetCheck {
+                            span, name, expr, ..
+                        } = &processed
+                        {
+                            self.record_checked_alias_type_only(span, name, expr)?;
                         }
+                    }
+                    if let Some(commands) = defer_checked_alias_proof_program {
+                        // A failed lookup must not make the alias appear in the
+                        // retained proof-checking source program.
+                        self.proof_check_program.extend(commands);
                     }
                     if causal_rule_origins
                         .as_mut()
@@ -5322,6 +5675,12 @@ pub enum Error {
         rule: String,
         expected: usize,
         observed: usize,
+        span: Span,
+    },
+    #[error("{span}\nlet-check {alias}: {reason}")]
+    CheckedAlias {
+        alias: String,
+        reason: String,
         span: Span,
     },
     #[error(
@@ -7300,6 +7659,221 @@ mod tests {
             .unwrap();
 
         assert!(!program_supports_proofs(&resolved, &egraph.type_info));
+    }
+
+    #[test]
+    fn let_check_resolves_prior_aliases_without_creating_constructors() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (A i64) (B E))
+                (B (A 1))
+                (let-check $a (A 1))
+                (let-check $b (B $a))
+                (let-check $n (+ 1 2))
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn let_check_alias_is_a_constant_in_checks() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (A i64))
+                (A 1)
+                (A 2)
+                (let-check $a (A 1))
+                "#,
+            )
+            .unwrap();
+
+        egraph
+            .parse_and_run_program(None, "(check (= $a (A 1)))")
+            .unwrap();
+        let error = egraph
+            .parse_and_run_program(None, "(check (= $a (A 2)))")
+            .expect_err("the checked alias must not act as a free query variable");
+        assert!(matches!(error, Error::CheckError(..)));
+    }
+
+    #[test]
+    fn let_check_constructor_miss_is_atomic() {
+        let mut egraph = EGraph::default();
+        egraph
+            .parse_and_run_program(None, "(datatype E (A i64))")
+            .unwrap();
+        let before = egraph.num_tuples();
+
+        let error = egraph
+            .parse_and_run_program(None, "(let-check $missing (A 1))")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("lookup"));
+        assert_eq!(egraph.num_tuples(), before);
+        assert!(!egraph.checked_aliases.contains_key("$missing"));
+        assert!(!egraph.checked_alias_types.contains_key("$missing"));
+        assert!(!egraph.names.contains_canonical("missing"));
+
+        // Neither the alias table nor the namespace may retain a ghost name.
+        egraph.parse_and_run_program(None, "(A 1)").unwrap();
+        egraph
+            .parse_and_run_program(None, "(let-check $missing (A 1))")
+            .unwrap();
+    }
+
+    #[test]
+    fn let_check_runs_through_proof_encoding_without_fiat_rows() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (datatype E (A i64))
+                (A 1)
+                "#,
+            )
+            .unwrap();
+        let tuples_before = egraph.num_tuples();
+        egraph
+            .parse_and_run_program(None, "(let-check $a (A 1))")
+            .unwrap();
+        assert_eq!(egraph.num_tuples(), tuples_before);
+        egraph
+            .parse_and_run_program(None, "(check (= $a (A 1)))")
+            .unwrap();
+    }
+
+    #[test]
+    fn let_check_proof_lookup_miss_does_not_publish_proof_or_alias_state() {
+        let mut egraph = EGraph::new_with_proofs();
+        egraph
+            .parse_and_run_program(None, "(datatype E (A i64))")
+            .unwrap();
+        let tuples_before = egraph.num_tuples();
+        let proof_program_before = egraph.proof_check_program.len();
+
+        let error = egraph
+            .parse_and_run_program(None, "(let-check $missing (A 1))")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("lookup"));
+        assert_eq!(egraph.num_tuples(), tuples_before);
+        assert_eq!(egraph.proof_check_program.len(), proof_program_before);
+        assert!(!egraph.checked_aliases.contains_key("$missing"));
+        assert!(!egraph.checked_alias_types.contains_key("$missing"));
+        assert!(!egraph.names.contains_canonical("missing"));
+    }
+
+    #[test]
+    fn let_check_allows_only_bounded_container_interning() {
+        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (sort P (Pair i64 i64))
+                    (sort V (Vec i64))
+                    (let-check $p (pair 1 2))
+                    (let-check $v (vec-of (pair-first $p) 3))
+                    (let-check $n (vec-length $v))
+                    "#,
+                )
+                .unwrap();
+        }
+
+        let mut egraph = EGraph::default();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort S (Set i64))
+                (let-check $set (set-of 1))
+                "#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("unsupported container"));
+        assert!(!egraph.checked_aliases.contains_key("$set"));
+    }
+
+    #[test]
+    fn let_check_expected_sort_is_enforced_without_ghost_aliases() {
+        let mut egraph = EGraph::default();
+        let expr = egraph.parser.get_expr_from_string(None, "(+ 1 2)").unwrap();
+        let command = Command::LetCheck {
+            span: expr.span(),
+            name: "$n".to_owned(),
+            expr: expr.clone(),
+            expected_sort: Some("bool".to_owned()),
+        };
+        let error = egraph.run_program(vec![command]).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::Mismatch { .. })
+        ));
+        assert!(!egraph.checked_alias_types.contains_key("$n"));
+        assert!(!egraph.names.contains_canonical("n"));
+
+        egraph
+            .run_program(vec![Command::LetCheck {
+                span: expr.span(),
+                name: "$n".to_owned(),
+                expr,
+                expected_sort: Some("i64".to_owned()),
+            }])
+            .unwrap();
+    }
+
+    #[test]
+    fn let_check_rejects_non_pure_primitives_and_unprefixed_names() {
+        let mut egraph = EGraph::default();
+        egraph.add_full_primitive(FullOnly, None);
+        let error = egraph
+            .parse_and_run_program(None, "(let-check $effect (full-only))")
+            .unwrap_err();
+        assert!(error.to_string().contains("Unbound function full-only"));
+        assert!(!egraph.checked_aliases.contains_key("$effect"));
+
+        let error = egraph
+            .parse_and_run_program(None, "(let-check plain 1)")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::CheckedAliasMissingPrefix { .. })
+        ));
+    }
+
+    #[test]
+    fn let_check_aliases_ground_run_rule_bindings_in_normal_and_proof_modes() {
+        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype E (A i64))
+                    (relation PairE (E E))
+                    (relation FiredE (E))
+                    (A 1)
+                    (A 2)
+                    (PairE (A 1) (A 1))
+                    (PairE (A 2) (A 2))
+                    (rule ((PairE x y) (= x y))
+                          ((FiredE y))
+                          :name "checked-pair")
+                    (let-check $a (A 1))
+                    (run-schedule
+                      (run-rule ("checked-pair" ((x $a) (y $a)))))
+                    (check (FiredE (A 1)))
+                    (fail (check (FiredE (A 2))))
+                    "#,
+                )
+                .unwrap();
+        }
     }
 
     #[test]

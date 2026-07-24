@@ -849,6 +849,15 @@ impl Parser {
                 )],
                 _ => return error!(span, "usage: (extract <expr> <number of variants>?)"),
             },
+            "let-check" => match tail {
+                [name, expr] => vec![Command::LetCheck {
+                    span,
+                    name: name.expect_atom("checked alias")?,
+                    expr: self.parse_expr(expr)?,
+                    expected_sort: None,
+                }],
+                _ => return error!(span, "usage: (let-check <$alias> <closed expression>)"),
+            },
             "check" => vec![Command::Check(
                 span,
                 map_fallible(tail, self, Self::parse_fact)?,

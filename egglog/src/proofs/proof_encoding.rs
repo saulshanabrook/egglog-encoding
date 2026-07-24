@@ -1657,6 +1657,12 @@ impl<'a> ProofInstrumentor<'a> {
                     .join("\n");
                 res.extend(self.parse_program(&instrumented));
             }
+            // `let-check` performs its own lookup-only evaluation. Passing it
+            // through avoids action instrumentation, Fiat term rows, and proof
+            // facts; runtime constructor lookup targets the encoded FD view.
+            ResolvedNCommand::LetCheck { .. } => {
+                res.push(command.to_command().make_unresolved());
+            }
             ResolvedNCommand::Check(span, facts) => {
                 let (instrumented, _lookups, _proof) = self.instrument_facts(facts);
                 res.push(Command::Check(
@@ -1758,7 +1764,8 @@ impl<'a> ProofInstrumentor<'a> {
             // run rebuilding after every command except a few
             if let ResolvedNCommand::Function(..)
             | ResolvedNCommand::NormRule { .. }
-            | ResolvedNCommand::Sort { .. } = &command
+            | ResolvedNCommand::Sort { .. }
+            | ResolvedNCommand::LetCheck { .. } = &command
             {
             } else {
                 res.push(Command::RunSchedule(self.rebuild()));

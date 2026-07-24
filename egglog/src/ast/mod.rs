@@ -126,6 +126,16 @@ where
         rule: GenericRule<Head, Leaf>,
     },
     CoreAction(GenericAction<Head, Leaf>),
+    /// Evaluate one closed replay value without publishing it as a global or
+    /// mutating relational/equality state.
+    LetCheck {
+        span: Span,
+        name: Leaf,
+        expr: GenericExpr<Head, Leaf>,
+        /// Causal replay carries the exact recorded sort out-of-band. Parsed
+        /// two-argument syntax leaves this absent and lets type inference decide.
+        expected_sort: Option<String>,
+    },
     Extract(Span, GenericExpr<Head, Leaf>, GenericExpr<Head, Leaf>),
     RunSchedule(GenericSchedule<Head, Leaf>),
     PrintOverallStatistics(Span, Option<String>),
@@ -216,6 +226,17 @@ where
                 GenericCommand::PrintOverallStatistics(span.clone(), file.clone())
             }
             GenericNCommand::CoreAction(action) => GenericCommand::Action(action.clone()),
+            GenericNCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort,
+            } => GenericCommand::LetCheck {
+                span: span.clone(),
+                name: name.clone(),
+                expr: expr.clone(),
+                expected_sort: expected_sort.clone(),
+            },
             GenericNCommand::Extract(span, expr, variants) => {
                 GenericCommand::Extract(span.clone(), expr.clone(), variants.clone())
             }
@@ -274,6 +295,7 @@ where
             | GenericNCommand::AddRuleset(..)
             | GenericNCommand::UnstableCombinedRuleset(..)
             | GenericNCommand::CoreAction(..)
+            | GenericNCommand::LetCheck { .. }
             | GenericNCommand::Extract(..)
             | GenericNCommand::PrintOverallStatistics(..)
             | GenericNCommand::PrintFunction(..)
@@ -329,6 +351,17 @@ where
             GenericNCommand::CoreAction(action) => {
                 GenericNCommand::CoreAction(action.visit_exprs(f))
             }
+            GenericNCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort,
+            } => GenericNCommand::LetCheck {
+                span,
+                name,
+                expr: expr.visit_exprs(f),
+                expected_sort,
+            },
             GenericNCommand::Extract(span, expr, variants) => {
                 GenericNCommand::Extract(span, expr.visit_exprs(f), variants.visit_exprs(f))
             }
@@ -934,6 +967,13 @@ where
     /// (let xplusone (Add (Var "x") (Num 1)))
     /// ```
     Action(GenericAction<Head, Leaf>),
+    /// Bind a closed, checked replay value in a frontend-only alias table.
+    LetCheck {
+        span: Span,
+        name: Leaf,
+        expr: GenericExpr<Head, Leaf>,
+        expected_sort: Option<String>,
+    },
     /// `extract` a datatype from the egraph, choosing
     /// the smallest representative.
     /// By default, each constructor costs 1 to extract
@@ -1054,6 +1094,12 @@ where
                 write!(f, "(datatype {name} {})", ListDisplay(variants, " "))
             }
             GenericCommand::Action(a) => write!(f, "{a}"),
+            GenericCommand::LetCheck {
+                name,
+                expr,
+                expected_sort: _,
+                ..
+            } => write!(f, "(let-check {name} {expr})"),
             GenericCommand::Extract(_span, expr, variants) => {
                 write!(f, "(extract {expr} {variants})")
             }
@@ -2077,6 +2123,17 @@ where
                 GenericCommand::BiRewrite(fun(name), rewrite)
             }
             GenericCommand::Action(action) => GenericCommand::Action(action),
+            GenericCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort,
+            } => GenericCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort: expected_sort.map(&mut *fun),
+            },
             GenericCommand::Extract(span, expr, variants) => {
                 GenericCommand::Extract(span, expr, variants)
             }
@@ -2175,6 +2232,17 @@ where
                 },
             ),
             GenericCommand::Action(action) => GenericCommand::Action(action.visit_exprs(f)),
+            GenericCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort,
+            } => GenericCommand::LetCheck {
+                span,
+                name,
+                expr: expr.visit_exprs(f),
+                expected_sort,
+            },
             GenericCommand::Extract(span, expr1, expr2) => {
                 GenericCommand::Extract(span, expr1.visit_exprs(f), expr2.visit_exprs(f))
             }
@@ -2303,6 +2371,17 @@ where
             GenericCommand::Action(action) => {
                 GenericCommand::Action(action.map_symbols(head, leaf))
             }
+            GenericCommand::LetCheck {
+                span,
+                name,
+                expr,
+                expected_sort,
+            } => GenericCommand::LetCheck {
+                span,
+                name: leaf(name),
+                expr: expr.map_symbols(head, leaf),
+                expected_sort,
+            },
             GenericCommand::Extract(span, expr, variants) => GenericCommand::Extract(
                 span,
                 expr.map_symbols(head, leaf),

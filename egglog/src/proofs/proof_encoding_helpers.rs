@@ -469,6 +469,8 @@ pub enum ProofEncodingUnsupportedReason {
         "a `:merge` action block (actions before the result value) is not supported by the term/proof encoding."
     )]
     MergeActionBlock,
+    #[error("checked alias expression is unsupported: {0}")]
+    CheckedAliasExpression(String),
 }
 
 /// Checks whether a desugared program supports proof encoding.
@@ -524,6 +526,78 @@ fn fact_has_eq_sort_primitive_result(fact: &ResolvedFact) -> bool {
         expr
     });
     has_eq_sort_primitive
+}
+
+fn checked_alias_expr_support(
+    expr: &ResolvedExpr,
+    type_info: &TypeInfo,
+) -> Result<(), ProofEncodingUnsupportedReason> {
+    match expr {
+        ResolvedExpr::Lit(..) => Ok(()),
+        ResolvedExpr::Var(_, variable) => {
+            Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                format!("variable `{}` is not a closed checked alias", variable.name),
+            ))
+        }
+        ResolvedExpr::Call(_, ResolvedCall::Values(_), _) => {
+            Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                "tuple values are not supported".to_owned(),
+            ))
+        }
+        ResolvedExpr::Call(_, ResolvedCall::Func(function), children) => {
+            if function.subtype != crate::ast::FunctionSubtype::Constructor
+                || function.outputs.len() != 1
+                || !function.output().is_eq_sort()
+            {
+                return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                    format!(
+                        "function `{}` is not a single-output EqSort constructor",
+                        function.name
+                    ),
+                ));
+            }
+            for child in children {
+                checked_alias_expr_support(child, type_info)?;
+            }
+            Ok(())
+        }
+        ResolvedExpr::Call(_, ResolvedCall::Primitive(primitive), children) => {
+            if !primitive.is_pure() || primitive.validator().is_none() {
+                return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                    format!(
+                        "primitive `{}` is not replay-safe and pure",
+                        primitive.name()
+                    ),
+                ));
+            }
+            if primitive.output().is_eq_sort() {
+                return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                    format!(
+                        "primitive `{}` produces EqSort `{}` instead of looking up a constructor",
+                        primitive.name(),
+                        primitive.output().name()
+                    ),
+                ));
+            }
+            if primitive.output().is_container_sort()
+                && !type_info
+                    .checked_alias_container_sorts
+                    .contains(primitive.output().name())
+            {
+                return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
+                    format!(
+                        "primitive `{}` returns unsupported container sort `{}`",
+                        primitive.name(),
+                        primitive.output().name()
+                    ),
+                ));
+            }
+            for child in children {
+                checked_alias_expr_support(child, type_info)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 /// Checks whether a resolved command supports proof encoding.
@@ -654,6 +728,7 @@ pub(crate) fn command_supports_proof_encoding(
             ..
         } => Err(ProofEncodingUnsupportedReason::SortWithProofFuncAnnotation),
         GenericCommand::UserDefined(..) => Err(ProofEncodingUnsupportedReason::UserDefinedCommand),
+        GenericCommand::LetCheck { expr, .. } => checked_alias_expr_support(expr, type_info),
         // Extract commands can't have non-global function lookups
         // because instrument_action_expr doesn't support them
         // (global function calls are fine - they get desugared to constructors)

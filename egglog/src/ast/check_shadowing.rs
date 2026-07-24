@@ -22,6 +22,38 @@ impl Names {
         }
     }
 
+    /// Check the checked-alias namespace without publishing the name. Runtime
+    /// evaluation may still fail, so committing during resolution would leave a
+    /// ghost binding behind.
+    pub(crate) fn check_checked_alias_available(
+        &self,
+        name: &str,
+        new: &Span,
+    ) -> Result<(), Error> {
+        let canonical = name.strip_prefix(GLOBAL_NAME_PREFIX).unwrap_or(name);
+        let conflict = self
+            .seen
+            .get(name)
+            .or_else(|| self.seen.get(canonical))
+            .or_else(|| self.seen.get(&format!("${canonical}")))
+            .or_else(|| self.global_aliases.get(canonical).map(|(_, span)| span));
+        if let Some(old) = conflict {
+            Err(Error::Shadowing(name.to_owned(), old.clone(), new.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Publish a successfully evaluated checked alias in both spellings so a
+    /// later declaration cannot collide through `$` canonicalization.
+    pub(crate) fn record_checked_alias(&mut self, name: &str, span: &Span) {
+        let canonical = name.strip_prefix(GLOBAL_NAME_PREFIX).unwrap_or(name);
+        debug_assert!(self.check_checked_alias_available(name, span).is_ok());
+        self.seen.insert(name.to_owned(), span.clone());
+        self.seen.insert(canonical.to_owned(), span.clone());
+        self.track_global_alias(name, span);
+    }
+
     fn track_global_alias(&mut self, name: &str, span: &Span) {
         if let Some(stripped) = name.strip_prefix(GLOBAL_NAME_PREFIX) {
             self.global_aliases
@@ -72,6 +104,8 @@ impl Names {
                 Ok(())
             }
             ResolvedNCommand::CoreAction(action) => self.check_shadowing_action(action),
+            // Runtime evaluation owns atomic namespace publication.
+            ResolvedNCommand::LetCheck { .. } => Ok(()),
             ResolvedNCommand::Check(_span, query) => {
                 let mut inner = self.clone();
                 inner.check_shadowing_query(query)
