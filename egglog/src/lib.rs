@@ -33,7 +33,7 @@ pub use ast::{ResolvedExpr, ResolvedFact, ResolvedVar};
 pub use cli::*;
 use constraint::{Constraint, Problem, SimpleTypeConstraint, TypeConstraint};
 pub use core::{Atom, AtomTerm};
-use core::{CoreActionContext, ResolvedAtomTerm, specialize_core_rule};
+use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
 pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
@@ -49,9 +49,9 @@ use egglog_ast::util::ListDisplay;
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
     CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec,
-    GuardedRuleRun, GuardedRuleRunOutcome, ReadMode, ReceiptSnapshot, ReplayConstructorSpec,
-    ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermId,
-    RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar, SourceRef,
+    ReadMode, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTerm, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec,
+    RuleValue, RuleVar, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -1191,49 +1191,6 @@ struct ResolvedNCommandsWithOutput {
     resolved_before_proofs: Vec<ResolvedNCommand>,
 }
 
-#[derive(Clone)]
-enum PreparedSchedule {
-    Saturate(Span, Box<PreparedSchedule>),
-    Repeat(Span, usize, Box<PreparedSchedule>),
-    Run(Span, ResolvedRunConfig),
-    RunRule(Vec<PreparedRunRule>),
-    Sequence(Span, Vec<PreparedSchedule>),
-}
-
-#[derive(Clone)]
-struct PreparedRunRule {
-    span: Span,
-    config: ResolvedRunRuleConfig,
-    rule_id: egglog_bridge::RuleId,
-    ruleset: String,
-}
-
-impl Display for PreparedSchedule {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PreparedSchedule::Saturate(_, schedule) => write!(f, "(saturate {schedule})"),
-            PreparedSchedule::Repeat(_, limit, schedule) => {
-                write!(f, "(repeat {limit} {schedule})")
-            }
-            PreparedSchedule::Run(_, config) => write!(f, "{config}"),
-            PreparedSchedule::RunRule(prepared) => write!(
-                f,
-                "(run-rule {})",
-                ListDisplay(
-                    &prepared
-                        .iter()
-                        .map(|prepared| &prepared.config)
-                        .collect::<Vec<_>>(),
-                    " "
-                )
-            ),
-            PreparedSchedule::Sequence(_, schedules) => {
-                write!(f, "(seq {})", ListDisplay(schedules, " "))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Error)]
 #[error("Not found: {0}")]
 pub struct NotFoundError(String);
@@ -2115,77 +2072,14 @@ impl EGraph {
         }
     }
 
-    // Prepare each static run-rule leaf once, then reuse its temporary naive
-    // specialization throughout repeat/saturate. Always release temporary rules,
-    // including when preparation or execution fails.
     fn run_schedule(&mut self, sched: &ResolvedSchedule) -> Result<RunReport, Error> {
-        let mut temporary_rules = Vec::new();
-        let prepared = match self.prepare_schedule(sched, &mut temporary_rules) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                for rule in temporary_rules {
-                    self.backend.free_rule(rule);
-                }
-                return Err(error);
-            }
-        };
-        let result = self.run_prepared_schedule(&prepared);
-        for rule in temporary_rules {
-            self.backend.free_rule(rule);
-        }
-        result
-    }
-
-    fn prepare_schedule(
-        &mut self,
-        sched: &ResolvedSchedule,
-        temporary_rules: &mut Vec<egglog_bridge::RuleId>,
-    ) -> Result<PreparedSchedule, Error> {
         match sched {
-            ResolvedSchedule::Run(span, config) => {
-                Ok(PreparedSchedule::Run(span.clone(), config.clone()))
-            }
-            ResolvedSchedule::RunRule(span, configs) => {
-                let prepared = configs
-                    .iter()
-                    .map(|config| self.prepare_run_rule(span, config))
-                    .collect::<Result<Vec<_>, _>>()?;
-                temporary_rules.extend(prepared.iter().map(|prepared| prepared.rule_id));
-                Ok(PreparedSchedule::RunRule(prepared))
-            }
-            ResolvedSchedule::Repeat(span, limit, sched) => Ok(PreparedSchedule::Repeat(
-                span.clone(),
-                *limit,
-                Box::new(self.prepare_schedule(sched, temporary_rules)?),
-            )),
-            ResolvedSchedule::Saturate(span, sched) => Ok(PreparedSchedule::Saturate(
-                span.clone(),
-                Box::new(self.prepare_schedule(sched, temporary_rules)?),
-            )),
-            ResolvedSchedule::Sequence(span, scheds) => {
-                let scheds = scheds
-                    .iter()
-                    .map(|sched| self.prepare_schedule(sched, temporary_rules))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(PreparedSchedule::Sequence(span.clone(), scheds))
-            }
-        }
-    }
-
-    fn run_prepared_schedule(&mut self, sched: &PreparedSchedule) -> Result<RunReport, Error> {
-        match sched {
-            PreparedSchedule::Run(span, config) => self.run_rules(span, config),
-            PreparedSchedule::RunRule(prepared) => {
-                let mut report = RunReport::default();
-                for firing in prepared {
-                    report.union(self.run_prepared_rule(firing)?);
-                }
-                Ok(report)
-            }
-            PreparedSchedule::Repeat(_span, limit, sched) => {
+            ResolvedSchedule::Run(span, config) => self.run_rules(span, config),
+            ResolvedSchedule::RunRule(span, configs) => self.run_grounded_rules(span, configs),
+            ResolvedSchedule::Repeat(_span, limit, sched) => {
                 let mut report = RunReport::default();
                 for _i in 0..*limit {
-                    let rec = self.run_prepared_schedule(sched)?;
+                    let rec = self.run_schedule(sched)?;
                     let can_stop = rec.can_stop;
                     report.union(rec);
                     if can_stop {
@@ -2194,7 +2088,7 @@ impl EGraph {
                 }
                 Ok(report)
             }
-            PreparedSchedule::Saturate(_span, sched) => {
+            ResolvedSchedule::Saturate(_span, sched) => {
                 let mut report = RunReport::default();
                 let mut i = 0usize;
                 loop {
@@ -2203,7 +2097,7 @@ impl EGraph {
                         "Saturate iteration {i} start: {}",
                         Self::schedule_for_log(sched)
                     );
-                    let rec = self.run_prepared_schedule(sched)?;
+                    let rec = self.run_schedule(sched)?;
                     let updated = rec.updated;
                     log::debug!(
                         "Saturate iteration {i} end: {}",
@@ -2217,108 +2111,158 @@ impl EGraph {
                 }
                 Ok(report)
             }
-            PreparedSchedule::Sequence(_span, scheds) => {
+            ResolvedSchedule::Sequence(_span, scheds) => {
                 let mut report = RunReport::default();
                 for sched in scheds {
-                    report.union(self.run_prepared_schedule(sched)?);
+                    report.union(self.run_schedule(sched)?);
                 }
                 Ok(report)
             }
         }
     }
 
-    fn prepare_run_rule(
+    fn run_grounded_rules(
         &mut self,
         span: &Span,
-        config: &ResolvedRunRuleConfig,
-    ) -> Result<PreparedRunRule, Error> {
+        configs: &[ResolvedRunRuleConfig],
+    ) -> Result<RunReport, Error> {
         if self.causal_state.is_some() {
             return Err(Error::BackendError(
                 "causal receipt recording does not support source run-rule schedules".into(),
             ));
         }
-        let (ruleset, core_rule, substitutions, include_subsumed, no_decomp) = self
-            .rulesets
-            .iter()
-            .find_map(|(ruleset_name, ruleset)| match ruleset {
-                Ruleset::Rules(rules) => rules.get(&config.rule).map(|registered| {
-                    (
-                        ruleset_name.clone(),
-                        registered.core.clone(),
-                        registered.substitutions.clone(),
-                        registered.include_subsumed,
-                        registered.no_decomp,
-                    )
-                }),
-                Ruleset::Combined(_) => None,
-            })
-            .ok_or_else(|| Error::NoSuchRule(config.rule.clone(), span.clone()))?;
-        let selectors = config
-            .bindings
-            .iter()
-            .map(|(target, value)| {
-                ResolvedFact::Eq(
-                    value.span(),
-                    ResolvedExpr::Var(value.span(), target.clone()),
-                    value.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
-        let core_rule = specialize_core_rule(
-            &core_rule,
-            &selectors,
-            &substitutions,
-            &self.type_info,
-            &mut self.parser.symbol_gen,
-        )?;
-        let mut translator = BackendRule::new(
-            &mut *self.backend,
-            &self.functions,
-            &self.type_info,
-            self.causal_state.as_ref(),
-            &mut self.unstable_fn_panic_ids,
-            true,
-        );
-        translator.query(&core_rule.body, include_subsumed)?;
-        translator.actions(&core_rule.head)?;
-        let rule_id = translator.try_build(
-            &config.rule,
-            false,
-            self.no_decomp || no_decomp,
-            core_rule.span,
-        )?;
+        let mut pending = Vec::with_capacity(configs.len());
+        let mut rulesets = IndexSet::default();
+        for config in configs {
+            let (ruleset, rule, substitutions) = self
+                .rulesets
+                .iter()
+                .find_map(|(ruleset_name, ruleset)| match ruleset {
+                    Ruleset::Rules(rules) => rules.get(&config.rule).map(|registered| {
+                        (
+                            ruleset_name.clone(),
+                            registered.backend_id,
+                            registered.substitutions.clone(),
+                        )
+                    }),
+                    Ruleset::Combined(_) => None,
+                })
+                .ok_or_else(|| Error::NoSuchRule(config.rule.clone(), span.clone()))?;
+            rulesets.insert(ruleset);
 
-        Ok(PreparedRunRule {
-            span: span.clone(),
-            config: config.clone(),
-            rule_id,
-            ruleset,
-        })
-    }
-
-    fn run_prepared_rule(&mut self, prepared: &PreparedRunRule) -> Result<RunReport, Error> {
-        self.begin_causal_wave()?;
-        let outcome = self.backend.run_rule_guarded(GuardedRuleRun {
-            rule: prepared.rule_id,
-            expected_matches: Some(1),
-        });
-
-        let outcome = outcome.map_err(|error| Error::BackendError(error.to_string()))?;
-        self.finalize_causal_wave()?;
-        match outcome {
-            GuardedRuleRunOutcome::Applied { report, .. } => {
-                Ok(RunReport::singleton(&prepared.ruleset, report))
+            let mut canonical = HashMap::<ResolvedVar, Value>::default();
+            for (source, expression) in &config.bindings {
+                let value = self.eval_checked_expr(&source.name, expression)?;
+                let mut target = ResolvedAtomTerm::Var(expression.span(), source.clone());
+                for _ in 0..=substitutions.len() {
+                    let ResolvedAtomTerm::Var(_, variable) = &target else {
+                        break;
+                    };
+                    let Some((_, replacement)) = substitutions
+                        .iter()
+                        .find(|(candidate, _)| candidate == variable)
+                    else {
+                        break;
+                    };
+                    target = replacement.clone();
+                }
+                match target {
+                    ResolvedAtomTerm::Var(_, variable) => {
+                        let value = self.canonical_checked_value(&variable.sort, value);
+                        if let Some(previous) = canonical.insert(variable.clone(), value)
+                            && previous != value
+                        {
+                            return Err(Error::BackendError(format!(
+                                "{span}: grounded rule `{}` gives unequal values to canonical variable `{}`",
+                                config.rule, variable.name
+                            )));
+                        }
+                    }
+                    ResolvedAtomTerm::Literal(_, literal) => {
+                        let expected = self.canonical_checked_value(
+                            &source.sort,
+                            literal_to_value(self.backend.base_values(), &literal),
+                        );
+                        let value = self.canonical_checked_value(&source.sort, value);
+                        if value != expected {
+                            return Err(Error::BackendError(format!(
+                                "{span}: grounded rule `{}` binding `{}` contradicts canonical literal `{literal}`",
+                                config.rule, source.name
+                            )));
+                        }
+                    }
+                    ResolvedAtomTerm::Global(_, variable) => {
+                        return Err(Error::BackendError(format!(
+                            "{span}: grounded rule `{}` retains global `{}` after canonicalization",
+                            config.rule, variable.name
+                        )));
+                    }
+                }
             }
-            GuardedRuleRunOutcome::MatchCountMismatch {
-                expected_matches,
-                observed_matches,
-            } => Err(Error::RunRuleMatchCountMismatch {
-                rule: prepared.config.rule.clone(),
-                expected: expected_matches,
-                observed: observed_matches,
-                span: prepared.span.clone(),
-            }),
+            pending.push((config.rule.clone(), rule, canonical));
         }
+
+        let bridge = self
+            .backend
+            .as_any_mut()
+            .downcast_mut::<egglog_bridge::EGraph>()
+            .ok_or_else(|| {
+                Error::BackendError("run-rule requires the concrete main bridge backend".into())
+            })?;
+        let mut firings = Vec::with_capacity(pending.len());
+        for (index, (name, rule, canonical)) in pending.into_iter().enumerate() {
+            let variables = bridge
+                .grounded_rule_variables(rule)
+                .map_err(|error| Error::BackendError(error.to_string()))?;
+            let mut bindings = Vec::with_capacity(canonical.len());
+            for (variable, value) in canonical {
+                let expected_ty = variable.sort.column_ty(bridge.base_values());
+                let mut matches = variables.iter().filter(|candidate| {
+                    candidate.name.as_deref() == Some(variable.name.as_str())
+                        && candidate.ty == expected_ty
+                });
+                let descriptor = matches.next().ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{span}: grounded rule `{name}` has no compiled variable `{}` of the recorded type",
+                        variable.name
+                    ))
+                })?;
+                if matches.next().is_some() {
+                    return Err(Error::BackendError(format!(
+                        "{span}: grounded rule `{name}` has ambiguous compiled variable `{}`",
+                        variable.name
+                    )));
+                }
+                bindings.push(egglog_bridge::GroundedRuleBinding {
+                    variable: descriptor.variable,
+                    ty: descriptor.ty,
+                    value,
+                });
+            }
+            firings.push(egglog_bridge::GroundedRuleRun {
+                match_id: index as u64,
+                rule,
+                bindings: bindings.into_boxed_slice(),
+            });
+        }
+
+        let names = configs
+            .iter()
+            .enumerate()
+            .map(|(index, config)| format!("{index}:{}", config.rule))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let report = bridge.run_grounded_wave(&firings).map_err(|error| {
+            Error::BackendError(format!(
+                "{span}: grounded run-rule wave [{names}] failed: {error}"
+            ))
+        })?;
+        let report_name = if rulesets.len() == 1 {
+            rulesets.first().expect("one ruleset disappeared").as_str()
+        } else {
+            "__causal_replay"
+        };
+        Ok(RunReport::singleton(report_name, report))
     }
 
     fn run_rules(&mut self, span: &Span, config: &ResolvedRunConfig) -> Result<RunReport, Error> {
@@ -2556,8 +2500,6 @@ impl EGraph {
                 core: core_rule,
                 backend_id: rule_id,
                 substitutions: canonicalized.substitutions,
-                include_subsumed: rule.include_subsumed,
-                no_decomp: rule.no_decomp,
             }),
         };
         Ok(rule_name)

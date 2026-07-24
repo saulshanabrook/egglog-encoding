@@ -8,10 +8,12 @@ const SETUP: &str = r#"
           ((Fired x))
           :ruleset chosen
           :name "mark-wrapped")
-    (let $a (A))
-    (let $b (B))
-    (let $wrapped-a (Wrap $a))
-    (let $wrapped-b (Wrap $b))
+    (Wrap (A))
+    (Wrap (B))
+    (let-check $a (A))
+    (let-check $b (B))
+    (let-check $wrapped-a (Wrap $a))
+    (let-check $wrapped-b (Wrap $b))
 "#;
 
 #[test]
@@ -31,19 +33,13 @@ fn run_rule_requires_exactly_one_match_and_a_later_list_recovers() {
                 "#,
             )
             .unwrap_err();
-        match error {
-            Error::RunRuleMatchCountMismatch {
-                rule,
-                expected,
-                observed,
-                ..
-            } => {
-                assert_eq!(rule, "mark-wrapped");
-                assert_eq!(expected, 1);
-                assert_eq!(observed, 0);
-            }
-            other => panic!("expected a run-rule match-count error, got {other:?}"),
-        }
+        assert!(
+            matches!(&error, Error::BackendError(message)
+                if message.contains("grounded run-rule wave")
+                    && message.contains("mark-wrapped")
+                    && message.contains("does not match")),
+            "expected a named grounded-premise error, got {error:?}"
+        );
     }
 
     let outputs = egraph

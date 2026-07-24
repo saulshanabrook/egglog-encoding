@@ -60,8 +60,6 @@ pub(crate) struct RegisteredRule {
     /// Canonicalization aliases for source variables no longer present in
     /// `core`. `run-rule` applies these aliases to its ground bindings.
     pub(crate) substitutions: Box<[(ResolvedVar, ResolvedAtomTerm)]>,
-    pub(crate) include_subsumed: bool,
-    pub(crate) no_decomp: bool,
 }
 
 #[derive(Clone, Debug)]

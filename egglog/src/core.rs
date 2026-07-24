@@ -726,17 +726,6 @@ where
 }
 
 trait CanonicalizeCoreRule<Head, Leaf> {
-    fn canonicalize(
-        self,
-        value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
-    ) -> GenericCoreRule<Head, Head, Leaf>
-    where
-        Self: Sized,
-    {
-        let mut substitutions = Vec::new();
-        self.canonicalize_tracking(&value_eq, &mut substitutions)
-    }
-
     fn canonicalize_tracking(
         self,
         value_eq: &impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
@@ -854,6 +843,7 @@ where
 }
 
 trait RemoveDuplicateVars<Head, Leaf> {
+    #[cfg(test)]
     fn remove_dup_vars(
         self,
         value_eq: impl Fn(&GenericAtomTerm<Leaf>, &GenericAtomTerm<Leaf>) -> Head,
@@ -1187,84 +1177,6 @@ impl ResolvedRuleExt for ResolvedRule {
             equalities: equalities.into_boxed_slice(),
         })
     }
-}
-
-pub(crate) fn specialize_core_rule(
-    core: &ResolvedCoreRule,
-    selectors: &[ResolvedFact],
-    substitutions: &[(ResolvedVar, ResolvedAtomTerm)],
-    typeinfo: &TypeInfo,
-    fresh_gen: &mut SymbolGen,
-) -> Result<ResolvedCoreRule, TypeError> {
-    let (mut selector_query, _) = Facts(selectors.to_vec()).to_query(typeinfo, fresh_gen);
-    // A source variable may have been eliminated from the stored core rule.
-    // Chase its canonicalization aliases before attaching the new selector.
-    for atom in &mut selector_query.atoms {
-        atom.substitute_with(&mut |variable| {
-            let mut current = substitutions
-                .iter()
-                .find(|(source, _)| source == variable)
-                .map(|(_, target)| target.clone())?;
-            for _ in 0..substitutions.len() {
-                let GenericAtomTerm::Var(_, variable) = &current else {
-                    break;
-                };
-                let Some((_, target)) = substitutions.iter().find(|(source, _)| source == variable)
-                else {
-                    break;
-                };
-                current = target.clone();
-            }
-            Some(current)
-        });
-    }
-
-    let selector_vars = selector_query.vars().collect::<HashSet<_>>();
-    for action in &core.head.0 {
-        let (span, variable) = match action {
-            GenericCoreAction::Let(span, variable, ..)
-            | GenericCoreAction::LetAtomTerm(span, variable, ..) => (span, variable),
-            GenericCoreAction::Set(..)
-            | GenericCoreAction::Change(..)
-            | GenericCoreAction::Union(..)
-            | GenericCoreAction::Panic(..) => continue,
-        };
-        if selector_vars.contains(variable) {
-            return Err(TypeError::AlreadyDefined(
-                variable.to_string(),
-                span.clone(),
-            ));
-        }
-    }
-
-    let atoms = core
-        .body
-        .atoms
-        .iter()
-        .cloned()
-        .map(|atom| GenericAtom {
-            span: atom.span,
-            head: HeadOrEq::Head(atom.head),
-            args: atom.args,
-        })
-        .chain(selector_query.atoms)
-        .collect();
-    let rule = GenericCoreRule {
-        span: core.span.clone(),
-        body: Query { atoms },
-        head: core.head.clone(),
-    };
-    grounded_check(&rule)?;
-
-    let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
-    let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
-        ResolvedCall::Primitive(SpecializedPrimitive {
-            prim_with_id: value_eq.clone(),
-            input: vec![atom_term_sort(at1), atom_term_sort(at2)],
-            output: UnitSort.to_arcsort(),
-        })
-    };
-    Ok(rule.canonicalize(&value_eq).remove_dup_vars(value_eq))
 }
 
 #[cfg(test)]
