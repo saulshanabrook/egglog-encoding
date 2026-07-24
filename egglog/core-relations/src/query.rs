@@ -697,6 +697,7 @@ impl RuleBuilder<'_, '_> {
                         .collect(),
                 );
                 let mut binding_sources = Vec::with_capacity(spec.bindings.len());
+                let mut next_residual = 0u32;
                 for binding in &spec.bindings {
                     let RuleBindingSpec::Variable {
                         variable: var,
@@ -753,22 +754,35 @@ impl RuleBuilder<'_, '_> {
                         ReplayBindingSource::Current {
                             variable: *var,
                             sort,
+                            residual: {
+                                let residual = next_residual;
+                                next_residual += 1;
+                                residual
+                            },
                         }
                     };
                     binding_sources.push(source);
                 }
+                let binding_sources = self
+                    .qb
+                    .rsb
+                    .db
+                    .causal_receipts
+                    .as_ref()
+                    .expect("rule receipt actions require causal receipts")
+                    .register_rule_binding_recipe(spec.rule, &binding_sources);
                 ActionReceiptSpec {
                     kind: ActionReceiptKind::Rule(spec.rule),
                     premise_count,
                     premise_slots,
-                    binding_sources: binding_sources.into_boxed_slice(),
+                    binding_sources,
                 }
             }
             ReceiptBuildSpec::Source(spec) => ActionReceiptSpec {
                 kind: ActionReceiptKind::Source(spec.source),
                 premise_count: 0,
                 premise_slots: Arc::new(DenseIdMap::new()),
-                binding_sources: Box::new([]),
+                binding_sources: Arc::from([]),
             },
             ReceiptBuildSpec::Check { premises } => {
                 let premise_count = premises.len();
@@ -783,7 +797,7 @@ impl RuleBuilder<'_, '_> {
                     kind: ActionReceiptKind::Check,
                     premise_count,
                     premise_slots,
-                    binding_sources: Box::new([]),
+                    binding_sources: Arc::from([]),
                 }
             }
         });

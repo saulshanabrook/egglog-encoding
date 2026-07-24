@@ -397,3 +397,54 @@ The accepted conclusion is bounded: native observation plus a conservative
 order-sensitive digest is near parity on both tested shapes. H1 does not prove
 that the future logical-support arena is free; it proves that the execution
 hooks themselves do not impose the former multi-x recording cost.
+
+### Checkpoint A: compact promoted-match bindings (2026-07-24)
+
+**Status:** implementation green; performance deliberately unmeasured pending
+independent review. The red mixed-layout canary initially preserved the public
+three-term match but observed zero new logical/stored counters. After the
+change, the same match exposes the identical source-order term vector while
+retaining only its one `Current` handle in the provisional and durable arenas.
+
+The rule catalog now shares one canonical binding recipe per causal rule.
+`Current` entries have dense residual slots; `Premise` and `Constant` entries
+are reconstructed lazily only when producing the public snapshot. Exact
+RHS-produced terms remain residual handles rather than being replaced by a
+global value lookup. Observed focused shapes:
+
+| Canary | Logical handles | Stored handles |
+|---|---:|---:|
+| mixed premise/constant/current | 3 | 1 |
+| premise plus primitive-only current | 2 | 1 |
+| exact RHS-only current | 1 | 1 |
+| four-premise decomposed join | 4 | 0 |
+
+The old `term_handles` counter remains a compatibility alias for logical
+handles. New counters report logical/stored handles and their `ReplayTermId`
+payload bytes separately. This checkpoint does not alter facts, rekeys,
+equality receipts, containers, removals, slicing, or replay.
+
+**Commands:**
+
+```bash
+# Red: failed at logical_match_term_handles, observed 0 instead of 3.
+cargo test -p egglog-core-relations \
+  promoted_matches_store_only_current_terms_but_expand_the_public_snapshot \
+  -- --nocapture
+
+# Green validation.
+cargo test -p egglog-core-relations
+cargo test -p egglog-bridge --no-run
+cargo test -p egglog-bridge causal_receipts
+cargo fmt --all -- --check
+git diff --check
+cargo clippy -p egglog-core-relations --all-targets -- \
+  -D warnings -A clippy::only-used-in-recursion
+```
+
+The core-relations run passed 147 unit tests and 2 doc tests. The bridge test
+target compiled successfully and its serial-activation canary passed. Strict
+Clippy is green for this checkpoint after allowing the unrelated, pre-existing
+`prepare_dependencies` recursion-only parameter warning. No `./bench.py` run
+belongs to this checkpoint; the next recording measurement requires explicit
+continuation after review.

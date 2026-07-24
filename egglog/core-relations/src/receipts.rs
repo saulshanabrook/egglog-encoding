@@ -747,6 +747,8 @@ pub(crate) enum ReplayBindingSource {
     Current {
         variable: Variable,
         sort: ReplaySortId,
+        /// Dense position in the match's physically stored residual terms.
+        residual: u32,
     },
     Constant {
         term: ReplayTermId,
@@ -787,7 +789,7 @@ pub(crate) struct ActionReceiptSpec {
     pub(crate) premise_count: usize,
     pub(crate) premise_slots: Arc<DenseIdMap<AtomId, PremiseSlot>>,
     /// One exact term source for every ordinary variable, in source order.
-    pub(crate) binding_sources: Box<[ReplayBindingSource]>,
+    pub(crate) binding_sources: Arc<[ReplayBindingSource]>,
 }
 
 impl ActionReceiptSpec {
@@ -1111,6 +1113,15 @@ pub struct ReceiptCounters {
     pub provisional_matches: u64,
     pub promoted_matches: u64,
     pub premise_handles: u64,
+    /// Logical match-term handles exposed by [`MatchRecord::terms`].
+    pub logical_match_term_handles: u64,
+    /// Match-term handles physically retained by the receipt arena.
+    pub stored_match_term_handles: u64,
+    /// Logical bytes exposed by [`MatchRecord::terms`].
+    pub logical_match_term_bytes: u64,
+    /// Match-term bytes physically retained by the receipt arena.
+    pub stored_match_term_bytes: u64,
+    /// Backward-compatible alias for [`Self::logical_match_term_handles`].
     pub term_handles: u64,
     /// Fact-owned constructor terms copied while preparing merge causes.
     /// This must scale with effective merged facts, not attempted collisions.
@@ -1526,7 +1537,7 @@ struct MatchDraft {
     wave: CausalWave,
     native_ordinal: u64,
     premises: FlatRange,
-    terms: FlatRange,
+    residual_terms: FlatRange,
     merge_reads: Option<PendingMergeReadRef>,
 }
 
@@ -1613,7 +1624,7 @@ pub(crate) struct PendingMatchBatch {
     wave: CausalWave,
     first_native_ordinal: u64,
     premise_arity: usize,
-    binding_sources: Box<[ReplayBindingSource]>,
+    binding_sources: Arc<[ReplayBindingSource]>,
     premises: PendingPremises,
     current_terms: Box<[ReplayTermId]>,
     merge_reads: Arc<PendingMergeReads>,
@@ -1623,7 +1634,7 @@ pub(crate) struct PendingMatchBatch {
 
 struct PreparedMatch {
     premises: Box<[FactId]>,
-    terms: Box<[ReplayTermId]>,
+    residual_terms: Box<[ReplayTermId]>,
 }
 
 impl Drop for PendingMatchBatch {
@@ -2147,7 +2158,7 @@ struct ProvisionalArena {
     /// recoverable directly from their compact cause node.
     equality_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
     premises: Vec<FactId>,
-    terms: Vec<ReplayTermId>,
+    residual_terms: Vec<ReplayTermId>,
     fact_terms: Vec<ReplayTermId>,
     rebuild_equalities: Vec<TypedCellEquality>,
     pending_equalities: IdSegment<PendingEquality>,
@@ -2160,7 +2171,7 @@ impl ProvisionalArena {
             && self.causes.present() == 0
             && self.equality_summaries.is_empty()
             && self.premises.is_empty()
-            && self.terms.is_empty()
+            && self.residual_terms.is_empty()
             && self.fact_terms.is_empty()
             && self.rebuild_equalities.is_empty()
             && self.pending_equalities.present() == 0
@@ -2173,7 +2184,7 @@ struct DurableMatch {
     rule: u32,
     wave: CausalWave,
     premises: FlatRange,
-    terms: FlatRange,
+    residual_terms: FlatRange,
     merge_reads: FlatRange,
 }
 
@@ -2183,7 +2194,7 @@ struct ReceiptArena {
     facts: Vec<Option<FactSlot>>,
     durable_matches: Vec<DurableMatch>,
     durable_premises: Vec<FactId>,
-    durable_terms: Vec<ReplayTermId>,
+    durable_residual_terms: Vec<ReplayTermId>,
     durable_merge_reads: Vec<FactId>,
     durable_fact_terms: Vec<ReplayTermId>,
     durable_rebuild_equalities: Vec<TypedCellEquality>,
@@ -2212,6 +2223,17 @@ impl ReceiptArena {
             .counters
             .peak_provisional_bytes
             .max(self.counters.live_provisional_bytes);
+    }
+
+    fn record_match_term_storage(&mut self, logical: usize, stored: usize) {
+        let logical = logical as u64;
+        let stored = stored as u64;
+        let handle_bytes = mem::size_of::<ReplayTermId>() as u64;
+        self.counters.logical_match_term_handles += logical;
+        self.counters.stored_match_term_handles += stored;
+        self.counters.logical_match_term_bytes += logical * handle_bytes;
+        self.counters.stored_match_term_bytes += stored * handle_bytes;
+        self.counters.term_handles += logical;
     }
 
     fn fact_term(&self, id: FactId, column: usize) -> Option<ReplayTermId> {
@@ -2354,6 +2376,8 @@ struct ReceiptShared {
     replay_terms: ReplayTermStore,
     equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
     equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
+    /// One canonical source-order binding recipe per source-level rule.
+    rule_binding_recipes: RwLock<HashMap<u32, Arc<[ReplayBindingSource]>>>,
     arena: Mutex<ReceiptArena>,
 }
 
@@ -2374,6 +2398,7 @@ impl Default for ReceiptShared {
             replay_terms: ReplayTermStore::default(),
             equality_value_sorts: Mutex::new(HashMap::default()),
             equality_wave_timestamp: Mutex::new(None),
+            rule_binding_recipes: RwLock::new(HashMap::default()),
             arena: Mutex::new(ReceiptArena::default()),
         }
     }
@@ -2834,6 +2859,51 @@ impl Drop for ReceiptBatch {
 pub struct CausalReceipts(Arc<ReceiptShared>);
 
 impl CausalReceipts {
+    /// Register and share the immutable source-order binding recipe for one
+    /// source-level rule. Seminaive/decomposed variants must agree exactly.
+    pub(crate) fn register_rule_binding_recipe(
+        &self,
+        rule: u32,
+        sources: &[ReplayBindingSource],
+    ) -> Arc<[ReplayBindingSource]> {
+        let mut next_residual = 0u32;
+        for source in sources {
+            match *source {
+                ReplayBindingSource::Current { residual, .. } => {
+                    assert_eq!(
+                        residual, next_residual,
+                        "rule receipt Current slots must be dense in source order"
+                    );
+                    next_residual += 1;
+                }
+                ReplayBindingSource::Constant { term } => {
+                    assert!(!term.is_missing(), "rule receipt constant term is missing");
+                }
+                ReplayBindingSource::Premise { .. } => {}
+            }
+        }
+
+        let mut recipes = self.0.rule_binding_recipes.write().unwrap();
+        if let Some(existing) = recipes.get(&rule) {
+            assert_eq!(
+                existing.as_ref(),
+                sources,
+                "one causal rule registered inconsistent binding recipes"
+            );
+            return Arc::clone(existing);
+        }
+        let recipe: Arc<[ReplayBindingSource]> = sources.into();
+        recipes.insert(rule, Arc::clone(&recipe));
+        recipe
+    }
+
+    fn current_term_arity(sources: &[ReplayBindingSource]) -> usize {
+        sources
+            .iter()
+            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
+            .count()
+    }
+
     pub(crate) fn pending_native_lease(&self, wave: CausalWave) -> PendingNativeLease {
         self.0.open_native_leases.fetch_add(1, Ordering::Relaxed);
         PendingNativeLease(Arc::new(PendingNativeLeaseInner {
@@ -3938,16 +4008,14 @@ impl CausalReceipts {
             lanes * premise_arity,
             "pending match premises must be dense and lane-aligned"
         );
-        let current_arity = binding_sources
-            .iter()
-            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
-            .count();
+        let current_arity = Self::current_term_arity(binding_sources);
         assert_eq!(
             flat_current_terms.len(),
             lanes * current_arity,
             "pending current terms must be dense and lane-aligned"
         );
         let first_native_ordinal = self.reserve_native_match_ordinals(lanes);
+        let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
         self.pending_rule_batch_at(
             rule,
             wave,
@@ -3967,7 +4035,7 @@ impl CausalReceipts {
         wave: CausalWave,
         first_native_ordinal: u64,
         premise_arity: usize,
-        binding_sources: &[ReplayBindingSource],
+        binding_sources: Arc<[ReplayBindingSource]>,
         flat_premises: &[FactId],
         flat_current_terms: &[ReplayTermId],
         lanes: usize,
@@ -3980,7 +4048,7 @@ impl CausalReceipts {
             wave,
             first_native_ordinal,
             premise_arity,
-            binding_sources: binding_sources.into(),
+            binding_sources,
             premises: PendingPremises::Flat(flat_premises.into()),
             current_terms: flat_current_terms.into(),
             merge_reads: Arc::new(PendingMergeReads::default()),
@@ -3998,17 +4066,14 @@ impl CausalReceipts {
         wave: CausalWave,
         first_native_ordinal: u64,
         premise_arity: usize,
-        binding_sources: &[ReplayBindingSource],
+        binding_sources: Arc<[ReplayBindingSource]>,
         resolver: Arc<dyn PendingPremiseResolver>,
         witness_lanes: &[u32],
         flat_current_terms: &[ReplayTermId],
     ) -> Arc<PendingMatchBatch> {
         let lanes = witness_lanes.len();
         assert!(lanes > 0, "pending match batch cannot be empty");
-        let current_arity = binding_sources
-            .iter()
-            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
-            .count();
+        let current_arity = Self::current_term_arity(&binding_sources);
         assert_eq!(
             flat_current_terms.len(),
             lanes * current_arity,
@@ -4022,7 +4087,7 @@ impl CausalReceipts {
             wave,
             first_native_ordinal,
             premise_arity,
-            binding_sources: binding_sources.into(),
+            binding_sources,
             premises: PendingPremises::Lazy {
                 resolver,
                 lanes: witness_lanes.into(),
@@ -4065,10 +4130,13 @@ impl CausalReceipts {
         let cause_id = CauseDraftId::new(ReceiptShared::alloc_u64(&self.0.next_cause_draft, 1));
         let mut arena = self.0.arena.lock().unwrap();
         let premise_range = FlatRange::new(arena.provisional.premises.len(), premises.len());
-        arena.provisional.premises.extend_from_slice(&premises);
-        let term_start = arena.provisional.terms.len();
-        arena.provisional.terms.extend_from_slice(&prepared.terms);
-        let term_range = FlatRange::new(term_start, batch.binding_sources.len());
+        arena.provisional.premises.extend_from_slice(premises);
+        let residual_start = arena.provisional.residual_terms.len();
+        arena
+            .provisional
+            .residual_terms
+            .extend_from_slice(&prepared.residual_terms);
+        let residual_range = FlatRange::new(residual_start, prepared.residual_terms.len());
         arena.provisional.matches.install(
             match_id.get(),
             MatchDraft {
@@ -4076,7 +4144,7 @@ impl CausalReceipts {
                 wave: batch.wave,
                 native_ordinal: batch.first_native_ordinal + lane as u64,
                 premises: premise_range,
-                terms: term_range,
+                residual_terms: residual_range,
                 merge_reads: Some(PendingMergeReadRef {
                     batch: Arc::clone(&batch.merge_reads),
                     lane: lane.try_into().expect("pending match batch exceeds u32"),
@@ -4088,13 +4156,13 @@ impl CausalReceipts {
             .causes
             .install(cause_id.get(), CauseDraft::Rule(match_id));
         arena.counters.premise_handles += premises.len() as u64;
-        arena.counters.term_handles += batch.binding_sources.len() as u64;
+        arena.record_match_term_storage(batch.binding_sources.len(), prepared.residual_terms.len());
         arena.counters.provisional_matches += 1;
         arena.add_live_bytes(
             mem::size_of::<MatchDraft>()
                 + mem::size_of::<CauseDraft>()
                 + premises.len() * mem::size_of::<FactId>()
-                + batch.binding_sources.len() * mem::size_of::<ReplayTermId>(),
+                + prepared.residual_terms.len() * mem::size_of::<ReplayTermId>(),
         );
         cause_id
     }
@@ -4110,16 +4178,10 @@ impl CausalReceipts {
         );
         if batch.prepared[lane].get().is_none() {
             let premises = batch.premises.resolve(lane, batch.premise_arity);
-            let current_arity = batch
-                .binding_sources
-                .iter()
-                .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
-                .count();
+            let current_arity = Self::current_term_arity(&batch.binding_sources);
             let current_start = lane * current_arity;
             let current_terms = &batch.current_terms[current_start..current_start + current_arity];
             let arena = self.0.arena.lock().unwrap();
-            let mut terms = Vec::with_capacity(batch.binding_sources.len());
-            let mut current = 0;
             for source in batch.binding_sources.iter().copied() {
                 let term = match source {
                     ReplayBindingSource::Premise { premise, column } => {
@@ -4130,22 +4192,20 @@ impl CausalReceipts {
                             )
                         })?
                     }
-                    ReplayBindingSource::Current { .. } => {
-                        let term = current_terms[current];
-                        current += 1;
-                        term
+                    ReplayBindingSource::Current { residual, .. } => {
+                        current_terms
+                            [usize::try_from(residual).expect("residual term slot exceeds usize")]
                     }
                     ReplayBindingSource::Constant { term } => term,
                 };
                 if term.is_missing() {
                     return Err("pending match prepared a missing ReplayTermId".into());
                 }
-                terms.push(term);
             }
             drop(arena);
             let _ = batch.prepared[lane].set(PreparedMatch {
                 premises: premises.into_vec().into_boxed_slice(),
-                terms: terms.into_boxed_slice(),
+                residual_terms: current_terms.into(),
             });
         }
         Ok(batch.prepared[lane]
@@ -4170,10 +4230,8 @@ impl CausalReceipts {
         if lanes.is_empty() {
             return Vec::new();
         }
-        let current_arity = binding_sources
-            .iter()
-            .filter(|source| matches!(source, ReplayBindingSource::Current { .. }))
-            .count();
+        let binding_sources = self.register_rule_binding_recipe(rule, binding_sources);
+        let current_arity = Self::current_term_arity(&binding_sources);
         assert_eq!(
             flat_current_terms.len(),
             lanes.len() * current_arity,
@@ -4189,9 +4247,9 @@ impl CausalReceipts {
             let premises = &flat_premises[premise_start..premise_start + premise_arity];
             let premise_range = FlatRange::new(arena.provisional.premises.len(), premises.len());
             arena.provisional.premises.extend_from_slice(premises);
-            let term_start = arena.provisional.terms.len();
-            let mut current = offset * current_arity;
-            for source in binding_sources {
+            let current_start = offset * current_arity;
+            let current_terms = &flat_current_terms[current_start..current_start + current_arity];
+            for source in binding_sources.iter() {
                 let term = match *source {
                     ReplayBindingSource::Premise { premise, column } => {
                         let fact = premises[premise];
@@ -4201,16 +4259,23 @@ impl CausalReceipts {
                             )
                         })
                     }
-                    ReplayBindingSource::Current { .. } => {
-                        let term = flat_current_terms[current];
-                        current += 1;
-                        term
+                    ReplayBindingSource::Current { residual, .. } => {
+                        current_terms
+                            [usize::try_from(residual).expect("residual term slot exceeds usize")]
                     }
                     ReplayBindingSource::Constant { term } => term,
                 };
-                arena.provisional.terms.push(term);
+                assert!(
+                    !term.is_missing(),
+                    "eager match prepared a missing ReplayTermId"
+                );
             }
-            let term_range = FlatRange::new(term_start, binding_sources.len());
+            let residual_start = arena.provisional.residual_terms.len();
+            arena
+                .provisional
+                .residual_terms
+                .extend_from_slice(current_terms);
+            let residual_range = FlatRange::new(residual_start, current_terms.len());
             let match_id = MatchDraftId::new(first_match + offset as u64);
             arena.provisional.matches.install(
                 match_id.get(),
@@ -4219,7 +4284,7 @@ impl CausalReceipts {
                     wave,
                     native_ordinal: first_native_ordinal + offset as u64,
                     premises: premise_range,
-                    terms: term_range,
+                    residual_terms: residual_range,
                     merge_reads: None,
                 },
             );
@@ -4231,12 +4296,15 @@ impl CausalReceipts {
             result.push((lane, cause_id));
         }
         arena.counters.premise_handles += (lanes.len() * premise_arity) as u64;
-        arena.counters.term_handles += (lanes.len() * binding_sources.len()) as u64;
+        arena.record_match_term_storage(
+            lanes.len() * binding_sources.len(),
+            lanes.len() * current_arity,
+        );
         arena.counters.provisional_matches += lanes.len() as u64;
         arena.add_live_bytes(
             lanes.len() * (mem::size_of::<MatchDraft>() + mem::size_of::<CauseDraft>())
                 + lanes.len() * premise_arity * mem::size_of::<FactId>()
-                + lanes.len() * binding_sources.len() * mem::size_of::<ReplayTermId>(),
+                + lanes.len() * current_arity * mem::size_of::<ReplayTermId>(),
         );
         result
     }
@@ -4372,9 +4440,12 @@ impl CausalReceipts {
             let premises_start = arena.durable_premises.len();
             let premises = arena.provisional.premises[draft.premises.as_range()].to_vec();
             arena.durable_premises.extend_from_slice(&premises);
-            let terms_start = arena.durable_terms.len();
-            let terms = arena.provisional.terms[draft.terms.as_range()].to_vec();
-            arena.durable_terms.extend_from_slice(&terms);
+            let residual_start = arena.durable_residual_terms.len();
+            let residual_terms =
+                arena.provisional.residual_terms[draft.residual_terms.as_range()].to_vec();
+            arena
+                .durable_residual_terms
+                .extend_from_slice(&residual_terms);
             let merge_reads = draft
                 .merge_reads
                 .as_ref()
@@ -4386,7 +4457,7 @@ impl CausalReceipts {
                 rule: draft.rule,
                 wave: draft.wave,
                 premises: FlatRange::new(premises_start, draft.premises.len as usize),
-                terms: FlatRange::new(terms_start, draft.terms.len as usize),
+                residual_terms: FlatRange::new(residual_start, draft.residual_terms.len as usize),
                 merge_reads: FlatRange::new(merge_reads_start, merge_reads.len()),
             });
             debug_assert_eq!(id.get() as usize, arena.durable_matches.len());
@@ -4646,6 +4717,7 @@ impl CausalReceipts {
             0,
             "cannot snapshot causal receipts after an unpublished worker fragment"
         );
+        let recipes = self.0.rule_binding_recipes.read().unwrap();
         let arena = self.0.arena.lock().unwrap();
         assert!(
             arena.provisional.is_empty()
@@ -4659,13 +4731,50 @@ impl CausalReceipts {
             .durable_matches
             .iter()
             .enumerate()
-            .map(|(index, record)| MatchRecord {
-                id: RuleMatchId::new(index as u64 + 1),
-                rule: record.rule,
-                wave: record.wave,
-                premises: arena.durable_premises[record.premises.as_range()].into(),
-                terms: arena.durable_terms[record.terms.as_range()].into(),
-                merge_reads: arena.durable_merge_reads[record.merge_reads.as_range()].into(),
+            .map(|(index, record)| {
+                let premises = &arena.durable_premises[record.premises.as_range()];
+                let residual_terms =
+                    &arena.durable_residual_terms[record.residual_terms.as_range()];
+                let recipe = recipes
+                    .get(&record.rule)
+                    .unwrap_or_else(|| panic!("rule {} has no binding recipe", record.rule));
+                assert_eq!(
+                    residual_terms.len(),
+                    Self::current_term_arity(recipe),
+                    "durable match residual count disagrees with its binding recipe"
+                );
+                let terms = recipe
+                    .iter()
+                    .map(|source| {
+                        let term = match *source {
+                            ReplayBindingSource::Premise { premise, column } => arena
+                                .fact_term(premises[premise], column)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "durable match premise {premise} column {column} lost its ReplayTermId"
+                                    )
+                                }),
+                            ReplayBindingSource::Current { residual, .. } => residual_terms
+                                [usize::try_from(residual)
+                                    .expect("residual term slot exceeds usize")],
+                            ReplayBindingSource::Constant { term } => term,
+                        };
+                        assert!(
+                            !term.is_missing(),
+                            "durable match expanded a missing ReplayTermId"
+                        );
+                        term
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice();
+                MatchRecord {
+                    id: RuleMatchId::new(index as u64 + 1),
+                    rule: record.rule,
+                    wave: record.wave,
+                    premises: premises.into(),
+                    terms,
+                    merge_reads: arena.durable_merge_reads[record.merge_reads.as_range()].into(),
+                }
             })
             .collect();
         let facts = arena
@@ -4936,6 +5045,113 @@ mod tests {
             next_match.terms.as_ref(),
             &terms,
             "a later rule must resolve terms through a derived FactId"
+        );
+    }
+
+    #[test]
+    fn promoted_matches_store_only_current_terms_but_expand_the_public_snapshot() {
+        let receipts = CausalReceipts::default();
+        let table = TableId::new_const(0);
+        let sort = ReplaySortId::new(1);
+        receipts
+            .register_table_layout(table, &[Some(sort)])
+            .unwrap();
+
+        let source_row = [Value::new_const(7)];
+        let source_term = receipts.intern_literal(sort, ReplayLiteral::I64(7), source_row[0]);
+        receipts
+            .install_source_row(table, &source_row, &[source_term])
+            .unwrap();
+        let source_cause = receipts.source_draft(SourceRef::Synthetic(0));
+        let mut source_batch = receipts.new_batch();
+        let source_fact = source_batch.record_fact(table, source_cause, &source_row);
+        source_batch.publish();
+        receipts.finalize_wave();
+
+        let constant_value = Value::new_const(8);
+        let constant_term = receipts.intern_literal(sort, ReplayLiteral::I64(8), constant_value);
+        let current_value = Value::new_const(9);
+        let current_term = receipts.intern_literal(sort, ReplayLiteral::I64(9), current_value);
+        let derived_row = [Value::new_const(10)];
+        let derived_term = receipts.intern_literal(sort, ReplayLiteral::I64(10), derived_row[0]);
+
+        let binding_sources = [
+            ReplayBindingSource::Premise {
+                premise: 0,
+                column: 0,
+            },
+            ReplayBindingSource::Constant {
+                term: constant_term,
+            },
+            ReplayBindingSource::Current {
+                variable: Variable::new(0),
+                sort,
+                residual: 0,
+            },
+        ];
+        let [(_, rule_cause)] = receipts
+            .register_rule_matches(
+                11,
+                CausalWave::new(1),
+                1,
+                &binding_sources,
+                &[source_fact],
+                &[current_term],
+                &[0],
+            )
+            .try_into()
+            .unwrap();
+        let mut derived_batch = receipts.new_batch();
+        derived_batch.record_fact(table, rule_cause, &derived_row);
+        derived_batch.publish();
+        receipts.finalize_wave();
+
+        let snapshot = receipts.snapshot();
+        assert_eq!(
+            snapshot.matches[0].terms.as_ref(),
+            &[source_term, constant_term, current_term],
+            "lazy expansion must preserve the historical public MatchRecord layout"
+        );
+        assert_eq!(snapshot.counters.logical_match_term_handles, 3);
+        assert_eq!(snapshot.counters.stored_match_term_handles, 1);
+        assert_eq!(
+            snapshot.counters.logical_match_term_bytes,
+            3 * mem::size_of::<ReplayTermId>() as u64
+        );
+        assert_eq!(
+            snapshot.counters.stored_match_term_bytes,
+            mem::size_of::<ReplayTermId>() as u64
+        );
+        assert_eq!(snapshot.counters.term_handles, 3);
+        assert_eq!(
+            receipts.replay_term(derived_term),
+            Some(ReplayTerm::Literal {
+                sort,
+                literal: ReplayLiteral::I64(10),
+            })
+        );
+    }
+
+    #[test]
+    fn identical_rule_binding_recipe_registration_reuses_one_layout() {
+        let receipts = CausalReceipts::default();
+        let sort = ReplaySortId::new(1);
+        let sources = [
+            ReplayBindingSource::Premise {
+                premise: 0,
+                column: 1,
+            },
+            ReplayBindingSource::Current {
+                variable: Variable::new(2),
+                sort,
+                residual: 0,
+            },
+        ];
+        let first = receipts.register_rule_binding_recipe(12, &sources);
+        let second = receipts.register_rule_binding_recipe(12, &sources);
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "cached/decomposed variants must share one canonical recipe allocation"
         );
     }
 

@@ -130,7 +130,7 @@ pub(crate) struct Bindings {
 struct ReceiptBindings {
     kind: ActionReceiptKind,
     wave: CausalWave,
-    binding_sources: Box<[ReplayBindingSource]>,
+    binding_sources: Arc<[ReplayBindingSource]>,
     premises: ReceiptPremises,
     causes: Vec<Option<CauseDraftId>>,
     pending_rule_batch: Option<Arc<PendingMatchBatch>>,
@@ -309,12 +309,12 @@ impl Bindings {
         kind: &ActionReceiptKind,
         wave: CausalWave,
         premises: &[FactId],
-        binding_sources: &[ReplayBindingSource],
+        binding_sources: &Arc<[ReplayBindingSource]>,
     ) {
         if let Some(existing) = &mut self.receipt {
             assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
-            assert_eq!(existing.binding_sources.as_ref(), binding_sources);
+            assert_eq!(existing.binding_sources.as_ref(), binding_sources.as_ref());
             let ReceiptPremises::Flat { arity, facts } = &mut existing.premises else {
                 panic!("cannot mix eager and lazy receipt witnesses in one action batch")
             };
@@ -325,7 +325,7 @@ impl Bindings {
             self.receipt = Some(Box::new(ReceiptBindings {
                 kind: kind.clone(),
                 wave,
-                binding_sources: binding_sources.into(),
+                binding_sources: Arc::clone(binding_sources),
                 premises: ReceiptPremises::Flat {
                     arity: premises.len(),
                     facts: premises.into(),
@@ -343,14 +343,14 @@ impl Bindings {
         kind: &ActionReceiptKind,
         wave: CausalWave,
         premise_arity: usize,
-        binding_sources: &[ReplayBindingSource],
+        binding_sources: &Arc<[ReplayBindingSource]>,
         resolver: Arc<dyn PendingPremiseResolver>,
         witness_lane: u32,
     ) {
         if let Some(existing) = &mut self.receipt {
             assert_eq!(&existing.kind, kind);
             assert_eq!(existing.wave, wave);
-            assert_eq!(existing.binding_sources.as_ref(), binding_sources);
+            assert_eq!(existing.binding_sources.as_ref(), binding_sources.as_ref());
             let ReceiptPremises::Lazy {
                 arity,
                 resolver: existing_resolver,
@@ -370,7 +370,7 @@ impl Bindings {
             self.receipt = Some(Box::new(ReceiptBindings {
                 kind: kind.clone(),
                 wave,
-                binding_sources: binding_sources.into(),
+                binding_sources: Arc::clone(binding_sources),
                 premises: ReceiptPremises::Lazy {
                     arity: premise_arity,
                     resolver,
@@ -405,7 +405,7 @@ impl Bindings {
         let mut current_terms = SmallVec::<[ReplayTermId; 16]>::new();
         for lane in 0..self.matches {
             for source in binding_sources.iter().copied() {
-                if let ReplayBindingSource::Current { variable, sort } = source {
+                if let ReplayBindingSource::Current { variable, sort, .. } = source {
                     let _ = sort;
                     let term = state
                         .produced_terms
@@ -424,7 +424,7 @@ impl Bindings {
                 wave,
                 first_native_ordinal,
                 premise_arity,
-                &binding_sources,
+                Arc::clone(&binding_sources),
                 facts,
                 &current_terms,
                 self.matches,
@@ -436,7 +436,7 @@ impl Bindings {
                 wave,
                 first_native_ordinal,
                 premise_arity,
-                &binding_sources,
+                Arc::clone(&binding_sources),
                 Arc::clone(resolver),
                 lanes,
                 &current_terms,
@@ -490,6 +490,7 @@ impl Bindings {
                 ReplayBindingSource::Current {
                     variable: current,
                     sort,
+                    ..
                 } if current == variable => Some(sort),
                 _ => None,
             })

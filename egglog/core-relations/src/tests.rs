@@ -4141,6 +4141,8 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
         .find(|matched| matched.id == derived_fact.cause.rule_match().unwrap())
         .unwrap();
     assert_eq!(matched.terms.as_ref(), &[value_term, primitive_term]);
+    assert_eq!(snapshot.counters.logical_match_term_handles, 2);
+    assert_eq!(snapshot.counters.stored_match_term_handles, 1);
 }
 
 #[test]
@@ -4241,6 +4243,8 @@ fn causal_receipts_capture_exact_rhs_producer_term_not_global_alias() {
     );
     assert_eq!(snapshot.matches.len(), 1);
     assert_eq!(snapshot.matches[0].terms.as_ref(), &[exact_call]);
+    assert_eq!(snapshot.counters.logical_match_term_handles, 1);
+    assert_eq!(snapshot.counters.stored_match_term_handles, 1);
     assert_eq!(
         receipts.replay_term(exact_call),
         Some(crate::ReplayTerm::Call {
@@ -5399,6 +5403,11 @@ fn decomposed_receipt_materialization_case(force_scoped_execution: bool) {
         "receipt premise order must follow the source rule"
     );
     assert!(!matched.premises.contains(&r_decoy));
+    assert_eq!(snapshot.counters.logical_match_term_handles, 4);
+    assert_eq!(
+        snapshot.counters.stored_match_term_handles, 0,
+        "decomposed premise-backed bindings need no durable match-term payload"
+    );
 }
 
 #[test]
