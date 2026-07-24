@@ -86,6 +86,14 @@ struct Args {
     /// Record compact native causal receipts for supported execution semantics
     #[clap(long)]
     causal_receipts: bool,
+    /// Record an ordinary run, slice successful checks, and replay the slice
+    /// on a fresh proof-enabled graph
+    #[clap(long)]
+    causal_slice: bool,
+    /// Write the exact source artifact corresponding to the executed causal
+    /// replay AST
+    #[clap(long, requires = "causal_slice")]
+    causal_slice_output: Option<PathBuf>,
 }
 
 /// Start a command-line interface for the E-graph.
@@ -94,7 +102,7 @@ struct Args {
 /// should also call this function.
 #[allow(clippy::disallowed_macros)]
 pub fn cli(egraph: EGraph) {
-    cli_with_args(egraph, std::env::args_os());
+    cli_with_args_inner(egraph, std::env::args_os(), None);
 }
 
 /// Start a command-line interface with an explicit argv.
@@ -102,8 +110,35 @@ pub fn cli(egraph: EGraph) {
 /// Custom binaries can pre-parse their own flags and pass the remaining
 /// arguments here while still using egglog's standard CLI behavior.
 #[allow(clippy::disallowed_macros)]
-pub fn cli_with_args<I, T>(mut egraph: EGraph, args: I)
+pub fn cli_with_args<I, T>(egraph: EGraph, args: I)
 where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+{
+    cli_with_args_inner(egraph, args, None);
+}
+
+/// Start a command-line interface with a factory for the fresh proof graph
+/// used by `--causal-slice`.
+///
+/// Custom binaries which install sorts, primitives, or command extensions
+/// must use this entrypoint so replay receives the same extensions as capture.
+#[allow(clippy::disallowed_macros)]
+pub fn cli_with_args_and_factory<I, T, F>(egraph: EGraph, args: I, proof_factory: F)
+where
+    I: IntoIterator<Item = T>,
+    T: Into<OsString> + Clone,
+    F: FnOnce() -> EGraph + 'static,
+{
+    cli_with_args_inner(egraph, args, Some(Box::new(proof_factory)));
+}
+
+#[allow(clippy::disallowed_macros)]
+fn cli_with_args_inner<I, T>(
+    mut egraph: EGraph,
+    args: I,
+    proof_factory: Option<Box<dyn FnOnce() -> EGraph>>,
+) where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
@@ -123,28 +158,40 @@ where
         log::error!("causal receipts require --threads 1; parallel causal capture is unsupported");
         std::process::exit(2);
     }
+    if args.causal_slice {
+        let invalid = if !args.proofs {
+            Some("--causal-slice requires --proofs")
+        } else if args.threads != 1 {
+            Some("--causal-slice requires --threads 1")
+        } else if args.inputs.len() != 1 {
+            Some("--causal-slice requires exactly one input file")
+        } else if args.causal_receipts {
+            Some("--causal-slice conflicts with --causal-receipts")
+        } else if args.proof_testing {
+            Some("--causal-slice conflicts with --proof-testing")
+        } else if args.term_encoding {
+            Some("--causal-slice conflicts with --term-encoding")
+        } else if args.naive {
+            Some("--causal-slice does not support --naive")
+        } else if proof_factory.is_none() {
+            Some(
+                "--causal-slice requires a fresh-proof factory; custom binaries must call cli_with_args_and_factory",
+            )
+        } else if matches!(
+            args.mode,
+            RunMode::Interactive | RunMode::ShowDesugaredEgglog
+        ) {
+            Some("--causal-slice supports only normal and no-messages modes")
+        } else {
+            None
+        };
+        if let Some(message) = invalid {
+            log::error!("{message}");
+            std::process::exit(2);
+        }
+    }
 
     EGraph::set_num_threads(args.threads);
-
-    if args.term_encoding {
-        egraph = egraph.with_term_encoding_enabled();
-    }
-
-    if args.proofs {
-        egraph = egraph.with_proofs_enabled();
-    }
-
-    if args.proof_testing {
-        egraph = egraph.with_proofs_enabled();
-        egraph = egraph.with_proof_testing();
-    }
-
-    if args.causal_receipts
-        && let Err(error) = egraph.enable_causal_receipts()
-    {
-        log::error!("{error}");
-        std::process::exit(2);
-    }
 
     egraph.fact_directory.clone_from(&args.fact_directory);
     egraph.seminaive = !args.naive;
@@ -153,7 +200,114 @@ where
     if args.strict_mode {
         egraph.set_strict_mode(true);
     }
-    if args.inputs.is_empty() {
+
+    if args.term_encoding {
+        egraph = egraph.with_term_encoding_enabled();
+    }
+
+    if args.proofs && !args.causal_slice {
+        egraph = egraph.with_proofs_enabled();
+    }
+
+    if args.proof_testing {
+        egraph = egraph.with_proofs_enabled();
+        egraph = egraph.with_proof_testing();
+    }
+
+    if (args.causal_receipts || args.causal_slice)
+        && let Err(error) = egraph.enable_causal_receipts()
+    {
+        log::error!("{error}");
+        std::process::exit(2);
+    }
+
+    if args.causal_slice {
+        let input = &args.inputs[0];
+        let program = std::fs::read_to_string(input).unwrap_or_else(|_| {
+            let arg = input.to_string_lossy();
+            panic!("Failed to read file {arg}")
+        });
+        let filename = Some(input.to_str().unwrap().to_owned());
+        let capture_start = std::time::Instant::now();
+        let parsed = egraph
+            .parse_program(filename, &program)
+            .unwrap_or_else(|error| {
+                log::error!("{error}");
+                std::process::exit(1);
+            });
+        if let Err(error) = egraph.run_program(parsed) {
+            log::error!("{error}");
+            std::process::exit(1);
+        }
+        let capture_time = capture_start.elapsed();
+
+        let slice_start = std::time::Instant::now();
+        let slice = crate::causal_slice::slice_all_checks(&egraph).unwrap_or_else(|error| {
+            log::error!("{error}");
+            std::process::exit(1);
+        });
+        let replay =
+            crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap_or_else(|error| {
+                log::error!("{error}");
+                std::process::exit(1);
+            });
+        let replay_stats = replay.stats;
+        let commands = replay.to_commands().unwrap_or_else(|error| {
+            log::error!("{error}");
+            std::process::exit(1);
+        });
+        if let Some(path) = &args.causal_slice_output {
+            let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands)
+                .unwrap_or_else(|error| {
+                    log::error!("{error}");
+                    std::process::exit(1);
+                });
+            std::fs::write(path, rendered).unwrap_or_else(|error| {
+                log::error!(
+                    "cannot write causal replay artifact `{}`: {error}",
+                    path.display()
+                );
+                std::process::exit(1);
+            });
+        }
+        let slice_time = slice_start.elapsed();
+
+        // Drop every runtime value and receipt allocation before constructing
+        // the proof graph. The owned AST above is the only phase boundary.
+        drop(egraph);
+        let mut proof_graph = proof_factory.expect("causal-slice factory was validated")();
+        proof_graph.fact_directory.clone_from(&args.fact_directory);
+        proof_graph.seminaive = true;
+        proof_graph.no_decomp = args.no_decomp;
+        proof_graph.set_report_level(args.report_level);
+        if args.strict_mode {
+            proof_graph.set_strict_mode(true);
+        }
+        proof_graph = proof_graph.with_proofs_enabled();
+        let replay_start = std::time::Instant::now();
+        let outputs = proof_graph.run_program(commands).unwrap_or_else(|error| {
+            log::error!("{error}");
+            std::process::exit(1);
+        });
+        let replay_time = replay_start.elapsed();
+        if args.mode != RunMode::NoMessages {
+            let mut output = io::stdout();
+            for message in outputs {
+                write!(output, "{message}").unwrap();
+            }
+        }
+        log::info!(
+            "causal slice: capture={capture_time:?} slice={slice_time:?} replay={replay_time:?} facts={} matches={} equalities={} removals={} waves={} aliases={} firings={}",
+            slice.facts.len(),
+            slice.matches.len(),
+            slice.equalities.len(),
+            slice.replay_removals.len(),
+            replay_stats.waves,
+            replay_stats.aliases,
+            replay_stats.firings,
+        );
+        egraph = proof_graph;
+    } else if args.inputs.is_empty() {
         match egraph.repl(args.mode) {
             Ok(()) => {}
             Err(err) => {

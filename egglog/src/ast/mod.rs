@@ -1095,9 +1095,12 @@ where
             GenericCommand::LetCheck {
                 name,
                 expr,
-                expected_sort: _,
+                expected_sort,
                 ..
-            } => write!(f, "(let-check {name} {expr})"),
+            } => match expected_sort {
+                Some(sort) => write!(f, "(let-check {name} {expr} :sort {sort})"),
+                None => write!(f, "(let-check {name} {expr})"),
+            },
             GenericCommand::Extract(_span, expr, variants) => {
                 write!(f, "(extract {expr} {variants})")
             }

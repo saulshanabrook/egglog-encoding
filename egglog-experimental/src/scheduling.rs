@@ -53,7 +53,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use egglog::{
     CausalScheduleContext, CommandOutput, UserDefinedCommand,
-    ast::{Command, Expr, Fact, Literal, ParseError},
+    ast::{Command, Expr, Fact, Literal, ParseError, Parser},
     prelude::Span,
     scheduler::{Scheduler, SchedulerId},
     span,
@@ -309,6 +309,27 @@ impl ScheduleState {
                     egraph.eval_expr(expr)?;
                 }
                 Ok((vec![], RunReport::default()))
+            }
+            // The experimental scheduler shadows core `run-schedule` in
+            // ordinary mode. Forward the one replay-facing leaf through a
+            // fresh core parser, then execute its AST directly so the rendered
+            // causal artifact has the same semantics without recursive
+            // interception or a production text round-trip.
+            "run-rule" => {
+                let mut parser = Parser::default();
+                let program =
+                    parser.get_program_from_string(None, &format!("(run-schedule {arg})"))?;
+                let outputs = egraph.run_program(program)?;
+                let mut report = RunReport::default();
+                let mut command_outputs = Vec::new();
+                for output in outputs {
+                    if let CommandOutput::RunSchedule(run) = output {
+                        report.union(run);
+                    } else {
+                        command_outputs.push(output);
+                    }
+                }
+                Ok((command_outputs, report))
             }
             // Allowlisted commands forwarded via parse roundtrip.
             // User-defined commands are also allowed (run-schedule, multi-extract, keep-best, ...).

@@ -416,6 +416,10 @@ struct CausalState {
     /// order. These commands never retain an `ArcSort`, backend id, or runtime
     /// value from the recording graph.
     command_catalog: Vec<CausalCatalogCommand>,
+    /// Macro-expanded source commands in source order. Replay emits static
+    /// declarations from this catalog so the inspectable artifact never leaks
+    /// normalized, parser-reserved implementation names such as `@RSort`.
+    surface_command_catalog: Vec<Option<Command>>,
     /// Stable replay catalog indexed by the causal rule ordinal carried by
     /// native match receipts.
     rule_catalog: Vec<CausalRuleCatalogEntry>,
@@ -451,6 +455,7 @@ struct CausalState {
 #[derive(Clone, Debug)]
 struct CausalCatalogCommand {
     command: Command,
+    surface_command: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -513,6 +518,7 @@ impl Default for CausalState {
             next_check: 0,
             next_wave: 1,
             command_catalog: Vec::new(),
+            surface_command_catalog: Vec::new(),
             rule_catalog: Vec::new(),
             source_commands: HashMap::default(),
             input_commands: HashMap::default(),
@@ -826,6 +832,7 @@ impl CausalState {
         &mut self,
         command: &ResolvedNCommand,
         anonymous_rule: Option<bool>,
+        surface_command: usize,
     ) -> Result<(), Error> {
         self.ensure_healthy()?;
         if self.active_command.is_some() || self.resolving_command {
@@ -835,10 +842,19 @@ impl CausalState {
         }
         let command = command.clone().to_command().make_unresolved();
         let id = self.command_catalog.len();
-        self.command_catalog.push(CausalCatalogCommand { command });
+        self.command_catalog.push(CausalCatalogCommand {
+            command,
+            surface_command,
+        });
         self.active_command = Some(ActiveCausalCommand { command: id });
         self.active_rule_anonymous = anonymous_rule;
         Ok(())
+    }
+
+    fn register_surface_command(&mut self, command: Option<Command>) -> usize {
+        let id = self.surface_command_catalog.len();
+        self.surface_command_catalog.push(command);
+        id
     }
 
     fn begin_resolution(&mut self) -> Result<(), Error> {
@@ -4284,6 +4300,24 @@ impl EGraph {
                     desugared.extend(resolved.resolved);
                     desugared_before_proofs.extend(resolved.resolved_before_proofs);
                 } else {
+                    // Preserve the macro-expanded source form separately from
+                    // the normalized commands used for exact event identity.
+                    // The former is parseable artifact syntax; the latter is
+                    // what native receipt ordinals refer to.
+                    let surface_replay_command = matches!(
+                        &command,
+                        Command::Sort { .. }
+                            | Command::Datatype { .. }
+                            | Command::Datatypes { .. }
+                            | Command::Constructor { .. }
+                            | Command::Relation { .. }
+                            | Command::Function { .. }
+                            | Command::AddRuleset(..)
+                            | Command::UnstableCombinedRuleset(..)
+                            | Command::Action(_)
+                            | Command::Check(..)
+                    )
+                    .then(|| command.clone());
                     let causal_rule_origins = self
                         .causal_state
                         .is_some()
@@ -4327,6 +4361,10 @@ impl EGraph {
                             return Err(error);
                         }
                     };
+                    let surface_command = self
+                        .causal_state
+                        .as_mut()
+                        .map(|causal| causal.register_surface_command(surface_replay_command));
                     if let Some(origins) = &causal_rule_origins {
                         let normalized_rules = resolved
                             .desugared
@@ -4382,7 +4420,12 @@ impl EGraph {
                             )
                         {
                             if let Some(causal) = self.causal_state.as_mut() {
-                                causal.begin_command(&processed, anonymous_rule)?;
+                                causal.begin_command(
+                                    &processed,
+                                    anonymous_rule,
+                                    surface_command
+                                        .expect("causal source command was not cataloged"),
+                                )?;
                             }
                             let result = if self.causal_state.is_some() {
                                 match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -6788,6 +6831,45 @@ mod tests {
                     && pair[1].starts_with("(constructor Num")),
             "datatype expansion must be cataloged in execution order: {commands:#?}"
         );
+        let datatype_surface = causal
+            .command_catalog
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.command,
+                    Command::Sort { name, .. } if name == "Expr"
+                ) || matches!(
+                    &entry.command,
+                    Command::Constructor { name, .. } if name == "Num"
+                )
+            })
+            .map(|entry| entry.surface_command)
+            .collect::<HashSet<_>>();
+        assert_eq!(datatype_surface.len(), 1);
+        let datatype_surface = *datatype_surface.iter().next().unwrap();
+        assert!(matches!(
+            causal.surface_command_catalog[datatype_surface],
+            Some(Command::Datatype { .. })
+        ));
+        let global_entries = causal
+            .command_catalog
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.command,
+                    Command::Function { name, .. } if name == "$seed"
+                ) || entry.command.to_string().starts_with("(set ($seed)")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(global_entries.len(), 2);
+        assert_eq!(
+            global_entries[0].surface_command,
+            global_entries[1].surface_command
+        );
+        assert!(matches!(
+            causal.surface_command_catalog[global_entries[0].surface_command],
+            Some(Command::Action(Action::Let(..)))
+        ));
         assert_eq!(causal.rule_catalog.len(), 1);
         assert_eq!(causal.rule_catalog[0].replay_name, "__causal_anon_rule_0");
         let rule_command = &causal.command_catalog[causal.rule_catalog[0].command].command;

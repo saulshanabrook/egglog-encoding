@@ -18,6 +18,13 @@ fn main() {
             Some("--proofs" | "--proof-testing" | "--term-encoding")
         )
     });
+    let causal_slice = args
+        .iter()
+        .any(|arg| arg.to_str() == Some("--causal-slice"));
+    if causal_slice && !matches!(backend, Backend::Main) {
+        eprintln!("error: --causal-slice supports only --backend main");
+        std::process::exit(2);
+    }
     #[cfg(feature = "dd-backend")]
     let args = if matches!(backend, Backend::Dd) {
         strip_term_encoding_arg(args)
@@ -25,6 +32,7 @@ fn main() {
         args
     };
     let egraph = match backend {
+        Backend::Main if causal_slice => egglog_experimental::new_experimental_egraph(),
         Backend::Main if proof_mode => egglog_experimental::new_experimental_egraph_for_proofs(),
         Backend::Main => egglog_experimental::new_experimental_egraph(),
         #[cfg(feature = "dd-backend")]
@@ -32,7 +40,11 @@ fn main() {
             Box::new(egglog_experimental_dd::EGraph::new()),
         ),
     };
-    egglog::cli_with_args(egraph, args)
+    egglog::cli_with_args_and_factory(
+        egraph,
+        args,
+        egglog_experimental::new_experimental_egraph_for_proofs,
+    )
 }
 
 fn extract_backend_arg<I>(args: I) -> Result<(Backend, Vec<OsString>), String>

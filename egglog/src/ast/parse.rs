@@ -850,13 +850,30 @@ impl Parser {
                 _ => return error!(span, "usage: (extract <expr> <number of variants>?)"),
             },
             "let-check" => match tail {
-                [name, expr] => vec![Command::LetCheck {
-                    span,
-                    name: name.expect_atom("checked alias")?,
-                    expr: self.parse_expr(expr)?,
-                    expected_sort: None,
-                }],
-                _ => return error!(span, "usage: (let-check <$alias> <closed expression>)"),
+                [name, expr, rest @ ..] => {
+                    let expected_sort = match self.parse_options(rest)?.as_slice() {
+                        [] => None,
+                        [(":sort", [sort])] => Some(sort.expect_atom("checked alias sort")?),
+                        _ => {
+                            return error!(
+                                span,
+                                "usage: (let-check <$alias> <closed expression> :sort <sort>?)"
+                            );
+                        }
+                    };
+                    vec![Command::LetCheck {
+                        span,
+                        name: name.expect_atom("checked alias")?,
+                        expr: self.parse_expr(expr)?,
+                        expected_sort,
+                    }]
+                }
+                _ => {
+                    return error!(
+                        span,
+                        "usage: (let-check <$alias> <closed expression> :sort <sort>?)"
+                    );
+                }
             },
             "check" => vec![Command::Check(
                 span,
