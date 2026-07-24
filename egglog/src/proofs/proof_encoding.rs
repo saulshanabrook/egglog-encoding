@@ -1490,23 +1490,22 @@ impl<'a> ProofInstrumentor<'a> {
                 };
                 Schedule::Sequence(span.clone(), vec![new_run, self.rebuild()])
             }
-            ResolvedSchedule::RunRule(span, config) => {
-                // Bindings select matches but are not premises of the logical rule.
-                // Encode their normalized selector facts so they query the proof
-                // views/UF, then deliberately discard the proof values they would
-                // produce. The temporary execution rule retains the original
-                // instrumented head, whose Justification::Rule still contains only
-                // the source rule's body premises.
-                let (instrumented, _lookups, _proof) = self.instrument_facts(&config.selectors);
-                let new_run = Schedule::RunRule(
-                    span.clone(),
-                    RunRuleConfig {
+            ResolvedSchedule::RunRule(span, configs) => {
+                // Ground bindings select physical matches; they are not logical
+                // premises of the source rule and need no proof instrumentation.
+                // Keep the atomic invocation list intact for the encoded rules.
+                let configs = configs
+                    .iter()
+                    .map(|config| RunRuleConfig {
                         rule: config.rule.clone(),
-                        bindings: vec![],
-                        selectors: self.parse_facts(&instrumented),
-                        expect: config.expect,
-                    },
-                );
+                        bindings: config
+                            .bindings
+                            .iter()
+                            .map(|(var, expr)| (var.name.clone(), expr.clone().make_unresolved()))
+                            .collect(),
+                    })
+                    .collect();
+                let new_run = Schedule::RunRule(span.clone(), configs);
                 Schedule::Sequence(span.clone(), vec![new_run, self.rebuild()])
             }
             ResolvedSchedule::Sequence(span, schedules) => Schedule::Sequence(

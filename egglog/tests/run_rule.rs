@@ -1,4 +1,4 @@
-use egglog::{CommandOutput, EGraph, Error, TypeError};
+use egglog::{CommandOutput, EGraph, Error};
 
 const SETUP: &str = r#"
     (datatype Expr (A) (B) (Wrap Expr))
@@ -8,23 +8,27 @@ const SETUP: &str = r#"
           ((Fired x))
           :ruleset chosen
           :name "mark-wrapped")
-    (let $wrapped-a (Wrap (A)))
-    (let $wrapped-b (Wrap (B)))
+    (let $a (A))
+    (let $b (B))
+    (let $wrapped-a (Wrap $a))
+    (let $wrapped-b (Wrap $b))
 "#;
 
 #[test]
-fn run_rule_mismatch_is_atomic_and_a_later_run_recovers() {
+fn run_rule_requires_exactly_one_match_and_a_later_list_recovers() {
     let mut egraph = EGraph::default();
     egraph.parse_and_run_program(None, SETUP).unwrap();
 
-    // Exercise the execution-error cleanup path more than once: each attempt
-    // compiles a temporary specialization and must release it after the guard
-    // rejects the two matches.
+    // Exercise temporary-rule cleanup after an impossible complete grounding.
     for _ in 0..2 {
         let error = egraph
             .parse_and_run_program(
                 None,
-                r#"(run-schedule (run-rule "mark-wrapped" :expect 1))"#,
+                r#"
+                    (run-schedule
+                      (run-rule
+                        ("mark-wrapped" ((root $wrapped-a) (x $b)))))
+                "#,
             )
             .unwrap_err();
         match error {
@@ -36,28 +40,20 @@ fn run_rule_mismatch_is_atomic_and_a_later_run_recovers() {
             } => {
                 assert_eq!(rule, "mark-wrapped");
                 assert_eq!(expected, 1);
-                assert_eq!(observed, 2);
+                assert_eq!(observed, 0);
             }
             other => panic!("expected a run-rule match-count error, got {other:?}"),
         }
     }
-
-    egraph
-        .parse_and_run_program(
-            None,
-            r#"
-                (fail (check (Fired (A))))
-                (fail (check (Fired (B))))
-            "#,
-        )
-        .unwrap();
 
     let outputs = egraph
         .parse_and_run_program(
             None,
             r#"
                 (run-schedule
-                  (run-rule "mark-wrapped" :bind ((x (A))) :expect 1))
+                  (run-rule
+                    ("mark-wrapped" ((root $wrapped-a) (x $a)))
+                    ("mark-wrapped" ((root $wrapped-b) (x $b)))))
             "#,
         )
         .unwrap();
@@ -69,7 +65,7 @@ fn run_rule_mismatch_is_atomic_and_a_later_run_recovers() {
         })
         .expect("run-schedule should return its report");
 
-    assert_eq!(report.num_matches_per_rule["mark-wrapped"], 1);
+    assert_eq!(report.num_matches_per_rule["mark-wrapped"], 2);
     assert!(report.ruleset_timings.contains_key("chosen"));
     assert_eq!(report.ruleset_timings.len(), 1);
 
@@ -77,8 +73,8 @@ fn run_rule_mismatch_is_atomic_and_a_later_run_recovers() {
         .parse_and_run_program(
             None,
             r#"
-                (check (Fired (A)))
-                (fail (check (Fired (B))))
+                (check (Fired $a))
+                (check (Fired $b))
             "#,
         )
         .unwrap();
@@ -99,7 +95,7 @@ fn run_rule_binding_follows_canonicalized_variable_equalities() {
                 (Pair 1 1)
                 (Pair 2 2)
                 (run-schedule
-                  (run-rule "equal-pair" :bind ((x 1)) :expect 1))
+                  (run-rule ("equal-pair" ((x 1) (y 1)))))
                 (check (FiredInt 1))
                 (fail (check (FiredInt 2)))
             "#,
@@ -123,7 +119,7 @@ fn run_rule_binding_follows_functional_dependency_substitutions() {
                 (set (Value 1) 10)
                 (set (Value 2) 20)
                 (run-schedule
-                  (run-rule "same-value" :bind ((y 10)) :expect 1))
+                  (run-rule ("same-value" ((x 1) (y 10) (z 10)))))
                 (check (FiredValue 10))
                 (fail (check (FiredValue 20)))
             "#,
@@ -133,27 +129,22 @@ fn run_rule_binding_follows_functional_dependency_substitutions() {
 }
 
 #[test]
-fn run_rule_selector_cannot_redefine_a_head_local() {
+fn run_rule_does_not_require_action_local_bindings() {
     let mut egraph = EGraph::default();
-    let error = egraph
+    egraph
         .parse_and_run_program(
             None,
             r#"
                 (relation R (i64))
-                (relation S (i64))
                 (relation FiredLocal (i64))
                 (rule ((R y))
                       ((let z 1) (FiredLocal z))
                       :name "head-local")
                 (R 10)
-                (S 20)
                 (run-schedule
-                  (run-rule "head-local" :internal-select ((S z))))
+                  (run-rule ("head-local" ((y 10)))))
+                (check (FiredLocal 1))
             "#,
         )
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        Error::TypeError(TypeError::AlreadyDefined(variable, _)) if variable == "z"
-    ));
+        .unwrap();
 }

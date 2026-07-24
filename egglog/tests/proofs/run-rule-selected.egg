@@ -3,17 +3,20 @@
   (B)
   (Wrap Expr))
 
-(rule ((= root (Wrap x)))
-      ((union root x))
+(relation Selected (Expr))
+
+(rule ((Selected x))
+      ((union (Wrap x) x))
       :name "unwrap")
 
 (let $wrapped-a (Wrap (A)))
 (let $wrapped-b (Wrap (B)))
+(Selected (A))
+(Selected (B))
 
 (run-schedule
-  (run-rule "unwrap"
-    :bind ((x (A)))
-    :expect 1))
+  (run-rule
+    ("unwrap" ((x (A))))))
 
 (check (= $wrapped-a (A)))
 (fail (check (= $wrapped-b (B))))

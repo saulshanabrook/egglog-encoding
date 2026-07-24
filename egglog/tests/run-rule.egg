@@ -10,37 +10,24 @@
       ((Fired x))
       :name "mark-wrapped")
 
-(let $wrapped-a (Wrap (A)))
-(let $wrapped-b (Wrap (B)))
 (let $a (A))
+(let $b (B))
+(let $wrapped-a (Wrap $a))
+(let $wrapped-b (Wrap $b))
 
-;; A failed cardinality assertion must not run either matching head.
-(fail
-  (run-schedule
-    (run-rule "mark-wrapped" :expect 1)))
-(fail (check (Fired (A))))
-(fail (check (Fired (B))))
-
-;; A partial binding can use a closed global e-class reference and selects one
-;; match without creating terms.
+;; Each list entry completely grounds one rule invocation. The whole list is
+;; one run-rule schedule leaf, and every grounding implicitly expects one match.
 (run-schedule
-  (run-rule "mark-wrapped"
-    :bind ((x $a))
-    :expect 1))
-(check (Fired (A)))
-(fail (check (Fired (B))))
+  (run-rule
+    ("mark-wrapped" ((root $wrapped-a) (x $a)))))
+(check (Fired $a))
+(fail (check (Fired $b)))
 
-;; Omitting bindings applies all matches, and a run-rule leaf is always a full
-;; query, so repeating it observes both old matches again.
+;; A single list can retain multiple grounded invocations.
 (run-schedule
-  (seq
-    (run-rule "mark-wrapped" :expect 2)
-    (run-rule "mark-wrapped" :expect 2)))
-(check (Fired (A)))
-(check (Fired (B)))
+  (run-rule
+    ("mark-wrapped" ((root $wrapped-a) (x $a)))
+    ("mark-wrapped" ((root $wrapped-b) (x $b)))))
 
-;; Zero matches is a successful no-op unless a different expectation is given.
-(run-schedule
-  (run-rule "mark-wrapped"
-    :bind ((x (C)))
-    :expect 0))
+(check (Fired $a))
+(check (Fired $b))
