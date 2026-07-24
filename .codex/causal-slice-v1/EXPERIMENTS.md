@@ -2215,3 +2215,14 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   canary verifies push/pop, out-of-catalog rule stepping, table clear,
   expression evaluation, direct user commands, update closures, and temporary
   queries all fail before effects while leaving a healthy capture.
+- Post-commit one-round public harness gate at `41a1718c6e64`, using the normal
+  append-only `.reports.jsonl`, `-j 1`, and a 120-second timeout:
+  `./bench.py --target . --treatment causal-receipts --compare-target .
+  --compare-treatment off --rounds 1 --timeout-sec 120 --detail files`.
+  All ten endpoint/file runs succeeded. Receipt/native wall ratios were Math
+  2.30x (1.088s/0.472s), Eggcc 1.22x (1.475s/1.213s), Pointer 1.19x
+  (10.0ms/8.44ms), Hardboiled 1.23x (178ms/145ms), and Luminal 1.12x
+  (510ms/455ms); suite-total wall was 1.42x. Peak-RSS ratios were 3.34x,
+  2.14x, 1.36x, 1.41x, and 1.17x respectively. These are point estimates,
+  not confidence claims. The accepted headroom gate remains end-to-end versus
+  proofs; recorder work stays frozen while the slice/replay cost is measured.
