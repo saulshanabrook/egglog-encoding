@@ -4455,11 +4455,23 @@ pub struct CausalReceiptView<'a> {
     replay_terms: &'a ReplayTermStore,
     projector: TermProjector<'a>,
     history_boundary: HistoryPosition,
-    equality_indices: HashMap<(EqualityEdgeCount, HistoryPosition, ReplaySortId), RawEqualityIndex>,
+    equality_index: Option<RawEqualityIndex>,
+    counters: CausalReceiptViewCounters,
 }
 
 struct RawEqualityIndex {
-    parents: HashMap<Value, (Value, AppliedEqualityId)>,
+    parents: HashMap<(ReplaySortId, Value), (Value, AppliedEqualityId)>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CausalReceiptViewCounters {
+    pub equality_index_builds: u64,
+    pub equality_events_indexed: u64,
+    pub equality_positions_validated: u64,
+    pub equality_explanation_queries: u64,
+    pub equality_parent_steps: u64,
+    pub rekey_lookups: u64,
+    pub rekey_records_scanned: u64,
 }
 
 impl<'a> CausalReceiptView<'a> {
@@ -4490,6 +4502,10 @@ impl<'a> CausalReceiptView<'a> {
             removals: self.arena.removals.len() as u64,
             check_roots: self.arena.check_roots.len() as u64,
         }
+    }
+
+    pub fn view_counters(&self) -> CausalReceiptViewCounters {
+        self.counters
     }
 
     pub fn counters(&self) -> ReceiptCounters {
@@ -4667,15 +4683,21 @@ impl<'a> CausalReceiptView<'a> {
     }
 
     pub fn rekey_at(
-        &self,
+        &mut self,
         position: HistoryPosition,
     ) -> Result<RawRekeyRecord<'a>, ReceiptViewError> {
+        self.counters.rekey_lookups += 1;
+        let mut scanned = 0u64;
         let record = self
             .arena
             .rekeys
             .iter()
-            .find(|record| record.position == position)
+            .find(|record| {
+                scanned += 1;
+                record.position == position
+            })
             .ok_or(ReceiptViewError::UnknownRekey(position))?;
+        self.counters.rekey_records_scanned += scanned;
         Ok(RawRekeyRecord {
             fact: record.fact,
             table: record.table,
@@ -5001,22 +5023,89 @@ impl<'a> CausalReceiptView<'a> {
                 "equality query exceeds the captured receipt history".into(),
             ));
         }
-        let mut visible = 0usize;
-        for event in &self.arena.durable_equalities {
-            let event = event.as_ref().ok_or_else(|| {
-                ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
-            })?;
-            if event.position > position {
-                break;
-            }
-            visible += 1;
-        }
-        if visible != cutoff {
+        let previous_visible = cutoff
+            .checked_sub(1)
+            .map(|index| {
+                self.arena.durable_equalities[index]
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ReceiptViewError::Invalid(
+                            "raw applied-equality history has an ID hole".into(),
+                        )
+                    })
+                    .map(|event| event.position <= position)
+            })
+            .transpose()?
+            .unwrap_or(true);
+        let next_hidden = self
+            .arena
+            .durable_equalities
+            .get(cutoff)
+            .map(|event| {
+                event
+                    .as_ref()
+                    .ok_or_else(|| {
+                        ReceiptViewError::Invalid(
+                            "raw applied-equality history has an ID hole".into(),
+                        )
+                    })
+                    .map(|event| event.position > position)
+            })
+            .transpose()?
+            .unwrap_or(true);
+        if !previous_visible || !next_hidden {
             return Err(ReceiptViewError::Invalid(
                 "equality cutoff disagrees with the global history position".into(),
             ));
         }
         Ok(cutoff)
+    }
+
+    fn raw_equality_index(&mut self) -> Result<&RawEqualityIndex, ReceiptViewError> {
+        if self.equality_index.is_none() {
+            let mut parents = HashMap::default();
+            let mut previous_position = None;
+            for (index, event) in self.arena.durable_equalities.iter().enumerate() {
+                let event = event.as_ref().ok_or_else(|| {
+                    ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
+                })?;
+                if previous_position.is_some_and(|previous| event.position <= previous) {
+                    return Err(ReceiptViewError::Invalid(
+                        "raw applied-equality positions are not strictly increasing".into(),
+                    ));
+                }
+                previous_position = Some(event.position);
+                if event.proposal.left.sort != event.proposal.right.sort {
+                    return Err(ReceiptViewError::Invalid(
+                        "one applied equality crosses logical sorts".into(),
+                    ));
+                }
+                let sort = event.proposal.left.sort;
+                if parents
+                    .insert(
+                        (sort, event.native_child),
+                        (
+                            event.native_parent,
+                            AppliedEqualityId::new(index as u64 + 1),
+                        ),
+                    )
+                    .is_some()
+                {
+                    return Err(ReceiptViewError::Invalid(
+                        "one native equality child acquired two historical parents".into(),
+                    ));
+                }
+            }
+            self.counters.equality_index_builds += 1;
+            self.counters.equality_events_indexed += self.arena.durable_equalities.len() as u64;
+            self.counters.equality_positions_validated +=
+                self.arena.durable_equalities.len() as u64;
+            self.equality_index = Some(RawEqualityIndex { parents });
+        }
+        Ok(self
+            .equality_index
+            .as_ref()
+            .expect("initialized raw equality index disappeared"))
     }
 
     pub fn explain_raw_equality_support_at(
@@ -5032,52 +5121,20 @@ impl<'a> CausalReceiptView<'a> {
             ));
         }
         let cutoff = self.validate_equality_cutoff(as_of, position)?;
-        let key = (as_of, position, left.sort);
-        if !self.equality_indices.contains_key(&key) {
-            let mut parents = HashMap::<Value, (Value, AppliedEqualityId)>::default();
-            for (index, event) in self.arena.durable_equalities[..cutoff].iter().enumerate() {
-                let event = event.as_ref().ok_or_else(|| {
-                    ReceiptViewError::Invalid("raw applied-equality history has an ID hole".into())
-                })?;
-                if event.proposal.left.sort != event.proposal.right.sort {
-                    return Err(ReceiptViewError::Invalid(
-                        "one applied equality crosses logical sorts".into(),
-                    ));
-                }
-                if event.proposal.left.sort != left.sort {
-                    continue;
-                }
-                if parents
-                    .insert(
-                        event.native_child,
-                        (
-                            event.native_parent,
-                            AppliedEqualityId::new(index as u64 + 1),
-                        ),
-                    )
-                    .is_some()
-                {
-                    return Err(ReceiptViewError::Invalid(
-                        "one native equality child acquired two historical parents".into(),
-                    ));
-                }
-            }
-            self.equality_indices
-                .insert(key, RawEqualityIndex { parents });
-        }
-        let parents = &self
-            .equality_indices
-            .get(&key)
-            .expect("inserted raw equality index disappeared")
-            .parents;
+        self.counters.equality_explanation_queries += 1;
+        let parents = &self.raw_equality_index()?.parents;
+        let edge_is_visible = |edge: AppliedEqualityId| edge.get() as usize <= cutoff;
         let mut left_ancestors = HashMap::<Value, usize>::default();
         let mut left_edges = Vec::new();
         let mut cursor = left.raw;
         loop {
             left_ancestors.insert(cursor, left_edges.len());
-            let Some((parent, edge)) = parents.get(&cursor).copied() else {
+            let Some((parent, edge)) = parents.get(&(left.sort, cursor)).copied() else {
                 break;
             };
+            if !edge_is_visible(edge) {
+                break;
+            }
             left_edges.push(edge);
             cursor = parent;
         }
@@ -5087,14 +5144,20 @@ impl<'a> CausalReceiptView<'a> {
             if let Some(depth) = left_ancestors.get(&cursor).copied() {
                 break depth;
             }
-            let Some((parent, edge)) = parents.get(&cursor).copied() else {
+            let Some((parent, edge)) = parents.get(&(right.sort, cursor)).copied() else {
                 return Err(ReceiptViewError::Invalid(
                     "equality endpoints were disconnected at the historical landmark".into(),
                 ));
             };
+            if !edge_is_visible(edge) {
+                return Err(ReceiptViewError::Invalid(
+                    "equality endpoints were disconnected at the historical landmark".into(),
+                ));
+            }
             right_edges.push(edge);
             cursor = parent;
         };
+        self.counters.equality_parent_steps += (left_edges.len() + right_edges.len()) as u64;
         let mut edges = left_edges[..left_depth].to_vec();
         edges.extend(right_edges);
         edges.sort_unstable();
@@ -7094,14 +7157,15 @@ impl CausalReceipts {
         Ok(EqualityEndpoint { sort, term, raw })
     }
 
-    pub(crate) fn check_premise_terms(
+    pub(crate) fn check_premise_endpoints(
         &self,
         premises: &[FactId],
         requests: &[(CheckTermSource, ReplaySortId)],
-    ) -> Result<SmallVec<[ReplayTermId; 8]>, String> {
+    ) -> Result<SmallVec<[EqualityEndpoint; 8]>, String> {
         enum Lookup {
             Direct {
                 term: ReplayTermId,
+                raw: Value,
                 sort: ReplaySortId,
             },
             Constructor {
@@ -7109,6 +7173,7 @@ impl CausalReceipts {
                 fact: FactId,
                 column: usize,
                 term: ReplayTermId,
+                raw: Value,
                 sort: ReplaySortId,
                 op: ReplayOpId,
             },
@@ -7135,7 +7200,13 @@ impl CausalReceipts {
                         let term = projector.fact_term(fact, column).map_err(|_| {
                             "check endpoint has no reconstructible fact term".to_owned()
                         })?;
-                        lookups.push(Lookup::Direct { term, sort });
+                        let raw = arena
+                            .fact_values(fact)
+                            .and_then(|(_, values)| values.get(column).copied())
+                            .ok_or_else(|| {
+                                "check endpoint has no reconstructible fact occurrence".to_owned()
+                            })?;
+                        lookups.push(Lookup::Direct { term, raw, sort });
                     }
                     CheckTermSource::Constructor {
                         premise,
@@ -7149,11 +7220,18 @@ impl CausalReceipts {
                             "check constructor producer has an unreconstructible output term"
                                 .to_owned()
                         })?;
+                        let raw = arena
+                            .fact_values(fact)
+                            .and_then(|(_, values)| values.get(input_columns).copied())
+                            .ok_or_else(|| {
+                                "check constructor producer has no exact fact occurrence".to_owned()
+                            })?;
                         lookups.push(Lookup::Constructor {
                             premise,
                             fact,
                             column: input_columns,
                             term,
+                            raw,
                             sort,
                             op,
                         });
@@ -7168,23 +7246,24 @@ impl CausalReceipts {
             lookups
         };
 
-        let mut terms = SmallVec::<[ReplayTermId; 8]>::new();
+        let mut endpoints = SmallVec::<[EqualityEndpoint; 8]>::new();
         for lookup in lookups {
-            let term = match lookup {
-                Lookup::Direct { term, sort } => {
+            let (term, raw, sort) = match lookup {
+                Lookup::Direct { term, raw, sort } => {
                     let node = self.0.replay_terms.node(term).ok_or_else(|| {
                         "check endpoint fact owns an unknown ReplayTermId".to_owned()
                     })?;
                     if node.sort() != sort {
                         return Err("check endpoint fact term has the wrong declared sort".into());
                     }
-                    term
+                    (term, raw, sort)
                 }
                 Lookup::Constructor {
                     premise,
                     fact,
                     column,
                     term,
+                    raw,
                     sort,
                     op,
                 } => {
@@ -7226,12 +7305,12 @@ impl CausalReceipts {
                             "check constructor output does not match its declared producer: premise={premise}, premises={premises:?}, fact={fact:?}, fact_table={fact_table:?}, fact_table_constructor={fact_table_constructor:?}, fact_origin={fact_origin:?}, origin_template={origin_template:?}, column={column}, expected_sort={sort:?}, expected_op={op:?}, term={term:?}, actual={node:?}"
                         ));
                     }
-                    term
+                    (term, raw, sort)
                 }
             };
-            terms.push(term);
+            endpoints.push(EqualityEndpoint { sort, term, raw });
         }
-        Ok(terms)
+        Ok(endpoints)
     }
 
     pub(crate) fn project_fact_term(
@@ -7374,9 +7453,9 @@ impl CausalReceipts {
             if left.sort != right.sort {
                 return Err("one check equality crosses logical sorts");
             }
-            if left.term == right.term {
+            if left.term == right.term && left.raw == right.raw {
                 return Err(
-                    "causal equality endpoints collapsed to one structural term; exact source terms are unavailable",
+                    "causal equality endpoints collapsed to one structural occurrence; exact source terms are unavailable",
                 );
             }
             for endpoint in [left, right] {
@@ -8173,7 +8252,8 @@ impl CausalReceipts {
             replay_terms: &self.0.replay_terms,
             projector,
             history_boundary,
-            equality_indices: HashMap::default(),
+            equality_index: None,
+            counters: CausalReceiptViewCounters::default(),
         };
         inspect(&mut view)
     }

@@ -5410,7 +5410,10 @@ mod tests {
         assert_eq!(root.equalities.len(), 1);
         let (left, right) = root.equalities[0];
         assert_eq!(left.sort, right.sort);
-        assert_eq!(left.raw, right.raw);
+        assert_ne!(
+            left.raw, right.raw,
+            "the check root preserves each premise's immutable creation occurrence"
+        );
         assert_ne!(left.term, right.term);
 
         let state = egraph.causal_state.as_ref().unwrap();
@@ -5461,7 +5464,7 @@ mod tests {
 
     #[test]
     #[should_panic(
-        expected = "causal equality endpoints collapsed to one structural term; exact source terms are unavailable"
+        expected = "causal equality endpoints collapsed to one structural occurrence; exact source terms are unavailable"
     )]
     fn causal_check_rejects_congruence_collapsed_endpoint_producers() {
         let mut egraph = EGraph::default();

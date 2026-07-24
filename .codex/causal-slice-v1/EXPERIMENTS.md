@@ -1984,3 +1984,137 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   relational-check canary: identical structural terms can denote distinct native
   versions, so an implicit equality pair is droppable only when both term and raw
   identity are equal.
+
+### 2026-07-24 — all-check passive closure and interference-only deletes
+
+- Starting HEAD: `fda99f9ec649290b7f8bc6a4765a2441959f39e5`.
+  Scope is Checkpoint 2B only: passive closure over every successful positive
+  check, replay-visible whole-action siblings, and interference-only removal
+  retention. There is still no source artifact/catalog, replay language, CLI,
+  proof integration, Prefix recovery, negative reasoning, or attempted-head
+  ledger.
+- The first falsifier used one common-prestate wave containing an independent
+  keyed delete and a later merge-bearing rewrite. The prior slicer retained
+  three causal matches and omitted the delete match; replay would merge against
+  the stale value. The fixed least-fixpoint closure retains four matches and
+  exactly one removal, and reports one interfering cell and one match in the
+  delete cone.
+- A cold owner index groups effective facts, applied equalities, and removals by
+  their direct rule match or source action. Selecting an owner exposes every
+  effective sibling to replay, while only requested support enters the causal
+  work queue. Merge causes inherit the incoming owner; congruence causes resolve
+  through the same chain and naturally stop at source/maintenance boundaries.
+  There is no attempted-effect ledger or hot-path field.
+- Deletion retention is a monotone, equality-aware timeline query. Constructor
+  and ValueFunction removals are selected only when their victim creator is
+  replay-visible and a later replay-visible fact targets the same keyed cell.
+  Selecting a removal enqueues only its recorded match, never its victim. The
+  comparison DSU contains only replay-visible selected applied events and keys
+  exact EqSort occurrences by `(sort, term, raw)`; base columns compare raw
+  values. PresenceRelation removals remain diagnostics-only.
+- The constructor falsifiers found and repaired a separate check-root bug.
+  `RecordCheck` previously combined an immutable premise term with the final
+  canonical binding value. After deleting and recreating `Leaf(1)`, a later
+  union therefore made the old and new occurrences appear identical and the
+  shared-variable equality was dropped. Premise endpoint reconstruction now
+  records the immutable creation `(sort, term, raw)` from each exact FactId.
+  Implicit equality elision and root validation collapse a pair only when both
+  term and raw agree. The repaired root retains equal term IDs at distinct raw
+  IDs plus the exact applied union.
+- Focused canaries cover: union of disjoint check cones with ordered check
+  positions; rule- and source-action sibling visibility without causal
+  broadening; ordinary and `:no-merge` interference; noninterfering and dead
+  writes; same-wave delete-before-write; constructor deletion/recreation;
+  equality-equivalent keys created by a future selected sibling union; exact
+  same-term/different-raw occurrence identity; and both `:merge old` no-op
+  directions. The lower-level recorder tests
+  `promoted_sibling_retains_unchanged_same_wave_merge_read` and
+  `unchanged_merge_without_effective_sibling_promotes_nothing` remain the
+  promotion authority; the frontend canary verifies that an unrelated check
+  selects no no-op-only firing.
+- Rejected hypotheses/corrections:
+  - term identity alone cannot classify EqSort keys: independently recreated
+    native occurrences may share one structural term;
+  - final UF/raw identity cannot classify them either: an unselected equality
+    must not influence removal retention;
+  - constructor calls written with a literal head expression may be hoisted and
+    reuse an existing value, so the same-syntax falsifier binds the constructor
+    key through the rule premise to force native delete/recreate behavior;
+  - merely changing the implicit-pair filter was insufficient because the raw
+    values reaching `RecordCheck` were already canonicalized; immutable premise
+    occurrences are the required data source.
+- Validation:
+  - all 15 `causal_slice::tests` passed;
+  - 120/120 frontend `egglog` library tests passed;
+  - 28/28 `egglog-bridge` library tests passed;
+  - 175/175 `egglog-core-relations` library tests passed;
+  - `cargo clippy -p egglog-core-relations -p egglog-bridge -p egglog
+    --all-targets -- -D warnings`, `cargo fmt --all`, and `git diff --check`
+    passed;
+  - implementation diff SHA-256 before this ledger update:
+    `e9f47b963f8eccb7d4c3e3a00da73de9ea39f20c7979f91ed434dd435355ac0e`.
+
+### 2026-07-24 — Checkpoint 2B review repairs
+
+- The first independent deletion review supplied a maintenance-congruence
+  counterexample, but its initial hand-written broken slice retained an old
+  source action that the actual slicer omitted. The accepted falsifier now
+  makes that premise explicit: a retained `Before 1` observer keeps the old
+  `tag(Parent(F(X)))` source and constructor siblings, a later selected
+  `X = Y` union makes `F(X) = F(Y)` and then the two `Parent` keys congruent,
+  and omitting the constructor delete would make replay hit the stale row and
+  eventually panic at `tag :no-merge`. The paired control removes `Before`;
+  the stale source is then absent from replay and the delete correctly remains
+  unselected.
+- Removal-key comparison now closes over exact recorded maintenance events,
+  not structural term bucketing. Applied `MergeFn`/`Congruence` events are
+  considered in dense history order and become replay-visible only when their
+  cause is replay-reachable: selected Rule/Source roots, Merge incoming plus a
+  replayed prior fact/cause, or Rebuild/Container prior facts plus changed-child
+  pairs whose cutoff-bounded explanation edges are already replay-visible.
+  Dense event order and strictly earlier cause cutoffs make one chronological
+  pass sufficient; it never reads the final UF or an unselected cause.
+  Workloads with no effective removals skip this maintenance scan entirely;
+  removal-bearing workloads reuse one recursion scratch set for the pass.
+- A second precision falsifier proved why term-only constructor congruence was
+  wrong. Replaying selected old/new `Parent(Leaf 1)` witnesses requires the
+  intervening Leaf delete, which gives the recreated Leaf a distinct native
+  version; therefore the Parent delete is unnecessary. Blind structural
+  bucketing retained both deletes. Recorded-event closure retains exactly the
+  Leaf delete because native history contains no Leaf congruence edge, while
+  still recovering the recorded nested F/Parent maintenance chain in the first
+  falsifier. The structural closure prototype was deleted rather than accepted
+  as conservative over-retention.
+- The raw equality explanation view previously built one full parent map per
+  `(cutoff, position, sort)`, making many historical explanations `O(K*E)`.
+  It now lazily builds one immutable parent forest keyed by `(sort, raw)` for
+  the complete applied-event history and follows a parent only when that
+  edge's dense `AppliedEqualityId` is within the requested cutoff. Cutoff
+  validation is constant-time at the two boundary events. The one-time build
+  validates that applied-event positions are strictly increasing and exposes
+  cold counters for builds, indexed events, validated positions, queries,
+  parent steps, and the still-linear rekey lookup scan.
+- The historical-cutoff canary issues 48 explanations across two positions.
+  It proves the earlier cutoff cannot see the later edge, the later cutoff can,
+  and all queries build exactly one two-edge forest while validating both
+  positions once.
+- Recorder-boundary wording correction: a no-op-only frontend firing has one
+  raw published match observation and one raw merge-read side entry because
+  head-execution batches are observed before actions. It has no effective
+  fact, union, removal, or sibling. Cold compatibility projection cites zero
+  promoted matches and the passive slice selects/replays zero matches. This is
+  accepted frozen-recorder cost, not Checkpoint 2B retention; the earlier
+  phrase "promotes nothing" refers to the cited compatibility view, not zero
+  raw observation storage.
+- Measured-next, not repaired here: owner-index construction still scans every
+  fact/equality/removal once, and `rekey_at` still linearly scans rekey records.
+  The new cold counters make the latter visible; time these cold phases on Math
+  and Luminal before deciding whether either index is worth additional code.
+- Review-repair validation: all 18 `causal_slice::tests` pass, including
+  the strengthened maintenance-congruence case, its omitted-creator control,
+  the delete/recreate precision discriminator, and the one-forest/many-cutoffs
+  canary. The complete library gate passed 123/123 frontend `egglog`, 28/28
+  `egglog-bridge`, and 175/175 `egglog-core-relations` tests. Clippy with
+  `-D warnings`, rustfmt check, and `git diff --check` also passed. The final
+  implementation-only diff SHA-256 (excluding this ledger) is
+  `5b974ca4b7dbb2f7b446f5b8f240c652318134c7a01a3be6afd640c3ef641b4b`.

@@ -2012,20 +2012,16 @@ impl ExecutionState<'_> {
                 });
                 let (wave, premises, raw_equalities) =
                     winner.expect("nonempty check mask has one exact candidate");
-                let premise_terms = receipts
-                    .check_premise_terms(&premises, &premise_requests)
+                let premise_endpoints = receipts
+                    .check_premise_endpoints(&premises, &premise_requests)
                     .unwrap_or_else(|error| panic!("invalid exact check root: {error}"));
-                let mut premise_terms = premise_terms.into_iter();
+                let mut premise_endpoints = premise_endpoints.into_iter();
                 let mut raw_equalities = raw_equalities.into_iter();
                 let mut resolve = |endpoint: CheckEndpointSpec, raw| match endpoint.term {
                     CheckTermSource::Premise { .. } | CheckTermSource::Constructor { .. } => {
-                        EqualityEndpoint {
-                            sort: endpoint.sort,
-                            term: premise_terms
-                                .next()
-                                .expect("one term for every premise endpoint"),
-                            raw,
-                        }
+                        premise_endpoints
+                            .next()
+                            .expect("one endpoint for every premise endpoint")
                     }
                     CheckTermSource::Constant { term } => EqualityEndpoint {
                         sort: endpoint.sort,
@@ -2067,7 +2063,7 @@ impl ExecutionState<'_> {
                         .next()
                         .expect("one raw pair for every check equality");
                     let pair = (resolve(left, left_raw), resolve(right, right_raw));
-                    if implicit && pair.0.term == pair.1.term {
+                    if implicit && pair.0.term == pair.1.term && pair.0.raw == pair.1.raw {
                         continue;
                     }
                     let occurrences = (occurrence(left), occurrence(right));
@@ -2087,7 +2083,7 @@ impl ExecutionState<'_> {
                     resolved.push(pair);
                     equality_occurrences.push(occurrences);
                 }
-                debug_assert!(premise_terms.next().is_none());
+                debug_assert!(premise_endpoints.next().is_none());
                 debug_assert!(raw_equalities.next().is_none());
                 receipts
                     .record_check_root(

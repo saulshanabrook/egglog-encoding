@@ -328,7 +328,7 @@ fn check_receipts_keep_distinct_premise_terms_for_the_same_runtime_equality_valu
                 crate::EqualityEndpoint {
                     sort,
                     term: term(second_left),
-                    raw: right,
+                    raw: second_left,
                 },
                 crate::EqualityEndpoint {
                     sort,
@@ -337,7 +337,10 @@ fn check_receipts_keep_distinct_premise_terms_for_the_same_runtime_equality_valu
                 },
             )]
         );
-        assert_eq!(root.equalities[0].0.raw, root.equalities[0].1.raw);
+        assert_ne!(
+            root.equalities[0].0.raw, root.equalities[0].1.raw,
+            "the root keeps each premise's immutable creation occurrence"
+        );
         assert_ne!(
             root.equalities[0].0.term, root.equalities[0].1.term,
             "equal runtime values must retain their distinct premise-owned syntax"
