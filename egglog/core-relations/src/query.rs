@@ -47,6 +47,73 @@ pub struct CachedPlan {
     actions: ActionInfo,
 }
 
+/// One exact table premise used by plan-free grounded execution.
+///
+/// Unlike a planned atom, every key must already be bound and the complete
+/// committed row is checked with one point lookup.
+#[derive(Debug, Clone)]
+#[doc(hidden)]
+pub struct GroundedProbe {
+    pub(crate) table: TableId,
+    pub(crate) entries: Box<[QueryEntry]>,
+    pub(crate) n_keys: usize,
+}
+
+impl GroundedProbe {
+    pub fn new(table: TableId, entries: impl Into<Box<[QueryEntry]>>, n_keys: usize) -> Self {
+        Self {
+            table,
+            entries: entries.into(),
+            n_keys,
+        }
+    }
+}
+
+/// The canonical compiled body-guard/head tape for one grounded rule.
+///
+/// This deliberately contains no query plan.  A later ordinary cached plan
+/// can attach the same action tape with [`RuleBuilder::build_with_grounded`].
+#[derive(Debug, Clone)]
+#[doc(hidden)]
+pub struct GroundedRule {
+    pub(crate) action: ActionInfo,
+    pub(crate) body_end: usize,
+    pub(crate) probes: Arc<[GroundedProbe]>,
+}
+
+impl GroundedRule {
+    pub fn with_probes(mut self, probes: impl Into<Arc<[GroundedProbe]>>) -> Self {
+        self.probes = probes.into();
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn shares_instruction_tape(&self, cached: &CachedPlan) -> bool {
+        Arc::ptr_eq(&self.action.instrs, &cached.actions.instrs)
+    }
+}
+
+enum RuleBuildOutput {
+    Planned(RuleId),
+    Grounded(GroundedRule),
+}
+
+impl RuleBuildOutput {
+    fn planned(self) -> RuleId {
+        let Self::Planned(rule) = self else {
+            unreachable!("planned rule build returned a grounded tape")
+        };
+        rule
+    }
+
+    fn grounded(self) -> GroundedRule {
+        let Self::Grounded(rule) = self else {
+            unreachable!("grounded rule build returned a query plan")
+        };
+        rule
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ActionInfo {
     pub(crate) used_vars: SmallVec<[Variable; 4]>,
@@ -1059,14 +1126,15 @@ impl RuleBuilder<'_, '_> {
     }
 
     pub fn build_with_description(self, desc: impl Into<String>) -> RuleId {
-        self.build_impl(desc, None)
+        self.build_impl(desc, None, None).planned()
     }
 
     /// Build a rule together with the fixed receipt layout preserved from the
     /// source-level rule. Runtime capture copies only FactId/ReplayTermId
     /// handles according to this layout.
     pub fn build_with_receipts(self, desc: impl Into<String>, spec: RuleReceiptSpec) -> RuleId {
-        self.build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)))
+        self.build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)), None)
+            .planned()
     }
 
     /// Build a source action whose effective lanes cite one stable source
@@ -1084,7 +1152,8 @@ impl RuleBuilder<'_, '_> {
             self.qb.query.atoms.is_empty(),
             "source receipt actions require an empty query"
         );
-        self.build_impl(desc, Some(ReceiptBuildSpec::Source(spec)))
+        self.build_impl(desc, Some(ReceiptBuildSpec::Source(spec)), None)
+            .planned()
     }
 
     /// Append an exact positive-check root action and build its native premise
@@ -1200,10 +1269,54 @@ impl RuleBuilder<'_, '_> {
             implicit_equalities: implicit_equalities.into_boxed_slice(),
             as_of_edges,
         });
-        self.build_impl(desc, Some(ReceiptBuildSpec::Check { premises }))
+        self.build_impl(desc, Some(ReceiptBuildSpec::Check { premises }), None)
+            .planned()
     }
 
-    fn build_impl(mut self, desc: impl Into<String>, receipt: Option<ReceiptBuildSpec>) -> RuleId {
+    /// Return the current instruction boundary without planning the query.
+    #[doc(hidden)]
+    pub fn instruction_count(&self) -> usize {
+        self.qb.instrs.len()
+    }
+
+    /// Finish a plan-free rule tape. `body_end` must be the boundary captured
+    /// after all body computations/guards and before the first head action.
+    #[doc(hidden)]
+    pub fn build_grounded(self, body_end: usize) -> GroundedRule {
+        self.build_impl("", None, Some(body_end)).grounded()
+    }
+
+    /// Plan this query while reusing the exact compiled tape held by a
+    /// grounded rule. No body or head callback is compiled a second time.
+    #[doc(hidden)]
+    pub fn build_with_grounded(
+        mut self,
+        desc: impl Into<String>,
+        grounded: &GroundedRule,
+    ) -> RuleId {
+        // This query was reconstructed without replaying the action callbacks,
+        // so copy the canonical tape's live-ins back into the query metadata
+        // that tells planning which bindings must reach the action.
+        for variable in grounded.action.used_vars.iter().copied() {
+            self.qb.query.var_info[variable].used_in_rhs = true;
+        }
+        let symbol_map = self.build_symbol_map();
+        let action_id = self.qb.rsb.rule_set.actions.push(grounded.action.clone());
+        self.qb.query.action = action_id;
+        let plan = self.qb.rsb.db.plan_query(self.qb.query);
+        self.qb
+            .rsb
+            .rule_set
+            .plans
+            .push((plan, desc.into().into(), symbol_map))
+    }
+
+    fn build_impl(
+        mut self,
+        desc: impl Into<String>,
+        receipt: Option<ReceiptBuildSpec>,
+        grounded_body_end: Option<usize>,
+    ) -> RuleBuildOutput {
         let var_info = &self.qb.query.var_info;
         let symbol_map = self.build_symbol_map();
         // Generate an id for our actions and slot them in.
@@ -1492,21 +1605,32 @@ impl RuleBuilder<'_, '_> {
                 .expect("receipt action has no static term recipe draft")
                 .attach_row_origins(receipts, &mut self.qb.instrs, &row_origin_inputs);
         }
-        let action_id = self.qb.rsb.rule_set.actions.push(ActionInfo {
+        let action = ActionInfo {
             instrs: Arc::new(self.qb.instrs),
             used_vars,
             receipt,
-        });
+        };
+        if let Some(body_end) = grounded_body_end {
+            assert!(body_end <= action.instrs.len());
+            return RuleBuildOutput::Grounded(GroundedRule {
+                action,
+                body_end,
+                probes: Arc::from([]),
+            });
+        }
+        let action_id = self.qb.rsb.rule_set.actions.push(action);
         self.qb.query.action = action_id;
         // Plan the query
         let plan = self.qb.rsb.db.plan_query(self.qb.query);
         let desc: String = desc.into();
         // Add it to the ruleset.
-        self.qb
-            .rsb
-            .rule_set
-            .plans
-            .push((plan, desc.into(), symbol_map))
+        RuleBuildOutput::Planned(
+            self.qb
+                .rsb
+                .rule_set
+                .plans
+                .push((plan, desc.into(), symbol_map)),
+        )
     }
 
     /// Return a variable containing the result of reading the specified counter.

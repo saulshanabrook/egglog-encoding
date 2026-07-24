@@ -30,14 +30,16 @@ pub use containers::{
     CausalContainerKind, ContainerRebuildSummary, ContainerValue, ContainerValueId, ContainerValues,
 };
 pub use free_join::{
-    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GuardedRuleSetRunError,
-    GuardedRuleSetRunOutcome, TableId, Variable, make_external_func, plan::PlanStrategy,
+    AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GroundedRuleMatch,
+    GroundedRuleRunError, GroundedRuleRunOutcome, GuardedRuleSetRunError, GuardedRuleSetRunOutcome,
+    TableId, Variable, make_external_func, plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use query::{
-    CachedPlan, QueryBuilder, QueryError, RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
+    CachedPlan, GroundedProbe, GroundedRule, QueryBuilder, QueryError, RuleBuilder, RuleId,
+    RuleSet, RuleSetBuilder,
 };
 pub use receipts::{
     AppliedEqualityId, CausalReceiptTotals, CausalReceiptView, CausalReceiptViewCounters,

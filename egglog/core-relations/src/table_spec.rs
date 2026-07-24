@@ -70,7 +70,6 @@ pub(crate) struct MutationCommit {
 }
 
 impl MutationTransaction {
-    #[cfg(test)]
     pub(crate) fn pending() -> Self {
         Self(Arc::new(MutationTransactionState {
             decision: AtomicU8::new(MUTATION_PENDING),

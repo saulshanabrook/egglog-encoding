@@ -21,7 +21,7 @@ use log::debug;
 use smallvec::SmallVec;
 use thiserror::Error;
 
-use crate::{CachedPlanInfo, NOT_SUBSUMED, RowVals, SUBSUMED, SchemaMath};
+use crate::{CachedPlanInfo, GroundedRuleInfo, NOT_SUBSUMED, RowVals, SUBSUMED, SchemaMath};
 use crate::{ColumnTy, DefaultVal, EGraph, FunctionId, Result, RuleId, RuleInfo, Timestamp};
 
 define_id!(pub VariableId, u32, "A variable in an egglog query");
@@ -398,6 +398,7 @@ impl RuleBuilder<'_> {
             query: self.query,
             owned_external_funcs: std::mem::take(&mut self.resources.external_funcs),
             cached_plan: None,
+            grounded_rule: None,
             desc: self.desc,
         };
         debug!("created rule {res:?} / {}", info.desc);
@@ -895,6 +896,22 @@ impl RuleBuilder<'_> {
 }
 
 impl Query {
+    pub(crate) fn grounded_variables(
+        &self,
+    ) -> impl Iterator<Item = (VariableId, ColumnTy, Option<Box<str>>)> + '_ {
+        self.vars
+            .iter()
+            .map(|(variable, info)| (variable, info.ty, info.name.clone()))
+    }
+
+    pub(crate) fn grounded_variable_type(&self, variable: VariableId) -> Option<ColumnTy> {
+        self.vars.get(variable).map(|info| info.ty)
+    }
+
+    pub(crate) fn supports_grounded_execution(&self) -> bool {
+        self.source_receipt.is_none() && self.rule_receipt.is_none() && self.check_receipt.is_none()
+    }
+
     fn query_state<'a, 'outer>(
         &self,
         rsb: &'a mut RuleSetBuilder<'outer>,
@@ -1016,6 +1033,7 @@ impl Query {
         &self,
         db: &mut core_relations::Database,
         desc: &str,
+        grounded: Option<&GroundedRuleInfo>,
     ) -> Result<CachedPlanInfo> {
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
@@ -1023,10 +1041,74 @@ impl Query {
         for (table, entries, _schema_info) in &self.atoms {
             atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
         }
-        let rule_id = self.run_rules_and_build(qb, inner, desc, &atom_mapping)?;
+        let rule_id = match grounded {
+            Some(grounded) => qb.build().build_with_grounded(desc, &grounded.rule),
+            None => self.run_rules_and_build(qb, inner, desc, &atom_mapping)?,
+        };
         let rs = rsb.build();
         let plan = Arc::new(rs.build_cached_plan(rule_id));
         Ok(CachedPlanInfo { plan, atom_mapping })
+    }
+
+    pub(crate) fn build_grounded_rule(
+        &self,
+        db: &mut core_relations::Database,
+    ) -> Result<GroundedRuleInfo> {
+        anyhow::ensure!(
+            self.supports_grounded_execution(),
+            "grounded execution cannot compile receipt-recording rules"
+        );
+        let mut rsb = RuleSetBuilder::new(db);
+        let (mut qb, mut inner) = self.query_state(&mut rsb);
+        let mut probes = Vec::with_capacity(self.atoms.len());
+        for (table, entries, schema) in &self.atoms {
+            probes.push(core_relations::GroundedProbe::new(
+                *table,
+                inner.convert_all(entries).into_vec(),
+                schema.n_keys,
+            ));
+            let _ = add_atom(&mut qb, *table, entries, &[], &mut inner)?;
+        }
+        let mut rb = qb.build();
+        inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
+        let head_start = self.head_start.unwrap_or(self.add_rule.len());
+        self.add_rule[..head_start]
+            .iter()
+            .try_for_each(|callback| callback(&mut inner, &mut rb))?;
+        for promotion in std::mem::take(&mut inner.replay_promotions) {
+            rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
+        }
+        let body_end = rb.instruction_count();
+        let body_mapping = inner.mapping.clone();
+        self.add_rule[head_start..]
+            .iter()
+            .try_for_each(|callback| callback(&mut inner, &mut rb))?;
+        let variables = body_mapping
+            .iter()
+            .filter_map(|(variable, body_entry)| {
+                let head_entry = inner.mapping.get(variable)?;
+                let same_entry = match (body_entry, head_entry) {
+                    (
+                        core_relations::QueryEntry::Var(left),
+                        core_relations::QueryEntry::Var(right),
+                    ) => left == right,
+                    (
+                        core_relations::QueryEntry::Const(left),
+                        core_relations::QueryEntry::Const(right),
+                    ) => left == right,
+                    _ => false,
+                };
+                if !same_entry {
+                    return None;
+                }
+                let core_relations::QueryEntry::Var(core_variable) = body_entry else {
+                    return None;
+                };
+                Some((variable, *core_variable))
+            })
+            .collect();
+        let rule = Arc::new(rb.build_grounded(body_end).with_probes(probes));
+        Ok(GroundedRuleInfo { rule, variables })
     }
 
     /// Add rules to the [`RuleSetBuilder`] for the query specified by the [`CachedPlanInfo`].

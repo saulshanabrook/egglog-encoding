@@ -20,8 +20,9 @@ use num_rational::Rational64;
 use once_cell::sync::Lazy;
 
 use crate::{
-    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, GuardedRuleRunResult, MergeAction,
-    MergeFn, QueryEntry, TableAction, add_expressions, define_rule,
+    ColumnTy, DefaultVal, EGraph, FunctionConfig, FunctionId, GroundedRuleBinding, GroundedRuleRun,
+    GuardedRuleRunResult, MergeAction, MergeFn, QueryEntry, TableAction, Variable, add_expressions,
+    define_rule,
 };
 
 #[test]
@@ -128,6 +129,411 @@ fn guarded_rule_uses_one_full_search_and_preserves_seminaive_epoch_on_mismatch()
     // seminaive execution.
     egraph.run_rules(&[rule]).unwrap();
     assert_eq!(head_calls.load(Ordering::Relaxed), 6);
+}
+
+#[test]
+fn grounded_wave_point_probes_every_match_before_running_any_head_without_planning() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let input = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "grounded-input".into(),
+        can_subsume: false,
+    });
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    let missing = egraph.base_values_mut().get(2i64);
+    let zero_id = egraph.add_term(input, &[zero]);
+    let one_id = egraph.add_term(input, &[one]);
+
+    let head_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&head_calls);
+    let observe_head =
+        egraph.register_external_func(Box::new(make_external_func(move |state, args| {
+            assert!(args.is_empty());
+            calls.fetch_add(1, Ordering::Relaxed);
+            Some(state.base_values().get(()))
+        })));
+    let (rule, value, id) = {
+        let mut builder = egraph.new_rule("grounded", true);
+        let value = builder.new_var_named(ColumnTy::Base(int_base), "value");
+        let QueryEntry::Var(value_var) = value.clone() else {
+            unreachable!()
+        };
+        let id: QueryEntry = builder.new_var_named(ColumnTy::Id, "id");
+        let QueryEntry::Var(id_var) = id.clone() else {
+            unreachable!()
+        };
+        builder
+            .query_table(input, &[value, id], Some(false))
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(observe_head, &[], ColumnTy::Base(unit_base), || {
+            "head call failed".into()
+        });
+        (builder.build(), value_var, id_var)
+    };
+
+    let firing = |match_id, value_arg, id_arg| GroundedRuleRun {
+        match_id,
+        rule,
+        bindings: vec![
+            GroundedRuleBinding {
+                variable: value.id,
+                ty: ColumnTy::Base(int_base),
+                value: value_arg,
+            },
+            GroundedRuleBinding {
+                variable: id.id,
+                ty: ColumnTy::Id,
+                value: id_arg,
+            },
+        ]
+        .into_boxed_slice(),
+    };
+
+    assert!(!egraph.rule_has_cached_plan(rule));
+    let error = egraph
+        .run_grounded_wave(&[firing(10, zero, zero_id), firing(11, missing, one_id)])
+        .unwrap_err();
+    assert!(error.to_string().contains("premise"));
+    assert_eq!(head_calls.load(Ordering::Relaxed), 0);
+    assert!(!egraph.rule_has_cached_plan(rule));
+
+    egraph
+        .run_grounded_wave(&[firing(12, zero, zero_id), firing(13, one, one_id)])
+        .unwrap();
+    assert_eq!(head_calls.load(Ordering::Relaxed), 2);
+    assert!(!egraph.rule_has_cached_plan(rule));
+
+    // Grounded replay neither consumes the ordinary seminaive epoch nor
+    // constructs a plan. The later planned run attaches the same canonical
+    // tape and therefore sees both original rows exactly once.
+    egraph.run_rules(&[rule]).unwrap();
+    assert_eq!(head_calls.load(Ordering::Relaxed), 4);
+    assert!(egraph.rule_has_cached_plan(rule));
+    assert!(egraph.rule_cached_plan_shares_grounded_tape(rule));
+}
+
+#[test]
+fn grounded_wave_uses_one_common_prestate_and_reports_committed_matches() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let input = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "grounded-delete-input".into(),
+        can_subsume: false,
+    });
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    let zero_id = egraph.add_term(input, &[zero]);
+    let one_id = egraph.add_term(input, &[one]);
+    let (rule, value, id, target) = {
+        let mut builder = egraph.new_rule("grounded-delete", true);
+        let value = builder.new_var_named(ColumnTy::Base(int_base), "value");
+        let id = builder.new_var_named(ColumnTy::Id, "id");
+        let target = builder.new_var_named(ColumnTy::Base(int_base), "target");
+        builder
+            .query_table(input, &[value.clone(), id.clone()], Some(false))
+            .unwrap();
+        builder.finish_query();
+        builder.remove(input, std::slice::from_ref(&target));
+        let QueryEntry::Var(value) = value else {
+            unreachable!()
+        };
+        let QueryEntry::Var(id) = id else {
+            unreachable!()
+        };
+        let QueryEntry::Var(target) = target else {
+            unreachable!()
+        };
+        (builder.build(), value, id, target)
+    };
+    let firing = |match_id, value_arg, id_arg, target_arg| GroundedRuleRun {
+        match_id,
+        rule,
+        bindings: vec![
+            GroundedRuleBinding {
+                variable: value.id,
+                ty: ColumnTy::Base(int_base),
+                value: value_arg,
+            },
+            GroundedRuleBinding {
+                variable: id.id,
+                ty: ColumnTy::Id,
+                value: id_arg,
+            },
+            GroundedRuleBinding {
+                variable: target.id,
+                ty: ColumnTy::Base(int_base),
+                value: target_arg,
+            },
+        ]
+        .into_boxed_slice(),
+    };
+
+    // The first firing deletes the row required by the second firing. Both
+    // premises must nevertheless be validated before either delete is staged.
+    let report = egraph
+        .run_grounded_wave(&[
+            firing(20, zero, zero_id, one),
+            firing(21, one, one_id, zero),
+        ])
+        .unwrap();
+    assert!(report.changed());
+    assert_eq!(report.rule_set_report.num_matches("grounded-delete"), 2);
+    assert!(egraph.lookup_row(input, &[zero]).is_none());
+    assert!(egraph.lookup_row(input, &[one]).is_none());
+}
+
+#[test]
+fn grounded_wave_guard_failure_runs_no_head() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let input = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "grounded-guard-input".into(),
+        can_subsume: false,
+    });
+    let zero = egraph.base_values_mut().get(0i64);
+    let one = egraph.base_values_mut().get(1i64);
+    let zero_id = egraph.add_term(input, &[zero]);
+    let one_id = egraph.add_term(input, &[one]);
+    let identity =
+        egraph.register_external_func(Box::new(make_external_func(|_, args| Some(args[0]))));
+    let head_calls = Arc::new(AtomicUsize::new(0));
+    let calls = Arc::clone(&head_calls);
+    let head = egraph.register_external_func(Box::new(make_external_func(move |state, _| {
+        calls.fetch_add(1, Ordering::Relaxed);
+        Some(state.base_values().get(()))
+    })));
+    let (rule, value, id) = {
+        let mut builder = egraph.new_rule("grounded-guard", true);
+        let value = builder.new_var_named(ColumnTy::Base(int_base), "value");
+        let id = builder.new_var_named(ColumnTy::Id, "id");
+        builder
+            .query_table(input, &[value.clone(), id.clone()], Some(false))
+            .unwrap();
+        builder
+            .query_prim(
+                identity,
+                &[
+                    value.clone(),
+                    QueryEntry::Const {
+                        val: zero,
+                        ty: ColumnTy::Base(int_base),
+                    },
+                ],
+                ColumnTy::Base(int_base),
+            )
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(head, &[], ColumnTy::Base(unit_base), || {
+            "head failed".into()
+        });
+        let QueryEntry::Var(value) = value else {
+            unreachable!()
+        };
+        let QueryEntry::Var(id) = id else {
+            unreachable!()
+        };
+        (builder.build(), value, id)
+    };
+    let firing = |match_id, value_arg, id_arg| GroundedRuleRun {
+        match_id,
+        rule,
+        bindings: vec![
+            GroundedRuleBinding {
+                variable: value.id,
+                ty: ColumnTy::Base(int_base),
+                value: value_arg,
+            },
+            GroundedRuleBinding {
+                variable: id.id,
+                ty: ColumnTy::Id,
+                value: id_arg,
+            },
+        ]
+        .into_boxed_slice(),
+    };
+
+    let error = egraph
+        .run_grounded_wave(&[firing(30, zero, zero_id), firing(31, one, one_id)])
+        .unwrap_err();
+    assert!(error.to_string().contains("guard rejected"));
+    assert_eq!(head_calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn grounded_wave_head_failure_aborts_earlier_staged_mutations() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let input = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "grounded-atomic-input".into(),
+        can_subsume: false,
+    });
+    let output = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "grounded-atomic-output".into(),
+        can_subsume: false,
+    });
+    let key = egraph.base_values_mut().get(9i64);
+    let id = egraph.add_term(input, &[key]);
+    let build = |egraph: &mut EGraph, desc: &str, fail: bool| {
+        let mut builder = egraph.new_rule(desc, true);
+        let key_variable = builder.new_var_named(ColumnTy::Base(int_base), "key");
+        let id_variable = builder.new_var_named(ColumnTy::Id, "id");
+        builder
+            .query_table(
+                input,
+                &[key_variable.clone(), id_variable.clone()],
+                Some(false),
+            )
+            .unwrap();
+        builder.finish_query();
+        if fail {
+            builder.panic("grounded head failed".into());
+        } else {
+            builder.set(output, &[key_variable.clone(), id_variable.clone()]);
+        }
+        let QueryEntry::Var(key_variable) = key_variable else {
+            unreachable!()
+        };
+        let QueryEntry::Var(id_variable) = id_variable else {
+            unreachable!()
+        };
+        (builder.build(), key_variable, id_variable)
+    };
+    let (write_rule, write_key, write_id) = build(&mut egraph, "grounded-write", false);
+    let (fail_rule, fail_key, fail_id) = build(&mut egraph, "grounded-fail", true);
+    let firing =
+        |match_id, rule, key_variable: &Variable, id_variable: &Variable| GroundedRuleRun {
+            match_id,
+            rule,
+            bindings: vec![
+                GroundedRuleBinding {
+                    variable: key_variable.id,
+                    ty: ColumnTy::Base(int_base),
+                    value: key,
+                },
+                GroundedRuleBinding {
+                    variable: id_variable.id,
+                    ty: ColumnTy::Id,
+                    value: id,
+                },
+            ]
+            .into_boxed_slice(),
+        };
+
+    let error = egraph
+        .run_grounded_wave(&[
+            firing(35, write_rule, &write_key, &write_id),
+            firing(36, fail_rule, &fail_key, &fail_id),
+        ])
+        .unwrap_err();
+    assert!(error.to_string().contains("grounded head failed"));
+    assert!(egraph.lookup_row(output, &[key]).is_none());
+}
+
+#[test]
+fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_vars() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "proof-source".into(),
+        can_subsume: false,
+    });
+    let premise = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Id, ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "proof-premise".into(),
+        can_subsume: false,
+    });
+    let key = egraph.base_values_mut().get(7i64);
+    let proof = egraph.add_term(source, &[key]);
+    let conclusion = egraph.add_term(premise, &[proof]);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let head = egraph.register_external_func(Box::new(make_external_func(move |state, args| {
+        assert_eq!(args, &[conclusion]);
+        observed.fetch_add(1, Ordering::Relaxed);
+        Some(state.base_values().get(()))
+    })));
+    let (rule, key_variable) = {
+        let mut builder = egraph.new_rule("proof-like-grounded", true);
+        let key_variable = builder.new_var_named(ColumnTy::Base(int_base), "key");
+        let proof_variable: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        let conclusion_variable: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        // Deliberately reverse producer order. The first key is an injected
+        // proof variable that the later point probe will bind.
+        builder
+            .query_table(
+                premise,
+                &[proof_variable.clone(), conclusion_variable.clone()],
+                Some(false),
+            )
+            .unwrap();
+        builder
+            .query_table(source, &[key_variable.clone(), proof_variable], Some(false))
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(
+            head,
+            std::slice::from_ref(&conclusion_variable),
+            ColumnTy::Base(unit_base),
+            || "proof head failed".into(),
+        );
+        let QueryEntry::Var(key_variable) = key_variable else {
+            unreachable!()
+        };
+        (builder.build(), key_variable)
+    };
+
+    egraph
+        .run_grounded_wave(&[GroundedRuleRun {
+            match_id: 40,
+            rule,
+            bindings: vec![GroundedRuleBinding {
+                variable: key_variable.id,
+                ty: ColumnTy::Base(int_base),
+                value: key,
+            }]
+            .into_boxed_slice(),
+        }])
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 
 #[test]
