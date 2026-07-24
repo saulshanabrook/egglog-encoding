@@ -744,6 +744,37 @@ pub(crate) struct PremiseOccurrence {
     pub(crate) column: usize,
 }
 
+/// One node in the static source-to-action term recipe. Nodes share producer
+/// subgraphs while a rule is compiled and instantiate only for promoted
+/// observations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TermTemplate {
+    Binding {
+        binding: u16,
+    },
+    Static {
+        term: ReplayTermId,
+    },
+    Call {
+        sort: ReplaySortId,
+        op: ReplayOpId,
+        children: Arc<[Arc<TermTemplate>]>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TermRecipe {
+    /// Exact structural producers for `ReplayBindingSource::Current` entries,
+    /// in residual-slot order. Premise and constant roots already live in the
+    /// binding recipe and are not duplicated here.
+    pub(crate) current_roots: Arc<[Option<Arc<TermTemplate>>]>,
+}
+
+#[derive(Default)]
+struct StaticTermRecipeStore {
+    rules: HashMap<u32, Arc<TermRecipe>>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReplayBindingSource {
     Premise {
@@ -1170,6 +1201,12 @@ pub struct ReceiptCounters {
     pub container_equalities: u64,
     /// Logical bytes of container cause and child-pair payload captured.
     pub container_bytes: u64,
+    /// `Current` binding slots with a complete replay-safe structural recipe.
+    pub supported_current_recipe_roots: u64,
+    /// `Current` binding slots whose structural producer remains unsupported.
+    /// Reached slots fail closed during slicing; this counter makes cohort
+    /// coverage visible before replay is wired.
+    pub missing_current_recipe_roots: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -2418,6 +2455,8 @@ struct ReceiptShared {
     equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
     /// One canonical source-order binding recipe per source-level rule.
     rule_binding_recipes: RwLock<HashMap<u32, Arc<[ReplayBindingSource]>>>,
+    /// Cold compile-time recipes shared by every seminaive/decomposed variant.
+    static_term_recipes: Mutex<StaticTermRecipeStore>,
     arena: Mutex<ReceiptArena>,
 }
 
@@ -2439,6 +2478,7 @@ impl Default for ReceiptShared {
             equality_value_sorts: Mutex::new(HashMap::default()),
             equality_wave_timestamp: Mutex::new(None),
             rule_binding_recipes: RwLock::new(HashMap::default()),
+            static_term_recipes: Mutex::new(StaticTermRecipeStore::default()),
             arena: Mutex::new(ReceiptArena::default()),
         }
     }
@@ -2899,6 +2939,45 @@ impl Drop for ReceiptBatch {
 pub struct CausalReceipts(Arc<ReceiptShared>);
 
 impl CausalReceipts {
+    pub(crate) fn register_rule_term_recipe(
+        &self,
+        rule: u32,
+        recipe: TermRecipe,
+    ) -> Arc<TermRecipe> {
+        let mut store = self.0.static_term_recipes.lock().unwrap();
+        if let Some(existing) = store.rules.get(&rule) {
+            assert_eq!(
+                existing.as_ref(),
+                &recipe,
+                "one causal owner registered inconsistent static term recipes"
+            );
+            return Arc::clone(existing);
+        }
+        let supported = recipe
+            .current_roots
+            .iter()
+            .filter(|root| root.is_some())
+            .count() as u64;
+        let missing = recipe.current_roots.len() as u64 - supported;
+        let recipe = Arc::new(recipe);
+        store.rules.insert(rule, Arc::clone(&recipe));
+        drop(store);
+        let mut arena = self.0.arena.lock().unwrap();
+        arena.counters.supported_current_recipe_roots += supported;
+        arena.counters.missing_current_recipe_roots += missing;
+        recipe
+    }
+
+    pub(crate) fn rule_term_recipe(&self, rule: u32) -> Option<Arc<TermRecipe>> {
+        self.0
+            .static_term_recipes
+            .lock()
+            .unwrap()
+            .rules
+            .get(&rule)
+            .cloned()
+    }
+
     /// Register and share the immutable source-order binding recipe for one
     /// source-level rule. Seminaive/decomposed variants must agree exactly.
     pub(crate) fn register_rule_binding_recipe(
@@ -4987,6 +5066,20 @@ impl CausalReceipts {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recipe_counters_distinguish_supported_and_missing_current_roots() {
+        let receipts = CausalReceipts::default();
+        let recipe = TermRecipe {
+            current_roots: vec![Some(Arc::new(TermTemplate::Binding { binding: 0 })), None].into(),
+        };
+        receipts.register_rule_term_recipe(7, recipe.clone());
+        receipts.register_rule_term_recipe(7, recipe);
+
+        let counters = receipts.snapshot().counters;
+        assert_eq!(counters.supported_current_recipe_roots, 1);
+        assert_eq!(counters.missing_current_recipe_roots, 1);
+    }
 
     #[test]
     fn receipt_batches_publish_out_of_order_without_holes() {

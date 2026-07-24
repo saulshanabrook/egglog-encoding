@@ -12,6 +12,7 @@ use egglog_reports::{PreMergeTiming, ReportLevel};
 
 use crate::numeric_id::NumericId;
 
+use crate::receipts::TermTemplate;
 use crate::{
     CausalReceipts, CausalWave, CheckEndpointSource, CheckReceiptSpec, FactId,
     GuardedRuleSetRunOutcome, PlanStrategy, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
@@ -4085,10 +4086,10 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
         iter::empty(),
         iter::empty(),
     );
-    let counter = db.add_counter();
     let receipts = db.enable_causal_receipts();
     let value_sort = ReplaySortId::new(10);
     let primitive_sort = ReplaySortId::new(11);
+    let primitive_op = ReplayOpId::new(11);
     receipts
         .register_table_layout(input, &[Some(value_sort), None])
         .unwrap();
@@ -4098,7 +4099,6 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
     let value = Value::new(7);
     let primitive = Value::new(0);
     let value_term = receipts.intern_literal(value_sort, ReplayLiteral::I64(7), value);
-    let primitive_term = receipts.intern_literal(primitive_sort, ReplayLiteral::I64(0), primitive);
     db.stage_source_row(
         input,
         &[value, Value::new(0)],
@@ -4108,6 +4108,8 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
     .unwrap();
     assert!(db.merge_all());
     db.finalize_causal_wave();
+    let primitive_fn =
+        db.add_external_function(Box::new(make_external_func(move |_, _| Some(primitive))));
 
     let mut rules = RuleSetBuilder::new(&mut db);
     let mut query = rules.new_rule();
@@ -4117,7 +4119,19 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
         .add_atom(input, &[x.into(), timestamp.into()], &[])
         .unwrap();
     let mut action = query.build();
-    let primitive_var = action.read_counter(counter);
+    // This instruction represents a replay-safe pure body primitive promoted
+    // before the mutating head begins.
+    let primitive_var = action
+        .call_external_with_replay(
+            primitive_fn,
+            &[x.into()],
+            Some(ReplayConstructorSpec::new(
+                primitive_sort,
+                primitive_op,
+                [value_sort],
+            )),
+        )
+        .unwrap();
     action
         .insert(derived, &[x.into(), primitive_var.into()])
         .unwrap();
@@ -4127,6 +4141,23 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
             .with_current_vars([(primitive_var, primitive_sort)]),
     );
     let rules = rules.build();
+    let recipe = receipts
+        .rule_term_recipe(60)
+        .expect("current binding must retain one structural producer");
+    let [Some(root)] = recipe.current_roots.as_ref() else {
+        panic!("pure body primitive must lower to one Current root")
+    };
+    let TermTemplate::Call { sort, op, children } = root.as_ref() else {
+        panic!("pure body primitive Current root must be a Call")
+    };
+    assert_eq!((*sort, *op), (primitive_sort, primitive_op));
+    assert_eq!(
+        children.as_ref(),
+        &[Arc::new(TermTemplate::Binding { binding: 0 })]
+    );
+    let recipe_counters = receipts.snapshot().counters;
+    assert_eq!(recipe_counters.supported_current_recipe_roots, 1);
+    assert_eq!(recipe_counters.missing_current_recipe_roots, 0);
     db.set_causal_wave(CausalWave::new(1));
     assert!(db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
     db.finalize_causal_wave();
@@ -4137,6 +4168,15 @@ fn causal_receipts_resolve_primitive_only_current_terms_after_ignored_columns() 
         .iter()
         .find(|fact| fact.table == derived)
         .unwrap();
+    let primitive_term = derived_fact.terms[1];
+    assert_eq!(
+        receipts.replay_term(primitive_term),
+        Some(ReplayTerm::Call {
+            sort: primitive_sort,
+            op: primitive_op,
+            children: [value_term].into(),
+        })
+    );
     assert_eq!(
         derived_fact.terms.as_ref(),
         &[value_term, primitive_term],

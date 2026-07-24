@@ -11,7 +11,7 @@ use thiserror::Error;
 
 use crate::receipts::{
     ActionReceiptKind, ActionReceiptSpec, CheckEndpointSpec, CheckTermSource, PremiseOccurrence,
-    PremiseSlot, ReplayBindingSource,
+    PremiseSlot, ReplayBindingSource, ReplayTerm, TermRecipe, TermTemplate,
 };
 use crate::{
     BaseValueId, CheckEndpointSource, CheckReceiptSpec, CounterId, ExternalFunctionId, PoolSet,
@@ -121,9 +121,15 @@ impl<'outer> RuleSetBuilder<'outer> {
     /// Add a rule to this rule set.
     pub fn new_rule<'a>(&'a mut self) -> QueryBuilder<'outer, 'a> {
         let instrs = with_pool_set(PoolSet::get);
+        let recipe_draft = self
+            .db
+            .causal_receipts
+            .is_some()
+            .then(StaticRecipeDraft::default);
         QueryBuilder {
             rsb: self,
             instrs,
+            recipe_draft,
             query: Query {
                 var_info: Default::default(),
                 atoms: Default::default(),
@@ -296,6 +302,7 @@ pub struct QueryBuilder<'outer, 'a> {
     rsb: &'a mut RuleSetBuilder<'outer>,
     query: Query,
     instrs: Pooled<Vec<Instr>>,
+    recipe_draft: Option<StaticRecipeDraft>,
 }
 
 impl<'outer, 'a> QueryBuilder<'outer, 'a> {
@@ -533,6 +540,178 @@ enum ReceiptBuildSpec {
     Check { premises: Box<[AtomId]> },
 }
 
+type RecipeRoot = Arc<RecipeExpr>;
+
+#[derive(Clone, Debug)]
+enum RecipeExpr {
+    Input(Variable),
+    Static {
+        term: crate::ReplayTermId,
+        sort: ReplaySortId,
+    },
+    Call {
+        replay: ReplayConstructorSpec,
+        children: Arc<[RecipeRoot]>,
+    },
+}
+
+#[derive(Default)]
+struct StaticRecipeDraft {
+    value_roots: HashMap<Variable, RecipeRoot>,
+}
+
+impl StaticRecipeDraft {
+    fn entry(
+        &self,
+        receipts: &crate::CausalReceipts,
+        entry: QueryEntry,
+        sort: ReplaySortId,
+    ) -> RecipeRoot {
+        match entry {
+            QueryEntry::Var(variable) => self
+                .value_roots
+                .get(&variable)
+                .cloned()
+                .unwrap_or_else(|| Arc::new(RecipeExpr::Input(variable))),
+            QueryEntry::Const(value) => {
+                let term = receipts
+                    .lookup_term(sort, value)
+                    .expect("typed action literal has no registered replay term");
+                assert!(
+                    matches!(receipts.replay_term(term), Some(ReplayTerm::Literal { sort: actual, .. }) if actual == sort),
+                    "typed action constant resolved through a structural alias instead of a literal"
+                );
+                Arc::new(RecipeExpr::Static { term, sort })
+            }
+        }
+    }
+
+    fn call_output(
+        &mut self,
+        receipts: &crate::CausalReceipts,
+        dst: Variable,
+        args: &[QueryEntry],
+        replay: &ReplayConstructorSpec,
+    ) {
+        let root = Arc::new(RecipeExpr::Call {
+            replay: replay.clone(),
+            children: replay
+                .child_sorts
+                .iter()
+                .copied()
+                .zip(args.iter().copied())
+                .map(|(sort, entry)| self.entry(receipts, entry, sort))
+                .collect(),
+        });
+        assert!(
+            self.value_roots.insert(dst, root).is_none(),
+            "one action variable has multiple structural producers"
+        );
+    }
+
+    fn lower(
+        &self,
+        bindings: &[RuleBindingSpec],
+        binding_sources: &[ReplayBindingSource],
+        binding_sorts: &[ReplaySortId],
+    ) -> TermRecipe {
+        let mut inputs = HashMap::default();
+        for (index, ((binding, source), sort)) in bindings
+            .iter()
+            .zip(binding_sources)
+            .zip(binding_sorts)
+            .enumerate()
+        {
+            if let (
+                RuleBindingSpec::Variable { variable, .. },
+                ReplayBindingSource::Premise { .. },
+            ) = (binding, source)
+            {
+                inputs.entry(*variable).or_insert((
+                    u16::try_from(index).expect("one causal rule has more than u16 bindings"),
+                    *sort,
+                ));
+            }
+        }
+        let mut lowerer = RecipeLowerer {
+            inputs,
+            memo: HashMap::default(),
+            observed_sorts: HashMap::default(),
+        };
+        let mut next_residual = 0u32;
+        let current_roots = bindings
+            .iter()
+            .zip(binding_sources)
+            .zip(binding_sorts)
+            .filter_map(|((binding, source), sort)| match (binding, source) {
+                (
+                    RuleBindingSpec::Variable { variable, .. },
+                    ReplayBindingSource::Current { residual, .. },
+                ) => {
+                    assert_eq!(*residual, next_residual);
+                    next_residual += 1;
+                    Some(
+                        self.value_roots
+                            .get(variable)
+                            .and_then(|root| lowerer.try_lower(root, *sort)),
+                    )
+                }
+                _ => None,
+            })
+            .collect();
+        TermRecipe { current_roots }
+    }
+}
+
+struct RecipeLowerer {
+    inputs: HashMap<Variable, (u16, ReplaySortId)>,
+    memo: HashMap<(usize, ReplaySortId), Option<Arc<TermTemplate>>>,
+    observed_sorts: HashMap<usize, ReplaySortId>,
+}
+
+impl RecipeLowerer {
+    fn try_lower(
+        &mut self,
+        root: &RecipeRoot,
+        expected: ReplaySortId,
+    ) -> Option<Arc<TermTemplate>> {
+        let key = Arc::as_ptr(root) as usize;
+        if let Some(prior) = self.observed_sorts.insert(key, expected) {
+            assert_eq!(prior, expected, "one producer crosses logical sorts");
+        }
+        if let Some(term) = self.memo.get(&(key, expected)) {
+            return term.clone();
+        }
+        let node = match root.as_ref() {
+            RecipeExpr::Input(variable) => {
+                let (binding, sort) = self.inputs.get(variable)?;
+                assert_eq!(*sort, expected, "input binding used under the wrong sort");
+                TermTemplate::Binding { binding: *binding }
+            }
+            RecipeExpr::Static { term, sort } => {
+                assert_eq!(*sort, expected);
+                TermTemplate::Static { term: *term }
+            }
+            RecipeExpr::Call { replay, children } => {
+                assert_eq!(replay.result_sort, expected);
+                TermTemplate::Call {
+                    sort: expected,
+                    op: replay.op,
+                    children: replay
+                        .child_sorts
+                        .iter()
+                        .copied()
+                        .zip(children.iter())
+                        .map(|(sort, child)| self.try_lower(child, sort))
+                        .collect::<Option<_>>()?,
+                }
+            }
+        };
+        let term = Arc::new(node);
+        self.memo.insert((key, expected), Some(Arc::clone(&term)));
+        Some(term)
+    }
+}
 impl RuleBuilder<'_, '_> {
     fn table_info(&self, table: TableId) -> &TableInfo {
         self.qb.rsb.db.get_table_info(table)
@@ -697,6 +876,7 @@ impl RuleBuilder<'_, '_> {
                         .collect(),
                 );
                 let mut binding_sources = Vec::with_capacity(spec.bindings.len());
+                let mut binding_sorts = Vec::with_capacity(spec.bindings.len());
                 let mut next_residual = 0u32;
                 for binding in &spec.bindings {
                     let RuleBindingSpec::Variable {
@@ -724,9 +904,11 @@ impl RuleBuilder<'_, '_> {
                             "receipt constant binding has the wrong replay sort"
                         );
                         binding_sources.push(ReplayBindingSource::Constant { term: *term });
+                        binding_sorts.push(*sort);
                         continue;
                     };
                     let mut occurrences = Vec::new();
+                    let mut occurrence_sort = None;
                     for (premise, atom) in spec.premises.iter().copied().enumerate() {
                         let Some(subatom) = var_info[*var]
                             .occurrences
@@ -737,14 +919,18 @@ impl RuleBuilder<'_, '_> {
                         };
                         let table = self.qb.query.atoms[atom].table;
                         for column in subatom.vars.iter().copied() {
-                            if let Some(receipts) = &self.qb.rsb.db.causal_receipts {
-                                assert!(
-                                    receipts
-                                        .table_column_sort(table, column.index())
-                                        .is_some(),
+                            let sort = self.qb.rsb.db.causal_receipts.as_ref().and_then(|receipts| {
+                                receipts.table_column_sort(table, column.index())
+                            }).unwrap_or_else(|| {
+                                panic!(
                                     "receipt variable {var:?} selects non-replayable table column {}",
                                     column.index()
-                                );
+                                )
+                            });
+                            if let Some(prior) = occurrence_sort {
+                                assert_eq!(prior, sort, "one receipt variable crosses replay sorts");
+                            } else {
+                                occurrence_sort = Some(sort);
                             }
                             occurrences.push(PremiseOccurrence {
                                 premise,
@@ -752,7 +938,7 @@ impl RuleBuilder<'_, '_> {
                             });
                         }
                     }
-                    let source = if !occurrences.is_empty() {
+                    let (source, sort) = if !occurrences.is_empty() {
                         let first_premise = occurrences[0].premise;
                         let representative = occurrences
                             .iter()
@@ -760,27 +946,34 @@ impl RuleBuilder<'_, '_> {
                             .take_while(|occurrence| occurrence.premise == first_premise)
                             .last()
                             .expect("nonempty premise occurrences have a representative");
-                        ReplayBindingSource::Premise {
-                            representative,
-                            occurrences: occurrences.into(),
-                        }
+                        (
+                            ReplayBindingSource::Premise {
+                                representative,
+                                occurrences: occurrences.into(),
+                            },
+                            occurrence_sort.unwrap(),
+                        )
                     } else {
                         let sort = current_sort.unwrap_or_else(|| {
                                 panic!(
                                     "receipt variable {var:?} has neither a retained premise nor a typed current-value producer"
                                 )
                             });
-                        ReplayBindingSource::Current {
-                            variable: *var,
-                            sort,
-                            residual: {
-                                let residual = next_residual;
-                                next_residual += 1;
-                                residual
+                        (
+                            ReplayBindingSource::Current {
+                                variable: *var,
+                                sort,
+                                residual: {
+                                    let residual = next_residual;
+                                    next_residual += 1;
+                                    residual
+                                },
                             },
-                        }
+                            sort,
+                        )
                     };
                     binding_sources.push(source);
+                    binding_sorts.push(sort);
                 }
                 let binding_sources = self
                     .qb
@@ -790,6 +983,14 @@ impl RuleBuilder<'_, '_> {
                     .as_ref()
                     .expect("rule receipt actions require causal receipts")
                     .register_rule_binding_recipe(spec.rule, &binding_sources);
+                let receipts = self.qb.rsb.db.causal_receipts.as_ref().unwrap();
+                let term_recipe = self
+                    .qb
+                    .recipe_draft
+                    .as_ref()
+                    .expect("rule receipt actions require a static recipe draft")
+                    .lower(&spec.bindings, &binding_sources, &binding_sorts);
+                receipts.register_rule_term_recipe(spec.rule, term_recipe);
                 ActionReceiptSpec {
                     kind: ActionReceiptKind::Rule(spec.rule),
                     premise_count,
@@ -1120,6 +1321,17 @@ impl RuleBuilder<'_, '_> {
                 self.qb.rsb.db.causal_receipts.is_some(),
                 "primitive replay metadata requires causal receipts"
             );
+            let receipts = self
+                .qb
+                .rsb
+                .db
+                .causal_receipts
+                .as_ref()
+                .expect("causal recipe draft requires causal receipts")
+                .clone();
+            if let Some(draft) = self.qb.recipe_draft.as_mut() {
+                draft.call_output(&receipts, dst, args, &replay);
+            }
             self.qb.instrs.push(Instr::PromoteReplayCall {
                 args: args.to_vec(),
                 dst,
