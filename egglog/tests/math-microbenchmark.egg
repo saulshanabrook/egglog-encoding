@@ -66,8 +66,18 @@
                                 (Const 2))))
 (run 11)
 (check
-  (= (Pow (Var "x") (Const 2))
-     (Mul (Var "x") (Var "x"))))
+  (= (Integral (Mul (Cos (Var "x")) (Var "x")) (Var "x"))
+     (Sub a0
+       (Sub a1
+         (Sub a2
+           (Sub a3
+             (Sub a4
+               (Sub a5
+                 (Sub a6
+                   (Sub a7
+                     (Sub a8
+                       (Sub a9
+                         (Sub a10 z11)))))))))))))
 (print-size Add)
 (print-size Mul)
 

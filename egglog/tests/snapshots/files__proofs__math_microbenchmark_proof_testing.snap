@@ -3,12 +3,314 @@ source: egglog/tests/files.rs
 assertion_line: 279
 expression: proof_snapshot
 ---
-(let t0 (Pow (Var "x") (Const 2)))
-(let t1 (Mul (Var "x") (Var "x")))
-(Sym
-  (= t0 t1)
-  (Rule
-    (= t1 t0)
-    (name "(rewrite (Pow x (Const 2)) (Mul x x))")
-    (premises (Fiat (= t0 t0)))
-    (substitution (@rewrite_var__13 t0) (x (Var "x")))))
+(let t0 (Integral (Mul (Cos (Var "x")) (Var "x")) (Var "x")))
+(let t1 (Integral (Var "x") (Var "x")))
+(let t2 (Mul (Cos (Var "x")) t1))
+(let t3 (Diff (Var "x") (Cos (Var "x"))))
+(let t4 (Integral t1 (Var "x")))
+(let t5 (Mul t3 t4))
+(let t6 (Diff (Var "x") t3))
+(let t7 (Integral t4 (Var "x")))
+(let t8 (Mul t6 t7))
+(let t9 (Diff (Var "x") t6))
+(let t10 (Integral t7 (Var "x")))
+(let t11 (Mul t9 t10))
+(let t12 (Diff (Var "x") t9))
+(let t13 (Integral t10 (Var "x")))
+(let t14 (Mul t12 t13))
+(let t15 (Diff (Var "x") t12))
+(let t16 (Integral t13 (Var "x")))
+(let t17 (Mul t15 t16))
+(let t18 (Diff (Var "x") t15))
+(let t19 (Integral t16 (Var "x")))
+(let t20 (Mul t18 t19))
+(let t21 (Diff (Var "x") t18))
+(let t22 (Integral t19 (Var "x")))
+(let t23 (Mul t21 t22))
+(let t24 (Diff (Var "x") t21))
+(let t25 (Integral t22 (Var "x")))
+(let t26 (Mul t24 t25))
+(let t27 (Diff (Var "x") t24))
+(let t28 (Integral t25 (Var "x")))
+(let t29 (Mul t27 t28))
+(let t30 (Diff (Var "x") t27))
+(let t31 (Integral t28 (Var "x")))
+(let t32
+  (Sub
+                            (Mul t30 t31)
+                            (Integral (Mul (Diff (Var "x") t30) t31) (Var "x"))))
+(let t33 (Sub t29 t32))
+(let t34 (Sub t26 t33))
+(let t35 (Sub t23 t34))
+(let t36 (Sub t20 t35))
+(let t37 (Sub t17 t36))
+(let t38 (Sub t14 t37))
+(let t39 (Sub t11 t38))
+(let t40 (Sub t8 t39))
+(let t41 (Sub t5 t40))
+(let t42 (Integral (Mul t3 t1) (Var "x")))
+(let t43 (Sub t2 t42))
+(let t44 (premises (Fiat (= t0 t0))))
+(let t45
+  (substitution
+          (@rewrite_var__23 t0)
+          (a (Cos (Var "x")))
+          (b (Var "x"))
+          (x (Var "x"))))
+(let t46 (Integral (Mul t6 t4) (Var "x")))
+(let t47 (Sub t5 t46))
+(let t48
+  (premises
+            (Rule
+              (= t42 t42)
+              (name
+                "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+              t44
+              t45)))
+(let t49 (substitution (@rewrite_var__23 t42) (a t3) (b t1) (x (Var "x"))))
+(let t50 (Integral (Mul t9 t7) (Var "x")))
+(let t51 (Sub t8 t50))
+(let t52
+  (premises
+              (Rule
+                (= t46 t46)
+                (name
+                  "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                t48
+                t49)))
+(let t53 (substitution (@rewrite_var__23 t46) (a t6) (b t4) (x (Var "x"))))
+(let t54 (Integral (Mul t12 t10) (Var "x")))
+(let t55 (Sub t11 t54))
+(let t56
+  (premises
+                (Rule
+                  (= t50 t50)
+                  (name
+                    "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                  t52
+                  t53)))
+(let t57 (substitution (@rewrite_var__23 t50) (a t9) (b t7) (x (Var "x"))))
+(let t58 (Integral (Mul t15 t13) (Var "x")))
+(let t59 (Sub t14 t58))
+(let t60
+  (premises
+                  (Rule
+                    (= t54 t54)
+                    (name
+                      "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                    t56
+                    t57)))
+(let t61
+  (substitution
+                  (@rewrite_var__23 t54)
+                  (a t12)
+                  (b t10)
+                  (x (Var "x"))))
+(let t62 (Integral (Mul t18 t16) (Var "x")))
+(let t63 (Sub t17 t62))
+(let t64
+  (premises
+                    (Rule
+                      (= t58 t58)
+                      (name
+                        "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                      t60
+                      t61)))
+(let t65
+  (substitution
+                    (@rewrite_var__23 t58)
+                    (a t15)
+                    (b t13)
+                    (x (Var "x"))))
+(let t66 (Integral (Mul t21 t19) (Var "x")))
+(let t67 (Sub t20 t66))
+(let t68
+  (premises
+                      (Rule
+                        (= t62 t62)
+                        (name
+                          "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                        t64
+                        t65)))
+(let t69
+  (substitution
+                      (@rewrite_var__23 t62)
+                      (a t18)
+                      (b t16)
+                      (x (Var "x"))))
+(let t70 (Integral (Mul t24 t22) (Var "x")))
+(let t71 (Sub t23 t70))
+(let t72
+  (premises
+                        (Rule
+                          (= t66 t66)
+                          (name
+                            "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                          t68
+                          t69)))
+(let t73
+  (substitution
+                        (@rewrite_var__23 t66)
+                        (a t21)
+                        (b t19)
+                        (x (Var "x"))))
+(let t74 (Integral (Mul t27 t25) (Var "x")))
+(let t75 (Sub t26 t74))
+(let t76
+  (premises
+                          (Rule
+                            (= t70 t70)
+                            (name
+                              "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                            t72
+                            t73)))
+(let t77
+  (substitution
+                          (@rewrite_var__23 t70)
+                          (a t24)
+                          (b t22)
+                          (x (Var "x"))))
+(let t78 (Integral (Mul t30 t28) (Var "x")))
+(let t79 (Sub t29 t78))
+(let t80
+  (premises
+                            (Rule
+                              (= t74 t74)
+                              (name
+                                "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                              t76
+                              t77)))
+(let t81
+  (substitution
+                            (@rewrite_var__23 t74)
+                            (a t27)
+                            (b t25)
+                            (x (Var "x"))))
+(Congr
+  (= t0 (Sub t2 t41))
+  (Sym
+    (= t0 t43)
+    (Rule
+      (= t43 t0)
+      (name
+        "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+      t44
+      t45))
+  (Congr
+    (= t42 t41)
+    (Sym
+      (= t42 t47)
+      (Rule
+        (= t47 t42)
+        (name
+          "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+        t48
+        t49))
+    (Congr
+      (= t46 t40)
+      (Sym
+        (= t46 t51)
+        (Rule
+          (= t51 t46)
+          (name
+            "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+          t52
+          t53))
+      (Congr
+        (= t50 t39)
+        (Sym
+          (= t50 t55)
+          (Rule
+            (= t55 t50)
+            (name
+              "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+            t56
+            t57))
+        (Congr
+          (= t54 t38)
+          (Sym
+            (= t54 t59)
+            (Rule
+              (= t59 t54)
+              (name
+                "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+              t60
+              t61))
+          (Congr
+            (= t58 t37)
+            (Sym
+              (= t58 t63)
+              (Rule
+                (= t63 t58)
+                (name
+                  "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                t64
+                t65))
+            (Congr
+              (= t62 t36)
+              (Sym
+                (= t62 t67)
+                (Rule
+                  (= t67 t62)
+                  (name
+                    "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                  t68
+                  t69))
+              (Congr
+                (= t66 t35)
+                (Sym
+                  (= t66 t71)
+                  (Rule
+                    (= t71 t66)
+                    (name
+                      "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                    t72
+                    t73))
+                (Congr
+                  (= t70 t34)
+                  (Sym
+                    (= t70 t75)
+                    (Rule
+                      (= t75 t70)
+                      (name
+                        "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                      t76
+                      t77))
+                  (Congr
+                    (= t74 t33)
+                    (Sym
+                      (= t74 t79)
+                      (Rule
+                        (= t79 t74)
+                        (name
+                          "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                        t80
+                        t81))
+                    (Sym
+                      (= t78 t32)
+                      (Rule
+                        (= t32 t78)
+                        (name
+                          "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                        (premises
+                          (Rule
+                            (= t78 t78)
+                            (name
+                              "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
+                            t80
+                            t81))
+                        (substitution
+                          (@rewrite_var__23 t78)
+                          (a t30)
+                          (b t28)
+                          (x (Var "x")))))
+                    1)
+                  1)
+                1)
+              1)
+            1)
+          1)
+        1)
+      1)
+    1)
+  1)
