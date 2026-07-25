@@ -349,10 +349,9 @@ struct CheckedAlias {
 struct CheckedAliasType {
     declaration_span: Span,
     sort: ArcSort,
-    /// Fully expanded source expression for grounding this alias in later
-    /// query-shaped commands. Keeping source syntax here lets proof encoding
-    /// instrument the constructor reads normally without copying a backend
-    /// `Value` between the execution and source-typechecking e-graphs.
+    /// Source expression retained for commands that deliberately expand
+    /// aliases (checks and open schedules). A later `let-check` keeps alias
+    /// variables intact so it can reuse their persistent graph-local values.
     closed_expr: Expr,
 }
 
@@ -3158,8 +3157,13 @@ impl EGraph {
     }
 
     fn canonical_checked_value(&self, sort: &ArcSort, value: Value) -> Value {
-        self.backend
-            .get_canon_repr(value, sort.column_ty(self.backend.base_values()))
+        let value = self
+            .backend
+            .get_canon_repr(value, sort.column_ty(self.backend.base_values()));
+        // Proof mode represents source EqSort equality in the existing
+        // explicit `UF_<Sort>` table. Reuse the same canonicalization helper
+        // as extraction; rebuilding guarantees its lookup is one hop.
+        crate::extract::find_canonical(self, value, sort)
     }
 
     /// Evaluate the deliberately closed `let-check` expression subset. This is
@@ -3286,17 +3290,6 @@ impl EGraph {
                         ),
                     ));
                 }
-                if primitive.output().is_eq_sort() {
-                    return Err(Self::checked_alias_error(
-                        span,
-                        alias_name,
-                        format!(
-                            "primitive `{}` produces EqSort `{}`; EqSort values require constructor lookup",
-                            primitive.name(),
-                            primitive.output().name()
-                        ),
-                    ));
-                }
                 if primitive.output().is_container_sort()
                     && !self
                         .type_info
@@ -3370,7 +3363,10 @@ impl EGraph {
             CheckedAliasType {
                 declaration_span: span.clone(),
                 sort: name.sort.clone(),
-                closed_expr: expr.clone().make_unresolved(),
+                closed_expr: typechecking::expand_checked_alias_expr(
+                    &expr.clone().make_unresolved(),
+                    &self.checked_alias_types,
+                ),
             },
         );
         self.names.record_checked_alias(&name.name, span);
@@ -3400,6 +3396,35 @@ impl EGraph {
         let check_receipt = record_causal_root
             .then(|| self.causal_state.as_mut().map(CausalState::next_check))
             .flatten();
+        let mut checked_variables = IndexMap::<String, (Span, ResolvedVar)>::default();
+        for fact in facts {
+            fact.visit_vars(&mut |variable_span, variable| {
+                if !variable.is_global_ref && self.checked_alias_types.contains_key(&variable.name)
+                {
+                    checked_variables
+                        .entry(variable.name.clone())
+                        .or_insert_with(|| (variable_span.clone(), variable.clone()));
+                }
+            });
+        }
+        let checked_constants = checked_variables
+            .into_values()
+            .map(|(variable_span, variable)| {
+                let checked = self.checked_aliases.get(&variable.name).ok_or_else(|| {
+                    Self::checked_alias_error(
+                        &variable_span,
+                        &variable.name,
+                        "checked alias has no published runtime value",
+                    )
+                })?;
+                let value = self.canonical_checked_value(&variable.sort, checked.value);
+                Ok((variable, value))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let checked_variables = checked_constants
+            .iter()
+            .map(|(variable, _)| variable.clone())
+            .collect::<HashSet<_>>();
         let fresh_name = self.parser.symbol_gen.fresh("check_facts");
         let fresh_ruleset = self.parser.symbol_gen.fresh("check_facts_ruleset");
         let rule = ast::ResolvedRule {
@@ -3421,11 +3446,13 @@ impl EGraph {
             (canonicalized.core.body, canonicalized.equalities)
         } else {
             (
-                rule.to_canonicalized_core_rule(
+                rule.to_canonicalized_core_rule_with_constants(
                     &self.type_info,
                     &mut self.parser.symbol_gen,
                     self.proof_state.original_typechecking.is_none(),
+                    &checked_variables,
                 )?
+                .core
                 .body,
                 Vec::new().into_boxed_slice(),
             )
@@ -3492,6 +3519,9 @@ impl EGraph {
             &mut self.unstable_fn_panic_ids,
             true, // global query: Read context (may read the DB)
         );
+        for (variable, value) in &checked_constants {
+            translator.bind_constant(variable, *value)?;
+        }
         translator.rollback_external_funcs.push(ext_id);
         translator.query(&query, true)?;
         translator.call_external_func(
@@ -3639,7 +3669,10 @@ impl EGraph {
                     .check_checked_alias_available(&name.name, &span)?;
                 let value = self.eval_checked_expr(&name.name, &expr)?;
                 let value = self.canonical_checked_value(&name.sort, value);
-                let closed_expr = expr.make_unresolved();
+                let closed_expr = typechecking::expand_checked_alias_expr(
+                    &expr.make_unresolved(),
+                    &self.checked_alias_types,
+                );
                 let alias = name.name.clone();
                 self.checked_aliases
                     .insert(alias.clone(), CheckedAlias { value });
@@ -5051,6 +5084,7 @@ struct BackendRule<'a> {
     unstable_fn_panic_ids: &'a mut HashMap<String, ExternalFunctionId>,
     pending_unstable_fn_panic_ids: HashMap<String, ExternalFunctionId>,
     entries: HashMap<core::ResolvedAtomTerm, core::GenericAtomTerm<RuleVar, RuleValue>>,
+    constant_bindings: HashMap<String, RuleValue>,
     next_var: u32,
     body: core::Query<RuleBodyCall, RuleVar, RuleValue>,
     head: core::GenericCoreActions<RuleActionCall, RuleVar, RuleValue>,
@@ -5093,6 +5127,7 @@ impl<'a> BackendRule<'a> {
             causal_union_sorts: Vec::new(),
             requires_read_context,
             entries: Default::default(),
+            constant_bindings: Default::default(),
             next_var: 0,
             body: Default::default(),
             head: Default::default(),
@@ -5205,6 +5240,22 @@ impl<'a> BackendRule<'a> {
         }
     }
 
+    fn bind_constant(&mut self, variable: &ResolvedVar, value: Value) -> Result<(), Error> {
+        let bound = RuleValue {
+            value,
+            ty: variable.sort.column_ty(self.backend.base_values()),
+        };
+        if let Some(previous) = self.constant_bindings.insert(variable.name.clone(), bound)
+            && previous != bound
+        {
+            return Err(Error::BackendError(format!(
+                "checked alias `{}` has conflicting runtime values",
+                variable.name
+            )));
+        }
+        Ok(())
+    }
+
     fn entry(
         &mut self,
         term: &core::ResolvedAtomTerm,
@@ -5213,9 +5264,14 @@ impl<'a> BackendRule<'a> {
             return Ok(entry.clone());
         }
         let entry = match term {
-            core::GenericAtomTerm::Var(span, variable) => {
-                core::GenericAtomTerm::Var(span.clone(), self.fresh_var(variable))
-            }
+            core::GenericAtomTerm::Var(span, variable) => self
+                .constant_bindings
+                .get(&variable.name)
+                .copied()
+                .map(|value| core::GenericAtomTerm::Literal(span.clone(), value))
+                .unwrap_or_else(|| {
+                    core::GenericAtomTerm::Var(span.clone(), self.fresh_var(variable))
+                }),
             core::GenericAtomTerm::Literal(span, literal) => {
                 let value = literal_to_rule_value(self.backend.base_values(), literal);
                 if let Some(causal) = self.causal_state {
@@ -5231,12 +5287,17 @@ impl<'a> BackendRule<'a> {
                 }
                 core::GenericAtomTerm::Literal(span.clone(), value)
             }
-            core::GenericAtomTerm::Global(span, variable) => {
-                return Err(Error::BackendError(format!(
-                    "{span}: global `{}` was not desugared before backend lowering",
-                    variable.name
-                )));
-            }
+            core::GenericAtomTerm::Global(span, variable) => self
+                .constant_bindings
+                .get(&variable.name)
+                .copied()
+                .map(|value| core::GenericAtomTerm::Literal(span.clone(), value))
+                .ok_or_else(|| {
+                    Error::BackendError(format!(
+                        "{span}: global `{}` was not desugared before backend lowering",
+                        variable.name
+                    ))
+                })?,
         };
         self.entries.insert(term.clone(), entry.clone());
         Ok(entry)
@@ -6636,10 +6697,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "causal equality endpoints collapsed to one structural occurrence; exact source terms are unavailable"
-    )]
-    fn causal_check_rejects_congruence_collapsed_endpoint_producers() {
+    fn causal_check_replays_congruence_collapsed_endpoint_producers() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
         egraph
@@ -6654,6 +6712,16 @@ mod tests {
                  (run 1)\
                  (check (= (F (A)) (F (B))))",
             )
+            .unwrap();
+
+        let slice = crate::causal_slice::slice_check(&egraph, 0).unwrap();
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
             .unwrap();
     }
 
@@ -7695,6 +7763,7 @@ mod tests {
                 (datatype E (A i64) (B E))
                 (B (A 1))
                 (let-check $a (A 1))
+                (delete (A 1))
                 (let-check $b (B $a))
                 (let-check $n (+ 1 2))
                 "#,
@@ -7724,6 +7793,33 @@ mod tests {
             .parse_and_run_program(None, "(check (= $a (A 2)))")
             .expect_err("the checked alias must not act as a free query variable");
         assert!(matches!(error, Error::CheckError(..)));
+    }
+
+    #[test]
+    fn let_check_alias_values_survive_constructor_deletion_in_checks() {
+        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (datatype E (A i64) (B E))
+                    (relation Hold (E))
+                    (B (A 1))
+                    (A 2)
+                    (Hold (A 1))
+                    (let-check $a (A 1))
+                    (let-check $b (B $a))
+                    (let-check $other (A 2))
+                    (delete (B (A 1)))
+                    (delete (A 1))
+                    (check (Hold $a))
+                    (check (= $a $a))
+                    (check (= $b $b))
+                    (fail (check (= $a $other)))
+                    "#,
+                )
+                .unwrap();
+        }
     }
 
     #[test]

@@ -129,6 +129,14 @@ pub enum GroundedRuleRunError {
         premise: usize,
         variable: Variable,
     },
+    #[error(
+        "grounded match {match_id} body instruction {instruction} has unbound input variable {variable:?}"
+    )]
+    UnboundBodyInput {
+        match_id: u64,
+        instruction: usize,
+        variable: Variable,
+    },
     #[error("grounded match {match_id} premise {premise} is absent")]
     MissingPremise { match_id: u64, premise: usize },
     #[error("grounded match {match_id} premise {premise} column {column} does not match")]
@@ -316,6 +324,30 @@ pub(crate) fn invoke_batch(
         });
     });
     bindings.insert(out_var, &out);
+}
+
+/// Invoke a grounded primitive into one stable variable slot. If another
+/// exact dependency already bound that slot, validate the primitive result
+/// instead of overwriting it.
+pub(crate) fn invoke_batch_assign_or_validate(
+    this: &dyn ExternalFunction,
+    state: &mut ExecutionState,
+    mask: &mut Mask,
+    bindings: &mut Bindings,
+    args: &[QueryEntry],
+    out_var: Variable,
+) {
+    let Some(expected) = bindings
+        .get(out_var)
+        .map(SmallVec::<[Value; 1]>::from_slice)
+    else {
+        invoke_batch(this, state, mask, bindings, args, out_var);
+        return;
+    };
+    for_each_binding_with_mask!(mask, args, bindings, |iter| {
+        iter.zip(&expected)
+            .retain(|(args, expected)| this.invoke(state, args.as_slice()) == Some(*expected))
+    });
 }
 
 /// A variant of [`invoke_batch`] that overwrites the output variable,
@@ -882,16 +914,23 @@ impl Database {
                     bindings.insert(variable, &[value]);
                 }
 
-                // Proof instrumentation can introduce a premise keyed by the
-                // output of another premise. This bounded readiness pass is
-                // only dependency closure over exact point reads: it never
-                // chooses an index, scans a row set, or constructs a plan.
-                let mut remaining = (0..firing.rule.probes.len()).collect::<Vec<_>>();
-                while !remaining.is_empty() {
-                    let pending = remaining.len();
-                    let mut next = Vec::new();
-                    let mut first_unbound = None;
-                    for premise in remaining {
+                // Proof instrumentation can introduce hidden table keys from
+                // either another premise or a deterministic body primitive.
+                // Close only those exact data dependencies: each ready body
+                // instruction executes once and each table access is a point
+                // probe. No index choice, scan, join, or query plan is built.
+                let mut remaining_probes = (0..firing.rule.probes.len()).collect::<Vec<_>>();
+                let mut remaining_instrs = (0..firing.rule.body_end).collect::<Vec<_>>();
+                let mut state = ExecutionState::new(self.read_only_view(), Default::default());
+                state.defer_mutations_until(transaction.clone());
+                while !remaining_probes.is_empty() || !remaining_instrs.is_empty() {
+                    let mut progressed = false;
+                    // Prefer exact premise probes before body computations.
+                    // This both exposes a missing premise at the earliest
+                    // point and avoids evaluating a primitive unnecessarily.
+                    let mut next_probes = Vec::new();
+                    let mut first_unbound_probe = None;
+                    for premise in remaining_probes {
                         let probe = &firing.rule.probes[premise];
                         let table = &self.tables[probe.table];
                         if probe.n_keys != table.spec.n_keys
@@ -913,7 +952,7 @@ impl Database {
                                         .and_then(|values| values.first())
                                         .copied()
                                     else {
-                                        first_unbound.get_or_insert((premise, *variable));
+                                        first_unbound_probe.get_or_insert((premise, *variable));
                                         key.clear();
                                         break;
                                     };
@@ -922,7 +961,7 @@ impl Database {
                             }
                         }
                         if key.len() != probe.n_keys {
-                            next.push(premise);
+                            next_probes.push(premise);
                             continue;
                         }
                         let row = table.table.get_row(&key).ok_or(
@@ -965,39 +1004,53 @@ impl Database {
                                 }
                             }
                         }
+                        progressed = true;
                     }
-                    if next.is_empty() {
-                        break;
+                    remaining_probes = next_probes;
+
+                    let mut next_instrs = Vec::new();
+                    let mut first_unbound_instr = None;
+                    for instruction in remaining_instrs {
+                        let instr = &firing.rule.action.instrs[instruction];
+                        if let Some(variable) = instr.first_unbound_grounded_input(&bindings) {
+                            first_unbound_instr.get_or_insert((instruction, variable));
+                            next_instrs.push(instruction);
+                            continue;
+                        }
+                        let succeeded =
+                            state.run_instrs(std::slice::from_ref(instr), &mut bindings);
+                        if state.changed {
+                            return Err(GroundedRuleRunError::MutatingGuard {
+                                match_id: firing.match_id,
+                            });
+                        }
+                        if succeeded != 1 {
+                            return Err(GroundedRuleRunError::GuardRejected {
+                                match_id: firing.match_id,
+                            });
+                        }
+                        progressed = true;
                     }
-                    if next.len() == pending {
-                        let (premise, variable) = first_unbound.unwrap();
+                    remaining_instrs = next_instrs;
+                    if progressed {
+                        continue;
+                    }
+                    if let Some((premise, variable)) = first_unbound_probe {
                         return Err(GroundedRuleRunError::UnboundPremiseKey {
                             match_id: firing.match_id,
                             premise,
                             variable,
                         });
                     }
-                    remaining = next;
+                    let (instruction, variable) = first_unbound_instr
+                        .expect("nonempty grounded dependency frontier has one missing input");
+                    return Err(GroundedRuleRunError::UnboundBodyInput {
+                        match_id: firing.match_id,
+                        instruction,
+                        variable,
+                    });
                 }
-
-                let mut state = ExecutionState::new(self.read_only_view(), Default::default());
-                state.defer_mutations_until(transaction.clone());
-                let succeeded = state.run_instrs(
-                    &firing.rule.action.instrs[..firing.rule.body_end],
-                    &mut bindings,
-                );
-                let guard_changed = state.changed;
                 drop(state);
-                if guard_changed {
-                    return Err(GroundedRuleRunError::MutatingGuard {
-                        match_id: firing.match_id,
-                    });
-                }
-                if succeeded != 1 {
-                    return Err(GroundedRuleRunError::GuardRejected {
-                        match_id: firing.match_id,
-                    });
-                }
                 for (variable, expected) in firing.bindings.iter().copied() {
                     if bindings.get(variable) != Some(std::slice::from_ref(&expected)) {
                         return Err(GroundedRuleRunError::BindingMismatch {

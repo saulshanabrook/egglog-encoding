@@ -212,12 +212,11 @@ fn grounded_wave_point_probes_every_match_before_running_any_head_without_planni
     assert!(!egraph.rule_has_cached_plan(rule));
 
     // Grounded replay neither consumes the ordinary seminaive epoch nor
-    // constructs a plan. The later planned run attaches the same canonical
-    // tape and therefore sees both original rows exactly once.
+    // constructs a plan. The later planned run compiles its ordinary tape
+    // independently and therefore sees both original rows exactly once.
     egraph.run_rules(&[rule]).unwrap();
     assert_eq!(head_calls.load(Ordering::Relaxed), 4);
     assert!(egraph.rule_has_cached_plan(rule));
-    assert!(egraph.rule_cached_plan_shares_grounded_tape(rule));
 }
 
 #[test]
@@ -521,7 +520,7 @@ fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_v
         (builder.build(), key_variable)
     };
 
-    egraph
+    let report = egraph
         .run_grounded_wave(&[GroundedRuleRun {
             match_id: 40,
             rule,
@@ -533,6 +532,234 @@ fn grounded_wave_resolves_proof_like_probe_dependencies_without_supplied_proof_v
             .into_boxed_slice(),
         }])
         .unwrap();
+    assert!(matches!(
+        report.rule_set_report.pre_merge,
+        crate::PreMergeTiming::Split {
+            search,
+            apply,
+            ..
+        } if search.is_zero() && apply.is_zero()
+    ));
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn grounded_wave_computes_hidden_primitive_keys_before_point_probes() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "computed-key-source".into(),
+        can_subsume: false,
+    });
+    let key = egraph.base_values_mut().get(7i64);
+    let value = egraph.add_term(source, &[key]);
+    let identity =
+        egraph.register_external_func(Box::new(make_external_func(|_, args| Some(args[0]))));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let head = egraph.register_external_func(Box::new(make_external_func(move |state, args| {
+        assert_eq!(args, &[value]);
+        observed.fetch_add(1, Ordering::Relaxed);
+        Some(state.base_values().get(()))
+    })));
+    let (rule, seed_variable) = {
+        let mut builder = egraph.new_rule("computed-key-grounded", true);
+        let seed_variable = builder.new_var_named(ColumnTy::Base(int_base), "seed");
+        let derived_variable: QueryEntry = builder.new_var(ColumnTy::Base(int_base)).into();
+        let value_variable: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        builder
+            .query_prim(
+                identity,
+                &[seed_variable.clone(), derived_variable.clone()],
+                ColumnTy::Base(int_base),
+            )
+            .unwrap();
+        builder
+            .query_table(
+                source,
+                &[derived_variable, value_variable.clone()],
+                Some(false),
+            )
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(
+            head,
+            std::slice::from_ref(&value_variable),
+            ColumnTy::Base(unit_base),
+            || "computed-key head failed".into(),
+        );
+        let QueryEntry::Var(seed_variable) = seed_variable else {
+            unreachable!()
+        };
+        (builder.build(), seed_variable)
+    };
+
+    egraph
+        .run_grounded_wave(&[GroundedRuleRun {
+            match_id: 41,
+            rule,
+            bindings: vec![GroundedRuleBinding {
+                variable: seed_variable.id,
+                ty: ColumnTy::Base(int_base),
+                value: key,
+            }]
+            .into_boxed_slice(),
+        }])
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn grounded_wave_handles_reverse_primitive_dependency_order() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "reverse-primitive-source".into(),
+        can_subsume: false,
+    });
+    let seven = egraph.base_values_mut().get(7i64);
+    let eight = egraph.base_values_mut().get(8i64);
+    let value = egraph.add_term(source, &[seven]);
+    let identity =
+        egraph.register_external_func(Box::new(make_external_func(|_, args| Some(args[0]))));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let head = egraph.register_external_func(Box::new(make_external_func(move |state, args| {
+        assert_eq!(args, &[value]);
+        observed.fetch_add(1, Ordering::Relaxed);
+        Some(state.base_values().get(()))
+    })));
+    let (rule, seed, x) = {
+        let mut builder = egraph.new_rule("reverse-primitive-grounded", true);
+        let seed = builder.new_var_named(ColumnTy::Base(int_base), "seed");
+        let x = builder.new_var_named(ColumnTy::Base(int_base), "x");
+        let y = builder.new_var_named(ColumnTy::Base(int_base), "y");
+        let value_var: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        // The consumer is deliberately compiled before x's producer.
+        builder
+            .query_prim(identity, &[x.clone(), y.clone()], ColumnTy::Base(int_base))
+            .unwrap();
+        builder
+            .query_prim(
+                identity,
+                &[seed.clone(), x.clone()],
+                ColumnTy::Base(int_base),
+            )
+            .unwrap();
+        builder
+            .query_table(source, &[y.clone(), value_var.clone()], Some(false))
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(
+            head,
+            std::slice::from_ref(&value_var),
+            ColumnTy::Base(unit_base),
+            || "reverse primitive head failed".into(),
+        );
+        let QueryEntry::Var(seed) = seed else {
+            unreachable!()
+        };
+        let QueryEntry::Var(x) = x else {
+            unreachable!()
+        };
+        (builder.build(), seed, x)
+    };
+    let binding = |variable: &Variable, value| GroundedRuleBinding {
+        variable: variable.id,
+        ty: ColumnTy::Base(int_base),
+        value,
+    };
+
+    let error = egraph
+        .run_grounded_wave(&[GroundedRuleRun {
+            match_id: 42,
+            rule,
+            bindings: vec![binding(&seed, seven), binding(&x, eight)].into_boxed_slice(),
+        }])
+        .unwrap_err();
+    assert!(error.to_string().contains("guard rejected"));
+    assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+    egraph
+        .run_grounded_wave(&[GroundedRuleRun {
+            match_id: 43,
+            rule,
+            bindings: vec![binding(&seed, seven)].into_boxed_slice(),
+        }])
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn ordinary_planned_rule_keeps_primitive_result_constraint() {
+    let mut egraph = EGraph::default();
+    let int_base = egraph.base_values_mut().register_type::<i64>();
+    let unit_base = egraph.base_values_mut().register_type::<()>();
+    let source = egraph.add_table(FunctionConfig {
+        n_vals: 1,
+        n_identity_vals: None,
+        schema: vec![ColumnTy::Base(int_base), ColumnTy::Id],
+        default: DefaultVal::FreshId,
+        merge: MergeFn::UnionId,
+        name: "ordinary-primitive-source".into(),
+        can_subsume: false,
+    });
+    let seven = egraph.base_values_mut().get(7i64);
+    let eight = egraph.base_values_mut().get(8i64);
+    egraph.add_term(source, &[seven]);
+    egraph.add_term(source, &[eight]);
+
+    let identity =
+        egraph.register_external_func(Box::new(make_external_func(|_, args| Some(args[0]))));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&calls);
+    let head = egraph.register_external_func(Box::new(make_external_func(move |state, _| {
+        observed.fetch_add(1, Ordering::Relaxed);
+        Some(state.base_values().get(()))
+    })));
+    let rule = {
+        let mut builder = egraph.new_rule("ordinary-primitive-constraint", true);
+        let derived: QueryEntry = builder.new_var(ColumnTy::Base(int_base)).into();
+        let value: QueryEntry = builder.new_var(ColumnTy::Id).into();
+        builder
+            .query_prim(
+                identity,
+                &[
+                    QueryEntry::Const {
+                        val: seven,
+                        ty: ColumnTy::Base(int_base),
+                    },
+                    derived.clone(),
+                ],
+                ColumnTy::Base(int_base),
+            )
+            .unwrap();
+        builder
+            .query_table(source, &[derived, value.clone()], Some(false))
+            .unwrap();
+        builder.finish_query();
+        builder.call_external_func(
+            head,
+            std::slice::from_ref(&value),
+            ColumnTy::Base(unit_base),
+            || "ordinary primitive head failed".into(),
+        );
+        builder.build()
+    };
+
+    egraph.run_rules(&[rule]).unwrap();
     assert_eq!(calls.load(Ordering::Relaxed), 1);
 }
 

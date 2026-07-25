@@ -69,10 +69,11 @@ impl GroundedProbe {
     }
 }
 
-/// The canonical compiled body-guard/head tape for one grounded rule.
+/// The specialized compiled body-guard/head tape for one grounded rule.
 ///
-/// This deliberately contains no query plan.  A later ordinary cached plan
-/// can attach the same action tape with [`RuleBuilder::build_with_grounded`].
+/// This deliberately contains no query plan and is not shared with ordinary
+/// planned execution: grounded compilation rewires primitive-produced values
+/// for dependency-driven point probing.
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub struct GroundedRule {
@@ -85,11 +86,6 @@ impl GroundedRule {
     pub fn with_probes(mut self, probes: impl Into<Arc<[GroundedProbe]>>) -> Self {
         self.probes = probes.into();
         self
-    }
-
-    #[doc(hidden)]
-    pub fn shares_instruction_tape(&self, cached: &CachedPlan) -> bool {
-        Arc::ptr_eq(&self.action.instrs, &cached.actions.instrs)
     }
 }
 
@@ -618,6 +614,14 @@ enum RecipeExpr {
         term: crate::ReplayTermId,
         sort: ReplaySortId,
     },
+    /// The value column of a zero-key table read. Source/global lookups use
+    /// this leaf so cold projection can resolve the exact historical fact
+    /// instead of consulting final database state.
+    FactLookup {
+        table: TableId,
+        column: u16,
+        sort: ReplaySortId,
+    },
     Call {
         replay: ReplayConstructorSpec,
         children: Arc<[RecipeRoot]>,
@@ -627,6 +631,26 @@ enum RecipeExpr {
 #[derive(Default)]
 struct StaticRecipeDraft {
     value_roots: HashMap<Variable, RecipeRoot>,
+}
+
+fn atom_query_entry(atom: &Atom, column: ColumnId) -> QueryEntry {
+    if let Some(variable) = atom.get_var(column) {
+        return QueryEntry::Var(variable);
+    }
+    atom.constraints
+        .fast
+        .iter()
+        .chain(atom.constraints.slow.iter())
+        .find_map(|constraint| match constraint {
+            Constraint::EqConst { col, val } if *col == column => Some(QueryEntry::Const(*val)),
+            _ => None,
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "query atom column {} is neither variable nor equality constant",
+                column.index()
+            )
+        })
 }
 
 impl StaticRecipeDraft {
@@ -674,6 +698,53 @@ impl StaticRecipeDraft {
         });
         assert!(
             self.value_roots.insert(dst, root).is_none(),
+            "one action variable has multiple structural producers"
+        );
+    }
+
+    fn alias_output(&mut self, source: Variable, destination: Variable) {
+        let root = self
+            .value_roots
+            .get(&source)
+            .cloned()
+            .expect("replay recipe alias source has no structural producer");
+        match self.value_roots.get(&destination) {
+            None => {
+                self.value_roots.insert(destination, root);
+            }
+            Some(existing) if Arc::ptr_eq(existing, &root) => {}
+            // A rule may deliberately validate two pure expressions into the
+            // same already-bound variable. Runtime execution retains both
+            // equality guards; the recipe is naming metadata, so one exact
+            // producer is sufficient and first-wins keeps lowering stable.
+            Some(_) => {}
+        }
+    }
+
+    fn lookup_output(
+        &mut self,
+        receipts: &crate::CausalReceipts,
+        destination: Variable,
+        table: TableId,
+        column: ColumnId,
+        key: &[QueryEntry],
+    ) {
+        // A zero-key table names one historical global cell exactly. General
+        // keyed action reads would require recording the key recipe too and
+        // remain deliberately unsupported by the causal replay contract.
+        if !key.is_empty() {
+            return;
+        }
+        let sort = receipts
+            .table_column_sort(table, column.index())
+            .expect("zero-key replay lookup has no registered result sort");
+        let root = Arc::new(RecipeExpr::FactLookup {
+            table,
+            column: u16::try_from(column.index()).expect("table column exceeds u16"),
+            sort,
+        });
+        assert!(
+            self.value_roots.insert(destination, root).is_none(),
             "one action variable has multiple structural producers"
         );
     }
@@ -814,6 +885,7 @@ impl StaticRecipeDraft {
     fn attach_row_origins(
         &self,
         receipts: &crate::CausalReceipts,
+        atoms: &DenseIdMap<AtomId, Atom>,
         instrs: &mut [Instr],
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
     ) {
@@ -844,6 +916,59 @@ impl StaticRecipeDraft {
             {
                 *left_origin = Some(self.lower_term_origin(receipts, *left, *sort, inputs));
                 *right_origin = Some(self.lower_term_origin(receipts, *right, *sort, inputs));
+                continue;
+            }
+            if let Instr::RecordCheck {
+                equalities,
+                implicit_equalities,
+                ..
+            } = instr
+            {
+                for endpoint in equalities
+                    .iter_mut()
+                    .chain(implicit_equalities.iter_mut())
+                    .flat_map(|(left, right)| [left, right])
+                {
+                    if let CheckTermSource::Constructor { atom, origin, .. } = &mut endpoint.term {
+                        let atom = &atoms[*atom];
+                        let replay = receipts.table_constructor(atom.table).unwrap_or_else(|| {
+                            panic!(
+                                "check constructor atom {:?} has no replay metadata",
+                                atom.table
+                            )
+                        });
+                        assert_eq!(
+                            replay.result_sort, endpoint.sort,
+                            "check constructor endpoint has the wrong replay result sort"
+                        );
+                        let children = replay
+                            .child_sorts
+                            .iter()
+                            .copied()
+                            .enumerate()
+                            .map(|(column, sort)| {
+                                self.entry(
+                                    receipts,
+                                    atom_query_entry(atom, ColumnId::from_usize(column)),
+                                    sort,
+                                )
+                            })
+                            .collect();
+                        let root = Arc::new(RecipeExpr::Call { replay, children });
+                        let mut lowerer = RecipeLowerer {
+                            inputs: inputs.clone(),
+                            memo: HashMap::default(),
+                            observed_sorts: HashMap::default(),
+                        };
+                        let term = lowerer.try_lower(&root, endpoint.sort).unwrap_or_else(|| {
+                            panic!("check constructor endpoint has no exact source-term recipe")
+                        });
+                        *origin = Some(receipts.register_term_origin(TermOriginSpec {
+                            sort: endpoint.sort,
+                            term,
+                        }));
+                    }
+                }
                 continue;
             }
             let (table, entries, origin) = match instr {
@@ -898,7 +1023,8 @@ impl StaticRecipeDraft {
                 _ => continue,
             };
             let spec = self.lower_row_origin(receipts, table, &entries, inputs);
-            *origin = Some(receipts.register_row_origin(spec));
+            let registered = receipts.register_row_origin(spec);
+            *origin = Some(registered);
         }
     }
 }
@@ -942,6 +1068,17 @@ impl RecipeLowerer {
             RecipeExpr::Static { term, sort } => {
                 assert_eq!(*sort, expected);
                 return Some(Arc::new(TermTemplate::Static { term: *term }));
+            }
+            RecipeExpr::FactLookup {
+                table,
+                column,
+                sort,
+            } => {
+                assert_eq!(*sort, expected);
+                return Some(Arc::new(TermTemplate::FactLookup {
+                    table: *table,
+                    column: *column,
+                }));
             }
             RecipeExpr::Call { .. } => {}
         }
@@ -1081,23 +1218,7 @@ impl RuleBuilder<'_, '_> {
     ) -> QueryEntry {
         let atom = &self.qb.query.atoms[premises[occurrence.premise]];
         let column = ColumnId::from_usize(occurrence.column);
-        if let Some(variable) = atom.get_var(column) {
-            return QueryEntry::Var(variable);
-        }
-        atom.constraints
-            .fast
-            .iter()
-            .chain(atom.constraints.slow.iter())
-            .find_map(|constraint| match constraint {
-                Constraint::EqConst { col, val } if *col == column => Some(QueryEntry::Const(*val)),
-                _ => None,
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "receipt premise {} column {} is neither variable nor equality constant",
-                    occurrence.premise, occurrence.column
-                )
-            })
+        atom_query_entry(atom, column)
     }
 
     /// Build the finished query.
@@ -1205,8 +1326,10 @@ impl RuleBuilder<'_, '_> {
                     );
                     CheckTermSource::Constructor {
                         premise,
+                        atom,
                         input_columns: column,
                         op,
+                        origin: None,
                     }
                 } else {
                     CheckTermSource::Premise { premise, column }
@@ -1284,31 +1407,6 @@ impl RuleBuilder<'_, '_> {
     #[doc(hidden)]
     pub fn build_grounded(self, body_end: usize) -> GroundedRule {
         self.build_impl("", None, Some(body_end)).grounded()
-    }
-
-    /// Plan this query while reusing the exact compiled tape held by a
-    /// grounded rule. No body or head callback is compiled a second time.
-    #[doc(hidden)]
-    pub fn build_with_grounded(
-        mut self,
-        desc: impl Into<String>,
-        grounded: &GroundedRule,
-    ) -> RuleId {
-        // This query was reconstructed without replaying the action callbacks,
-        // so copy the canonical tape's live-ins back into the query metadata
-        // that tells planning which bindings must reach the action.
-        for variable in grounded.action.used_vars.iter().copied() {
-            self.qb.query.var_info[variable].used_in_rhs = true;
-        }
-        let symbol_map = self.build_symbol_map();
-        let action_id = self.qb.rsb.rule_set.actions.push(grounded.action.clone());
-        self.qb.query.action = action_id;
-        let plan = self.qb.rsb.db.plan_query(self.qb.query);
-        self.qb
-            .rsb
-            .rule_set
-            .plans
-            .push((plan, desc.into().into(), symbol_map))
     }
 
     fn build_impl(
@@ -1603,7 +1701,12 @@ impl RuleBuilder<'_, '_> {
                 .recipe_draft
                 .as_ref()
                 .expect("receipt action has no static term recipe draft")
-                .attach_row_origins(receipts, &mut self.qb.instrs, &row_origin_inputs);
+                .attach_row_origins(
+                    receipts,
+                    &self.qb.query.atoms,
+                    &mut self.qb.instrs,
+                    &row_origin_inputs,
+                );
         }
         let action = ActionInfo {
             instrs: Arc::new(self.qb.instrs),
@@ -1909,6 +2012,25 @@ impl RuleBuilder<'_, '_> {
         Ok(res)
     }
 
+    /// Apply a primitive into an existing grounded variable slot. The runtime
+    /// assigns an absent slot or validates an existing value for equality.
+    #[doc(hidden)]
+    pub fn call_external_assign_or_validate(
+        &mut self,
+        func: ExternalFunctionId,
+        args: &[QueryEntry],
+        dst: Variable,
+    ) -> Result<(), QueryError> {
+        self.qb.instrs.push(Instr::ExternalAssignOrValidate {
+            func,
+            args: args.to_vec(),
+            dst,
+        });
+        self.qb.mark_used(args);
+        self.qb.mark_defined(&dst.into());
+        Ok(())
+    }
+
     pub fn promote_replay_call(
         &mut self,
         args: &[QueryEntry],
@@ -1947,6 +2069,17 @@ impl RuleBuilder<'_, '_> {
         }
     }
 
+    /// Copy one already-registered structural recipe onto the query variable
+    /// whose runtime value a guard-only primitive validated. This is metadata
+    /// only: it emits no instruction and performs no runtime term work.
+    pub fn alias_replay_recipe(&mut self, source: Variable, destination: Variable) {
+        self.qb
+            .recipe_draft
+            .as_mut()
+            .expect("replay recipe alias requires causal receipts")
+            .alias_output(source, destination);
+    }
+
     /// Look up the given key in the given table. If the lookup fails, then call the given external
     /// function with the given arguments. Bind the result to the returned variable. If the
     /// external function returns None (and the lookup fails) then the execution of the rule halts.
@@ -1958,9 +2091,44 @@ impl RuleBuilder<'_, '_> {
         func: ExternalFunctionId,
         func_args: &[QueryEntry],
     ) -> Result<Variable, QueryError> {
+        self.lookup_with_fallback_inner(table, key, dst_col, func, func_args, false)
+    }
+
+    /// Look up a value that must already exist; `func` is only the native
+    /// error path. Unlike a general fallback, a successful result is
+    /// certified to come from the table and may therefore name a historical
+    /// zero-key global in a causal replay recipe.
+    pub fn lookup_required(
+        &mut self,
+        table: TableId,
+        key: &[QueryEntry],
+        dst_col: ColumnId,
+        func: ExternalFunctionId,
+        func_args: &[QueryEntry],
+    ) -> Result<Variable, QueryError> {
+        self.lookup_with_fallback_inner(table, key, dst_col, func, func_args, true)
+    }
+
+    fn lookup_with_fallback_inner(
+        &mut self,
+        table: TableId,
+        key: &[QueryEntry],
+        dst_col: ColumnId,
+        func: ExternalFunctionId,
+        func_args: &[QueryEntry],
+        existing_required: bool,
+    ) -> Result<Variable, QueryError> {
         let table_info = self.table_info(table);
         self.validate_keys(table, table_info, key)?;
         let res = self.qb.new_var();
+        if existing_required
+            && let (Some(receipts), Some(draft)) = (
+                self.qb.rsb.db.causal_receipts.as_ref(),
+                self.qb.recipe_draft.as_mut(),
+            )
+        {
+            draft.lookup_output(receipts, res, table, dst_col, key);
+        }
         self.qb.instrs.push(Instr::LookupWithFallback {
             table,
             table_key: key.to_vec(),

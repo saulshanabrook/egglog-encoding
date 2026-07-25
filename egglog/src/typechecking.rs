@@ -512,12 +512,15 @@ impl EGraph {
     }
 }
 
-fn expand_checked_alias_expr(expr: &Expr, aliases: &IndexMap<String, CheckedAliasType>) -> Expr {
+pub(super) fn expand_checked_alias_expr(
+    expr: &Expr,
+    aliases: &IndexMap<String, CheckedAliasType>,
+) -> Expr {
     match expr {
         GenericExpr::Lit(span, literal) => GenericExpr::Lit(span.clone(), literal.clone()),
         GenericExpr::Var(span, variable) => aliases
             .get(variable)
-            .map(|alias| alias.closed_expr.clone())
+            .map(|alias| expand_checked_alias_expr(&alias.closed_expr, aliases))
             .unwrap_or_else(|| GenericExpr::Var(span.clone(), variable.clone())),
         GenericExpr::Call(span, head, children) => GenericExpr::Call(
             span.clone(),
@@ -573,13 +576,12 @@ fn expand_checked_alias_schedule(
                 .iter()
                 .map(|config| RunRuleConfig {
                     rule: config.rule.clone(),
-                    bindings: config
-                        .bindings
-                        .iter()
-                        .map(|(variable, expr)| {
-                            (variable.clone(), expand_checked_alias_expr(expr, aliases))
-                        })
-                        .collect(),
+                    // A grounded binding is allowed to keep a checked alias
+                    // as a typed runtime constant. Expanding it back to its
+                    // constructor expression would repeat a lookup after a
+                    // selected deletion and discard the persistent value the
+                    // alias was specifically created to preserve.
+                    bindings: config.bindings.clone(),
                 })
                 .collect(),
         ),
@@ -606,24 +608,6 @@ impl EGraph {
     }
 
     fn typecheck_command(&mut self, command: &NCommand) -> Result<ResolvedNCommand, TypeError> {
-        // Checked aliases are query constants, not local variables. Expand
-        // their already-closed source expression before constraint solving so
-        // a later check cannot accidentally bind `$alias` as a free variable.
-        let expanded_let_check_expr = match command {
-            NCommand::LetCheck { expr, .. } => {
-                Some(expand_checked_alias_expr(expr, &self.checked_alias_types))
-            }
-            _ => None,
-        };
-        let expanded_check_facts = match command {
-            NCommand::Check(_, facts) => Some(
-                facts
-                    .iter()
-                    .map(|fact| expand_checked_alias_fact(fact, &self.checked_alias_types))
-                    .collect::<Vec<_>>(),
-            ),
-            _ => None,
-        };
         let expanded_schedule = match command {
             NCommand::RunSchedule(schedule) => Some(expand_checked_alias_schedule(
                 schedule,
@@ -631,6 +615,20 @@ impl EGraph {
             )),
             _ => None,
         };
+        let checked_alias_binding_storage = self
+            .checked_alias_types
+            .iter()
+            .map(|(name, alias)| {
+                (
+                    name.clone(),
+                    (alias.declaration_span.clone(), alias.sort.clone()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let checked_alias_bindings = checked_alias_binding_storage
+            .iter()
+            .map(|(name, binding)| (name.as_str(), binding.clone()))
+            .collect::<IndexMap<_, _>>();
         let symbol_gen = &mut self.parser.symbol_gen;
 
         let command: ResolvedNCommand = match command {
@@ -740,7 +738,7 @@ impl EGraph {
             NCommand::LetCheck {
                 span,
                 name,
-                expr: _,
+                expr,
                 expected_sort,
             } => {
                 if !name.starts_with(crate::GLOBAL_NAME_PREFIX) {
@@ -757,9 +755,6 @@ impl EGraph {
                     });
                 }
 
-                let closed_expr = expanded_let_check_expr
-                    .as_ref()
-                    .expect("let-check expression was not expanded");
                 let expected = expected_sort
                     .as_ref()
                     .map(|sort| {
@@ -772,16 +767,16 @@ impl EGraph {
                 let resolved_expr = if let Some(expected) = expected {
                     self.type_info.typecheck_expr_with_output(
                         symbol_gen,
-                        closed_expr,
-                        &Default::default(),
+                        expr,
+                        &checked_alias_bindings,
                         expected,
                         Context::Pure,
                     )?
                 } else {
                     self.type_info.typecheck_standalone_expr(
                         symbol_gen,
-                        closed_expr,
-                        &Default::default(),
+                        expr,
+                        &checked_alias_bindings,
                         Context::Pure,
                     )?
                 };
@@ -834,13 +829,12 @@ impl EGraph {
 
                 ResolvedNCommand::Extract(span.clone(), res_expr, res_variants)
             }
-            NCommand::Check(span, _) => ResolvedNCommand::Check(
+            NCommand::Check(span, facts) => ResolvedNCommand::Check(
                 span.clone(),
-                self.type_info.typecheck_facts(
+                self.type_info.typecheck_facts_with_bindings(
                     symbol_gen,
-                    expanded_check_facts
-                        .as_deref()
-                        .expect("check facts were not expanded"),
+                    facts,
+                    &checked_alias_bindings,
                 )?,
             ),
             NCommand::Fail(span, cmd) => {
@@ -852,6 +846,7 @@ impl EGraph {
                     expanded_schedule
                         .as_ref()
                         .expect("schedule was not expanded"),
+                    &self.checked_alias_types,
                 )?,
             ),
             NCommand::Pop(span, n) => ResolvedNCommand::Pop(span.clone(), *n),
@@ -1297,23 +1292,24 @@ impl TypeInfo {
         &self,
         symbol_gen: &mut SymbolGen,
         schedule: &Schedule,
+        checked_aliases: &IndexMap<String, CheckedAliasType>,
     ) -> Result<ResolvedSchedule, TypeError> {
         let schedule = match schedule {
             Schedule::Repeat(span, times, schedule) => ResolvedSchedule::Repeat(
                 span.clone(),
                 *times,
-                Box::new(self.typecheck_schedule(symbol_gen, schedule)?),
+                Box::new(self.typecheck_schedule(symbol_gen, schedule, checked_aliases)?),
             ),
             Schedule::Sequence(span, schedules) => {
                 let schedules = schedules
                     .iter()
-                    .map(|schedule| self.typecheck_schedule(symbol_gen, schedule))
+                    .map(|schedule| self.typecheck_schedule(symbol_gen, schedule, checked_aliases))
                     .collect::<Result<Vec<_>, _>>()?;
                 ResolvedSchedule::Sequence(span.clone(), schedules)
             }
             Schedule::Saturate(span, schedule) => ResolvedSchedule::Saturate(
                 span.clone(),
-                Box::new(self.typecheck_schedule(symbol_gen, schedule)?),
+                Box::new(self.typecheck_schedule(symbol_gen, schedule, checked_aliases)?),
             ),
             Schedule::Run(span, RunConfig { ruleset, until }) => {
                 let until = until
@@ -1332,7 +1328,9 @@ impl TypeInfo {
                 span.clone(),
                 configs
                     .iter()
-                    .map(|config| self.typecheck_run_rule_config(symbol_gen, span, config))
+                    .map(|config| {
+                        self.typecheck_run_rule_config(symbol_gen, span, config, checked_aliases)
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             ),
         };
@@ -1345,6 +1343,7 @@ impl TypeInfo {
         symbol_gen: &mut SymbolGen,
         span: &Span,
         config: &RunRuleConfig,
+        checked_aliases: &IndexMap<String, CheckedAliasType>,
     ) -> Result<ResolvedRunRuleConfig, TypeError> {
         let rule_info = self
             .named_rules
@@ -1374,27 +1373,50 @@ impl TypeInfo {
                 });
             };
 
-            let mut non_closed = None;
-            expr.visit_vars(&mut |var_span, var| {
-                if non_closed.is_none() && !self.global_sorts.contains_key(var) {
-                    non_closed = Some((var.clone(), var_span.clone()));
+            let checked_alias = match expr {
+                GenericExpr::Var(alias_span, alias) => checked_aliases
+                    .get(alias)
+                    .map(|checked| (alias_span, alias, checked)),
+                GenericExpr::Lit(..) | GenericExpr::Call(..) => None,
+            };
+            let resolved_expr = if let Some((alias_span, alias, checked)) = checked_alias {
+                if checked.sort.name() != target.sort.name() {
+                    return Err(TypeError::Mismatch {
+                        expr: expr.clone(),
+                        expected: target.sort.clone(),
+                        actual: checked.sort.clone(),
+                    });
                 }
-            });
-            if let Some((variable, span)) = non_closed {
-                return Err(TypeError::RunRuleBindingNotClosed {
-                    rule: config.rule.clone(),
-                    variable,
-                    span,
+                GenericExpr::Var(
+                    alias_span.clone(),
+                    ResolvedVar {
+                        name: alias.clone(),
+                        sort: checked.sort.clone(),
+                        is_global_ref: false,
+                    },
+                )
+            } else {
+                let mut non_closed = None;
+                expr.visit_vars(&mut |var_span, var| {
+                    if non_closed.is_none() && !self.global_sorts.contains_key(var) {
+                        non_closed = Some((var.clone(), var_span.clone()));
+                    }
                 });
-            }
-
-            let resolved_expr = self.typecheck_expr_with_output(
-                symbol_gen,
-                expr,
-                &Default::default(),
-                target.sort.clone(),
-                Context::Read,
-            )?;
+                if let Some((variable, span)) = non_closed {
+                    return Err(TypeError::RunRuleBindingNotClosed {
+                        rule: config.rule.clone(),
+                        variable,
+                        span,
+                    });
+                }
+                self.typecheck_expr_with_output(
+                    symbol_gen,
+                    expr,
+                    &Default::default(),
+                    target.sort.clone(),
+                    Context::Read,
+                )?
+            };
             bindings.push((target.clone(), resolved_expr));
         }
 
@@ -1538,11 +1560,23 @@ impl TypeInfo {
         symbol_gen: &mut SymbolGen,
         facts: &[Fact],
     ) -> Result<Vec<ResolvedFact>, TypeError> {
+        self.typecheck_facts_with_bindings(symbol_gen, facts, &Default::default())
+    }
+
+    fn typecheck_facts_with_bindings(
+        &self,
+        symbol_gen: &mut SymbolGen,
+        facts: &[Fact],
+        bindings: &IndexMap<&str, (Span, ArcSort)>,
+    ) -> Result<Vec<ResolvedFact>, TypeError> {
         let (query, mapped_facts) = Facts(facts.to_vec()).to_query(self, symbol_gen);
         let mut problem = Problem::default();
         // Top-level query-shaped commands (e.g. `check`) are read-only:
         // primitives may inspect the database but not write to it.
         problem.add_query(&query, self, Context::Read)?;
+        for (variable, (span, sort)) in bindings {
+            problem.assign_local_var_type(variable, span.clone(), sort.clone())?;
+        }
         let assignment = problem
             .solve(|sort: &ArcSort| sort.name())
             .map_err(|e| e.to_type_error())?;

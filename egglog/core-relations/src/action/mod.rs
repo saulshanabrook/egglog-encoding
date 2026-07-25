@@ -12,7 +12,7 @@ use std::{
 
 use crate::{
     common::HashMap,
-    free_join::{invoke_batch, invoke_batch_assign},
+    free_join::{invoke_batch, invoke_batch_assign, invoke_batch_assign_or_validate},
     numeric_id::{DenseIdMap, NumericId},
 };
 use egglog_concurrency::NotificationList;
@@ -1875,6 +1875,16 @@ impl ExecutionState<'_> {
                     *dst,
                 );
             }
+            Instr::ExternalAssignOrValidate { func, args, dst } => {
+                invoke_batch_assign_or_validate(
+                    self.db.external_funcs[*func].as_ref(),
+                    self,
+                    mask,
+                    bindings,
+                    args,
+                    *dst,
+                );
+            }
             Instr::ExternalWithFallback {
                 f1,
                 args1,
@@ -2213,6 +2223,14 @@ pub(crate) enum Instr {
         dst: Variable,
     },
 
+    /// Grounded-only primitive evaluation into a stable variable slot. An
+    /// absent slot is assigned; an existing slot is validated for equality.
+    ExternalAssignOrValidate {
+        func: ExternalFunctionId,
+        args: Vec<QueryEntry>,
+        dst: Variable,
+    },
+
     /// Bind the result of the external function to a variable. If the first external function
     /// fails, then use the second external function. If both fail, execution is haulted, (as in a
     /// single failure of `External`).
@@ -2254,4 +2272,75 @@ pub(crate) enum Instr {
         /// The variable to write the value to.
         dst: Variable,
     },
+}
+
+impl Instr {
+    /// Return the first input that a grounded body instruction still needs.
+    /// Outputs are deliberately excluded: grounded replay uses this to run
+    /// deterministic body computations and point probes to a dependency
+    /// fixpoint without constructing a query plan.
+    pub(crate) fn first_unbound_grounded_input(&self, bindings: &Bindings) -> Option<Variable> {
+        let entry = |entry: &QueryEntry| match entry {
+            QueryEntry::Const(_) => None,
+            QueryEntry::Var(variable) if bindings.get(*variable).is_none() => Some(*variable),
+            QueryEntry::Var(_) => None,
+        };
+        let entries = |entries: &[QueryEntry]| entries.iter().find_map(entry);
+        let writes = |writes: &[WriteVal]| {
+            writes.iter().find_map(|write| match write {
+                WriteVal::QueryEntry(entry_value) => entry(entry_value),
+                WriteVal::IncCounter(_) | WriteVal::CurrentVal(_) => None,
+            })
+        };
+        match self {
+            Instr::LookupOrInsertDefault { args, default, .. }
+            | Instr::LookupOrInsertDefaultReplay { args, default, .. } => {
+                entries(args).or_else(|| writes(default))
+            }
+            Instr::LookupWithDefault { args, default, .. } => {
+                entries(args).or_else(|| entry(default))
+            }
+            Instr::Lookup { args, .. } => entries(args),
+            Instr::LookupWithFallback {
+                table_key,
+                func_args,
+                ..
+            } => entries(table_key).or_else(|| entries(func_args)),
+            Instr::Insert { vals, .. } => entries(vals),
+            Instr::UnionWithReplay {
+                left,
+                right,
+                timestamp,
+                ..
+            } => entry(left)
+                .or_else(|| entry(right))
+                .or_else(|| entry(timestamp)),
+            Instr::RecordCheck {
+                equalities,
+                implicit_equalities,
+                ..
+            } => equalities
+                .iter()
+                .chain(implicit_equalities.iter())
+                .find_map(|(left, right)| entry(&left.value).or_else(|| entry(&right.value))),
+            Instr::InsertIfEq { l, r, vals, .. } => {
+                entry(l).or_else(|| entry(r)).or_else(|| entries(vals))
+            }
+            Instr::Remove { args, .. } => entries(args),
+            Instr::External { args, .. } | Instr::ExternalAssignOrValidate { args, .. } => {
+                entries(args)
+            }
+            Instr::ExternalWithFallback { args1, args2, .. } => {
+                entries(args1).or_else(|| entries(args2))
+            }
+            Instr::PromoteReplayCall { args, dst, .. } => {
+                entries(args).or_else(|| bindings.get(*dst).is_none().then_some(*dst))
+            }
+            Instr::AssertEq(left, right) | Instr::AssertNe(left, right) => {
+                entry(left).or_else(|| entry(right))
+            }
+            Instr::AssertAnyNe { ops, .. } => entries(ops),
+            Instr::ReadCounter { .. } => None,
+        }
+    }
 }

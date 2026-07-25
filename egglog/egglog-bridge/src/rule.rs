@@ -605,6 +605,18 @@ impl RuleBuilder<'_> {
         self.query.add_rule.push(Box::new(move |inner, rb| {
             let mut dst_vars = inner.convert_all(&entries);
             let expected = dst_vars.pop().expect("must specify a return value");
+            if inner.grounded_execution {
+                match expected {
+                    DstVar::Var(dst) => {
+                        rb.call_external_assign_or_validate(func, &dst_vars, dst)?;
+                    }
+                    DstVar::Const(_) => {
+                        let actual = rb.call_external(func, &dst_vars)?;
+                        rb.assert_eq(actual.into(), expected);
+                    }
+                }
+                return Ok(());
+            }
             let promote_immediately = replay
                 .as_ref()
                 .is_some_and(|replay| replay.promote_immediately);
@@ -622,10 +634,25 @@ impl RuleBuilder<'_> {
                             args: dst_vars,
                             dst: var,
                             replay,
+                            alias: None,
                         });
                     }
                 }
-                _ => rb.assert_eq(var.into(), expected),
+                _ => {
+                    rb.assert_eq(var.into(), expected);
+                    if let (Some(replay), DstVar::Var(alias)) = (replay.clone(), expected) {
+                        if promote_immediately {
+                            rb.alias_replay_recipe(var, alias);
+                        } else {
+                            inner.replay_promotions.push(DeferredReplayCall {
+                                args: dst_vars,
+                                dst: var,
+                                replay,
+                                alias: Some(alias),
+                            });
+                        }
+                    }
+                }
             }
             Ok(())
         }));
@@ -757,7 +784,7 @@ impl RuleBuilder<'_> {
                 let panic_func = self.new_panic_lazy(panic_msg);
                 Box::new(move |inner, rb| {
                     let dst_vars = inner.convert_all(&entries);
-                    let var = rb.lookup_with_fallback(
+                    let var = rb.lookup_required(
                         table,
                         &dst_vars,
                         ColumnId::from_usize(schema_math.ret_val_col()),
@@ -925,6 +952,7 @@ impl Query {
             mapping: Default::default(),
             grounded: Default::default(),
             replay_promotions: Default::default(),
+            grounded_execution: false,
         };
         for (var, info) in self.vars.iter() {
             let new_var = match info.name.as_ref() {
@@ -951,6 +979,9 @@ impl Query {
             .try_for_each(|f| f(&mut inner, &mut rb))?;
         for promotion in std::mem::take(&mut inner.replay_promotions) {
             rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
+            if let Some(alias) = promotion.alias {
+                rb.alias_replay_recipe(promotion.dst, alias);
+            }
         }
         self.add_rule[head_start..]
             .iter()
@@ -1033,7 +1064,6 @@ impl Query {
         &self,
         db: &mut core_relations::Database,
         desc: &str,
-        grounded: Option<&GroundedRuleInfo>,
     ) -> Result<CachedPlanInfo> {
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
@@ -1041,10 +1071,7 @@ impl Query {
         for (table, entries, _schema_info) in &self.atoms {
             atom_mapping.push(add_atom(&mut qb, *table, entries, &[], &mut inner)?);
         }
-        let rule_id = match grounded {
-            Some(grounded) => qb.build().build_with_grounded(desc, &grounded.rule),
-            None => self.run_rules_and_build(qb, inner, desc, &atom_mapping)?,
-        };
+        let rule_id = self.run_rules_and_build(qb, inner, desc, &atom_mapping)?;
         let rs = rsb.build();
         let plan = Arc::new(rs.build_cached_plan(rule_id));
         Ok(CachedPlanInfo { plan, atom_mapping })
@@ -1060,14 +1087,14 @@ impl Query {
         );
         let mut rsb = RuleSetBuilder::new(db);
         let (mut qb, mut inner) = self.query_state(&mut rsb);
-        let mut probes = Vec::with_capacity(self.atoms.len());
-        for (table, entries, schema) in &self.atoms {
-            probes.push(core_relations::GroundedProbe::new(
-                *table,
-                inner.convert_all(entries).into_vec(),
-                schema.n_keys,
-            ));
-            let _ = add_atom(&mut qb, *table, entries, &[], &mut inner)?;
+        inner.grounded_execution = true;
+        // Register the atoms for variable metadata, but do not mark their
+        // variables as statically grounded. A hidden primitive can produce a
+        // later point-probe key (proof instrumentation does this routinely),
+        // and grounded execution resolves that exact dependency at runtime.
+        for (table, entries, _schema) in &self.atoms {
+            let vars = inner.convert_all(entries);
+            let _ = qb.add_atom(*table, &vars, &[])?;
         }
         let mut rb = qb.build();
         inner.next_ts = Some(rb.read_counter(self.ts_counter).into());
@@ -1077,7 +1104,21 @@ impl Query {
             .try_for_each(|callback| callback(&mut inner, &mut rb))?;
         for promotion in std::mem::take(&mut inner.replay_promotions) {
             rb.promote_replay_call(&promotion.args, promotion.dst, Some(promotion.replay));
+            if let Some(alias) = promotion.alias {
+                rb.alias_replay_recipe(promotion.dst, alias);
+            }
         }
+        let probes = self
+            .atoms
+            .iter()
+            .map(|(table, entries, schema)| {
+                core_relations::GroundedProbe::new(
+                    *table,
+                    inner.convert_all(entries).into_vec(),
+                    schema.n_keys,
+                )
+            })
+            .collect::<Vec<_>>();
         let body_end = rb.instruction_count();
         let body_mapping = inner.mapping.clone();
         self.add_rule[head_start..]
@@ -1195,12 +1236,14 @@ pub(crate) struct Bindings {
     pub(crate) mapping: DenseIdMap<VariableId, DstVar>,
     grounded: HashSet<VariableId>,
     replay_promotions: Vec<DeferredReplayCall>,
+    grounded_execution: bool,
 }
 
 struct DeferredReplayCall {
     args: SmallVec<[DstVar; 4]>,
     dst: core_relations::Variable,
     replay: ReplayConstructorSpec,
+    alias: Option<core_relations::Variable>,
 }
 
 impl Bindings {

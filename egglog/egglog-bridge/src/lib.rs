@@ -1217,8 +1217,15 @@ impl EGraph {
             rule_set_report: RuleSetReport {
                 changed: outcome.changed,
                 rule_reports,
-                pre_merge: PreMergeTiming::Combined {
-                    elapsed: outcome.pre_merge_time,
+                // Grounded replay deliberately has no query plan, scan, or
+                // join whose time could be classified as search/apply.
+                // Preserve the exact total in the split report's explicit
+                // residual bucket so benchmark timing summaries remain
+                // available without inventing a phase attribution.
+                pre_merge: PreMergeTiming::Split {
+                    search: Duration::ZERO,
+                    apply: Duration::ZERO,
+                    unattributed: outcome.pre_merge_time,
                 },
                 merge_time: outcome.merge_time,
             },
@@ -1242,15 +1249,6 @@ impl EGraph {
     #[cfg(test)]
     fn rule_has_cached_plan(&self, rule: RuleId) -> bool {
         self.rules[rule].cached_plan.is_some()
-    }
-
-    #[cfg(test)]
-    fn rule_cached_plan_shares_grounded_tape(&self, rule: RuleId) -> bool {
-        let info = &self.rules[rule];
-        info.grounded_rule
-            .as_ref()
-            .zip(info.cached_plan.as_ref())
-            .is_some_and(|(grounded, cached)| grounded.rule.shares_instruction_tape(&cached.plan))
     }
 
     /// Search one rule body once and apply its head to the captured bindings
@@ -2827,14 +2825,7 @@ fn run_rules_impl(
     for rule in rules {
         let info = &mut rule_info[*rule];
         if info.cached_plan.is_none() {
-            if info.grounded_rule.is_none() && info.query.supports_grounded_execution() {
-                info.grounded_rule = Some(info.query.build_grounded_rule(db)?);
-            }
-            info.cached_plan = Some(info.query.build_cached_plan(
-                db,
-                &info.desc,
-                info.grounded_rule.as_ref(),
-            )?);
+            info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
         }
     }
     let mut rsb = db.new_rule_set();
@@ -2859,14 +2850,7 @@ fn run_rule_guarded_impl(
 ) -> Result<core_relations::GuardedRuleSetRunOutcome> {
     let info = &mut rule_info[rule];
     if info.cached_plan.is_none() {
-        if info.grounded_rule.is_none() && info.query.supports_grounded_execution() {
-            info.grounded_rule = Some(info.query.build_grounded_rule(db)?);
-        }
-        info.cached_plan = Some(info.query.build_cached_plan(
-            db,
-            &info.desc,
-            info.grounded_rule.as_ref(),
-        )?);
+        info.cached_plan = Some(info.query.build_cached_plan(db, &info.desc)?);
     }
     let cached_plan = info.cached_plan.as_ref().unwrap().plan.clone();
     let mut rsb = db.new_rule_set();

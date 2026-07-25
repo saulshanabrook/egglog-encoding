@@ -448,10 +448,10 @@ struct OwnedTermBuilder<'a, 'view> {
     view: &'a mut CausalReceiptView<'view>,
     sorts: HashMap<ReplaySortId, String>,
     ops: HashMap<ReplayOpId, OwnedReplayOp>,
-    memo: HashMap<ReplayTermId, ReplayTermRef>,
+    literal_memo: HashMap<ReplayTermId, ReplayTermRef>,
     visiting: HashSet<ReplayTermId>,
     nodes: Vec<OwnedReplayTerm>,
-    newly_interned_calls: Vec<ReplayTermRef>,
+    newly_interned_calls: Vec<(ReplayTermId, ReplayTermRef)>,
 }
 
 impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
@@ -491,7 +491,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
             view,
             sorts,
             ops,
-            memo: HashMap::default(),
+            literal_memo: HashMap::default(),
             visiting: HashSet::default(),
             nodes: Vec::new(),
             newly_interned_calls: Vec::new(),
@@ -504,9 +504,6 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
                 "selected binding owns a missing replay term".into(),
             ));
         }
-        if let Some(term) = self.memo.get(&source) {
-            return Ok(*term);
-        }
         if !self.visiting.insert(source) {
             return Err(CausalReplayError::Invalid(format!(
                 "replay term {} is cyclic",
@@ -517,6 +514,12 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
             .view
             .replay_term(source)
             .map_err(|error| CausalReplayError::Receipt(error.to_string()))?;
+        if matches!(node, ReplayTerm::Literal { .. })
+            && let Some(term) = self.literal_memo.get(&source)
+        {
+            self.visiting.remove(&source);
+            return Ok(*term);
+        }
         let owned = match node {
             ReplayTerm::Literal { sort, literal } => OwnedReplayTerm::Literal {
                 sort: self.sort_name(sort)?.to_owned(),
@@ -564,9 +567,10 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         let is_call = matches!(owned, OwnedReplayTerm::Call { .. });
         let term = ReplayTermRef::from_index(self.nodes.len())?;
         self.nodes.push(owned);
-        self.memo.insert(source, term);
         if is_call {
-            self.newly_interned_calls.push(term);
+            self.newly_interned_calls.push((source, term));
+        } else {
+            self.literal_memo.insert(source, term);
         }
         Ok(term)
     }
@@ -577,7 +581,7 @@ impl<'a, 'view> OwnedTermBuilder<'a, 'view> {
         })
     }
 
-    fn take_new_calls(&mut self) -> Vec<ReplayTermRef> {
+    fn take_new_calls(&mut self) -> Vec<(ReplayTermId, ReplayTermRef)> {
         std::mem::take(&mut self.newly_interned_calls)
     }
 }
@@ -745,6 +749,39 @@ fn canonical_symbol(name: &str) -> &str {
     name.strip_prefix(crate::GLOBAL_NAME_PREFIX).unwrap_or(name)
 }
 
+fn restore_selected_rule_globals(
+    command: Command,
+    causal: &CausalState,
+    sources: &HashSet<SourceRef>,
+    rule: &str,
+) -> Result<Command, CausalReplayError> {
+    let mut missing = None;
+    let command = command.visit_exprs(&mut |expr| match expr {
+        Expr::Call(span, name, children) if children.is_empty() => {
+            let Some(source) = causal.immutable_globals.get(&name) else {
+                return Expr::Call(span, name, children);
+            };
+            if sources.contains(source) {
+                // Global removal lowers a source-level variable to a lookup
+                // of its private zero-argument function. Replay emits the
+                // selected source `let` instead, so restore only that leaf;
+                // the rest of the retained rule stays normalized.
+                Expr::Var(span, name)
+            } else {
+                missing.get_or_insert((name.clone(), source.clone()));
+                Expr::Call(span, name, children)
+            }
+        }
+        other => other,
+    });
+    if let Some((name, source)) = missing {
+        return Err(CausalReplayError::Invalid(format!(
+            "retained rule `{rule}` reads immutable global `{name}` from unselected source {source:?}"
+        )));
+    }
+    Ok(command)
+}
+
 fn validate_alias_namespace(
     egraph: &EGraph,
     causal: &CausalState,
@@ -812,29 +849,6 @@ fn build_owned(
             });
         }
     }
-    for entry in &causal.command_catalog {
-        let surface_is_let = causal
-            .surface_command_catalog
-            .get(entry.surface_command)
-            .and_then(Option::as_ref)
-            .is_some_and(|command| matches!(command, Command::Action(Action::Let(..))));
-        let internal_let_declaration = matches!(
-            &entry.command,
-            Command::Function {
-                let_binding: true,
-                ..
-            } | Command::Constructor {
-                let_binding: true,
-                ..
-            }
-        );
-        if surface_is_let && internal_let_declaration {
-            setup.push(ReplaySetup {
-                catalog_ordinal: entry.surface_command,
-                kind: ReplaySetupKind::Command(entry.command.clone()),
-            });
-        }
-    }
     let mut source_events = BTreeMap::new();
     for source in &sources {
         let SourceRef::Synthetic(_) = source else {
@@ -857,11 +871,10 @@ fn build_owned(
                     "source {source:?} cites missing surface command {surface_command}"
                 ))
             })?;
-        let command = if matches!(surface, Command::Action(Action::Let(..))) {
-            normalized.command.clone()
-        } else {
-            surface.clone()
-        };
+        // Surface lets are replayed as lets. Emitting their normalized
+        // internal function and set bypasses ordinary proof-global lowering
+        // and can manufacture unbound tuple values on the fresh proof graph.
+        let command = surface.clone();
         if !matches!(command, Command::Action(_)) {
             return Err(CausalReplayError::Invalid(format!(
                 "source {source:?} does not map to an action command"
@@ -892,6 +905,7 @@ fn build_owned(
             })?
             .command
             .clone();
+        let command = restore_selected_rule_globals(command, causal, &sources, &entry.replay_name)?;
         let Command::Rule { rule: command_rule } = &command else {
             return Err(CausalReplayError::Invalid(format!(
                 "rule ordinal {rule} does not map to a rule command"
@@ -912,6 +926,14 @@ fn build_owned(
     let mut terms = OwnedTermBuilder::new(view, causal)?;
     let mut waves = BTreeMap::<u64, (u64, Vec<ReplayFiring>)>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
+    let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
+    let mut wave_positions = BTreeMap::<u64, u64>::new();
+    for (_, _, wave, position) in &matches {
+        wave_positions
+            .entry(*wave)
+            .and_modify(|current| *current = (*current).min(*position))
+            .or_insert(*position);
+    }
     let mut next_alias = 0usize;
     for (id, rule, wave, position) in matches {
         let catalog = &causal.rule_catalog[rule as usize];
@@ -929,9 +951,26 @@ fn build_owned(
                 catalog.variables.len()
             )));
         }
+        let binding_windows = slice.match_term_windows.get(&id).ok_or_else(|| {
+            CausalReplayError::Invalid(format!(
+                "selected match {} has no checked-alias availability plan",
+                id.get()
+            ))
+        })?;
+        if binding_windows.len() != binding_terms.len() {
+            return Err(CausalReplayError::Invalid(format!(
+                "selected match {} has {} alias windows for {} bindings",
+                id.get(),
+                binding_windows.len(),
+                binding_terms.len()
+            )));
+        }
         let mut bindings = Vec::with_capacity(binding_terms.len());
-        for ((variable, expected_sort), source_term) in
-            catalog.variables.iter().zip(binding_terms.iter().copied())
+        for (((variable, expected_sort), source_term), alias_windows) in catalog
+            .variables
+            .iter()
+            .zip(binding_terms.iter().copied())
+            .zip(binding_windows.iter())
         {
             let term = terms.intern(source_term)?;
             let actual_sort = terms.nodes[term.index()].sort();
@@ -946,13 +985,58 @@ fn build_owned(
                 sort: expected_sort.clone(),
                 term,
             });
-        }
-        for term in terms.take_new_calls() {
-            aliases_by_wave.entry(wave).or_default().push(ReplayAlias {
-                name: format!("$__causal_replay_{next_alias}"),
-                term,
-            });
-            next_alias += 1;
+            let new_calls = terms.take_new_calls();
+            if new_calls.len() != alias_windows.len() {
+                return Err(CausalReplayError::Invalid(format!(
+                    "match {} binding `{variable}` owns {} structural call occurrences but has {} availability windows",
+                    id.get(),
+                    new_calls.len(),
+                    alias_windows.len()
+                )));
+            }
+            for ((source_call, call), window) in new_calls.into_iter().zip(alias_windows.iter()) {
+                if source_call != window.term {
+                    return Err(CausalReplayError::Invalid(format!(
+                        "match {} binding `{variable}` availability order expected call {} but projected call {}",
+                        id.get(),
+                        source_call.get(),
+                        window.term.get()
+                    )));
+                }
+                let window = *window;
+                let dependency_wave = match &terms.nodes[call.index()] {
+                    OwnedReplayTerm::Literal { .. } => unreachable!("Call queue contained literal"),
+                    OwnedReplayTerm::Call { children, .. } => children
+                        .iter()
+                        .filter_map(|child| alias_wave_by_term.get(child).copied())
+                        .max()
+                        .unwrap_or(0),
+                };
+                let alias_wave = wave_positions
+                    .iter()
+                    .find_map(|(candidate_wave, candidate_position)| {
+                        (*candidate_wave >= dependency_wave
+                            && *candidate_wave <= wave
+                            && *candidate_position >= window.available_after.get())
+                        .then_some(*candidate_wave)
+                    })
+                    .ok_or_else(|| {
+                        CausalReplayError::Invalid(format!(
+                            "match {} binding `{variable}` call {} has no retained pre-wave point in its availability window",
+                            id.get(),
+                            source_call.get()
+                        ))
+                    })?;
+                aliases_by_wave
+                    .entry(alias_wave)
+                    .or_default()
+                    .push(ReplayAlias {
+                        name: format!("$__causal_replay_{next_alias}"),
+                        term: call,
+                    });
+                alias_wave_by_term.insert(call, alias_wave);
+                next_alias += 1;
+            }
         }
         let wave_entry = waves.entry(wave).or_insert((position, Vec::new()));
         wave_entry.0 = wave_entry.0.min(position);
@@ -1243,34 +1327,62 @@ mod tests {
         recorder
             .parse_and_run_program(
                 None,
-                "(datatype E (A i64))
-                 (relation Out (E))
+                "(datatype E (A i64) (B E) (C E))
+                 (relation Seed (E))
+                 (Seed (A 1))
+                 (let $dead (A 2))
                  (let $seed (A 1))
-                 (rule () ((Out $seed)) :name \"emit\")
+                 (rule ((Seed x))
+                       ((union (B $seed) (C x)))
+                       :name \"emit\")
                  (run 1)
-                 (check (Out (A 1)))",
+                 (check (= (B $seed) (C (A 1))))",
             )
             .unwrap();
         let slice = slice_all_checks(&recorder).unwrap();
         let ir = build_causal_replay_ir(&recorder, &slice).unwrap();
         let commands = ir.to_commands().unwrap();
+        assert!(commands.iter().any(|command| {
+            matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$seed")
+        }));
+        assert!(!commands.iter().any(|command| {
+            matches!(command, Command::Action(Action::Let(_, name, _)) if name == "$dead")
+        }));
+        assert!(!commands.iter().any(|command| {
+            matches!(
+                command,
+                Command::Function {
+                    let_binding: true,
+                    ..
+                } | Command::Constructor {
+                    let_binding: true,
+                    ..
+                }
+            )
+        }));
         let rendered = CausalReplayIr::render_commands(&commands).unwrap();
         assert!(rendered.contains("(datatype E"));
-        assert!(rendered.contains("(relation Out"));
-        assert!(rendered.contains(":internal-let"));
+        assert!(rendered.contains("(relation Seed"));
+        assert!(rendered.contains("(let $seed (A 1))"));
+        assert!(!rendered.contains(":internal-let"));
         assert!(rendered.contains("(let-check $__causal_replay_0 (A 1) :sort E)"));
         assert!(
             !rendered.contains('@'),
             "rendered replay leaked a parser-reserved internal symbol:\n{rendered}"
         );
-        let global = rendered.find("(function $seed").unwrap();
+        let global = rendered.find("(let $seed").unwrap();
         let rule = rendered.find(":name \"emit\"").unwrap();
         assert!(
             global < rule,
             "retained globals must precede dependent rules"
         );
 
-        let mut proof = EGraph::default().with_proofs_enabled();
+        let mut direct_proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_pool()
+            .install(|| direct_proof.run_program(commands))
+            .unwrap();
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
         serial_pool()
             .install(|| proof.parse_and_run_program(None, &rendered))
             .unwrap();

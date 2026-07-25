@@ -534,9 +534,15 @@ fn checked_alias_expr_support(
 ) -> Result<(), ProofEncodingUnsupportedReason> {
     match expr {
         ResolvedExpr::Lit(..) => Ok(()),
+        // `let-check` is typechecked with only previously published checked
+        // aliases in its local binding environment. Preserve those variables
+        // as graph-local constants: expanding their constructor syntax would
+        // repeat a lookup and can fail after a selected delete even though the
+        // alias still owns the value it checked.
+        ResolvedExpr::Var(_, variable) if !variable.is_global_ref => Ok(()),
         ResolvedExpr::Var(_, variable) => {
             Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
-                format!("variable `{}` is not a closed checked alias", variable.name),
+                format!("global variable `{}` is not a checked alias", variable.name),
             ))
         }
         ResolvedExpr::Call(_, ResolvedCall::Values(_), _) => {
@@ -567,15 +573,6 @@ fn checked_alias_expr_support(
                     format!(
                         "primitive `{}` is not replay-safe and pure",
                         primitive.name()
-                    ),
-                ));
-            }
-            if primitive.output().is_eq_sort() {
-                return Err(ProofEncodingUnsupportedReason::CheckedAliasExpression(
-                    format!(
-                        "primitive `{}` produces EqSort `{}` instead of looking up a constructor",
-                        primitive.name(),
-                        primitive.output().name()
                     ),
                 ));
             }

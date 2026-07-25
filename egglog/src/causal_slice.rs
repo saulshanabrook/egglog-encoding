@@ -3,9 +3,10 @@ use std::collections::VecDeque;
 use crate::core_relations::{
     AppliedEqualityId, CausalReceiptView, CheckEndpointOccurrence, CheckRoot, EqualityEdgeCount,
     EqualityEndpoint, EqualityReason, FactCellRef, FactId, HistoryPosition,
-    ProjectedAppliedEquality, RawEqualityEndpoint, RawEqualitySupport, RawReceiptCause,
-    ReceiptCausePrior, ReceiptCauseRef, ReceiptEqualitySource, ReceiptViewError, ReplaySortId,
-    ReplayTableKind, ReplayTermId, RuleMatchId, SourceRef, TableId, TypedCellEquality, Value,
+    ProjectedAppliedEquality, RawAliasWindow, RawEqualityEndpoint, RawEqualitySupport,
+    RawReceiptCause, ReceiptCausePrior, ReceiptCauseRef, ReceiptEqualitySource, ReceiptViewError,
+    ReplaySortId, ReplayTableKind, ReplayTermId, RuleMatchId, SourceRef, TableId,
+    TypedCellEquality, Value,
 };
 use crate::numeric_id::NumericId;
 use crate::util::{HashMap, HashSet};
@@ -36,6 +37,10 @@ pub(crate) struct CausalSlice {
     pub(crate) sources: HashSet<SourceRef>,
     pub(crate) fact_terms: HashMap<FactId, Box<[ReplayTermId]>>,
     pub(crate) match_terms: HashMap<RuleMatchId, Box<[ReplayTermId]>>,
+    /// Earliest historical capture point for each occurrence in each match
+    /// binding's structural `let-check` recipe. Aliases may be hoisted before
+    /// a selected deletion and then reused by later grounded waves.
+    pub(crate) match_term_windows: HashMap<RuleMatchId, Box<[Box<[RawAliasWindow]>]>>,
     pub(crate) equality_records: HashMap<AppliedEqualityId, ProjectedAppliedEquality>,
     interfering_cell_count: usize,
     delete_cone_match_count: usize,
@@ -248,6 +253,46 @@ fn explain_rule_equality(
     as_of_edges: EqualityEdgeCount,
     position: HistoryPosition,
 ) -> Result<RawEqualitySupport, ReceiptViewError> {
+    let premise_cell =
+        |source: ReceiptEqualitySource| -> Result<Option<FactCellRef>, ReceiptViewError> {
+            let ReceiptEqualitySource::Premise(occurrence) = source else {
+                return Ok(None);
+            };
+            let fact = *premises.get(occurrence.premise).ok_or_else(|| {
+                ReceiptViewError::Invalid(format!(
+                    "equality obligation cites missing premise {}",
+                    occurrence.premise
+                ))
+            })?;
+            let column = occurrence.column.try_into().map_err(|_| {
+                ReceiptViewError::Invalid("premise occurrence column exceeds u32".into())
+            })?;
+            Ok(Some(FactCellRef {
+                fact,
+                column: crate::core_relations::ColumnId::new(column),
+            }))
+        };
+    let left_cell = premise_cell(left)?;
+    let right_cell = premise_cell(right)?;
+    match (left_cell, right_cell) {
+        (Some(left), Some(right)) => {
+            return view.explain_fact_cell_support_at(left, right, as_of_edges, position);
+        }
+        (Some(fact), None) => {
+            let ReceiptEqualitySource::Constant(endpoint) = right else {
+                unreachable!("non-premise equality source is always a constant")
+            };
+            return view.explain_fact_endpoint_support_at(fact, endpoint, as_of_edges, position);
+        }
+        (None, Some(fact)) => {
+            let ReceiptEqualitySource::Constant(endpoint) = left else {
+                unreachable!("non-premise equality source is always a constant")
+            };
+            return view.explain_fact_endpoint_support_at(fact, endpoint, as_of_edges, position);
+        }
+        (None, None) => {}
+    }
+
     let mut facts = Vec::new();
     let mut rekeys = Vec::new();
     let mut resolve = |source| -> Result<EqualityEndpoint, ReceiptViewError> {
@@ -675,7 +720,7 @@ fn seed_check_root(
     slice.check_positions.insert(root.check, root.position);
     work.extend(root.premises.iter().copied().map(Work::Fact));
 
-    for ((left, right), (left_occurrence, right_occurrence)) in root
+    for ((left_endpoint, right_endpoint), (left_occurrence, right_occurrence)) in root
         .equalities
         .iter()
         .copied()
@@ -685,42 +730,42 @@ fn seed_check_root(
         let right_cell = check_occurrence_cell(right_occurrence);
         let support = match (left_cell, right_cell) {
             (Some(left), Some(right)) => {
-                view.explain_fact_cell_support_at(left, right, root.as_of_edges, root.position)?
+                let fact_support = view.explain_fact_cell_support_at(
+                    left,
+                    right,
+                    root.as_of_edges,
+                    root.position,
+                )?;
+                enqueue_support(slice, work, fact_support);
+                // Fact occurrences identify the exact rows that satisfied the
+                // check, but their creation terms may differ from the source
+                // terms requested by the check after canonical lookup. Keep
+                // both: the row witness and the source-term occurrence proof.
+                view.explain_equality_support_at(
+                    left_endpoint,
+                    right_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?
             }
-            (left_cell, right_cell) => {
-                let mut facts = Vec::new();
-                let mut rekeys = Vec::new();
-                let left = if let Some(cell) = left_cell {
-                    let cell = view.fact_cell_at(cell, root.position)?;
-                    facts.push(cell.occurrence.fact);
-                    rekeys.extend(cell.rekeys);
-                    cell.created
-                } else {
-                    left
-                };
-                let right = if let Some(cell) = right_cell {
-                    let cell = view.fact_cell_at(cell, root.position)?;
-                    facts.push(cell.occurrence.fact);
-                    rekeys.extend(cell.rekeys);
-                    cell.created
-                } else {
-                    right
-                };
-                let support =
-                    view.explain_equality_support_at(left, right, root.as_of_edges, root.position)?;
-                facts.extend(support.facts);
-                facts.sort_unstable();
-                facts.dedup();
-                rekeys.extend(support.rekeys);
-                rekeys.sort_unstable();
-                rekeys.dedup();
-                RawEqualitySupport {
-                    applied: support.applied,
-                    facts: facts.into_boxed_slice(),
-                    causes: support.causes,
-                    rekeys: rekeys.into_boxed_slice(),
-                }
-            }
+            (Some(fact), None) => view.explain_fact_endpoint_support_at(
+                fact,
+                right_endpoint,
+                root.as_of_edges,
+                root.position,
+            )?,
+            (None, Some(fact)) => view.explain_fact_endpoint_support_at(
+                fact,
+                left_endpoint,
+                root.as_of_edges,
+                root.position,
+            )?,
+            (None, None) => view.explain_equality_support_at(
+                left_endpoint,
+                right_endpoint,
+                root.as_of_edges,
+                root.position,
+            )?,
         };
         enqueue_support(slice, work, support);
     }
@@ -765,7 +810,17 @@ fn slice_roots(
                     let merge_reads = matched.merge_reads.to_vec();
                     work.extend(premises.iter().copied().map(Work::Fact));
                     work.extend(merge_reads.into_iter().map(Work::Fact));
-                    slice.match_terms.insert(id, view.match_terms(id)?);
+                    let terms = view.match_terms(id)?;
+                    let mut windows = Vec::with_capacity(terms.len());
+                    for binding in 0..terms.len() {
+                        let availability = view.explain_match_term_availability(id, binding)?;
+                        windows.push(availability.aliases);
+                        enqueue_support(&mut slice, &mut work, availability.support);
+                    }
+                    slice.match_terms.insert(id, terms);
+                    slice
+                        .match_term_windows
+                        .insert(id, windows.into_boxed_slice());
                     for (left, right) in view.rule_equality_layout(rule)?.iter().copied() {
                         let support = explain_rule_equality(
                             view,
@@ -1075,12 +1130,9 @@ mod tests {
             )
             .unwrap();
 
-        let error = slice_check(&egraph, 0).unwrap_err();
-        assert!(matches!(
-            error,
-            CausalSliceError::Receipt(ReceiptViewError::Invalid(message))
-                if message.contains("requires exact occurrence provenance")
-        ));
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 2);
+        assert_eq!(slice.equalities.len(), 1);
     }
 
     #[test]
@@ -1314,11 +1366,15 @@ mod tests {
         let slice = slice_all_checks(&egraph).unwrap();
         assert_eq!(slice.interference_removals.len(), 1);
         assert_eq!(slice.matches.len(), 3, "recreate, reconcile, and delete");
-        assert_eq!(slice.equalities.len(), 1);
+        assert_eq!(
+            slice.equalities.len(),
+            2,
+            "the historical source occurrence needs both the child-key bridge and the explicit parent bridge"
+        );
         assert_eq!(
             slice.replay_equalities.len(),
             2,
-            "the sibling key union is replay-visible but not causal support"
+            "the retained head replays exactly those two union effects"
         );
     }
 
@@ -1548,15 +1604,21 @@ mod tests {
                  (relation Recreate (i64))
                  (relation Before (E))
                  (relation After (E))
-                 (rule ((Delete key)) ((delete (Leaf key))) :name \"delete-leaf\")
-                 (rule ((Recreate key)) ((After (Leaf key))) :name \"recreate-leaf\")
-                 (rule ((Before old) (After new)) ((union old new)) :name \"reconcile\")
+                 (ruleset cleanup)
+                 (ruleset recreate)
+                 (ruleset reconcile)
+                 (rule ((Delete key)) ((delete (Leaf key)))
+                       :ruleset cleanup :name \"delete-leaf\")
+                 (rule ((Recreate key)) ((After (Leaf key)))
+                       :ruleset recreate :name \"recreate-leaf\")
+                 (rule ((Before old) (After new)) ((union old new))
+                       :ruleset reconcile :name \"reconcile\")
                  (Before (Leaf 1))
                  (Delete 1)
-                 (run 1)
                  (Recreate 1)
-                 (run 1)
-                 (run 1)
+                 (run cleanup 1)
+                 (run recreate 1)
+                 (run reconcile 1)
                  (check (Before x) (After x))",
             )
             .unwrap();
@@ -1568,6 +1630,95 @@ mod tests {
         let equality = slice.equality_records.values().next().unwrap();
         assert_eq!(equality.left.term, equality.right.term);
         assert_ne!(equality.left.raw, equality.right.raw);
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn duplicate_syntax_in_one_binding_keeps_distinct_occurrence_windows() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))
+                 (relation Old (E))
+                 (relation New (E))
+                 (relation Trigger ())
+                 (relation Pairs (E))
+                 (relation Out (E))
+                 (ruleset cleanup)
+                 (ruleset recreate)
+                 (ruleset pair_rules)
+                 (ruleset consume_rules)
+                 (Old (A 1))
+                 (Trigger)
+                 (rule ((Trigger))
+                       ((delete (A 1)))
+                       :ruleset cleanup :name \"cleanup\")
+                 (rule ((Trigger))
+                       ((New (A 1)))
+                       :ruleset recreate :name \"recreate\")
+                 (rule ((Old old) (New new))
+                       ((Pairs (Pair old new)))
+                       :ruleset pair_rules :name \"pair\")
+                 (rule ((Pairs pair)) ((Out pair))
+                       :ruleset consume_rules :name \"consume\")
+                 (run cleanup 1)
+                 (run recreate 1)
+                 (run pair_rules 1)
+                 (run consume_rules 1)
+                 (check (Out pair))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap();
+        let cleanup = rendered
+            .find("(run-schedule (run-rule (\"cleanup\"")
+            .unwrap();
+        let recreate = rendered
+            .find("(run-schedule (run-rule (\"recreate\"")
+            .unwrap();
+        let pair = rendered.find("(run-schedule (run-rule (\"pair\"").unwrap();
+        let consume = rendered
+            .find("(run-schedule (run-rule (\"consume\"")
+            .unwrap();
+        assert!(cleanup < recreate && recreate < pair && pair < consume);
+
+        let aliases_before_cleanup = rendered[..cleanup].matches("(let-check ").count();
+        let aliases_between_recreate_and_pair =
+            rendered[recreate..pair].matches("(let-check ").count();
+        let aliases_between_pair_and_consume =
+            rendered[pair..consume].matches("(let-check ").count();
+        assert!(
+            aliases_before_cleanup >= 1,
+            "old occurrence must be named before deletion"
+        );
+        assert!(
+            aliases_between_recreate_and_pair >= 1,
+            "recreated occurrence must be named after its creator"
+        );
+        assert!(
+            aliases_between_pair_and_consume >= 1,
+            "parent occurrence must be named after its creator"
+        );
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
     }
 
     #[test]
@@ -1800,5 +1951,398 @@ mod tests {
             .map(|edge| edge.get())
             .collect::<HashSet<_>>();
         assert_eq!(lazy_edges, snapshot_edges);
+    }
+
+    #[test]
+    fn terminal_rewrite_equality_keeps_distinct_constructor_occurrences() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (F E) (G E))
+                 (F (A 1))
+                 (rewrite (F x) (G x))
+                 (run 1)
+                 (check (= (F (A 1)) (G (A 1))))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 1);
+        assert_eq!(slice.equalities.len(), 0);
+    }
+
+    #[test]
+    fn direct_check_retains_nested_child_equality_used_by_a_head_term() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Alias i64))
+                 (sort Es (Vec E))
+                 (datatype Root (Target Es) (Seed))
+                 (ruleset equate)
+                 (ruleset finish)
+                 (let $seed (Seed))
+                 (A 8)
+                 (rewrite (A x) (Alias x) :ruleset equate)
+                 (rule ()
+                       ((union $seed (Target (vec-of (Alias 8)))))
+                       :ruleset finish
+                       :name \"finish\")
+                 (run equate 1)
+                 (run finish 1)
+                 (check (= $seed (Target (vec-of (A 8)))))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(
+            slice.matches.len(),
+            2,
+            "the parent union and nested A/Alias equality are both required"
+        );
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn nested_constructor_key_occurrence_replays_from_its_prior_producer() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (F E) (G E) (H E))
+                 (relation R (E))
+                 (relation S (E))
+                 (ruleset equate)
+                 (ruleset emit)
+                 (F (A 1))
+                 (G (A 1))
+                 (R (H (F (A 1))))
+                 (rewrite (F x) (G x) :ruleset equate)
+                 (rule ((= x (G (A 1))))
+                       ((S (H x)))
+                       :ruleset emit)
+                 (run equate 1)
+                 (run emit 1)
+                 (check (R x) (S x))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 2, "retain the rewrite and emitter");
+        assert_eq!(slice.replay_equalities.len(), 1, "replay the F = G edge");
+        let mut damaged = slice.clone();
+        let equality_creator = *damaged.matches.iter().min().unwrap();
+        damaged.matches.remove(&equality_creator);
+        let damaged_replay =
+            crate::causal_replay::build_causal_replay_ir(&egraph, &damaged).unwrap();
+        let damaged_commands = damaged_replay.to_commands().unwrap();
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut damaged_proof = EGraph::default().with_proofs_enabled();
+        assert!(
+            serial_causal_pool()
+                .install(|| damaged_proof.run_program(damaged_commands))
+                .is_err()
+        );
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn same_term_child_occurrences_keep_their_native_bridge() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (H E))
+                 (relation Trigger ())
+                 (relation Old (E))
+                 (relation New (E))
+                 (relation R (E))
+                 (relation S (E))
+                 (relation Out ())
+                 (ruleset cleanup)
+                 (ruleset recreate)
+                 (ruleset bridge)
+                 (ruleset emit)
+                 (ruleset consume)
+                 (Trigger)
+                 (Old (A 1))
+                 (R (H (A 1)))
+                 (rule ((Trigger))
+                       ((delete (A 1)))
+                       :ruleset cleanup
+                       :name \"cleanup\")
+                 (rule ((Trigger))
+                       ((New (A 1)))
+                       :ruleset recreate
+                       :name \"recreate\")
+                 (rule ((Old x) (New y))
+                       ((union x y))
+                       :ruleset bridge
+                       :name \"bridge\")
+                 (rule ((New y))
+                       ((S (H y)))
+                       :ruleset emit
+                       :name \"emit\")
+                 (rule ((R x) (S x))
+                       ((Out))
+                       :ruleset consume
+                       :name \"consume\")
+                 (run cleanup 1)
+                 (run recreate 1)
+                 (run bridge 1)
+                 (run emit 1)
+                 (run consume 1)
+                 (check (Out))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.equalities.len(), 1, "retain the A occurrence bridge");
+        let mut damaged = slice.clone();
+        damaged.equalities.clear();
+        assert!(matches!(
+            damaged.validate_exact_support(),
+            Err(CausalSliceError::MissingSupport {
+                kind: "applied equality",
+                ..
+            })
+        ));
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn grounded_binding_alias_is_hoisted_before_its_constructor_is_removed() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64))
+                 (relation Carry (E))
+                 (relation Trigger ())
+                 (relation Mid ())
+                 (relation Done ())
+                 (Carry (A 1))
+                 (Trigger)
+                 (rule ((Trigger))
+                       ((delete (A 1)) (Mid))
+                       :name \"cleanup\")
+                 (run 1)
+                 (rule ((Carry x) (Mid)) ((Done)) :name \"consume\")
+                 (run 1)
+                 (check (Done))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap();
+        assert!(
+            rendered.find("(let-check").unwrap() < rendered.find("(run-schedule").unwrap(),
+            "the persistent alias must be captured before cleanup:\n{rendered}"
+        );
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn source_constructor_recipe_resolves_an_earlier_global_historically() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Pair E E))
+                 (relation Keep (E))
+                 (relation Out ())
+                 (let $left (A 1))
+                 (let $right (A 2))
+                 (Keep (Pair $left $right))
+                 (rule ((Keep (Pair x y))) ((Out)) :name \"consume\")
+                 (run 1)
+                 (check (Out))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 1);
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap();
+        assert!(rendered.contains("(let $left (A 1))"), "{rendered}");
+        assert!(rendered.contains("(let $right (A 2))"), "{rendered}");
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn eqsort_result_of_replay_safe_primitive_is_structurally_available() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64))
+                 (sort Es (Vec E))
+                 (relation Seed (Es))
+                 (relation Out (E))
+                 (Seed (vec-of (A 1)))
+                 (rule ((Seed xs)
+                        (= x (vec-get xs 0)))
+                       ((Out x))
+                       :name \"read-vec\")
+                 (run 1)
+                 (check (Out (A 1)))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 1);
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn repeated_pure_result_guards_share_one_naming_recipe() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))
+                 (relation Out (i64))
+                 (Input 1)
+                 (rule ((Input n)
+                        (= x (+ n 1))
+                        (= x (* n 2)))
+                       ((Out x))
+                       :name \"agreeing-guards\")
+                 (run 1)
+                 (check (Out 2))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 1);
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn eqsort_projection_retains_the_child_equality_it_observed() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        serial_causal_pool()
+            .install(|| {
+                egraph.parse_and_run_program(
+                    None,
+                    "(datatype E (A) (B))
+                 (sort Es (Vec E))
+                 (relation Inputs (E E))
+                 (relation Out ())
+                 (ruleset equate)
+                 (ruleset make)
+                 (ruleset consume)
+                 (rule () ((union (A) (B)))
+                       :ruleset equate :name \"equate\")
+                 (rule ()
+                       ((Inputs (vec-get (vec-of (A)) 0)
+                                (vec-get (vec-of (B)) 0)))
+                       :ruleset make :name \"make\")
+                 (rule ((Inputs x x)) ((Out))
+                       :ruleset consume :name \"consume\")
+                 (run equate 1)
+                 (run make 1)
+                 (run consume 1)
+                 (check (Out))",
+                )
+            })
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(slice.matches.len(), 3);
+        assert_eq!(slice.equalities.len(), 1);
+        let mut damaged = slice.clone();
+        damaged.equalities.clear();
+        assert!(matches!(
+            damaged.validate_exact_support(),
+            Err(CausalSliceError::MissingSupport {
+                kind: "applied equality",
+                ..
+            })
+        ));
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
     }
 }

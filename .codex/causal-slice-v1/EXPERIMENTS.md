@@ -2258,3 +2258,71 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   and selected-only unsupported input). `cargo fmt --all` and
   `git diff --check` pass. A concurrent list-form `run-rule` checkpoint was
   intentionally excluded from this commit and owns its separate validation.
+
+## 2026-07-24: exact occurrence projection and five-workload replay
+
+- Replaced structural-term-only replay aliases with occurrence-specific
+  availability windows. A checked alias can now be captured before a selected
+  deletion and remain a read-only graph value for a later grounded premise;
+  constructor delete/recreate canaries prove equal syntax does not conflate
+  distinct native identities. Proof-mode alias canonicalization follows the
+  existing proof UF without re-evaluating or reinserting the term.
+- Hardboiled first failed because a parent source row was published before an
+  exact nested child producer. Projection now discovers at the consuming
+  position, prefers the exact structural producer, and validates any raw-value
+  bridge through the historical equality index. Hardboiled passes strict proof
+  replay with 130 retained facts, 21 matches, 5 equalities, and 14 waves.
+- Eggcc exposed two pure guard chains naming the same already-bound variable.
+  Runtime grounded validation keeps both guards; static naming metadata is now
+  deterministic first-wins. The discriminator canary proves the second guard
+  still rejects an inconsistent value. Eggcc passes with 5 facts and 1 firing.
+- Math exposed a physical rekey duplicate colliding with the same immutable
+  `FactId`. Such `Absorbed(prior_fact)`/`Replaced(prior_fact)` outcomes no longer
+  create a false logical transition; collisions into a different fact remain
+  recorded. Sampling then attributed more than 99% of cold slice CPU to global
+  rekey scans. A lazy per-fact rekey index and position index reduced the same
+  terminal-check causal run from more than 60 seconds to 0.769 seconds of
+  slicing. Its complete measured phase split was 0.921s capture, 0.769s slice,
+  and 0.048s proof replay, retaining 57 facts and 12 matches through all 11
+  waves. No scout run, early check, or capture shutoff is used.
+- Luminal exposed the remaining source-origin seam: a nested constructor read
+  earlier nullary internal-let globals through `LookupWithFallback`. The bridge
+  now certifies only required existing lookups, and zero-key recipes resolve the
+  latest live fact strictly before the owning source commit. Resolution uses
+  immutable history, never final database state. A two-global nested-constructor
+  canary passes strict proof replay. Luminal passes with 8 facts and 1 firing.
+- One frozen release binary passed the default five programs directly under
+  `--causal-slice --proofs -j 1`: Math, Eggcc pass 1, Pointer with its fact
+  directory, Hardboiled conv1d32, and Luminal. Pointer retained 3 facts, 1
+  match, and 1 equality. The rendered Luminal artifact also reparsed and ran
+  successfully through the experimental binary under unchanged proof mode.
+- Focused post-repair gates: all 27 `causal_slice::tests`, all 6
+  `causal_replay::tests`, and all 7 grounded bridge tests pass. Rustfmt and
+  `git diff --check` pass. Public comparative benchmarking remains
+  intentionally deferred until the obsolete guarded/scalar run-rule executor
+  is removed and the complete proof/check suite is green.
+- Independent review then falsified the remaining structural alias assumption:
+  two child occurrences can have the same `ReplayTermId` while belonging to
+  different native delete/recreate lifetimes. Availability is now an ordered,
+  occurrence-preserving child-first list rather than a map keyed by syntax;
+  replay consumes that list one-for-one while constructing local alias ids.
+  A four-wave cleanup/recreate/pair/consume canary requires the old alias before
+  deletion, the recreated alias after its creator, and the parent alias after
+  its creator, then passes unchanged strict proof testing.
+- A later `let-check` now typechecks prior checked aliases as typed runtime
+  constants instead of expanding their saved constructor syntax. Proof
+  preflight accepts only those resolved non-global variables, so a persistent
+  alias survives constructor deletion without acquiring Fiat rows or copying a
+  `Value` between graphs. The former fail-closed congruence-collapsed check
+  canary is correspondingly a positive end-to-end proof replay canary.
+- Review also found that final checks still expanded aliases back into syntax.
+  Checks now mark only already-published checked variables as core query
+  constants, inject their typed graph-local values during backend lowering, and
+  reuse the shared extraction canonicalizer for proof UF lookup. A normal and
+  proof-mode canary retains nested aliases and a relation witness across
+  constructor deletion, accepts alias self-equality, and rejects two unequal
+  aliases. Saved syntax is recursively closed only for the remaining commands
+  that intentionally expand it.
+- Post-correction focused gates: all 71 tests selected by the `causal_` filter,
+  all 10 `let_check_` tests, and all 7 grounded bridge tests pass; rustfmt and
+  `git diff --check` pass.

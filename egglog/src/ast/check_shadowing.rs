@@ -1,9 +1,10 @@
-use crate::{util::HashMap, *};
+use crate::{util::HashMap, util::HashSet, *};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Names {
     seen: HashMap<String, Span>,
     global_aliases: HashMap<String, (String, Span)>,
+    checked_aliases: HashSet<String>,
 }
 
 impl Names {
@@ -51,6 +52,7 @@ impl Names {
         debug_assert!(self.check_checked_alias_available(name, span).is_ok());
         self.seen.insert(name.to_owned(), span.clone());
         self.seen.insert(canonical.to_owned(), span.clone());
+        self.checked_aliases.insert(name.to_owned());
         self.track_global_alias(name, span);
     }
 
@@ -108,7 +110,7 @@ impl Names {
             ResolvedNCommand::LetCheck { .. } => Ok(()),
             ResolvedNCommand::Check(_span, query) => {
                 let mut inner = self.clone();
-                inner.check_shadowing_query(query)
+                inner.check_shadowing_check(query)
             }
             ResolvedNCommand::Fail(_span, command) => {
                 let mut inner = self.clone();
@@ -129,6 +131,19 @@ impl Names {
     }
 
     fn check_shadowing_query(&mut self, query: &[ResolvedFact]) -> Result<(), Error> {
+        self.check_shadowing_query_with(query, |_| false)
+    }
+
+    fn check_shadowing_check(&mut self, query: &[ResolvedFact]) -> Result<(), Error> {
+        let checked_aliases = self.checked_aliases.clone();
+        self.check_shadowing_query_with(query, |name| checked_aliases.contains(name))
+    }
+
+    fn check_shadowing_query_with(
+        &mut self,
+        query: &[ResolvedFact],
+        is_checked_alias: impl Fn(&str) -> bool,
+    ) -> Result<(), Error> {
         // we want to allow names in queries to shadow each other, so we first collect
         // all of the variable names, and then we check each of those names once
         fn collect_expr_names(expr: &ResolvedExpr, out: &mut HashMap<String, Span>) {
@@ -156,7 +171,9 @@ impl Names {
         }
 
         for (name, span) in collected {
-            self.check_pattern_name(&name, &span)?;
+            if !is_checked_alias(&name) {
+                self.check_pattern_name(&name, &span)?;
+            }
         }
 
         Ok(())

@@ -956,18 +956,22 @@ where
 }
 
 pub(crate) trait ResolvedRuleExt {
-    fn to_canonicalized_core_rule(
-        &self,
-        typeinfo: &TypeInfo,
-        fresh_gen: &mut SymbolGen,
-        union_to_set_optimization: bool,
-    ) -> Result<ResolvedCoreRule, TypeError>;
-
     fn to_canonicalized_core_rule_with_substitutions(
         &self,
         typeinfo: &TypeInfo,
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
+    ) -> Result<CanonicalizedRule, TypeError>;
+
+    /// Treat the listed query variables as typed constants during core
+    /// groundedness and canonicalization. Used by top-level `let-check`
+    /// aliases, whose runtime values are injected during backend lowering.
+    fn to_canonicalized_core_rule_with_constants(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+        union_to_set_optimization: bool,
+        constants: &HashSet<ResolvedVar>,
     ) -> Result<CanonicalizedRule, TypeError>;
 
     /// Lower and canonicalize a positive check while retaining the exact
@@ -998,26 +1002,26 @@ pub(crate) struct CanonicalizedCheck {
 }
 
 impl ResolvedRuleExt for ResolvedRule {
-    fn to_canonicalized_core_rule(
-        &self,
-        typeinfo: &TypeInfo,
-        fresh_gen: &mut SymbolGen,
-        union_to_set_optimization: bool,
-    ) -> Result<ResolvedCoreRule, TypeError> {
-        Ok(self
-            .to_canonicalized_core_rule_with_substitutions(
-                typeinfo,
-                fresh_gen,
-                union_to_set_optimization,
-            )?
-            .core)
-    }
-
     fn to_canonicalized_core_rule_with_substitutions(
         &self,
         typeinfo: &TypeInfo,
         fresh_gen: &mut SymbolGen,
         union_to_set_optimization: bool,
+    ) -> Result<CanonicalizedRule, TypeError> {
+        self.to_canonicalized_core_rule_with_constants(
+            typeinfo,
+            fresh_gen,
+            union_to_set_optimization,
+            &HashSet::default(),
+        )
+    }
+
+    fn to_canonicalized_core_rule_with_constants(
+        &self,
+        typeinfo: &TypeInfo,
+        fresh_gen: &mut SymbolGen,
+        union_to_set_optimization: bool,
+        constants: &HashSet<ResolvedVar>,
     ) -> Result<CanonicalizedRule, TypeError> {
         let value_eq = &typeinfo.get_prims("value-eq").unwrap()[0];
         let value_eq = |at1: &ResolvedAtomTerm, at2: &ResolvedAtomTerm| {
@@ -1028,7 +1032,16 @@ impl ResolvedRuleExt for ResolvedRule {
             })
         };
 
-        let rule = self.to_core_rule(typeinfo, fresh_gen, union_to_set_optimization)?;
+        let mut rule = self.to_core_rule(typeinfo, fresh_gen, union_to_set_optimization)?;
+        for atom in &mut rule.body.atoms {
+            for argument in &mut atom.args {
+                if let GenericAtomTerm::Var(span, variable) = argument
+                    && constants.contains(variable)
+                {
+                    *argument = GenericAtomTerm::Global(span.clone(), variable.clone());
+                }
+            }
+        }
 
         // The groundedness check happens before canonicalization, because canonicalization
         // may turn ungrounded variables in a query to unbounded variables in actions (e.g.,
