@@ -132,7 +132,13 @@ fn add_experimental_extensions(egraph: &mut EGraph, extended_run_schedule: bool)
     // scheduler support
     if extended_run_schedule {
         egraph
-            .add_command("run-schedule".into(), Arc::new(RunExtendedSchedule))
+            .parser
+            .add_command_macro(Arc::new(RunExtendedScheduleMacro));
+        egraph
+            .add_command(
+                EXTENDED_RUN_SCHEDULE_COMMAND.into(),
+                Arc::new(RunExtendedSchedule),
+            )
             .unwrap();
     }
     egraph
@@ -180,6 +186,60 @@ mod causal_container_tests {
                 .build()
                 .unwrap()
         })
+    }
+
+    #[test]
+    fn experimental_schedule_executes_only_list_form_grounded_run_rule() {
+        let mut egraph = new_experimental_egraph();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))\
+                 (relation Output (i64))\
+                 (ruleset derive)\
+                 (Input 1)\
+                 (rule ((Input x)) ((Output x))\
+                   :ruleset derive :name \"copy\")",
+            )
+            .unwrap();
+        let outputs = egraph
+            .parse_and_run_program(
+                None,
+                "(run-schedule\
+                   (let-scheduler s (back-off))\
+                   (seq (run-rule (\"copy\" ((x 1)))))\
+                   (run-with s derive))",
+            )
+            .unwrap();
+        assert_eq!(
+            outputs
+                .iter()
+                .filter(|output| matches!(output, CommandOutput::RunSchedule(_)))
+                .count(),
+            1,
+            "one public schedule must keep one combined report"
+        );
+        egraph
+            .parse_and_run_program(None, "(check (Output 1))")
+            .unwrap();
+
+        let error = egraph
+            .parse_and_run_program(None, "(run-schedule (run-rule \"copy\"))")
+            .unwrap_err();
+        assert!(error.to_string().contains("expected run-rule invocation"));
+
+        let marker = "(__experimental-grounded-run-rule\
+            (__experimental-grounded-run-rule-invocation\
+              \"copy\"\
+              (__experimental-grounded-run-rule-binding x 1)))";
+        let error = egraph
+            .parse_and_run_program(None, &format!("(run-schedule {marker})"))
+            .unwrap_err();
+        assert!(error.to_string().contains("not source syntax"));
+        let error = egraph
+            .parse_and_run_program(None, &format!("({EXTENDED_RUN_SCHEDULE_COMMAND} {marker})"))
+            .unwrap_err();
+        assert!(error.to_string().contains("not source syntax"));
     }
 
     #[test]
@@ -273,6 +333,37 @@ mod causal_container_tests {
                     .contains("poisoned"),
                 "the conservative transaction boundary poisons any entered command error"
             );
+        });
+    }
+
+    #[test]
+    fn grounded_run_rule_is_preflighted_before_a_causal_schedule_prefix() {
+        serial_pool().install(|| {
+            let mut egraph = new_experimental_egraph();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(relation Seed (i64))\
+                     (relation Done (i64))\
+                     (ruleset derive)\
+                     (Seed 1)\
+                     (rule ((Seed x)) ((Done x)) :ruleset derive :name \"derive-rule\")",
+                )
+                .unwrap();
+            let error = egraph
+                .parse_and_run_program(
+                    None,
+                    "(run-schedule\
+                       (seq derive (run-rule (\"derive-rule\" ((x 1))))))",
+                )
+                .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported during causal capture")
+            );
+            assert_eq!(egraph.get_size("Done"), 0);
         });
     }
 

@@ -28,9 +28,8 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerMergeFn, ContainerValues, CounterId, DefaultVal,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, MergeAction, MergeFn, PreMergeTiming,
-    ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar,
-    ScanEntry, Value,
+    IterationReport, MergeAction, MergeFn, PreMergeTiming, ReportLevel, RuleActionCall,
+    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
@@ -905,7 +904,7 @@ impl<'a> MergeTransaction<'a> {
                 )
             }),
             MergeFn::Const(value) => Ok(value.rep()),
-            MergeFn::Primitive(id, arguments) => {
+            MergeFn::Primitive(id, arguments) | MergeFn::InputChoicePrimitive(id, arguments) => {
                 let arguments = self
                     .eval_args(arguments, owner, old, new, self_col, environment)?
                     .into_iter()
@@ -1182,20 +1181,6 @@ mod tests {
             RuleSetRun {
                 name: Some("test"),
                 rules,
-            },
-        )
-    }
-
-    fn run_rule_guarded(
-        egraph: &mut EGraph,
-        rule: RuleId,
-        expected_matches: Option<usize>,
-    ) -> Result<GuardedRuleRunOutcome> {
-        Backend::run_rule_guarded(
-            egraph,
-            GuardedRuleRun {
-                rule,
-                expected_matches,
             },
         )
     }
@@ -1509,9 +1494,8 @@ mod tests {
         Backend::free_rule(&mut eg, replacement_id);
         assert_eq!(Arc::strong_count(&owned_lifetime), 1);
 
-        // Top-level `run-rule` creates and frees one temporary rule per command.
-        // Repeating that lifecycle must keep the slot vector bounded and must
-        // not leak atom-less firing state into the replacement rule.
+        // Repeated temporary-rule lifecycles must keep the slot vector bounded
+        // and must not leak atom-less firing state into the replacement rule.
         for iteration in 0..16 {
             let rule = TestRule::new(&format!("temporary {iteration}")).build(&mut eg);
             assert_eq!(rule, first_id);
@@ -1520,143 +1504,12 @@ mod tests {
             assert!(eg.dd_fused.is_empty());
             assert!(eg.dd_fused_fed_versions.is_empty());
 
-            let outcome = run_rule_guarded(&mut eg, rule, None).unwrap();
-            assert!(matches!(
-                outcome,
-                GuardedRuleRunOutcome::Applied {
-                    observed_matches: 1,
-                    ..
-                }
-            ));
+            run_rules(&mut eg, &[rule]).unwrap();
             assert!(eg.seen.contains_key(&(rule.rep() as usize)));
             Backend::free_rule(&mut eg, rule);
             assert!(!eg.seen.contains_key(&(rule.rep() as usize)));
         }
         assert_eq!(eg.rules.len(), 1);
-    }
-
-    #[test]
-    fn guarded_rule_requeries_the_full_view_on_every_run() {
-        let mut eg = EGraph::new();
-        let input = id_table(&mut eg, "input", 2);
-        let output = id_table(&mut eg, "output", 2);
-        eg.insert_live_row(input, row(&[1, 10]));
-
-        let mut builder = TestRule::new("copy one");
-        let key = builder.new_var(ColumnTy::Id);
-        let value = builder.new_var(ColumnTy::Id);
-        builder.query_table(input, &[key.clone(), value.clone()], Some(false));
-        builder.set(output, &[key, value]);
-        let rule = builder.build(&mut eg);
-
-        let first = run_rule_guarded(&mut eg, rule, None).unwrap();
-        assert!(matches!(
-            first,
-            GuardedRuleRunOutcome::Applied {
-                observed_matches: 1,
-                ..
-            }
-        ));
-        assert!(eg.mirror[&output].contains(&row(&[1, 10])));
-
-        // A normal incremental single-rule worker has no positive delta here.
-        // Guarded execution must instead rebuild its worker from the complete
-        // current mirror and observe the same grounding again.
-        let second = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
-        assert!(matches!(
-            second,
-            GuardedRuleRunOutcome::Applied {
-                observed_matches: 1,
-                ..
-            }
-        ));
-
-        // Atom-less rules similarly bypass ordinary `seen` bookkeeping.
-        let mut atomless = TestRule::new("atomless");
-        atomless.set(
-            output,
-            &[constant(2, ColumnTy::Id), constant(20, ColumnTy::Id)],
-        );
-        let atomless = atomless.build(&mut eg);
-        for _ in 0..2 {
-            let outcome = run_rule_guarded(&mut eg, atomless, Some(1)).unwrap();
-            assert!(matches!(
-                outcome,
-                GuardedRuleRunOutcome::Applied {
-                    observed_matches: 1,
-                    ..
-                }
-            ));
-        }
-    }
-
-    #[test]
-    fn guarded_rule_count_check_is_atomic_for_zero_one_and_many_matches() {
-        let mut eg = EGraph::new();
-        let input = id_table(&mut eg, "input", 2);
-        let output = id_table(&mut eg, "output", 2);
-
-        let mut builder = TestRule::new("guarded copy");
-        let key = builder.new_var(ColumnTy::Id);
-        let value = builder.new_var(ColumnTy::Id);
-        builder.query_table(input, &[key.clone(), value.clone()], Some(false));
-        builder.set(output, &[key, value]);
-        let rule = builder.build(&mut eg);
-
-        let zero_mismatch = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
-        assert!(matches!(
-            zero_mismatch,
-            GuardedRuleRunOutcome::MatchCountMismatch {
-                expected_matches: 1,
-                observed_matches: 0,
-            }
-        ));
-        assert!(eg.mirror[&output].is_empty());
-
-        let zero = run_rule_guarded(&mut eg, rule, Some(0)).unwrap();
-        assert!(matches!(
-            zero,
-            GuardedRuleRunOutcome::Applied {
-                observed_matches: 0,
-                ..
-            }
-        ));
-
-        eg.insert_live_row(input, row(&[1, 10]));
-        let one = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
-        assert!(matches!(
-            one,
-            GuardedRuleRunOutcome::Applied {
-                observed_matches: 1,
-                ..
-            }
-        ));
-        assert_eq!(eg.mirror[&output], HashSet::from([row(&[1, 10])]));
-
-        eg.insert_live_row(input, row(&[2, 20]));
-        let many_mismatch = run_rule_guarded(&mut eg, rule, Some(1)).unwrap();
-        assert!(matches!(
-            many_mismatch,
-            GuardedRuleRunOutcome::MatchCountMismatch {
-                expected_matches: 1,
-                observed_matches: 2,
-            }
-        ));
-        // The already-present row remains, but no head ran for the new match.
-        assert_eq!(eg.mirror[&output], HashSet::from([row(&[1, 10])]));
-
-        let many = run_rule_guarded(&mut eg, rule, Some(2)).unwrap();
-        assert!(matches!(
-            many,
-            GuardedRuleRunOutcome::Applied {
-                observed_matches: 2,
-                ..
-            }
-        ));
-        assert_eq!(
-            eg.mirror[&output],
-            HashSet::from([row(&[1, 10]), row(&[2, 20])])
-        );
     }
 
     #[test]
@@ -2696,41 +2549,6 @@ impl Backend for EGraph {
         }
         let result = result?;
         Ok(Self::iteration_report(result))
-    }
-
-    fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome> {
-        if let Some(message) = self.take_panic_message() {
-            return Err(anyhow!(message));
-        }
-
-        let idx = run.rule.rep() as usize;
-        let rule = self
-            .rules
-            .get(idx)
-            .and_then(Option::as_ref)
-            .cloned()
-            .ok_or_else(|| anyhow!("cannot run missing rule id {}", run.rule.rep()))?;
-        let result = interpret::run_rule_guarded(self, &(idx, rule), run.expected_matches);
-        if let Some(message) = self.take_panic_message() {
-            return Err(anyhow!(message));
-        }
-
-        match result? {
-            interpret::GuardedIterationResult::Applied {
-                observed_matches,
-                result,
-            } => Ok(GuardedRuleRunOutcome::Applied {
-                observed_matches,
-                report: Self::iteration_report(result),
-            }),
-            interpret::GuardedIterationResult::MatchCountMismatch {
-                expected_matches,
-                observed_matches,
-            } => Ok(GuardedRuleRunOutcome::MatchCountMismatch {
-                expected_matches,
-                observed_matches,
-            }),
-        }
     }
 
     fn flush_updates(&mut self) -> bool {

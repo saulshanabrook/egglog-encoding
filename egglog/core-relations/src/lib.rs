@@ -31,8 +31,8 @@ pub use containers::{
 };
 pub use free_join::{
     AtomId, CounterId, Database, ExternalFunction, ExternalFunctionId, GroundedRuleMatch,
-    GroundedRuleRunError, GroundedRuleRunOutcome, GuardedRuleSetRunError, GuardedRuleSetRunOutcome,
-    TableId, Variable, make_external_func, plan::PlanStrategy,
+    GroundedRuleRunError, GroundedRuleRunOutcome, TableId, Variable, make_external_func,
+    plan::PlanStrategy,
 };
 pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};

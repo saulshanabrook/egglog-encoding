@@ -2326,3 +2326,36 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Post-correction focused gates: all 71 tests selected by the `causal_` filter,
   all 10 `let_check_` tests, and all 7 grounded bridge tests pass; rustfmt and
   `git diff --check` pass.
+
+## 2026-07-24: list-only grounded run-rule surface
+
+- Deleted the obsolete guarded/scalar executor end to end: backend-trait API,
+  bridge lowering, core join capture buffers and guarded plan execution, DD
+  re-query implementation, frontend mismatch error, and their dedicated tests.
+  The only replay-facing surface is now the list-form, fully grounded
+  `run-rule`; the parser retains negative canaries for the removed `:bind`,
+  `:expect`, and internal-selector spellings.
+- The experimental `run-schedule` interception previously parsed every leaf as
+  an expression, so a list-form invocation failed before reaching core syntax
+  because each entry begins with a rule-name string. A raw-syntax command macro
+  now validates every nested list-form leaf with the existing core schedule
+  parser, then lowers it to a private expression marker inside the one unchanged
+  extended-schedule command. The executor turns that marker directly back into
+  the core `Schedule::RunRule` AST. There is no text reparse, report splitting,
+  scheduler-scope reset, or second grounded executor. A canary through
+  `new_experimental_egraph` keeps a named scheduler live across a nested
+  list-form firing, observes one combined report, and rejects the removed
+  scalar form. Raw internal-marker syntax and direct private-executor calls are
+  rejected by a parser-reserved capability marker, so they cannot become a
+  second user surface. A causal canary proves whole-command preflight rejects
+  the leaf before an earlier supported prefix runs.
+- Compiling the DD suite exposed an older exhaustiveness omission for
+  `InputChoicePrimitive`. DD now treats that frontend provenance marker exactly
+  like `Primitive`, matching its documented execution semantics; this is
+  independent of causal replay and restores workspace compilability.
+- Focused validation: `egglog-core-relations` 176/176,
+  `egglog-bridge` 35/35, `egglog-experimental` 8/8, and
+  `egglog-experimental-dd` 37/37 pass. The backend-trait crate compiles, rustfmt
+  is clean, repository-wide obsolete-symbol search is empty, and
+  `git diff --check` passes. After falsifying and repairing both schedule
+  splitting and marker forgery, the independent final review returned GO.

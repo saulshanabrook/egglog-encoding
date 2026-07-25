@@ -5714,15 +5714,6 @@ pub enum Error {
     NoSuchRuleset(String, Span),
     #[error("{1}\nNo such rule: {0:?}")]
     NoSuchRule(String, Span),
-    #[error(
-        "{span}\nrun-rule {rule:?} expected {expected} match(es), but found {observed}; no rule actions were applied"
-    )]
-    RunRuleMatchCountMismatch {
-        rule: String,
-        expected: usize,
-        observed: usize,
-        span: Span,
-    },
     #[error("{span}\nlet-check {alias}: {reason}")]
     CheckedAlias {
         alias: String,

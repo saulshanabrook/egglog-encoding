@@ -14,7 +14,6 @@ use crate::{
     numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id},
 };
 use egglog_concurrency::{NotificationList, ResettableOnceLock};
-use egglog_reports::RuleSetReport;
 use rayon::prelude::*;
 use smallvec::SmallVec;
 use thiserror::Error;
@@ -72,29 +71,6 @@ impl TableId {
 }
 
 define_id!(pub(crate) ActionId, u32, "an identifier picking out the RHS of a rule");
-
-/// Result of searching one rule once and conditionally applying its head to
-/// the bindings captured by that search.
-#[derive(Debug)]
-pub enum GuardedRuleSetRunOutcome {
-    Applied {
-        observed_matches: usize,
-        report: RuleSetReport,
-    },
-    MatchCountMismatch {
-        expected_matches: usize,
-        observed_matches: usize,
-    },
-}
-
-/// Invalid input to guarded single-rule execution.
-#[derive(Debug, Error)]
-pub enum GuardedRuleSetRunError {
-    #[error("guarded rule execution requires at most one executable plan, got {plan_count}")]
-    MultipleExecutablePlans { plan_count: usize },
-    #[error("guarded rule execution cannot preserve exact causal match witnesses")]
-    CausalReceiptWitnessUnsupported,
-}
 
 /// One fully grounded invocation of an already compiled rule tape.
 #[derive(Clone, Debug)]

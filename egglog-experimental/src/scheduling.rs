@@ -2,9 +2,11 @@
 //!
 //! `run-schedule` takes one or more *schedule expressions* and runs them in
 //! order against the e-graph, returning the combined [`RunReport`] (plus any
-//! per-command outputs such as `print-size` results). It is registered as a
-//! user-defined command by [`new_experimental_egraph`](crate::new_experimental_egraph)
-//! and is the experimental counterpart to core egglog's built-in `run-schedule`.
+//! per-command outputs such as `print-size` results). It is installed by
+//! [`new_experimental_egraph`](crate::new_experimental_egraph) as the
+//! experimental counterpart to core egglog's built-in `run-schedule`. A
+//! raw-syntax macro keeps core list-form `run-rule` leaves intact and routes all
+//! other leaves to the extended executor.
 //!
 //! # Schedule expressions
 //!
@@ -53,7 +55,7 @@ use std::{collections::HashMap, sync::Mutex};
 
 use egglog::{
     CausalScheduleContext, CommandOutput, UserDefinedCommand,
-    ast::{Command, Expr, Fact, Literal, ParseError, Parser},
+    ast::{Command, Expr, Fact, Literal, Macro, ParseError, Parser, RunRuleConfig, Schedule, Sexp},
     prelude::Span,
     scheduler::{Scheduler, SchedulerId},
     span,
@@ -62,6 +64,140 @@ use egglog_reports::RunReport;
 use lazy_static::lazy_static;
 
 type PermanentSchedulerState = HashMap<String, SchedulerId>;
+
+pub(crate) const EXTENDED_RUN_SCHEDULE_COMMAND: &str = "__experimental-run-schedule";
+const EXTENDED_RUN_SCHEDULE_CAPABILITY: &str = "@experimental-run-schedule-capability";
+const GROUNDED_RUN_RULE_LEAF: &str = "__experimental-grounded-run-rule";
+const GROUNDED_RUN_RULE_INVOCATION: &str = "__experimental-grounded-run-rule-invocation";
+const GROUNDED_RUN_RULE_BINDING: &str = "__experimental-grounded-run-rule-binding";
+
+/// Parse the public `run-schedule` surface before user-command arguments are
+/// forced through [`Expr`]. List-form grounded `run-rule` contains a string at
+/// the head of each invocation and therefore is schedule syntax, not expression
+/// syntax. All other leaves retain the experimental executor unchanged.
+pub struct RunExtendedScheduleMacro;
+
+impl RunExtendedScheduleMacro {
+    /// Replace list-only schedule syntax with an expression-shaped marker so
+    /// the complete extended schedule remains one user command. Calling the
+    /// core parser first keeps one authoritative `run-rule` grammar.
+    fn lower_grounded_run_rule(sexp: &Sexp, parser: &mut Parser) -> Result<Sexp, ParseError> {
+        if matches!(
+            sexp,
+            Sexp::List(items, _)
+                if matches!(
+                    items.first(),
+                    Some(Sexp::Atom(head, _))
+                        if matches!(
+                            head.as_str(),
+                            GROUNDED_RUN_RULE_LEAF
+                                | GROUNDED_RUN_RULE_INVOCATION
+                                | GROUNDED_RUN_RULE_BINDING
+                        )
+                )
+        ) {
+            return Err(ParseError(
+                sexp.span(),
+                "internal grounded run-rule markers are not source syntax".into(),
+            ));
+        }
+        let is_run_rule = matches!(
+            sexp,
+            Sexp::List(items, _)
+                if matches!(items.first(), Some(Sexp::Atom(head, _)) if head == "run-rule")
+        );
+        if is_run_rule {
+            let Schedule::RunRule(_, _) = parser.parse_schedule(sexp)? else {
+                unreachable!("the run-rule head must parse as a grounded schedule")
+            };
+            let (_, invocations, span) = sexp.expect_call("run-rule schedule")?;
+            let mut lowered = Vec::with_capacity(invocations.len() + 1);
+            lowered.push(Sexp::Atom(GROUNDED_RUN_RULE_LEAF.into(), span.clone()));
+            for invocation in invocations {
+                let invocation_span = invocation.span();
+                let [rule, bindings] = invocation.expect_list("run-rule invocation")? else {
+                    unreachable!("core run-rule parsing already validated each invocation")
+                };
+                let mut lowered_invocation = vec![
+                    Sexp::Atom(GROUNDED_RUN_RULE_INVOCATION.into(), invocation_span.clone()),
+                    Self::lower_grounded_run_rule(rule, parser)?,
+                ];
+                for binding in bindings.expect_list("run-rule bindings")? {
+                    let binding_span = binding.span();
+                    let [variable, value] = binding.expect_list("run-rule binding")? else {
+                        unreachable!("core run-rule parsing already validated each binding")
+                    };
+                    lowered_invocation.push(Sexp::List(
+                        vec![
+                            Sexp::Atom(GROUNDED_RUN_RULE_BINDING.into(), binding_span.clone()),
+                            Self::lower_grounded_run_rule(variable, parser)?,
+                            Self::lower_grounded_run_rule(value, parser)?,
+                        ],
+                        binding_span,
+                    ));
+                }
+                lowered.push(Sexp::List(lowered_invocation, invocation_span));
+            }
+            return Ok(Sexp::List(lowered, span));
+        }
+
+        match sexp {
+            Sexp::List(items, span) => Ok(Sexp::List(
+                items
+                    .iter()
+                    .map(|item| Self::lower_grounded_run_rule(item, parser))
+                    .collect::<Result<_, _>>()?,
+                span.clone(),
+            )),
+            Sexp::Literal(literal, span) => Ok(Sexp::Literal(literal.clone(), span.clone())),
+            Sexp::Atom(atom, span) => Ok(Sexp::Atom(atom.clone(), span.clone())),
+        }
+    }
+}
+
+impl Macro<Vec<Command>> for RunExtendedScheduleMacro {
+    fn name(&self) -> &str {
+        "run-schedule"
+    }
+
+    fn parse(
+        &self,
+        args: &[Sexp],
+        span: Span,
+        parser: &mut Parser,
+    ) -> Result<Vec<Command>, ParseError> {
+        let mut lowered_args = Vec::with_capacity(args.len() + 1);
+        // `@` is the parser's reserved internal prefix, so source text cannot
+        // forge this marker or invoke the private executor directly.
+        lowered_args.push(Expr::Var(
+            span.clone(),
+            EXTENDED_RUN_SCHEDULE_CAPABILITY.into(),
+        ));
+        for arg in args {
+            let lowered = Self::lower_grounded_run_rule(arg, parser)?;
+            lowered_args.push(parser.parse_expr(&lowered)?);
+        }
+        Ok(vec![Command::UserDefined(
+            span,
+            EXTENDED_RUN_SCHEDULE_COMMAND.into(),
+            lowered_args,
+        )])
+    }
+}
+
+fn authorized_extended_schedule_args(args: &[Expr]) -> Result<&[Expr], egglog::Error> {
+    match args.split_first() {
+        Some((Expr::Var(_, capability), args))
+            if capability == EXTENDED_RUN_SCHEDULE_CAPABILITY =>
+        {
+            Ok(args)
+        }
+        _ => Err(egglog::Error::ParseError(ParseError(
+            args.first().map_or_else(|| span!(), Expr::span),
+            "the private extended-schedule executor is not source syntax".into(),
+        ))),
+    }
+}
 
 /// The `run-schedule` user-defined command.
 ///
@@ -310,16 +446,42 @@ impl ScheduleState {
                 }
                 Ok((vec![], RunReport::default()))
             }
-            // The experimental scheduler shadows core `run-schedule` in
-            // ordinary mode. Forward the one replay-facing leaf through a
-            // fresh core parser, then execute its AST directly so the rendered
-            // causal artifact has the same semantics without recursive
-            // interception or a production text round-trip.
-            "run-rule" => {
-                let mut parser = Parser::default();
-                let program =
-                    parser.get_program_from_string(None, &format!("(run-schedule {arg})"))?;
-                let outputs = egraph.run_program(program)?;
+            GROUNDED_RUN_RULE_LEAF => {
+                let mut configs = Vec::with_capacity(exprs.len());
+                for invocation in exprs {
+                    let Expr::Call(_, head, fields) = invocation else {
+                        return err();
+                    };
+                    if head != GROUNDED_RUN_RULE_INVOCATION {
+                        return err();
+                    }
+                    let [Expr::Lit(_, Literal::String(rule)), bindings @ ..] = fields.as_slice()
+                    else {
+                        return err();
+                    };
+                    let mut resolved_bindings = Vec::with_capacity(bindings.len());
+                    for binding in bindings {
+                        let Expr::Call(_, head, fields) = binding else {
+                            return err();
+                        };
+                        if head != GROUNDED_RUN_RULE_BINDING {
+                            return err();
+                        }
+                        let [Expr::Var(_, variable), value] = fields.as_slice() else {
+                            return err();
+                        };
+                        resolved_bindings.push((variable.clone(), value.clone()));
+                    }
+                    configs.push(RunRuleConfig {
+                        rule: rule.clone(),
+                        bindings: resolved_bindings,
+                    });
+                }
+
+                let outputs = egraph.run_program(vec![Command::RunSchedule(Schedule::RunRule(
+                    arg.span(),
+                    configs,
+                ))])?;
                 let mut report = RunReport::default();
                 let mut command_outputs = Vec::new();
                 for output in outputs {
@@ -346,7 +508,8 @@ impl ScheduleState {
                     | "delete"
                     | "subsume"
                     | "panic"
-            ) || egraph.has_command(head) =>
+            ) || head == "run-schedule"
+                || egraph.has_command(head) =>
             {
                 let outputs = egraph.parse_and_run_program(None, &format!("{}", arg))?;
                 let mut report = RunReport::default();
@@ -470,6 +633,7 @@ impl UserDefinedCommand for RunExtendedSchedule {
         egraph: &mut egglog::EGraph,
         args: &[Expr],
     ) -> Result<Vec<CommandOutput>, egglog::Error> {
+        let args = authorized_extended_schedule_args(args)?;
         let mut schedule = ScheduleState::new();
         let mut report = RunReport::default();
         let mut outputs: Vec<CommandOutput> = Vec::new();
@@ -488,6 +652,7 @@ impl UserDefinedCommand for RunExtendedSchedule {
         args: &[Expr],
     ) -> Option<Result<Vec<CommandOutput>, egglog::Error>> {
         let result = (|| {
+            let args = authorized_extended_schedule_args(args)?;
             args.iter().try_for_each(ScheduleState::validate_causal)?;
             let mut report = RunReport::default();
             for arg in args {

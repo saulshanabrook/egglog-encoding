@@ -65,6 +65,7 @@ fn validate_merge_expr(merge: &MergeFn, n_vals: usize, name: &str, available_slo
             "merge for `{name}` references let slot {slot} before it is bound"
         ),
         MergeFn::Primitive(_, arguments)
+        | MergeFn::InputChoicePrimitive(_, arguments)
         | MergeFn::Function(_, arguments)
         | MergeFn::Lookup(_, arguments) => {
             for argument in arguments {
@@ -85,7 +86,9 @@ pub(super) fn visit_merge_read_dependencies(merge: &MergeFn, visit: &mut impl Fn
                 visit_merge_read_dependencies(argument, visit);
             }
         }
-        MergeFn::Primitive(_, arguments) | MergeFn::Columns(arguments) => {
+        MergeFn::Primitive(_, arguments)
+        | MergeFn::InputChoicePrimitive(_, arguments)
+        | MergeFn::Columns(arguments) => {
             for argument in arguments {
                 visit_merge_read_dependencies(argument, visit);
             }

@@ -11,8 +11,8 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::{Result, bail};
 use egglog_bridge::{
-    ActionRegistry, CheckReplayPremise, CheckReplaySpec, EGraph, GuardedRuleRunResult, QueryEntry,
-    RuleBuilder, RuleReplayBinding, RuleReplaySpec,
+    ActionRegistry, CheckReplayPremise, CheckReplaySpec, EGraph, QueryEntry, RuleBuilder,
+    RuleReplayBinding, RuleReplaySpec,
 };
 
 use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
@@ -20,9 +20,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use crate::{
     Backend, BaseValues, CausalCheckPremise, CausalRuleBinding, ColumnTy, ContainerValues,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    FunctionReplaySpec, GuardedRuleRun, GuardedRuleRunOutcome, IterationReport, ReceiptSnapshot,
-    ReplayLiteral, ReplaySortId, ReplayTerm, ReplayTermId, ReportLevel, RuleActionCall,
-    RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry, Value,
+    FunctionReplaySpec, IterationReport, ReceiptSnapshot, ReplayLiteral, ReplaySortId, ReplayTerm,
+    ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
+    RuleValue, RuleVar, ScanEntry, Value,
 };
 
 fn rule_entry(
@@ -354,27 +354,6 @@ impl Backend for EGraph {
 
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
         EGraph::run_rules(self, run.rules)
-    }
-
-    fn run_rule_guarded(&mut self, run: GuardedRuleRun) -> Result<GuardedRuleRunOutcome> {
-        Ok(
-            match EGraph::run_rule_guarded(self, run.rule, run.expected_matches)? {
-                GuardedRuleRunResult::Applied {
-                    observed_matches,
-                    report,
-                } => GuardedRuleRunOutcome::Applied {
-                    observed_matches,
-                    report,
-                },
-                GuardedRuleRunResult::MatchCountMismatch {
-                    expected_matches,
-                    observed_matches,
-                } => GuardedRuleRunOutcome::MatchCountMismatch {
-                    expected_matches,
-                    observed_matches,
-                },
-            },
-        )
     }
 
     fn flush_updates(&mut self) -> bool {
