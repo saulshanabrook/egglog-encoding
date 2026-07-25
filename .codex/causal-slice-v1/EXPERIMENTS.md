@@ -2359,3 +2359,25 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   is clean, repository-wide obsolete-symbol search is empty, and
   `git diff --check` passes. After falsifying and repairing both schedule
   splitting and marker forgery, the independent final review returned GO.
+
+## 2026-07-24: complete validation after list-only cleanup
+
+- `make proof-tests` passed both proof file targets: 192/192 core file cases
+  and 8/8 experimental file cases. This was run before the complete workspace
+  check and was not repeated afterward.
+- The first `make check` falsified an old fixture assumption: list-form
+  `run-rule` evaluated bindings through the lookup-only checked-expression
+  path, while `tests/run-rule.egg` still named ordinary `let` globals. Those
+  globals are zero-argument functions and intentionally are not checked
+  aliases. The fixture now inserts its source constructors normally and names
+  the existing graph values through `$__causal_replay_*` `let-check` aliases,
+  matching the emitted causal artifact. Supporting ordinary globals would add
+  a second Fiat-backed reference path and was rejected after independent
+  semantic review.
+- The eight focused `run_rule` file variants passed after the repair, including
+  proof-testing and desugar proof-testing. The complete restarted `make check`
+  then passed formatting, both Clippy configurations, 171 Python tests, the
+  full Rust workspace and doctest suite, and the DD timing-summary test.
+- Clippy-only cleanup in the cold occurrence projector groups invariant walk
+  arguments into one local context, collapses a nested conditional, and avoids
+  cloning a `Copy` test value. It changes no receipt or slice behavior.

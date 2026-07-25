@@ -6011,12 +6011,16 @@ impl<'a> CausalReceiptView<'a> {
         position: HistoryPosition,
         depth: usize,
     ) -> Result<RawEqualitySupport, ReceiptViewError> {
-        fn walk(
-            view: &mut CausalReceiptView<'_>,
+        struct WalkContext {
             result_sort: ReplaySortId,
-            term: ReplayTermId,
             desired_raw: Value,
             position: HistoryPosition,
+        }
+
+        fn walk(
+            view: &mut CausalReceiptView<'_>,
+            context: &WalkContext,
+            term: ReplayTermId,
             depth: usize,
             visited: &mut HashSet<ReplayTermId>,
             supports: &mut Vec<RawEqualitySupport>,
@@ -6032,42 +6036,37 @@ impl<'a> CausalReceiptView<'a> {
             let ReplayTerm::Call { sort, op, children } = view.replay_term(term)? else {
                 return Ok(());
             };
-            if sort == result_sort && view.is_registered_constructor_call(sort, op) {
-                if let Some(support) = view.explain_term_occurrence_at(
+            if sort == context.result_sort
+                && view.is_registered_constructor_call(sort, op)
+                && let Some(support) = view.explain_term_occurrence_at(
                     term,
                     sort,
-                    desired_raw,
-                    position,
+                    context.desired_raw,
+                    context.position,
                     FactId::MISSING,
                     depth + 1,
-                )? {
-                    supports.push(support);
-                }
+                )?
+            {
+                supports.push(support);
             }
             for child in children.iter().copied() {
-                walk(
-                    view,
-                    result_sort,
-                    child,
-                    desired_raw,
-                    position,
-                    depth + 1,
-                    visited,
-                    supports,
-                )?;
+                walk(view, context, child, depth + 1, visited, supports)?;
             }
             Ok(())
         }
 
         let mut visited = HashSet::default();
         let mut supports = Vec::new();
+        let context = WalkContext {
+            result_sort,
+            desired_raw,
+            position,
+        };
         for child in children.iter().copied() {
             walk(
                 self,
-                result_sort,
+                &context,
                 child,
-                desired_raw,
-                position,
                 depth + 1,
                 &mut visited,
                 &mut supports,
@@ -10337,7 +10336,7 @@ mod tests {
                 fact,
                 EqualityEdgeCount::new(1),
                 HistoryPosition::new(9),
-                &[pair.clone()],
+                &[pair],
             )
         };
 

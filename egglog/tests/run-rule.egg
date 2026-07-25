@@ -10,24 +10,33 @@
       ((Fired x))
       :name "mark-wrapped")
 
-(let $a (A))
-(let $b (B))
-(let $wrapped-a (Wrap $a))
-(let $wrapped-b (Wrap $b))
+(A)
+(B)
+(Wrap (A))
+(Wrap (B))
+
+;; Grounded replay names existing values through read-only checked aliases.
+(let-check $__causal_replay_a (A))
+(let-check $__causal_replay_b (B))
+(let-check $__causal_replay_wrapped_a (Wrap $__causal_replay_a))
+(let-check $__causal_replay_wrapped_b (Wrap $__causal_replay_b))
 
 ;; Each list entry completely grounds one rule invocation. The whole list is
 ;; one run-rule schedule leaf, and every grounding implicitly expects one match.
 (run-schedule
   (run-rule
-    ("mark-wrapped" ((root $wrapped-a) (x $a)))))
-(check (Fired $a))
-(fail (check (Fired $b)))
+    ("mark-wrapped"
+      ((root $__causal_replay_wrapped_a) (x $__causal_replay_a)))))
+(check (Fired (A)))
+(fail (check (Fired (B))))
 
 ;; A single list can retain multiple grounded invocations.
 (run-schedule
   (run-rule
-    ("mark-wrapped" ((root $wrapped-a) (x $a)))
-    ("mark-wrapped" ((root $wrapped-b) (x $b)))))
+    ("mark-wrapped"
+      ((root $__causal_replay_wrapped_a) (x $__causal_replay_a)))
+    ("mark-wrapped"
+      ((root $__causal_replay_wrapped_b) (x $__causal_replay_b)))))
 
-(check (Fired $a))
-(check (Fired $b))
+(check (Fired (A)))
+(check (Fired (B)))
