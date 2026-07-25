@@ -2424,3 +2424,46 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   proof subset was not redundantly rerun after the workspace check. Independent
   review returned GO on boundary-local identity, child-before-parent alias
   ordering, cross-wave recreation, and incremental proof-type synchronization.
+
+## 2026-07-24: final all-five causal-proofs acceptance
+
+- Frozen implementation commit `5de2fa830db1` ran through the public harness
+  with the normal append-only `.reports.jsonl`, main backend, `-j 1`, and a
+  common 120-second timeout. The one-round screen collected 10/10 successful
+  observations and showed every file faster. The six-round command reused
+  those ten cache rows and collected the remaining 50/50 successfully; no run
+  was forced or added for significance.
+- Same-binary six-round results (`causal-proofs / proofs`, 95% intervals):
+
+  | Workload | Wall ratio | RSS ratio |
+  | --- | ---: | ---: |
+  | Math | 0.231-0.241x | 0.404-0.409x |
+  | Eggcc | 0.322-0.332x | 0.481-0.493x |
+  | Pointer | 0.0615-0.0640x | 0.158-0.160x |
+  | Hardboiled | 0.416-0.431x | 0.389-0.403x |
+  | Luminal | 0.0349-0.0357x | 0.0821-0.0877x |
+
+  Suite-total wall ratio was 0.134-0.137x. Every per-file wall interval is
+  below 1 and every RSS interval is below 0.5, satisfying the final gate.
+- One logged direct run per workload records the causal cost model and retained
+  artifact size:
+
+  | Workload | Capture | Slice | Proof replay | Facts / matches / equalities / removals / waves / aliases |
+  | --- | ---: | ---: | ---: | --- |
+  | Math | 908.6ms | 760.1ms | 9.9ms | 57 / 12 / 0 / 0 / 11 / 46 |
+  | Eggcc | 1.387s | 28.5ms | 222.3ms | 5 / 1 / 0 / 0 / 1 / 0 |
+  | Pointer | 6.1ms | 0.59ms | 9.7ms | 3 / 1 / 1 / 0 / 1 / 0 |
+  | Hardboiled | 167.2ms | 5.8ms | 71.3ms | 130 / 21 / 5 / 0 / 14 / 121 |
+  | Luminal | 491.4ms | 95.2ms | 70.5ms | 8 / 1 / 0 / 0 / 1 / 5 |
+
+  All checks passed unchanged; removal count is zero in the retained cones,
+  even though Luminal's exact removal recording/interference machinery was
+  exercised during native capture.
+- The requested supplemental one-round comparison against pre-experiment
+  `4940be37429e` full proofs also passed all ten endpoints (five fresh baseline,
+  five cached candidate). Its suite-total wall ratio was 0.137x; per-file
+  ratios ranged from Luminal 0.0348x to Hardboiled 0.435x. This joint comparison
+  is recorded as supplemental because target and treatment both differ.
+- The mission gate is complete. Recorder contingencies remain archived in
+  `RESEARCH-recorder-cost-2026-07-24.md`; neither the barrier-local journal nor
+  annotation-only contract is triggered by the measured end-to-end result.
