@@ -927,6 +927,13 @@ fn build_owned(
     let mut waves = BTreeMap::<u64, (u64, Vec<ReplayFiring>)>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
     let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
+    // A replay boundary observes one immutable pre-wave database. Repeated
+    // occurrences of the same structural receipt term at that boundary must
+    // therefore resolve to the same runtime value and need only one checked
+    // alias. The wave remains part of the key: identical syntax before and
+    // after deletion/recreation denotes distinct historical occurrences.
+    let mut canonical_call_by_boundary = HashMap::<(u64, ReplayTermId), ReplayTermRef>::default();
+    let mut canonical_term = HashMap::<ReplayTermRef, ReplayTermRef>::default();
     let mut wave_positions = BTreeMap::<u64, u64>::new();
     for (_, _, wave, position) in &matches {
         wave_positions
@@ -980,11 +987,6 @@ fn build_owned(
                     id.get()
                 )));
             }
-            bindings.push(ReplayBinding {
-                variable: variable.clone(),
-                sort: expected_sort.clone(),
-                term,
-            });
             let new_calls = terms.take_new_calls();
             if new_calls.len() != alias_windows.len() {
                 return Err(CausalReplayError::Invalid(format!(
@@ -1004,14 +1006,22 @@ fn build_owned(
                     )));
                 }
                 let window = *window;
-                let dependency_wave = match &terms.nodes[call.index()] {
+                let canonical_children = match &terms.nodes[call.index()] {
                     OwnedReplayTerm::Literal { .. } => unreachable!("Call queue contained literal"),
                     OwnedReplayTerm::Call { children, .. } => children
                         .iter()
-                        .filter_map(|child| alias_wave_by_term.get(child).copied())
-                        .max()
-                        .unwrap_or(0),
+                        .map(|child| canonical_term.get(child).copied().unwrap_or(*child))
+                        .collect::<Vec<_>>(),
                 };
+                let dependency_wave = canonical_children
+                    .iter()
+                    .filter_map(|child| alias_wave_by_term.get(child).copied())
+                    .max()
+                    .unwrap_or(0);
+                let OwnedReplayTerm::Call { children, .. } = &mut terms.nodes[call.index()] else {
+                    unreachable!("Call queue contained literal")
+                };
+                *children = canonical_children.into_boxed_slice();
                 let alias_wave = wave_positions
                     .iter()
                     .find_map(|(candidate_wave, candidate_position)| {
@@ -1027,6 +1037,21 @@ fn build_owned(
                             source_call.get()
                         ))
                     })?;
+                if let Some(canonical) = canonical_call_by_boundary
+                    .get(&(alias_wave, source_call))
+                    .copied()
+                {
+                    if terms.nodes[canonical.index()] != terms.nodes[call.index()] {
+                        return Err(CausalReplayError::Invalid(format!(
+                            "replay term {} has inconsistent structure at wave {alias_wave}",
+                            source_call.get()
+                        )));
+                    }
+                    canonical_term.insert(call, canonical);
+                    alias_wave_by_term.insert(call, alias_wave);
+                    continue;
+                }
+                canonical_call_by_boundary.insert((alias_wave, source_call), call);
                 aliases_by_wave
                     .entry(alias_wave)
                     .or_default()
@@ -1037,6 +1062,11 @@ fn build_owned(
                 alias_wave_by_term.insert(call, alias_wave);
                 next_alias += 1;
             }
+            bindings.push(ReplayBinding {
+                variable: variable.clone(),
+                sort: expected_sort.clone(),
+                term: canonical_term.get(&term).copied().unwrap_or(term),
+            });
         }
         let wave_entry = waves.entry(wave).or_insert((position, Vec::new()));
         wave_entry.0 = wave_entry.0.min(position);
@@ -1290,6 +1320,47 @@ mod tests {
             CausalReplayIr::render_commands(&ir.to_commands().unwrap()).unwrap(),
             "the inspectable artifact must be a deterministic rendering of the executed AST"
         );
+    }
+
+    #[test]
+    fn owned_ir_reuses_structural_aliases_at_one_replay_boundary() {
+        let mut egraph = EGraph::default();
+        serial_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64))
+                 (relation Seed (E))
+                 (relation Left (E))
+                 (relation Right (E))
+                 (relation Out ())
+                 (Seed (A 1))
+                 (rule ((Seed x)) ((Left x)) :name \"left\")
+                 (rule ((Seed x)) ((Right x)) :name \"right\")
+                 (rule ((Left x) (Right x)) ((Out)) :name \"join\")
+                 (run 2)
+                 (check (Out))",
+            )
+            .unwrap();
+
+        let slice = slice_all_checks(&egraph).unwrap();
+        let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
+        assert_eq!(ir.stats.firings, 3);
+        assert_eq!(
+            ir.stats.aliases, 1,
+            "all three selected matches read the same structural term at one immutable boundary"
+        );
+        let commands = ir.to_commands().unwrap();
+        let rendered = CausalReplayIr::render_commands(&commands).unwrap();
+        assert_eq!(rendered.matches("(let-check ").count(), 1, "{rendered}");
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        serial_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
     }
 
     #[test]

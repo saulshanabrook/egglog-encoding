@@ -4156,45 +4156,52 @@ impl EGraph {
         command: Command,
     ) -> Result<Vec<ResolvedNCommand>, Error> {
         let desugared = desugar_command(command, &mut self.parser, self.proof_state.proof_testing)?;
-        let checked_alias_types = self
-            .checked_alias_types
-            .iter()
-            .map(|(name, alias)| {
-                (
-                    name.clone(),
-                    alias.declaration_span.clone(),
-                    alias.sort.name().to_owned(),
-                    alias.closed_expr.clone(),
-                )
-            })
-            .collect::<Vec<_>>();
+        let checked_alias_types = &self.checked_alias_types;
         if let Some(original_typechecking) = self.proof_state.original_typechecking.as_mut() {
             // Values are backend-local. Only mirror the successfully published
-            // alias types needed to resolve this next source command. Rebind
-            // each sort by name so even the type object comes from the source
-            // typechecking graph.
-            original_typechecking.checked_alias_types = checked_alias_types
-                .into_iter()
-                .map(|(name, declaration_span, sort_name, closed_expr)| {
-                    let sort = original_typechecking
-                        .type_info
-                        .get_sort_by_name(&sort_name)
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "checked alias sort `{sort_name}` missing from source typechecker"
-                            )
-                        })
-                        .clone();
-                    (
-                        name,
-                        CheckedAliasType {
-                            declaration_span,
-                            sort,
-                            closed_expr,
-                        },
-                    )
-                })
-                .collect();
+            // alias types needed to resolve this next source command. Checked
+            // aliases are immutable and append-only between push/pop snapshots,
+            // so rebuilding and cloning the complete prefix for every alias is
+            // quadratic in a replay program. Copy only the newly published
+            // suffix, rebinding each sort by name so even the type object comes
+            // from the source typechecking graph.
+            let synchronized = original_typechecking.checked_alias_types.len();
+            if synchronized > checked_alias_types.len()
+                || (synchronized > 0
+                    && original_typechecking
+                        .checked_alias_types
+                        .get_index(synchronized - 1)
+                        .map(|(name, _)| name)
+                        != checked_alias_types
+                            .get_index(synchronized - 1)
+                            .map(|(name, _)| name))
+            {
+                return Err(Error::BackendError(
+                    "proof typechecker checked-alias prefix diverged from runtime state".into(),
+                ));
+            }
+            for index in synchronized..checked_alias_types.len() {
+                let (name, alias) = checked_alias_types
+                    .get_index(index)
+                    .expect("checked-alias suffix index disappeared");
+                let sort_name = alias.sort.name();
+                let sort = original_typechecking
+                    .type_info
+                    .get_sort_by_name(sort_name)
+                    .unwrap_or_else(|| {
+                        panic!("checked alias sort `{sort_name}` missing from source typechecker")
+                    })
+                    .clone();
+                let previous = original_typechecking.checked_alias_types.insert(
+                    name.clone(),
+                    CheckedAliasType {
+                        declaration_span: alias.declaration_span.clone(),
+                        sort,
+                        closed_expr: alias.closed_expr.clone(),
+                    },
+                );
+                debug_assert!(previous.is_none(), "checked alias was synchronized twice");
+            }
             // Typecheck using the original egraph
             // TODO this is ugly- we don't need an entire e-graph just for type information.
             let typechecked = original_typechecking.typecheck_program(&desugared)?;

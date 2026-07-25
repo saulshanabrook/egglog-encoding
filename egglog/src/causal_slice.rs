@@ -1713,6 +1713,10 @@ mod tests {
             aliases_between_pair_and_consume >= 1,
             "parent occurrence must be named after its creator"
         );
+        assert!(
+            rendered.matches("(A 1) :sort E").count() >= 2,
+            "identical syntax before and after recreation must keep distinct aliases:\n{rendered}"
+        );
         drop(egraph);
 
         let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();

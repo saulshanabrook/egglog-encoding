@@ -2381,3 +2381,46 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Clippy-only cleanup in the cold occurrence projector groups invariant walk
   arguments into one local context, collapses a nested conditional, and avoids
   cloning a `Copy` test value. It changes no receipt or slice behavior.
+
+## 2026-07-24: first end-to-end benchmark and bounded Hardboiled repair
+
+- `make benchmark-smoke` passed through the public runner using its temporary
+  report. The first same-binary, one-round public comparison used
+  `./bench.py --target . --treatment causal-proofs --compare-target .
+  --compare-treatment proofs --rounds 1 --timeout-sec 120 --detail phases`
+  and the normal append-only `.reports.jsonl` at `93100a9`. All ten runs and
+  unchanged checks passed. Causal/full-proof wall ratios were Math 0.256x,
+  Eggcc 0.322x, Pointer 0.063x, Hardboiled 2.42x, and Luminal 0.035x; the suite
+  total was 0.177x. Hardboiled was the sole loss, so the planned final six
+  rounds were held until its bounded two-attempt diagnosis completed.
+- A direct Hardboiled split localized the loss to proof replay: about 164ms
+  capture, 6.6ms slice construction, and 1.25s replay for only 130 facts, 21
+  matches, 5 equalities, and 14 waves. `./bench.py profile
+  egglog/tests/hardboiled_conv1d_32.egg --target . --treatment causal-proofs
+  --profile-seconds 10 --top 30 --format markdown` attributed the application
+  CPU to persistent alias maps, hashing, and expression clone/drop; grounded
+  head execution itself was negligible.
+- Bounded attempt one made the proof typechecker's checked-alias mirror
+  incremental. Checked aliases are immutable and append-only between
+  snapshots, so each command now copies only the newly published suffix after
+  validating the shared prefix. Focused `let_check_` and `run_rule` tests
+  passed. Hardboiled replay fell to about 916ms but still lost, falsifying this
+  as a sufficient lever.
+- Artifact census then found 1,564 top-level aliases but only 121 distinct
+  structural calls; 1,443 duplicates occurred at the same immutable pre-wave
+  boundary. Bounded attempt two canonicalizes only `(wave, ReplayTermId)`.
+  Cross-wave syntax remains occurrence-specific, so delete/recreate identity
+  is unchanged. A new three-firing canary emits one shared alias, while the
+  existing four-wave delete/recreate canary now explicitly requires two
+  separate `(A 1)` aliases and still passes strict proof testing.
+- The resulting Hardboiled artifact has 121 aliases, 311 lines, and 27,374
+  bytes. Its unchanged proof replay takes about 72ms; three complete direct
+  causal-proof runs each took 0.23s wall, below the earlier 0.573s full-proof
+  observation. This exhausts the planned two one-variable optimization cycles.
+  The public all-five comparison remains the acceptance measurement.
+- The complete post-repair `make check` passed formatting, both Clippy
+  configurations, 171 Python tests, the full Rust workspace and doctest suite,
+  and the DD timing-summary test. Per the validation order, the already-green
+  proof subset was not redundantly rerun after the workspace check. Independent
+  review returned GO on boundary-local identity, child-before-parent alias
+  ordering, cross-wave recreation, and incremental proof-type synchronization.
