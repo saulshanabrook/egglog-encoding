@@ -2948,6 +2948,11 @@ struct StructuralOccurrenceQuery {
     excluded_fact: FactId,
 }
 
+enum ObservedEqualitySupport {
+    Support(RawEqualitySupport),
+    Missing(ReplayTermId),
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CausalReceiptViewCounters {
     pub equality_index_builds: u64,
@@ -3919,7 +3924,82 @@ impl<'a> CausalReceiptView<'a> {
         as_of: EqualityEdgeCount,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        match self.observed_equality_support(left, right, as_of, position)? {
+            ObservedEqualitySupport::Support(support) => Ok(support),
+            ObservedEqualitySupport::Missing(term) => Err(ReceiptViewError::Invalid(format!(
+                "endpoint term {term:?} has no supported historical native occurrence"
+            ))),
+        }
+    }
+
+    /// Return exact endpoint equality support when both source terms own a
+    /// historical native occurrence. A structurally available checked term
+    /// may deliberately have no standalone occurrence; callers that already
+    /// retain anchored availability can distinguish that case from malformed
+    /// receipt history without weakening other validation errors.
+    pub fn explain_equality_support_if_observed_at(
+        &mut self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+        match self.observed_equality_support(left, right, as_of, position)? {
+            ObservedEqualitySupport::Support(support) => Ok(Some(support)),
+            ObservedEqualitySupport::Missing(_) => Ok(None),
+        }
+    }
+
+    fn observed_equality_support(
+        &mut self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<ObservedEqualitySupport, ReceiptViewError> {
         self.validate_equality_cutoff(as_of, position)?;
+        self.validate_equality_endpoints(left, right)?;
+        let Some(left_support) =
+            self.explain_endpoint_term_occurrence_if_observed(left, position)?
+        else {
+            return Ok(ObservedEqualitySupport::Missing(left.term));
+        };
+        let Some(right_support) =
+            self.explain_endpoint_term_occurrence_if_observed(right, position)?
+        else {
+            return Ok(ObservedEqualitySupport::Missing(right.term));
+        };
+        let raw_support = if left.raw == right.raw {
+            RawEqualitySupport {
+                applied: Box::new([]),
+                facts: Box::new([]),
+                causes: Box::new([]),
+                rekeys: Box::new([]),
+            }
+        } else {
+            self.explain_raw_equality_support_at(
+                RawEqualityEndpoint {
+                    sort: left.sort,
+                    raw: left.raw,
+                },
+                RawEqualityEndpoint {
+                    sort: right.sort,
+                    raw: right.raw,
+                },
+                as_of,
+                position,
+            )?
+        };
+        Ok(ObservedEqualitySupport::Support(
+            combine_raw_equality_support([left_support, right_support, raw_support]),
+        ))
+    }
+
+    fn validate_equality_endpoints(
+        &self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+    ) -> Result<(), ReceiptViewError> {
         if left.term.is_missing() || right.term.is_missing() {
             return Err(ReceiptViewError::Invalid(
                 "cannot explain equality with a missing ReplayTermId".into(),
@@ -3943,34 +4023,7 @@ impl<'a> CausalReceiptView<'a> {
                 "cannot explain equality across logical sorts".into(),
             ));
         }
-        let left_support = self.explain_endpoint_term_occurrence(left, position)?;
-        let right_support = self.explain_endpoint_term_occurrence(right, position)?;
-        let raw_support = if left.raw == right.raw {
-            RawEqualitySupport {
-                applied: Box::new([]),
-                facts: Box::new([]),
-                causes: Box::new([]),
-                rekeys: Box::new([]),
-            }
-        } else {
-            self.explain_raw_equality_support_at(
-                RawEqualityEndpoint {
-                    sort: left.sort,
-                    raw: left.raw,
-                },
-                RawEqualityEndpoint {
-                    sort: right.sort,
-                    raw: right.raw,
-                },
-                as_of,
-                position,
-            )?
-        };
-        Ok(combine_raw_equality_support([
-            left_support,
-            right_support,
-            raw_support,
-        ]))
+        Ok(())
     }
 
     fn explain_endpoint_term_occurrence(
@@ -3978,28 +4031,35 @@ impl<'a> CausalReceiptView<'a> {
         endpoint: EqualityEndpoint,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        self.explain_endpoint_term_occurrence_if_observed(endpoint, position)?
+            .ok_or_else(|| {
+                ReceiptViewError::Invalid(format!(
+                    "endpoint term {:?} has no supported historical native occurrence",
+                    endpoint.term
+                ))
+            })
+    }
+
+    fn explain_endpoint_term_occurrence_if_observed(
+        &mut self,
+        endpoint: EqualityEndpoint,
+        position: HistoryPosition,
+    ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
         match self.replay_term(endpoint.term)? {
-            ReplayTerm::Literal { .. } => Ok(RawEqualitySupport {
+            ReplayTerm::Literal { .. } => Ok(Some(RawEqualitySupport {
                 applied: Box::new([]),
                 facts: Box::new([]),
                 causes: Box::new([]),
                 rekeys: Box::new([]),
-            }),
-            ReplayTerm::Call { .. } => self
-                .explain_term_occurrence_at(
-                    endpoint.term,
-                    endpoint.sort,
-                    endpoint.raw,
-                    position,
-                    FactId::MISSING,
-                    0,
-                )?
-                .ok_or_else(|| {
-                    ReceiptViewError::Invalid(format!(
-                        "endpoint term {:?} has no supported historical native occurrence",
-                        endpoint.term
-                    ))
-                }),
+            })),
+            ReplayTerm::Call { .. } => self.explain_term_occurrence_at(
+                endpoint.term,
+                endpoint.sort,
+                endpoint.raw,
+                position,
+                FactId::MISSING,
+                0,
+            ),
         }
     }
 

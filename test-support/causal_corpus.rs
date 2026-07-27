@@ -281,13 +281,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/integer_math.egg"],
-        disposition: Disposition::KnownReplayFailure {
-            diagnostic: "tests/integer_math.egg: (check (= $start-expr $equiv-expr))",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &["core/nested-container-dirty-propagation.egg"],
         disposition: Disposition::KnownReplayFailure {
             diagnostic: "lookup of constructor `p` failed",

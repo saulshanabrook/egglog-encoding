@@ -751,6 +751,14 @@ fn seed_check_root(
                     root.position,
                 )?;
                 enqueue_support(slice, work, exact);
+                if let Some(endpoint_equality) = view.explain_equality_support_if_observed_at(
+                    left_endpoint,
+                    right_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )? {
+                    enqueue_support(slice, work, endpoint_equality);
+                }
                 let left_source = view.explain_fact_endpoint_availability_at(
                     left,
                     left_endpoint,
