@@ -2635,3 +2635,10 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   summary integration test. The restart followed one test-only Clippy cleanup
   (`as_ref()` on an already borrowed premise slice); it receives no production
   reduction credit. The proof subset was not rerun afterward.
+- Final cached benchmark progression completed at six rounds without forcing
+  valid rows. Against frozen `5de2fa8` causal-proofs, every per-file wall upper
+  bound was 1.03x and every RSS upper bound was at most 1.04x. On the final
+  binary, causal-proofs remained faster than full proofs for every workload:
+  Math 0.224-0.237x, Eggcc 0.322-0.330x, Pointer 0.0619-0.0642x,
+  Hardboiled 0.420-0.427x, and Luminal 0.0347-0.0355x wall time. Suite wall
+  ratio was 0.132-0.135x; no failure, timeout, or unsupported boundary appeared.
