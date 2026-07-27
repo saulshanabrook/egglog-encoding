@@ -2214,14 +2214,12 @@ struct PendingEquality {
     cause: CauseRef,
 }
 
-#[derive(Clone, Debug)]
 struct DurableEquality {
     position: HistoryPosition,
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
     native_child: crate::Value,
     cause: CauseRef,
-    reason: EqualityReason,
 }
 
 #[derive(Clone, Debug)]
@@ -2243,8 +2241,7 @@ struct ReceiptArena {
     durable_fact_values: Vec<Value>,
     durable_merge_cell_origins: Vec<MergeCellOrigin>,
     durable_rebuild_equalities: Vec<TypedCellEquality>,
-    durable_causes: Vec<Option<DurableCause>>,
-    cause_summaries: HashMap<CauseDraftId, EqualityCauseSummary>,
+    durable_causes: Vec<Option<(DurableCause, EqualityCauseSummary)>>,
     durable_equalities: Vec<Option<DurableEquality>>,
     rekeys: Vec<RekeyRecord>,
     removals: Vec<RemovalRecord>,
@@ -2280,10 +2277,11 @@ impl ReceiptArena {
             self.durable_causes.resize_with(index + 1, || None);
         }
         assert!(
-            self.durable_causes[index].replace(cause).is_none(),
+            self.durable_causes[index]
+                .replace((cause, summary))
+                .is_none(),
             "duplicate cause-node publication"
         );
-        assert!(self.cause_summaries.insert(id, summary).is_none());
         self.published_causes += 1;
     }
 
@@ -2291,6 +2289,7 @@ impl ReceiptArena {
         self.durable_causes
             .get((id.get().checked_sub(1)?) as usize)?
             .as_ref()
+            .map(|(cause, _)| cause)
     }
 
     fn install_equality(&mut self, id: AppliedEqualityId, equality: DurableEquality) {
@@ -2335,9 +2334,10 @@ impl ReceiptArena {
     }
 
     fn cause_summary(&self, id: CauseDraftId) -> Result<EqualityCauseSummary, &'static str> {
-        self.cause_summaries
-            .get(&id)
-            .copied()
+        self.durable_causes
+            .get((id.get().checked_sub(1).ok_or("missing cause node")?) as usize)
+            .and_then(Option::as_ref)
+            .map(|(_, summary)| *summary)
             .ok_or("cause node has not been published")
     }
 
@@ -2357,7 +2357,13 @@ impl ReceiptArena {
         }
     }
 
-    fn equality_reason(&self, root: CauseRef, summary: EqualityCauseSummary) -> EqualityReason {
+    fn equality_reason(&self, root: CauseRef) -> EqualityReason {
+        let summary = if root.rule_match().is_some() {
+            EqualityCauseSummary::Rule
+        } else {
+            self.cause_summary(root.cause_node().expect("equality cause is unattributed"))
+                .expect("applied equality cause has no classification")
+        };
         summary.validate().unwrap_or_else(|error| panic!("{error}"));
         if let Some(rule) = root.rule_match() {
             return EqualityReason::RuleUnion(rule);
@@ -3174,7 +3180,7 @@ impl<'a> CausalReceiptView<'a> {
             },
             native_parent: event.native_parent,
             native_child: event.native_child,
-            reason: event.reason.clone(),
+            reason: self.arena.equality_reason(event.cause),
         })
     }
 
@@ -3207,7 +3213,7 @@ impl<'a> CausalReceiptView<'a> {
             right,
             native_parent: event.native_parent,
             native_child: event.native_child,
-            reason: event.reason.clone(),
+            reason: self.arena.equality_reason(event.cause),
         })
     }
 
@@ -5610,19 +5616,6 @@ impl ReceiptBatch {
                 );
             }
             for (id, equality) in self.equalities.drain(..) {
-                let summary = if equality.cause.rule_match().is_some() {
-                    EqualityCauseSummary::Rule
-                } else {
-                    arena
-                        .cause_summary(
-                            equality
-                                .cause
-                                .cause_node()
-                                .expect("equality cause is unattributed"),
-                        )
-                        .expect("applied equality cause has no classification")
-                };
-                let reason = arena.equality_reason(equality.cause, summary);
                 arena.install_equality(
                     id,
                     DurableEquality {
@@ -5631,7 +5624,6 @@ impl ReceiptBatch {
                         native_parent: equality.native_parent,
                         native_child: equality.native_child,
                         cause: equality.cause,
-                        reason,
                     },
                 );
             }

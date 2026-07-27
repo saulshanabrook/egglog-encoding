@@ -2561,3 +2561,32 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - Per the campaign stop rules, the entire checkpoint-3 candidate was discarded
   without commit. The worktree returned exactly to accepted checkpoint-1
   commit `311c68e`; no source fragment from the failed bundle was retained.
+
+## 2026-07-26: causal slicing LoC checkpoint 4 — consolidate durable causes
+
+- Co-located each durable cause with its immutable equality summary in the
+  existing dense cause arena, deleting the parallel summary hash map and its
+  publication insertion. Durable equalities no longer store a redundant
+  `EqualityReason`; borrowed receipt views derive it in O(1) from the cause's
+  rule-match tag or co-located summary. The private equality record's unused
+  `Clone` and `Debug` implementations were also removed.
+- The rustfmt-normalized production delta from `477a5a3` is A=18, D=26, net
+  **-8 lines**. The resulting totals are A=23,039, D=1,877, net **+21,162**
+  versus `4940be37`, and A=14,746, D=5,191, net **+9,555** versus `0d7ffbb`.
+  Nontrivia rust-analyzer syntax tokens fell from 44,004 to 43,998 (net -6),
+  so the candidate does not trade physical lines for token growth. Patch
+  SHA-256 is `d427c20f2cbe95440e5a89972d69b7909142275aa8b114bad7a9372d605f5ffb`.
+- All 177 focused core tests passed, release compilation succeeded, formatting
+  and `git diff --check` were clean, and independent semantic and hot-path
+  review both returned GO. The change removes one hash insertion/allocation
+  from capture and adds only constant-time cold-view derivation; it does not
+  touch an ordinary/native execution branch.
+- The exact final release binary used by the public one-round all-five screen
+  had SHA-256 `0e4af4482187def33dc65e82d74fa27044c72db4563ee7ee809c839143a26ded`.
+  Candidate/baseline causal-proofs wall ratios were Math 0.908x, Eggcc 0.927x,
+  Pointer 0.945x, Hardboiled 0.906x, and Luminal 0.930x; suite total was
+  0.918x. Peak-RSS ratios ranged from 0.978x to 1.04x. Every point remained
+  inside the 1.10 causal ceiling.
+- All five final artifacts were byte-identical to `5de2fa8`: Math
+  `3f5216d5...e17`, Eggcc `e4f6045e...c3ea`, Pointer `000dfda7...851`,
+  Hardboiled `2ccbf8e2...46e5`, and Luminal `044b11c6...ad4`.
