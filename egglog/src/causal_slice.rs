@@ -970,6 +970,20 @@ fn slice_roots(
                     slice.replay_equalities.insert(id);
                     let event = view.project_applied_equality(id)?;
                     let reason = event.reason.clone();
+                    if let EqualityReason::Congruence {
+                        as_of_edges,
+                        position,
+                        ..
+                    } = reason
+                    {
+                        let support = view.explain_congruence_child_support_at(
+                            event.left,
+                            event.right,
+                            as_of_edges,
+                            position,
+                        )?;
+                        enqueue_support(&mut slice, &mut work, support);
+                    }
                     slice.equality_records.insert(id, event);
                     work.push_back(Work::Cause(match reason {
                         EqualityReason::RuleUnion(rule) => ReceiptCauseRef::Rule(rule),
@@ -1938,6 +1952,44 @@ mod tests {
         drop(egraph);
 
         let mut proof = EGraph::default().with_proofs_enabled();
+        serial_causal_pool()
+            .install(|| proof.run_program(commands))
+            .unwrap();
+    }
+
+    #[test]
+    fn congruence_projection_retains_historical_child_union() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (Num i64) (Add E E) (Max E E))
+                 (rewrite (Add (Num a) (Num b)) (Num (+ a b)))
+                 (rewrite (Max (Num a) (Num b)) (Num (max a b)))
+                 (datatype L (Cons L))
+                 (constructor Nil () L)
+                 (constructor F (i64 L) E)
+                 (rule ((= f (F capacity (Cons rest))))
+                       ((union f
+                               (Max (Add (Num 1) (F (- capacity 1) rest))
+                                    (F capacity rest)))))
+                 (rule ((= f (F capacity (Nil))))
+                       ((union f (Num 0))))
+                 (let $test (F 2 (Cons (Cons (Nil)))))
+                 (run 10)
+                 (check (= $test (Num 2)))",
+            )
+            .unwrap();
+
+        let slice = slice_all_checks(&egraph).unwrap();
+        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
+        let commands = replay.to_commands().unwrap();
+        drop(egraph);
+
+        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
         serial_causal_pool()
             .install(|| proof.run_program(commands))
             .unwrap();

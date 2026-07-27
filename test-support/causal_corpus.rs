@@ -345,13 +345,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/web-demo/knapsack.egg"],
-        disposition: Disposition::KnownReplayFailure {
-            diagnostic: "grounded match 1 premise 2 is absent from table",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &[
             "core/complex-merge-prim.egg",
             "core/merge-action-block.egg",

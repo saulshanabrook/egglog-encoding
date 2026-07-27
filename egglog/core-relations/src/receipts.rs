@@ -3859,6 +3859,159 @@ impl<'a> CausalReceiptView<'a> {
             })
     }
 
+    /// Return the historical child equalities required to replay one
+    /// congruence edge between two structural calls.
+    ///
+    /// The applied edge records the parent equality and its cause, but the
+    /// parent's congruence also depends on each unequal child pair already
+    /// being equal at the recorded cutoff. Reconstruct those dependencies
+    /// from the projected terms and the existing equality forest.
+    pub fn explain_congruence_child_support_at(
+        &mut self,
+        left: EqualityEndpoint,
+        right: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        self.validate_equality_cutoff(as_of, position)?;
+        self.validate_equality_endpoints(left, right)?;
+        let (
+            ReplayTerm::Call {
+                sort: left_sort,
+                op: left_op,
+                children: left_children,
+            },
+            ReplayTerm::Call {
+                sort: right_sort,
+                op: right_op,
+                children: right_children,
+            },
+        ) = (self.replay_term(left.term)?, self.replay_term(right.term)?)
+        else {
+            return Err(ReceiptViewError::Invalid(
+                "congruence equality endpoints are not structural calls".into(),
+            ));
+        };
+        if left_sort != right_sort
+            || left_op != right_op
+            || left_children.len() != right_children.len()
+        {
+            return Err(ReceiptViewError::Invalid(
+                "congruence equality endpoints have incompatible structure".into(),
+            ));
+        }
+        let left_candidates = self.congruence_call_child_candidates(left, as_of, position)?;
+        let right_candidates = self.congruence_call_child_candidates(right, as_of, position)?;
+        for left_children in &left_candidates {
+            for right_children in &right_candidates {
+                if left_children.len() != right_children.len() {
+                    continue;
+                }
+                let mut support = Vec::with_capacity(left_children.len());
+                let mut connected = true;
+                for (left_child, right_child) in left_children.iter().zip(right_children.iter()) {
+                    if left_child.sort != right_child.sort {
+                        connected = false;
+                        break;
+                    }
+                    let Some(child_support) = self.raw_equality_support_if_connected_at(
+                        *left_child,
+                        *right_child,
+                        as_of,
+                        position,
+                    )?
+                    else {
+                        connected = false;
+                        break;
+                    };
+                    support.push(child_support);
+                }
+                if connected {
+                    return Ok(combine_raw_equality_support(support));
+                }
+            }
+        }
+        Err(ReceiptViewError::Invalid(
+            "congruence equality has no exact historically connected constructor occurrences"
+                .into(),
+        ))
+    }
+
+    fn congruence_call_child_candidates(
+        &mut self,
+        endpoint: EqualityEndpoint,
+        as_of: EqualityEdgeCount,
+        position: HistoryPosition,
+    ) -> Result<Vec<Box<[RawEqualityEndpoint]>>, ReceiptViewError> {
+        let ReplayTerm::Call { sort, op, children } = self.replay_term(endpoint.term)? else {
+            return Err(ReceiptViewError::Invalid(
+                "congruence equality endpoint is not a structural call".into(),
+            ));
+        };
+        let facts = self.constructor_occurrence_facts(sort, op);
+        let mut candidates = Vec::new();
+        for producer in facts.iter().rev().copied() {
+            let fact = self.fact(producer)?;
+            if fact.position > position {
+                continue;
+            }
+            let table = fact.table;
+            let values = fact.values.to_vec();
+            let constructor = self
+                .replay_terms
+                .table_constructors
+                .get(&table)
+                .map(|entry| entry.clone())
+                .ok_or(ReceiptViewError::UnknownTable(table))?;
+            let output = constructor.child_sorts.len();
+            if output != children.len() || values.len() <= output {
+                return Err(ReceiptViewError::Invalid(format!(
+                    "constructor fact {producer:?} has an invalid replay arity"
+                )));
+            }
+            let projected = self
+                .projector
+                .fact_term(producer, output)
+                .map_err(ReceiptViewError::Invalid)?;
+            if projected != endpoint.term {
+                continue;
+            }
+            if self
+                .raw_equality_support_if_connected_at(
+                    RawEqualityEndpoint {
+                        sort,
+                        raw: values[output],
+                    },
+                    RawEqualityEndpoint {
+                        sort,
+                        raw: endpoint.raw,
+                    },
+                    as_of,
+                    position,
+                )?
+                .is_none()
+            {
+                continue;
+            }
+            candidates.push(
+                constructor
+                    .child_sorts
+                    .iter()
+                    .copied()
+                    .zip(values.into_iter())
+                    .map(|(sort, raw)| RawEqualityEndpoint { sort, raw })
+                    .collect(),
+            );
+        }
+        if candidates.is_empty() {
+            return Err(ReceiptViewError::Invalid(format!(
+                "congruence endpoint term {:?} has no exact historical constructor occurrence",
+                endpoint.term
+            )));
+        }
+        Ok(candidates)
+    }
+
     fn raw_equality_support_if_connected_at(
         &mut self,
         left: RawEqualityEndpoint,
