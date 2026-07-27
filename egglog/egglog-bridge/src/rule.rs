@@ -1056,7 +1056,7 @@ impl Query {
                     .with_equalities(equalities),
             )?
         } else {
-            rb.build_with_description(desc)
+            rb.try_build_with_description(desc)?
         })
     }
 

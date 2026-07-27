@@ -1350,7 +1350,15 @@ impl RuleBuilder<'_, '_> {
     }
 
     pub fn build_with_description(self, desc: impl Into<String>) -> RuleId {
-        self.build_impl(desc, None, None).planned()
+        self.try_build_with_description(desc)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn try_build_with_description(
+        self,
+        desc: impl Into<String>,
+    ) -> Result<RuleId, ReceiptBuildError> {
+        Ok(self.try_build_impl(desc, None, None)?.planned())
     }
 
     /// Build a rule together with the fixed receipt layout preserved from the
@@ -1558,6 +1566,25 @@ impl RuleBuilder<'_, '_> {
         receipt: Option<ReceiptBuildSpec>,
         grounded_body_end: Option<usize>,
     ) -> Result<RuleBuildOutput, ReceiptBuildError> {
+        if receipt.is_none()
+            && grounded_body_end.is_none()
+            && self.qb.rsb.db.causal_receipts.is_some()
+            && self.qb.query.atoms.is_empty()
+        {
+            let first_effect = self
+                .qb
+                .instrs
+                .iter()
+                .find(|instr| !matches!(instr, Instr::ReadCounter { .. }));
+            if let Some(Instr::LookupOrInsertDefaultReplay { table, args, .. }) = first_effect
+                && args.is_empty()
+                && self.qb.rsb.db.get_table(*table).get_row(&[]).is_none()
+            {
+                return Err(ReceiptBuildError(
+                    "receipt-enabled action requires exact match witnesses",
+                ));
+            }
+        }
         let var_info = &self.qb.query.var_info;
         let symbol_map = self.build_symbol_map();
         // Generate an id for our actions and slot them in.

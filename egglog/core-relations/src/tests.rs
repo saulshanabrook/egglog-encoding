@@ -2276,6 +2276,90 @@ fn receipt_recipe_failure_precedes_catalog_and_rule_set_mutation() {
 }
 
 #[test]
+fn receiptless_static_constructor_miss_fails_before_counter_or_rule_mutation() {
+    let mut db = Database::default();
+    let constructor = db.add_table_named(
+        SortedWritesTable::new(
+            0,
+            2,
+            Some(ColumnId::new(1)),
+            vec![],
+            Box::new(|_, left, right, _| {
+                assert_eq!(left, right, "zero-argument constructor rows are immutable");
+                false
+            }),
+        ),
+        "StaticConstructor".into(),
+        iter::empty(),
+        iter::empty(),
+    );
+    let fresh = db.add_counter();
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(200);
+    let op = ReplayOpId::new(200);
+    let replay = ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>());
+    receipts
+        .register_table_layout(constructor, &[Some(sort), None])
+        .unwrap();
+    receipts
+        .register_table_constructor(constructor, replay.clone())
+        .unwrap();
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut action = rules.new_rule().build();
+    action
+        .lookup_or_insert_with_replay(
+            constructor,
+            &[],
+            &[WriteVal::IncCounter(fresh), Value::new(0).into()],
+            ColumnId::new(0),
+            replay.clone(),
+        )
+        .unwrap();
+    let error = action
+        .try_build_with_description("missing-static-constructor")
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "receipt-enabled action requires exact match witnesses"
+    );
+    let rules = rules.build();
+    assert!(rules.actions.is_empty());
+    assert!(rules.plans.is_empty());
+    assert!(db.get_table(constructor).is_empty());
+    assert_eq!(db.read_counter(fresh), 0);
+
+    let value = Value::new(2000);
+    let term = receipts.intern_call(sort, op, &[], value).unwrap();
+    db.stage_source_row(
+        constructor,
+        &[value, Value::new(0)],
+        &[term, crate::ReplayTermId::MISSING],
+        SourceRef::Synthetic(200),
+    )
+    .unwrap();
+    assert!(db.merge_all());
+
+    let mut rules = RuleSetBuilder::new(&mut db);
+    let mut action = rules.new_rule().build();
+    action
+        .lookup_or_insert_with_replay(
+            constructor,
+            &[],
+            &[WriteVal::IncCounter(fresh), Value::new(1).into()],
+            ColumnId::new(0),
+            replay,
+        )
+        .unwrap();
+    action
+        .try_build_with_description("existing-static-constructor")
+        .unwrap();
+    let rules = rules.build();
+    assert!(!db.run_rule_set(&rules, ReportLevel::TimeOnly).changed);
+    assert_eq!(db.read_counter(fresh), 0);
+}
+
+#[test]
 fn causal_receipt_binding_recipe_keeps_every_premise_occurrence() {
     let mut db = Database::default();
     let repeated = db.add_table(

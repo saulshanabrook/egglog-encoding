@@ -34,10 +34,6 @@ pub enum Disposition {
         diagnostic: &'static str,
         artifact: ArtifactExpectation,
     },
-    KnownCapturePanic {
-        diagnostic: &'static str,
-        artifact: ArtifactExpectation,
-    },
     NoReplayRoot,
     ExtractRootsUnsupported,
     ChecksOnly,
@@ -323,7 +319,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     },
     AllowlistGroup {
         paths: &["core/repro-738-fn-sort.egg"],
-        disposition: Disposition::KnownCapturePanic {
+        disposition: Disposition::Unsupported {
             diagnostic: "receipt-enabled action requires exact match witnesses",
             artifact: ArtifactExpectation::Absent,
         },
@@ -414,8 +410,7 @@ pub fn disposition_for(path: &str, allowlist: &[AllowlistGroup]) -> Option<Dispo
                 assert!(!reason.is_empty(), "static causal exclusion has no reason");
             }
             Disposition::Unsupported { diagnostic, .. }
-            | Disposition::KnownReplayFailure { diagnostic, .. }
-            | Disposition::KnownCapturePanic { diagnostic, .. } => {
+            | Disposition::KnownReplayFailure { diagnostic, .. } => {
                 assert!(
                     !diagnostic.is_empty(),
                     "runtime causal exclusion has no diagnostic"
@@ -471,11 +466,7 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
         matches!(case.allowlisted, Some(Disposition::ExtractRootsUnsupported));
     let classified_runtime_failure = matches!(
         case.allowlisted,
-        Some(
-            Disposition::Unsupported { .. }
-                | Disposition::KnownReplayFailure { .. }
-                | Disposition::KnownCapturePanic { .. }
-        )
+        Some(Disposition::Unsupported { .. } | Disposition::KnownReplayFailure { .. })
     );
     match case.allowlisted {
         Some(Disposition::NoReplayRoot) => {
@@ -564,14 +555,6 @@ fn run_case(case: &CausalCase, resolve_roots: RootResolver) {
             assert_artifact(&case.name, &artifact, expected);
             return;
         }
-        Some(Disposition::KnownCapturePanic {
-            diagnostic,
-            artifact: expected,
-        }) => {
-            assert_expected_panic(&case.name, &capture, diagnostic);
-            assert_artifact(&case.name, &artifact, expected);
-            return;
-        }
         Some(Disposition::NoReplayRoot) => unreachable!(),
     }
 
@@ -625,29 +608,6 @@ fn assert_expected_failure(name: &str, output: &Output, diagnostic: &str) {
     assert!(
         !stderr.contains("panicked at"),
         "{name} is classified unsupported but panicked:\n{stderr}"
-    );
-}
-
-fn assert_expected_panic(name: &str, output: &Output, diagnostic: &str) {
-    assert!(
-        !output.status.success(),
-        "{name} is stale: causal capture now succeeds"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let panic_markers = stderr.match_indices("panicked at").collect::<Vec<_>>();
-    assert_eq!(
-        panic_markers.len(),
-        1,
-        "{name} changed panic count or signature:\n{stderr}"
-    );
-    let panic_payload = &stderr[panic_markers[0].0..];
-    assert!(
-        panic_payload.contains(diagnostic),
-        "{name} panicked for an unexpected reason; expected {diagnostic:?} in the panic payload:\n{stderr}"
-    );
-    assert!(
-        output.status.code() == Some(101),
-        "{name} is classified as a known capture panic but no longer panics:\n{stderr}"
     );
 }
 
