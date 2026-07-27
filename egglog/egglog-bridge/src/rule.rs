@@ -987,7 +987,7 @@ impl Query {
             .iter()
             .try_for_each(|f| f(&mut inner, &mut rb))?;
         Ok(if let Some(source) = &self.source_receipt {
-            rb.build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))
+            rb.try_build_source_with_receipts(desc, SourceReceiptSpec::new(source.clone()))?
         } else if let Some(receipt) = &self.rule_receipt {
             let bindings = receipt.bindings.iter().map(|binding| match binding {
                 RuleReplayBinding::Entry {
@@ -1003,14 +1003,14 @@ impl Query {
                     RuleBindingSpec::constant(*term, *sort)
                 }
             });
-            rb.build_with_receipts(
+            rb.try_build_with_receipts(
                 desc,
                 CoreRuleReceiptSpec::with_bindings(
                     receipt.rule,
                     atom_mapping.iter().copied(),
                     bindings,
                 ),
-            )
+            )?
         } else if let Some(receipt) = &self.check_receipt {
             let endpoint = |source: CheckReplayPremise| {
                 let (_, entries, schema) = self.atoms.get(source.premise).unwrap_or_else(|| {
@@ -1050,11 +1050,11 @@ impl Query {
                 .equalities
                 .iter()
                 .map(|(left, right)| (endpoint(*left), endpoint(*right)));
-            rb.build_check_with_receipts(
+            rb.try_build_check_with_receipts(
                 desc,
                 CoreCheckReceiptSpec::new(receipt.check, atom_mapping.iter().copied())
                     .with_equalities(equalities),
-            )
+            )?
         } else {
             rb.build_with_description(desc)
         })

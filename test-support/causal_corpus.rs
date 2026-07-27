@@ -316,7 +316,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
     },
     AllowlistGroup {
         paths: &["core/factoring-multisets.egg"],
-        disposition: Disposition::KnownCapturePanic {
+        disposition: Disposition::Unsupported {
             diagnostic: "typed equality endpoint has no structural producer",
             artifact: ArtifactExpectation::Absent,
         },

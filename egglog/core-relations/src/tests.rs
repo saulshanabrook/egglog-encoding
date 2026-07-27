@@ -2187,6 +2187,95 @@ fn causal_receipts_capture_exact_rhs_producer_term_not_global_alias() {
 }
 
 #[test]
+fn receipt_recipe_failure_precedes_catalog_and_rule_set_mutation() {
+    const RULE: u32 = 199;
+
+    let mut db = Database::default();
+    let receipts = db.enable_causal_receipts();
+    let sort = ReplaySortId::new(199);
+    let op = ReplayOpId::new(199);
+    let before = receipts.with_view(|view| Ok(view.counters())).unwrap();
+    let mut rules = RuleSetBuilder::new(&mut db);
+
+    let mut query = rules.new_rule();
+    let valid_before_failure = query.new_var_named("valid-before-failure");
+    let destination = query.new_var_named("destination");
+    let missing = query.new_var_named("missing");
+    let mut action = query.build();
+    action.promote_replay_call(
+        &[],
+        valid_before_failure,
+        Some(
+            ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
+                .with_immediate_promotion(),
+        ),
+    );
+    action.promote_replay_call(
+        &[missing.into()],
+        destination,
+        Some(ReplayConstructorSpec::new(sort, op, [sort]).with_immediate_promotion()),
+    );
+    let error = action
+        .try_build_with_receipts(
+            "missing-producer",
+            RuleReceiptSpec::new(RULE, iter::empty(), [destination])
+                .with_current_vars([(destination, sort)]),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "typed equality endpoint has no structural producer"
+    );
+    assert_eq!(
+        receipts.with_view(|view| Ok(view.counters())).unwrap(),
+        before,
+        "failed preflight must not register a partial rule recipe"
+    );
+    receipts
+        .with_view(|view| {
+            assert!(view.rule_binding_layout(RULE).is_err());
+            assert!(view.rule_equality_layout(RULE).is_err());
+            Ok(())
+        })
+        .unwrap();
+
+    let mut query = rules.new_rule();
+    let destination = query.new_var_named("destination");
+    let mut action = query.build();
+    action.promote_replay_call(
+        &[],
+        destination,
+        Some(
+            ReplayConstructorSpec::new(sort, op, iter::empty::<ReplaySortId>())
+                .with_immediate_promotion(),
+        ),
+    );
+    action
+        .try_build_with_receipts(
+            "valid-producer",
+            RuleReceiptSpec::new(RULE, iter::empty(), [destination])
+                .with_current_vars([(destination, sort)]),
+        )
+        .unwrap();
+
+    let rules = rules.build();
+    assert_eq!(rules.plans.len(), 1);
+    assert_eq!(rules.actions.len(), 1);
+    let action = &rules.actions.iter().next().unwrap().1;
+    let Instr::PromoteReplayCall {
+        origin: Some(origin),
+        ..
+    } = action.instrs[0]
+    else {
+        panic!("valid rule lost its replay promotion origin")
+    };
+    assert_eq!(origin.get(), 1, "failed preflight consumed an origin id");
+    let after = receipts.with_view(|view| Ok(view.counters())).unwrap();
+    assert_eq!(after.supported_current_recipe_roots, 1);
+    assert_eq!(after.missing_current_recipe_roots, 0);
+}
+
+#[test]
 fn causal_receipt_binding_recipe_keeps_every_premise_occurrence() {
     let mut db = Database::default();
     let repeated = db.add_table(

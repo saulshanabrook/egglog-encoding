@@ -38,8 +38,8 @@ pub use hash_index::TupleIndex;
 pub use offsets::{OffsetRange, RowId, Subset, SubsetRef};
 pub use pool::{Pool, PoolSet, Pooled};
 pub use query::{
-    CachedPlan, GroundedProbe, GroundedRule, QueryBuilder, QueryError, RuleBuilder, RuleId,
-    RuleSet, RuleSetBuilder,
+    CachedPlan, GroundedProbe, GroundedRule, QueryBuilder, QueryError, ReceiptBuildError,
+    RuleBuilder, RuleId, RuleSet, RuleSetBuilder,
 };
 pub use receipts::{
     AppliedEqualityId, CausalReceiptTotals, CausalReceiptView, CausalReceiptViewCounters,

@@ -592,6 +592,13 @@ pub enum QueryError {
     },
 }
 
+/// A receipt-aware rule could not be represented without losing exact replay
+/// provenance. The builder reports this before registering receipt recipes or
+/// adding the rule to its rule set.
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub struct ReceiptBuildError(&'static str);
+
 /// Builder for the "action" portion of the rule.
 ///
 /// Rules can refer to the variables bound in their query to modify the database.
@@ -603,6 +610,21 @@ enum ReceiptBuildSpec {
     Rule(RuleReceiptSpec),
     Source(SourceReceiptSpec),
     Check { premises: Box<[AtomId]> },
+}
+
+struct PendingRuleRecipes {
+    rule: u32,
+    binding_sources: Arc<[ReplayBindingSource]>,
+    equality_obligations: Vec<(ReplayEqualitySource, ReplayEqualitySource)>,
+    term_recipe: TermRecipe,
+}
+
+enum PreparedInstructionOrigins {
+    None,
+    Term(TermOriginSpec),
+    Union(TermOriginSpec, TermOriginSpec),
+    Check(Box<[TermOriginSpec]>),
+    Row(RowOriginSpec),
 }
 
 type RecipeRoot = Arc<RecipeExpr>;
@@ -863,13 +885,14 @@ impl StaticRecipeDraft {
         }
     }
 
-    fn lower_term_origin(
+    fn prepare_term_origin(
         &self,
         receipts: &crate::CausalReceipts,
         entry: QueryEntry,
         sort: ReplaySortId,
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
-    ) -> crate::receipts::TermOriginSiteId {
+        missing: &'static str,
+    ) -> Result<TermOriginSpec, ReceiptBuildError> {
         let mut lowerer = RecipeLowerer {
             inputs: inputs.clone(),
             memo: HashMap::default(),
@@ -878,153 +901,233 @@ impl StaticRecipeDraft {
         let root = self.entry(receipts, entry, sort);
         let term = lowerer
             .try_lower(&root, sort)
-            .unwrap_or_else(|| panic!("typed equality endpoint has no structural producer"));
-        receipts.register_term_origin(TermOriginSpec { sort, term })
+            .ok_or(ReceiptBuildError(missing))?;
+        Ok(TermOriginSpec { sort, term })
     }
 
-    fn attach_row_origins(
+    fn prepare_instruction_origins(
         &self,
         receipts: &crate::CausalReceipts,
         atoms: &DenseIdMap<AtomId, Atom>,
-        instrs: &mut [Instr],
+        instrs: &[Instr],
         inputs: &HashMap<Variable, (RecipeInput, ReplaySortId)>,
-    ) {
-        for instr in instrs {
-            if let Instr::PromoteReplayCall {
-                dst,
-                replay,
-                origin,
-                ..
-            } = instr
-            {
-                *origin = Some(self.lower_term_origin(
-                    receipts,
-                    QueryEntry::Var(*dst),
-                    replay.result_sort,
-                    inputs,
-                ));
-                continue;
-            }
-            if let Instr::UnionWithReplay {
-                left,
-                right,
-                sort,
-                left_origin,
-                right_origin,
-                ..
-            } = instr
-            {
-                *left_origin = Some(self.lower_term_origin(receipts, *left, *sort, inputs));
-                *right_origin = Some(self.lower_term_origin(receipts, *right, *sort, inputs));
-                continue;
-            }
-            if let Instr::RecordCheck {
-                equalities,
-                implicit_equalities,
-                ..
-            } = instr
-            {
-                for endpoint in equalities
-                    .iter_mut()
-                    .chain(implicit_equalities.iter_mut())
-                    .flat_map(|(left, right)| [left, right])
+    ) -> Result<Vec<PreparedInstructionOrigins>, ReceiptBuildError> {
+        instrs
+            .iter()
+            .map(|instr| {
+                if let Instr::PromoteReplayCall { dst, replay, .. } = instr {
+                    return self
+                        .prepare_term_origin(
+                            receipts,
+                            QueryEntry::Var(*dst),
+                            replay.result_sort,
+                            inputs,
+                            "typed equality endpoint has no structural producer",
+                        )
+                        .map(PreparedInstructionOrigins::Term);
+                }
+                if let Instr::UnionWithReplay {
+                    left, right, sort, ..
+                } = instr
                 {
-                    if let CheckTermSource::Constructor { atom, origin, .. } = &mut endpoint.term {
-                        let atom = &atoms[*atom];
-                        let replay = receipts.table_constructor(atom.table).unwrap_or_else(|| {
-                            panic!(
-                                "check constructor atom {:?} has no replay metadata",
-                                atom.table
-                            )
-                        });
-                        assert_eq!(
-                            replay.result_sort, endpoint.sort,
-                            "check constructor endpoint has the wrong replay result sort"
-                        );
-                        let children = replay
-                            .child_sorts
-                            .iter()
-                            .copied()
-                            .enumerate()
-                            .map(|(column, sort)| {
-                                self.entry(
-                                    receipts,
-                                    atom_query_entry(atom, ColumnId::from_usize(column)),
-                                    sort,
-                                )
-                            })
-                            .collect();
-                        let root = Arc::new(RecipeExpr::Call { replay, children });
-                        let mut lowerer = RecipeLowerer {
-                            inputs: inputs.clone(),
-                            memo: HashMap::default(),
-                            observed_sorts: HashMap::default(),
-                        };
-                        let term = lowerer.try_lower(&root, endpoint.sort).unwrap_or_else(|| {
-                            panic!("check constructor endpoint has no exact source-term recipe")
-                        });
-                        *origin = Some(receipts.register_term_origin(TermOriginSpec {
-                            sort: endpoint.sort,
-                            term,
-                        }));
-                    }
+                    let left = self.prepare_term_origin(
+                        receipts,
+                        *left,
+                        *sort,
+                        inputs,
+                        "typed equality endpoint has no structural producer",
+                    )?;
+                    let right = self.prepare_term_origin(
+                        receipts,
+                        *right,
+                        *sort,
+                        inputs,
+                        "typed equality endpoint has no structural producer",
+                    )?;
+                    return Ok(PreparedInstructionOrigins::Union(left, right));
                 }
-                continue;
+                if let Instr::RecordCheck {
+                    equalities,
+                    implicit_equalities,
+                    ..
+                } = instr
+                {
+                    let mut origins = Vec::new();
+                    for endpoint in equalities
+                        .iter()
+                        .chain(implicit_equalities.iter())
+                        .flat_map(|(left, right)| [left, right])
+                    {
+                        if let CheckTermSource::Constructor { atom, .. } = endpoint.term {
+                            let atom = &atoms[atom];
+                            let replay =
+                                receipts.table_constructor(atom.table).unwrap_or_else(|| {
+                                    panic!(
+                                        "check constructor atom {:?} has no replay metadata",
+                                        atom.table
+                                    )
+                                });
+                            assert_eq!(
+                                replay.result_sort, endpoint.sort,
+                                "check constructor endpoint has the wrong replay result sort"
+                            );
+                            let children = replay
+                                .child_sorts
+                                .iter()
+                                .copied()
+                                .enumerate()
+                                .map(|(column, sort)| {
+                                    self.entry(
+                                        receipts,
+                                        atom_query_entry(atom, ColumnId::from_usize(column)),
+                                        sort,
+                                    )
+                                })
+                                .collect();
+                            let root = Arc::new(RecipeExpr::Call { replay, children });
+                            let mut lowerer = RecipeLowerer {
+                                inputs: inputs.clone(),
+                                memo: HashMap::default(),
+                                observed_sorts: HashMap::default(),
+                            };
+                            let term = lowerer.try_lower(&root, endpoint.sort).ok_or(
+                                ReceiptBuildError(
+                                    "check constructor endpoint has no exact source-term recipe",
+                                ),
+                            )?;
+                            origins.push(TermOriginSpec {
+                                sort: endpoint.sort,
+                                term,
+                            });
+                        }
+                    }
+                    return Ok(PreparedInstructionOrigins::Check(
+                        origins.into_boxed_slice(),
+                    ));
+                }
+                let (table, entries) = match instr {
+                    Instr::Insert { table, vals, .. } | Instr::InsertIfEq { table, vals, .. } => {
+                        (*table, vals.iter().copied().map(Some).collect())
+                    }
+                    Instr::LookupOrInsertDefault {
+                        table,
+                        args,
+                        default,
+                        ..
+                    } => {
+                        let mut entries = args.iter().copied().map(Some).collect::<Vec<_>>();
+                        for value in default.iter().copied() {
+                            entries.push(match value {
+                                WriteVal::QueryEntry(entry) => Some(entry),
+                                WriteVal::CurrentVal(column) => entries[column],
+                                WriteVal::IncCounter(_) => None,
+                            });
+                        }
+                        (*table, entries)
+                    }
+                    Instr::LookupOrInsertDefaultReplay {
+                        table,
+                        args,
+                        default,
+                        dst_col,
+                        dst_var,
+                        ..
+                    } => {
+                        let mut entries = args.iter().copied().map(Some).collect::<Vec<_>>();
+                        for value in default.iter().copied() {
+                            entries.push(match value {
+                                WriteVal::QueryEntry(entry) => Some(entry),
+                                WriteVal::CurrentVal(column) => entries[column],
+                                WriteVal::IncCounter(_) => None,
+                            });
+                        }
+                        entries[dst_col.index()] = Some(QueryEntry::Var(*dst_var));
+                        (*table, entries)
+                    }
+                    Instr::LookupWithDefault { .. }
+                    | Instr::Lookup { .. }
+                    | Instr::LookupWithFallback { .. }
+                    | Instr::Remove { .. }
+                    | Instr::External { .. }
+                    | Instr::ExternalAssignOrValidate { .. }
+                    | Instr::ExternalWithFallback { .. }
+                    | Instr::AssertEq(..)
+                    | Instr::AssertNe(..)
+                    | Instr::AssertAnyNe { .. }
+                    | Instr::ReadCounter { .. } => {
+                        return Ok(PreparedInstructionOrigins::None);
+                    }
+                    Instr::UnionWithReplay { .. }
+                    | Instr::RecordCheck { .. }
+                    | Instr::PromoteReplayCall { .. } => {
+                        unreachable!("origin-bearing instruction escaped receipt preparation")
+                    }
+                };
+                let spec = self.lower_row_origin(receipts, table, &entries, inputs);
+                Ok(PreparedInstructionOrigins::Row(spec))
+            })
+            .collect()
+    }
+
+    fn attach_instruction_origins(
+        receipts: &crate::CausalReceipts,
+        instrs: &mut [Instr],
+        prepared: Vec<PreparedInstructionOrigins>,
+    ) {
+        assert_eq!(instrs.len(), prepared.len());
+        for (instr, prepared) in instrs.iter_mut().zip(prepared) {
+            match (instr, prepared) {
+                (
+                    Instr::PromoteReplayCall { origin, .. },
+                    PreparedInstructionOrigins::Term(spec),
+                ) => *origin = Some(receipts.register_term_origin(spec)),
+                (
+                    Instr::UnionWithReplay {
+                        left_origin,
+                        right_origin,
+                        ..
+                    },
+                    PreparedInstructionOrigins::Union(left, right),
+                ) => {
+                    *left_origin = Some(receipts.register_term_origin(left));
+                    *right_origin = Some(receipts.register_term_origin(right));
+                }
+                (
+                    Instr::RecordCheck {
+                        equalities,
+                        implicit_equalities,
+                        ..
+                    },
+                    PreparedInstructionOrigins::Check(origins),
+                ) => {
+                    let mut origins = origins.into_vec().into_iter();
+                    for endpoint in equalities
+                        .iter_mut()
+                        .chain(implicit_equalities.iter_mut())
+                        .flat_map(|(left, right)| [left, right])
+                    {
+                        if let CheckTermSource::Constructor { origin, .. } = &mut endpoint.term {
+                            let spec = origins
+                                .next()
+                                .expect("prepared check origin count changed before commit");
+                            *origin = Some(receipts.register_term_origin(spec));
+                        }
+                    }
+                    assert!(
+                        origins.next().is_none(),
+                        "prepared check origin count changed before commit"
+                    );
+                }
+                (
+                    Instr::Insert { origin, .. }
+                    | Instr::InsertIfEq { origin, .. }
+                    | Instr::LookupOrInsertDefault { origin, .. }
+                    | Instr::LookupOrInsertDefaultReplay { origin, .. },
+                    PreparedInstructionOrigins::Row(spec),
+                ) => *origin = Some(receipts.register_row_origin(spec)),
+                (_, PreparedInstructionOrigins::None) => {}
+                _ => panic!("prepared receipt origins no longer match their instructions"),
             }
-            let (table, entries, origin) = match instr {
-                Instr::Insert {
-                    table,
-                    vals,
-                    origin,
-                }
-                | Instr::InsertIfEq {
-                    table,
-                    vals,
-                    origin,
-                    ..
-                } => (*table, vals.iter().copied().map(Some).collect(), origin),
-                Instr::LookupOrInsertDefault {
-                    table,
-                    args,
-                    default,
-                    origin,
-                    ..
-                } => {
-                    let mut entries = args.iter().copied().map(Some).collect::<Vec<_>>();
-                    for value in default.iter().copied() {
-                        entries.push(match value {
-                            WriteVal::QueryEntry(entry) => Some(entry),
-                            WriteVal::CurrentVal(column) => entries[column],
-                            WriteVal::IncCounter(_) => None,
-                        });
-                    }
-                    (*table, entries, origin)
-                }
-                Instr::LookupOrInsertDefaultReplay {
-                    table,
-                    args,
-                    default,
-                    dst_col,
-                    dst_var,
-                    origin,
-                    ..
-                } => {
-                    let mut entries = args.iter().copied().map(Some).collect::<Vec<_>>();
-                    for value in default.iter().copied() {
-                        entries.push(match value {
-                            WriteVal::QueryEntry(entry) => Some(entry),
-                            WriteVal::CurrentVal(column) => entries[column],
-                            WriteVal::IncCounter(_) => None,
-                        });
-                    }
-                    entries[dst_col.index()] = Some(QueryEntry::Var(*dst_var));
-                    (*table, entries, origin)
-                }
-                _ => continue,
-            };
-            let spec = self.lower_row_origin(receipts, table, &entries, inputs);
-            let registered = receipts.register_row_origin(spec);
-            *origin = Some(registered);
         }
     }
 }
@@ -1254,8 +1357,18 @@ impl RuleBuilder<'_, '_> {
     /// source-level rule. Runtime capture copies only FactId/ReplayTermId
     /// handles according to this layout.
     pub fn build_with_receipts(self, desc: impl Into<String>, spec: RuleReceiptSpec) -> RuleId {
-        self.build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)), None)
-            .planned()
+        self.try_build_with_receipts(desc, spec)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn try_build_with_receipts(
+        self,
+        desc: impl Into<String>,
+        spec: RuleReceiptSpec,
+    ) -> Result<RuleId, ReceiptBuildError> {
+        Ok(self
+            .try_build_impl(desc, Some(ReceiptBuildSpec::Rule(spec)), None)?
+            .planned())
     }
 
     /// Build a source action whose effective lanes cite one stable source
@@ -1265,6 +1378,15 @@ impl RuleBuilder<'_, '_> {
         desc: impl Into<String>,
         spec: SourceReceiptSpec,
     ) -> RuleId {
+        self.try_build_source_with_receipts(desc, spec)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn try_build_source_with_receipts(
+        self,
+        desc: impl Into<String>,
+        spec: SourceReceiptSpec,
+    ) -> Result<RuleId, ReceiptBuildError> {
         assert!(
             self.qb.rsb.db.causal_receipts.is_some(),
             "source receipt actions require causal receipts"
@@ -1273,17 +1395,27 @@ impl RuleBuilder<'_, '_> {
             self.qb.query.atoms.is_empty(),
             "source receipt actions require an empty query"
         );
-        self.build_impl(desc, Some(ReceiptBuildSpec::Source(spec)), None)
-            .planned()
+        Ok(self
+            .try_build_impl(desc, Some(ReceiptBuildSpec::Source(spec)), None)?
+            .planned())
     }
 
     /// Append an exact positive-check root action and build its native premise
     /// witness layout. The recorder runs after every previously-added guard.
     pub fn build_check_with_receipts(
-        mut self,
+        self,
         desc: impl Into<String>,
         spec: CheckReceiptSpec,
     ) -> RuleId {
+        self.try_build_check_with_receipts(desc, spec)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    pub fn try_build_check_with_receipts(
+        mut self,
+        desc: impl Into<String>,
+        spec: CheckReceiptSpec,
+    ) -> Result<RuleId, ReceiptBuildError> {
         assert!(
             self.qb.rsb.db.causal_receipts.is_some(),
             "check receipt actions require causal receipts"
@@ -1392,8 +1524,9 @@ impl RuleBuilder<'_, '_> {
             implicit_equalities: implicit_equalities.into_boxed_slice(),
             as_of_edges,
         });
-        self.build_impl(desc, Some(ReceiptBuildSpec::Check { premises }), None)
-            .planned()
+        Ok(self
+            .try_build_impl(desc, Some(ReceiptBuildSpec::Check { premises }), None)?
+            .planned())
     }
 
     /// Return the current instruction boundary without planning the query.
@@ -1410,11 +1543,21 @@ impl RuleBuilder<'_, '_> {
     }
 
     fn build_impl(
-        mut self,
+        self,
         desc: impl Into<String>,
         receipt: Option<ReceiptBuildSpec>,
         grounded_body_end: Option<usize>,
     ) -> RuleBuildOutput {
+        self.try_build_impl(desc, receipt, grounded_body_end)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    fn try_build_impl(
+        mut self,
+        desc: impl Into<String>,
+        receipt: Option<ReceiptBuildSpec>,
+        grounded_body_end: Option<usize>,
+    ) -> Result<RuleBuildOutput, ReceiptBuildError> {
         let var_info = &self.qb.query.var_info;
         let symbol_map = self.build_symbol_map();
         // Generate an id for our actions and slot them in.
@@ -1426,7 +1569,8 @@ impl RuleBuilder<'_, '_> {
             }
         }));
         let mut row_origin_inputs = HashMap::default();
-        let receipt = receipt.map(|spec| match spec {
+        let mut pending_rule_recipes = None;
+        let mut receipt = receipt.map(|spec| match spec {
             ReceiptBuildSpec::Rule(spec) => {
                 let equality_obligations = self.receipt_equality_obligations(&spec.premises);
                 let premise_count = spec.premises.len();
@@ -1594,23 +1738,19 @@ impl RuleBuilder<'_, '_> {
                         break;
                     }
                 }
-                let binding_sources = self
-                    .qb
-                    .rsb
-                    .db
-                    .causal_receipts
-                    .as_ref()
-                    .expect("rule receipt actions require causal receipts")
-                    .register_rule_binding_recipe(spec.rule, &binding_sources);
-                let receipts = self.qb.rsb.db.causal_receipts.as_ref().unwrap();
-                receipts.register_rule_equality_recipe(spec.rule, &equality_obligations);
+                let binding_sources: Arc<[ReplayBindingSource]> = binding_sources.into();
                 let term_recipe = self
                     .qb
                     .recipe_draft
                     .as_ref()
                     .expect("rule receipt actions require a static recipe draft")
                     .lower(&spec.bindings, &binding_sources, &binding_sorts);
-                receipts.register_rule_term_recipe(spec.rule, term_recipe);
+                pending_rule_recipes = Some(PendingRuleRecipes {
+                    rule: spec.rule,
+                    binding_sources: Arc::clone(&binding_sources),
+                    equality_obligations,
+                    term_recipe,
+                });
                 ActionReceiptSpec {
                     kind: ActionReceiptKind::Rule(spec.rule),
                     premise_count,
@@ -1689,24 +1829,39 @@ impl RuleBuilder<'_, '_> {
                 }
             }
         });
-        if receipt.is_some() {
+        let prepared_origins = if let Some(action_receipt) = receipt.as_mut() {
             let receipts = self
                 .qb
                 .rsb
                 .db
                 .causal_receipts
                 .as_ref()
-                .expect("receipt action has no causal arena");
-            self.qb
+                .expect("receipt action has no causal arena")
+                .clone();
+            let prepared = self
+                .qb
                 .recipe_draft
                 .as_ref()
                 .expect("receipt action has no static term recipe draft")
-                .attach_row_origins(
-                    receipts,
+                .prepare_instruction_origins(
+                    &receipts,
                     &self.qb.query.atoms,
-                    &mut self.qb.instrs,
+                    &self.qb.instrs,
                     &row_origin_inputs,
-                );
+                )?;
+            if let Some(pending) = pending_rule_recipes {
+                let binding_sources =
+                    receipts.register_rule_binding_recipe(pending.rule, &pending.binding_sources);
+                receipts.register_rule_equality_recipe(pending.rule, &pending.equality_obligations);
+                receipts.register_rule_term_recipe(pending.rule, pending.term_recipe);
+                action_receipt.binding_sources = binding_sources;
+            }
+            Some((receipts, prepared))
+        } else {
+            None
+        };
+        if let Some((receipts, prepared)) = prepared_origins {
+            StaticRecipeDraft::attach_instruction_origins(&receipts, &mut self.qb.instrs, prepared);
         }
         let action = ActionInfo {
             instrs: Arc::new(self.qb.instrs),
@@ -1715,11 +1870,11 @@ impl RuleBuilder<'_, '_> {
         };
         if let Some(body_end) = grounded_body_end {
             assert!(body_end <= action.instrs.len());
-            return RuleBuildOutput::Grounded(GroundedRule {
+            return Ok(RuleBuildOutput::Grounded(GroundedRule {
                 action,
                 body_end,
                 probes: Arc::from([]),
-            });
+            }));
         }
         let action_id = self.qb.rsb.rule_set.actions.push(action);
         self.qb.query.action = action_id;
@@ -1727,13 +1882,11 @@ impl RuleBuilder<'_, '_> {
         let plan = self.qb.rsb.db.plan_query(self.qb.query);
         let desc: String = desc.into();
         // Add it to the ruleset.
-        RuleBuildOutput::Planned(
-            self.qb
-                .rsb
-                .rule_set
-                .plans
-                .push((plan, desc.into(), symbol_map)),
-        )
+        Ok(RuleBuildOutput::Planned(self.qb.rsb.rule_set.plans.push((
+            plan,
+            desc.into(),
+            symbol_map,
+        ))))
     }
 
     /// Return a variable containing the result of reading the specified counter.
