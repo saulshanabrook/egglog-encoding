@@ -3709,7 +3709,7 @@ fn merge_function_union_cites_one_match_and_immutable_prior_fact() {
             assert_eq!(recorded_prior, prior_fact);
             let matched = view.matched(rule_match)?;
             assert_eq!(matched.rule, 100);
-            assert_eq!(matched.premises.as_ref(), &[proposal_fact]);
+            assert_eq!(matched.premises, &[proposal_fact]);
             assert_eq!(equality.left.term, prior_term);
             assert_eq!(equality.right.term, incoming_term);
             Ok(())

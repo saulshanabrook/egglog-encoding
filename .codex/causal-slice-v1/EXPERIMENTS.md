@@ -2628,3 +2628,10 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   and failed its first performance screen. Per the campaign stop rules, no
   shared-effect framework, replacement catalog, API-breaking counter bundle,
   line packing, or moved complexity was introduced.
+- Final validation ran in the required order: `make proof-tests` passed 192
+  main-backend and 8 experimental proof fixtures, then the complete restarted
+  `make check` passed lockfile, formatting, Ruff, mypy, both Clippy modes, 171
+  Python tests, the full Rust workspace and doctest suite, and the DD timing
+  summary integration test. The restart followed one test-only Clippy cleanup
+  (`as_ref()` on an already borrowed premise slice); it receives no production
+  reduction credit. The proof subset was not rerun afterward.
