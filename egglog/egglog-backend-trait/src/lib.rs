@@ -100,8 +100,8 @@ pub use egglog_bridge::{
 };
 pub use egglog_core_relations::{
     BaseValue, BaseValueId, BaseValues, ContainerValue, ContainerValues, CounterId, ExecutionState,
-    ExternalFunction, ExternalFunctionId, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral,
-    ReplayOpId, ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermId, SourceRef, Value,
+    ExternalFunction, ExternalFunctionId, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
+    ReplaySortId, ReplayTableKind, ReplayTermId, SourceRef, Value,
 };
 pub use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel};
 
@@ -481,13 +481,6 @@ pub trait Backend: Send + Sync {
         ))
     }
 
-    /// Take one durable snapshot of the backend's causal receipts.
-    fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
-        Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
-        ))
-    }
-
     /// Promote all effective roots from the completed synchronous causal
     /// wave. Call only at an existing native merge/rebuild barrier.
     fn finalize_causal_wave(&mut self) -> Result<()> {
@@ -498,13 +491,6 @@ pub trait Backend: Send + Sync {
 
     /// Set the globally monotone wave inherited by subsequent native effects.
     fn set_causal_wave(&mut self, _wave: u64) -> Result<()> {
-        Err(anyhow::anyhow!(
-            "this backend does not support causal receipts"
-        ))
-    }
-
-    /// Inspect one replay node referenced from a causal receipt snapshot.
-    fn causal_replay_term(&self, _id: ReplayTermId) -> Result<Option<ReplayTerm>> {
         Err(anyhow::anyhow!(
             "this backend does not support causal receipts"
         ))

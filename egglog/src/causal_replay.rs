@@ -1259,19 +1259,8 @@ mod tests {
                  (check (Out (A 1)))",
             )
             .unwrap();
-        let bridge = egraph
-            .backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .unwrap();
-        let compatibility_reads = bridge.causal_compatibility_projection_reads().unwrap();
         let slice = slice_all_checks(&egraph).unwrap();
         let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
-        assert_eq!(
-            compatibility_reads,
-            bridge.causal_compatibility_projection_reads().unwrap(),
-            "owned IR construction must not materialize a full receipt snapshot"
-        );
         assert_eq!(ir.stats.firings, 1);
         assert_eq!(ir.stats.waves, 1);
         assert_eq!(ir.stats.checks, 1);

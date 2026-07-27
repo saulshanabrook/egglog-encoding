@@ -2467,3 +2467,61 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - The mission gate is complete. Recorder contingencies remain archived in
   `RESEARCH-recorder-cost-2026-07-24.md`; neither the barrier-local journal nor
   annotation-only contract is triggered by the measured end-to-end result.
+
+## 2026-07-26: causal slicing LoC checkpoint 1 — remove ReceiptSnapshot
+
+- Fixed bases: whole-feature `4940be37429e`, logical-v1 `0d7ffbb`, frozen
+  implementation/performance `5de2fa830db1`, and clean campaign start
+  `74eb9218c30a`. The corrected rustfmt-normalized starting production metric
+  was +23,232 net lines versus `4940be37`; the earlier +23,268 estimate retained
+  36 inline-test lines and is not used.
+- Frozen release binary SHA-256 before rebuilding was
+  `c32febc37a96e17daa5068692f0b02085c0aeac92652b482b990c5be35995ac1`.
+  The five input SHA-256 values were Math `7303e72d...05ef1f`, Eggcc
+  `fcbaaa9d...333e9e`, Pointer `dbb09187...3f76f` with fact-directory
+  `c15261f1...6e78`, Hardboiled `a8f04f0e...be3e2`, and Luminal
+  `4bd1d2f3...0dad`.
+- Removed the owned `ReceiptSnapshot` compatibility model completely: public
+  snapshot methods/reexports, projected fact/match/cause records, the duplicate
+  cold equality forest, compatibility traversal/counters, and backend-trait
+  delegation are gone. Production slicing and replay continue to consume the
+  borrowed `CausalReceiptView` directly. Snapshot-layout-only assertions were
+  deleted; semantic assertions now select durable facts/equalities and unfold
+  causes lazily.
+- The permanent occurrence-liveness canary proves that the old `FactId` is
+  available before removal, unavailable inclusively at the removal position,
+  and never reused when an identical key is recreated. Removal interference
+  reconstructs the victim key at the checked predecessor position. Both
+  `fact_cell_at` and `fact_key_at` enforce the same lifetime. A native
+  four-thread 20,001-row insert canary remains green.
+- Review found and fixed two borrowed-view boundary gaps before acceptance:
+  equality high-water marks are validated before every structural fast path;
+  and view inspection has a per-recorder nonblocking reentrancy guard plus an
+  unwind boundary, so same-thread/cross-thread nesting cannot deadlock and a
+  callback panic cannot poison capture locks. `FactNoLongerLive` exposes an
+  optional successor rather than an inaccessible sentinel.
+- Final normalized production metric (patch SHA-256
+  `34b71a6113241d01ec7eb7d52614b00bcfa994fd6111e267ac779f8380e273a1`):
+  A=23,047, D=1,877, net **+21,170** versus `4940be37`; A=14,756,
+  D=5,193, net **+9,563** versus `0d7ffbb`; direct change from clean
+  `74eb9218` is A=267, D=2,329, net **-2,062 production lines**. Tests and this
+  ledger receive no reduction credit.
+- Candidate release binary SHA-256 was
+  `1009a4a80e64471f294f8022f5fc33acea5dd950eec5dd592d94d2196c3f2eb7`.
+  All five artifacts were byte-identical to `5de2fa8`:
+  Math `3f5216d5...e17` (68 lines/7,101 bytes), Eggcc
+  `e4f6045e...c3ea` (3,422/160,755), Pointer `000dfda7...851`
+  (34/1,992), Hardboiled `2ccbf8e2...46e5` (311/27,374), and Luminal
+  `044b11c6...ad4` (49/6,500).
+- The public one-round all-five `causal-proofs` screen rebuilt both endpoints
+  under the current toolchain and appended ten successful rows to the normal
+  report cache. Candidate/baseline wall ratios were Math 1.00x, Eggcc 0.981x,
+  Pointer 0.972x, Hardboiled 0.968x, and Luminal 0.963x; suite total was
+  0.986x. Peak-RSS ratios ranged from 0.993x to 1.01x. Every point was within
+  the 1.10 causal ceiling.
+- Focused gates: 177 core tests and 157 frontend tests passed; experimental
+  library tests compiled. Independent semantic review returned GO, hot-path
+  review found no changed ordinary/native execution branch or allocation, and
+  two independent LoC calculations agreed. The obsolete global Exact-collision
+  panic was correctly classified as a limitation of the deleted compatibility
+  forest rather than a production slicing boundary.

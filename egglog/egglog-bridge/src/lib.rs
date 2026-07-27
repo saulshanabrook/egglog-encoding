@@ -26,8 +26,8 @@ use crate::core_relations::{
 use crate::numeric_id::{DenseIdMap, DenseIdMapWithReuse, NumericId, define_id};
 use egglog_core_relations as core_relations;
 pub use egglog_core_relations::{
-    CausalReceipts, CausalWave, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId,
-    ReplaySortId, ReplayTableKind, ReplayTerm, ReplayTermCounters, ReplayTermId,
+    CausalReceipts, CausalWave, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTermCounters, ReplayTermId,
 };
 use egglog_numeric_id as numeric_id;
 use egglog_reports::{IterationReport, PreMergeTiming, ReportLevel, RuleReport, RuleSetReport};
@@ -1016,17 +1016,8 @@ impl EGraph {
         Ok(receipts.intern_literal(sort, literal, value))
     }
 
-    /// Take a durable snapshot of the current causal receipts.
-    pub fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
-        let receipts = self
-            .causal_receipts
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
-        Ok(receipts.snapshot())
-    }
-
-    /// Inspect finalized raw causal receipts without constructing the
-    /// compatibility snapshot. Borrowed arena data cannot escape `inspect`.
+    /// Inspect finalized raw causal receipts. Borrowed arena data cannot
+    /// escape `inspect`.
     pub fn with_causal_receipt_view<R>(
         &self,
         inspect: impl for<'view> FnOnce(
@@ -1040,16 +1031,8 @@ impl EGraph {
         receipts.with_view(inspect)
     }
 
-    pub fn causal_compatibility_projection_reads(&self) -> Result<u64> {
-        let receipts = self
-            .causal_receipts
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("causal receipts are not enabled"))?;
-        Ok(receipts.compatibility_projection_reads())
-    }
-
     /// Inspect live replay-term and container-anchor cardinalities. Unlike a
-    /// durable receipt snapshot, this remains valid while a rejected causal
+    /// finalized receipt view, this remains valid while a rejected causal
     /// wave is being diagnosed.
     pub fn causal_replay_term_counters(&self) -> Result<ReplayTermCounters> {
         let receipts = self
@@ -1076,8 +1059,10 @@ impl EGraph {
         Ok(())
     }
 
-    /// Inspect one structural replay node referenced by a receipt snapshot.
-    pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>> {
+    pub fn causal_replay_term(
+        &self,
+        id: ReplayTermId,
+    ) -> Result<Option<core_relations::ReplayTerm>> {
         let receipts = self
             .causal_receipts
             .as_ref()

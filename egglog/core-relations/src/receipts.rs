@@ -9,7 +9,7 @@ use std::{
     mem,
     sync::{
         Arc, Mutex, OnceLock, RwLock,
-        atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
     },
 };
 
@@ -21,6 +21,27 @@ use crate::{
     common::{DashMap, HashMap, HashSet},
     numeric_id::{DenseIdMap, NumericId},
 };
+
+struct ActiveReceiptViewGuard<'a> {
+    active: &'a AtomicBool,
+}
+
+impl<'a> ActiveReceiptViewGuard<'a> {
+    fn enter(active: &'a AtomicBool) -> Result<Self, ReceiptViewError> {
+        active
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .map(|_| Self { active })
+            .map_err(|_| {
+                ReceiptViewError::Invalid("causal receipt inspection is not reentrant".into())
+            })
+    }
+}
+
+impl Drop for ActiveReceiptViewGuard<'_> {
+    fn drop(&mut self) {
+        self.active.store(false, Ordering::Release);
+    }
+}
 
 #[cfg(test)]
 thread_local! {
@@ -72,11 +93,9 @@ handle!(RuleMatchId, u64);
 handle!(ReplayTermId, u32);
 handle!(ReplaySortId, u32);
 handle!(ReplayOpId, u32);
-handle!(EqNodeId, u64);
 // Dense identity of one effective native union in raw receipt history,
 // including same-syntax alias joins.
 handle!(AppliedEqualityId, u64);
-handle!(EqLeafId, u64);
 handle!(EqualityEdgeCount, u64);
 handle!(CausalWave, u64);
 handle!(HistoryPosition, u64);
@@ -97,7 +116,7 @@ pub enum ReplayTableKind {
     ValueFunction,
 }
 
-/// Stable index into the snapshot-owned, shared causal DAG.
+/// Stable index into the shared causal DAG.
 /// A dependency can point directly at an observed rule match or at a shared
 /// non-rule cause node. Keeping the tagged distinction public avoids
 /// manufacturing one cause-arena node for every native match.
@@ -106,9 +125,6 @@ pub enum ReceiptCauseRef {
     Rule(RuleMatchId),
     Cause(ReceiptCauseId),
 }
-
-/// Applied equality edges and their immutable binary join nodes are 1:1.
-pub type EqualityEdgeId = EqNodeId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PremiseSlot(u16);
@@ -191,7 +207,8 @@ impl CauseRef {
         self == Self::UNATTRIBUTED
     }
 
-    pub(crate) fn public(self) -> ReceiptCauseRef {
+    #[cfg(test)]
+    fn into_public(self) -> ReceiptCauseRef {
         match self.rule_match() {
             Some(rule) => ReceiptCauseRef::Rule(rule),
             None => ReceiptCauseRef::Cause(
@@ -200,6 +217,13 @@ impl CauseRef {
                     .public(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+impl From<CauseRef> for ReceiptCauseRef {
+    fn from(value: CauseRef) -> Self {
+        value.into_public()
     }
 }
 
@@ -1114,32 +1138,6 @@ impl ActionReceiptSpec {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MatchRecord {
-    pub id: RuleMatchId,
-    pub rule: u32,
-    pub wave: CausalWave,
-    /// Inclusive cross-stream high-water captured once when native matching
-    /// began. Repeated-variable and equality-body obligations must never use
-    /// facts, rekeys, or zero-edge aliases published later in the wave.
-    pub position: HistoryPosition,
-    /// Applied equality prefix visible at the same match-start boundary.
-    pub as_of_edges: EqualityEdgeCount,
-    pub premises: Box<[FactId]>,
-    pub terms: Box<[ReplayTermId]>,
-    /// Immutable prior facts read by table merge callbacks for this firing,
-    /// in native callback order. A read is retained only when another effect
-    /// promotes the firing.
-    pub merge_reads: Box<[FactId]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RebuildDependency {
-    pub wave: CausalWave,
-    pub prior_fact: FactId,
-    pub equalities: EqualityLandmark,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RekeyOutcome {
     Moved,
@@ -1151,13 +1149,13 @@ pub enum RekeyOutcome {
 /// collision records which live fact absorbed or replaced it. The equality
 /// landmark is immutable and historically bounded at the rebuild decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RekeyRecord {
-    pub fact: FactId,
-    pub table: TableId,
-    pub wave: CausalWave,
-    pub position: HistoryPosition,
-    pub equalities: EqualityLandmark,
-    pub outcome: RekeyOutcome,
+pub(crate) struct RekeyRecord {
+    pub(crate) fact: FactId,
+    pub(crate) table: TableId,
+    pub(crate) wave: CausalWave,
+    pub(crate) position: HistoryPosition,
+    pub(crate) equalities: EqualityLandmark,
+    pub(crate) outcome: RekeyOutcome,
 }
 
 /// Exact positional child changes produced by one serial container rebuild.
@@ -1165,12 +1163,12 @@ pub struct RekeyRecord {
 /// The container's structural replay term remains immutable. Re-executing the
 /// child equalities makes that same term denote the rebuilt native container.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContainerDependency {
-    pub wave: CausalWave,
-    pub equalities: EqualityLandmark,
+pub(crate) struct ContainerDependency {
+    pub(crate) wave: CausalWave,
+    pub(crate) equalities: EqualityLandmark,
 }
 
-/// Receipt-only logical identity for one container version. Public snapshots
+/// Receipt-only logical identity for one container version. Borrowed views
 /// expose the dependency itself; native refresh bookkeeping additionally
 /// needs the exact structural producer that owned the raw container id.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1217,57 +1215,11 @@ impl ContainerAnchorJournal {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FactCause {
-    Source(SourceRef),
-    Rule(RuleMatchId),
-    Rebuild {
-        wave: CausalWave,
-        prior_fact: FactId,
-        equalities: EqualityLandmark,
-    },
-    ContainerRefresh {
-        wave: CausalWave,
-        prior_fact: FactId,
-        equalities: EqualityLandmark,
-    },
-    Merge {
-        /// Shared exact native fold DAG. This preserves cross-kind ordering
-        /// without copying a growing dependency prefix into every fact.
-        cause: ReceiptCauseId,
-    },
-}
-
-impl FactCause {
-    pub fn rule_match(&self) -> Option<RuleMatchId> {
-        match self {
-            FactCause::Source(_)
-            | FactCause::Rebuild { .. }
-            | FactCause::ContainerRefresh { .. } => None,
-            FactCause::Rule(id) => Some(*id),
-            FactCause::Merge { .. } => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FactRecord {
-    pub id: FactId,
-    pub table: TableId,
-    /// Serial logical order shared with applied equalities, rekeys, and
-    /// selected checks. Cold projection uses it to attach exact fact terms
-    /// to the native equality component that existed when the fact appeared.
-    pub position: HistoryPosition,
-    pub cause: FactCause,
-    pub values: Box<[Value]>,
-    pub terms: Box<[ReplayTermId]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EqualityReason {
     RuleUnion(RuleMatchId),
     MergeFn {
         /// Shared exact cause root. Dependencies are unfolded lazily through
-        /// [`ReceiptSnapshot::cause_dependencies`].
+        /// [`CausalReceiptView::cause`].
         cause: ReceiptCauseId,
     },
     Congruence {
@@ -1293,133 +1245,6 @@ impl EqualityReason {
 pub enum ReceiptCausePrior {
     Fact(FactId),
     Cause(ReceiptCauseRef),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ReceiptCauseRecord {
-    Source(SourceRef),
-    Rebuild {
-        wave: CausalWave,
-        prior_fact: FactId,
-        equalities: EqualityLandmark,
-    },
-    ContainerCanonicalize {
-        wave: CausalWave,
-        equalities: EqualityLandmark,
-    },
-    ContainerRefresh {
-        wave: CausalWave,
-        prior_fact: FactId,
-        equalities: EqualityLandmark,
-    },
-    Merge {
-        incoming: ReceiptCauseRef,
-        prior: ReceiptCausePrior,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReceiptCauseDependency<'a> {
-    Source(&'a SourceRef),
-    Rule(RuleMatchId),
-    Fact(FactId),
-    Rebuild {
-        wave: CausalWave,
-        prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
-        position: HistoryPosition,
-        equalities: &'a [TypedCellEquality],
-    },
-    ContainerCanonicalize {
-        wave: CausalWave,
-        as_of_edges: EqualityEdgeCount,
-        position: HistoryPosition,
-        equalities: &'a [TypedCellEquality],
-    },
-    ContainerRefresh {
-        wave: CausalWave,
-        prior_fact: FactId,
-        as_of_edges: EqualityEdgeCount,
-        position: HistoryPosition,
-        equalities: &'a [TypedCellEquality],
-    },
-}
-
-enum CauseDependencyItem {
-    Cause(ReceiptCauseRef),
-    Fact(FactId),
-}
-
-pub struct ReceiptCauseDependencies<'a> {
-    causes: &'a [ReceiptCauseRecord],
-    stack: Vec<CauseDependencyItem>,
-}
-
-impl<'a> Iterator for ReceiptCauseDependencies<'a> {
-    type Item = ReceiptCauseDependency<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            match self.stack.pop()? {
-                CauseDependencyItem::Fact(fact) => {
-                    return Some(ReceiptCauseDependency::Fact(fact));
-                }
-                CauseDependencyItem::Cause(ReceiptCauseRef::Rule(rule)) => {
-                    return Some(ReceiptCauseDependency::Rule(rule));
-                }
-                CauseDependencyItem::Cause(ReceiptCauseRef::Cause(cause)) => {
-                    match &self.causes[(cause.get() - 1) as usize] {
-                        ReceiptCauseRecord::Source(source) => {
-                            return Some(ReceiptCauseDependency::Source(source));
-                        }
-                        ReceiptCauseRecord::Rebuild {
-                            wave,
-                            prior_fact,
-                            equalities,
-                        } => {
-                            return Some(ReceiptCauseDependency::Rebuild {
-                                wave: *wave,
-                                prior_fact: *prior_fact,
-                                as_of_edges: equalities.as_of_edges,
-                                position: equalities.position,
-                                equalities: &equalities.pairs,
-                            });
-                        }
-                        ReceiptCauseRecord::ContainerCanonicalize { wave, equalities } => {
-                            return Some(ReceiptCauseDependency::ContainerCanonicalize {
-                                wave: *wave,
-                                as_of_edges: equalities.as_of_edges,
-                                position: equalities.position,
-                                equalities: &equalities.pairs,
-                            });
-                        }
-                        ReceiptCauseRecord::ContainerRefresh {
-                            wave,
-                            prior_fact,
-                            equalities,
-                        } => {
-                            return Some(ReceiptCauseDependency::ContainerRefresh {
-                                wave: *wave,
-                                prior_fact: *prior_fact,
-                                as_of_edges: equalities.as_of_edges,
-                                position: equalities.position,
-                                equalities: &equalities.pairs,
-                            });
-                        }
-                        ReceiptCauseRecord::Merge { incoming, prior } => {
-                            self.stack.push(CauseDependencyItem::Cause(*incoming));
-                            self.stack.push(match prior {
-                                ReceiptCausePrior::Fact(fact) => CauseDependencyItem::Fact(*fact),
-                                ReceiptCausePrior::Cause(cause) => {
-                                    CauseDependencyItem::Cause(*cause)
-                                }
-                            });
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1469,120 +1294,29 @@ pub struct TypedCellEquality {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqualityLandmark {
+pub(crate) struct EqualityLandmark {
     /// Dense applied-edge prefix visible at this exact global history point.
-    pub as_of_edges: EqualityEdgeCount,
+    pub(crate) as_of_edges: EqualityEdgeCount,
     /// Cross-stream cutoff for zero-edge fact/rekey/alias attachments.
-    pub position: HistoryPosition,
-    pub pairs: Box<[TypedCellEquality]>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum EqComponentRef {
-    Leaf(EqLeafId),
-    Node(EqNodeId),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct EqLeafRecord {
-    pub id: EqLeafId,
-    pub position: HistoryPosition,
-    pub endpoint: EqualityEndpoint,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqNodeRecord {
-    pub id: EqNodeId,
-    pub left: EqComponentRef,
-    pub right: EqComponentRef,
-    /// Occurrence-scoped leaf through which the edge enters each child.
-    pub left_anchor: EqLeafId,
-    pub right_anchor: EqLeafId,
-    pub edge: EqualityEdgeId,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqualityRecord {
-    pub id: EqualityEdgeId,
-    pub wave: CausalWave,
-    pub position: HistoryPosition,
-    pub left: EqualityEndpoint,
-    pub right: EqualityEndpoint,
-    pub native_parent: crate::Value,
-    pub native_child: crate::Value,
-    pub reason: EqualityReason,
-}
-
-/// One effective native union between distinct runtime ids whose endpoint
-/// terms already belong to the same logical equality component. It is
-/// attributable but adds no new logical equality, so it deliberately does
-/// not allocate an equality-forest edge.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeAliasRecord {
-    pub wave: CausalWave,
-    pub position: HistoryPosition,
-    pub left: EqualityEndpoint,
-    pub right: EqualityEndpoint,
-    pub native_parent: crate::Value,
-    pub native_child: crate::Value,
-    pub reason: EqualityReason,
-}
-
-/// A zero-edge structural alias learned when an exact fact term is published
-/// into a native equality component that already has another structural
-/// representative. The fact is the proof-producing attachment; no synthetic
-/// equality edge is invented.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TermAttachmentDependency {
-    Fact(FactId),
-    Cause(ReceiptCauseRef),
-    Rekey {
-        position: HistoryPosition,
-        fact: FactId,
-    },
-    /// `EqualityTermRef::Exact` proved this current-value alias existed
-    /// before the applied event was staged. Its original occurrence carries
-    /// the replay dependency; catch-up itself adds none.
-    Trusted,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TermAttachment {
-    position: HistoryPosition,
-    sort: ReplaySortId,
-    raw: Value,
-    term: ReplayTermId,
-    leaf: EqLeafId,
-    dependency: TermAttachmentDependency,
+    pub(crate) position: HistoryPosition,
+    pub(crate) pairs: Box<[TypedCellEquality]>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ReceiptCounters {
-    pub provisional_matches: u64,
     /// Every normal-return native rule lane, including inert observations.
     pub observed_matches: u64,
-    pub promoted_matches: u64,
     pub premise_handles: u64,
-    /// Logical match-term handles exposed by [`MatchRecord::terms`].
+    /// Logical match-term handles exposed by [`CausalReceiptView::match_terms`].
     pub logical_match_term_handles: u64,
     /// Match-term handles physically retained by the receipt arena.
     pub stored_match_term_handles: u64,
-    /// Logical bytes exposed by [`MatchRecord::terms`].
+    /// Logical bytes exposed by [`CausalReceiptView::match_terms`].
     pub logical_match_term_bytes: u64,
     /// Match-term bytes physically retained by the receipt arena.
     pub stored_match_term_bytes: u64,
-    /// Backward-compatible alias for [`Self::logical_match_term_handles`].
-    pub term_handles: u64,
-    /// Fact-owned constructor terms copied while preparing merge causes.
-    /// This must scale with effective merged facts, not attempted collisions.
-    pub merge_prior_term_copies: u64,
-    pub peak_provisional_bytes: u64,
-    pub live_provisional_bytes: u64,
-    pub promotion_misses: u64,
     pub unattributed_commits: u64,
     pub redundant_unions: u64,
-    /// Effective native unions that added no logical equality edge.
-    pub native_alias_unions: u64,
     /// Effective constructor/value-function removals retained for slicing.
     pub effective_removals: u64,
     /// Effective presence-relation removals observed but not retained.
@@ -1593,12 +1327,6 @@ pub struct ReceiptCounters {
     pub rebuild_equalities: u64,
     /// Logical bytes of rebuild cause and changed-cell payload captured.
     pub rebuild_bytes: u64,
-    /// Container canonicalization and same-ID parent-refresh causes retained.
-    pub container_causes: u64,
-    /// Positional child equality pairs stored across container causes.
-    pub container_equalities: u64,
-    /// Logical bytes of container cause and child-pair payload captured.
-    pub container_bytes: u64,
     /// `Current` binding slots with a complete replay-safe structural recipe.
     pub supported_current_recipe_roots: u64,
     /// `Current` binding slots whose structural producer remains unsupported.
@@ -1849,546 +1577,8 @@ pub enum ReceiptViewError {
         fact: FactId,
         position: HistoryPosition,
         ended_at: HistoryPosition,
-        successor: FactId,
+        successor: Option<FactId>,
     },
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct ReceiptSnapshot {
-    pub facts: Vec<FactRecord>,
-    pub matches: Vec<MatchRecord>,
-    pub equality_leaves: Vec<EqLeafRecord>,
-    pub equality_nodes: Vec<EqNodeRecord>,
-    pub equalities: Vec<EqualityRecord>,
-    pub native_aliases: Vec<NativeAliasRecord>,
-    pub rekeys: Vec<RekeyRecord>,
-    pub removals: Vec<RemovalRecord>,
-    pub causes: Vec<ReceiptCauseRecord>,
-    pub check_roots: Vec<CheckRoot>,
-    pub counters: ReceiptCounters,
-    equality_history_prefix: Box<[usize]>,
-    equality_history_positions: Box<[HistoryPosition]>,
-    term_attachments: Box<[TermAttachment]>,
-}
-
-impl ReceiptSnapshot {
-    pub fn cause_dependencies(
-        &self,
-        root: impl Into<ReceiptCauseRef>,
-    ) -> ReceiptCauseDependencies<'_> {
-        let root = root.into();
-        if let ReceiptCauseRef::Cause(root) = root {
-            assert!(
-                root.get() > 0 && root.get() as usize <= self.causes.len(),
-                "receipt cause root is outside this snapshot"
-            );
-        }
-        ReceiptCauseDependencies {
-            causes: &self.causes,
-            stack: vec![CauseDependencyItem::Cause(root)],
-        }
-    }
-
-    /// Lazily unfold one exact applied-edge explanation as it existed at the
-    /// supplied historical landmark. This walks only immutable receipt data;
-    /// native path compression and later equality edges are irrelevant.
-    ///
-    /// The applied forest supplies one deterministic explanation. Shorter
-    /// alternatives through redundant proposals are deliberately not stored
-    /// on the recording hot path.
-    #[cfg(test)]
-    pub fn explain_equality_at_end(
-        &self,
-        left: EqualityEndpoint,
-        right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
-    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
-        self.equality_explanation_index_at_end(as_of)?
-            .explain_equality(left, right)
-    }
-
-    /// Explain at an exact cross-stream logical point. Unlike an edge-only
-    /// cutoff, this includes zero-edge fact attachments published after the
-    /// most recent union and excludes attachments published after the caller.
-    pub fn explain_equality_at(
-        &self,
-        left: EqualityEndpoint,
-        right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
-        position: HistoryPosition,
-    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
-        self.equality_explanation_index_at(as_of, position)?
-            .explain_equality(left, right)
-    }
-
-    pub fn explain_equality_support_at(
-        &self,
-        left: EqualityEndpoint,
-        right: EqualityEndpoint,
-        as_of: EqualityEdgeCount,
-        position: HistoryPosition,
-    ) -> Result<EqualitySupport, &'static str> {
-        self.equality_explanation_index_at(as_of, position)?
-            .explain_equality_support(left, right)
-    }
-
-    /// Build one immutable forest index for a historical cutoff. A slicer
-    /// should reuse this value for every changed-cell pair at that cutoff;
-    /// membership checks during explanation are constant-time interval tests.
-    #[cfg(test)]
-    pub fn equality_explanation_index_at_end(
-        &self,
-        as_of: EqualityEdgeCount,
-    ) -> Result<EqualityExplanationIndex<'_>, &'static str> {
-        EqualityExplanationIndex::new(self, as_of, HistoryPosition::new(u64::MAX))
-    }
-
-    pub fn equality_explanation_index_at(
-        &self,
-        as_of: EqualityEdgeCount,
-        position: HistoryPosition,
-    ) -> Result<EqualityExplanationIndex<'_>, &'static str> {
-        EqualityExplanationIndex::new(self, as_of, position)
-    }
-}
-
-pub struct EqualityExplanationIndex<'a> {
-    snapshot: &'a ReceiptSnapshot,
-    cutoff: usize,
-    leaf_positions: HashMap<EqLeafId, (EqComponentRef, usize)>,
-    endpoint_leaves: HashMap<(ReplaySortId, ReplayTermId, Value), EqLeafId>,
-    term_attachment_dependencies:
-        HashMap<(ReplaySortId, ReplayTermId, Value), TermAttachmentDependency>,
-    leaf_dependencies: HashMap<EqLeafId, TermAttachmentDependency>,
-    node_intervals: Vec<Option<(usize, usize)>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EqualitySupport {
-    pub edges: Box<[EqualityEdgeId]>,
-    /// Exact fact publications needed for zero-edge structural attachment.
-    /// These are dependencies, not synthetic equality edges.
-    pub facts: Box<[FactId]>,
-    /// Exact promoted causes that introduced a structural endpoint into an
-    /// already-existing native component without adding an equality edge.
-    pub causes: Box<[ReceiptCauseRef]>,
-    /// Pure-rekey navigation records needed to make an occurrence available
-    /// under its later raw value. Positions uniquely identify snapshot rekeys.
-    pub rekeys: Box<[HistoryPosition]>,
-}
-
-impl<'a> EqualityExplanationIndex<'a> {
-    fn new(
-        snapshot: &'a ReceiptSnapshot,
-        as_of: EqualityEdgeCount,
-        position: HistoryPosition,
-    ) -> Result<Self, &'static str> {
-        let history_cutoff: usize = as_of
-            .get()
-            .try_into()
-            .map_err(|_| "equality landmark exceeds addressable receipt storage")?;
-        if history_cutoff > snapshot.equality_history_prefix.len() {
-            return Err("equality landmark exceeds the recorded applied-edge prefix");
-        }
-        if position != HistoryPosition::new(u64::MAX) {
-            let visible = snapshot
-                .equality_history_positions
-                .partition_point(|event| *event <= position);
-            if visible != history_cutoff {
-                return Err("equality edge cutoff disagrees with the global history position");
-            }
-        }
-        let cutoff = history_cutoff
-            .checked_sub(1)
-            .map_or(0, |index| snapshot.equality_history_prefix[index]);
-        if cutoff > snapshot.equality_nodes.len() || cutoff > snapshot.equalities.len() {
-            return Err("equality history maps beyond the cold logical forest");
-        }
-
-        let mut leaf_parents = vec![None; snapshot.equality_leaves.len()];
-        let mut node_parents = vec![None; cutoff];
-        for index in 0..cutoff {
-            let expected = EqNodeId::new(index as u64 + 1);
-            let node = &snapshot.equality_nodes[index];
-            let equality = &snapshot.equalities[index];
-            if node.id != expected || node.edge != expected || equality.id != expected {
-                return Err("equality receipt IDs are not one dense applied-edge prefix");
-            }
-            if equality.left.sort != equality.right.sort {
-                return Err("one applied equality edge crosses logical sorts");
-            }
-            for child in [node.left, node.right] {
-                match child {
-                    EqComponentRef::Leaf(leaf) => {
-                        let leaf_index: usize = leaf
-                            .get()
-                            .checked_sub(1)
-                            .ok_or("equality forest references leaf zero")?
-                            .try_into()
-                            .map_err(|_| "equality leaf ID exceeds addressable storage")?;
-                        if leaf_index >= snapshot.equality_leaves.len() {
-                            return Err("equality forest references an absent leaf");
-                        }
-                        if leaf_parents[leaf_index].replace(node.id).is_some() {
-                            return Err("equality forest leaf has multiple parents");
-                        }
-                    }
-                    EqComponentRef::Node(child) => {
-                        let child_index: usize = child
-                            .get()
-                            .checked_sub(1)
-                            .ok_or("equality forest references node zero")?
-                            .try_into()
-                            .map_err(|_| "equality node ID exceeds addressable storage")?;
-                        if child_index >= index {
-                            return Err("equality forest child does not precede its parent");
-                        }
-                        if node_parents[child_index].replace(node.id).is_some() {
-                            return Err("equality forest node has multiple parents");
-                        }
-                    }
-                }
-            }
-        }
-
-        enum Visit {
-            Enter(EqComponentRef, EqNodeId),
-            Exit(EqNodeId, usize),
-        }
-        let mut leaf_positions = HashMap::default();
-        let mut node_intervals = vec![None; cutoff];
-        let mut next_position = 0usize;
-        for (root_index, parent) in node_parents.iter().enumerate().take(cutoff) {
-            if parent.is_some() {
-                continue;
-            }
-            let root = EqNodeId::new(root_index as u64 + 1);
-            let mut stack = vec![Visit::Enter(EqComponentRef::Node(root), root)];
-            while let Some(visit) = stack.pop() {
-                match visit {
-                    Visit::Enter(EqComponentRef::Leaf(leaf), root) => {
-                        if leaf_positions
-                            .insert(leaf, (EqComponentRef::Node(root), next_position))
-                            .is_some()
-                        {
-                            return Err("equality forest leaf occurs more than once");
-                        }
-                        next_position += 1;
-                    }
-                    Visit::Enter(EqComponentRef::Node(node), root) => {
-                        let index: usize = node
-                            .get()
-                            .checked_sub(1)
-                            .ok_or("equality forest references node zero")?
-                            .try_into()
-                            .map_err(|_| "equality node ID exceeds addressable storage")?;
-                        let record = snapshot
-                            .equality_nodes
-                            .get(index)
-                            .ok_or("equality forest references an absent node")?;
-                        let start = next_position;
-                        stack.push(Visit::Exit(node, start));
-                        stack.push(Visit::Enter(record.right, root));
-                        stack.push(Visit::Enter(record.left, root));
-                    }
-                    Visit::Exit(node, start) => {
-                        let index = (node.get() - 1) as usize;
-                        if start == next_position {
-                            return Err("equality forest node contains no term leaves");
-                        }
-                        if node_intervals[index]
-                            .replace((start, next_position))
-                            .is_some()
-                        {
-                            return Err("equality forest node was visited more than once");
-                        }
-                    }
-                }
-            }
-        }
-        if node_intervals.iter().any(Option::is_none) {
-            return Err("equality forest contains an unreachable node");
-        }
-
-        // Leaves whose first parent lies after the requested edge cutoff are
-        // standalone historical components at this point.
-        for leaf in snapshot
-            .equality_leaves
-            .iter()
-            .filter(|leaf| leaf.position <= position)
-        {
-            leaf_positions.entry(leaf.id).or_insert_with(|| {
-                let position = next_position;
-                next_position += 1;
-                (EqComponentRef::Leaf(leaf.id), position)
-            });
-        }
-
-        let mut endpoint_leaves = HashMap::default();
-        for leaf in snapshot
-            .equality_leaves
-            .iter()
-            .filter(|leaf| leaf.position <= position)
-        {
-            endpoint_leaves.insert(
-                (leaf.endpoint.sort, leaf.endpoint.term, leaf.endpoint.raw),
-                leaf.id,
-            );
-        }
-        let mut term_attachment_dependencies = HashMap::default();
-        let mut leaf_dependencies = HashMap::default();
-        for attachment in snapshot
-            .term_attachments
-            .iter()
-            .filter(|attachment| attachment.position <= position)
-        {
-            let key = (attachment.sort, attachment.term, attachment.raw);
-            term_attachment_dependencies.insert(key, attachment.dependency);
-            endpoint_leaves.insert(key, attachment.leaf);
-            leaf_dependencies
-                .entry(attachment.leaf)
-                .or_insert(attachment.dependency);
-        }
-
-        let index = Self {
-            snapshot,
-            cutoff,
-            leaf_positions,
-            endpoint_leaves,
-            term_attachment_dependencies,
-            leaf_dependencies,
-            node_intervals,
-        };
-        for node in snapshot.equality_nodes.iter().take(cutoff) {
-            if !index.contains(node.left, node.left_anchor)
-                || !index.contains(node.right, node.right_anchor)
-            {
-                return Err("applied edge anchors do not belong to their recorded components");
-            }
-        }
-        Ok(index)
-    }
-
-    pub fn explain_equality(
-        &self,
-        left: EqualityEndpoint,
-        right: EqualityEndpoint,
-    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
-        Ok(self.explain_equality_support(left, right)?.edges)
-    }
-
-    pub fn explain_equality_support(
-        &self,
-        left: EqualityEndpoint,
-        right: EqualityEndpoint,
-    ) -> Result<EqualitySupport, &'static str> {
-        if left.sort != right.sort {
-            return Err("cannot explain equality across logical sorts");
-        }
-        if left.term.is_missing() || right.term.is_missing() {
-            return Err("cannot explain equality with a missing ReplayTermId");
-        }
-        let mut facts = Vec::new();
-        let mut causes = Vec::new();
-        let mut rekeys = Vec::new();
-        let left_leaf = self.endpoint_leaf(left, &mut facts, &mut causes, &mut rekeys)?;
-        let right_leaf = self.endpoint_leaf(right, &mut facts, &mut causes, &mut rekeys)?;
-        facts.sort_unstable();
-        facts.dedup();
-        causes.sort_unstable();
-        causes.dedup();
-        rekeys.sort_unstable();
-        rekeys.dedup();
-        if left_leaf == right_leaf {
-            return Ok(EqualitySupport {
-                edges: Box::new([]),
-                facts: facts.into_boxed_slice(),
-                causes: causes.into_boxed_slice(),
-                rekeys: rekeys.into_boxed_slice(),
-            });
-        }
-
-        let Some(left_root) = self.root(left_leaf) else {
-            return Err("left equality endpoint is absent from the historical forest");
-        };
-        let Some(right_root) = self.root(right_leaf) else {
-            return Err("right equality endpoint is absent from the historical forest");
-        };
-        if left_root != right_root {
-            return Err("equality endpoints were disconnected at the historical landmark");
-        }
-        Ok(EqualitySupport {
-            edges: self.explain(left_root, left_leaf, right_leaf, left.sort)?,
-            facts: facts.into_boxed_slice(),
-            causes: causes.into_boxed_slice(),
-            rekeys: rekeys.into_boxed_slice(),
-        })
-    }
-
-    fn endpoint_leaf(
-        &self,
-        endpoint: EqualityEndpoint,
-        facts: &mut Vec<FactId>,
-        causes: &mut Vec<ReceiptCauseRef>,
-        rekeys: &mut Vec<HistoryPosition>,
-    ) -> Result<EqLeafId, &'static str> {
-        let key = (endpoint.sort, endpoint.term, endpoint.raw);
-        match self.term_attachment_dependencies.get(&key).copied() {
-            Some(TermAttachmentDependency::Fact(fact)) => facts.push(fact),
-            Some(TermAttachmentDependency::Cause(cause)) => causes.push(cause),
-            Some(TermAttachmentDependency::Rekey { position, fact }) => {
-                rekeys.push(position);
-                facts.push(fact);
-            }
-            Some(TermAttachmentDependency::Trusted) => {}
-            None => {}
-        }
-        let leaf = self
-            .endpoint_leaves
-            .get(&key)
-            .copied()
-            .ok_or("equality endpoint occurrence is absent at the historical position")?;
-        match self.leaf_dependencies.get(&leaf).copied() {
-            Some(TermAttachmentDependency::Fact(fact)) => facts.push(fact),
-            Some(TermAttachmentDependency::Cause(cause)) => causes.push(cause),
-            Some(TermAttachmentDependency::Rekey { position, fact }) => {
-                rekeys.push(position);
-                facts.push(fact);
-            }
-            Some(TermAttachmentDependency::Trusted) => {}
-            None => {}
-        }
-        Ok(leaf)
-    }
-
-    fn root(&self, leaf: EqLeafId) -> Option<EqComponentRef> {
-        self.leaf_positions.get(&leaf).map(|(root, _)| *root)
-    }
-
-    fn contains(&self, component: EqComponentRef, leaf: EqLeafId) -> bool {
-        match component {
-            EqComponentRef::Leaf(expected) => expected == leaf,
-            EqComponentRef::Node(node) => {
-                let Some((_, position)) = self.leaf_positions.get(&leaf) else {
-                    return false;
-                };
-                let Some(index) = node.get().checked_sub(1).map(|id| id as usize) else {
-                    return false;
-                };
-                let Some(Some((start, end))) = self.node_intervals.get(index) else {
-                    return false;
-                };
-                *start <= *position && *position < *end
-            }
-        }
-    }
-
-    fn explain(
-        &self,
-        root: EqComponentRef,
-        left: EqLeafId,
-        right: EqLeafId,
-        sort: ReplaySortId,
-    ) -> Result<Box<[EqualityEdgeId]>, &'static str> {
-        enum Task {
-            Pair {
-                component: EqComponentRef,
-                left: EqLeafId,
-                right: EqLeafId,
-            },
-            Edge(EqualityEdgeId),
-        }
-
-        let mut tasks = vec![Task::Pair {
-            component: root,
-            left,
-            right,
-        }];
-        let mut result = Vec::new();
-        while let Some(task) = tasks.pop() {
-            let Task::Pair {
-                component,
-                left,
-                right,
-            } = task
-            else {
-                let Task::Edge(edge) = task else {
-                    unreachable!()
-                };
-                result.push(edge);
-                continue;
-            };
-            if left == right {
-                continue;
-            }
-            let EqComponentRef::Node(node_id) = component else {
-                return Err("distinct occurrences reached one leaf in the equality forest");
-            };
-            let node_index: usize = node_id
-                .get()
-                .checked_sub(1)
-                .ok_or("equality explanation reached node zero")?
-                .try_into()
-                .map_err(|_| "equality node ID exceeds addressable storage")?;
-            if node_index >= self.cutoff {
-                return Err("equality explanation crossed its historical landmark");
-            }
-            let node = &self.snapshot.equality_nodes[node_index];
-            let equality = &self.snapshot.equalities[node_index];
-            if equality.left.sort != sort || equality.right.sort != sort {
-                return Err("equality explanation crossed logical sorts");
-            }
-            if !self.contains(node.left, node.left_anchor)
-                || !self.contains(node.right, node.right_anchor)
-            {
-                return Err("applied edge anchors do not belong to their recorded components");
-            }
-            let left_in_left = self.contains(node.left, left);
-            let left_in_right = self.contains(node.right, left);
-            let right_in_left = self.contains(node.left, right);
-            let right_in_right = self.contains(node.right, right);
-            if left_in_left && right_in_left {
-                tasks.push(Task::Pair {
-                    component: node.left,
-                    left,
-                    right,
-                });
-            } else if left_in_right && right_in_right {
-                tasks.push(Task::Pair {
-                    component: node.right,
-                    left,
-                    right,
-                });
-            } else if left_in_left && right_in_right {
-                tasks.push(Task::Pair {
-                    component: node.right,
-                    left: node.right_anchor,
-                    right,
-                });
-                tasks.push(Task::Edge(equality.id));
-                tasks.push(Task::Pair {
-                    component: node.left,
-                    left,
-                    right: node.left_anchor,
-                });
-            } else if left_in_right && right_in_left {
-                tasks.push(Task::Pair {
-                    component: node.left,
-                    left: node.left_anchor,
-                    right,
-                });
-                tasks.push(Task::Edge(equality.id));
-                tasks.push(Task::Pair {
-                    component: node.right,
-                    left,
-                    right: node.right_anchor,
-                });
-            } else {
-                return Err("equality terms do not belong to the requested component");
-            }
-        }
-        Ok(result.into_boxed_slice())
-    }
 }
 
 /// Opaque proof that both raw union endpoints were resolved through the
@@ -3017,7 +2207,6 @@ struct DurableFact {
 
 #[derive(Clone, Debug)]
 struct PendingEquality {
-    history: EqualityEdgeCount,
     position: HistoryPosition,
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
@@ -3027,7 +2216,6 @@ struct PendingEquality {
 
 #[derive(Clone, Debug)]
 struct DurableEquality {
-    history: EqualityEdgeCount,
     position: HistoryPosition,
     proposal: AppliedEqualityProposal,
     native_parent: crate::Value,
@@ -3105,7 +2293,7 @@ impl ReceiptArena {
             .as_ref()
     }
 
-    fn install_equality(&mut self, id: EqNodeId, equality: DurableEquality) {
+    fn install_equality(&mut self, id: AppliedEqualityId, equality: DurableEquality) {
         let index = (id.get() - 1) as usize;
         if self.durable_equalities.len() <= index {
             self.durable_equalities.resize_with(index + 1, || None);
@@ -3125,7 +2313,6 @@ impl ReceiptArena {
         self.counters.stored_match_term_handles += stored;
         self.counters.logical_match_term_bytes += logical * handle_bytes;
         self.counters.stored_match_term_bytes += stored * handle_bytes;
-        self.counters.term_handles += logical;
     }
 
     fn has_fact(&self, id: FactId) -> bool {
@@ -3214,122 +2401,11 @@ impl ReceiptArena {
             _ => unreachable!("validated equality cause has no public reason"),
         }
     }
-
-    /// Derive the compatibility snapshot's effective match view without
-    /// putting a cited bit or lock on the native hot path. The raw arena keeps
-    /// every observation; only facts, applied equalities, and selected checks
-    /// seed this cold dependency walk.
-    fn cited_matches(&self) -> Result<HashSet<RuleMatchId>, String> {
-        #[derive(Clone, Copy)]
-        enum Item {
-            Fact(FactId),
-            Cause(CauseRef),
-            Matched(RuleMatchId),
-        }
-
-        let mut stack = Vec::new();
-        for fact in self.facts.iter().filter_map(Option::as_ref) {
-            stack.push(Item::Cause(fact.cause));
-        }
-        stack.extend(
-            self.durable_equalities
-                .iter()
-                .filter_map(Option::as_ref)
-                .map(|edge| Item::Cause(edge.cause)),
-        );
-        for root in self.check_roots.values() {
-            stack.extend(root.premises.iter().copied().map(Item::Fact));
-        }
-        stack.extend(
-            self.removals
-                .iter()
-                .map(|removal| Item::Matched(removal.cause)),
-        );
-
-        let mut facts = HashSet::default();
-        let mut causes = HashSet::default();
-        let mut matches = HashSet::default();
-        while let Some(item) = stack.pop() {
-            match item {
-                Item::Fact(fact) => {
-                    if fact.is_missing() {
-                        return Err("cited dependency contains the missing FactId sentinel".into());
-                    }
-                    if !facts.insert(fact) {
-                        continue;
-                    }
-                    let Some(slot) = self
-                        .facts
-                        .get((fact.get() - 1) as usize)
-                        .and_then(Option::as_ref)
-                    else {
-                        return Err(format!("cited dependency references missing fact {fact:?}"));
-                    };
-                    stack.push(Item::Cause(slot.cause));
-                }
-                Item::Cause(cause) => {
-                    if let Some(matched) = cause.rule_match() {
-                        stack.push(Item::Matched(matched));
-                        continue;
-                    }
-                    let Some(node) = cause.cause_node() else {
-                        return Err("cited dependency contains an unattributed cause".into());
-                    };
-                    if !causes.insert(node) {
-                        continue;
-                    }
-                    let Some(cause) = self.durable_cause(node) else {
-                        return Err(format!(
-                            "cited dependency references missing cause node {node:?}"
-                        ));
-                    };
-                    match cause {
-                        DurableCause::Source(_) | DurableCause::ContainerCanonicalize { .. } => {}
-                        DurableCause::Rebuild { prior_fact, .. }
-                        | DurableCause::ContainerRefresh { prior_fact, .. } => {
-                            stack.push(Item::Fact(*prior_fact));
-                        }
-                        DurableCause::Merge { incoming, prior } => {
-                            stack.push(Item::Cause(*incoming));
-                            stack.push(match prior {
-                                DurablePrior::Fact(fact) => Item::Fact(*fact),
-                                DurablePrior::Cause(cause) => Item::Cause(*cause),
-                            });
-                        }
-                    }
-                }
-                Item::Matched(matched) => {
-                    if !matches.insert(matched) {
-                        continue;
-                    }
-                    let Some(record) = self
-                        .durable_matches
-                        .get((matched.get() - 1) as usize)
-                        .and_then(Option::as_ref)
-                    else {
-                        return Err(format!(
-                            "cited dependency references missing observed match {matched:?}"
-                        ));
-                    };
-                    stack.extend(
-                        self.durable_premises[record.premises.as_range()]
-                            .iter()
-                            .copied()
-                            .map(Item::Fact),
-                    );
-                    if let Some(reads) = self.merge_reads.get(&matched) {
-                        stack.extend(reads.iter().copied().map(Item::Fact));
-                    }
-                }
-            }
-        }
-        Ok(matches)
-    }
 }
 
-/// Cold compatibility projector. Native capture stores raw creation rows and
-/// compact static origin sites; only an explicit snapshot/debug read expands
-/// those references into the historical replay-term DAG.
+/// Lazy receipt-view projector. Native capture stores raw creation rows and
+/// compact static origin sites; selected reads expand only the requested
+/// references into the historical replay-term DAG.
 #[derive(Clone)]
 enum TemplateOwner {
     Durable(RuleMatchId),
@@ -3346,15 +2422,6 @@ struct TermProjector<'a> {
     match_memo: HashMap<(RuleMatchId, usize), ReplayTermId>,
     visiting_facts: HashSet<(FactId, usize)>,
     visiting_matches: HashSet<(RuleMatchId, usize)>,
-}
-
-struct ProjectedEqualityEndpoint {
-    endpoint: EqualityEndpoint,
-    /// Immutable creation-row value when this endpoint was reconstructed
-    /// through a stable FactId. A pure rekey may make it differ from
-    /// `endpoint.raw`; the cold equality builder validates that drift against
-    /// the already-applied native prefix before accepting it.
-    creation_raw: Option<Value>,
 }
 
 impl<'a> TermProjector<'a> {
@@ -3740,9 +2807,9 @@ impl<'a> TermProjector<'a> {
         &mut self,
         endpoint: PendingEqualityEndpoint,
         cause: CauseRef,
-    ) -> Result<ProjectedEqualityEndpoint, String> {
-        let (term, creation_raw) = match endpoint.term {
-            EqualityTermRef::Exact(term) => (term, None),
+    ) -> Result<EqualityEndpoint, String> {
+        let term = match endpoint.term {
+            EqualityTermRef::Exact(term) => term,
             EqualityTermRef::Site(site) => {
                 let owner = self
                     .arena
@@ -3759,7 +2826,7 @@ impl<'a> TermProjector<'a> {
                         spec.sort, endpoint.sort
                     ));
                 }
-                (self.template(&spec.term, owner.as_ref())?, None)
+                self.template(&spec.term, owner.as_ref())?
             }
             EqualityTermRef::Cell {
                 origin,
@@ -3776,20 +2843,17 @@ impl<'a> TermProjector<'a> {
                             "equality endpoint fact {fact:?} belongs to {fact_table:?}, not {table:?}"
                         ));
                     }
-                    let creation_raw = *values.get(column as usize).ok_or_else(|| {
+                    values.get(column as usize).ok_or_else(|| {
                         format!("equality endpoint fact {fact:?} has no column {column}")
                     })?;
-                    (self.fact_term(fact, column as usize)?, Some(creation_raw))
+                    self.fact_term(fact, column as usize)?
                 }
                 RowOriginRef::Site(site) => {
                     let owner = self
                         .arena
                         .originating_rule(cause)
                         .map(TemplateOwner::Durable);
-                    (
-                        self.site_term(site, table, column as usize, owner.as_ref())?,
-                        None,
-                    )
+                    self.site_term(site, table, column as usize, owner.as_ref())?
                 }
             },
         };
@@ -3804,778 +2868,18 @@ impl<'a> TermProjector<'a> {
                 endpoint.sort
             ));
         }
-        Ok(ProjectedEqualityEndpoint {
-            endpoint: EqualityEndpoint {
-                sort: endpoint.sort,
-                term,
-                raw: endpoint.raw,
-            },
-            creation_raw,
-        })
-    }
-}
-
-type ColdEqualityArtifacts = (
-    Vec<EqLeafRecord>,
-    Vec<EqNodeRecord>,
-    Vec<EqualityRecord>,
-    Vec<NativeAliasRecord>,
-    Vec<usize>,
-    Vec<(EqualityEndpoint, EqualityEndpoint)>,
-    Vec<TermAttachment>,
-);
-
-#[derive(Default)]
-struct ColdEqualityForest {
-    parents: HashMap<(ReplaySortId, Value), (ReplaySortId, Value)>,
-    components: HashMap<(ReplaySortId, Value), EqComponentRef>,
-    /// A trusted Exact alias may leave several native roots pointing at one
-    /// logical component. When any owner later grows, advance the shared
-    /// component once rather than scanning every native root.
-    component_successors: HashMap<EqComponentRef, EqComponentRef>,
-    occurrences: HashMap<(ReplaySortId, ReplayTermId, Value), EqLeafId>,
-    /// First logical occurrence recorded for one exact historical native
-    /// value. A component may have many leaves, so later zero-edge
-    /// attachments must use this raw-specific anchor rather than whichever
-    /// endpoint happened to be on the left of a prior equality proposal.
-    raw_anchors: HashMap<(ReplaySortId, Value), EqLeafId>,
-    exact_occurrences: HashMap<(ReplaySortId, ReplayTermId), ((ReplaySortId, Value), EqLeafId)>,
-    leaves: Vec<EqLeafRecord>,
-}
-
-impl ColdEqualityForest {
-    fn resolve_component(&mut self, component: EqComponentRef) -> EqComponentRef {
-        let mut root = component;
-        while let Some(parent) = self.component_successors.get(&root).copied() {
-            root = parent;
-        }
-        let mut current = component;
-        while let Some(parent) = self.component_successors.get(&current).copied() {
-            if parent == root {
-                break;
-            }
-            self.component_successors.insert(current, root);
-            current = parent;
-        }
-        root
-    }
-
-    fn root_component(&mut self, root: (ReplaySortId, Value)) -> Option<EqComponentRef> {
-        let component = self.components.get(&root).copied()?;
-        let component = self.resolve_component(component);
-        self.components.insert(root, component);
-        Some(component)
-    }
-
-    fn advance_component(&mut self, old: EqComponentRef, new: EqComponentRef) {
-        if old != new {
-            assert!(
-                self.component_successors.insert(old, new).is_none(),
-                "cold equality component acquired two logical parents"
-            );
-        }
-    }
-
-    fn find(&mut self, value: (ReplaySortId, Value)) -> (ReplaySortId, Value) {
-        let mut root = value;
-        while let Some(parent) = self.parents.get(&root).copied() {
-            if parent == root {
-                break;
-            }
-            root = parent;
-        }
-        let mut current = value;
-        while let Some(parent) = self.parents.get(&current).copied() {
-            if parent == root {
-                break;
-            }
-            self.parents.insert(current, root);
-            current = parent;
-        }
-        root
-    }
-
-    fn alias_component(left: EqComponentRef, right: EqComponentRef) -> Option<EqComponentRef> {
-        // Only an already-shared occurrence component is a native-only alias.
-        // Identical syntax in distinct native components remains two leaves
-        // and the applied bridge becomes a logical edge.
-        (left == right).then_some(left)
-    }
-
-    fn new_leaf(&mut self, position: HistoryPosition, endpoint: EqualityEndpoint) -> EqLeafId {
-        let id = EqLeafId::new(self.leaves.len() as u64 + 1);
-        self.leaves.push(EqLeafRecord {
-            id,
-            position,
-            endpoint,
-        });
-        self.raw_anchors
-            .entry((endpoint.sort, endpoint.raw))
-            .or_insert(id);
-        id
-    }
-
-    fn attach_fact_term(
-        &mut self,
-        position: HistoryPosition,
-        dependency: TermAttachmentDependency,
-        endpoint: EqualityEndpoint,
-    ) -> Result<Option<TermAttachment>, String> {
-        let root = self.find((endpoint.sort, endpoint.raw));
-        let key = (endpoint.sort, endpoint.term, endpoint.raw);
-        let leaf = if let Some(leaf) = self.occurrences.get(&key).copied() {
-            leaf
-        } else if self.root_component(root).is_some() {
-            let leaf = self
-                .raw_anchors
-                .get(&(endpoint.sort, endpoint.raw))
-                .copied()
-                .ok_or("native value has a cold component but no raw-specific anchor")?;
-            self.occurrences.insert(key, leaf);
-            leaf
-        } else {
-            let leaf = self.new_leaf(position, endpoint);
-            self.components.insert(root, EqComponentRef::Leaf(leaf));
-            self.occurrences.insert(key, leaf);
-            leaf
-        };
-        Ok(Some(TermAttachment {
-            position,
+        Ok(EqualityEndpoint {
             sort: endpoint.sort,
+            term,
             raw: endpoint.raw,
-            term: endpoint.term,
-            leaf,
-            dependency,
-        }))
-    }
-
-    /// Carry one immutable fact term across a native rekey without changing
-    /// its logical occurrence. Choosing the destination component's generic
-    /// anchor would erase the equality edge that made the rekey possible
-    /// (for example B@B -> B@A after A=B), producing an empty explanation for
-    /// a later check of A=B.
-    fn attach_rekey_term(
-        &mut self,
-        position: HistoryPosition,
-        fact: FactId,
-        old: EqualityEndpoint,
-        new: EqualityEndpoint,
-    ) -> Result<TermAttachment, String> {
-        if old.sort != new.sort || old.term != new.term {
-            return Err("one rekey changed the immutable fact term or its sort".into());
-        }
-        let old_root = self.find((old.sort, old.raw));
-        let new_root = self.find((new.sort, new.raw));
-        if old_root != new_root {
-            return Err("rekey endpoints are disconnected in the cold equality history".into());
-        }
-        self.root_component(new_root)
-            .ok_or("rekey destination has no cold equality component")?;
-        let prior_leaf = self
-            .occurrences
-            .get(&(old.sort, old.term, old.raw))
-            .copied()
-            .ok_or("rekey source term has no prior cold occurrence")?;
-        let key = (new.sort, new.term, new.raw);
-        // If the exact same syntax already exists at the destination value,
-        // that occurrence is semantically interchangeable and keeps the
-        // forest minimal. Otherwise preserve this fact's prior occurrence so
-        // the equality that moved it remains visible to later explanations.
-        let leaf = self.occurrences.get(&key).copied().unwrap_or_else(|| {
-            self.occurrences.insert(key, prior_leaf);
-            prior_leaf
-        });
-        Ok(TermAttachment {
-            position,
-            sort: new.sort,
-            raw: new.raw,
-            term: new.term,
-            leaf,
-            dependency: TermAttachmentDependency::Rekey { position, fact },
         })
     }
-
-    fn attach_equality_endpoint(
-        &mut self,
-        position: HistoryPosition,
-        cause: CauseRef,
-        endpoint: EqualityEndpoint,
-        exact: bool,
-        attachments: &mut Vec<TermAttachment>,
-    ) -> Result<EqLeafId, String> {
-        let root = self.find((endpoint.sort, endpoint.raw));
-        let key = (endpoint.sort, endpoint.term, endpoint.raw);
-        if let Some(leaf) = self.occurrences.get(&key).copied() {
-            return Ok(leaf);
-        }
-        if exact
-            && let Some((owner, leaf)) = self
-                .exact_occurrences
-                .get(&(endpoint.sort, endpoint.term))
-                .copied()
-        {
-            let owner_root = self.find(owner);
-            let component = self
-                .root_component(owner_root)
-                .ok_or("trusted exact occurrence has no cold component")?;
-            // A certified Exact mapping may catch an otherwise-empty native
-            // component up to its already-recorded structural occurrence.
-            // It must never replace or locally shadow a different component:
-            // replacement orphans that component's equality history, while
-            // local attachment leaves one Exact term in two disconnected
-            // logical components. Supporting that case requires an explicit
-            // zero-edge component join, which this minimal forest does not
-            // model, so fail closed before mutating the cold projection.
-            if self
-                .root_component(root)
-                .is_some_and(|current| current != component)
-            {
-                return Err(
-                    "trusted exact occurrence collides with an independently recorded native component"
-                        .into(),
-                );
-            }
-            self.components.insert(root, component);
-            self.occurrences.insert(key, leaf);
-            self.raw_anchors
-                .entry((endpoint.sort, endpoint.raw))
-                .or_insert(leaf);
-            attachments.push(TermAttachment {
-                position,
-                sort: endpoint.sort,
-                raw: endpoint.raw,
-                term: endpoint.term,
-                leaf,
-                dependency: TermAttachmentDependency::Trusted,
-            });
-            return Ok(leaf);
-        }
-        let (leaf, zero_edge_attachment) = if self.root_component(root).is_some() {
-            (
-                self.raw_anchors
-                    .get(&(endpoint.sort, endpoint.raw))
-                    .copied()
-                    .ok_or("native value has a cold component but no raw-specific anchor")?,
-                true,
-            )
-        } else {
-            let leaf = self.new_leaf(position, endpoint);
-            self.components.insert(root, EqComponentRef::Leaf(leaf));
-            (leaf, false)
-        };
-        self.occurrences.insert(key, leaf);
-        if exact {
-            self.exact_occurrences
-                .entry((endpoint.sort, endpoint.term))
-                .or_insert(((endpoint.sort, endpoint.raw), leaf));
-        }
-        if zero_edge_attachment {
-            attachments.push(TermAttachment {
-                position,
-                sort: endpoint.sort,
-                raw: endpoint.raw,
-                term: endpoint.term,
-                leaf,
-                dependency: TermAttachmentDependency::Cause(cause.public()),
-            });
-        }
-        Ok(leaf)
-    }
-
-    fn union(
-        &mut self,
-        left: (ReplaySortId, Value),
-        right: (ReplaySortId, Value),
-        component: EqComponentRef,
-    ) -> (Value, Value) {
-        assert_eq!(left.0, right.0, "cold equality union crosses logical sorts");
-        let (parent, child) = if left.1 <= right.1 {
-            (left, right)
-        } else {
-            (right, left)
-        };
-        self.parents.insert(child, parent);
-        self.components.remove(&child);
-        self.components.insert(parent, component);
-        (parent.1, child.1)
-    }
-}
-
-fn attach_fact_terms(
-    projector: &mut TermProjector<'_>,
-    forest: &mut ColdEqualityForest,
-    fact_id: FactId,
-    position: HistoryPosition,
-    attachments: &mut Vec<TermAttachment>,
-) -> Result<(), String> {
-    let fact = projector
-        .arena
-        .facts
-        .get((fact_id.get() - 1) as usize)
-        .and_then(Option::as_ref)
-        .ok_or_else(|| format!("cannot attach unknown fact {fact_id:?}"))?;
-    let table = fact.table;
-    let values = projector.arena.durable_fact_values[fact.values.as_range()].to_vec();
-    let layout: Vec<Option<ReplaySortId>> = projector
-        .replay_terms
-        .table_layout(table)
-        .ok_or_else(|| format!("fact {fact_id:?} table has no replay layout"))?
-        .to_vec();
-    if layout.len() != values.len() {
-        return Err(format!(
-            "fact {fact_id:?} row and replay layout have different arities"
-        ));
-    }
-    for (column, (sort, raw)) in layout.into_iter().zip(values).enumerate() {
-        let Some(sort) = sort else {
-            continue;
-        };
-        let term = projector.fact_term(fact_id, column)?;
-        if let Some(attachment) = forest.attach_fact_term(
-            position,
-            TermAttachmentDependency::Fact(fact_id),
-            EqualityEndpoint { sort, term, raw },
-        )? {
-            attachments.push(attachment);
-        }
-    }
-    Ok(())
-}
-
-fn attach_rekey_terms(
-    projector: &mut TermProjector<'_>,
-    forest: &mut ColdEqualityForest,
-    rekey: &RekeyRecord,
-    attachments: &mut Vec<TermAttachment>,
-) -> Result<(), String> {
-    for pair in &rekey.equalities.pairs {
-        let term = projector.fact_term(rekey.fact, pair.column.index())?;
-        attachments.push(forest.attach_rekey_term(
-            rekey.position,
-            rekey.fact,
-            EqualityEndpoint {
-                sort: pair.left.sort,
-                term,
-                raw: pair.left.raw,
-            },
-            EqualityEndpoint {
-                sort: pair.right.sort,
-                term,
-                raw: pair.right.raw,
-            },
-        )?);
-    }
-    Ok(())
-}
-
-fn build_cold_equality_forest(
-    projector: &mut TermProjector<'_>,
-    history: &[DurableEquality],
-) -> Result<ColdEqualityArtifacts, String> {
-    let mut forest = ColdEqualityForest::default();
-    let mut nodes = Vec::new();
-    let mut equalities = Vec::new();
-    let mut aliases = Vec::new();
-    let mut prefix = Vec::with_capacity(history.len());
-    let mut projected_history = Vec::with_capacity(history.len());
-    let mut attachments = Vec::new();
-    #[derive(Clone, Copy)]
-    enum NavigationEvent {
-        Fact(FactId),
-        Rekey(usize),
-    }
-    let mut navigation_events = projector
-        .arena
-        .facts
-        .iter()
-        .enumerate()
-        .map(|(index, slot)| match slot {
-            Some(fact) => Ok((
-                fact.position,
-                NavigationEvent::Fact(FactId::new(index as u64 + 1)),
-            )),
-            None => Err("cold equality projection saw a missing dense FactId"),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    navigation_events.extend(
-        projector
-            .arena
-            .rekeys
-            .iter()
-            .enumerate()
-            .map(|(index, rekey)| (rekey.position, NavigationEvent::Rekey(index))),
-    );
-    navigation_events.sort_by_key(|(position, _)| *position);
-
-    // One global position orders every effective cross-stream event. Rekeys
-    // Checks do not mutate the cold forest, but including them in the
-    // uniqueness audit prevents a landmark from silently aliasing a fact,
-    // rekey navigation, or equality event.
-    let mut positions = navigation_events
-        .iter()
-        .map(|(position, _)| *position)
-        .chain(history.iter().map(|event| event.position))
-        .chain(
-            projector
-                .arena
-                .check_roots
-                .values()
-                .map(|event| event.position),
-        )
-        .collect::<Vec<_>>();
-    positions.sort_unstable();
-    if positions.iter().any(|position| position.get() == 0)
-        || positions.windows(2).any(|pair| pair[0] == pair[1])
-    {
-        return Err("causal logical history positions are missing or duplicated".into());
-    }
-
-    let mut navigation_cursor = 0usize;
-    for (history_index, event) in history.iter().enumerate() {
-        if event.history.get() as usize != history_index + 1 {
-            return Err("raw equality history is not one dense chronological prefix".into());
-        }
-        if history_index > 0 && history[history_index - 1].position >= event.position {
-            return Err("applied equality positions are not strictly chronological".into());
-        }
-        while let Some((position, navigation)) = navigation_events.get(navigation_cursor).copied() {
-            if position >= event.position {
-                break;
-            }
-            match navigation {
-                NavigationEvent::Fact(fact) => {
-                    attach_fact_terms(projector, &mut forest, fact, position, &mut attachments)?
-                }
-                NavigationEvent::Rekey(index) => {
-                    let rekey = projector.arena.rekeys[index].clone();
-                    attach_rekey_terms(projector, &mut forest, &rekey, &mut attachments)?
-                }
-            }
-            navigation_cursor += 1;
-        }
-        let left = projector.equality_endpoint(event.proposal.left, event.cause)?;
-        let right = projector.equality_endpoint(event.proposal.right, event.cause)?;
-        for endpoint in [&left, &right] {
-            let Some(creation_raw) = endpoint.creation_raw else {
-                continue;
-            };
-            if creation_raw != endpoint.endpoint.raw
-                && forest.find((endpoint.endpoint.sort, creation_raw))
-                    != forest.find((endpoint.endpoint.sort, endpoint.endpoint.raw))
-            {
-                return Err(format!(
-                    "fact-origin equality endpoint {:?} is not connected to its creation value {:?} before event {}",
-                    endpoint.endpoint.raw,
-                    creation_raw,
-                    history_index + 1
-                ));
-            }
-        }
-        let left = left.endpoint;
-        let right = right.endpoint;
-        projected_history.push((left, right));
-        if left.sort != right.sort {
-            return Err("one raw equality event crosses logical sorts".into());
-        }
-        let left_leaf = forest.attach_equality_endpoint(
-            event.position,
-            event.cause,
-            left,
-            matches!(event.proposal.left.term, EqualityTermRef::Exact(_)),
-            &mut attachments,
-        )?;
-        let right_leaf = forest.attach_equality_endpoint(
-            event.position,
-            event.cause,
-            right,
-            matches!(event.proposal.right.term, EqualityTermRef::Exact(_)),
-            &mut attachments,
-        )?;
-        let left_root = forest.find((left.sort, left.raw));
-        let right_root = forest.find((right.sort, right.raw));
-        if left_root == right_root {
-            return Err("raw applied equality history contains a redundant event".into());
-        }
-        let left_component = forest
-            .root_component(left_root)
-            .ok_or("left equality occurrence has no cold component")?;
-        let right_component = forest
-            .root_component(right_root)
-            .ok_or("right equality occurrence has no cold component")?;
-        let component = if let Some(component) =
-            ColdEqualityForest::alias_component(left_component, right_component)
-        {
-            aliases.push(NativeAliasRecord {
-                wave: event.proposal.wave,
-                position: event.position,
-                left,
-                right,
-                native_parent: event.native_parent,
-                native_child: event.native_child,
-                reason: event.reason.clone(),
-            });
-            component
-        } else {
-            if left.term == right.term {
-                let prior_fact = match event
-                    .cause
-                    .cause_node()
-                    .and_then(|cause| projector.arena.durable_cause(cause))
-                {
-                    Some(DurableCause::Merge {
-                        prior: DurablePrior::Fact(fact),
-                        ..
-                    }) if projector.arena.originating_rule(event.cause).is_some() => Some(*fact),
-                    _ => None,
-                };
-                let endpoint_cells = [event.proposal.left.term, event.proposal.right.term];
-                let witnessed = prior_fact.is_some_and(|prior_fact| {
-                    endpoint_cells
-                        .iter()
-                        .all(|term| matches!(term, EqualityTermRef::Cell { .. }))
-                        && endpoint_cells.iter().any(|term| {
-                            matches!(
-                                term,
-                                EqualityTermRef::Cell {
-                                    origin: RowOriginRef::Fact(fact),
-                                    ..
-                                } if *fact == prior_fact
-                            )
-                        })
-                });
-                if !witnessed {
-                    return Err(format!(
-                        "same-term native bridge at event {} has no exact fact/rule merge witness",
-                        history_index + 1
-                    ));
-                }
-            }
-            let id = EqNodeId::new(nodes.len() as u64 + 1);
-            nodes.push(EqNodeRecord {
-                id,
-                left: left_component,
-                right: right_component,
-                left_anchor: left_leaf,
-                right_anchor: right_leaf,
-                edge: id,
-            });
-            equalities.push(EqualityRecord {
-                id,
-                wave: event.proposal.wave,
-                position: event.position,
-                left,
-                right,
-                native_parent: event.native_parent,
-                native_child: event.native_child,
-                reason: event.reason.clone(),
-            });
-            EqComponentRef::Node(id)
-        };
-        forest.advance_component(left_component, component);
-        forest.advance_component(right_component, component);
-        let (parent, child) = forest.union(left_root, right_root, component);
-        if (parent, child) != (event.native_parent, event.native_child) {
-            return Err("raw equality history parent/child disagrees with native union".into());
-        }
-        prefix.push(nodes.len());
-    }
-    for (position, navigation) in navigation_events.into_iter().skip(navigation_cursor) {
-        match navigation {
-            NavigationEvent::Fact(fact) => {
-                attach_fact_terms(projector, &mut forest, fact, position, &mut attachments)?
-            }
-            NavigationEvent::Rekey(index) => {
-                let rekey = projector.arena.rekeys[index].clone();
-                attach_rekey_terms(projector, &mut forest, &rekey, &mut attachments)?
-            }
-        }
-    }
-    attachments.sort_by_key(|attachment| attachment.position);
-    Ok((
-        forest.leaves,
-        nodes,
-        equalities,
-        aliases,
-        prefix,
-        projected_history,
-        attachments,
-    ))
-}
-
-fn project_rebuild_equalities(
-    projector: &mut TermProjector<'_>,
-    equality_history: &[(EqualityEndpoint, EqualityEndpoint)],
-    prior_fact: FactId,
-    as_of_edges: EqualityEdgeCount,
-    pairs: &[TypedCellEquality],
-) -> Result<Box<[TypedCellEquality]>, String> {
-    let cutoff: usize = as_of_edges
-        .get()
-        .try_into()
-        .map_err(|_| "rebuild equality cutoff exceeds addressable storage")?;
-    let history = equality_history
-        .get(..cutoff)
-        .ok_or_else(|| "rebuild equality cutoff exceeds raw history".to_owned())?;
-    pairs
-        .iter()
-        .map(|pair| {
-            let column = pair.column.index();
-            let left_term = projector.fact_term(prior_fact, column)?;
-            let left_node = projector
-                .replay_terms
-                .node(left_term)
-                .ok_or_else(|| format!("rebuild prior fact owns unknown term {left_term:?}"))?;
-            if left_node.sort() != pair.left.sort {
-                return Err("rebuild prior fact term has the wrong logical sort".into());
-            }
-            let right_term = history
-                .iter()
-                .rev()
-                .flat_map(|(left, right)| [*left, *right])
-                .find(|endpoint| endpoint.sort == pair.right.sort && endpoint.raw == pair.right.raw)
-                .map(|endpoint| endpoint.term)
-                .ok_or_else(|| {
-                    format!(
-                        "rebuild target {:?} has no exact endpoint at its historical cutoff",
-                        pair.right.raw
-                    )
-                })?;
-            Ok(TypedCellEquality {
-                column: pair.column,
-                left: EqualityEndpoint {
-                    term: left_term,
-                    ..pair.left
-                },
-                right: EqualityEndpoint {
-                    term: right_term,
-                    ..pair.right
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Vec::into_boxed_slice)
-}
-
-fn project_container_equalities(
-    projector: &TermProjector<'_>,
-    equality_history: &[(EqualityEndpoint, EqualityEndpoint)],
-    as_of_edges: EqualityEdgeCount,
-    pairs: &[TypedCellEquality],
-) -> Result<Box<[TypedCellEquality]>, String> {
-    let cutoff: usize = as_of_edges
-        .get()
-        .try_into()
-        .map_err(|_| "container equality cutoff exceeds addressable storage")?;
-    let history = equality_history
-        .get(..cutoff)
-        .ok_or_else(|| "container equality cutoff exceeds raw history".to_owned())?;
-    let resolve = |endpoint: EqualityEndpoint| -> Result<EqualityEndpoint, String> {
-        if !endpoint.term.is_missing() {
-            let node = projector.replay_terms.node(endpoint.term).ok_or_else(|| {
-                format!("container landmark owns unknown term {:?}", endpoint.term)
-            })?;
-            if node.sort() != endpoint.sort {
-                return Err("container landmark term has the wrong logical sort".into());
-            }
-            return Ok(endpoint);
-        }
-        history
-            .iter()
-            .rev()
-            .flat_map(|(left, right)| [*left, *right])
-            .find(|candidate| candidate.sort == endpoint.sort && candidate.raw == endpoint.raw)
-            .ok_or_else(|| {
-                format!(
-                    "container child {:?} has no exact endpoint at its historical cutoff",
-                    endpoint.raw
-                )
-            })
-    };
-    pairs
-        .iter()
-        .map(|pair| {
-            Ok(TypedCellEquality {
-                column: pair.column,
-                left: resolve(pair.left)?,
-                right: resolve(pair.right)?,
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map(Vec::into_boxed_slice)
-}
-
-fn project_fact_cause(
-    projector: &mut TermProjector<'_>,
-    arena: &ReceiptArena,
-    equality_history: &[(EqualityEndpoint, EqualityEndpoint)],
-    root: CauseRef,
-) -> Result<FactCause, String> {
-    if let Some(rule) = root.rule_match() {
-        return Ok(FactCause::Rule(rule));
-    }
-    let root = root
-        .cause_node()
-        .ok_or_else(|| "missing durable cause".to_owned())?;
-    let root_node = arena
-        .durable_cause(root)
-        .ok_or_else(|| format!("unknown durable cause {root:?}"))?;
-    Ok(match root_node {
-        DurableCause::Source(source) => FactCause::Source(source.clone()),
-        DurableCause::Rebuild {
-            wave,
-            prior_fact,
-            as_of_edges,
-            position,
-            equalities,
-        } => FactCause::Rebuild {
-            wave: *wave,
-            prior_fact: *prior_fact,
-            equalities: EqualityLandmark {
-                as_of_edges: *as_of_edges,
-                position: *position,
-                pairs: project_rebuild_equalities(
-                    projector,
-                    equality_history,
-                    *prior_fact,
-                    *as_of_edges,
-                    &arena.durable_rebuild_equalities[equalities.as_range()],
-                )?,
-            },
-        },
-        DurableCause::ContainerCanonicalize { .. } => {
-            return Err("container canonicalization cannot justify an effective table fact".into());
-        }
-        DurableCause::ContainerRefresh {
-            wave,
-            prior_fact,
-            as_of_edges,
-            position,
-            equalities,
-        } => FactCause::ContainerRefresh {
-            wave: *wave,
-            prior_fact: *prior_fact,
-            equalities: EqualityLandmark {
-                as_of_edges: *as_of_edges,
-                position: *position,
-                pairs: project_container_equalities(
-                    projector,
-                    equality_history,
-                    *as_of_edges,
-                    &arena.durable_rebuild_equalities[equalities.as_range()],
-                )?,
-            },
-        },
-        DurableCause::Merge { .. } => FactCause::Merge {
-            cause: root.public(),
-        },
-    })
 }
 
 /// Borrowed, non-escaping view of one finalized raw receipt arena.
 ///
 /// Accessors project structural terms only for explicitly selected facts,
-/// matches, or equality events. The compatibility [`ReceiptSnapshot`] is
-/// deliberately not constructed here.
+/// matches, or equality events.
 pub struct CausalReceiptView<'a> {
     arena: &'a ReceiptArena,
     binding_recipes: &'a HashMap<u32, Arc<[ReplayBindingSource]>>,
@@ -4890,13 +3194,11 @@ impl<'a> CausalReceiptView<'a> {
         let left = self
             .projector
             .equality_endpoint(event.proposal.left, event.cause)
-            .map_err(ReceiptViewError::Invalid)?
-            .endpoint;
+            .map_err(ReceiptViewError::Invalid)?;
         let right = self
             .projector
             .equality_endpoint(event.proposal.right, event.cause)
-            .map_err(ReceiptViewError::Invalid)?
-            .endpoint;
+            .map_err(ReceiptViewError::Invalid)?;
         Ok(ProjectedAppliedEquality {
             id,
             wave: event.proposal.wave,
@@ -5179,23 +3481,44 @@ impl<'a> CausalReceiptView<'a> {
             .ok_or_else(|| ReceiptViewError::Invalid(format!("unknown replay term {term:?}")))
     }
 
+    fn live_fact_at(
+        &self,
+        fact: FactId,
+        position: HistoryPosition,
+    ) -> Result<RawFactRecord<'a>, ReceiptViewError> {
+        if position > self.history_boundary {
+            return Err(ReceiptViewError::Invalid(
+                "fact query exceeds the captured receipt history".into(),
+            ));
+        }
+        let record = self.fact(fact)?;
+        if record.position > position {
+            return Err(ReceiptViewError::Invalid(format!(
+                "fact {fact:?} was created after {position:?}"
+            )));
+        }
+        if let Some(removal) = self
+            .arena
+            .removals
+            .iter()
+            .find(|removal| removal.removed_fact == fact && removal.position <= position)
+        {
+            return Err(ReceiptViewError::FactNoLongerLive {
+                fact,
+                position,
+                ended_at: removal.position,
+                successor: None,
+            });
+        }
+        Ok(record)
+    }
+
     pub fn fact_cell_at(
         &mut self,
         occurrence: FactCellRef,
         position: HistoryPosition,
     ) -> Result<HistoricalFactCell, ReceiptViewError> {
-        if position > self.history_boundary {
-            return Err(ReceiptViewError::Invalid(
-                "fact-cell query exceeds the captured receipt history".into(),
-            ));
-        }
-        let fact = self.fact(occurrence.fact)?;
-        if fact.position > position {
-            return Err(ReceiptViewError::Invalid(format!(
-                "fact {:?} was created after {:?}",
-                occurrence.fact, position
-            )));
-        }
+        let fact = self.live_fact_at(occurrence.fact, position)?;
         let column = occurrence.column.index();
         let sort = self
             .replay_terms
@@ -5254,7 +3577,7 @@ impl<'a> CausalReceiptView<'a> {
                     fact: occurrence.fact,
                     position,
                     ended_at: rekey.position,
-                    successor,
+                    successor: Some(successor),
                 });
             }
         }
@@ -5275,7 +3598,7 @@ impl<'a> CausalReceiptView<'a> {
         fact: FactId,
         position: HistoryPosition,
     ) -> Result<Box<[Value]>, ReceiptViewError> {
-        let record = self.fact(fact)?;
+        let record = self.live_fact_at(fact, position)?;
         let schema = self.table_schema(record.table)?;
         (0..schema.key_columns)
             .map(|column| {
@@ -5485,6 +3808,7 @@ impl<'a> CausalReceiptView<'a> {
         as_of: EqualityEdgeCount,
         position: HistoryPosition,
     ) -> Result<RawEqualitySupport, ReceiptViewError> {
+        self.validate_equality_cutoff(as_of, position)?;
         if left.term.is_missing() || right.term.is_missing() {
             return Err(ReceiptViewError::Invalid(
                 "cannot explain equality with a missing ReplayTermId".into(),
@@ -6894,7 +5218,7 @@ struct ReceiptShared {
     open_native_leases: AtomicUsize,
     abandoned_fragments: AtomicU64,
     poisoned_rule_executions: AtomicU64,
-    compatibility_projection_reads: AtomicU64,
+    view_active: AtomicBool,
     replay_terms: ReplayTermStore,
     equality_value_sorts: Mutex<HashMap<Value, ReplaySortId>>,
     equality_wave_timestamp: Mutex<Option<(CausalWave, Value)>>,
@@ -6922,7 +5246,7 @@ impl Default for ReceiptShared {
             open_native_leases: AtomicUsize::new(0),
             abandoned_fragments: AtomicU64::new(0),
             poisoned_rule_executions: AtomicU64::new(0),
-            compatibility_projection_reads: AtomicU64::new(0),
+            view_active: AtomicBool::new(false),
             replay_terms: ReplayTermStore::default(),
             equality_value_sorts: Mutex::new(HashMap::default()),
             equality_wave_timestamp: Mutex::new(None),
@@ -6950,7 +5274,7 @@ pub(crate) struct ReceiptBatch {
     facts: Vec<(FactId, PendingFact)>,
     fact_values: Vec<Value>,
     merge_cell_origins: Vec<MergeCellOrigin>,
-    equalities: Vec<(EqNodeId, PendingEquality)>,
+    equalities: Vec<(AppliedEqualityId, PendingEquality)>,
     redundant_unions: u64,
     unattributed_commits: u64,
     published: bool,
@@ -7004,7 +5328,7 @@ impl ReceiptBatch {
     ) -> ReceiptCauseRef {
         self.merge_drafts_capability(incoming.into(), prior.into())
             .cause_ref()
-            .public()
+            .into()
     }
 
     pub(crate) fn merge_drafts_capability(
@@ -7214,17 +5538,16 @@ impl ReceiptBatch {
         native_parent: crate::Value,
         native_child: crate::Value,
         cause: CauseRef,
-    ) -> EqNodeId {
+    ) -> AppliedEqualityId {
         assert!(
             !cause.is_unattributed(),
             "applied union is missing exact causal attribution"
         );
-        let id = EqNodeId::new(ReceiptShared::alloc_u64(&self.shared.next_equality, 1));
+        let id = AppliedEqualityId::new(ReceiptShared::alloc_u64(&self.shared.next_equality, 1));
         let position = HistoryPosition::new(ReceiptShared::alloc_u64(&self.shared.next_history, 1));
         self.equalities.push((
             id,
             PendingEquality {
-                history: EqualityEdgeCount::new(id.get()),
                 position,
                 proposal,
                 native_parent,
@@ -7303,7 +5626,6 @@ impl ReceiptBatch {
                 arena.install_equality(
                     id,
                     DurableEquality {
-                        history: equality.history,
                         position: equality.position,
                         proposal: equality.proposal,
                         native_parent: equality.native_parent,
@@ -8337,7 +6659,7 @@ impl CausalReceipts {
                 column: crate::ColumnId::from_usize(slot),
                 // Exact structural endpoints already exist in the applied
                 // equality history at this cutoff. Keep the rebuild hook to
-                // raw typed values and resolve terms only for a cold snapshot.
+                // raw typed values and resolve terms only for a selected view read.
                 left: EqualityEndpoint {
                     sort,
                     term: ReplayTermId::MISSING,
@@ -9813,6 +8135,7 @@ impl CausalReceipts {
         &self,
         inspect: impl for<'view> FnOnce(&mut CausalReceiptView<'view>) -> Result<R, ReceiptViewError>,
     ) -> Result<R, ReceiptViewError> {
+        let _active = ActiveReceiptViewGuard::enter(&self.0.view_active)?;
         if self.0.poisoned_rule_executions.load(Ordering::Acquire) != 0 {
             return Err(ReceiptViewError::NotFinalized("a rule execution panicked"));
         }
@@ -9928,388 +8251,63 @@ impl CausalReceipts {
             exact_occurrence_support_cache: HashMap::default(),
             counters: CausalReceiptViewCounters::default(),
         };
-        inspect(&mut view)
-    }
-
-    pub fn compatibility_projection_reads(&self) -> u64 {
-        self.0
-            .compatibility_projection_reads
-            .load(Ordering::Acquire)
-    }
-
-    pub fn snapshot(&self) -> ReceiptSnapshot {
-        self.0
-            .compatibility_projection_reads
-            .fetch_add(1, Ordering::Relaxed);
-        assert_eq!(
-            self.0.poisoned_rule_executions.load(Ordering::Acquire),
-            0,
-            "cannot snapshot causal receipts after a panicking rule execution"
-        );
-        assert_eq!(
-            self.0.open_fragments.load(Ordering::Acquire),
-            0,
-            "cannot snapshot causal receipts with open worker fragments"
-        );
-        assert_eq!(
-            self.0.open_native_leases.load(Ordering::Acquire),
-            0,
-            "cannot snapshot causal receipts with queued transactional native mutations"
-        );
-        assert_eq!(
-            self.0.abandoned_fragments.load(Ordering::Acquire),
-            0,
-            "cannot snapshot causal receipts after an unpublished worker fragment"
-        );
-        let recipes = self.0.rule_binding_recipes.read().unwrap();
-        let term_recipes = self.0.static_term_recipes.lock().unwrap();
-        let arena = self.0.arena.lock().unwrap();
-        assert_eq!(
-            arena.published_facts,
-            self.0.next_fact.load(Ordering::Acquire),
-            "finalize the causal wave before taking a durable snapshot"
-        );
-        let durable_equalities = arena
-            .durable_equalities
-            .iter()
-            .map(|event| {
-                event
-                    .clone()
-                    .expect("snapshot observed an equality ID hole")
-            })
-            .collect::<Vec<_>>();
-        let mut projector = TermProjector::new(
-            &arena,
-            &recipes,
-            &term_recipes,
-            &self.0.replay_terms,
-            &self.0.next_term,
-        );
-        let cold_equalities = build_cold_equality_forest(&mut projector, &durable_equalities);
-        let (
-            equality_leaves,
-            equality_nodes,
-            equalities,
-            native_aliases,
-            equality_history_prefix,
-            projected_equality_history,
-            term_attachments,
-        ) = match cold_equalities {
-            Ok(artifacts) => artifacts,
-            Err(error) => {
-                // A cold projection error is fail-closed, but it must not
-                // poison the durable receipt arena or recipe registry. Drop
-                // every guard before surfacing the named diagnostic so the
-                // immutable history remains inspectable/retryable.
-                drop(projector);
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inspect(&mut view))) {
+            Ok(result) => result,
+            Err(payload) => {
+                drop(view);
                 drop(arena);
                 drop(term_recipes);
+                drop(equality_recipes);
                 drop(recipes);
-                panic!("cannot project equality history: {error}");
+                std::panic::resume_unwind(payload)
             }
-        };
-        let cited_matches = arena
-            .cited_matches()
-            .unwrap_or_else(|error| panic!("cannot select cited matches: {error}"));
-        let matches = arena
-            .durable_matches
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| {
-                let match_id = RuleMatchId::new(index as u64 + 1);
-                if !cited_matches.contains(&match_id) {
-                    return None;
-                }
-                let record = record
-                    .as_ref()
-                    .expect("snapshot observed a RuleMatchId publication hole");
-                let premises = &arena.durable_premises[record.premises.as_range()];
-                let recipe = recipes
-                    .get(&record.rule)
-                    .unwrap_or_else(|| panic!("rule {} has no binding recipe", record.rule));
-                let terms = (0..recipe.len())
-                    .map(|binding| {
-                        projector
-                            .match_term(match_id, binding)
-                            .unwrap_or_else(|error| panic!("cannot project match term: {error}"))
-                    })
-                    .collect::<Vec<_>>()
-                    .into_boxed_slice();
-                Some(MatchRecord {
-                    id: match_id,
-                    rule: record.rule,
-                    wave: record.wave,
-                    position: record.position,
-                    as_of_edges: record.as_of_edges,
-                    premises: premises.into(),
-                    terms,
-                    merge_reads: arena
-                        .merge_reads
-                        .get(&match_id)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_vec()
-                        .into_boxed_slice(),
-                })
-            })
-            .collect();
-        let facts = arena
-            .facts
-            .iter()
-            .enumerate()
-            .map(|(index, slot)| {
-                let fact = slot.as_ref().expect("snapshot observed a FactId hole");
-                let cause = project_fact_cause(
-                    &mut projector,
-                    &arena,
-                    &projected_equality_history,
-                    fact.cause,
-                )
-                .unwrap_or_else(|error| panic!("cannot project fact cause: {error}"));
-                let values: Box<[Value]> = arena.durable_fact_values[fact.values.as_range()].into();
-                let layout = self
-                    .0
-                    .replay_terms
-                    .table_layout(fact.table)
-                    .expect("durable fact table has no replay layout");
-                let fact_id = FactId::new(index as u64 + 1);
-                let terms = layout
-                    .iter()
-                    .enumerate()
-                    .map(|(column, sort)| {
-                        sort.map_or(ReplayTermId::MISSING, |_| {
-                            projector
-                                .fact_term(fact_id, column)
-                                .unwrap_or_else(|error| panic!("cannot project fact term: {error}"))
-                        })
-                    })
-                    .collect();
-                FactRecord {
-                    id: fact_id,
-                    table: fact.table,
-                    position: fact.position,
-                    cause,
-                    values,
-                    terms,
-                }
-            })
-            .collect();
-        let rekeys = arena
-            .rekeys
-            .iter()
-            .map(|record| RekeyRecord {
-                fact: record.fact,
-                table: record.table,
-                wave: record.wave,
-                position: record.position,
-                equalities: EqualityLandmark {
-                    as_of_edges: record.equalities.as_of_edges,
-                    position: record.equalities.position,
-                    pairs: project_rebuild_equalities(
-                        &mut projector,
-                        &projected_equality_history,
-                        record.fact,
-                        record.equalities.as_of_edges,
-                        &record.equalities.pairs,
-                    )
-                    .unwrap_or_else(|error| panic!("cannot project rekey landmark: {error}")),
-                },
-                outcome: record.outcome,
-            })
-            .collect();
-        let causes = arena
-            .durable_causes
-            .iter()
-            .map(|entry| {
-                match entry
-                    .as_ref()
-                    .expect("snapshot observed a cause-node ID hole")
-                {
-                    DurableCause::Source(source) => ReceiptCauseRecord::Source(source.clone()),
-                    DurableCause::Rebuild {
-                        wave,
-                        prior_fact,
-                        as_of_edges,
-                        position,
-                        equalities,
-                    } => ReceiptCauseRecord::Rebuild {
-                        wave: *wave,
-                        prior_fact: *prior_fact,
-                        equalities: EqualityLandmark {
-                            as_of_edges: *as_of_edges,
-                            position: *position,
-                            pairs: project_rebuild_equalities(
-                                &mut projector,
-                                &projected_equality_history,
-                                *prior_fact,
-                                *as_of_edges,
-                                &arena.durable_rebuild_equalities[equalities.as_range()],
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!("cannot project rebuild cause landmark: {error}")
-                            }),
-                        },
-                    },
-                    DurableCause::ContainerCanonicalize {
-                        wave,
-                        as_of_edges,
-                        position,
-                        equalities,
-                    } => ReceiptCauseRecord::ContainerCanonicalize {
-                        wave: *wave,
-                        equalities: EqualityLandmark {
-                            as_of_edges: *as_of_edges,
-                            position: *position,
-                            pairs: project_container_equalities(
-                                &projector,
-                                &projected_equality_history,
-                                *as_of_edges,
-                                &arena.durable_rebuild_equalities[equalities.as_range()],
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!("cannot project container canonicalization: {error}")
-                            }),
-                        },
-                    },
-                    DurableCause::ContainerRefresh {
-                        wave,
-                        prior_fact,
-                        as_of_edges,
-                        position,
-                        equalities,
-                    } => ReceiptCauseRecord::ContainerRefresh {
-                        wave: *wave,
-                        prior_fact: *prior_fact,
-                        equalities: EqualityLandmark {
-                            as_of_edges: *as_of_edges,
-                            position: *position,
-                            pairs: project_container_equalities(
-                                &projector,
-                                &projected_equality_history,
-                                *as_of_edges,
-                                &arena.durable_rebuild_equalities[equalities.as_range()],
-                            )
-                            .unwrap_or_else(|error| {
-                                panic!("cannot project container refresh: {error}")
-                            }),
-                        },
-                    },
-                    DurableCause::Merge { incoming, prior } => ReceiptCauseRecord::Merge {
-                        incoming: incoming.public(),
-                        prior: match prior {
-                            DurablePrior::Fact(fact) => ReceiptCausePrior::Fact(*fact),
-                            DurablePrior::Cause(cause) => ReceiptCausePrior::Cause(cause.public()),
-                        },
-                    },
-                }
-            })
-            .collect();
-        let mut check_roots = arena.check_roots.values().cloned().collect::<Vec<_>>();
-        check_roots.sort_by_key(|root| root.check);
-        let mut counters = arena.counters;
-        counters.promoted_matches = cited_matches.len() as u64;
-        counters.native_alias_unions = native_aliases.len() as u64;
-        ReceiptSnapshot {
-            facts,
-            matches,
-            equality_leaves,
-            equality_nodes,
-            equalities,
-            native_aliases,
-            rekeys,
-            removals: arena.removals.clone(),
-            causes,
-            check_roots,
-            counters,
-            equality_history_prefix: equality_history_prefix.into_boxed_slice(),
-            equality_history_positions: arena
-                .durable_equalities
-                .iter()
-                .map(|event| event.as_ref().expect("equality ID hole").position)
-                .collect(),
-            term_attachments: term_attachments.into_boxed_slice(),
         }
-    }
-
-    /// Dense O(1) lookup used by focused identity canaries.
-    pub fn fact_record(&self, id: FactId) -> Option<FactRecord> {
-        self.0
-            .compatibility_projection_reads
-            .fetch_add(1, Ordering::Relaxed);
-        if id.is_missing() {
-            return None;
-        }
-        assert_eq!(
-            self.0.open_fragments.load(Ordering::Acquire),
-            0,
-            "cannot read causal facts with open worker fragments"
-        );
-        let recipes = self.0.rule_binding_recipes.read().unwrap();
-        let term_recipes = self.0.static_term_recipes.lock().unwrap();
-        let arena = self.0.arena.lock().unwrap();
-        assert_eq!(
-            arena.published_facts,
-            self.0.next_fact.load(Ordering::Acquire),
-            "finalize the causal wave before reading durable facts"
-        );
-        let fact = arena.facts.get((id.get() - 1) as usize)?.as_ref()?;
-        let mut projector = TermProjector::new(
-            &arena,
-            &recipes,
-            &term_recipes,
-            &self.0.replay_terms,
-            &self.0.next_term,
-        );
-        let durable_equalities = arena
-            .durable_equalities
-            .iter()
-            .map(|event| {
-                event
-                    .clone()
-                    .expect("fact lookup observed an equality ID hole")
-            })
-            .collect::<Vec<_>>();
-        let (_, _, _, _, _, projected_equality_history, _) =
-            build_cold_equality_forest(&mut projector, &durable_equalities)
-                .unwrap_or_else(|error| panic!("cannot project equality history: {error}"));
-        let cause = project_fact_cause(
-            &mut projector,
-            &arena,
-            &projected_equality_history,
-            fact.cause,
-        )
-        .unwrap_or_else(|error| panic!("cannot project fact cause: {error}"));
-        let values: Box<[Value]> = arena.durable_fact_values[fact.values.as_range()].into();
-        let layout = self
-            .0
-            .replay_terms
-            .table_layout(fact.table)
-            .expect("durable fact table has no replay layout");
-        let terms = layout
-            .iter()
-            .enumerate()
-            .map(|(column, sort)| {
-                sort.map_or(ReplayTermId::MISSING, |_| {
-                    projector
-                        .fact_term(id, column)
-                        .unwrap_or_else(|error| panic!("cannot project fact term: {error}"))
-                })
-            })
-            .collect();
-        Some(FactRecord {
-            id,
-            table: fact.table,
-            position: fact.position,
-            cause,
-            values,
-            terms,
-        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn receipt_view_rejects_reentrancy_without_poisoning_capture() {
+        let receipts = CausalReceipts::default();
+        let error = receipts
+            .with_view(|_| receipts.with_view(|_| Ok(())))
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ReceiptViewError::Invalid(ref message) if message.contains("not reentrant")
+        ));
+        receipts
+            .with_view(|_| {
+                std::thread::scope(|scope| {
+                    let nested = scope
+                        .spawn(|| receipts.with_view(|_| Ok(())))
+                        .join()
+                        .unwrap();
+                    assert!(matches!(
+                        nested,
+                        Err(ReceiptViewError::Invalid(ref message))
+                            if message.contains("not reentrant")
+                    ));
+                });
+                Ok(())
+            })
+            .unwrap();
+        assert!(receipts.with_view(|_| Ok(())).is_ok());
+    }
+
+    #[test]
+    fn panicking_receipt_view_callback_does_not_poison_capture_locks() {
+        let receipts = CausalReceipts::default();
+        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = receipts
+                .with_view(|_| -> Result<(), ReceiptViewError> { panic!("inspection panic") });
+        }));
+        assert!(failure.is_err());
+        assert!(receipts.with_view(|_| Ok(())).is_ok());
+    }
 
     #[test]
     fn physical_rekey_collision_with_same_fact_records_no_logical_transition() {
@@ -10414,24 +8412,6 @@ mod tests {
     }
 
     #[test]
-    fn cited_match_walk_rejects_a_dangling_rule_reference() {
-        let mut arena = ReceiptArena::default();
-        arena.facts.push(Some(DurableFact {
-            table: TableId::new_const(1),
-            position: HistoryPosition::new(1),
-            cause: CauseRef::rule(RuleMatchId::new(999)),
-            values: FlatRange::new(0, 0),
-            origin: None,
-        }));
-
-        assert_eq!(
-            arena.cited_matches().unwrap_err(),
-            "cited dependency references missing observed match RuleMatchId(999)",
-            "cold cited-match traversal must fail closed with the dangling id named"
-        );
-    }
-
-    #[test]
     fn recipe_counters_distinguish_supported_and_missing_current_roots() {
         let receipts = CausalReceipts::default();
         let recipe = TermRecipe {
@@ -10440,7 +8420,7 @@ mod tests {
         receipts.register_rule_term_recipe(7, recipe.clone());
         receipts.register_rule_term_recipe(7, recipe);
 
-        let counters = receipts.snapshot().counters;
+        let counters = receipts.with_view(|view| Ok(view.counters())).unwrap();
         assert_eq!(counters.supported_current_recipe_roots, 1);
         assert_eq!(counters.missing_current_recipe_roots, 1);
     }
@@ -10471,11 +8451,13 @@ mod tests {
         lower.publish();
         receipts.finalize_wave();
 
-        let snapshot = receipts.snapshot();
-        assert!(snapshot.facts.is_empty());
-        assert!(snapshot.matches.is_empty());
-        assert_eq!(snapshot.counters.provisional_matches, 0);
-        assert_eq!(snapshot.counters.live_provisional_bytes, 0);
+        receipts
+            .with_view(|view| {
+                assert_eq!(view.totals().facts, 0);
+                assert_eq!(view.totals().matches, 0);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -10498,7 +8480,12 @@ mod tests {
         let source = source_batch.record_fact_with_origin(table, source_cause, &row, origin);
         source_batch.publish();
         receipts.finalize_wave();
-        assert_eq!(receipts.fact_record(source).unwrap().terms.as_ref(), &terms);
+        receipts
+            .with_view(|view| {
+                assert_eq!(view.fact_terms(source)?.as_ref(), &terms);
+                Ok(())
+            })
+            .unwrap();
 
         let binding_sources = [
             ReplayBindingSource::Premise {
@@ -10534,11 +8521,16 @@ mod tests {
         derived_batch.publish();
         receipts.finalize_wave();
 
-        assert_eq!(
-            receipts.fact_record(derived).unwrap().terms.as_ref(),
-            &terms,
-            "fact terms belong to the immutable committed row, not its Source cause"
-        );
+        receipts
+            .with_view(|view| {
+                assert_eq!(
+                    view.fact_terms(derived)?.as_ref(),
+                    &terms,
+                    "fact terms belong to the immutable committed row, not its Source cause"
+                );
+                Ok(())
+            })
+            .unwrap();
 
         let [(lane, next_cause)] = receipts
             .register_rule_matches(8, CausalWave::new(2), 1, &binding_sources, &[derived], &[0])
@@ -10549,17 +8541,20 @@ mod tests {
         next_batch.record_fact_with_origin(table, next_cause, &row, origin);
         next_batch.publish();
         receipts.finalize_wave();
-        let next_match = receipts
-            .snapshot()
-            .matches
-            .into_iter()
-            .find(|matched| matched.rule == 8)
+        receipts
+            .with_view(|view| {
+                let next_match = (1..=view.totals().matches)
+                    .map(RuleMatchId::new)
+                    .find(|id| view.matched(*id).is_ok_and(|matched| matched.rule == 8))
+                    .unwrap();
+                assert_eq!(
+                    view.match_terms(next_match)?.as_ref(),
+                    &terms,
+                    "a later rule must resolve terms through a derived FactId"
+                );
+                Ok(())
+            })
             .unwrap();
-        assert_eq!(
-            next_match.terms.as_ref(),
-            &terms,
-            "a later rule must resolve terms through a derived FactId"
-        );
     }
 
     #[test]
@@ -10636,20 +8631,25 @@ mod tests {
         derived_batch.publish();
         receipts.finalize_wave();
 
-        let snapshot = receipts.snapshot();
-        assert_eq!(
-            snapshot.matches[0].terms.as_ref(),
-            &[source_term, constant_term, current_term],
-            "lazy expansion must preserve the historical public MatchRecord layout"
-        );
-        assert_eq!(snapshot.counters.logical_match_term_handles, 3);
-        assert_eq!(snapshot.counters.stored_match_term_handles, 0);
-        assert_eq!(
-            snapshot.counters.logical_match_term_bytes,
-            3 * mem::size_of::<ReplayTermId>() as u64
-        );
-        assert_eq!(snapshot.counters.stored_match_term_bytes, 0);
-        assert_eq!(snapshot.counters.term_handles, 3);
+        receipts
+            .with_view(|view| {
+                assert_eq!(
+                    view.match_terms(RuleMatchId::new(1))?.as_ref(),
+                    &[source_term, constant_term, current_term],
+                    "lazy expansion must preserve the complete binding layout"
+                );
+                let counters = view.counters();
+                assert_eq!(counters.logical_match_term_handles, 3);
+                assert_eq!(counters.stored_match_term_handles, 0);
+                assert_eq!(
+                    counters.logical_match_term_bytes,
+                    3 * mem::size_of::<ReplayTermId>() as u64
+                );
+                assert_eq!(counters.stored_match_term_bytes, 0);
+                assert_eq!(counters.logical_match_term_handles, 3);
+                Ok(())
+            })
+            .unwrap();
         assert_eq!(
             receipts.replay_term(derived_term),
             Some(ReplayTerm::Literal {
@@ -10815,7 +8815,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_rejects_an_unpublished_worker_fragment() {
+    fn view_rejects_an_unpublished_worker_fragment() {
         let receipts = CausalReceipts::default();
         let mut abandoned = receipts.new_batch();
         abandoned.add_draft(
@@ -10824,20 +8824,24 @@ mod tests {
         );
         drop(abandoned);
 
-        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| receipts.snapshot()));
-        assert!(failed.is_err());
+        assert!(matches!(
+            receipts.with_view(|_| Ok(())),
+            Err(ReceiptViewError::NotFinalized(_))
+        ));
     }
 
     #[test]
-    fn snapshot_rejects_a_dropped_redundant_only_fragment() {
+    fn view_rejects_a_dropped_redundant_only_fragment() {
         let receipts = CausalReceipts::default();
         let mut abandoned = receipts.new_batch();
         abandoned.record_redundant_union();
         drop(abandoned);
 
-        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| receipts.snapshot()));
         assert!(
-            failed.is_err(),
+            matches!(
+                receipts.with_view(|_| Ok(())),
+                Err(ReceiptViewError::NotFinalized(_))
+            ),
             "dropping a diagnostics-only receipt fragment must fail closed"
         );
     }
@@ -10903,24 +8907,21 @@ mod tests {
         low.publish();
         receipts.finalize_wave();
 
-        assert_eq!(
-            receipts.fact_record(low_fact).unwrap().terms.as_ref(),
-            &[low_term]
-        );
-        assert_eq!(
-            receipts.fact_record(high_fact).unwrap().terms.as_ref(),
-            &[high_term]
-        );
-        assert_eq!(
-            receipts
-                .snapshot()
-                .facts
-                .iter()
-                .flat_map(|fact| fact.terms.iter().copied())
-                .collect::<Vec<_>>(),
-            [low_term, high_term],
-            "FactId order must be independent of batch publication order"
-        );
+        receipts
+            .with_view(|view| {
+                assert_eq!(view.fact_terms(low_fact)?.as_ref(), &[low_term]);
+                assert_eq!(view.fact_terms(high_fact)?.as_ref(), &[high_term]);
+                assert_eq!(
+                    [low_fact, high_fact]
+                        .into_iter()
+                        .flat_map(|fact| view.fact_terms(fact).unwrap())
+                        .collect::<Vec<_>>(),
+                    [low_term, high_term],
+                    "FactId order must be independent of batch publication order"
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

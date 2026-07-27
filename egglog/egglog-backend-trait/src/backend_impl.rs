@@ -20,9 +20,9 @@ use egglog_ast::core::{GenericAtomTerm, GenericCoreAction};
 use crate::{
     Backend, BaseValues, CausalCheckPremise, CausalRuleBinding, ColumnTy, ContainerValues,
     ExecutionState, ExternalFunction, ExternalFunctionId, FunctionConfig, FunctionId,
-    FunctionReplaySpec, IterationReport, ReceiptSnapshot, ReplayLiteral, ReplaySortId, ReplayTerm,
-    ReplayTermId, ReportLevel, RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec,
-    RuleValue, RuleVar, ScanEntry, Value,
+    FunctionReplaySpec, IterationReport, ReplayLiteral, ReplaySortId, ReplayTermId, ReportLevel,
+    RuleActionCall, RuleBodyCall, RuleId, RuleSetRun, RuleSpec, RuleValue, RuleVar, ScanEntry,
+    Value,
 };
 
 fn rule_entry(
@@ -280,20 +280,12 @@ impl Backend for EGraph {
         EGraph::intern_replay_literal(self, sort, literal, value)
     }
 
-    fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot> {
-        EGraph::causal_receipt_snapshot(self)
-    }
-
     fn finalize_causal_wave(&mut self) -> Result<()> {
         EGraph::finalize_causal_wave(self)
     }
 
     fn set_causal_wave(&mut self, wave: u64) -> Result<()> {
         EGraph::set_causal_wave(self, wave)
-    }
-
-    fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>> {
-        EGraph::causal_replay_term(self, id)
     }
 
     fn peek_next_function_id(&self) -> FunctionId {

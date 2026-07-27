@@ -35,6 +35,8 @@ use constraint::{Constraint, Problem, SimpleTypeConstraint, TypeConstraint};
 pub use core::{Atom, AtomTerm};
 use core::{CoreActionContext, ResolvedAtomTerm};
 pub use core::{ResolvedCall, SpecializedPrimitive};
+#[cfg(test)]
+use core_relations::ReplayTerm;
 pub use core_relations::{BaseValue, CausalContainerKind, ContainerValue, Value};
 use core_relations::{ExecutionState, ExternalFunctionId, make_external_func};
 use csv::Writer;
@@ -49,9 +51,9 @@ use egglog_ast::util::ListDisplay;
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
     CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec,
-    ReadMode, ReceiptSnapshot, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
-    ReplayTableKind, ReplayTerm, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec,
-    RuleValue, RuleVar, SourceRef,
+    ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind,
+    ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
+    SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -1380,14 +1382,22 @@ impl EGraph {
         Ok(())
     }
 
-    /// Snapshot the compact native receipt DAG.
-    pub fn causal_receipt_snapshot(&self) -> Result<ReceiptSnapshot, Error> {
+    /// Inspect finalized native causal receipts without copying their arena.
+    pub fn with_causal_receipt_view<R>(
+        &self,
+        inspect: impl for<'view> FnOnce(
+            &mut core_relations::CausalReceiptView<'view>,
+        ) -> Result<R, core_relations::ReceiptViewError>,
+    ) -> Result<R, Error> {
         self.causal_state
             .as_ref()
             .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
             .ensure_healthy()?;
         self.backend
-            .causal_receipt_snapshot()
+            .as_any()
+            .downcast_ref::<egglog_bridge::EGraph>()
+            .ok_or_else(|| Error::BackendError("causal receipts require the main backend".into()))?
+            .with_causal_receipt_view(inspect)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
@@ -1403,13 +1413,18 @@ impl EGraph {
             .map_err(|error| Error::BackendError(error.to_string()))
     }
 
-    /// Resolve one typed structural term from the native replay DAG.
-    pub fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
+    #[cfg(test)]
+    fn causal_replay_term(&self, id: ReplayTermId) -> Result<Option<ReplayTerm>, Error> {
         self.causal_state
             .as_ref()
             .ok_or_else(|| Error::BackendError("causal receipts are not enabled".into()))?
             .ensure_healthy()?;
         self.backend
+            .as_any()
+            .downcast_ref::<egglog_bridge::EGraph>()
+            .ok_or_else(|| {
+                Error::BackendError("test backend has no native causal receipts".into())
+            })?
             .causal_replay_term(id)
             .map_err(|error| Error::BackendError(error.to_string()))
     }
@@ -5785,7 +5800,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use crate::constraint::SimpleTypeConstraint;
-    use crate::core_relations::{EqualityReason, FactCause};
+    use crate::core_relations::EqualityReason;
     use crate::*;
 
     use crate::PureState;
@@ -5802,6 +5817,42 @@ mod tests {
 
     fn enable_serial_causal_receipts(egraph: &mut EGraph) -> Result<(), Error> {
         serial_causal_pool().install(|| egraph.enable_causal_receipts())
+    }
+
+    fn find_container_canonicalization(
+        view: &core_relations::CausalReceiptView<'_>,
+        root: core_relations::ReceiptCauseId,
+    ) -> Result<
+        Option<(
+            core_relations::CausalWave,
+            core_relations::EqualityEdgeCount,
+            core_relations::HistoryPosition,
+            Vec<core_relations::TypedCellEquality>,
+        )>,
+        core_relations::ReceiptViewError,
+    > {
+        let mut pending = vec![core_relations::ReceiptCauseRef::Cause(root)];
+        while let Some(cause) = pending.pop() {
+            let core_relations::ReceiptCauseRef::Cause(cause) = cause else {
+                continue;
+            };
+            match view.cause(cause)? {
+                core_relations::RawReceiptCause::ContainerCanonicalize {
+                    wave,
+                    as_of_edges,
+                    position,
+                    equalities,
+                } => return Ok(Some((wave, as_of_edges, position, equalities.to_vec()))),
+                core_relations::RawReceiptCause::Merge { incoming, prior } => {
+                    pending.push(incoming);
+                    if let core_relations::ReceiptCausePrior::Cause(prior) = prior {
+                        pending.push(prior);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
     }
 
     #[test]
@@ -5836,26 +5887,36 @@ mod tests {
             .parse_and_run_program(None, "(datatype Node (Leaf i64)) (let $root (Leaf 7))")
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert!(
-            snapshot
-                .facts
-                .iter()
-                .any(|fact| matches!(fact.cause, core_relations::FactCause::Source(_)))
-        );
-        assert!(snapshot.matches.is_empty());
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
-
         let mut saw_constructor = false;
-        for fact in &snapshot.facts {
-            for term in fact.terms.iter().copied().filter(|term| !term.is_missing()) {
-                let replay = egraph
-                    .causal_replay_term(term)
-                    .unwrap()
-                    .expect("every recorded term handle resolves");
-                saw_constructor |= matches!(replay, ReplayTerm::Call { .. });
-            }
-        }
+        egraph
+            .with_causal_receipt_view(|view| {
+                let mut saw_source = false;
+                for raw in 1..=view.totals().facts {
+                    let fact = view.fact(core_relations::FactId::new(raw))?;
+                    if let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause {
+                        saw_source |= matches!(
+                            view.cause(cause)?,
+                            core_relations::RawReceiptCause::Source(_)
+                        );
+                    }
+                    for term in view
+                        .fact_terms(fact.id)?
+                        .iter()
+                        .copied()
+                        .filter(|term| !term.is_missing())
+                    {
+                        let replay = egraph
+                            .causal_replay_term(term)
+                            .unwrap()
+                            .expect("every recorded term handle resolves");
+                        saw_constructor |= matches!(replay, ReplayTerm::Call { .. });
+                    }
+                }
+                assert!(saw_source);
+                assert_eq!(view.counters().unattributed_commits, 0);
+                Ok(())
+            })
+            .unwrap();
         assert!(saw_constructor);
     }
 
@@ -5892,48 +5953,50 @@ mod tests {
             );
             egraph.parse_and_run_program(None, &program).unwrap();
 
-            let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            let (cause, wave, as_of_edges, position) = snapshot
-                .equalities
-                .iter()
-                .find_map(|edge| match edge.reason {
-                    EqualityReason::Congruence {
-                        cause,
-                        wave,
-                        as_of_edges,
-                        position,
-                    } => Some((cause, wave, as_of_edges, position)),
-                    _ => None,
+            egraph
+                .with_causal_receipt_view(|view| {
+                    let (cause, wave, as_of_edges, position) = (1..=view
+                        .totals()
+                        .applied_equalities)
+                        .find_map(|raw| {
+                            match view
+                                .applied_equality(core_relations::AppliedEqualityId::new(raw))
+                                .ok()?
+                                .reason
+                            {
+                                EqualityReason::Congruence {
+                                    cause,
+                                    wave,
+                                    as_of_edges,
+                                    position,
+                                } => Some((cause, wave, as_of_edges, position)),
+                                _ => None,
+                            }
+                        })
+                        .expect("Pair collision should retain one exact container-congruence edge");
+                    let dependency = find_container_canonicalization(view, cause)?
+                        .expect("Pair congruence should unfold to its container collision");
+                    assert_eq!(
+                        (dependency.0, dependency.1, dependency.2),
+                        (wave, as_of_edges, position)
+                    );
+                    assert!(!dependency.3.is_empty());
+                    for pair in dependency.3 {
+                        assert!(
+                            !view
+                                .explain_equality_support_at(
+                                    pair.left,
+                                    pair.right,
+                                    as_of_edges,
+                                    position
+                                )?
+                                .applied
+                                .is_empty()
+                        );
+                    }
+                    Ok(())
                 })
-                .expect("Pair collision should retain one exact container-congruence edge");
-            let dependency = snapshot
-                .cause_dependencies(cause)
-                .find_map(|dependency| match dependency {
-                    core_relations::ReceiptCauseDependency::ContainerCanonicalize {
-                        wave,
-                        as_of_edges,
-                        position,
-                        equalities,
-                    } => Some((wave, as_of_edges, position, equalities)),
-                    _ => None,
-                })
-                .expect("Pair congruence should unfold to its container collision");
-            assert_eq!(
-                (dependency.0, dependency.1, dependency.2),
-                (wave, as_of_edges, position)
-            );
-            assert!(!dependency.3.is_empty());
-            let explanation = snapshot
-                .equality_explanation_index_at(as_of_edges, position)
-                .expect("container landmark should be a complete equality prefix");
-            for pair in dependency.3 {
-                assert!(
-                    !explanation
-                        .explain_equality(pair.left, pair.right)
-                        .expect("each changed Pair child must be equal at the landmark")
-                        .is_empty()
-                );
-            }
+                .unwrap();
         });
     }
 
@@ -5969,44 +6032,68 @@ mod tests {
                 )
                 .unwrap();
 
-            let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            let observed = snapshot
-                .matches
-                .iter()
-                .find(|matched| matched.rule == 1)
-                .expect("the post-refresh observer should fire");
-            let (fact, prior_fact, equalities) = observed
-                .premises
-                .iter()
-                .find_map(
-                    |fact| match &snapshot.facts[(fact.get() - 1) as usize].cause {
-                        FactCause::ContainerRefresh {
-                            prior_fact,
-                            equalities,
-                            ..
-                        } => Some((*fact, *prior_fact, equalities)),
-                        _ => None,
-                    },
-                )
-                .expect("the successful check should cite a refreshed immutable parent fact");
-            assert_ne!(fact, prior_fact);
-            let refreshed_fact = &snapshot.facts[(fact.get() - 1) as usize];
-            assert_eq!(
-                snapshot.facts[(prior_fact.get() - 1) as usize].table,
-                refreshed_fact.table
-            );
-            assert!(!equalities.pairs.is_empty());
-            let explanation = snapshot
-                .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
-                .expect("container refresh landmark should be complete");
-            for pair in &equalities.pairs {
-                assert!(
-                    !explanation
-                        .explain_equality(pair.left, pair.right)
-                        .expect("each changed Vec child must be equal at the landmark")
-                        .is_empty()
-                );
-            }
+            egraph
+                .with_causal_receipt_view(|view| {
+                    let observed = (1..=view.totals().matches)
+                        .find_map(|raw| {
+                            view.matched(core_relations::RuleMatchId::new(raw))
+                                .ok()
+                                .filter(|matched| matched.rule == 1)
+                        })
+                        .expect("the post-refresh observer should fire");
+                    let (fact, prior_fact, as_of_edges, position, equalities) = observed
+                        .premises
+                        .iter()
+                        .find_map(|fact| {
+                            let record = view.fact(*fact).ok()?;
+                            let core_relations::ReceiptCauseRef::Cause(cause) = record.cause else {
+                                return None;
+                            };
+                            match view.cause(cause).ok()? {
+                                core_relations::RawReceiptCause::ContainerRefresh {
+                                    prior_fact,
+                                    as_of_edges,
+                                    position,
+                                    equalities,
+                                    ..
+                                } => Some((
+                                    *fact,
+                                    prior_fact,
+                                    as_of_edges,
+                                    position,
+                                    equalities.to_vec(),
+                                )),
+                                _ => None,
+                            }
+                        })
+                        .expect(
+                            "the successful check should cite a refreshed immutable parent fact",
+                        );
+                    assert_ne!(fact, prior_fact);
+                    assert_eq!(view.fact(prior_fact)?.table, view.fact(fact)?.table);
+                    assert!(!equalities.is_empty());
+                    for pair in &equalities {
+                        assert!(
+                            !view
+                                .explain_raw_equality_support_at(
+                                    core_relations::RawEqualityEndpoint {
+                                        sort: pair.left.sort,
+                                        raw: pair.left.raw
+                                    },
+                                    core_relations::RawEqualityEndpoint {
+                                        sort: pair.right.sort,
+                                        raw: pair.right.raw
+                                    },
+                                    as_of_edges,
+                                    position
+                                )?
+                                .applied
+                                .is_empty()
+                        );
+                    }
+                    Ok(())
+                })
+                .unwrap();
         });
     }
 
@@ -6044,13 +6131,23 @@ mod tests {
             );
             egraph.parse_and_run_program(None, &program).unwrap();
 
-            let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            assert!(
-                snapshot
-                    .facts
-                    .iter()
-                    .any(|fact| { matches!(fact.cause, FactCause::ContainerRefresh { .. }) })
-            );
+            egraph
+                .with_causal_receipt_view(|view| {
+                    let mut refreshed = false;
+                    for raw in 1..=view.totals().facts {
+                        let fact = view.fact(core_relations::FactId::new(raw))?;
+                        let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
+                            continue;
+                        };
+                        refreshed |= matches!(
+                            view.cause(cause)?,
+                            core_relations::RawReceiptCause::ContainerRefresh { .. }
+                        );
+                    }
+                    assert!(refreshed);
+                    Ok(())
+                })
+                .unwrap();
         });
     }
 
@@ -6128,57 +6225,89 @@ mod tests {
                 )
                 .unwrap();
 
-            let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            let (latest, middle, latest_landmark) = snapshot
-                .facts
-                .iter()
-                .find_map(|fact| {
-                    let FactCause::ContainerRefresh {
-                        prior_fact,
-                        equalities,
-                        ..
-                    } = &fact.cause
-                    else {
-                        return None;
-                    };
-                    matches!(
-                        snapshot.facts[(prior_fact.get() - 1) as usize].cause,
-                        FactCause::ContainerRefresh { .. }
-                    )
-                    .then_some((fact.id, *prior_fact, equalities))
+            egraph
+                .with_causal_receipt_view(|view| {
+                    let mut chain = None;
+                    for raw in 1..=view.totals().facts {
+                        let latest = view.fact(core_relations::FactId::new(raw))?;
+                        let core_relations::ReceiptCauseRef::Cause(latest_cause) = latest.cause
+                        else {
+                            continue;
+                        };
+                        let core_relations::RawReceiptCause::ContainerRefresh {
+                            wave: latest_wave,
+                            prior_fact: middle,
+                            as_of_edges: latest_edges,
+                            position: latest_position,
+                            equalities: latest_pairs,
+                        } = view.cause(latest_cause)?
+                        else {
+                            continue;
+                        };
+                        let middle_record = view.fact(middle)?;
+                        let core_relations::ReceiptCauseRef::Cause(middle_cause) =
+                            middle_record.cause
+                        else {
+                            continue;
+                        };
+                        let core_relations::RawReceiptCause::ContainerRefresh {
+                            wave: middle_wave,
+                            prior_fact: original,
+                            as_of_edges: middle_edges,
+                            position: middle_position,
+                            equalities: middle_pairs,
+                        } = view.cause(middle_cause)?
+                        else {
+                            continue;
+                        };
+                        chain = Some((
+                            latest.id,
+                            middle,
+                            original,
+                            latest_wave,
+                            middle_wave,
+                            (latest_edges, latest_position, latest_pairs.to_vec()),
+                            (middle_edges, middle_position, middle_pairs.to_vec()),
+                        ));
+                        break;
+                    }
+                    let (
+                        latest,
+                        middle,
+                        original,
+                        latest_wave,
+                        middle_wave,
+                        latest_landmark,
+                        middle_landmark,
+                    ) = chain.expect("latest Vec fact should point to a prior refreshed fact");
+                    assert_ne!(latest, middle);
+                    assert_ne!(middle, original);
+                    assert!(middle_wave < latest_wave);
+                    assert_ne!(middle_landmark.0, latest_landmark.0);
+                    for landmark in [middle_landmark, latest_landmark] {
+                        for pair in &landmark.2 {
+                            assert!(
+                                !view
+                                    .explain_raw_equality_support_at(
+                                        core_relations::RawEqualityEndpoint {
+                                            sort: pair.left.sort,
+                                            raw: pair.left.raw
+                                        },
+                                        core_relations::RawEqualityEndpoint {
+                                            sort: pair.right.sort,
+                                            raw: pair.right.raw
+                                        },
+                                        landmark.0,
+                                        landmark.1
+                                    )?
+                                    .applied
+                                    .is_empty()
+                            );
+                        }
+                    }
+                    Ok(())
                 })
-                .expect("latest Vec fact should point to a prior refreshed fact");
-            let FactCause::ContainerRefresh {
-                wave: middle_wave,
-                prior_fact: original,
-                equalities: middle_landmark,
-            } = &snapshot.facts[(middle.get() - 1) as usize].cause
-            else {
-                unreachable!()
-            };
-            let FactCause::ContainerRefresh {
-                wave: latest_wave, ..
-            } = &snapshot.facts[(latest.get() - 1) as usize].cause
-            else {
-                unreachable!()
-            };
-            assert_ne!(latest, middle);
-            assert_ne!(middle, *original);
-            assert!(middle_wave < latest_wave);
-            assert_ne!(middle_landmark.as_of_edges, latest_landmark.as_of_edges);
-            for landmark in [middle_landmark, latest_landmark] {
-                let explanation = snapshot
-                    .equality_explanation_index_at(landmark.as_of_edges, landmark.position)
-                    .unwrap();
-                for pair in &landmark.pairs {
-                    assert!(
-                        !explanation
-                            .explain_equality(pair.left, pair.right)
-                            .unwrap()
-                            .is_empty()
-                    );
-                }
-            }
+                .unwrap();
         });
     }
 
@@ -6209,35 +6338,30 @@ mod tests {
                 inputs: vec!["VVE".into()],
                 output: "E".into(),
             }];
-            let snapshot = egraph.causal_receipt_snapshot().unwrap();
-            let parent = snapshot
-                .facts
-                .iter()
-                .find(|fact| {
-                    matches!(fact.cause, FactCause::ContainerRefresh { .. })
-                        && fact.terms.iter().any(|term| {
-                            matches!(
-                                egraph.causal_replay_term(*term).unwrap(),
-                                Some(ReplayTerm::Call { op, .. }) if op == p
-                            )
-                        })
-                })
-                .expect("the outer p fact should receive an exact nested-container refresh");
-            let FactCause::ContainerRefresh { equalities, .. } = &parent.cause else {
-                unreachable!()
-            };
-            assert!(!equalities.pairs.is_empty());
-            let explanation = snapshot
-                .equality_explanation_index_at(equalities.as_of_edges, equalities.position)
-                .unwrap();
-            for pair in &equalities.pairs {
+            egraph.with_causal_receipt_view(|view| {
+            let mut parent = None;
+            for raw in 1..=view.totals().facts {
+                let fact = view.fact(core_relations::FactId::new(raw))?;
+                let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else { continue };
+                let core_relations::RawReceiptCause::ContainerRefresh { as_of_edges, position, equalities, .. } = view.cause(cause)? else { continue };
+                let terms = view.fact_terms(fact.id)?;
+                if terms.iter().any(|term| matches!(egraph.causal_replay_term(*term).unwrap(), Some(ReplayTerm::Call { op, .. }) if op == p)) {
+                    parent = Some((as_of_edges, position, equalities.to_vec()));
+                    break;
+                }
+            }
+            let (as_of_edges, position, equalities) = parent.expect("the outer p fact should receive an exact nested-container refresh");
+            assert!(!equalities.is_empty());
+            for pair in &equalities {
                 assert!(
-                    !explanation
-                        .explain_equality(pair.left, pair.right)
-                        .unwrap()
-                        .is_empty()
+                    !view.explain_raw_equality_support_at(
+                        core_relations::RawEqualityEndpoint { sort: pair.left.sort, raw: pair.left.raw },
+                        core_relations::RawEqualityEndpoint { sort: pair.right.sort, raw: pair.right.raw },
+                        as_of_edges, position)?.applied.is_empty()
                 );
             }
+            Ok(())
+            }).unwrap();
         });
     }
 
@@ -6339,7 +6463,7 @@ mod tests {
             );
             assert!(
                 egraph
-                    .causal_receipt_snapshot()
+                    .with_causal_receipt_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
@@ -6389,29 +6513,38 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
         let state = egraph.causal_state.as_ref().unwrap();
         let divide = state.op_ids[&ReplayOpKey {
             name: "/".to_owned(),
             inputs: vec!["i64".to_owned(), "i64".to_owned()],
             output: "i64".to_owned(),
         }];
-        assert!(snapshot.facts.iter().any(|fact| {
-            fact.cause.rule_match().is_some()
-                && fact
-                    .terms
-                    .iter()
-                    .copied()
-                    .filter(|term| !term.is_missing())
-                    .any(|term| {
-                        matches!(
-                            egraph.causal_replay_term(term).unwrap(),
-                            Some(ReplayTerm::Call { op, .. }) if op == divide
-                        )
-                    })
-        }));
-        assert_eq!(snapshot.check_roots.len(), 1);
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
+        egraph
+            .with_causal_receipt_view(|view| {
+                let mut found = false;
+                for raw in 1..=view.totals().facts {
+                    let fact = view.fact(core_relations::FactId::new(raw))?;
+                    if !matches!(fact.cause, core_relations::ReceiptCauseRef::Rule(_)) {
+                        continue;
+                    }
+                    found |= view
+                        .fact_terms(fact.id)?
+                        .iter()
+                        .copied()
+                        .filter(|term| !term.is_missing())
+                        .any(|term| {
+                            matches!(
+                                egraph.causal_replay_term(term).unwrap(),
+                                Some(ReplayTerm::Call { op, .. }) if op == divide
+                            )
+                        });
+                }
+                assert!(found);
+                assert_eq!(view.totals().check_roots, 1);
+                assert_eq!(view.counters().unattributed_commits, 0);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -6430,7 +6563,6 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
         let state = egraph.causal_state.as_ref().unwrap();
         let divide = state.op_ids[&ReplayOpKey {
             name: "/".to_owned(),
@@ -6442,18 +6574,27 @@ mod tests {
             inputs: vec!["i64".to_owned(), "i64".to_owned()],
             output: "i64".to_owned(),
         }];
-        let output_term = snapshot
-            .facts
-            .iter()
-            .filter(|fact| fact.cause.rule_match().is_some())
-            .flat_map(|fact| fact.terms.iter().copied())
-            .find(|term| {
-                matches!(
-                    egraph.causal_replay_term(*term).unwrap(),
-                    Some(ReplayTerm::Call { op, .. }) if op == add
-                )
+        let output_term = egraph
+            .with_causal_receipt_view(|view| {
+                for raw in 1..=view.totals().facts {
+                    let fact = view.fact(core_relations::FactId::new(raw))?;
+                    if !matches!(fact.cause, core_relations::ReceiptCauseRef::Rule(_)) {
+                        continue;
+                    }
+                    if let Some(term) = view.fact_terms(fact.id)?.iter().copied().find(|term| {
+                        matches!(
+                            egraph.causal_replay_term(*term).unwrap(),
+                            Some(ReplayTerm::Call { op, .. }) if op == add
+                        )
+                    }) {
+                        return Ok(term);
+                    }
+                }
+                Err(core_relations::ReceiptViewError::Invalid(
+                    "derived output has no pure action call term".into(),
+                ))
             })
-            .expect("derived output has its pure action call term");
+            .unwrap();
         let Some(ReplayTerm::Call { children, .. }) =
             egraph.causal_replay_term(output_term).unwrap()
         else {
@@ -6465,8 +6606,13 @@ mod tests {
                 Some(ReplayTerm::Call { op, .. }) if op == divide
             )
         }));
-        assert_eq!(snapshot.check_roots.len(), 1);
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
+        egraph
+            .with_causal_receipt_view(|view| {
+                assert_eq!(view.totals().check_roots, 1);
+                assert_eq!(view.counters().unattributed_commits, 0);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -6484,8 +6630,6 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert!(snapshot.matches.is_empty());
         let state = egraph.causal_state.as_ref().unwrap();
         let add = state.op_ids[&ReplayOpKey {
             name: "+".to_owned(),
@@ -6519,14 +6663,18 @@ mod tests {
                  (run 1)",
             )
             .unwrap();
-        let failure = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _ = egraph.causal_receipt_snapshot();
-        }))
-        .expect_err("cold causal projection accepted an unsupported primitive producer");
+        let failure = egraph
+            .with_causal_receipt_view(|view| {
+                for raw in 1..=view.totals().facts {
+                    view.fact_terms(core_relations::FactId::new(raw))?;
+                }
+                Ok(())
+            })
+            .unwrap_err();
         assert!(
-            panic_message(failure.as_ref()).contains("reached unsupported causal row origin"),
-            "unexpected cold-projection panic: {}",
-            panic_message(failure.as_ref())
+            failure
+                .to_string()
+                .contains("unsupported causal row origin")
         );
     }
 
@@ -6547,61 +6695,63 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert_eq!(snapshot.matches.len(), 1);
-        let matched = &snapshot.matches[0];
-        assert_eq!(matched.rule, 0);
-        assert_eq!(matched.wave.get(), 1);
-        assert_eq!(matched.premises.len(), 1);
-        assert_eq!(matched.terms.len(), 2);
-        assert_eq!(
-            egraph.causal_replay_term(matched.terms[0]).unwrap(),
-            Some(ReplayTerm::Literal {
-                sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
-                literal: ReplayLiteral::I64(3),
+        egraph
+            .with_causal_receipt_view(|view| {
+                let matched = view.matched(core_relations::RuleMatchId::new(1))?;
+                assert_eq!(matched.rule, 0);
+                assert_eq!(matched.wave.get(), 1);
+                assert_eq!(matched.premises.len(), 1);
+                let terms = view.match_terms(matched.id)?;
+                assert_eq!(terms.len(), 2);
+                assert_eq!(
+                    egraph.causal_replay_term(terms[0]).unwrap(),
+                    Some(ReplayTerm::Literal {
+                        sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
+                        literal: ReplayLiteral::I64(3),
+                    })
+                );
+                assert_eq!(
+                    egraph.causal_replay_term(terms[1]).unwrap(),
+                    Some(ReplayTerm::Literal {
+                        sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
+                        literal: ReplayLiteral::I64(7),
+                    })
+                );
+                let cataloged_rule = &egraph.causal_state.as_ref().unwrap().rule_catalog[0];
+                assert_eq!(cataloged_rule.ruleset, "");
+                assert_eq!(cataloged_rule.native_name, "derive");
+                assert_eq!(cataloged_rule.replay_name, "derive");
+                assert_eq!(
+                    &*cataloged_rule.variables,
+                    &[
+                        ("y".to_owned(), "i64".to_owned()),
+                        ("x".to_owned(), "i64".to_owned()),
+                    ]
+                );
+                let premise = view.fact(matched.premises[0])?;
+                let core_relations::ReceiptCauseRef::Cause(source) = premise.cause else {
+                    panic!("premise lost source cause")
+                };
+                assert!(matches!(
+                    view.cause(source)?,
+                    core_relations::RawReceiptCause::Source(_)
+                ));
+                for raw in 1..=view.totals().facts {
+                    if let core_relations::ReceiptCauseRef::Rule(id) =
+                        view.fact(core_relations::FactId::new(raw))?.cause
+                    {
+                        assert_eq!(id, matched.id);
+                    }
+                }
+                let root = view.check_root(0)?;
+                assert_eq!(root.check, 0);
+                assert_eq!(root.wave.get(), 1);
+                assert!(!root.premises.is_empty());
+                assert!(root.equalities.is_empty());
+                assert_eq!(view.counters().unattributed_commits, 0);
+                Ok(())
             })
-        );
-        assert_eq!(
-            egraph.causal_replay_term(matched.terms[1]).unwrap(),
-            Some(ReplayTerm::Literal {
-                sort: egraph.causal_state.as_ref().unwrap().sort_ids["i64"],
-                literal: ReplayLiteral::I64(7),
-            })
-        );
-        let cataloged_rule = &egraph.causal_state.as_ref().unwrap().rule_catalog[0];
-        assert_eq!(cataloged_rule.ruleset, "");
-        assert_eq!(cataloged_rule.native_name, "derive");
-        assert_eq!(cataloged_rule.replay_name, "derive");
-        assert_eq!(
-            &*cataloged_rule.variables,
-            &[
-                ("y".to_owned(), "i64".to_owned()),
-                ("x".to_owned(), "i64".to_owned()),
-            ]
-        );
-        let premise = snapshot
-            .facts
-            .iter()
-            .find(|fact| fact.id == matched.premises[0])
             .unwrap();
-        assert!(matches!(
-            premise.cause,
-            core_relations::FactCause::Source(_)
-        ));
-        assert!(
-            snapshot
-                .facts
-                .iter()
-                .filter_map(|fact| fact.cause.rule_match())
-                .all(|id| id == matched.id)
-        );
-        assert_eq!(snapshot.check_roots.len(), 1);
-        let root = &snapshot.check_roots[0];
-        assert_eq!(root.check, 0);
-        assert_eq!(root.wave.get(), 1);
-        assert!(!root.premises.is_empty());
-        assert!(root.equalities.is_empty());
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
     }
 
     #[test]
@@ -6635,46 +6785,51 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert_eq!(snapshot.check_roots.len(), 1);
-        let root = &snapshot.check_roots[0];
-        assert_eq!(root.premises.len(), 2);
-        assert_eq!(root.equalities.len(), 1);
-        let (left, right) = root.equalities[0];
-        assert_eq!(left.sort, right.sort);
-        assert_ne!(
-            left.raw, right.raw,
-            "the check root preserves each premise's immutable creation occurrence"
-        );
-        assert_ne!(left.term, right.term);
+        egraph
+            .with_causal_receipt_view(|view| {
+                let root = view.check_root(0)?;
+                assert_eq!(root.premises.len(), 2);
+                assert_eq!(root.equalities.len(), 1);
+                let (left, right) = root.equalities[0];
+                assert_eq!(left.sort, right.sort);
+                assert_ne!(
+                    left.raw, right.raw,
+                    "the check root preserves each premise's immutable creation occurrence"
+                );
+                assert_ne!(left.term, right.term);
 
-        let state = egraph.causal_state.as_ref().unwrap();
-        let a = state.op_ids[&ReplayOpKey {
-            name: "A".into(),
-            inputs: vec!["i64".into()],
-            output: "Expr".into(),
-        }];
-        let b = state.op_ids[&ReplayOpKey {
-            name: "B".into(),
-            inputs: vec!["i64".into()],
-            output: "Expr".into(),
-        }];
-        assert!(matches!(
-            egraph.causal_replay_term(left.term).unwrap(),
-            Some(ReplayTerm::Call { op, .. }) if op == a
-        ));
-        assert!(matches!(
-            egraph.causal_replay_term(right.term).unwrap(),
-            Some(ReplayTerm::Call { op, .. }) if op == b
-        ));
-        let explanation = snapshot
-            .explain_equality_at(left, right, root.as_of_edges, root.position)
+                let state = egraph.causal_state.as_ref().unwrap();
+                let a = state.op_ids[&ReplayOpKey {
+                    name: "A".into(),
+                    inputs: vec!["i64".into()],
+                    output: "Expr".into(),
+                }];
+                let b = state.op_ids[&ReplayOpKey {
+                    name: "B".into(),
+                    inputs: vec!["i64".into()],
+                    output: "Expr".into(),
+                }];
+                assert!(matches!(
+                    egraph.causal_replay_term(left.term).unwrap(),
+                    Some(ReplayTerm::Call { op, .. }) if op == a
+                ));
+                assert!(matches!(
+                    egraph.causal_replay_term(right.term).unwrap(),
+                    Some(ReplayTerm::Call { op, .. }) if op == b
+                ));
+                let explanation =
+                    view.explain_equality_support_at(left, right, root.as_of_edges, root.position)?;
+                assert_eq!(
+                    explanation.applied.as_ref(),
+                    [core_relations::AppliedEqualityId::new(1)]
+                );
+                assert!(matches!(
+                    view.applied_equality(core_relations::AppliedEqualityId::new(1))?.reason,
+                    core_relations::EqualityReason::RuleUnion(rule) if view.matched(rule)?.rule == 0
+                ));
+                Ok(())
+            })
             .unwrap();
-        assert_eq!(explanation.as_ref(), [snapshot.equalities[0].id]);
-        assert!(matches!(
-            snapshot.equalities[0].reason,
-            core_relations::EqualityReason::RuleUnion(rule) if rule == snapshot.matches[0].id
-        ));
     }
 
     #[test]
@@ -6684,14 +6839,16 @@ mod tests {
         egraph
             .parse_and_run_program(None, "(run 1 :until (= 1 1))")
             .unwrap();
-        assert!(
-            egraph
-                .causal_receipt_snapshot()
-                .unwrap()
-                .check_roots
-                .is_empty(),
-            "schedule probes are control flow, not replay soundness roots"
-        );
+        egraph
+            .with_causal_receipt_view(|view| {
+                assert_eq!(
+                    view.totals().check_roots,
+                    0,
+                    "schedule probes are control flow, not replay soundness roots"
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -6741,15 +6898,17 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert_eq!(
-            snapshot
-                .matches
-                .iter()
-                .map(|matched| matched.wave.get())
-                .collect::<Vec<_>>(),
-            [1, 2]
-        );
+        egraph
+            .with_causal_receipt_view(|view| {
+                let waves = (1..=view.totals().matches)
+                    .filter_map(|raw| view.matched(core_relations::RuleMatchId::new(raw)).ok())
+                    .filter(|matched| matched.rule == 0)
+                    .map(|matched| matched.wave.get())
+                    .collect::<Vec<_>>();
+                assert_eq!(waves, [1, 2]);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -6805,7 +6964,7 @@ mod tests {
         assert!(matches!(error, Error::InputFileFormatError(_)));
         assert!(
             rejected
-                .causal_receipt_snapshot()
+                .with_causal_receipt_view(|_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned"),
@@ -6813,56 +6972,67 @@ mod tests {
         );
         std::fs::remove_dir_all(&directory).ok();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        let source_facts = snapshot
-            .facts
-            .iter()
-            .filter_map(|fact| match &fact.cause {
-                core_relations::FactCause::Source(source) => Some((source, fact)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(source_facts.len(), 4);
-        for expected in [
-            SourceRef::InputRow {
-                command: 0,
-                line: 1,
-            },
-            SourceRef::InputRow {
-                command: 0,
-                line: 3,
-            },
-            SourceRef::InputRow {
-                command: 1,
-                line: 1,
-            },
-            SourceRef::InputRow {
-                command: 2,
-                line: 1,
-            },
-        ] {
-            assert!(source_facts.iter().any(|(source, _)| **source == expected));
-        }
-        assert!(!source_facts.iter().any(|(source, _)| {
-            **source
-                == SourceRef::InputRow {
-                    command: 0,
-                    line: 2,
+        egraph
+            .with_causal_receipt_view(|view| {
+                let mut source_facts = Vec::new();
+                for raw in 1..=view.totals().facts {
+                    let fact = view.fact(core_relations::FactId::new(raw))?;
+                    let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
+                        continue;
+                    };
+                    if let core_relations::RawReceiptCause::Source(source) = view.cause(cause)? {
+                        source_facts.push((source.clone(), fact.id));
+                    }
                 }
-        }));
-        for (_, fact) in source_facts
-            .iter()
-            .filter(|(source, _)| matches!(source, SourceRef::InputRow { command: 0, .. }))
-        {
-            assert!(fact.terms.iter().copied().any(|term| {
-                !term.is_missing()
-                    && matches!(
-                        egraph.causal_replay_term(term).unwrap(),
-                        Some(ReplayTerm::Call { .. })
-                    )
-            }));
-        }
-        assert_eq!(snapshot.counters.unattributed_commits, 0);
+                assert_eq!(source_facts.len(), 4);
+                for expected in [
+                    SourceRef::InputRow {
+                        command: 0,
+                        line: 1,
+                    },
+                    SourceRef::InputRow {
+                        command: 0,
+                        line: 3,
+                    },
+                    SourceRef::InputRow {
+                        command: 1,
+                        line: 1,
+                    },
+                    SourceRef::InputRow {
+                        command: 2,
+                        line: 1,
+                    },
+                ] {
+                    assert!(source_facts.iter().any(|(source, _)| *source == expected));
+                }
+                assert!(!source_facts.iter().any(|(source, _)| {
+                    *source
+                        == SourceRef::InputRow {
+                            command: 0,
+                            line: 2,
+                        }
+                }));
+                for (_, fact) in source_facts
+                    .iter()
+                    .filter(|(source, _)| matches!(source, SourceRef::InputRow { command: 0, .. }))
+                {
+                    assert!(view.fact_terms(*fact)?.iter().copied().any(|term| {
+                        !term.is_missing()
+                            && matches!(
+                                egraph.causal_replay_term(term).unwrap(),
+                                Some(ReplayTerm::Call { .. })
+                            )
+                    }));
+                }
+                Ok(())
+            })
+            .unwrap();
+        egraph
+            .with_causal_receipt_view(|view| {
+                assert_eq!(view.counters().unattributed_commits, 0);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -7069,7 +7239,7 @@ mod tests {
             .unwrap_err();
         assert!(sort.to_string().contains("registration after capture"));
         assert!(egraph.get_sort_by_name("CausalDirectSort").is_none());
-        assert!(egraph.causal_receipt_snapshot().is_ok());
+        assert!(egraph.with_causal_receipt_view(|_| Ok(())).is_ok());
 
         let mut proof = EGraph::new_with_proofs();
         let proof_error = enable_serial_causal_receipts(&mut proof).unwrap_err();
@@ -7111,7 +7281,7 @@ mod tests {
         assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
         assert!(
             egraph
-                .causal_receipt_snapshot()
+                .with_causal_receipt_view(|_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned")
@@ -7205,7 +7375,7 @@ mod tests {
                 .contains("EGraph::query")
         );
         assert_eq!(egraph.get_size("R"), 0);
-        assert!(egraph.causal_receipt_snapshot().is_ok());
+        assert!(egraph.with_causal_receipt_view(|_| Ok(())).is_ok());
     }
 
     #[test]
@@ -7226,16 +7396,21 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert_eq!(snapshot.matches.len(), 1);
-        assert!(snapshot.equalities.len() >= 3);
-        assert!(
-            snapshot
-                .equalities
-                .iter()
-                .all(|equality| equality.wave.get() == 1),
-            "direct and multi-pass congruence edges belong to one replay wave"
-        );
+        egraph
+            .with_causal_receipt_view(|view| {
+                assert!(view.totals().applied_equalities >= 3);
+                for raw in 1..=view.totals().applied_equalities {
+                    assert_eq!(
+                        view.applied_equality(core_relations::AppliedEqualityId::new(raw))?
+                            .wave
+                            .get(),
+                        1,
+                        "direct and multi-pass congruence edges belong to one replay wave"
+                    );
+                }
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -7259,7 +7434,7 @@ mod tests {
         );
         assert!(
             egraph
-                .causal_receipt_snapshot()
+                .with_causal_receipt_view(|_| Ok(()))
                 .unwrap_err()
                 .to_string()
                 .contains("poisoned")
@@ -7311,11 +7486,14 @@ mod tests {
             )
             .unwrap();
 
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        assert!(snapshot.removals.is_empty());
-        assert!(snapshot.matches.is_empty());
-        assert_eq!(snapshot.counters.effective_removals, 0);
-        assert_eq!(snapshot.counters.relation_removals, 1);
+        egraph
+            .with_causal_receipt_view(|view| {
+                assert_eq!(view.totals().removals, 0);
+                assert_eq!(view.counters().effective_removals, 0);
+                assert_eq!(view.counters().relation_removals, 1);
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
@@ -7342,7 +7520,9 @@ mod tests {
                  (Go)",
             )
             .unwrap();
-        let before = egraph.causal_receipt_snapshot().unwrap();
+        let before = egraph
+            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .unwrap();
 
         egraph
             .parse_and_run_program(
@@ -7352,10 +7532,10 @@ mod tests {
             )
             .unwrap();
 
-        let after = egraph.causal_receipt_snapshot().unwrap();
-        assert!(after.removals.is_empty());
-        assert!(after.matches.is_empty());
-        assert_eq!(after.facts, before.facts);
+        let after = egraph
+            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .unwrap();
+        assert_eq!(after, before);
     }
 
     #[test]

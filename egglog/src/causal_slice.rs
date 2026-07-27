@@ -638,6 +638,16 @@ fn replay_key_at(
     Ok((table, key.into_boxed_slice()))
 }
 
+fn position_before_event(position: HistoryPosition) -> Result<HistoryPosition, ReceiptViewError> {
+    position
+        .get()
+        .checked_sub(1)
+        .map(HistoryPosition::new)
+        .ok_or_else(|| {
+            ReceiptViewError::Invalid("causal event has no preceding history position".into())
+        })
+}
+
 fn keys_equivalent(dsu: &mut SelectedEqualityDsu, left: &[KeyCell], right: &[KeyCell]) -> bool {
     left.len() == right.len()
         && left
@@ -668,7 +678,8 @@ fn select_interfering_removals(
         if schema.kind == ReplayTableKind::PresenceRelation {
             continue;
         }
-        let (table, victim_key) = replay_key_at(view, removal.removed_fact, removal.position)?;
+        let victim_position = position_before_event(removal.position)?;
+        let (table, victim_key) = replay_key_at(view, removal.removed_fact, victim_position)?;
         let mut interferes = false;
         for later in replay_facts.iter().copied() {
             let record = view.fact(later)?;
@@ -699,7 +710,8 @@ fn count_interfering_cells(
     let mut cells = HashSet::default();
     for index in &slice.interference_removals {
         let removal = view.removal(*index)?;
-        let (table, key) = replay_key_at(view, removal.removed_fact, removal.position)?;
+        let victim_position = position_before_event(removal.position)?;
+        let (table, key) = replay_key_at(view, removal.removed_fact, victim_position)?;
         let key = key
             .iter()
             .copied()
@@ -1079,15 +1091,7 @@ mod tests {
             )
             .unwrap();
 
-        let bridge = egraph
-            .backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .unwrap();
-        let before = bridge.causal_compatibility_projection_reads().unwrap();
         let slice = slice_check(&egraph, 0).unwrap();
-        let after = bridge.causal_compatibility_projection_reads().unwrap();
-        assert_eq!(before, after, "timed slicing constructed no full snapshot");
         assert_eq!(slice.matches.len(), 2);
         assert_eq!(slice.equalities.len(), 1);
         assert_eq!(slice.sources.len(), 2);
@@ -1892,7 +1896,7 @@ mod tests {
     }
 
     #[test]
-    fn equality_check_after_rekey_uses_root_occurrences_and_matches_snapshot_support() {
+    fn equality_check_after_rekey_uses_root_occurrences_and_matches_receipt_support() {
         let mut egraph = EGraph::default();
         serial_causal_pool()
             .install(|| egraph.enable_causal_receipts())
@@ -1934,27 +1938,20 @@ mod tests {
                 let generic =
                     view.explain_equality_support_at(left, right, root.as_of_edges, root.position)?;
                 assert_eq!(generic.applied.len(), 1);
+                let lazy_edges = slice
+                    .equalities
+                    .iter()
+                    .map(|edge| edge.get())
+                    .collect::<HashSet<_>>();
+                let raw_edges = generic
+                    .applied
+                    .iter()
+                    .map(|edge| edge.get())
+                    .collect::<HashSet<_>>();
+                assert_eq!(lazy_edges, raw_edges);
                 Ok(())
             })
             .unwrap();
-
-        let snapshot = egraph.causal_receipt_snapshot().unwrap();
-        let root = &snapshot.check_roots[0];
-        let (left, right) = root.equalities[0];
-        let support = snapshot
-            .explain_equality_support_at(left, right, root.as_of_edges, root.position)
-            .unwrap();
-        let snapshot_edges = support
-            .edges
-            .iter()
-            .map(|edge| edge.get())
-            .collect::<HashSet<_>>();
-        let lazy_edges = slice
-            .equalities
-            .iter()
-            .map(|edge| edge.get())
-            .collect::<HashSet<_>>();
-        assert_eq!(lazy_edges, snapshot_edges);
     }
 
     #[test]

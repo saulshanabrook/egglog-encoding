@@ -288,7 +288,7 @@ mod causal_container_tests {
             );
             assert!(
                 egraph
-                    .causal_receipt_snapshot()
+                    .with_causal_receipt_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
@@ -327,7 +327,7 @@ mod causal_container_tests {
             );
             assert!(
                 egraph
-                    .causal_receipt_snapshot()
+                    .with_causal_receipt_view(|_| Ok(()))
                     .unwrap_err()
                     .to_string()
                     .contains("poisoned"),
