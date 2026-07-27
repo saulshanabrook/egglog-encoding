@@ -284,6 +284,10 @@ impl Backend for EGraph {
         EGraph::add_table(self, config)
     }
 
+    fn try_add_table(&mut self, config: FunctionConfig) -> Result<FunctionId> {
+        EGraph::try_add_table(self, config)
+    }
+
     fn enable_causal_receipts(&mut self) -> Result<()> {
         EGraph::enable_causal_receipts(self)
     }

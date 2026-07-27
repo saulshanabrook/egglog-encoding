@@ -289,6 +289,12 @@ pub trait Backend: Send + Sync {
     /// Register a function / relation / constructor and return its handle.
     fn add_table(&mut self, config: FunctionConfig) -> FunctionId;
 
+    /// Fallible registration hook for backends that must validate optional
+    /// capabilities before allocating table state.
+    fn try_add_table(&mut self, config: FunctionConfig) -> Result<FunctionId> {
+        Ok(self.add_table(config))
+    }
+
     /// The id that the next [`Backend::add_table`] call will assign.
     ///
     /// Merge action blocks use this to write back into the table being

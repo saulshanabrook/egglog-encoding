@@ -309,7 +309,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
             "core/complex-merge-func.egg",
             "core/web-demo/rw-analysis.egg",
         ],
-        disposition: Disposition::KnownCapturePanic {
+        disposition: Disposition::Unsupported {
             diagnostic: "merge reached an unsupported structural result expression",
             artifact: ArtifactExpectation::Absent,
         },

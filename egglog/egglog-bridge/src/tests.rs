@@ -59,6 +59,57 @@ fn causal_receipts_reject_parallel_bridge_activation() {
 }
 
 #[test]
+fn causal_receipts_reject_unsupported_merge_before_table_allocation() {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(1)
+        .build()
+        .unwrap();
+    pool.install(|| {
+        let mut egraph = EGraph::default();
+        egraph.enable_causal_receipts().unwrap();
+        let constructor = egraph.add_table(FunctionConfig {
+            n_vals: 1,
+            n_identity_vals: None,
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            default: DefaultVal::FreshId,
+            merge: MergeFn::UnionId,
+            name: "constructor".into(),
+            can_subsume: false,
+        });
+        let next_function = egraph.peek_next_function_id();
+        let next_table = egraph.db.next_table_id();
+
+        let error = egraph
+            .try_add_table(FunctionConfig {
+                n_vals: 1,
+                n_identity_vals: None,
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                default: DefaultVal::Fail,
+                merge: MergeFn::Function(constructor, vec![MergeFn::Old, MergeFn::New]),
+                name: "unsupported-merge".into(),
+                can_subsume: false,
+            })
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("merge reached an unsupported structural result expression")
+        );
+        assert_eq!(egraph.peek_next_function_id(), next_function);
+        assert_eq!(egraph.db.next_table_id(), next_table);
+        assert!(
+            egraph
+                .action_registry()
+                .read()
+                .unwrap()
+                .lookup_table("unsupported-merge")
+                .is_none()
+        );
+    });
+}
+
+#[test]
 fn grounded_wave_point_probes_every_match_before_running_any_head_without_planning() {
     let mut egraph = EGraph::default();
     let int_base = egraph.base_values_mut().register_type::<i64>();

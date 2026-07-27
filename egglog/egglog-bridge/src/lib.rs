@@ -261,6 +261,25 @@ pub struct FunctionConfig {
     pub can_subsume: bool,
 }
 
+fn validate_replay_merge_origins(
+    name: &str,
+    origins: &[MergeOriginSelector],
+    has_function_result: bool,
+) -> Result<()> {
+    if !has_function_result {
+        return Ok(());
+    }
+    if origins
+        .iter()
+        .any(|origin| matches!(origin, MergeOriginSelector::Unsupported))
+    {
+        anyhow::bail!(
+            "function `{name}` merge reached an unsupported structural result expression"
+        );
+    }
+    Ok(())
+}
+
 /// Side-band structural replay metadata for one registered function.
 ///
 /// The logical sorts cover only the user-visible key and value columns. The
@@ -683,6 +702,13 @@ impl EGraph {
     }
 
     pub fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
+        self.try_add_table(config)
+            .unwrap_or_else(|error| panic!("{error}"))
+    }
+
+    /// Register a function, returning a controlled error when receipt capture
+    /// cannot represent its merge before allocating any table state.
+    pub fn try_add_table(&mut self, config: FunctionConfig) -> Result<FunctionId> {
         let FunctionConfig {
             schema,
             n_vals,
@@ -727,7 +753,11 @@ impl EGraph {
         };
         let n_args = schema_math.num_keys();
         let n_cols = schema_math.table_columns();
+        let has_function_result = merge.has_function_result();
         let merge_origins = merge.origin_selectors(&schema, n_keys);
+        if self.causal_receipts.is_some() {
+            validate_replay_merge_origins(&name, &merge_origins, has_function_result)?;
+        }
         let next_func_id = self.funcs.next_id();
         let name: Arc<str> = name.into();
         // Knot-tying for a self-referential merge (e.g. the term encoder's single-table UF `@UF`,
@@ -745,6 +775,7 @@ impl EGraph {
             n_identity_vals,
             replay: None,
             merge_origins,
+            has_function_result,
             incremental_rebuild_rules: Default::default(),
             nonincremental_rebuild_rule: RuleId::new(!0),
             default_val: default,
@@ -797,7 +828,7 @@ impl EGraph {
             .write()
             .unwrap()
             .register_table(table_name, action);
-        res
+        Ok(res)
     }
 
     /// Enable compact causal receipt capture before any rows are inserted.
@@ -862,6 +893,7 @@ impl EGraph {
                 );
             }
         }
+        validate_replay_merge_origins(&info.name, &info.merge_origins, info.has_function_result)?;
 
         let receipts = self
             .causal_receipts
@@ -1639,6 +1671,7 @@ struct FunctionInfo {
     n_identity_vals: Option<usize>,
     replay: Option<FunctionReplaySpec>,
     merge_origins: Box<[MergeOriginSelector]>,
+    has_function_result: bool,
     incremental_rebuild_rules: Vec<RuleId>,
     nonincremental_rebuild_rule: RuleId,
     default_val: DefaultVal,
@@ -1742,6 +1775,25 @@ pub enum MergeAction {
 }
 
 impl MergeFn {
+    fn has_function_result(&self) -> bool {
+        match self {
+            Self::Function(..) => true,
+            Self::Columns(columns) => columns.iter().any(Self::has_function_result),
+            Self::Block { result, .. } => result.has_function_result(),
+            Self::AssertEq
+            | Self::UnionId
+            | Self::Primitive(..)
+            | Self::InputChoicePrimitive(..)
+            | Self::Lookup(..)
+            | Self::Old
+            | Self::New
+            | Self::OldCol(..)
+            | Self::NewCol(..)
+            | Self::LetVar(..)
+            | Self::Const(..) => false,
+        }
+    }
+
     fn origin_selectors(&self, schema: &[ColumnTy], n_keys: usize) -> Box<[MergeOriginSelector]> {
         let result = match self {
             MergeFn::Block { actions, result } if actions.is_empty() => result.as_ref(),

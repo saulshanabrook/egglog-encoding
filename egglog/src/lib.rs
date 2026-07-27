@@ -1942,23 +1942,26 @@ impl EGraph {
                 None => MergeFn::AssertEq,
             },
         };
-        let backend_id = self.backend.add_table(egglog_bridge::FunctionConfig {
-            schema: schema
-                .input
-                .iter()
-                .chain(schema.outputs.iter())
-                .map(|sort| sort.column_ty(self.backend.base_values()))
-                .collect(),
-            n_vals: num_outputs,
-            n_identity_vals: decl.identity_vals,
-            default: match decl.subtype {
-                FunctionSubtype::Constructor => DefaultVal::FreshId,
-                FunctionSubtype::Custom => DefaultVal::Fail,
-            },
-            merge,
-            name: decl.name.to_string(),
-            can_subsume,
-        });
+        let backend_id = self
+            .backend
+            .try_add_table(egglog_bridge::FunctionConfig {
+                schema: schema
+                    .input
+                    .iter()
+                    .chain(schema.outputs.iter())
+                    .map(|sort| sort.column_ty(self.backend.base_values()))
+                    .collect(),
+                n_vals: num_outputs,
+                n_identity_vals: decl.identity_vals,
+                default: match decl.subtype {
+                    FunctionSubtype::Constructor => DefaultVal::FreshId,
+                    FunctionSubtype::Custom => DefaultVal::Fail,
+                },
+                merge,
+                name: decl.name.to_string(),
+                can_subsume,
+            })
+            .map_err(|error| Error::BackendError(error.to_string()))?;
         assert_eq!(backend_id, own_id);
         if let Some(replay) = replay {
             self.backend
