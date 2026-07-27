@@ -2590,3 +2590,41 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
 - All five final artifacts were byte-identical to `5de2fa8`: Math
   `3f5216d5...e17`, Eggcc `e4f6045e...c3ea`, Pointer `000dfda7...851`,
   Hardboiled `2ccbf8e2...46e5`, and Luminal `044b11c6...ad4`.
+
+## 2026-07-26: rejected table-only parallel receipt specialization
+
+- The second bounded revision isolated only the unreachable receipt-enabled
+  parallel table insertion, rehash, promoted-cause sidecar, and staged-output
+  specialization. Its exact production delta from `b920952` was A=54, D=298,
+  net **-244 lines**, independently clearing the 233-line experiment floor.
+  All 177 core tests passed, including the native four-thread large-insert
+  canary. The isolation intentionally omitted the prior candidate's action,
+  scoped-execution, receipt-safe traversal, input-digest, and receipt-draft
+  deletions.
+- It nevertheless reproduced the shared-path failure before dead-helper cleanup
+  or causal benchmarking. A fresh one-round all-five `proofs` comparison against
+  `b920952` reported a 1.05x suite wall ratio: Math 1.00x, Eggcc 1.02x,
+  Pointer 1.06x, Hardboiled 1.02x, and Luminal 1.08x. Peak RSS ranged from
+  0.992x to 1.02x. Pointer and Luminal exceed the immutable 1.02 native wall
+  ceiling at the first screen, so additional rounds cannot make this source an
+  acceptable first checkpoint.
+- The entire source revision was reverted. Together with the broader rejected
+  checkpoint-3 attempt, this exhausts the allowed two measured revisions for
+  dormant parallel receipt specialization. No part of either failed source
+  candidate is retained.
+
+## 2026-07-26: final reduction inventory and stop decision
+
+- Independent inventories found no remaining semantics-preserving proposal
+  expected to remove 233 net production lines. The generic shared-effect seam
+  is realistically 140-210 lines and exceeds the threshold only by changing
+  ordinary constructor allocation, lookup, instruction layout, or codegen.
+  Catalog-as-view is roughly 20-110 lines because expanded chronology, rule
+  bindings, source/check links, input provenance, anonymous identities, and
+  poison state still require durable ownership. Strictly private dead helpers
+  aggregate to roughly 93 lines; including public diagnostic counter APIs still
+  does not conservatively reach 233.
+- The table-only revision above was the sole independently qualifying leftover
+  and failed its first performance screen. Per the campaign stop rules, no
+  shared-effect framework, replacement catalog, API-breaking counter bundle,
+  line packing, or moved complexity was introduced.
