@@ -288,14 +288,14 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         paths: &["core/integer_math.egg"],
         disposition: Disposition::KnownReplayFailure {
             diagnostic: "tests/integer_math.egg: (check (= $start-expr $equiv-expr))",
-            artifact: ArtifactExpectation::Present,
+            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/nested-container-dirty-propagation.egg"],
         disposition: Disposition::KnownReplayFailure {
             diagnostic: "lookup of constructor `p` failed",
-            artifact: ArtifactExpectation::Present,
+            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -332,7 +332,7 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         paths: &["core/uf-extraction.egg"],
         disposition: Disposition::Unsupported {
             diagnostic: "sort has a :internal-uf annotation",
-            artifact: ArtifactExpectation::Present,
+            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
@@ -352,14 +352,14 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         paths: &["core/web-demo/eqsolve.egg"],
         disposition: Disposition::KnownReplayFailure {
             diagnostic: r#"tests/web-demo/eqsolve.egg: (check (= (Var "y") (Add (Add (Num 12) (Neg (Var "y"))) (Neg (Var "y")))))"#,
-            artifact: ArtifactExpectation::Present,
+            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {
         paths: &["core/web-demo/knapsack.egg"],
         disposition: Disposition::KnownReplayFailure {
             diagnostic: "grounded match 1 premise 2 is absent from table",
-            artifact: ArtifactExpectation::Present,
+            artifact: ArtifactExpectation::Absent,
         },
     },
     AllowlistGroup {

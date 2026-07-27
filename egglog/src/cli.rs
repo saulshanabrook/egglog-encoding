@@ -256,20 +256,14 @@ fn cli_with_args_inner<I, T>(
             log::error!("{error}");
             std::process::exit(1);
         });
-        if let Some(path) = &args.causal_slice_output {
-            let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands)
-                .unwrap_or_else(|error| {
+        let rendered = args.causal_slice_output.as_ref().map(|_| {
+            crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap_or_else(
+                |error| {
                     log::error!("{error}");
                     std::process::exit(1);
-                });
-            std::fs::write(path, rendered).unwrap_or_else(|error| {
-                log::error!(
-                    "cannot write causal replay artifact `{}`: {error}",
-                    path.display()
-                );
-                std::process::exit(1);
-            });
-        }
+                },
+            )
+        });
         let slice_time = slice_start.elapsed();
 
         // Drop every runtime value and receipt allocation before constructing
@@ -294,6 +288,15 @@ fn cli_with_args_inner<I, T>(
             std::process::exit(1);
         });
         let replay_time = replay_start.elapsed();
+        if let (Some(path), Some(rendered)) = (&args.causal_slice_output, rendered) {
+            std::fs::write(path, rendered).unwrap_or_else(|error| {
+                log::error!(
+                    "cannot write causal replay artifact `{}`: {error}",
+                    path.display()
+                );
+                std::process::exit(1);
+            });
+        }
         if args.mode != RunMode::NoMessages {
             let mut output = io::stdout();
             for message in outputs {
