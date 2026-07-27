@@ -281,13 +281,6 @@ pub const ALLOWLIST: &[AllowlistGroup] = &[
         },
     },
     AllowlistGroup {
-        paths: &["core/nested-container-dirty-propagation.egg"],
-        disposition: Disposition::KnownReplayFailure {
-            diagnostic: "lookup of constructor `p` failed",
-            artifact: ArtifactExpectation::Absent,
-        },
-    },
-    AllowlistGroup {
         paths: &["core/subsume-relation.egg", "core/web-demo/subsume.egg"],
         disposition: Disposition::StaticUnsupported {
             reason: "the ordinary proof suite manually excludes checks over subsumed values",

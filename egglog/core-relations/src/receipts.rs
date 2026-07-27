@@ -1388,6 +1388,9 @@ pub struct RawTermAvailability {
 pub struct RawAliasWindow {
     pub term: ReplayTermId,
     pub available_after: HistoryPosition,
+    /// A refreshed ordered-container spelling and its structural descendants
+    /// cannot canonicalize back to aliases from an earlier container version.
+    pub fresh_after: Option<HistoryPosition>,
 }
 
 fn combine_raw_equality_support(
@@ -2948,6 +2951,13 @@ struct StructuralOccurrenceQuery {
     excluded_fact: FactId,
 }
 
+#[derive(Clone, Copy)]
+struct StructuralAvailabilityContext<'a> {
+    desired: Option<RawEqualityEndpoint>,
+    anchor: Option<&'a HistoricalFactCell>,
+    fresh_after: Option<HistoryPosition>,
+}
+
 enum ObservedEqualitySupport {
     Support(RawEqualitySupport),
     Missing(ReplayTermId),
@@ -4486,7 +4496,15 @@ impl<'a> CausalReceiptView<'a> {
         anchor: Option<&HistoricalFactCell>,
     ) -> Result<RawEqualitySupport, ReceiptViewError> {
         if let Some(support) = self.try_explain_structural_term_availability_at(
-            term, position, depth, aliases, desired, anchor,
+            term,
+            position,
+            depth,
+            aliases,
+            StructuralAvailabilityContext {
+                desired,
+                anchor,
+                fresh_after: None,
+            },
         )? {
             return Ok(support);
         }
@@ -4502,9 +4520,13 @@ impl<'a> CausalReceiptView<'a> {
         position: HistoryPosition,
         depth: usize,
         aliases: &mut Vec<RawAliasWindow>,
-        desired: Option<RawEqualityEndpoint>,
-        anchor: Option<&HistoricalFactCell>,
+        context: StructuralAvailabilityContext<'_>,
     ) -> Result<Option<RawEqualitySupport>, ReceiptViewError> {
+        let StructuralAvailabilityContext {
+            desired,
+            anchor,
+            fresh_after: inherited_fresh_after,
+        } = context;
         if depth > 256 {
             return Err(ReceiptViewError::Invalid(
                 "structural term availability exceeds 256 call levels".into(),
@@ -4526,6 +4548,18 @@ impl<'a> CausalReceiptView<'a> {
                 )));
             }
             let equality_sort = self.is_equality_sort(sort, op);
+            let mut fresh_after = inherited_fresh_after;
+            if self.replay_terms.container_child_sorts.contains_key(&sort)
+                && let (Some(desired), Some(anchor)) = (desired, anchor)
+            {
+                let versions = self.replay_terms.container_anchors(sort, desired.raw);
+                if versions.len() > 1 && versions.contains(&term) {
+                    let anchor_position = self.fact(anchor.occurrence.fact)?.position;
+                    fresh_after = Some(
+                        fresh_after.map_or(anchor_position, |current| current.max(anchor_position)),
+                    );
+                }
+            }
             let mut parts = Vec::with_capacity(children.len() + usize::from(desired.is_some()));
             if equality_sort && let Some(desired) = desired {
                 parts.push(self.explain_pure_eqsort_call_occurrence(
@@ -4557,8 +4591,11 @@ impl<'a> CausalReceiptView<'a> {
                     position,
                     depth + 1,
                     aliases,
-                    child_desired,
-                    None,
+                    StructuralAvailabilityContext {
+                        desired: child_desired,
+                        anchor: None,
+                        fresh_after,
+                    },
                 )?
                 else {
                     aliases.truncate(alias_checkpoint);
@@ -4571,7 +4608,8 @@ impl<'a> CausalReceiptView<'a> {
             // scheduler enforces that topological dependency separately.
             aliases.push(RawAliasWindow {
                 term,
-                available_after: HistoryPosition::new(0),
+                available_after: fresh_after.unwrap_or(HistoryPosition::new(0)),
+                fresh_after,
             });
             return Ok(Some(combine_raw_equality_support(parts)));
         }
@@ -4727,11 +4765,14 @@ impl<'a> CausalReceiptView<'a> {
                         position,
                         depth + 1,
                         aliases,
-                        Some(RawEqualityEndpoint {
-                            sort: child_sort,
-                            raw: child_cell.endpoint.raw,
-                        }),
-                        Some(&child_cell),
+                        StructuralAvailabilityContext {
+                            desired: Some(RawEqualityEndpoint {
+                                sort: child_sort,
+                                raw: child_cell.endpoint.raw,
+                            }),
+                            anchor: Some(&child_cell),
+                            fresh_after: inherited_fresh_after,
+                        },
                     )?
                     else {
                         aliases.truncate(alias_checkpoint);
@@ -4752,12 +4793,15 @@ impl<'a> CausalReceiptView<'a> {
                 // Capture at the earliest retained boundary after creation.
                 // Child facts may be published later in the same native batch;
                 // replay scheduling also waits for every child alias.
+                let available_after = anchor
+                    .map(|anchor| self.fact(anchor.occurrence.fact).map(|fact| fact.position))
+                    .transpose()?
+                    .map_or(fact_position, |anchor| anchor.max(fact_position));
                 aliases.push(RawAliasWindow {
                     term,
-                    available_after: anchor
-                        .map(|anchor| self.fact(anchor.occurrence.fact).map(|fact| fact.position))
-                        .transpose()?
-                        .map_or(fact_position, |anchor| anchor.max(fact_position)),
+                    available_after: inherited_fresh_after
+                        .map_or(available_after, |fresh| fresh.max(available_after)),
+                    fresh_after: inherited_fresh_after,
                 });
                 parts.push(RawEqualitySupport {
                     applied: Box::new([]),

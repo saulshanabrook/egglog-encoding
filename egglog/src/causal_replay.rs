@@ -950,9 +950,10 @@ fn build_owned(
     // A replay boundary observes one immutable pre-wave database. Repeated
     // structurally identical calls within one removal epoch must therefore
     // resolve to the same runtime value and need only one checked alias.
-    let mut source_call_by_boundary = HashMap::<(u64, ReplayTermId), ReplayTermRef>::default();
+    let mut source_call_by_boundary =
+        HashMap::<(u64, Option<u64>, ReplayTermId), ReplayTermRef>::default();
     let mut canonical_call_by_boundary =
-        HashMap::<(usize, OwnedReplayTerm), ReplayTermRef>::default();
+        HashMap::<(usize, Option<u64>, OwnedReplayTerm), ReplayTermRef>::default();
     let mut canonical_term = HashMap::<ReplayTermRef, ReplayTermRef>::default();
     let mut wave_positions = BTreeMap::<u64, u64>::new();
     for (_, _, wave, position) in &matches {
@@ -1057,8 +1058,9 @@ fn build_owned(
                             source_call.get()
                         ))
                     })?;
+                let fresh_after = window.fresh_after.map(|position| position.get());
                 if let Some(previous) = source_call_by_boundary
-                    .get(&(alias_wave, source_call))
+                    .get(&(alias_wave, fresh_after, source_call))
                     .copied()
                 {
                     if terms.nodes[previous.index()] != terms.nodes[call.index()] {
@@ -1068,14 +1070,14 @@ fn build_owned(
                         )));
                     }
                 } else {
-                    source_call_by_boundary.insert((alias_wave, source_call), call);
+                    source_call_by_boundary.insert((alias_wave, fresh_after, source_call), call);
                 }
                 let alias_position = *wave_positions
                     .get(&alias_wave)
                     .expect("selected alias wave has no history position");
                 let alias_epoch =
                     alias_reset_positions.partition_point(|position| *position <= alias_position);
-                let structural_key = (alias_epoch, terms.nodes[call.index()].clone());
+                let structural_key = (alias_epoch, fresh_after, terms.nodes[call.index()].clone());
                 if let Some(canonical) = canonical_call_by_boundary.get(&structural_key).copied() {
                     let canonical_wave = alias_wave_by_term[&canonical];
                     let canonical_wave = if alias_wave < canonical_wave {
