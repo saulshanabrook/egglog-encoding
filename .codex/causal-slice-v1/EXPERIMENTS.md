@@ -2642,3 +2642,94 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   Math 0.224-0.237x, Eggcc 0.322-0.330x, Pointer 0.0619-0.0642x,
   Hardboiled 0.420-0.427x, and Luminal 0.0347-0.0355x wall time. Suite wall
   ratio was 0.132-0.135x; no failure, timeout, or unsupported boundary appeared.
+
+## 2026-07-27: bounded correctness pass for review
+
+- Landed the already-green consolidation first, followed by validation-gated
+  artifact publication and three separate pre-mutation capability boundaries:
+  structural merge results, equality endpoints without structural producers,
+  and receipt actions without exact witnesses. Receipt-enabled paths no longer
+  expose any corpus-classified capture panic. Publication occurs only after the
+  generated program passes unchanged strict replay; on a fresh output path a
+  failure leaves no artifact. This is phase-atomic validation, not a claim of
+  filesystem-atomic replacement of an already-existing output file.
+- Repaired three consumer-side replay defects without adding durable receipt
+  history or changing the recording schema:
+  - Integer Math closes historical equality support only for observed source
+    endpoints.
+  - Knapsack recursively closes the exact historical child equality used by a
+    selected congruence occurrence.
+  - Refreshed nested containers use existing multi-anchor landmarks to keep
+    exact container generations distinct during replay canonicalization.
+  A broader nested-generation propagation was rejected because it changed the
+  Math and Hardboiled artifacts; the narrowed exact-anchor rule restored all
+  five frozen hashes before it was accepted.
+- Named residual tracking note `CS-REPLAY-EQSOLVE`: `core/web-demo/eqsolve.egg`
+  still exposes a known slicing defect at the final equality check. It remains
+  `KnownReplayFailure`, not `Unsupported`; the general strict-replay validation
+  gate fails closed with exit 1 and leaves the fresh artifact absent. Two
+  bounded consumer-side revisions did not establish a sound fix, and no loose
+  predictive rejection predicate or recording-side feature expansion was
+  introduced to hide it.
+- The final executable corpus is green: 151/151 core cases and 36/36
+  experimental/workload cases. There are zero `KnownCapturePanic` cases, one
+  `KnownReplayFailure` as named above, and 48 runtime `Unsupported` cases that
+  represent explicit contract boundaries. Every runtime failure expects an
+  absent fresh artifact. The separate inventory also contains 52 static and
+  four extract-root exclusions. List-form `run-rule` remains the only accepted
+  syntax; the legacy scalar/guarded form stays deleted.
+- All five generated artifacts remain byte-identical to frozen `5de2fa8`:
+
+  | Workload | SHA-256 |
+  | --- | --- |
+  | Math | `3f5216d58918eb0a1dd12cdd4b074294a96557b780c2ea26bfaf995973ca4e17` |
+  | Eggcc | `e4f6045e6f237f28e292a009565a7fc0a437401a1ae8e48501faf4bca941c3ea` |
+  | Pointer | `000dfda7c43fcfa6776530bbf6db3d5aa582764422358a67759355dde96b1851` |
+  | Hardboiled | `2ccbf8e2228958424ec448e2825ae7766a45d71928eaa541c1fbc251b5fd46e5` |
+  | Luminal | `044b11c62b5d9fc74838843eee08354bf0b34b94546120d9b58414afb5b08ad4` |
+
+- Final validation followed the mandated order. `make proof-tests` passed 349
+  core proof cases and 44 experimental/workload cases. Without rerunning that
+  subset, `make check` then passed lockfile validation, formatting, Ruff, mypy,
+  171 Python tests, both Clippy configurations, the full Rust workspace and
+  doctest suite, and the DD timing-summary integration test.
+- A fresh isolated public-harness run progressed from one to three to six
+  rounds without forcing rows. The append-only report contains 90/90 successful
+  observations, no timeout or failure, and has SHA-256
+  `55429dcb61e24ad0bcc3f7abd479238bf40fbad558da020cd7b0fb95adcb0d2e`.
+  Final same-binary six-round intervals were:
+
+  | Workload | `causal-proofs / proofs` wall | `causal-proofs / off` wall |
+  | --- | ---: | ---: |
+  | Math | 0.227-0.256x | 3.89-4.45x |
+  | Eggcc | 0.307-0.332x | 1.42-1.54x |
+  | Pointer | 0.0602-0.0651x | 2.36-2.81x |
+  | Hardboiled | 0.404-0.429x | 1.73-1.84x |
+  | Luminal | 0.0298-0.0334x | 1.45-1.54x |
+
+  Suite-total wall was 0.124-0.134x versus full proofs and 2.00-2.12x versus
+  normal/off. Every causal-proofs workload is therefore decisively faster than
+  full proofs. Its peak-RSS intervals versus proofs range from 0.0858-0.0967x
+  (Luminal) to 0.499-0.503x (Eggcc); versus off they range from 1.23-1.24x
+  (Luminal) to 5.09-5.19x (Math).
+- The user-approved review gate treats same-final-binary causal-proofs versus
+  proofs as the blocker and defers native/frozen-baseline optimization. The
+  prior native regression remains cause-undetermined with two concrete priors:
+  binary-layout sensitivity was observed twice on this branch at roughly 5-8%,
+  while the correctness consolidation also introduced 571 production lines on
+  shared paths and could carry real cost. No instructions-retired discriminator
+  or new profiling path was built in this pass. The former 1.02 native and 1.10
+  frozen-causal ceilings are disclosed diagnostics rather than blockers here.
+- Final calibrated production accounting is A=24,155, D=1,893, net **+22,262**
+  versus whole-feature base `4940be37`; A=15,962, D=5,307, net **+10,655**
+  versus logical-v1 base `0d7ffbb`; and A=1,813, D=2,783, net **-970** from
+  campaign start `74eb9218`. This is a 4.18% production-LoC reduction from the
+  corrected +23,232 starting metric, not the earlier projected >10% checkpoint.
+  Nontrivia production tokens fell by 5,513 from the campaign start, the public
+  declaration/re-export line proxy fell by 97, no dependency changed, and the
+  unsafe-keyword count remained 122.
+- Review commits, in order: `f3a017b`, `25d32c4`, `6a83d83`, `76b5567`,
+  `31b3410`, `eab009d`, `967bd15`, and `f1cb365`. Independent semantic review
+  returned GO on the narrowed container-generation rule. The unrelated
+  untracked `LITERATURE-REVIEW.md` was not read, edited, staged, or benchmarked
+  as production input.
