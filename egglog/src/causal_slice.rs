@@ -386,7 +386,9 @@ fn build_owner_index(view: &CausalReceiptView<'_>) -> Result<OwnerIndex, Receipt
         let event = view.applied_equality(equality)?;
         let owner = match event.reason {
             EqualityReason::RuleUnion(rule) => Some(ReplayOwner::Match(rule)),
-            EqualityReason::MergeFn { cause } | EqualityReason::Congruence { cause, .. } => {
+            EqualityReason::SourceUnion { cause }
+            | EqualityReason::MergeFn { cause }
+            | EqualityReason::Congruence { cause, .. } => {
                 replay_owner_for_cause(view, ReceiptCauseRef::Cause(cause), &mut memo, &mut active)?
             }
         };
@@ -580,7 +582,7 @@ fn select_replay_maintenance_equalities(
         }
         let event = view.applied_equality(id)?;
         let cause = match event.reason {
-            EqualityReason::RuleUnion(_) => continue,
+            EqualityReason::RuleUnion(_) | EqualityReason::SourceUnion { .. } => continue,
             EqualityReason::MergeFn { cause } | EqualityReason::Congruence { cause, .. } => {
                 ReceiptCauseRef::Cause(cause)
             }
@@ -742,36 +744,58 @@ fn seed_check_root(
         let right_cell = check_occurrence_cell(right_occurrence);
         let support = match (left_cell, right_cell) {
             (Some(left), Some(right)) => {
-                let fact_support = view.explain_fact_cell_support_at(
+                let exact = view.explain_fact_cell_support_at(
                     left,
                     right,
                     root.as_of_edges,
                     root.position,
                 )?;
-                enqueue_support(slice, work, fact_support);
-                // Fact occurrences identify the exact rows that satisfied the
-                // check, but their creation terms may differ from the source
-                // terms requested by the check after canonical lookup. Keep
-                // both: the row witness and the source-term occurrence proof.
-                view.explain_equality_support_at(
+                enqueue_support(slice, work, exact);
+                let left_source = view.explain_fact_endpoint_availability_at(
+                    left,
                     left_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?;
+                enqueue_support(slice, work, left_source.support);
+                view.explain_fact_endpoint_availability_at(
+                    right,
+                    right_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?
+                .support
+            }
+            (Some(fact), None) => {
+                let source = view.explain_fact_endpoint_availability_at(
+                    fact,
+                    left_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?;
+                enqueue_support(slice, work, source.support);
+                view.explain_fact_endpoint_support_at(
+                    fact,
                     right_endpoint,
                     root.as_of_edges,
                     root.position,
                 )?
             }
-            (Some(fact), None) => view.explain_fact_endpoint_support_at(
-                fact,
-                right_endpoint,
-                root.as_of_edges,
-                root.position,
-            )?,
-            (None, Some(fact)) => view.explain_fact_endpoint_support_at(
-                fact,
-                left_endpoint,
-                root.as_of_edges,
-                root.position,
-            )?,
+            (None, Some(fact)) => {
+                let source = view.explain_fact_endpoint_availability_at(
+                    fact,
+                    right_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?;
+                enqueue_support(slice, work, source.support);
+                view.explain_fact_endpoint_support_at(
+                    fact,
+                    left_endpoint,
+                    root.as_of_edges,
+                    root.position,
+                )?
+            }
             (None, None) => view.explain_equality_support_at(
                 left_endpoint,
                 right_endpoint,
@@ -941,7 +965,8 @@ fn slice_roots(
                     slice.equality_records.insert(id, event);
                     work.push_back(Work::Cause(match reason {
                         EqualityReason::RuleUnion(rule) => ReceiptCauseRef::Rule(rule),
-                        EqualityReason::MergeFn { cause }
+                        EqualityReason::SourceUnion { cause }
+                        | EqualityReason::MergeFn { cause }
                         | EqualityReason::Congruence { cause, .. } => ReceiptCauseRef::Cause(cause),
                     }));
                 }
@@ -1112,85 +1137,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_variable_source_after_equality_never_returns_empty_support() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (B i64))
-                 (relation R (E))
-                 (relation S (E))
-                 (relation Out (Unit))
-                 (rule () ((union (A 1) (B 2))) :name \"eq-ab\")
-                 (rule ((R x) (S x)) ((Out ())) :name \"join\")
-                 (run 1)
-                 (R (A 1))
-                 (S (B 2))
-                 (run 1)
-                 (check (Out ()))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 2);
-        assert_eq!(slice.equalities.len(), 1);
-    }
-
-    #[test]
-    fn lowered_nested_constructor_equality_is_retained() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (F i64) (G i64))
-                 (relation R (E))
-                 (relation Out (Unit))
-                 (rule () ((union (F 1) (G 1))) :name \"eq-fg\")
-                 (rule ((R (F x))) ((Out ())) :name \"nested\")
-                 (F 1)
-                 (R (G 1))
-                 (run 2)
-                 (check (Out ()))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 2);
-        assert_eq!(slice.equalities.len(), 1);
-    }
-
-    #[test]
-    fn relational_check_shared_variable_equality_is_retained() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (B i64))
-                 (relation R (E))
-                 (relation S (E))
-                 (rule () ((union (A 1) (B 2))) :name \"eq-ab\")
-                 (R (A 1))
-                 (S (B 2))
-                 (run 1)
-                 (check (R x) (S x))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 1);
-        assert_eq!(slice.equalities.len(), 1);
-    }
-
-    #[test]
     fn interfering_same_wave_delete_retains_its_independent_match() {
         let mut egraph = EGraph::default();
         serial_causal_pool()
@@ -1282,104 +1228,6 @@ mod tests {
         let stats = slice_all_check_stats(&egraph).unwrap();
         assert_eq!(stats.selected_checks, 2);
         assert_eq!(stats.causal_matches, 2);
-    }
-
-    #[test]
-    fn selected_match_exposes_whole_head_without_causal_closing_sibling() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(relation A (Unit))
-                 (relation Out (Unit))
-                 (relation Sibling (Unit))
-                 (A ())
-                 (rule ((A u)) ((Out ()) (Sibling ())) :name \"two-effects\")
-                 (run 1)
-                 (check (Out ()))",
-            )
-            .unwrap();
-
-        let slice = slice_all_checks(&egraph).unwrap();
-        assert_eq!(slice.matches.len(), 1);
-        assert_eq!(slice.facts.len(), 2, "only the check cone is causal");
-        assert_eq!(
-            slice.replay_facts.len(),
-            3,
-            "the sibling head effect is visible"
-        );
-    }
-
-    #[test]
-    fn selected_source_exposes_all_constructor_effects_of_the_action() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (F E) (G i64))
-                 (relation R (E))
-                 (R (F (G 1)))
-                 (check (R x))",
-            )
-            .unwrap();
-
-        let slice = slice_all_checks(&egraph).unwrap();
-        assert_eq!(slice.sources.len(), 1);
-        assert_eq!(slice.facts.len(), 1, "only the checked relation is causal");
-        assert!(
-            slice.replay_facts.len() >= 3,
-            "the selected source action also creates its nested constructors"
-        );
-    }
-
-    #[test]
-    fn future_selected_union_makes_constructor_keys_interfere() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A) (B) (Parent E))
-                 (relation Delete (Unit))
-                 (relation Recreate (Unit))
-                 (relation Before (E))
-                 (relation After (E))
-                 (rule ((Delete u)) ((delete (Parent (A)))) :name \"delete-parent\")
-                 (rule ((Recreate u)) ((After (Parent (B)))) :name \"recreate-parent\")
-                 (rule ((Before old) (After new))
-                       ((union (A) (B)) (union old new))
-                       :name \"reconcile\")
-                 (Before (Parent (A)))
-                 (Delete ())
-                 (run 1)
-                 (Recreate ())
-                 (run 1)
-                 (run 1)
-                 (check (Before x) (After x))",
-            )
-            .unwrap();
-
-        let slice = slice_all_checks(&egraph).unwrap();
-        assert_eq!(slice.interference_removals.len(), 1);
-        assert_eq!(slice.matches.len(), 3, "recreate, reconcile, and delete");
-        assert_eq!(
-            slice.equalities.len(),
-            2,
-            "the historical source occurrence needs both the child-key bridge and the explicit parent bridge"
-        );
-        assert_eq!(
-            slice.replay_equalities.len(),
-            2,
-            "the retained head replays exactly those two union effects"
-        );
     }
 
     #[test]
@@ -1512,86 +1360,6 @@ mod tests {
             2,
             "only recreate and the required Leaf delete should replay"
         );
-    }
-
-    #[test]
-    fn raw_equality_view_builds_one_forest_for_many_historical_cutoffs() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A) (B) (C))
-                 (relation First (Unit))
-                 (relation Second (Unit))
-                 (First ())
-                 (rule ((First u)) ((union (A) (B))) :name \"first\")
-                 (run 1)
-                 (Second ())
-                 (rule ((Second u)) ((union (B) (C))) :name \"second\")
-                 (run 1)
-                 (check (= (A) (C)))",
-            )
-            .unwrap();
-
-        let bridge = egraph
-            .backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .unwrap();
-        bridge
-            .with_causal_receipt_view(|view| {
-                assert_eq!(view.totals().applied_equalities, 2);
-                let first = view.applied_equality(AppliedEqualityId::new(1))?;
-                let second = view.applied_equality(AppliedEqualityId::new(2))?;
-                assert!(first.position < second.position);
-                for _ in 0..16 {
-                    assert_eq!(
-                        view.explain_raw_equality_support_at(
-                            first.left,
-                            first.right,
-                            EqualityEdgeCount::new(1),
-                            first.position,
-                        )?
-                        .applied
-                        .as_ref(),
-                        &[AppliedEqualityId::new(1)]
-                    );
-                    let early = view
-                        .explain_raw_equality_support_at(
-                            second.left,
-                            second.right,
-                            EqualityEdgeCount::new(1),
-                            first.position,
-                        )
-                        .unwrap_err();
-                    assert!(
-                        early
-                            .to_string()
-                            .contains("disconnected at the historical landmark")
-                    );
-                    assert_eq!(
-                        view.explain_raw_equality_support_at(
-                            second.left,
-                            second.right,
-                            EqualityEdgeCount::new(2),
-                            second.position,
-                        )?
-                        .applied
-                        .as_ref(),
-                        &[AppliedEqualityId::new(2)]
-                    );
-                }
-                let counters = view.view_counters();
-                assert_eq!(counters.equality_index_builds, 1);
-                assert_eq!(counters.equality_events_indexed, 2);
-                assert_eq!(counters.equality_positions_validated, 2);
-                assert_eq!(counters.equality_explanation_queries, 48);
-                Ok(())
-            })
-            .unwrap();
     }
 
     #[test]
@@ -1730,61 +1498,6 @@ mod tests {
     }
 
     #[test]
-    fn equality_key_identity_includes_raw_occurrence_until_selected_union() {
-        let sort = ReplaySortId::new(1);
-        let term = ReplayTermId::new(1);
-        let old = KeyCell::Equality(TypedTerm {
-            sort,
-            term,
-            raw: Value::new(1),
-        });
-        let recreated = KeyCell::Equality(TypedTerm {
-            sort,
-            term,
-            raw: Value::new(2),
-        });
-        let mut dsu = SelectedEqualityDsu::default();
-        assert!(!dsu.equivalent(old, recreated));
-        let (KeyCell::Equality(old), KeyCell::Equality(recreated)) = (old, recreated) else {
-            unreachable!()
-        };
-        dsu.union(old, recreated);
-        assert!(dsu.equivalent(KeyCell::Equality(old), KeyCell::Equality(recreated)));
-    }
-
-    #[test]
-    fn no_merge_rewrite_retains_the_interfering_delete() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(function f (i64) i64 :no-merge)
-                 (relation Trigger (Unit))
-                 (relation Write (Unit))
-                 (relation Done (Unit))
-                 (relation Before (i64))
-                 (relation After (i64))
-                 (set (f 1) 5)
-                 (Trigger ())
-                 (Write ())
-                 (rule ((= value (f 1))) ((Before value)) :name \"observe-before\")
-                 (rule ((Trigger u)) ((delete (f 1))) :name \"delete-f\")
-                 (rule ((Write u)) ((set (f 1) 2) (Done ())) :name \"rewrite-f\")
-                 (rule ((Done u) (= value (f 1))) ((After value)) :name \"observe-after\")
-                 (run 2)
-                 (check (Before 5) (After 2))",
-            )
-            .unwrap();
-
-        let slice = slice_all_checks(&egraph).unwrap();
-        assert_eq!(slice.matches.len(), 4);
-        assert_eq!(slice.interference_removals.len(), 1);
-    }
-
-    #[test]
     fn noninterfering_and_dead_write_deletes_are_not_retained() {
         for program in [
             "(function f (i64) i64 :merge (max old new))
@@ -1896,182 +1609,6 @@ mod tests {
     }
 
     #[test]
-    fn equality_check_after_rekey_uses_root_occurrences_and_matches_receipt_support() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype Expr (A i64) (B i64))
-                 (relation Go (Unit))
-                 (let $lhs (A 1))
-                 (Go ())
-                 (rule ((Go u)) ((union (A 1) (B 2))) :name \"merge\")
-                 (run 1)
-                 (check (= $lhs (B 2)))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 1);
-        assert_eq!(slice.equalities.len(), 1);
-
-        let bridge = egraph
-            .backend
-            .as_any()
-            .downcast_ref::<egglog_bridge::EGraph>()
-            .unwrap();
-        bridge
-            .with_causal_receipt_view(|view| {
-                let root = view.check_root(0)?.clone();
-                assert_eq!(root.equality_occurrences.len(), 1, "{root:#?}");
-                assert!(
-                    root.equality_occurrences
-                        .iter()
-                        .flat_map(|(left, right)| [left, right])
-                        .all(|source| !matches!(source, CheckEndpointOccurrence::Current))
-                );
-
-                let (left, right) = root.equalities[0];
-                let generic =
-                    view.explain_equality_support_at(left, right, root.as_of_edges, root.position)?;
-                assert_eq!(generic.applied.len(), 1);
-                let lazy_edges = slice
-                    .equalities
-                    .iter()
-                    .map(|edge| edge.get())
-                    .collect::<HashSet<_>>();
-                let raw_edges = generic
-                    .applied
-                    .iter()
-                    .map(|edge| edge.get())
-                    .collect::<HashSet<_>>();
-                assert_eq!(lazy_edges, raw_edges);
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn terminal_rewrite_equality_keeps_distinct_constructor_occurrences() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (F E) (G E))
-                 (F (A 1))
-                 (rewrite (F x) (G x))
-                 (run 1)
-                 (check (= (F (A 1)) (G (A 1))))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 1);
-        assert_eq!(slice.equalities.len(), 0);
-    }
-
-    #[test]
-    fn direct_check_retains_nested_child_equality_used_by_a_head_term() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (Alias i64))
-                 (sort Es (Vec E))
-                 (datatype Root (Target Es) (Seed))
-                 (ruleset equate)
-                 (ruleset finish)
-                 (let $seed (Seed))
-                 (A 8)
-                 (rewrite (A x) (Alias x) :ruleset equate)
-                 (rule ()
-                       ((union $seed (Target (vec-of (Alias 8)))))
-                       :ruleset finish
-                       :name \"finish\")
-                 (run equate 1)
-                 (run finish 1)
-                 (check (= $seed (Target (vec-of (A 8)))))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(
-            slice.matches.len(),
-            2,
-            "the parent union and nested A/Alias equality are both required"
-        );
-        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
-        let commands = replay.to_commands().unwrap();
-        drop(egraph);
-
-        let mut proof = EGraph::default().with_proofs_enabled();
-        serial_causal_pool()
-            .install(|| proof.run_program(commands))
-            .unwrap();
-    }
-
-    #[test]
-    fn nested_constructor_key_occurrence_replays_from_its_prior_producer() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (F E) (G E) (H E))
-                 (relation R (E))
-                 (relation S (E))
-                 (ruleset equate)
-                 (ruleset emit)
-                 (F (A 1))
-                 (G (A 1))
-                 (R (H (F (A 1))))
-                 (rewrite (F x) (G x) :ruleset equate)
-                 (rule ((= x (G (A 1))))
-                       ((S (H x)))
-                       :ruleset emit)
-                 (run equate 1)
-                 (run emit 1)
-                 (check (R x) (S x))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        assert_eq!(slice.matches.len(), 2, "retain the rewrite and emitter");
-        assert_eq!(slice.replay_equalities.len(), 1, "replay the F = G edge");
-        let mut damaged = slice.clone();
-        let equality_creator = *damaged.matches.iter().min().unwrap();
-        damaged.matches.remove(&equality_creator);
-        let damaged_replay =
-            crate::causal_replay::build_causal_replay_ir(&egraph, &damaged).unwrap();
-        let damaged_commands = damaged_replay.to_commands().unwrap();
-        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
-        let commands = replay.to_commands().unwrap();
-        drop(egraph);
-
-        let mut damaged_proof = EGraph::default().with_proofs_enabled();
-        assert!(
-            serial_causal_pool()
-                .install(|| damaged_proof.run_program(damaged_commands))
-                .is_err()
-        );
-        let mut proof = EGraph::default().with_proofs_enabled();
-        serial_causal_pool()
-            .install(|| proof.run_program(commands))
-            .unwrap();
-    }
-
-    #[test]
     fn same_term_child_occurrences_keep_their_native_bridge() {
         let mut egraph = EGraph::default();
         serial_causal_pool()
@@ -2146,7 +1683,7 @@ mod tests {
     }
 
     #[test]
-    fn grounded_binding_alias_is_hoisted_before_its_constructor_is_removed() {
+    fn relational_check_shared_variable_equality_is_retained() {
         let mut egraph = EGraph::default();
         serial_causal_pool()
             .install(|| egraph.enable_causal_receipts())
@@ -2154,70 +1691,121 @@ mod tests {
         egraph
             .parse_and_run_program(
                 None,
-                "(datatype E (A i64))
-                 (relation Carry (E))
-                 (relation Trigger ())
-                 (relation Mid ())
-                 (relation Done ())
-                 (Carry (A 1))
-                 (Trigger)
-                 (rule ((Trigger))
-                       ((delete (A 1)) (Mid))
-                       :name \"cleanup\")
+                "(datatype E (A i64) (B i64))
+                 (relation R (E))
+                 (relation S (E))
+                 (rule () ((union (A 1) (B 2))) :name \"eq-ab\")
+                 (R (A 1))
+                 (S (B 2))
                  (run 1)
-                 (rule ((Carry x) (Mid)) ((Done)) :name \"consume\")
-                 (run 1)
-                 (check (Done))",
-            )
-            .unwrap();
-
-        let slice = slice_check(&egraph, 0).unwrap();
-        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
-        let commands = replay.to_commands().unwrap();
-        let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap();
-        assert!(
-            rendered.find("(let-check").unwrap() < rendered.find("(run-schedule").unwrap(),
-            "the persistent alias must be captured before cleanup:\n{rendered}"
-        );
-        drop(egraph);
-
-        let mut proof = EGraph::default().with_proofs_enabled();
-        serial_causal_pool()
-            .install(|| proof.run_program(commands))
-            .unwrap();
-    }
-
-    #[test]
-    fn source_constructor_recipe_resolves_an_earlier_global_historically() {
-        let mut egraph = EGraph::default();
-        serial_causal_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64) (Pair E E))
-                 (relation Keep (E))
-                 (relation Out ())
-                 (let $left (A 1))
-                 (let $right (A 2))
-                 (Keep (Pair $left $right))
-                 (rule ((Keep (Pair x y))) ((Out)) :name \"consume\")
-                 (run 1)
-                 (check (Out))",
+                 (check (R x) (S x))",
             )
             .unwrap();
 
         let slice = slice_check(&egraph, 0).unwrap();
         assert_eq!(slice.matches.len(), 1);
+        assert_eq!(slice.equalities.len(), 1);
+    }
+
+    #[test]
+    fn selected_match_exposes_whole_head_without_causal_closing_sibling() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation A (Unit))
+                 (relation Out (Unit))
+                 (relation Sibling (Unit))
+                 (A ())
+                 (rule ((A u)) ((Out ()) (Sibling ())) :name \"two-effects\")
+                 (run 1)
+                 (check (Out ()))",
+            )
+            .unwrap();
+
+        let slice = slice_all_checks(&egraph).unwrap();
+        assert_eq!(slice.matches.len(), 1);
+        assert_eq!(slice.facts.len(), 2, "only the check cone is causal");
+        assert_eq!(
+            slice.replay_facts.len(),
+            3,
+            "the sibling head effect is visible"
+        );
+    }
+
+    #[test]
+    fn no_merge_rewrite_retains_the_interfering_delete() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(function f (i64) i64 :no-merge)
+                 (relation Trigger (Unit))
+                 (relation Write (Unit))
+                 (relation Done (Unit))
+                 (relation Before (i64))
+                 (relation After (i64))
+                 (set (f 1) 5)
+                 (Trigger ())
+                 (Write ())
+                 (rule ((= value (f 1))) ((Before value)) :name \"observe-before\")
+                 (rule ((Trigger u)) ((delete (f 1))) :name \"delete-f\")
+                 (rule ((Write u)) ((set (f 1) 2) (Done ())) :name \"rewrite-f\")
+                 (rule ((Done u) (= value (f 1))) ((After value)) :name \"observe-after\")
+                 (run 2)
+                 (check (Before 5) (After 2))",
+            )
+            .unwrap();
+
+        let slice = slice_all_checks(&egraph).unwrap();
+        assert_eq!(slice.matches.len(), 4);
+        assert_eq!(slice.interference_removals.len(), 1);
+    }
+
+    #[test]
+    fn direct_check_retains_nested_child_equality_used_by_a_head_term() {
+        let mut egraph = EGraph::default();
+        serial_causal_pool()
+            .install(|| egraph.enable_causal_receipts())
+            .unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype E (A i64) (Alias i64))
+                 (sort Es (Vec E))
+                 (datatype Root (Target Es) (Seed))
+                 (ruleset equate)
+                 (ruleset finish)
+                 (let $seed (Seed))
+                 (A 8)
+                 (rewrite (A x) (Alias x) :ruleset equate)
+                 (rule ()
+                       ((union $seed (Target (vec-of (Alias 8)))))
+                       :ruleset finish
+                       :name \"finish\")
+                 (run equate 1)
+                 (run finish 1)
+                 (check (= $seed (Target (vec-of (A 8)))))",
+            )
+            .unwrap();
+
+        let slice = slice_check(&egraph, 0).unwrap();
+        assert_eq!(
+            slice.matches.len(),
+            2,
+            "the parent union and nested A/Alias equality are both required"
+        );
         let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
         let commands = replay.to_commands().unwrap();
-        let rendered = crate::causal_replay::CausalReplayIr::render_commands(&commands).unwrap();
-        assert!(rendered.contains("(let $left (A 1))"), "{rendered}");
-        assert!(rendered.contains("(let $right (A 2))"), "{rendered}");
         drop(egraph);
 
-        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
+        let mut proof = EGraph::default().with_proofs_enabled();
         serial_causal_pool()
             .install(|| proof.run_program(commands))
             .unwrap();

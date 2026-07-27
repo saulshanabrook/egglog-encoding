@@ -22,19 +22,7 @@ use web_time::{Duration, Instant};
 
 #[cfg(test)]
 thread_local! {
-    static MATERIALIZED_WITNESS_TEST_COUNTS: std::cell::Cell<(usize, usize)> =
-        const { std::cell::Cell::new((0, 0)) };
     static PENDING_WITNESS_RESOLUTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-#[cfg(test)]
-pub(crate) fn reset_materialized_witness_test_counts() {
-    MATERIALIZED_WITNESS_TEST_COUNTS.set((0, 0));
-}
-
-#[cfg(test)]
-pub(crate) fn materialized_witness_test_counts() -> (usize, usize) {
-    MATERIALIZED_WITNESS_TEST_COUNTS.get()
 }
 
 #[cfg(test)]
@@ -977,14 +965,6 @@ impl MaterializedGroup {
         let row = self.rows.add_row(row);
         if capture_witness {
             let witness = witness.expect("receipt materialization requires a native witness");
-            #[cfg(test)]
-            MATERIALIZED_WITNESS_TEST_COUNTS.set({
-                let (allocations, writes) = MATERIALIZED_WITNESS_TEST_COUNTS.get();
-                (
-                    allocations + usize::from(self.witnesses.is_none()),
-                    writes + 1,
-                )
-            });
             let witnesses = self.witnesses.get_or_insert_default();
             assert_eq!(
                 witnesses.rows.len(),
@@ -1070,43 +1050,7 @@ impl PendingWitnessBatch {
         for &(slot, fact) in &witness.facts {
             record(slot, fact);
         }
-        let has_direct_exact_owner = |candidate: MaterializedWitnessRef| {
-            witness.ancestors.iter().any(|ancestor| {
-                ancestor.materialization == candidate.materialization
-                    && ancestor.group == candidate.group
-                    && ancestor.is_exact()
-            })
-        };
-        let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
-        while let Some(ancestor) = ancestors.pop() {
-            let materialization = self
-                .materializations
-                .get(ancestor.materialization)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "missing materialization resolver entry {:?}",
-                        ancestor.materialization
-                    )
-                });
-            let group = materialization
-                .get_index(ancestor.group as usize)
-                .unwrap_or_else(|| panic!("missing materialized witness group {}", ancestor.group))
-                .1;
-            let stored = group
-                .witnesses
-                .as_ref()
-                .expect("receipt materialization is missing its witness sidecar");
-            let (facts, nested) = stored.get(ancestor.row());
-            for &(slot, fact) in facts {
-                record(slot, fact);
-            }
-            ancestors.extend(
-                nested
-                    .iter()
-                    .copied()
-                    .filter(|nested| !(nested.is_projected() && has_direct_exact_owner(*nested))),
-            );
-        }
+        visit_materialized_witness_facts(&self.materializations, witness, &mut record);
         premises
             .into_iter()
             .enumerate()
@@ -1114,6 +1058,49 @@ impl PendingWitnessBatch {
                 fact.unwrap_or_else(|| panic!("missing exact premise FactId for slot {slot}"))
             })
             .collect()
+    }
+}
+
+fn visit_materialized_witness_facts(
+    materializations: &DenseIdMap<MatId, Arc<Materialization>>,
+    witness: &MatchWitness,
+    mut visit: impl FnMut(PremiseSlot, crate::FactId),
+) {
+    let has_direct_exact_owner = |candidate: MaterializedWitnessRef| {
+        witness.ancestors.iter().any(|ancestor| {
+            ancestor.materialization == candidate.materialization
+                && ancestor.group == candidate.group
+                && ancestor.is_exact()
+        })
+    };
+    let mut ancestors = SmallVec::<[MaterializedWitnessRef; 4]>::from_slice(&witness.ancestors);
+    while let Some(ancestor) = ancestors.pop() {
+        let materialization = materializations
+            .get(ancestor.materialization)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing materialization resolver entry {:?}",
+                    ancestor.materialization
+                )
+            });
+        let group = materialization
+            .get_index(ancestor.group as usize)
+            .unwrap_or_else(|| panic!("missing materialized witness group {}", ancestor.group))
+            .1;
+        let stored = group
+            .witnesses
+            .as_ref()
+            .expect("receipt materialization is missing its witness sidecar");
+        let (facts, nested) = stored.get(ancestor.row());
+        for &(slot, fact) in facts {
+            visit(slot, fact);
+        }
+        ancestors.extend(
+            nested
+                .iter()
+                .copied()
+                .filter(|nested| !(nested.is_projected() && has_direct_exact_owner(*nested))),
+        );
     }
 }
 
@@ -2672,6 +2659,7 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
     if idx >= binding_sets.len() {
         let retained = witness.as_ref().map_or(0, |witness| witness.facts.len());
         if let Some(witness) = witness {
+            let mut ancestor_slots = None::<SmallVec<[PremiseSlot; 4]>>;
             for (atom, info) in atoms.iter() {
                 let Some(slot) = action_buf.receipt_premise_slot(action, atom) else {
                     continue;
@@ -2683,19 +2671,77 @@ fn expand_binding_sets<'state, A: NumericId, BUF: ActionBuffer<'state, A> + ?Siz
                     continue;
                 };
                 let subset = node.subset.as_ref();
-                if subset.size() != 1 {
+                if subset.size() == 1 {
+                    let row = match subset {
+                        SubsetRef::Dense(range) => range.start,
+                        SubsetRef::Sparse(rows) => rows.inner()[0],
+                    };
+                    let fact = validated_atom_fact(
+                        action,
+                        atom,
+                        "singleton",
+                        info,
+                        row,
+                        bindings,
+                        live_vars,
+                        exec_state,
+                    );
+                    witness.facts.push((slot, fact));
                     continue;
                 }
-                let row = subset.first().expect("singleton subset has one row");
+
+                // Materialized ancestors already carry their own exact
+                // premise facts. Walk them only for the ambiguous case;
+                // singleton residuals stay on the original fast path.
+                let ancestor_slots = ancestor_slots.get_or_insert_with(|| {
+                    let mut slots = SmallVec::<[PremiseSlot; 4]>::new();
+                    visit_materialized_witness_facts(
+                        materializations,
+                        witness,
+                        |ancestor_slot, _| {
+                            if !slots.contains(&ancestor_slot) {
+                                slots.push(ancestor_slot);
+                            }
+                        },
+                    );
+                    slots
+                });
+                if ancestor_slots.contains(&slot) {
+                    continue;
+                }
+
+                // An atom used only as an existential probe can retain
+                // multiple rows after the complete match is bound. Narrow by
+                // one bound column when possible, then choose the first exact
+                // support in deterministic RowId order.
+                let table_info = &exec_state.db.table_info[info.table];
+                let matches = |row_id: RowId| {
+                    table_info.table.row_at(row_id).is_some_and(|row| {
+                        atom_row_matches(info, &row.vals, bindings, live_vars, |_, _, _, _| {})
+                    })
+                };
+                let first_match = |candidates: SubsetRef<'_>| match candidates {
+                    SubsetRef::Dense(range) => (range.start.index()..range.end.index())
+                        .map(RowId::from_usize)
+                        .find(|row| matches(*row)),
+                    SubsetRef::Sparse(rows) => rows.iter().find(|row| matches(*row)),
+                };
+                let bound_column = info.var_columns.iter().find_map(|(column, variable)| {
+                    live_vars
+                        .contains(&variable)
+                        .then(|| bindings.get(variable).map(|value| (column, *value)))
+                        .flatten()
+                });
+                let row = if let Some((column, value)) = bound_column {
+                    node.get_cached_index(column, table_info)
+                        .get_subset(&value)
+                        .and_then(first_match)
+                } else {
+                    first_match(subset)
+                }
+                .expect("matched residual subset has no exact premise row");
                 let fact = validated_atom_fact(
-                    action,
-                    atom,
-                    "singleton",
-                    info,
-                    row,
-                    bindings,
-                    live_vars,
-                    exec_state,
+                    action, atom, "residual", info, row, bindings, live_vars, exec_state,
                 );
                 witness.facts.push((slot, fact));
             }
@@ -2830,41 +2876,59 @@ fn validated_atom_fact<A: NumericId>(
     let row = table
         .row_at(row_id)
         .unwrap_or_else(|| panic!("receipt witness row {row_id:?} is not live"));
-    for (column, variable) in atom.var_columns.iter() {
-        if live_vars.contains(&variable)
-            && let Some(bound) = bindings.get(variable)
-        {
-            let actual = row.vals[column.index()];
-            assert_eq!(
-                actual,
-                *bound,
-                "receipt {source} witness is inconsistent with the current binding: action={}, atom={atom_id:?}, table={:?} ({:?}), row={row_id:?}, column={column:?}, variable={variable:?}",
+    let constraints_hold = atom_row_matches(
+        atom,
+        &row.vals,
+        bindings,
+        live_vars,
+        |column, variable, actual, bound| {
+            panic!(
+                "receipt {source} witness is inconsistent with the current binding: action={}, atom={atom_id:?}, table={:?} ({:?}), row={row_id:?}, column={column:?}, variable={variable:?}, actual={actual:?}, bound={bound:?}",
                 action.index(),
                 atom.table,
                 exec_state.table_name(atom.table)
-            );
-        }
-    }
-    let constraints_hold = atom
-        .constraints
-        .fast
-        .iter()
-        .chain(atom.constraints.slow.iter())
-        .all(|constraint| match constraint {
-            Constraint::Eq { l_col, r_col } => row.vals[l_col.index()] == row.vals[r_col.index()],
-            Constraint::EqConst { col, val } => row.vals[col.index()] == *val,
-            Constraint::LtConst { col, val } => row.vals[col.index()] < *val,
-            Constraint::GtConst { col, val } => row.vals[col.index()] > *val,
-            Constraint::LeConst { col, val } => row.vals[col.index()] <= *val,
-            Constraint::GeConst { col, val } => row.vals[col.index()] >= *val,
-        });
+            )
+        },
+    );
     assert!(
         constraints_hold,
-        "receipt singleton witness violates its atom constraints"
+        "receipt {source} witness violates its atom constraints"
     );
     table
         .fact_id(row_id)
         .unwrap_or_else(|| panic!("receipt witness row {row_id:?} has no immutable FactId"))
+}
+
+fn atom_row_matches(
+    atom: &Atom,
+    row: &[Value],
+    bindings: &DenseIdMap<Variable, Value>,
+    live_vars: &[Variable],
+    mut binding_mismatch: impl FnMut(ColumnId, Variable, Value, Value),
+) -> bool {
+    for (column, variable) in atom.var_columns.iter() {
+        if live_vars.contains(&variable)
+            && let Some(bound) = bindings.get(variable)
+        {
+            let actual = row[column.index()];
+            if actual != *bound {
+                binding_mismatch(column, variable, actual, *bound);
+                return false;
+            }
+        }
+    }
+    atom.constraints
+        .fast
+        .iter()
+        .chain(atom.constraints.slow.iter())
+        .all(|constraint| match constraint {
+            Constraint::Eq { l_col, r_col } => row[l_col.index()] == row[r_col.index()],
+            Constraint::EqConst { col, val } => row[col.index()] == *val,
+            Constraint::LtConst { col, val } => row[col.index()] < *val,
+            Constraint::GtConst { col, val } => row[col.index()] > *val,
+            Constraint::LeConst { col, val } => row[col.index()] <= *val,
+            Constraint::GeConst { col, val } => row[col.index()] >= *val,
+        })
 }
 
 fn flush_action_states(

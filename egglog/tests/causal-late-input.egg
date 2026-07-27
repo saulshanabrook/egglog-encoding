@@ -1,0 +1,4 @@
+(relation LateInput (i64))
+(run 0)
+(input LateInput "tests/causal-late-input.csv")
+(check (LateInput 1))

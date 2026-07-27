@@ -1,0 +1,4 @@
+(relation LateSource (i64))
+(run 0)
+(LateSource 1)
+(check (LateSource 1))

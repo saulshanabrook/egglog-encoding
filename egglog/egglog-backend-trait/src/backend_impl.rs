@@ -66,17 +66,33 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         owned_external_funcs,
     } = rule;
     let mut builder = egraph.new_rule(&name, seminaive);
-    if let Some(source) = source_receipt {
-        builder.set_source_receipt(source);
-    }
     for func in owned_external_funcs {
         builder.own_external_func(func);
+    }
+    let causal_metadata_count = [
+        causal_receipt.is_some(),
+        check_receipt.is_some(),
+        source_receipt.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if causal_metadata_count > 1 {
+        bail!("one backend rule cannot have more than one kind of causal metadata");
+    }
+    if let Some(receipt) = &source_receipt {
+        builder.set_source_receipt(receipt.source.clone());
     }
     builder.set_no_decomp(no_decomp);
     let mut variables = BTreeMap::new();
     let mut union_sorts = causal_receipt
         .as_ref()
-        .map(|receipt| receipt.union_sorts.iter().copied());
+        .map(|receipt| receipt.union_sorts.iter().copied())
+        .or_else(|| {
+            source_receipt
+                .as_ref()
+                .map(|receipt| receipt.union_sorts.iter().copied())
+        });
 
     let mut body_atom_to_table_premise = vec![None; core.body.atoms.len()];
     let mut next_table_premise = 0;
@@ -164,7 +180,7 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                 let rhs = rule_entry(&mut builder, &mut variables, rhs)?;
                 if let Some(sorts) = union_sorts.as_mut() {
                     let sort = sorts.next().ok_or_else(|| {
-                        anyhow::anyhow!("causal rule has fewer union sorts than union actions")
+                        anyhow::anyhow!("causal metadata has fewer union sorts than union actions")
                     })?;
                     builder.union_with_replay(lhs, rhs, sort);
                 } else {
@@ -175,7 +191,7 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
         }
     }
     if union_sorts.is_some_and(|mut sorts| sorts.next().is_some()) {
-        bail!("causal rule has more union sorts than union actions");
+        bail!("causal metadata has more union sorts than union actions");
     }
 
     if let Some(receipt) = causal_receipt {
@@ -211,6 +227,17 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
     }
     if let Some(receipt) = check_receipt {
         let premise = |source: CausalCheckPremise| -> Result<CheckReplayPremise> {
+            let logical_columns = core
+                .body
+                .atoms
+                .get(source.body_atom)
+                .map(|atom| atom.args.len())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "causal check endpoint cites missing body atom {}",
+                        source.body_atom
+                    )
+                })?;
             let premise = body_atom_to_table_premise
                 .get(source.body_atom)
                 .copied()
@@ -221,6 +248,13 @@ fn build_rule(egraph: &mut EGraph, rule: RuleSpec) -> Result<RuleId> {
                         source.body_atom
                     )
                 })?;
+            if source.column >= logical_columns {
+                bail!(
+                    "causal check endpoint body atom {} has no logical column {}",
+                    source.body_atom,
+                    source.column
+                );
+            }
             Ok(CheckReplayPremise {
                 premise,
                 column: source.column,
@@ -393,5 +427,67 @@ impl Backend for EGraph {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egglog_ast::{core::GenericCoreRule, span::Span};
+
+    use super::*;
+    use crate::{CausalCheckSpec, CausalRuleSpec, CausalSourceSpec, SourceRef};
+
+    fn empty_rule(
+        causal_receipt: Option<CausalRuleSpec>,
+        check_receipt: Option<CausalCheckSpec>,
+        source_receipt: Option<CausalSourceSpec>,
+    ) -> RuleSpec {
+        RuleSpec {
+            name: "invalid-causal-metadata".into(),
+            seminaive: false,
+            no_decomp: false,
+            core: GenericCoreRule {
+                span: Span::Panic,
+                body: Default::default(),
+                head: Default::default(),
+            },
+            causal_receipt,
+            check_receipt,
+            source_receipt,
+            owned_external_funcs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn backend_rejects_multiple_causal_metadata_kinds_without_panicking() {
+        let rule = CausalRuleSpec {
+            rule: 0,
+            bindings: Box::new([]),
+            union_sorts: Box::new([]),
+        };
+        let check = CausalCheckSpec {
+            check: 0,
+            equalities: Box::new([]),
+        };
+        let source = CausalSourceSpec {
+            source: SourceRef::Synthetic(0),
+            union_sorts: Box::new([]),
+        };
+        for spec in [
+            empty_rule(Some(rule.clone()), Some(check.clone()), None),
+            empty_rule(Some(rule.clone()), None, Some(source.clone())),
+            empty_rule(None, Some(check.clone()), Some(source.clone())),
+            empty_rule(
+                Some(rule.clone()),
+                Some(check.clone()),
+                Some(source.clone()),
+            ),
+        ] {
+            let error = Backend::add_rule(&mut EGraph::default(), spec).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                "one backend rule cannot have more than one kind of causal metadata"
+            );
+        }
     }
 }

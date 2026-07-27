@@ -1218,11 +1218,6 @@ impl EGraph {
         Ok(report)
     }
 
-    #[cfg(test)]
-    fn rule_has_cached_plan(&self, rule: RuleId) -> bool {
-        self.rules[rule].cached_plan.is_some()
-    }
-
     fn run_rules_inner(&mut self, rules: &[RuleId]) -> Result<IterationReport> {
         let ts = self.next_ts();
 
@@ -3003,5 +2998,12 @@ impl<T, A: smallvec::Array<Item = T>> HasResizeWith<T> for SmallVec<A> {
         F: FnMut() -> T,
     {
         self.resize_with(new_size, f);
+    }
+}
+
+#[cfg(test)]
+impl EGraph {
+    fn rule_has_cached_plan(&self, rule: RuleId) -> bool {
+        self.rules[rule].cached_plan.is_some()
     }
 }

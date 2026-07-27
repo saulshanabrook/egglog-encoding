@@ -113,8 +113,15 @@ pub enum GroundedRuleRunError {
         instruction: usize,
         variable: Variable,
     },
-    #[error("grounded match {match_id} premise {premise} is absent")]
-    MissingPremise { match_id: u64, premise: usize },
+    #[error(
+        "grounded match {match_id} premise {premise} is absent from table {table:?} at key {key:?}"
+    )]
+    MissingPremise {
+        match_id: u64,
+        premise: usize,
+        table: TableId,
+        key: Box<[Value]>,
+    },
     #[error("grounded match {match_id} premise {premise} column {column} does not match")]
     PremiseMismatch {
         match_id: u64,
@@ -374,6 +381,28 @@ impl Counters {
         // We synchronize with `read_counter` but not with other increments.
         // NB: we may want to experiment with Ordering::Relaxed here.
         self.0[ctr].fetch_add(1, Ordering::Release)
+    }
+}
+
+/// Prevent a caught merge panic from exposing receipts for native state that
+/// may already have been partially mutated. This is deliberately a
+/// fail-closed receipt boundary, not native transaction rollback.
+struct MergeReceiptExecutionGuard {
+    receipts: CausalReceipts,
+    completed: bool,
+}
+
+impl MergeReceiptExecutionGuard {
+    fn complete(&mut self) {
+        self.completed = true;
+    }
+}
+
+impl Drop for MergeReceiptExecutionGuard {
+    fn drop(&mut self) {
+        if !self.completed {
+            self.receipts.poison_rule_execution();
+        }
     }
 }
 
@@ -940,12 +969,14 @@ impl Database {
                             next_probes.push(premise);
                             continue;
                         }
-                        let row = table.table.get_row(&key).ok_or(
+                        let row = table.table.get_row(&key).ok_or_else(|| {
                             GroundedRuleRunError::MissingPremise {
                                 match_id: firing.match_id,
                                 premise,
-                            },
-                        )?;
+                                table: probe.table,
+                                key: key.clone().into_vec().into_boxed_slice(),
+                            }
+                        })?;
                         for (column, (entry, observed)) in probe
                             .entries
                             .iter()
@@ -1162,6 +1193,13 @@ impl Database {
     ///
     /// Useful for out-of-band insertions into the database.
     pub fn merge_all(&mut self) -> bool {
+        let mut receipt_guard =
+            self.causal_receipts
+                .as_ref()
+                .map(|receipts| MergeReceiptExecutionGuard {
+                    receipts: receipts.clone(),
+                    completed: false,
+                });
         let mut ever_changed = false;
         let do_parallel =
             self.causal_receipts.is_none() && parallelize_db_level_op(self.total_size_estimate);
@@ -1270,6 +1308,9 @@ impl Database {
             size_estimate += info.table.len();
         }
         self.total_size_estimate = size_estimate;
+        if let Some(guard) = &mut receipt_guard {
+            guard.complete();
+        }
         ever_changed
     }
 
@@ -1313,6 +1354,13 @@ impl Database {
     /// elesewhere. The `merge_all` method runs merges to a fixed point to avoid
     /// surprises here.
     pub fn merge_table(&mut self, table: TableId) -> bool {
+        let mut receipt_guard =
+            self.causal_receipts
+                .as_ref()
+                .map(|receipts| MergeReceiptExecutionGuard {
+                    receipts: receipts.clone(),
+                    completed: false,
+                });
         let mut info = self.tables.unwrap_val(table);
         self.total_size_estimate = self.total_size_estimate.wrapping_sub(info.table.len());
         let merge_result = catch_unwind(AssertUnwindSafe(|| {
@@ -1326,10 +1374,14 @@ impl Database {
         }));
         self.total_size_estimate = self.total_size_estimate.wrapping_add(info.table.len());
         self.tables.insert(table, info);
-        match merge_result {
+        let changed = match merge_result {
             Ok(table_changed) => table_changed.added,
             Err(payload) => resume_unwind(payload),
+        };
+        if let Some(guard) = &mut receipt_guard {
+            guard.complete();
         }
+        changed
     }
 
     /// Get id of the next table to be added to the database.

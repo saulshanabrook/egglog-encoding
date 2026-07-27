@@ -50,10 +50,10 @@ use egglog_ast::util::ListDisplay;
 /// implement their own backend (see [`EGraph::with_backend`]).
 pub use egglog_backend_trait::{Backend, BackendExt};
 use egglog_backend_trait::{
-    CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, FunctionReplaySpec,
-    ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId, ReplayTableKind,
-    ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue, RuleVar,
-    SourceRef,
+    CausalCheckPremise, CausalCheckSpec, CausalRuleBinding, CausalRuleSpec, CausalSourceSpec,
+    FunctionReplaySpec, ReadMode, ReplayConstructorSpec, ReplayLiteral, ReplayOpId, ReplaySortId,
+    ReplayTableKind, ReplayTermId, RuleActionCall, RuleBodyCall, RuleSetRun, RuleSpec, RuleValue,
+    RuleVar, SourceRef,
 };
 use egglog_bridge::ColumnTy;
 use egglog_core_relations as core_relations;
@@ -5665,7 +5665,10 @@ impl<'a> BackendRule<'a> {
             },
             causal_receipt: self.causal_receipt.take(),
             check_receipt: self.check_receipt.take(),
-            source_receipt: self.source_receipt.take(),
+            source_receipt: self.source_receipt.take().map(|source| CausalSourceSpec {
+                source,
+                union_sorts: self.causal_union_sorts.clone().into_boxed_slice(),
+            }),
             owned_external_funcs: std::mem::take(&mut self.rollback_external_funcs),
         };
         let result = self
@@ -5871,55 +5874,6 @@ mod tests {
         }
     }
 
-    fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
-        payload
-            .downcast_ref::<String>()
-            .map(String::as_str)
-            .or_else(|| payload.downcast_ref::<&str>().copied())
-            .unwrap_or("non-string panic payload")
-    }
-
-    #[test]
-    fn causal_receipts_capture_typed_source_constructor() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(None, "(datatype Node (Leaf i64)) (let $root (Leaf 7))")
-            .unwrap();
-
-        let mut saw_constructor = false;
-        egraph
-            .with_causal_receipt_view(|view| {
-                let mut saw_source = false;
-                for raw in 1..=view.totals().facts {
-                    let fact = view.fact(core_relations::FactId::new(raw))?;
-                    if let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause {
-                        saw_source |= matches!(
-                            view.cause(cause)?,
-                            core_relations::RawReceiptCause::Source(_)
-                        );
-                    }
-                    for term in view
-                        .fact_terms(fact.id)?
-                        .iter()
-                        .copied()
-                        .filter(|term| !term.is_missing())
-                    {
-                        let replay = egraph
-                            .causal_replay_term(term)
-                            .unwrap()
-                            .expect("every recorded term handle resolves");
-                        saw_constructor |= matches!(replay, ReplayTerm::Call { .. });
-                    }
-                }
-                assert!(saw_source);
-                assert_eq!(view.counters().unattributed_commits, 0);
-                Ok(())
-            })
-            .unwrap();
-        assert!(saw_constructor);
-    }
-
     #[test]
     fn causal_receipts_attribute_pair_registry_congruence() {
         serial_causal_pool().install(|| {
@@ -5998,6 +5952,204 @@ mod tests {
                 })
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn causal_receipts_ignore_raw_colliding_unrelated_set_ancestor() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            let mut program = String::from(
+                "(datatype Expr (A i64) (B i64))\
+                 (sort Exprs (Vec Expr))\
+                 (sort Ints (Set i64))\
+                 (function Hold (Unit) Exprs :no-merge)\
+                 (relation Go (Unit))\
+                 (relation Done (Unit))\
+                 (let $a (A 1))",
+            );
+            // Crowd the unsupported Set registry with every likely raw child
+            // id. Its i64 elements are not typed Vec children, even when their
+            // Value bits collide with the dirty Vec id.
+            for value in 0..256 {
+                program.push_str(&format!("(let $ints-{value} (set-of {value}))"));
+            }
+            program.push_str(
+                "(Go ())\
+                 (rule ((Go u))\
+                   ((set (Hold ()) (vec-of (B 2)))\
+                    (union (A 1) (B 2))) :name \"merge-child\")\
+                 (run 1)\
+                 (rule ((= v (Hold ()))\
+                        (= v (vec-of (A 1))))\
+                   ((Done ())) :name \"observe-refresh\")\
+                 (run 1)\
+                 (check (Done ()))",
+            );
+            egraph.parse_and_run_program(None, &program).unwrap();
+
+            egraph
+                .with_causal_receipt_view(|view| {
+                    let mut refreshed = false;
+                    for raw in 1..=view.totals().facts {
+                        let fact = view.fact(core_relations::FactId::new(raw))?;
+                        let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
+                            continue;
+                        };
+                        refreshed |= matches!(
+                            view.cause(cause)?,
+                            core_relations::RawReceiptCause::ContainerRefresh { .. }
+                        );
+                    }
+                    assert!(refreshed);
+                    Ok(())
+                })
+                .unwrap();
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "multiple exact logical replay sorts")]
+    fn causal_receipts_reject_ambiguous_nominal_container_aliases() {
+        serial_causal_pool().install(|| {
+            let mut egraph = EGraph::default();
+            egraph.enable_causal_receipts().unwrap();
+            egraph
+                .parse_and_run_program(
+                    None,
+                    "(datatype Expr (A i64) (B i64))\
+                     (sort P1 (Pair Expr i64))\
+                     (sort P2 (Pair Expr i64))\
+                     (datatype R1 (H1 P1))\
+                     (datatype R2 (H2 P2))\
+                     (relation Go (Unit))\
+                     (relation Done (Unit))\
+                     (Go ())\
+                     (rule ((Go u))\
+                       ((H1 (pair (A 1) 7))\
+                        (H1 (pair (B 2) 7))\
+                        (H2 (pair (A 1) 7))\
+                        (H2 (pair (B 2) 7))\
+                        (Done ())\
+                        (union (A 1) (B 2))) :name \"merge-child\")\
+                     (run 1)\
+                     (check (Done ()))",
+                )
+                .unwrap();
+        });
+    }
+
+    fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+        payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload")
+    }
+
+    #[test]
+    fn causal_receipts_defer_body_primitive_terms_until_all_guards_pass() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 1)\
+                 (rule ((Input x) (= y (+ x 1)) (< y 0)) ((Done y)) :name \"dead\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let state = egraph.causal_state.as_ref().unwrap();
+        let add = state.op_ids[&ReplayOpKey {
+            name: "+".to_owned(),
+            inputs: vec!["i64".to_owned(), "i64".to_owned()],
+            output: "i64".to_owned(),
+        }];
+        let mut ordinal = 1;
+        while let Some(term) = egraph
+            .causal_replay_term(ReplayTermId::new(ordinal))
+            .unwrap()
+        {
+            assert!(!matches!(term, ReplayTerm::Call { op, .. } if op == add));
+            ordinal += 1;
+        }
+    }
+
+    #[test]
+    fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(sort Fn (UnstableFn (i64 i64) i64))\
+                 (relation Input (i64))\
+                 (relation Done (i64))\
+                 (Input 1)\
+                 (rule ((Input l))\
+                   ((Done (+ (unstable-app (unstable-fn \"+\") l 1) 1)))\
+                   :name \"unsupported-child\")\
+                 (run 1)",
+            )
+            .unwrap();
+        let failure = egraph
+            .with_causal_receipt_view(|view| {
+                for raw in 1..=view.totals().facts {
+                    view.fact_terms(core_relations::FactId::new(raw))?;
+                }
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(
+            failure
+                .to_string()
+                .contains("unsupported causal row origin")
+        );
+    }
+
+    #[test]
+    fn failed_relation_declaration_does_not_poison_origin_catalog() {
+        let mut egraph = EGraph::default();
+        let error = egraph
+            .parse_and_run_program(None, "(relation Broken (MissingSort))")
+            .unwrap_err();
+
+        assert!(error.to_string().contains("MissingSort"));
+        assert!(!egraph.relation_names.contains("Broken"));
+    }
+
+    #[test]
+    fn causal_subsume_mark_only_transition_records_no_specialized_receipt() {
+        let mut egraph = EGraph::default();
+        enable_serial_causal_receipts(&mut egraph).unwrap();
+        egraph
+            .parse_and_run_program(
+                None,
+                "(datatype Expr (A))\
+                 (relation Go ())\
+                 (let $a (A))\
+                 (Go)",
+            )
+            .unwrap();
+        let before = egraph
+            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .unwrap();
+
+        egraph
+            .parse_and_run_program(
+                None,
+                "(rule ((Go)) ((subsume (A))) :name \"subsume-existing\")\
+                 (run 1)",
+            )
+            .unwrap();
+
+        let after = egraph
+            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
+            .unwrap();
+        assert_eq!(after, before);
     }
 
     #[test]
@@ -6093,91 +6245,6 @@ mod tests {
                     }
                     Ok(())
                 })
-                .unwrap();
-        });
-    }
-
-    #[test]
-    fn causal_receipts_ignore_raw_colliding_unrelated_set_ancestor() {
-        serial_causal_pool().install(|| {
-            let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
-            let mut program = String::from(
-                "(datatype Expr (A i64) (B i64))\
-                 (sort Exprs (Vec Expr))\
-                 (sort Ints (Set i64))\
-                 (function Hold (Unit) Exprs :no-merge)\
-                 (relation Go (Unit))\
-                 (relation Done (Unit))\
-                 (let $a (A 1))",
-            );
-            // Crowd the unsupported Set registry with every likely raw child
-            // id. Its i64 elements are not typed Vec children, even when their
-            // Value bits collide with the dirty Vec id.
-            for value in 0..256 {
-                program.push_str(&format!("(let $ints-{value} (set-of {value}))"));
-            }
-            program.push_str(
-                "(Go ())\
-                 (rule ((Go u))\
-                   ((set (Hold ()) (vec-of (B 2)))\
-                    (union (A 1) (B 2))) :name \"merge-child\")\
-                 (run 1)\
-                 (rule ((= v (Hold ()))\
-                        (= v (vec-of (A 1))))\
-                   ((Done ())) :name \"observe-refresh\")\
-                 (run 1)\
-                 (check (Done ()))",
-            );
-            egraph.parse_and_run_program(None, &program).unwrap();
-
-            egraph
-                .with_causal_receipt_view(|view| {
-                    let mut refreshed = false;
-                    for raw in 1..=view.totals().facts {
-                        let fact = view.fact(core_relations::FactId::new(raw))?;
-                        let core_relations::ReceiptCauseRef::Cause(cause) = fact.cause else {
-                            continue;
-                        };
-                        refreshed |= matches!(
-                            view.cause(cause)?,
-                            core_relations::RawReceiptCause::ContainerRefresh { .. }
-                        );
-                    }
-                    assert!(refreshed);
-                    Ok(())
-                })
-                .unwrap();
-        });
-    }
-
-    #[test]
-    #[should_panic(expected = "multiple exact logical replay sorts")]
-    fn causal_receipts_reject_ambiguous_nominal_container_aliases() {
-        serial_causal_pool().install(|| {
-            let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
-            egraph
-                .parse_and_run_program(
-                    None,
-                    "(datatype Expr (A i64) (B i64))\
-                     (sort P1 (Pair Expr i64))\
-                     (sort P2 (Pair Expr i64))\
-                     (datatype R1 (H1 P1))\
-                     (datatype R2 (H2 P2))\
-                     (relation Go (Unit))\
-                     (relation Done (Unit))\
-                     (Go ())\
-                     (rule ((Go u))\
-                       ((H1 (pair (A 1) 7))\
-                        (H1 (pair (B 2) 7))\
-                        (H2 (pair (A 1) 7))\
-                        (H2 (pair (B 2) 7))\
-                        (Done ())\
-                        (union (A 1) (B 2))) :name \"merge-child\")\
-                     (run 1)\
-                     (check (Done ()))",
-                )
                 .unwrap();
         });
     }
@@ -6498,187 +6565,6 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_promote_pure_rule_action_result() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(relation Input (i64))\
-                 (relation Done (i64))\
-                 (Input 256)\
-                 (rule ((Input l)) ((Done (/ l 2))) :name \"halve\")\
-                 (run 1)\
-                 (check (Done 128))",
-            )
-            .unwrap();
-
-        let state = egraph.causal_state.as_ref().unwrap();
-        let divide = state.op_ids[&ReplayOpKey {
-            name: "/".to_owned(),
-            inputs: vec!["i64".to_owned(), "i64".to_owned()],
-            output: "i64".to_owned(),
-        }];
-        egraph
-            .with_causal_receipt_view(|view| {
-                let mut found = false;
-                for raw in 1..=view.totals().facts {
-                    let fact = view.fact(core_relations::FactId::new(raw))?;
-                    if !matches!(fact.cause, core_relations::ReceiptCauseRef::Rule(_)) {
-                        continue;
-                    }
-                    found |= view
-                        .fact_terms(fact.id)?
-                        .iter()
-                        .copied()
-                        .filter(|term| !term.is_missing())
-                        .any(|term| {
-                            matches!(
-                                egraph.causal_replay_term(term).unwrap(),
-                                Some(ReplayTerm::Call { op, .. }) if op == divide
-                            )
-                        });
-                }
-                assert!(found);
-                assert_eq!(view.totals().check_roots, 1);
-                assert_eq!(view.counters().unattributed_commits, 0);
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_receipts_promote_bound_body_primitive_for_action_use() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(relation Input (i64))\
-                 (relation Done (i64))\
-                 (Input 256)\
-                 (rule ((Input l) (= half (/ l 2))) ((Done (+ half 1))) :name \"halve-plus-one\")\
-                 (run 1)\
-                 (check (Done 129))",
-            )
-            .unwrap();
-
-        let state = egraph.causal_state.as_ref().unwrap();
-        let divide = state.op_ids[&ReplayOpKey {
-            name: "/".to_owned(),
-            inputs: vec!["i64".to_owned(), "i64".to_owned()],
-            output: "i64".to_owned(),
-        }];
-        let add = state.op_ids[&ReplayOpKey {
-            name: "+".to_owned(),
-            inputs: vec!["i64".to_owned(), "i64".to_owned()],
-            output: "i64".to_owned(),
-        }];
-        let output_term = egraph
-            .with_causal_receipt_view(|view| {
-                for raw in 1..=view.totals().facts {
-                    let fact = view.fact(core_relations::FactId::new(raw))?;
-                    if !matches!(fact.cause, core_relations::ReceiptCauseRef::Rule(_)) {
-                        continue;
-                    }
-                    if let Some(term) = view.fact_terms(fact.id)?.iter().copied().find(|term| {
-                        matches!(
-                            egraph.causal_replay_term(*term).unwrap(),
-                            Some(ReplayTerm::Call { op, .. }) if op == add
-                        )
-                    }) {
-                        return Ok(term);
-                    }
-                }
-                Err(core_relations::ReceiptViewError::Invalid(
-                    "derived output has no pure action call term".into(),
-                ))
-            })
-            .unwrap();
-        let Some(ReplayTerm::Call { children, .. }) =
-            egraph.causal_replay_term(output_term).unwrap()
-        else {
-            unreachable!()
-        };
-        assert!(children.iter().any(|child| {
-            matches!(
-                egraph.causal_replay_term(*child).unwrap(),
-                Some(ReplayTerm::Call { op, .. }) if op == divide
-            )
-        }));
-        egraph
-            .with_causal_receipt_view(|view| {
-                assert_eq!(view.totals().check_roots, 1);
-                assert_eq!(view.counters().unattributed_commits, 0);
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_receipts_defer_body_primitive_terms_until_all_guards_pass() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(relation Input (i64))\
-                 (relation Done (i64))\
-                 (Input 1)\
-                 (rule ((Input x) (= y (+ x 1)) (< y 0)) ((Done y)) :name \"dead\")\
-                 (run 1)",
-            )
-            .unwrap();
-
-        let state = egraph.causal_state.as_ref().unwrap();
-        let add = state.op_ids[&ReplayOpKey {
-            name: "+".to_owned(),
-            inputs: vec!["i64".to_owned(), "i64".to_owned()],
-            output: "i64".to_owned(),
-        }];
-        let mut ordinal = 1;
-        while let Some(term) = egraph
-            .causal_replay_term(ReplayTermId::new(ordinal))
-            .unwrap()
-        {
-            assert!(!matches!(term, ReplayTerm::Call { op, .. } if op == add));
-            ordinal += 1;
-        }
-    }
-
-    #[test]
-    fn causal_receipts_fail_closed_when_a_pure_call_depends_on_an_unsupported_primitive() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(sort Fn (UnstableFn (i64 i64) i64))\
-                 (relation Input (i64))\
-                 (relation Done (i64))\
-                 (Input 1)\
-                 (rule ((Input l))\
-                   ((Done (+ (unstable-app (unstable-fn \"+\") l 1) 1)))\
-                   :name \"unsupported-child\")\
-                 (run 1)",
-            )
-            .unwrap();
-        let failure = egraph
-            .with_causal_receipt_view(|view| {
-                for raw in 1..=view.totals().facts {
-                    view.fact_terms(core_relations::FactId::new(raw))?;
-                }
-                Ok(())
-            })
-            .unwrap_err();
-        assert!(
-            failure
-                .to_string()
-                .contains("unsupported causal row origin")
-        );
-    }
-
-    #[test]
     fn causal_receipts_capture_exact_rule_premise_and_wave() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -6755,20 +6641,6 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_run_terminal_math_check() {
-        serial_causal_pool().install(|| {
-            let mut egraph = EGraph::default();
-            egraph.enable_causal_receipts().unwrap();
-            egraph
-                .parse_and_run_program(
-                    Some("math-microbenchmark.egg".to_owned()),
-                    include_str!("../tests/math-microbenchmark.egg"),
-                )
-                .unwrap();
-        });
-    }
-
-    #[test]
     fn causal_receipts_preserve_distinct_check_equality_terms() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -6829,54 +6701,6 @@ mod tests {
                 ));
                 Ok(())
             })
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_until_does_not_record_a_check_root() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(None, "(run 1 :until (= 1 1))")
-            .unwrap();
-        egraph
-            .with_causal_receipt_view(|view| {
-                assert_eq!(
-                    view.totals().check_roots,
-                    0,
-                    "schedule probes are control flow, not replay soundness roots"
-                );
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_check_replays_congruence_collapsed_endpoint_producers() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype Expr (A) (B) (F Expr))\
-                 (relation Go (Unit))\
-                 (let $fa (F (A)))\
-                 (let $fb (F (B)))\
-                 (Go ())\
-                 (rule ((Go u)) ((union (A) (B))) :name \"merge\")\
-                 (run 1)\
-                 (check (= (F (A)) (F (B))))",
-            )
-            .unwrap();
-
-        let slice = crate::causal_slice::slice_check(&egraph, 0).unwrap();
-        let replay = crate::causal_replay::build_causal_replay_ir(&egraph, &slice).unwrap();
-        let commands = replay.to_commands().unwrap();
-        drop(egraph);
-
-        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
-        serial_causal_pool()
-            .install(|| proof.run_program(commands))
             .unwrap();
     }
 
@@ -7127,51 +6951,6 @@ mod tests {
     }
 
     #[test]
-    fn causal_source_catalog_keeps_transitive_global_edges_and_marks_late_sources() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                    (let $a 1)
-                    (let $b (+ $a 1))
-                    (relation Seed (i64))
-                    (Seed $b)
-                    (rule ((Seed x)) ((Seed x)) :name "observe")
-                    (run 1)
-                    (Seed 3)
-                    (check (Seed 3))
-                "#,
-            )
-            .unwrap();
-
-        let causal = egraph.causal_state.as_ref().unwrap();
-        let source = |ordinal| &causal.source_commands[&SourceRef::Synthetic(ordinal)];
-        assert!(source(0).dependencies.is_empty());
-        assert_eq!(
-            &*source(1).dependencies,
-            &[SourceRef::Synthetic(0)],
-            "the second global directly depends on the first"
-        );
-        assert_eq!(
-            &*source(2).dependencies,
-            &[SourceRef::Synthetic(1)],
-            "the source assertion directly depends on the second global"
-        );
-        assert!(source(0).unsupported.is_none());
-        assert!(source(1).unsupported.is_none());
-        assert!(source(2).unsupported.is_none());
-        assert!(
-            source(3)
-                .unsupported
-                .as_deref()
-                .is_some_and(|reason| reason.contains("after a run command")),
-            "a selected late source must make replay fail closed"
-        );
-    }
-
-    #[test]
     fn causal_source_catalog_detects_generated_rule_name_collision() {
         let mut egraph = EGraph::default();
         enable_serial_causal_receipts(&mut egraph).unwrap();
@@ -7414,34 +7193,6 @@ mod tests {
     }
 
     #[test]
-    fn causal_receipts_reject_source_run_rule_before_opening_a_wave() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        let error = egraph
-            .parse_and_run_program(
-                None,
-                "(relation R (i64))\
-                 (relation S (i64))\
-                 (R 1)\
-                 (rule ((R x)) ((S x)) :name \"copy\")\
-                 (run-schedule (run-rule (\"copy\" ((x 1)))))",
-            )
-            .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("causal receipt recording does not support source run-rule schedules")
-        );
-        assert!(
-            egraph
-                .with_causal_receipt_view(|_| Ok(()))
-                .unwrap_err()
-                .to_string()
-                .contains("poisoned")
-        );
-    }
-
-    #[test]
     fn causal_receipts_reject_late_rule_activation_without_switching_modes() {
         let mut egraph = EGraph::default();
         egraph
@@ -7457,123 +7208,6 @@ mod tests {
         egraph
             .parse_and_run_program(None, "(A 1) (run 1) (check (B 1))")
             .unwrap();
-    }
-
-    #[test]
-    fn causal_receipts_reject_activation_after_declarations_without_replay_template() {
-        let mut egraph = EGraph::default();
-        egraph
-            .parse_and_run_program(None, "(relation A (i64))")
-            .unwrap();
-        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
-        assert!(error.to_string().contains("replay catalog is complete"));
-        egraph
-            .parse_and_run_program(None, "(A 1) (check (A 1))")
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_relation_origin_is_registered_when_declared_after_activation() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(relation R (i64))\
-                 (R 1)\
-                 (rule ((R x)) ((delete (R x))) :name \"delete-r\")\
-                 (run 1)",
-            )
-            .unwrap();
-
-        egraph
-            .with_causal_receipt_view(|view| {
-                assert_eq!(view.totals().removals, 0);
-                assert_eq!(view.counters().effective_removals, 0);
-                assert_eq!(view.counters().relation_removals, 1);
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn failed_relation_declaration_does_not_poison_origin_catalog() {
-        let mut egraph = EGraph::default();
-        let error = egraph
-            .parse_and_run_program(None, "(relation Broken (MissingSort))")
-            .unwrap_err();
-
-        assert!(error.to_string().contains("MissingSort"));
-        assert!(!egraph.relation_names.contains("Broken"));
-    }
-
-    #[test]
-    fn causal_subsume_mark_only_transition_records_no_specialized_receipt() {
-        let mut egraph = EGraph::default();
-        enable_serial_causal_receipts(&mut egraph).unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype Expr (A))\
-                 (relation Go ())\
-                 (let $a (A))\
-                 (Go)",
-            )
-            .unwrap();
-        let before = egraph
-            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
-            .unwrap();
-
-        egraph
-            .parse_and_run_program(
-                None,
-                "(rule ((Go)) ((subsume (A))) :name \"subsume-existing\")\
-                 (run 1)",
-            )
-            .unwrap();
-
-        let after = egraph
-            .with_causal_receipt_view(|view| Ok((view.totals().facts, view.totals().removals)))
-            .unwrap();
-        assert_eq!(after, before);
-    }
-
-    #[test]
-    fn causal_receipt_activation_on_clone_does_not_change_original_merges() {
-        let mut original = EGraph::default();
-        original
-            .parse_and_run_program(
-                None,
-                "(datatype Expr (A) (B) (F Expr)) (relation Go (Unit))",
-            )
-            .unwrap();
-        let mut recording = original.clone();
-        let error = enable_serial_causal_receipts(&mut recording).unwrap_err();
-        assert!(error.to_string().contains("replay catalog is complete"));
-
-        original
-            .parse_and_run_program(
-                None,
-                "(let $fa (F (A)))\
-                 (let $fb (F (B)))\
-                 (Go ())\
-                 (rule ((Go u)) ((union (A) (B))))\
-                 (run 1)\
-                 (check (= $fa $fb))",
-            )
-            .unwrap();
-    }
-
-    #[test]
-    fn causal_receipts_report_late_row_activation_without_switching_modes() {
-        let mut egraph = EGraph::default();
-        egraph
-            .parse_and_run_program(None, "(relation A (i64)) (A 1)")
-            .unwrap();
-
-        let error = enable_serial_causal_receipts(&mut egraph).unwrap_err();
-        assert!(error.to_string().contains("replay catalog is complete"));
-        egraph.parse_and_run_program(None, "(check (A 1))").unwrap();
     }
 
     #[test]
@@ -7932,24 +7566,6 @@ mod tests {
     }
 
     #[test]
-    fn let_check_resolves_prior_aliases_without_creating_constructors() {
-        let mut egraph = EGraph::default();
-        egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (datatype E (A i64) (B E))
-                (B (A 1))
-                (let-check $a (A 1))
-                (delete (A 1))
-                (let-check $b (B $a))
-                (let-check $n (+ 1 2))
-                "#,
-            )
-            .unwrap();
-    }
-
-    #[test]
     fn let_check_alias_is_a_constant_in_checks() {
         let mut egraph = EGraph::default();
         egraph
@@ -7971,33 +7587,6 @@ mod tests {
             .parse_and_run_program(None, "(check (= $a (A 2)))")
             .expect_err("the checked alias must not act as a free query variable");
         assert!(matches!(error, Error::CheckError(..)));
-    }
-
-    #[test]
-    fn let_check_alias_values_survive_constructor_deletion_in_checks() {
-        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
-            egraph
-                .parse_and_run_program(
-                    None,
-                    r#"
-                    (datatype E (A i64) (B E))
-                    (relation Hold (E))
-                    (B (A 1))
-                    (A 2)
-                    (Hold (A 1))
-                    (let-check $a (A 1))
-                    (let-check $b (B $a))
-                    (let-check $other (A 2))
-                    (delete (B (A 1)))
-                    (delete (A 1))
-                    (check (Hold $a))
-                    (check (= $a $a))
-                    (check (= $b $b))
-                    (fail (check (= $a $other)))
-                    "#,
-                )
-                .unwrap();
-        }
     }
 
     #[test]
@@ -8069,65 +7658,6 @@ mod tests {
     }
 
     #[test]
-    fn let_check_allows_only_bounded_container_interning() {
-        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
-            egraph
-                .parse_and_run_program(
-                    None,
-                    r#"
-                    (sort P (Pair i64 i64))
-                    (sort V (Vec i64))
-                    (let-check $p (pair 1 2))
-                    (let-check $v (vec-of (pair-first $p) 3))
-                    (let-check $n (vec-length $v))
-                    "#,
-                )
-                .unwrap();
-        }
-
-        let mut egraph = EGraph::default();
-        let error = egraph
-            .parse_and_run_program(
-                None,
-                r#"
-                (sort S (Set i64))
-                (let-check $set (set-of 1))
-                "#,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("unsupported container"));
-        assert!(!egraph.checked_aliases.contains_key("$set"));
-    }
-
-    #[test]
-    fn let_check_expected_sort_is_enforced_without_ghost_aliases() {
-        let mut egraph = EGraph::default();
-        let expr = egraph.parser.get_expr_from_string(None, "(+ 1 2)").unwrap();
-        let command = Command::LetCheck {
-            span: expr.span(),
-            name: "$n".to_owned(),
-            expr: expr.clone(),
-            expected_sort: Some("bool".to_owned()),
-        };
-        let error = egraph.run_program(vec![command]).unwrap_err();
-        assert!(matches!(
-            error,
-            Error::TypeError(TypeError::Mismatch { .. })
-        ));
-        assert!(!egraph.checked_alias_types.contains_key("$n"));
-        assert!(!egraph.names.contains_canonical("n"));
-
-        egraph
-            .run_program(vec![Command::LetCheck {
-                span: expr.span(),
-                name: "$n".to_owned(),
-                expr,
-                expected_sort: Some("i64".to_owned()),
-            }])
-            .unwrap();
-    }
-
-    #[test]
     fn let_check_rejects_non_pure_primitives_and_unprefixed_names() {
         let mut egraph = EGraph::default();
         egraph.add_full_primitive(FullOnly, None);
@@ -8144,34 +7674,6 @@ mod tests {
             error,
             Error::TypeError(TypeError::CheckedAliasMissingPrefix { .. })
         ));
-    }
-
-    #[test]
-    fn let_check_aliases_ground_run_rule_bindings_in_normal_and_proof_modes() {
-        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
-            egraph
-                .parse_and_run_program(
-                    None,
-                    r#"
-                    (datatype E (A i64))
-                    (relation PairE (E E))
-                    (relation FiredE (E))
-                    (A 1)
-                    (A 2)
-                    (PairE (A 1) (A 1))
-                    (PairE (A 2) (A 2))
-                    (rule ((PairE x y) (= x y))
-                          ((FiredE y))
-                          :name "checked-pair")
-                    (let-check $a (A 1))
-                    (run-schedule
-                      (run-rule ("checked-pair" ((x $a) (y $a)))))
-                    (check (FiredE (A 1)))
-                    (fail (check (FiredE (A 2))))
-                    "#,
-                )
-                .unwrap();
-        }
     }
 
     #[test]
@@ -8479,5 +7981,64 @@ mod tests {
             .parse_and_run_program(None, "(ruleset test)\n(run test2 1)")
             .unwrap_err();
         assert!(matches!(err, Error::NoSuchRuleset(name, _) if name == "test2"));
+    }
+
+    #[test]
+    fn let_check_allows_only_bounded_container_interning() {
+        for mut egraph in [EGraph::default(), EGraph::new_with_proofs()] {
+            egraph
+                .parse_and_run_program(
+                    None,
+                    r#"
+                    (sort P (Pair i64 i64))
+                    (sort V (Vec i64))
+                    (let-check $p (pair 1 2))
+                    (let-check $v (vec-of (pair-first $p) 3))
+                    (let-check $n (vec-length $v))
+                    "#,
+                )
+                .unwrap();
+        }
+
+        let mut egraph = EGraph::default();
+        let error = egraph
+            .parse_and_run_program(
+                None,
+                r#"
+                (sort S (Set i64))
+                (let-check $set (set-of 1))
+                "#,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("unsupported container"));
+        assert!(!egraph.checked_aliases.contains_key("$set"));
+    }
+
+    #[test]
+    fn let_check_expected_sort_is_enforced_without_ghost_aliases() {
+        let mut egraph = EGraph::default();
+        let expr = egraph.parser.get_expr_from_string(None, "(+ 1 2)").unwrap();
+        let command = Command::LetCheck {
+            span: expr.span(),
+            name: "$n".to_owned(),
+            expr: expr.clone(),
+            expected_sort: Some("bool".to_owned()),
+        };
+        let error = egraph.run_program(vec![command]).unwrap_err();
+        assert!(matches!(
+            error,
+            Error::TypeError(TypeError::Mismatch { .. })
+        ));
+        assert!(!egraph.checked_alias_types.contains_key("$n"));
+        assert!(!egraph.names.contains_canonical("n"));
+
+        egraph
+            .run_program(vec![Command::LetCheck {
+                span: expr.span(),
+                name: "$n".to_owned(),
+                expr,
+                expected_sort: Some("i64".to_owned()),
+            }])
+            .unwrap();
     }
 }

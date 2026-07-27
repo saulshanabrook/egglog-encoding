@@ -1,0 +1,6 @@
+---
+source: egglog/tests/files.rs
+assertion_line: 132
+expression: snapshot_content_across_treatments
+---
+((LateSource 1))

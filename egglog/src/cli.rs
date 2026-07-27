@@ -286,7 +286,11 @@ fn cli_with_args_inner<I, T>(
         proof_graph = proof_graph.with_proofs_enabled();
         let replay_start = std::time::Instant::now();
         let outputs = proof_graph.run_program(commands).unwrap_or_else(|error| {
-            log::error!("{error}");
+            if matches!(&error, crate::Error::CheckError(..)) {
+                log::error!("causal replay check failed: {error}");
+            } else {
+                log::error!("causal replay execution failed: {error}");
+            }
             std::process::exit(1);
         });
         let replay_time = replay_start.elapsed();

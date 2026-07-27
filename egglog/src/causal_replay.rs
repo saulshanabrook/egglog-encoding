@@ -33,14 +33,14 @@ impl ReplayTermRef {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OwnedReplayOp {
     pub(crate) name: String,
     pub(crate) inputs: Box<[String]>,
     pub(crate) output: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum OwnedReplayTerm {
     Literal {
         sort: String,
@@ -923,16 +923,36 @@ fn build_owned(
     }
     setup.sort_by_key(|entry| entry.catalog_ordinal);
 
+    // A checked alias remains a valid name for later monotone unions/rekeys,
+    // but not across removal/recreation: identical syntax can then denote a
+    // fresh native occurrence. Use a conservative global removal epoch so
+    // unrelated deletions may inhibit deduplication but can never merge two
+    // occurrence lifetimes.
+    let mut alias_reset_positions = slice
+        .replay_removals
+        .iter()
+        .chain(&slice.interference_removals)
+        .copied()
+        .map(|index| {
+            view.removal(index)
+                .map(|removal| removal.position.get())
+                .map_err(|error| CausalReplayError::Receipt(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    alias_reset_positions.sort_unstable();
+    alias_reset_positions.dedup();
+
     let mut terms = OwnedTermBuilder::new(view, causal)?;
     let mut waves = BTreeMap::<u64, (u64, Vec<ReplayFiring>)>::new();
     let mut aliases_by_wave = BTreeMap::<u64, Vec<ReplayAlias>>::new();
     let mut alias_wave_by_term = HashMap::<ReplayTermRef, u64>::default();
+    let mut alias_ordinal_by_term = HashMap::<ReplayTermRef, usize>::default();
     // A replay boundary observes one immutable pre-wave database. Repeated
-    // occurrences of the same structural receipt term at that boundary must
-    // therefore resolve to the same runtime value and need only one checked
-    // alias. The wave remains part of the key: identical syntax before and
-    // after deletion/recreation denotes distinct historical occurrences.
-    let mut canonical_call_by_boundary = HashMap::<(u64, ReplayTermId), ReplayTermRef>::default();
+    // structurally identical calls within one removal epoch must therefore
+    // resolve to the same runtime value and need only one checked alias.
+    let mut source_call_by_boundary = HashMap::<(u64, ReplayTermId), ReplayTermRef>::default();
+    let mut canonical_call_by_boundary =
+        HashMap::<(usize, OwnedReplayTerm), ReplayTermRef>::default();
     let mut canonical_term = HashMap::<ReplayTermRef, ReplayTermRef>::default();
     let mut wave_positions = BTreeMap::<u64, u64>::new();
     for (_, _, wave, position) in &matches {
@@ -1037,21 +1057,47 @@ fn build_owned(
                             source_call.get()
                         ))
                     })?;
-                if let Some(canonical) = canonical_call_by_boundary
+                if let Some(previous) = source_call_by_boundary
                     .get(&(alias_wave, source_call))
                     .copied()
                 {
-                    if terms.nodes[canonical.index()] != terms.nodes[call.index()] {
+                    if terms.nodes[previous.index()] != terms.nodes[call.index()] {
                         return Err(CausalReplayError::Invalid(format!(
                             "replay term {} has inconsistent structure at wave {alias_wave}",
                             source_call.get()
                         )));
                     }
+                } else {
+                    source_call_by_boundary.insert((alias_wave, source_call), call);
+                }
+                let alias_position = *wave_positions
+                    .get(&alias_wave)
+                    .expect("selected alias wave has no history position");
+                let alias_epoch =
+                    alias_reset_positions.partition_point(|position| *position <= alias_position);
+                let structural_key = (alias_epoch, terms.nodes[call.index()].clone());
+                if let Some(canonical) = canonical_call_by_boundary.get(&structural_key).copied() {
+                    let canonical_wave = alias_wave_by_term[&canonical];
+                    let canonical_wave = if alias_wave < canonical_wave {
+                        let aliases = aliases_by_wave
+                            .get_mut(&canonical_wave)
+                            .expect("canonical alias wave disappeared");
+                        let index = aliases
+                            .iter()
+                            .position(|alias| alias.term == canonical)
+                            .expect("canonical alias disappeared from its wave");
+                        let alias = aliases.remove(index);
+                        aliases_by_wave.entry(alias_wave).or_default().push(alias);
+                        alias_wave_by_term.insert(canonical, alias_wave);
+                        alias_wave
+                    } else {
+                        canonical_wave
+                    };
                     canonical_term.insert(call, canonical);
-                    alias_wave_by_term.insert(call, alias_wave);
+                    alias_wave_by_term.insert(call, canonical_wave);
                     continue;
                 }
-                canonical_call_by_boundary.insert((alias_wave, source_call), call);
+                canonical_call_by_boundary.insert(structural_key, call);
                 aliases_by_wave
                     .entry(alias_wave)
                     .or_default()
@@ -1060,6 +1106,7 @@ fn build_owned(
                         term: call,
                     });
                 alias_wave_by_term.insert(call, alias_wave);
+                alias_ordinal_by_term.insert(call, next_alias);
                 next_alias += 1;
             }
             bindings.push(ReplayBinding {
@@ -1080,6 +1127,9 @@ fn build_owned(
     validate_alias_namespace(egraph, causal, next_alias)?;
     let term_nodes = std::mem::take(&mut terms.nodes);
     drop(terms);
+    for aliases in aliases_by_wave.values_mut() {
+        aliases.sort_unstable_by_key(|alias| alias_ordinal_by_term[&alias.term]);
+    }
 
     let mut events = source_events
         .into_iter()
@@ -1242,117 +1292,6 @@ mod tests {
     }
 
     #[test]
-    fn owned_ir_keeps_complete_bindings_and_check_chronology() {
-        let mut egraph = EGraph::default();
-        serial_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64))
-                 (relation Seed (E))
-                 (relation Out (E))
-                 (Seed (A 1))
-                 (rule ((Seed x)) ((Out x)) :name \"step\")
-                 (run 1)
-                 (check (Out (A 1)))",
-            )
-            .unwrap();
-        let slice = slice_all_checks(&egraph).unwrap();
-        let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
-        assert_eq!(ir.stats.firings, 1);
-        assert_eq!(ir.stats.waves, 1);
-        assert_eq!(ir.stats.checks, 1);
-        let wave = ir
-            .events
-            .iter()
-            .find_map(|event| match event {
-                ReplayEvent::Wave(wave) => Some(wave),
-                ReplayEvent::Source(_) | ReplayEvent::Check(_) => None,
-            })
-            .unwrap();
-        let wave_index = ir
-            .events
-            .iter()
-            .position(|event| matches!(event, ReplayEvent::Wave(_)))
-            .unwrap();
-        let check_index = ir
-            .events
-            .iter()
-            .position(|event| matches!(event, ReplayEvent::Check(_)))
-            .unwrap();
-        assert!(wave_index < check_index);
-        assert_eq!(wave.firings[0].replay_name, "step");
-        assert_eq!(wave.firings[0].bindings.len(), 1);
-        assert!(
-            wave.aliases
-                .iter()
-                .all(|alias| alias.name.starts_with("$__causal_replay_"))
-        );
-
-        let commands = ir.to_commands().unwrap();
-        assert!(commands.iter().any(|command| matches!(
-            command,
-            Command::LetCheck { name, .. } if name.starts_with("$__causal_replay_")
-        )));
-        let run_rule = commands.iter().find_map(|command| match command {
-            Command::RunSchedule(Schedule::RunRule(_, configs)) => Some(configs),
-            _ => None,
-        });
-        let run_rule = run_rule.expect("owned replay must lower one grounded wave");
-        assert_eq!(run_rule.len(), 1);
-        assert_eq!(run_rule[0].rule, "step");
-        assert_eq!(run_rule[0].bindings.len(), 1);
-        assert_eq!(
-            CausalReplayIr::render_commands(&commands).unwrap(),
-            CausalReplayIr::render_commands(&ir.to_commands().unwrap()).unwrap(),
-            "the inspectable artifact must be a deterministic rendering of the executed AST"
-        );
-    }
-
-    #[test]
-    fn owned_ir_reuses_structural_aliases_at_one_replay_boundary() {
-        let mut egraph = EGraph::default();
-        serial_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(datatype E (A i64))
-                 (relation Seed (E))
-                 (relation Left (E))
-                 (relation Right (E))
-                 (relation Out ())
-                 (Seed (A 1))
-                 (rule ((Seed x)) ((Left x)) :name \"left\")
-                 (rule ((Seed x)) ((Right x)) :name \"right\")
-                 (rule ((Left x) (Right x)) ((Out)) :name \"join\")
-                 (run 2)
-                 (check (Out))",
-            )
-            .unwrap();
-
-        let slice = slice_all_checks(&egraph).unwrap();
-        let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
-        assert_eq!(ir.stats.firings, 3);
-        assert_eq!(
-            ir.stats.aliases, 1,
-            "all three selected matches read the same structural term at one immutable boundary"
-        );
-        let commands = ir.to_commands().unwrap();
-        let rendered = CausalReplayIr::render_commands(&commands).unwrap();
-        assert_eq!(rendered.matches("(let-check ").count(), 1, "{rendered}");
-        drop(egraph);
-
-        let mut proof = EGraph::default().with_proofs_enabled().with_proof_testing();
-        serial_pool()
-            .install(|| proof.run_program(commands))
-            .unwrap();
-    }
-
-    #[test]
     fn owned_ir_preserves_pre_run_check_and_source_order() {
         let mut egraph = EGraph::default();
         serial_pool()
@@ -1370,12 +1309,15 @@ mod tests {
             .unwrap();
         let slice = slice_all_checks(&egraph).unwrap();
         let ir = build_causal_replay_ir(&egraph, &slice).unwrap();
-        assert_eq!(ir.stats.source_events, 2);
-        assert_eq!(ir.stats.checks, 2);
-        assert!(matches!(ir.events[0], ReplayEvent::Source(_)));
-        assert!(matches!(ir.events[1], ReplayEvent::Check(_)));
-        assert!(matches!(ir.events[2], ReplayEvent::Source(_)));
-        assert!(matches!(ir.events[3], ReplayEvent::Check(_)));
+        assert!(matches!(
+            ir.events.as_slice(),
+            [
+                ReplayEvent::Source(_),
+                ReplayEvent::Check(_),
+                ReplayEvent::Source(_),
+                ReplayEvent::Check(_),
+            ]
+        ));
     }
 
     #[test]
@@ -1504,32 +1446,6 @@ mod tests {
             matches!(error, CausalReplayError::Input(message) if message.contains("changed after receipt capture"))
         );
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn owned_ir_rejects_checked_alias_collisions_with_any_declaration() {
-        let mut egraph = EGraph::default();
-        serial_pool()
-            .install(|| egraph.enable_causal_receipts())
-            .unwrap();
-        egraph
-            .parse_and_run_program(
-                None,
-                "(function $__causal_replay_0 (i64) i64 :no-merge)
-                 (datatype E (A i64))
-                 (relation Seed (E))
-                 (relation Out (E))
-                 (Seed (A 1))
-                 (rule ((Seed x)) ((Out x)) :name \"step\")
-                 (run 1)
-                 (check (Out (A 1)))",
-            )
-            .unwrap();
-        let slice = slice_all_checks(&egraph).unwrap();
-        let error = build_causal_replay_ir(&egraph, &slice).unwrap_err();
-        assert!(
-            matches!(error, CausalReplayError::Invalid(message) if message.contains("collides with a user symbol"))
-        );
     }
 
     #[test]

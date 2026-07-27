@@ -151,11 +151,19 @@ pub enum CausalRuleBinding {
     },
 }
 
-/// Backend-neutral causal metadata for one ordinary source rule.
+/// Backend-neutral causal metadata for one ordinary rule.
 #[derive(Clone, Debug)]
 pub struct CausalRuleSpec {
     pub rule: u32,
     pub bindings: Box<[CausalRuleBinding]>,
+    /// Logical equality sorts for rule-head `union` actions, in head order.
+    pub union_sorts: Box<[ReplaySortId]>,
+}
+
+/// Backend-neutral causal metadata for one top-level source action.
+#[derive(Clone, Debug)]
+pub struct CausalSourceSpec {
+    pub source: SourceRef,
     /// Logical equality sorts for source `union` actions, in head order.
     pub union_sorts: Box<[ReplaySortId]>,
 }
@@ -221,6 +229,9 @@ pub type BackendCoreRule =
     egglog_ast::core::GenericCoreRule<RuleBodyCall, RuleActionCall, RuleVar, RuleValue>;
 
 /// A complete logical rule supplied to a backend.
+///
+/// At most one of [`RuleSpec::causal_receipt`],
+/// [`RuleSpec::check_receipt`], and [`RuleSpec::source_receipt`] may be set.
 #[derive(Clone, Debug)]
 pub struct RuleSpec {
     pub name: String,
@@ -235,7 +246,7 @@ pub struct RuleSpec {
     /// Source actions have an empty query and attribute every effective
     /// commit directly to this identity rather than manufacturing a rule
     /// match. Ordinary rules leave this unset.
-    pub source_receipt: Option<SourceRef>,
+    pub source_receipt: Option<CausalSourceSpec>,
     /// External-function registrations whose lifetime is owned by this rule.
     ///
     /// [`Backend::add_rule`] takes ownership of these handles, including on

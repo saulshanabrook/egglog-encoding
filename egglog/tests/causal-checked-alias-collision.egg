@@ -1,0 +1,8 @@
+(function $__causal_replay_0 (i64) i64 :no-merge)
+(datatype E (A i64))
+(relation Seed (E))
+(relation Out (E))
+(Seed (A 1))
+(rule ((Seed x)) ((Out x)) :name "step")
+(run 1)
+(check (Out (A 1)))
