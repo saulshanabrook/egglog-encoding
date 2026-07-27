@@ -2525,3 +2525,39 @@ command/cwd, endpoint SHAs, observation, hypothesis result, and next gate.
   two independent LoC calculations agreed. The obsolete global Exact-collision
   panic was correctly classified as a limitation of the deleted compatibility
   forest rather than a production slicing boundary.
+
+## 2026-07-27: rejected checkpoint 3 — unreachable parallel receipt capture
+
+- A bounded candidate removed the receipt-enabled parallel table-insert
+  specialization, parallel staged cause/fact sidecars, fact-aware parallel
+  rehash branch, scoped parallel receipt witnesses, impossible parallel arm of
+  the causal receipt-safe table helper, and the worker-local merge-draft/cache
+  chain that became dead. It also avoided input-file SHA-256 outside causal
+  capture. The final normalized candidate was 499 net production lines smaller
+  than `311c68e` (A=112, D=611), leaving +20,671 versus `4940be37` and +9,064
+  versus `0d7ffbb`; tests received no reduction credit.
+- All 173 focused core tests and all 157 frontend tests passed. Both public
+  multi-thread activation errors remained, the four-thread 20,001-row native
+  insert canary passed, and the five generated artifacts were byte-identical:
+  Math `3f5216d5...e17`, Eggcc `e4f6045e...c3ea`, Pointer
+  `000dfda7...851`, Hardboiled `2ccbf8e2...46e5`, and Luminal
+  `044b11c6...ad4`. Independent semantic and source-level hot-path reviews
+  found the deletion correctly bounded.
+- The candidate nevertheless failed the immutable shared-path performance
+  gate. A six-round `proofs` comparison against `311c68e` reported a suite
+  wall interval of 1.04-1.06x and Luminal 1.06-1.10x. After eliminating the
+  only review-identified release cost (an O(actions) invariant scan), a fresh
+  one-round final-source screen was slower on all five files: Math 1.03x,
+  Eggcc 1.10x, Pointer 1.11x, Hardboiled 1.06x, and Luminal 1.16x. Ordinary
+  `off` measurements were noisy and did not establish the required 1.02 upper
+  bound. Causal-proofs remained within its 1.10 ceiling and profiling suggested
+  code-layout sensitivity, but neither overrides the shared-path gate.
+- The attempted release-cost repair also failed semantic review: changing the
+  parallel metadata guard to `debug_assert!` would let a publicly reusable
+  receipt-bearing `RuleSet` run against a large ordinary database in release
+  mode while silently dropping its witness metadata. Keeping the hard O(actions)
+  guard preserved fail-closed behavior but retained the measured-risk mechanism;
+  an O(1) mode/origin token would be a different, separately bounded design.
+- Per the campaign stop rules, the entire checkpoint-3 candidate was discarded
+  without commit. The worktree returned exactly to accepted checkpoint-1
+  commit `311c68e`; no source fragment from the failed bundle was retained.
