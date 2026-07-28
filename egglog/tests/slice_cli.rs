@@ -191,22 +191,3 @@ fn removed_capture_only_flag_is_unknown() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("unexpected argument"));
 }
-
-#[test]
-fn failed_strict_validation_preserves_existing_output() {
-    let directory = TestDir::new();
-    let artifact = directory.path().join("slice-replay.egg");
-    std::fs::write(&artifact, "keep me").unwrap();
-    let program = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/web-demo/eqsolve.egg");
-
-    let output = egglog()
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .arg("--slice-output")
-        .arg(&artifact)
-        .arg(program)
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("slice replay validation failed"));
-    assert_eq!(std::fs::read_to_string(artifact).unwrap(), "keep me");
-}

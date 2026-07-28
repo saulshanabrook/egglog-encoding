@@ -183,6 +183,15 @@ fn publish_slice_output(path: &Path, rendered: &str) -> io::Result<()> {
     result
 }
 
+fn validate_then_publish_slice<T>(
+    validate: impl FnOnce() -> Result<T, String>,
+    publish: impl FnOnce() -> Result<(), String>,
+) -> Result<T, String> {
+    let validated = validate()?;
+    publish()?;
+    Ok(validated)
+}
+
 /// Start a command-line interface for the E-graph.
 ///
 /// This is what vanilla egglog uses, and custom egglog builds (i.e., "egglog batteries included")
@@ -363,38 +372,44 @@ fn cli_with_args_inner<I, T>(
         let user_seed = args.proofs.then(|| replay_seed.clone());
         let mut strict_graph = replay_seed.with_proofs_enabled().with_proof_testing();
         let replay_start = std::time::Instant::now();
-        strict_graph
-            .parse_and_run_program(Some("generated slice replay".into()), &rendered)
-            .unwrap_or_else(|error| {
-                log::error!("slice replay validation failed: {error}");
-                std::process::exit(1);
-            });
-        let (final_graph, outputs) = if let Some(user_seed) = user_seed {
-            let mut user_graph = user_seed.with_proofs_enabled();
-            let outputs = user_graph
-                .parse_and_run_program(Some("generated slice replay".into()), &rendered)
-                .unwrap_or_else(|error| {
-                    if matches!(&error, crate::Error::CheckError(..)) {
-                        log::error!("slice replay check failed: {error}");
-                    } else {
-                        log::error!("slice replay execution failed: {error}");
-                    }
-                    std::process::exit(1);
-                });
-            (user_graph, outputs)
-        } else {
-            (strict_graph, Vec::new())
-        };
-        let replay_time = replay_start.elapsed();
-        if let Some(path) = &args.slice_output {
-            publish_slice_output(path, &rendered).unwrap_or_else(|error| {
-                log::error!(
-                    "cannot publish slice replay artifact `{}`: {error}",
-                    path.display()
-                );
-                std::process::exit(1);
-            });
-        }
+        let ((final_graph, outputs), replay_time) = validate_then_publish_slice(
+            || {
+                strict_graph
+                    .parse_and_run_program(Some("generated slice replay".into()), &rendered)
+                    .map_err(|error| format!("slice replay validation failed: {error}"))?;
+                let validated = if let Some(user_seed) = user_seed {
+                    let mut user_graph = user_seed.with_proofs_enabled();
+                    let outputs = user_graph
+                        .parse_and_run_program(Some("generated slice replay".into()), &rendered)
+                        .map_err(|error| {
+                            if matches!(&error, crate::Error::CheckError(..)) {
+                                format!("slice replay check failed: {error}")
+                            } else {
+                                format!("slice replay execution failed: {error}")
+                            }
+                        })?;
+                    (user_graph, outputs)
+                } else {
+                    (strict_graph, Vec::new())
+                };
+                Ok((validated, replay_start.elapsed()))
+            },
+            || {
+                if let Some(path) = &args.slice_output {
+                    publish_slice_output(path, &rendered).map_err(|error| {
+                        format!(
+                            "cannot publish slice replay artifact `{}`: {error}",
+                            path.display()
+                        )
+                    })?;
+                }
+                Ok(())
+            },
+        )
+        .unwrap_or_else(|error| {
+            log::error!("{error}");
+            std::process::exit(1);
+        });
         if args.mode != RunMode::NoMessages {
             let mut output = io::stdout();
             for message in outputs {
@@ -657,6 +672,38 @@ impl FromStr for RunMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_slice_validation_skips_publication() {
+        static NEXT_ID: AtomicU64 = AtomicU64::new(0);
+
+        let directory = std::env::temp_dir().join(format!(
+            "egglog-slice-validation-{}-{}",
+            std::process::id(),
+            NEXT_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let existing = directory.join("existing.egg");
+        let fresh = directory.join("fresh.egg");
+        std::fs::write(&existing, "keep me").unwrap();
+
+        for path in [&existing, &fresh] {
+            let publish_called = std::cell::Cell::new(false);
+            let error = validate_then_publish_slice::<()>(
+                || Err("slice replay validation failed: injected failure".into()),
+                || {
+                    publish_called.set(true);
+                    publish_slice_output(path, "replacement").map_err(|error| error.to_string())
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error, "slice replay validation failed: injected failure");
+            assert!(!publish_called.get());
+        }
+        assert_eq!(std::fs::read_to_string(&existing).unwrap(), "keep me");
+        assert!(!fresh.exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn test_should_eval() {
