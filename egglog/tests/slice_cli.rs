@@ -44,6 +44,41 @@ fn slice_output_implies_slice_and_strictly_replays() {
 }
 
 #[test]
+fn rewrite_root_collision_strictly_replays() {
+    let directory = tempfile::tempdir().unwrap();
+    let program = directory.path().join("rewrite-collision.egg");
+    let artifact = directory.path().join("slice-replay.egg");
+    std::fs::write(
+        &program,
+        r#"
+            (datatype E (A i64) (B i64))
+            (rewrite (A __rewrite_root) (B __rewrite_root) :name "colliding")
+            (let $x (A 1))
+            (run 1)
+            (check (= $x (B 1)))
+        "#,
+    )
+    .unwrap();
+
+    let output = egglog()
+        .arg("--slice-output")
+        .arg(&artifact)
+        .arg(&program)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "slice failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let artifact = std::fs::read_to_string(artifact).unwrap();
+    assert!(
+        artifact.contains(r#"(rewrite (A __rewrite_root) (B __rewrite_root) :name "colliding")"#)
+    );
+    assert!(artifact.contains("(__rewrite_root_1 "));
+}
+
+#[test]
 fn slice_requires_an_output_and_proofs_remains_optional() {
     let directory = tempfile::tempdir().unwrap();
     let program = write_program(directory.path());
