@@ -4,7 +4,9 @@
 //! Function rows live only in typed DuckDB tables. This storage scaffold
 //! implements a deliberately narrow first production [`RuleSpec`] subset:
 //! Live table atoms with typed variables/literals and one table Set into a
-//! one-output `MergeFn::Old` target. Unsupported IR fails closed at admission.
+//! one-output `MergeFn::Old` or `MergeFn::AssertEq` target. Unsupported writes
+//! fail closed during preflight even though their full configurations remain
+//! registered for later lowering.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -12,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow, bail};
 use egglog_backend_trait::{
     Backend, BaseValues, ColumnTy, ContainerValues, CounterId, ExecutionState, ExternalFunction,
-    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, MergeFn, ReportLevel, RuleId,
+    ExternalFunctionId, FunctionConfig, FunctionId, IterationReport, ReportLevel, RuleId,
     RuleSetRun, RuleSpec, ScanEntry, Value,
 };
 use egglog_core_relations::Database;
@@ -24,7 +26,7 @@ mod rule_sql_tests;
 mod storage;
 
 use rule_sql::{CompiledRule, RuleExecutionStats, compile_rule};
-use storage::{InputMerge, InsertStats, Storage, for_each_scan_entry};
+use storage::{InsertStats, Storage, for_each_scan_entry};
 
 struct RegisteredRule {
     plan: CompiledRule,
@@ -150,58 +152,11 @@ impl ExternalFunction for DeferredPanic {
     }
 }
 
-fn input_merge_policy(name: &str, n_vals: usize, merge: &MergeFn) -> Result<InputMerge> {
-    match merge {
-        // `add_values` is correct for this narrow policy: DuckDB retains the
-        // first row for a key and ignores later conflicts. Rule execution and
-        // every other merge form remain an explicit checkpoint boundary.
-        MergeFn::Old if n_vals == 1 => Ok(InputMerge::KeepOld),
-        MergeFn::Old => bail!(
-            "DuckDB checkpoint 0.5 supports MergeFn::Old only for one output column; table `{name}` declares {n_vals}"
-        ),
-        _ => bail!(
-            "DuckDB checkpoint 0.5 cannot register table `{name}`: only the one-column MergeFn::Old input policy is implemented"
-        ),
-    }
-}
-
 impl Backend for EGraph {
     fn add_table(&mut self, config: FunctionConfig) -> FunctionId {
-        let FunctionConfig {
-            schema,
-            n_vals,
-            n_identity_vals,
-            default,
-            merge,
-            name,
-            can_subsume,
-        } = config;
-        if let Some(identity_vals) = n_identity_vals
-            && !(1..=n_vals).contains(&identity_vals)
-        {
-            panic!(
-                "DuckDB add_table({name}) failed: identity-column count {identity_vals} is outside 1..={n_vals}"
-            );
-        }
-        let input_merge = input_merge_policy(&name, n_vals, &merge)
-            .unwrap_or_else(|error| panic!("DuckDB add_table({name}) failed: {error:#}"));
-        // An identity guard cannot change KeepOld: a collision keeps the old
-        // row whether or not the guarded value matches. Retain the field here
-        // to make that deliberate rather than silently losing SPI metadata.
-        let _identity_guard = n_identity_vals;
-        // Defaults affect action-stream lookup-or-insert, which is unreachable
-        // while production RuleSpec lowering fails closed. Direct lookup stays
-        // pure by Backend contract, so no default is applied in this slice.
-        let _deferred_default = default;
+        let name = config.name.clone();
         self.storage
-            .register_table(
-                self.registries.base_values(),
-                name.clone(),
-                &schema,
-                n_vals,
-                can_subsume,
-                input_merge,
-            )
+            .register_table(self.registries.base_values(), config)
             .unwrap_or_else(|error| panic!("DuckDB add_table({name}) failed: {error:#}"))
     }
 
@@ -400,12 +355,353 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
     use super::*;
+    use egglog_backend_trait::{DefaultVal, MergeAction, MergeFn};
     use egglog_core_relations::Boxed;
     use ordered_float::OrderedFloat;
 
     #[test]
-    fn keep_old_input_is_sql_native_and_other_merges_fail_closed() -> Result<()> {
+    fn assert_eq_equal_input_duplicates_are_idempotent() -> Result<()> {
+        let mut backend = EGraph::new()?;
+        backend.base_values_mut().register_type::<()>();
+        backend.base_values_mut().register_type::<bool>();
+        backend.base_values_mut().register_type::<i64>();
+        backend
+            .base_values_mut()
+            .register_type::<Boxed<OrderedFloat<f64>>>();
+        backend.base_values_mut().register_type::<Boxed<String>>();
+        let table = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "assert-eq-equal-duplicates".to_string(),
+            can_subsume: false,
+        });
+
+        backend.add_values(vec![
+            (table, vec![Value::new(1), Value::new(10)]),
+            (table, vec![Value::new(1), Value::new(10)]),
+        ])?;
+        assert_eq!(backend.table_size(table), 1);
+        assert_eq!(
+            backend.lookup_row(table, &[Value::new(1)]),
+            Some(vec![Value::new(1), Value::new(10)])
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn assert_eq_input_conflicts_are_setwise_atomic_and_recoverable() -> Result<()> {
+        let mut backend = EGraph::new()?;
+        backend.base_values_mut().register_type::<()>();
+        backend.base_values_mut().register_type::<bool>();
+        backend.base_values_mut().register_type::<i64>();
+        backend
+            .base_values_mut()
+            .register_type::<Boxed<OrderedFloat<f64>>>();
+        backend.base_values_mut().register_type::<Boxed<String>>();
+        let early = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Old,
+            name: "early user target".to_string(),
+            can_subsume: false,
+        });
+        let asserted = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: Some(1),
+            default: DefaultVal::Const(Value::new(99)),
+            merge: MergeFn::AssertEq,
+            name: "asserted user target; DROP TABLE".to_string(),
+            can_subsume: true,
+        });
+
+        backend.add_values(vec![(asserted, vec![Value::new(1), Value::new(10)])])?;
+        let original_generation = backend.storage.generation()?;
+        let original_row_generation =
+            backend.storage.scan(backend.base_values(), asserted)?[0].generation;
+        backend.add_values(vec![
+            (asserted, vec![Value::new(1), Value::new(10)]),
+            (asserted, vec![Value::new(1), Value::new(10)]),
+        ])?;
+        assert_eq!(backend.last_input_inserted_rows(), 0);
+        assert_eq!(backend.storage.generation()?, original_generation);
+        assert_eq!(
+            backend.storage.scan(backend.base_values(), asserted)?[0].generation,
+            original_row_generation
+        );
+
+        let existing_error = backend
+            .add_values(vec![(asserted, vec![Value::new(1), Value::new(11)])])
+            .unwrap_err();
+        assert!(existing_error.to_string().contains("AssertEq"));
+        let intra_error = backend
+            .add_values(vec![
+                (asserted, vec![Value::new(2), Value::new(20)]),
+                (asserted, vec![Value::new(2), Value::new(21)]),
+            ])
+            .unwrap_err();
+        assert!(intra_error.to_string().contains("AssertEq"));
+        assert_eq!(backend.table_size(asserted), 1);
+        assert_eq!(backend.storage.generation()?, original_generation);
+
+        backend.storage.with_connection(|connection| {
+            connection.execute(
+                &format!(
+                    "UPDATE {} SET __subsumed = TRUE WHERE c0 = CAST('1' AS UBIGINT)",
+                    crate::storage::sql_table(asserted)
+                ),
+                [],
+            )?;
+            Ok(())
+        })?;
+        backend.add_values(vec![(asserted, vec![Value::new(1), Value::new(10)])])?;
+        let subsumed = backend.storage.scan(backend.base_values(), asserted)?;
+        assert_eq!(subsumed.len(), 1);
+        assert!(
+            subsumed[0].subsumed,
+            "equal duplicate must not revive a row"
+        );
+        assert_eq!(subsumed[0].generation, original_row_generation);
+        assert!(
+            backend
+                .add_values(vec![(asserted, vec![Value::new(1), Value::new(12)],)])
+                .unwrap_err()
+                .to_string()
+                .contains("AssertEq")
+        );
+
+        let nullary = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::AssertEq,
+            name: "nullary-assert".to_string(),
+            can_subsume: false,
+        });
+        backend.add_values(vec![
+            (nullary, vec![Value::new(30)]),
+            (nullary, vec![Value::new(30)]),
+        ])?;
+        assert_eq!(backend.table_size(nullary), 1);
+        let generation_before_conflict = backend.storage.generation()?;
+        assert!(
+            backend
+                .add_values(vec![
+                    (nullary, vec![Value::new(31)]),
+                    (nullary, vec![Value::new(32)]),
+                ])
+                .unwrap_err()
+                .to_string()
+                .contains("AssertEq")
+        );
+        assert_eq!(backend.storage.generation()?, generation_before_conflict);
+
+        let heterogeneous_error = backend
+            .add_values(vec![
+                (early, vec![Value::new(7), Value::new(70)]),
+                (asserted, vec![Value::new(1), Value::new(13)]),
+            ])
+            .unwrap_err();
+        assert!(heterogeneous_error.to_string().contains("AssertEq"));
+        assert_eq!(backend.table_size(early), 0);
+        assert_eq!(backend.storage.generation()?, generation_before_conflict);
+        assert_eq!(backend.last_input_rows(), 0);
+
+        backend.add_values(vec![
+            (early, vec![Value::new(7), Value::new(70)]),
+            (asserted, vec![Value::new(1), Value::new(10)]),
+        ])?;
+        assert_eq!(backend.table_size(early), 1);
+        assert_eq!(backend.table_size(asserted), 1);
+        let generated = backend.storage.latest_input_sql();
+        assert!(generated.iter().all(|sql| !sql.contains('?')));
+        assert!(
+            generated
+                .iter()
+                .all(|sql| !sql.contains("asserted user target"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn function_config_is_retained_and_deferred_preflight_preserves_ids() -> Result<()> {
+        let mut backend = EGraph::new()?;
+        backend.base_values_mut().register_type::<()>();
+        backend.base_values_mut().register_type::<bool>();
+        backend.base_values_mut().register_type::<i64>();
+        backend
+            .base_values_mut()
+            .register_type::<Boxed<OrderedFloat<f64>>>();
+        backend.base_values_mut().register_type::<Boxed<String>>();
+        let executable = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Old,
+            name: "executable".to_string(),
+            can_subsume: false,
+        });
+        let tuple_output = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            n_vals: 2,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Columns(vec![MergeFn::OldCol(0), MergeFn::OldCol(1)]),
+            name: "tuple-output".to_string(),
+            can_subsume: false,
+        });
+        let function_reader = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Function(tuple_output, vec![MergeFn::Old, MergeFn::New]),
+            name: "tuple-function-reader".to_string(),
+            can_subsume: false,
+        });
+        let lookup_reader = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Fail,
+            merge: MergeFn::Lookup(tuple_output, vec![MergeFn::Old]),
+            name: "tuple-lookup-reader".to_string(),
+            can_subsume: false,
+        });
+        assert!(matches!(
+            backend.storage.table_info(function_reader)?.merge.as_ref(),
+            MergeFn::Function(id, arguments) if *id == tuple_output && arguments.len() == 2
+        ));
+        assert!(matches!(
+            backend.storage.table_info(lookup_reader)?.merge.as_ref(),
+            MergeFn::Lookup(id, arguments) if *id == tuple_output && arguments.len() == 1
+        ));
+        let predicted = backend.peek_next_function_id();
+        let deferred = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id, ColumnTy::Id],
+            n_vals: 2,
+            n_identity_vals: Some(1),
+            default: DefaultVal::Const(Value::new(42)),
+            merge: MergeFn::Block {
+                actions: vec![
+                    MergeAction::Let {
+                        slot: 0,
+                        value: MergeFn::Const(Value::new(10)),
+                    },
+                    MergeAction::Set(
+                        predicted,
+                        vec![
+                            MergeFn::Const(Value::new(5)),
+                            MergeFn::LetVar(0),
+                            MergeFn::NewCol(1),
+                        ],
+                    ),
+                ],
+                result: Box::new(MergeFn::Columns(vec![
+                    MergeFn::LetVar(0),
+                    MergeFn::NewCol(1),
+                ])),
+            },
+            name: "retained-self-write".to_string(),
+            can_subsume: true,
+        });
+        assert_eq!(deferred, predicted);
+        let info = backend.storage.table_info(deferred)?;
+        assert_eq!(info.name, "retained-self-write");
+        assert_eq!(info.schema, [ColumnTy::Id, ColumnTy::Id, ColumnTy::Id]);
+        assert_eq!(info.n_keys, 1);
+        assert_eq!(info.n_vals, 2);
+        assert_eq!(info.n_identity_vals, Some(1));
+        assert!(matches!(info.default, DefaultVal::Const(value) if value == Value::new(42)));
+        assert!(info.can_subsume);
+        let MergeFn::Block { actions, result } = info.merge.as_ref() else {
+            panic!("full merge block was not retained");
+        };
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(actions[0], MergeAction::Let { slot: 0, .. }));
+        assert!(matches!(actions[1], MergeAction::Set(id, _) if id == deferred));
+        assert!(matches!(result.as_ref(), MergeFn::Columns(columns) if columns.len() == 2));
+
+        let generation_before = backend.storage.generation()?;
+        let error = backend
+            .add_values(vec![
+                (executable, vec![Value::new(1), Value::new(2)]),
+                (deferred, vec![Value::new(3), Value::new(4), Value::new(5)]),
+            ])
+            .unwrap_err();
+        assert!(error.to_string().contains("registered but deferred"));
+        assert_eq!(backend.table_size(executable), 0);
+        assert_eq!(backend.table_size(deferred), 0);
+        assert_eq!(backend.storage.generation()?, generation_before);
+
+        let next = backend.peek_next_function_id();
+        let wrong_function_arity = catch_unwind(AssertUnwindSafe(|| {
+            backend.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Function(tuple_output, vec![MergeFn::Old]),
+                name: "invalid-function-arity".to_string(),
+                can_subsume: false,
+            })
+        }));
+        assert!(wrong_function_arity.is_err());
+        assert_eq!(backend.peek_next_function_id(), next);
+
+        let nested = catch_unwind(AssertUnwindSafe(|| {
+            backend.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Columns(vec![MergeFn::Columns(vec![MergeFn::Old])]),
+                name: "invalid-nested-columns".to_string(),
+                can_subsume: false,
+            })
+        }));
+        assert!(nested.is_err());
+        assert_eq!(backend.peek_next_function_id(), next);
+
+        let self_read = catch_unwind(AssertUnwindSafe(|| {
+            backend.add_table(FunctionConfig {
+                schema: vec![ColumnTy::Id, ColumnTy::Id],
+                n_vals: 1,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Function(next, vec![MergeFn::Old]),
+                name: "invalid-self-read".to_string(),
+                can_subsume: false,
+            })
+        }));
+        assert!(self_read.is_err());
+        assert_eq!(backend.peek_next_function_id(), next);
+
+        let admitted = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Id],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::FreshId,
+            merge: MergeFn::New,
+            name: "admitted-after-invalid".to_string(),
+            can_subsume: false,
+        });
+        assert_eq!(admitted, next, "invalid configs must not consume table ids");
+        Ok(())
+    }
+
+    #[test]
+    fn keep_old_input_is_sql_native_and_deferred_writes_fail_closed() -> Result<()> {
         let mut backend = EGraph::new()?;
         backend.base_values_mut().register_type::<()>();
         backend.base_values_mut().register_type::<bool>();
@@ -439,12 +735,20 @@ mod tests {
             Some(vec![Value::new(7), ten])
         );
 
-        assert!(
-            input_merge_policy("unsupported", 1, &MergeFn::AssertEq)
-                .unwrap_err()
-                .to_string()
-                .contains("only the one-column MergeFn::Old")
-        );
+        let deferred = backend.add_table(FunctionConfig {
+            schema: vec![ColumnTy::Id, ColumnTy::Base(i64_ty)],
+            n_vals: 1,
+            n_identity_vals: None,
+            default: DefaultVal::Const(ten),
+            merge: MergeFn::New,
+            name: "deferred-new".to_string(),
+            can_subsume: true,
+        });
+        let error = backend
+            .add_values(vec![(deferred, vec![Value::new(1), twenty])])
+            .unwrap_err();
+        assert!(error.to_string().contains("registered but deferred"));
+        assert_eq!(backend.table_size(deferred), 0);
         Ok(())
     }
 

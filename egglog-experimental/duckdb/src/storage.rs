@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, anyhow, bail};
-use duckdb::types::Value as DuckValue;
-use duckdb::{Connection, Row, params_from_iter};
-use egglog_backend_trait::{BaseValues, ColumnTy, FunctionId, ScanEntry, Value};
-use egglog_core_relations::Boxed;
+use duckdb::{Connection, Row};
+use egglog_backend_trait::{
+    BaseValueId, BaseValues, ColumnTy, DefaultVal, FunctionConfig, FunctionId, MergeAction,
+    MergeFn, ScanEntry, Value,
+};
+use egglog_core_relations::{BaseValue, Boxed};
 use egglog_numeric_id::NumericId;
+use num::{BigInt, BigRational, ToPrimitive, Zero, rational::Rational64};
 use ordered_float::OrderedFloat;
 
 use crate::rule_sql::{CompiledRule, RuleExecutionStats};
@@ -21,15 +24,31 @@ pub(crate) enum ScalarSqlType {
     I64,
     F64,
     String,
+    BigInt,
+    BigRat,
+    Rational,
 }
 
-/// Merge policies whose native input semantics are implemented in this first
-/// storage slice. This is deliberately not a catch-all representation of
-/// `MergeFn`: table registration fails closed before unsupported metadata can
-/// reach storage.
+/// Whether a registered table may currently be written by native input or the
+/// production one-Set rule compiler. Every table retains its full merge plan;
+/// this enum is only an explicit execution capability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum InputMerge {
+pub(crate) enum WriteCapability {
     KeepOld,
+    AssertEq,
+    Deferred,
+}
+
+impl WriteCapability {
+    fn preflight(self, table: &TableInfo) -> Result<()> {
+        if self == Self::Deferred {
+            bail!(
+                "write to table `{}` requires a merge capability that is registered but deferred",
+                table.name
+            );
+        }
+        Ok(())
+    }
 }
 
 impl ScalarSqlType {
@@ -51,9 +70,15 @@ impl ScalarSqlType {
             Self::F64
         } else if base == base_values.get_ty::<Boxed<String>>() {
             Self::String
+        } else if registered_base_type_is::<Boxed<BigInt>>(base_values, base) {
+            Self::BigInt
+        } else if registered_base_type_is::<Boxed<BigRational>>(base_values, base) {
+            Self::BigRat
+        } else if registered_base_type_is::<Boxed<Rational64>>(base_values, base) {
+            Self::Rational
         } else {
             bail!(
-                "DuckDB checkpoint 0.5 has no safe native scalar codec for base type {}",
+                "DuckDB has no safe native scalar codec for base type {}",
                 base.rep()
             );
         };
@@ -67,6 +92,9 @@ impl ScalarSqlType {
             Self::I64 => "BIGINT",
             Self::F64 => "DOUBLE",
             Self::String => "VARCHAR",
+            Self::BigInt => "BIGNUM",
+            Self::BigRat => "STRUCT(numer BIGNUM, denom BIGNUM)",
+            Self::Rational => "STRUCT(numer BIGINT, denom BIGINT)",
         }
     }
 
@@ -75,8 +103,8 @@ impl ScalarSqlType {
     /// Every user-controlled byte passes through this single encoder. Numeric
     /// spellings contain only formatter-produced digits/signs, while strings
     /// are UTF-8 hex and therefore cannot terminate or extend the SQL literal.
-    pub(crate) fn sql_literal(self, base_values: &BaseValues, value: Value) -> String {
-        match self {
+    pub(crate) fn sql_literal(self, base_values: &BaseValues, value: Value) -> Result<String> {
+        Ok(match self {
             Self::Id => format!("CAST('{}' AS UBIGINT)", value.rep()),
             Self::Unit => {
                 base_values.unwrap::<()>(value);
@@ -116,29 +144,39 @@ impl ScalarSqlType {
                     encode_hex(value.as_bytes())
                 )
             }
-        }
+            Self::BigInt => {
+                let value = base_values.unwrap::<Boxed<BigInt>>(value).into_inner();
+                format!("CAST('{}' AS BIGNUM)", value)
+            }
+            Self::BigRat => {
+                let value =
+                    canonical_bigrat(base_values.unwrap::<Boxed<BigRational>>(value).into_inner())?;
+                format!(
+                    "CAST(struct_pack(numer := CAST('{}' AS BIGNUM), denom := CAST('{}' AS BIGNUM)) AS STRUCT(numer BIGNUM, denom BIGNUM))",
+                    value.numer(),
+                    value.denom()
+                )
+            }
+            Self::Rational => {
+                let value = canonical_rational64(
+                    base_values.unwrap::<Boxed<Rational64>>(value).into_inner(),
+                )?;
+                format!(
+                    "CAST(struct_pack(numer := CAST('{}' AS BIGINT), denom := CAST('{}' AS BIGINT)) AS STRUCT(numer BIGINT, denom BIGINT))",
+                    value.numer(),
+                    value.denom()
+                )
+            }
+        })
     }
 
-    /// Bind a typed value for read-only point lookups. Production ingestion is
-    /// deliberately routed through `sql_literal`, never this parameter path.
-    fn bind_value(self, base_values: &BaseValues, value: Value) -> DuckValue {
+    fn read_expression(self, column: &str) -> String {
         match self {
-            Self::Id => DuckValue::UBigInt(u64::from(value.rep())),
-            Self::Unit => {
-                base_values.unwrap::<()>(value);
-                DuckValue::Boolean(true)
-            }
-            Self::Bool => DuckValue::Boolean(base_values.unwrap::<bool>(value)),
-            Self::I64 => DuckValue::BigInt(base_values.unwrap::<i64>(value)),
-            Self::F64 => DuckValue::Double(
-                base_values
-                    .unwrap::<Boxed<OrderedFloat<f64>>>(value)
-                    .0
-                    .into_inner(),
+            Self::BigInt => format!("CAST({column} AS VARCHAR)"),
+            Self::BigRat | Self::Rational => format!(
+                "concat(CAST(struct_extract({column}, 'numer') AS VARCHAR), '/', CAST(struct_extract({column}, 'denom') AS VARCHAR))"
             ),
-            Self::String => {
-                DuckValue::Text(base_values.unwrap::<Boxed<String>>(value).into_inner())
-            }
+            _ => column.to_string(),
         }
     }
 
@@ -159,8 +197,95 @@ impl ScalarSqlType {
             Self::I64 => base_values.get(row.get::<_, i64>(column)?),
             Self::F64 => base_values.get(Boxed::new(OrderedFloat(row.get::<_, f64>(column)?))),
             Self::String => base_values.get(Boxed::new(row.get::<_, String>(column)?)),
+            Self::BigInt => {
+                let value = parse_canonical_bigint(&row.get::<_, String>(column)?)?;
+                base_values.get(Boxed::new(value))
+            }
+            Self::BigRat => {
+                let (numer, denom) = parse_exact_pair(&row.get::<_, String>(column)?)?;
+                let value = canonical_bigrat(BigRational::new(numer.clone(), denom.clone()))?;
+                if value.numer() != &numer || value.denom() != &denom {
+                    bail!("DuckDB BigRat row is not canonically reduced");
+                }
+                base_values.get(Boxed::new(value))
+            }
+            Self::Rational => {
+                let (numer, denom) = parse_exact_pair(&row.get::<_, String>(column)?)?;
+                let stored_numer = numer
+                    .to_i64()
+                    .context("DuckDB Rational numerator is outside i64")?;
+                let stored_denom = denom
+                    .to_i64()
+                    .context("DuckDB Rational denominator is outside i64")?;
+                let value = canonical_rational64(Rational64::new_raw(stored_numer, stored_denom))?;
+                if *value.numer() != stored_numer || *value.denom() != stored_denom {
+                    bail!("DuckDB Rational row is not canonically reduced");
+                }
+                base_values.get(Boxed::new(value))
+            }
         })
     }
+}
+
+/// `BaseValues` intentionally exposes no fallible type-id lookup. Registering
+/// on a clone tells us whether a concrete Rust type was already present
+/// without mutating the live registry or relying on registration order.
+fn registered_base_type_is<P: BaseValue>(base_values: &BaseValues, id: BaseValueId) -> bool {
+    let mut probe = base_values.clone();
+    probe.register_type::<P>() == id
+}
+
+fn canonical_bigrat(value: BigRational) -> Result<BigRational> {
+    if value.denom().is_zero() {
+        bail!("BigRat denominator must not be zero");
+    }
+    Ok(BigRational::new(
+        value.numer().clone(),
+        value.denom().clone(),
+    ))
+}
+
+fn canonical_rational64(value: Rational64) -> Result<Rational64> {
+    if value.denom().is_zero() {
+        bail!("Rational denominator must not be zero");
+    }
+    // Normalize through arbitrary precision so hostile raw i64 pairs cannot
+    // overflow while flipping a denominator sign or reducing a gcd.
+    let normalized = BigRational::new(BigInt::from(*value.numer()), BigInt::from(*value.denom()));
+    let numer = normalized
+        .numer()
+        .to_i64()
+        .context("canonical Rational numerator is outside i64")?;
+    let denom = normalized
+        .denom()
+        .to_i64()
+        .context("canonical Rational denominator is outside i64")?;
+    Ok(Rational64::new_raw(numer, denom))
+}
+
+fn parse_canonical_bigint(text: &str) -> Result<BigInt> {
+    let value = text
+        .parse::<BigInt>()
+        .with_context(|| format!("invalid canonical integer projection `{text}`"))?;
+    if value.to_string() != text {
+        bail!("non-canonical integer projection `{text}`");
+    }
+    Ok(value)
+}
+
+fn parse_exact_pair(text: &str) -> Result<(BigInt, BigInt)> {
+    let (numer, denom) = text
+        .split_once('/')
+        .ok_or_else(|| anyhow!("invalid exact-number projection `{text}`"))?;
+    if denom.contains('/') {
+        bail!("invalid exact-number projection `{text}`");
+    }
+    let numer = parse_canonical_bigint(numer)?;
+    let denom = parse_canonical_bigint(denom)?;
+    if denom <= BigInt::ZERO {
+        bail!("exact-number denominator must be positive");
+    }
+    Ok((numer, denom))
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
@@ -173,20 +298,244 @@ fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct TableInfo {
     pub(crate) name: String,
     pub(crate) schema: Vec<ColumnTy>,
     pub(crate) columns: Vec<ScalarSqlType>,
     pub(crate) n_keys: usize,
+    pub(crate) n_vals: usize,
+    // Retained for action-stream lookup and identity-guard lowering in later
+    // checkpoints even though this slice only executes direct Set writes.
+    #[allow(dead_code)]
+    pub(crate) n_identity_vals: Option<usize>,
+    #[allow(dead_code)]
+    pub(crate) default: DefaultVal,
+    #[allow(dead_code)]
+    pub(crate) merge: Arc<MergeFn>,
     pub(crate) can_subsume: bool,
-    pub(crate) input_merge: InputMerge,
+    pub(crate) write_capability: WriteCapability,
 }
 
 impl TableInfo {
     pub(crate) fn arity(&self) -> usize {
         self.columns.len()
     }
+
+    pub(crate) fn preflight_write(&self) -> Result<()> {
+        self.write_capability.preflight(self)
+    }
+}
+
+fn validate_function_config(
+    tables: &[TableInfo],
+    predicted_id: FunctionId,
+    config: &FunctionConfig,
+) -> Result<WriteCapability> {
+    if !(1..=config.schema.len()).contains(&config.n_vals) {
+        bail!(
+            "function `{}` declares {} value columns but has {} columns",
+            config.name,
+            config.n_vals,
+            config.schema.len()
+        );
+    }
+    if let Some(identity_vals) = config.n_identity_vals
+        && !(1..=config.n_vals).contains(&identity_vals)
+    {
+        bail!(
+            "function `{}` declares {identity_vals} identity columns but has {} value columns",
+            config.name,
+            config.n_vals
+        );
+    }
+
+    let (actions, result) = match &config.merge {
+        MergeFn::Block { actions, result } => (actions.as_slice(), result.as_ref()),
+        result => (&[][..], result),
+    };
+    let mut available_slots = 0;
+    for action in actions {
+        validate_merge_action(action, tables, predicted_id, config, available_slots)?;
+        if let MergeAction::Let { slot, .. } = action {
+            if *slot != available_slots {
+                bail!(
+                    "merge for `{}` declares let slot {slot}, expected {available_slots}",
+                    config.name
+                );
+            }
+            available_slots += 1;
+        }
+    }
+
+    let results = match result {
+        MergeFn::Columns(columns) => columns.as_slice(),
+        result => std::slice::from_ref(result),
+    };
+    if results.len() != config.n_vals {
+        bail!(
+            "merge for `{}` must produce {} value column(s), got {}",
+            config.name,
+            config.n_vals,
+            results.len()
+        );
+    }
+    for result in results {
+        validate_merge_expression(result, tables, predicted_id, config, available_slots)?;
+    }
+
+    Ok(match (&config.merge, config.n_vals) {
+        (MergeFn::Old, 1) => WriteCapability::KeepOld,
+        (MergeFn::AssertEq, 1) => WriteCapability::AssertEq,
+        _ => WriteCapability::Deferred,
+    })
+}
+
+fn validate_merge_action(
+    action: &MergeAction,
+    tables: &[TableInfo],
+    predicted_id: FunctionId,
+    config: &FunctionConfig,
+    available_slots: usize,
+) -> Result<()> {
+    match action {
+        MergeAction::Set(target, arguments) => {
+            let target_arity = if *target == predicted_id {
+                config.schema.len()
+            } else {
+                tables
+                    .get(target.rep() as usize)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "merge for `{}` writes future or unknown function {}",
+                            config.name,
+                            target.rep()
+                        )
+                    })?
+                    .arity()
+            };
+            if arguments.len() != target_arity {
+                bail!(
+                    "merge for `{}` writes {} columns to function {}, expected {target_arity}",
+                    config.name,
+                    arguments.len(),
+                    target.rep()
+                );
+            }
+            for argument in arguments {
+                validate_merge_expression(argument, tables, predicted_id, config, available_slots)?;
+            }
+        }
+        MergeAction::Let { value, .. } => {
+            validate_merge_expression(value, tables, predicted_id, config, available_slots)?
+        }
+        MergeAction::Union(lhs, rhs) => {
+            validate_merge_expression(lhs, tables, predicted_id, config, available_slots)?;
+            validate_merge_expression(rhs, tables, predicted_id, config, available_slots)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_merge_expression(
+    merge: &MergeFn,
+    tables: &[TableInfo],
+    predicted_id: FunctionId,
+    config: &FunctionConfig,
+    available_slots: usize,
+) -> Result<()> {
+    match merge {
+        MergeFn::OldCol(index) | MergeFn::NewCol(index) => {
+            if *index >= config.n_vals {
+                bail!(
+                    "merge for `{}` references value column {index}, but has only {} value columns",
+                    config.name,
+                    config.n_vals
+                );
+            }
+        }
+        MergeFn::LetVar(slot) => {
+            if *slot >= available_slots {
+                bail!(
+                    "merge for `{}` references let slot {slot} before it is bound",
+                    config.name
+                );
+            }
+        }
+        MergeFn::Primitive(_, arguments) => {
+            for argument in arguments {
+                validate_merge_expression(argument, tables, predicted_id, config, available_slots)?;
+            }
+        }
+        MergeFn::Function(function, arguments) => {
+            if *function == predicted_id {
+                bail!(
+                    "self-referential merge for `{}` may write to itself but may not read itself",
+                    config.name
+                );
+            }
+            let target = tables.get(function.rep() as usize).ok_or_else(|| {
+                anyhow!(
+                    "merge for `{}` reads future or unknown function {}",
+                    config.name,
+                    function.rep()
+                )
+            })?;
+            let expected = target.arity() - 1;
+            if arguments.len() != expected {
+                bail!(
+                    "merge for `{}` calls function {} with {} arguments, expected {expected}",
+                    config.name,
+                    function.rep(),
+                    arguments.len()
+                );
+            }
+            for argument in arguments {
+                validate_merge_expression(argument, tables, predicted_id, config, available_slots)?;
+            }
+        }
+        MergeFn::Lookup(function, arguments) => {
+            if *function == predicted_id {
+                bail!(
+                    "self-referential merge for `{}` may write to itself but may not read itself",
+                    config.name
+                );
+            }
+            let target = tables.get(function.rep() as usize).ok_or_else(|| {
+                anyhow!(
+                    "merge for `{}` reads future or unknown function {}",
+                    config.name,
+                    function.rep()
+                )
+            })?;
+            if arguments.len() != target.n_keys {
+                bail!(
+                    "merge for `{}` looks up {} keys from function {}, expected {}",
+                    config.name,
+                    arguments.len(),
+                    function.rep(),
+                    target.n_keys
+                );
+            }
+            for argument in arguments {
+                validate_merge_expression(argument, tables, predicted_id, config, available_slots)?;
+            }
+        }
+        MergeFn::Columns(_) => {
+            bail!(
+                "nested MergeFn::Columns is not supported for `{}`",
+                config.name
+            )
+        }
+        MergeFn::Block { .. } => {
+            bail!(
+                "nested MergeFn::Block is not supported for `{}`",
+                config.name
+            )
+        }
+        MergeFn::AssertEq | MergeFn::UnionId | MergeFn::Old | MergeFn::New | MergeFn::Const(_) => {}
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -267,47 +616,40 @@ impl Storage {
     pub(crate) fn register_table(
         &self,
         base_values: &BaseValues,
-        name: String,
-        schema: &[ColumnTy],
-        n_vals: usize,
-        can_subsume: bool,
-        input_merge: InputMerge,
+        config: FunctionConfig,
     ) -> Result<FunctionId> {
-        if !(1..=schema.len()).contains(&n_vals) {
-            bail!(
-                "function `{name}` declares {n_vals} value columns but has {} columns",
-                schema.len()
-            );
-        }
-        let columns = schema
+        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let id = FunctionId::new(state.tables.len() as u32);
+        let write_capability = validate_function_config(&state.tables, id, &config)?;
+        let columns = config
+            .schema
             .iter()
             .copied()
             .map(|column| ScalarSqlType::from_column(base_values, column))
             .collect::<Result<Vec<_>>>()?;
-        let n_keys = schema.len() - n_vals;
-
-        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
-        let id = FunctionId::new(state.tables.len() as u32);
-        create_table(
-            &state.connection,
-            id,
-            &TableInfo {
-                name: name.clone(),
-                schema: schema.to_vec(),
-                columns: columns.clone(),
-                n_keys,
-                can_subsume,
-                input_merge,
-            },
-        )?;
-        state.tables.push(TableInfo {
+        let FunctionConfig {
+            schema,
+            n_vals,
+            n_identity_vals,
+            default,
+            merge,
             name,
-            schema: schema.to_vec(),
-            columns,
-            n_keys,
             can_subsume,
-            input_merge,
-        });
+        } = config;
+        let info = TableInfo {
+            name,
+            n_keys: schema.len() - n_vals,
+            n_vals,
+            n_identity_vals,
+            default,
+            merge: Arc::new(merge),
+            schema,
+            columns,
+            can_subsume,
+            write_capability,
+        };
+        create_table(&state.connection, id, &info)?;
+        state.tables.push(info);
         Ok(id)
     }
 
@@ -324,6 +666,7 @@ impl Storage {
         let mut grouped = BTreeMap::<u32, Vec<Vec<String>>>::new();
         for (function, row) in values {
             let info = table_info(&state, function)?;
+            info.preflight_write()?;
             if row.len() != info.arity() {
                 bail!(
                     "table `{}` expects {} columns, got {}",
@@ -337,7 +680,7 @@ impl Storage {
                 .iter()
                 .zip(row)
                 .map(|(&ty, value)| ty.sql_literal(base_values, value))
-                .collect();
+                .collect::<Result<Vec<_>>>()?;
             grouped.entry(function.rep()).or_default().push(encoded);
         }
 
@@ -366,6 +709,18 @@ impl Storage {
             )?;
 
             for (function, info, rows) in grouped {
+                if info.write_capability == WriteCapability::AssertEq {
+                    let conflict_sql = input_assert_eq_conflict_sql(function, &info, &rows);
+                    let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
+                    #[cfg(test)]
+                    executed_sql.push(conflict_sql);
+                    if conflict {
+                        bail!(
+                            "illegal MergeFn::AssertEq conflict for table `{}`",
+                            info.name
+                        );
+                    }
+                }
                 let sql = input_insert_sql(function, &info, &rows, generation);
                 inserted_rows += transaction.execute(&sql, [])?;
                 #[cfg(test)]
@@ -428,7 +783,7 @@ impl Storage {
 
         let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
         let run = state.next_rule_run;
-        state.next_rule_run = state
+        let next_rule_run = state
             .next_rule_run
             .checked_add(1)
             .context("DuckDB rule-stage identifier overflow")?;
@@ -471,6 +826,15 @@ impl Storage {
 
             let mut changed = false;
             for ((rule, _), stage) in scheduled.iter().zip(&stage_names) {
+                if let Some(conflict_sql) = rule.conflict_sql(stage) {
+                    let conflict = transaction.query_row(&conflict_sql, [], |row| row.get(0))?;
+                    #[cfg(test)]
+                    sql_log.push(conflict_sql);
+                    statement_count += 1;
+                    if conflict {
+                        bail!("illegal MergeFn::AssertEq conflict in scheduled rule");
+                    }
+                }
                 let insert = rule.insert_sql(stage, generation);
                 let inserted = transaction.execute(&insert, [])?;
                 changed |= inserted != 0;
@@ -512,6 +876,7 @@ impl Storage {
             }
         };
         transaction.commit()?;
+        state.next_rule_run = next_rule_run;
         #[cfg(test)]
         {
             state.latest_rule_sql = sql_log;
@@ -539,7 +904,7 @@ impl Storage {
         let info = table_info(&state, id)?;
         let sql = format!(
             "SELECT {}, __generation, __subsumed FROM {} ORDER BY __generation, {}",
-            visible_columns(info.arity()),
+            read_columns(info),
             sql_table(id),
             visible_columns(info.arity())
         );
@@ -571,23 +936,26 @@ impl Storage {
         let predicate = if key.is_empty() {
             "TRUE".to_string()
         } else {
-            (0..key.len())
-                .map(|column| format!("c{column} = ?"))
-                .collect::<Vec<_>>()
+            info.columns[..info.n_keys]
+                .iter()
+                .zip(key)
+                .enumerate()
+                .map(|(column, (&ty, &value))| {
+                    Ok(format!(
+                        "c{column} IS NOT DISTINCT FROM {}",
+                        ty.sql_literal(base_values, value)?
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?
                 .join(" AND ")
         };
-        let params = info.columns[..info.n_keys]
-            .iter()
-            .zip(key)
-            .map(|(&ty, &value)| ty.bind_value(base_values, value))
-            .collect::<Vec<_>>();
         let sql = format!(
             "SELECT {}, __generation, __subsumed FROM {} WHERE {predicate} LIMIT 1",
-            visible_columns(info.arity()),
+            read_columns(info),
             sql_table(id)
         );
         let mut statement = state.connection.prepare(&sql)?;
-        let mut rows = statement.query(params_from_iter(params.iter()))?;
+        let mut rows = statement.query([])?;
         rows.next()?
             .map(|row| decode_row(base_values, info, row))
             .transpose()
@@ -613,7 +981,7 @@ impl Storage {
     }
 
     #[cfg(test)]
-    fn latest_input_sql(&self) -> Vec<String> {
+    pub(crate) fn latest_input_sql(&self) -> Vec<String> {
         self.state
             .lock()
             .expect("DuckDB storage mutex poisoned")
@@ -675,22 +1043,16 @@ fn input_insert_sql(
             qualified_columns("incoming", info.n_keys)
         )
     };
-    let existing_row = match info.input_merge {
-        InputMerge::KeepOld if info.n_keys == 0 => {
-            format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(function))
-        }
-        InputMerge::KeepOld => {
-            let equality = (0..info.n_keys)
-                .map(|column| format!("existing.c{column} IS NOT DISTINCT FROM ranked.c{column}"))
-                .collect::<Vec<_>>()
-                .join(" AND ");
-            format!(
-                "NOT EXISTS (
-                     SELECT 1 FROM {} AS existing WHERE {equality}
-                 )",
-                sql_table(function)
-            )
-        }
+    let existing_row = if info.n_keys == 0 {
+        format!("NOT EXISTS (SELECT 1 FROM {})", sql_table(function))
+    } else {
+        let equality = key_equality("existing", "ranked", info.n_keys);
+        format!(
+            "NOT EXISTS (
+                 SELECT 1 FROM {} AS existing WHERE {equality}
+             )",
+            sql_table(function)
+        )
     };
 
     format!(
@@ -708,6 +1070,67 @@ fn input_insert_sql(
         qualified_columns("ranked", info.arity()),
         visible_columns(info.arity()),
     )
+}
+
+fn input_assert_eq_conflict_sql(
+    function: FunctionId,
+    info: &TableInfo,
+    rows: &[Vec<String>],
+) -> String {
+    debug_assert_eq!(info.write_capability, WriteCapability::AssertEq);
+    debug_assert_eq!(info.n_vals, 1);
+    let values = rows
+        .iter()
+        .map(|row| format!("({})", row.join(", ")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "WITH incoming({}) AS (VALUES {values}) {}",
+        visible_columns(info.arity()),
+        assert_eq_conflict_sql(function, info.n_keys, "incoming")
+    )
+}
+
+pub(crate) fn assert_eq_conflict_sql(
+    function: FunctionId,
+    n_keys: usize,
+    incoming: &str,
+) -> String {
+    debug_assert!(
+        incoming
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    );
+    let output = n_keys;
+    let intra_batch = if n_keys == 0 {
+        format!("SELECT 1 FROM {incoming} HAVING count(DISTINCT c{output}) > 1")
+    } else {
+        format!(
+            "SELECT 1 FROM {incoming} GROUP BY {} HAVING count(DISTINCT c{output}) > 1",
+            visible_columns(n_keys)
+        )
+    };
+    let key_join = if n_keys == 0 {
+        "TRUE".to_string()
+    } else {
+        key_equality("existing", "candidate", n_keys)
+    };
+    format!(
+        "SELECT EXISTS ({intra_batch}) OR EXISTS (
+             SELECT 1
+             FROM {incoming} AS candidate
+             JOIN {} AS existing ON {key_join}
+             WHERE candidate.c{output} IS DISTINCT FROM existing.c{output}
+         )",
+        sql_table(function)
+    )
+}
+
+fn key_equality(left: &str, right: &str, n_keys: usize) -> String {
+    (0..n_keys)
+        .map(|column| format!("{left}.c{column} IS NOT DISTINCT FROM {right}.c{column}"))
+        .collect::<Vec<_>>()
+        .join(" AND ")
 }
 
 fn decode_row(base_values: &BaseValues, info: &TableInfo, row: &Row<'_>) -> Result<StoredRow> {
@@ -747,6 +1170,15 @@ pub(crate) fn visible_columns(arity: usize) -> String {
         .join(", ")
 }
 
+fn read_columns(info: &TableInfo) -> String {
+    info.columns
+        .iter()
+        .enumerate()
+        .map(|(column, ty)| ty.read_expression(&format!("c{column}")))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 pub(crate) fn qualified_columns(alias: &str, arity: usize) -> String {
     (0..arity)
         .map(|column| format!("{alias}.c{column}"))
@@ -773,6 +1205,7 @@ mod tests {
     use super::*;
     use duckdb::types::Value as DuckValue;
     use egglog_backend_trait::ColumnTy;
+    use num::{BigInt, BigRational, rational::Rational64};
 
     fn scalar_base_values() -> BaseValues {
         let mut values = BaseValues::default();
@@ -782,6 +1215,49 @@ mod tests {
         values.register_type::<i64>();
         values.register_type::<Boxed<OrderedFloat<f64>>>();
         values
+    }
+
+    fn register_keep_old(
+        storage: &Storage,
+        values: &BaseValues,
+        name: &str,
+        schema: Vec<ColumnTy>,
+        n_vals: usize,
+        can_subsume: bool,
+    ) -> Result<FunctionId> {
+        storage.register_table(
+            values,
+            FunctionConfig {
+                schema,
+                n_vals,
+                n_identity_vals: None,
+                default: DefaultVal::Fail,
+                merge: MergeFn::Old,
+                name: name.to_string(),
+                can_subsume,
+            },
+        )
+    }
+
+    fn register_assert_eq(
+        storage: &Storage,
+        values: &BaseValues,
+        name: &str,
+        schema: Vec<ColumnTy>,
+        can_subsume: bool,
+    ) -> Result<FunctionId> {
+        storage.register_table(
+            values,
+            FunctionConfig {
+                schema,
+                n_vals: 1,
+                n_identity_vals: Some(1),
+                default: DefaultVal::Fail,
+                merge: MergeFn::AssertEq,
+                name: name.to_string(),
+                can_subsume,
+            },
+        )
     }
 
     fn ordinary_function_index_count(connection: &Connection) -> Result<u64> {
@@ -817,13 +1293,206 @@ mod tests {
     }
 
     #[test]
+    fn exact_numeric_values_round_trip_through_typed_columns() -> Result<()> {
+        let mut values = scalar_base_values();
+        let bigint_ty = values.register_type::<Boxed<BigInt>>();
+        let bigrat_ty = values.register_type::<Boxed<BigRational>>();
+        let rational_ty = values.register_type::<Boxed<Rational64>>();
+        let storage = Storage::new()?;
+        let table = register_keep_old(
+            &storage,
+            &values,
+            "exact-numbers",
+            vec![
+                ColumnTy::Id,
+                ColumnTy::Base(bigint_ty),
+                ColumnTy::Base(bigrat_ty),
+                ColumnTy::Base(rational_ty),
+            ],
+            1,
+            false,
+        )?;
+        let huge = "1234567890".repeat(40).parse::<BigInt>()?;
+        let ratio_denom = "98765432109876543210987654321".parse::<BigInt>()?;
+        let raw_ratio = BigRational::new_raw(huge.clone(), -ratio_denom.clone());
+        let canonical_ratio = BigRational::new(-huge.clone(), ratio_denom);
+        let fixed = Rational64::new_raw(-6, -8);
+        let row = vec![
+            Value::new(1),
+            values.get(Boxed::new(huge.clone())),
+            values.get(Boxed::new(raw_ratio.clone())),
+            values.get(Boxed::new(fixed)),
+        ];
+
+        storage.insert_batch(&values, vec![(table, row)])?;
+        let stored = &storage.scan(&values, table)?[0].values;
+        assert_eq!(values.unwrap::<Boxed<BigInt>>(stored[1]).into_inner(), huge);
+        assert_eq!(
+            values.unwrap::<Boxed<BigRational>>(stored[2]).into_inner(),
+            canonical_ratio
+        );
+        assert_eq!(
+            values.unwrap::<Boxed<Rational64>>(stored[3]).into_inner(),
+            Rational64::new(3, 4)
+        );
+        assert!(
+            storage
+                .lookup(
+                    &values,
+                    table,
+                    &[
+                        Value::new(1),
+                        values.get(Boxed::new(huge)),
+                        values.get(Boxed::new(raw_ratio)),
+                    ],
+                )?
+                .is_some()
+        );
+        assert!(
+            storage
+                .latest_input_sql()
+                .iter()
+                .all(|statement| !statement.contains('?'))
+        );
+        storage.with_connection(|connection| {
+            let types = connection
+                .prepare(&format!("DESCRIBE {}", sql_table(table)))?
+                .query_map([], |row| row.get::<_, String>(1))?
+                .collect::<duckdb::Result<Vec<_>>>()?;
+            assert_eq!(types[1], "BIGNUM");
+            assert_eq!(types[2], "STRUCT(numer BIGNUM, denom BIGNUM)");
+            assert_eq!(types[3], "STRUCT(numer BIGINT, denom BIGINT)");
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn hostile_noncanonical_exact_values_fail_before_transaction_without_panicking() -> Result<()> {
+        let mut values = scalar_base_values();
+        let bigrat_ty = values.register_type::<Boxed<BigRational>>();
+        let rational_ty = values.register_type::<Boxed<Rational64>>();
+        let storage = Storage::new()?;
+        let first = register_keep_old(
+            &storage,
+            &values,
+            "first-before-hostile",
+            vec![ColumnTy::Id, ColumnTy::Id],
+            1,
+            false,
+        )?;
+        let bigrat = register_keep_old(
+            &storage,
+            &values,
+            "hostile-bigrat",
+            vec![ColumnTy::Id, ColumnTy::Base(bigrat_ty)],
+            1,
+            false,
+        )?;
+        let rational = register_keep_old(
+            &storage,
+            &values,
+            "hostile-rational",
+            vec![ColumnTy::Id, ColumnTy::Base(rational_ty)],
+            1,
+            false,
+        )?;
+        assert!(
+            canonical_rational64(Rational64::new_raw(i64::MIN, -1))
+                .unwrap_err()
+                .to_string()
+                .contains("outside i64")
+        );
+        let generation_before = storage.generation()?;
+        let hostile_bigrat = values.get(Boxed::new(BigRational::new_raw(1.into(), 0.into())));
+        let error = storage
+            .insert_batch(
+                &values,
+                vec![
+                    (first, vec![Value::new(1), Value::new(2)]),
+                    (bigrat, vec![Value::new(3), hostile_bigrat]),
+                ],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("denominator must not be zero"));
+        assert_eq!(storage.table_size(first)?, 0);
+        assert_eq!(storage.table_size(bigrat)?, 0);
+        assert_eq!(storage.generation()?, generation_before);
+
+        let hostile_rational = values.get(Boxed::new(Rational64::new_raw(1, 0)));
+        let error = storage
+            .insert_batch(
+                &values,
+                vec![
+                    (first, vec![Value::new(1), Value::new(2)]),
+                    (rational, vec![Value::new(3), hostile_rational]),
+                ],
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("denominator must not be zero"));
+        assert_eq!(storage.table_size(first)?, 0);
+        assert_eq!(storage.table_size(rational)?, 0);
+        assert_eq!(storage.generation()?, generation_before);
+        Ok(())
+    }
+
+    #[test]
+    fn assert_eq_compares_typed_bigrat_structs_setwise() -> Result<()> {
+        let mut values = scalar_base_values();
+        let bigrat_ty = values.register_type::<Boxed<BigRational>>();
+        let storage = Storage::new()?;
+        let table = register_assert_eq(
+            &storage,
+            &values,
+            "bigrat-assert",
+            vec![ColumnTy::Id, ColumnTy::Base(bigrat_ty)],
+            false,
+        )?;
+        let one_third = values.get(Boxed::new(BigRational::new(1.into(), 3.into())));
+        let two_fifths = values.get(Boxed::new(BigRational::new(2.into(), 5.into())));
+        storage.insert_batch(
+            &values,
+            vec![
+                (table, vec![Value::new(1), one_third]),
+                (table, vec![Value::new(1), one_third]),
+            ],
+        )?;
+        assert_eq!(storage.table_size(table)?, 1);
+        let generation = storage.generation()?;
+        assert!(
+            storage
+                .insert_batch(
+                    &values,
+                    vec![
+                        (table, vec![Value::new(2), one_third]),
+                        (table, vec![Value::new(2), two_fifths]),
+                    ],
+                )
+                .unwrap_err()
+                .to_string()
+                .contains("AssertEq")
+        );
+        assert!(
+            storage
+                .insert_batch(&values, vec![(table, vec![Value::new(1), two_fifths])],)
+                .unwrap_err()
+                .to_string()
+                .contains("AssertEq")
+        );
+        assert_eq!(storage.table_size(table)?, 1);
+        assert_eq!(storage.generation()?, generation);
+        Ok(())
+    }
+
+    #[test]
     fn typed_values_round_trip_without_opaque_base_handles_or_indexes() -> Result<()> {
         let values = scalar_base_values();
         let storage = Storage::new()?;
-        let id = storage.register_table(
+        let id = register_keep_old(
+            &storage,
             &values,
-            "typed".to_string(),
-            &[
+            "typed",
+            vec![
                 ColumnTy::Id,
                 ColumnTy::Base(values.get_ty::<bool>()),
                 ColumnTy::Base(values.get_ty::<i64>()),
@@ -833,7 +1502,6 @@ mod tests {
             ],
             1,
             false,
-            InputMerge::KeepOld,
         )?;
         let row = vec![
             Value::new(17),
@@ -889,35 +1557,35 @@ mod tests {
     fn adversarial_sql_literals_round_trip_and_cannot_escape_values() -> Result<()> {
         let values = scalar_base_values();
         let storage = Storage::new()?;
-        let string_table = storage.register_table(
+        let string_table = register_keep_old(
+            &storage,
             &values,
-            "strings".to_string(),
-            &[
+            "strings",
+            vec![
                 ColumnTy::Id,
                 ColumnTy::Base(values.get_ty::<Boxed<String>>()),
             ],
             1,
             false,
-            InputMerge::KeepOld,
         )?;
-        let integer_table = storage.register_table(
+        let integer_table = register_keep_old(
+            &storage,
             &values,
-            "integers".to_string(),
-            &[ColumnTy::Id, ColumnTy::Base(values.get_ty::<i64>())],
+            "integers",
+            vec![ColumnTy::Id, ColumnTy::Base(values.get_ty::<i64>())],
             1,
             false,
-            InputMerge::KeepOld,
         )?;
-        let float_table = storage.register_table(
+        let float_table = register_keep_old(
+            &storage,
             &values,
-            "floats".to_string(),
-            &[
+            "floats",
+            vec![
                 ColumnTy::Id,
                 ColumnTy::Base(values.get_ty::<Boxed<OrderedFloat<f64>>>()),
             ],
             1,
             false,
-            InputMerge::KeepOld,
         )?;
 
         let strings = [
@@ -1010,23 +1678,9 @@ mod tests {
     fn keep_old_conflicts_and_invalid_target_rollback_are_transactional() -> Result<()> {
         let values = scalar_base_values();
         let storage = Storage::new()?;
-        let schema = [ColumnTy::Id, ColumnTy::Base(values.get_ty::<i64>())];
-        let first = storage.register_table(
-            &values,
-            "first".to_string(),
-            &schema,
-            1,
-            false,
-            InputMerge::KeepOld,
-        )?;
-        let second = storage.register_table(
-            &values,
-            "second".to_string(),
-            &schema,
-            1,
-            false,
-            InputMerge::KeepOld,
-        )?;
+        let schema = vec![ColumnTy::Id, ColumnTy::Base(values.get_ty::<i64>())];
+        let first = register_keep_old(&storage, &values, "first", schema.clone(), 1, false)?;
+        let second = register_keep_old(&storage, &values, "second", schema, 1, false)?;
         // Recreate the ordinary target with a test-only CHECK fault injector.
         // DuckDB 1.5.4 cannot add CHECK constraints with ALTER TABLE; this DDL
         // remains index-free and preserves the registered physical schema.
@@ -1116,13 +1770,13 @@ mod tests {
     fn nullary_keep_old_is_index_free_and_keeps_first_incoming() -> Result<()> {
         let values = scalar_base_values();
         let storage = Storage::new()?;
-        let table = storage.register_table(
+        let table = register_keep_old(
+            &storage,
             &values,
-            "nullary".to_string(),
-            &[ColumnTy::Base(values.get_ty::<i64>())],
+            "nullary",
+            vec![ColumnTy::Base(values.get_ty::<i64>())],
             1,
             false,
-            InputMerge::KeepOld,
         )?;
         let first = storage.insert_batch(
             &values,

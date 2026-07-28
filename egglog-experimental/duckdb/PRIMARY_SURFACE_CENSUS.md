@@ -155,27 +155,40 @@ relations.
 ## Checkpoint decision
 
 The five workloads' typed schemas and rule shapes are representable at the
-current backend SPI. This is not a claim that checkpoint 0.5 executes the full
-programs: production `RuleSpec` lowering now admits only nonempty Live table
-bodies with typed variables/literals and exactly one Set into a one-output
-`MergeFn::Old` target. That reduced subset passes the Math and Pointer
-differentials described above. Table registration still accepts only that
-one-output merge policy, whose duplicate-key behavior is implemented natively
-with ordinal-ranked `VALUES` plus a full typed-key `NOT EXISTS` anti-join.
-Ordinary function tables have no primary/unique constraints, singleton column,
-or ART indexes. Every other merge policy is rejected before a table is
-advertised. The static census does not reveal reached dynamic `UnstableFn`
-construction/application, so it remains schema-only deferred. The next
-blocking breadth is ordinary merge/effect semantics, primitives/containers,
-and complete-program lowering, not proof-specific storage.
+current backend SPI. This is not a claim that checkpoint 1 executes the full
+programs: production `RuleSpec` lowering admits only nonempty Live table bodies
+with typed variables/literals and exactly one Set into a one-output
+`MergeFn::Old` or `MergeFn::AssertEq` target. The reduced Old subset passes the
+Math and Pointer differentials described above. One-output AssertEq now checks
+intra-stage and existing-row conflicts set-wise in DuckDB before ordinal
+consolidation; equal duplicates remain idempotent. Ordinary function tables
+have no primary/unique constraints, singleton column, or ART indexes.
 
-The reached scalar storage set is `Id`, `Unit`, `bool`, `i64`, `f64`, and
-`String`. None of the five sources reaches `BigInt`, `BigRat`, or experimental
-`Rational`; the storage scaffold fails those and any extension base type closed
-until a lossless native DuckDB representation is selected. Input literals use
-one schema-directed encoder: numeric casts are formatter-produced, and String
-bytes use UTF-8 hex plus DuckDB `from_hex`/`decode`, so input ingestion requires
-no bound parameters and cannot interpolate user text.
+Table registration now retains schema, output and identity counts, default,
+the complete recursively validated merge tree, subsumption, and name.
+Structurally valid merge plans outside the two executable one-output policies
+register as explicitly deferred capabilities; native input and one-Set rules
+reject a write to them during preflight. This lets all five proof-mode public
+paths register their common 23-table prefix (21 AssertEq, one Old, and one
+two-output identity Block) without claiming the deferred Block is executable.
+The first remaining public failure is the generated `uf_path_compress` rule,
+whose four-action head and `!=` primitive are intentionally outside this
+slice. The static census still reveals no dynamic `UnstableFn`
+construction/application, so it remains schema-only deferred.
+
+The source programs' ordinary scalar declarations use `Id`, `Unit`, `bool`,
+`i64`, `f64`, and `String`, but that was not the complete proof-mode storage
+surface. Proof instrumentation reaches `BigInt`, `BigRat`, and experimental
+`Rational` columns on the public paths. Checkpoint 1 stores DuckDB-representable
+values exactly as `BIGNUM`, `STRUCT(numer BIGNUM, denom BIGNUM)`, and
+`STRUCT(numer BIGINT, denom BIGINT)` respectively; an integer outside DuckDB's
+finite `BIGNUM` domain fails transactionally rather than being rounded or
+truncated. Construction uses canonical closed SQL expressions; reads project
+canonical decimal text only at the low-volume Rust boundary because safe public
+`duckdb-rs` has no BIGNUM value variant. Input literals use one schema-directed
+encoder: numeric casts are formatter-produced, and String bytes use UTF-8 hex
+plus DuckDB `from_hex`/`decode`, so input ingestion requires no bound parameters
+and cannot interpolate user text.
 
 One current `(input ...)` command becomes one heterogeneous `add_values` batch
 containing several encoded function IDs. Typed vertical tables therefore use
@@ -211,3 +224,24 @@ superseded by the accepted commands above.
 Fact-directory checks used `awk -F '\t'` per file for row/arity/blank counts,
 `wc -l` for the 2,255-row total, and integer regex/range checks for the three
 numeric columns. All exited 0 in approximately 0.1s; the directory was 396 KiB.
+
+### Checkpoint-1 public boundary
+
+After the AssertEq/config/codec slice, the final feature-enabled nonbundled
+build completed in 6.43s. Fresh direct invocations used
+`target/debug/egglog-experimental --backend duckdb --proofs --mode no-messages`
+with the source path below; Pointer also used its frozen `-F` directory. On
+macOS, `DYLD_LIBRARY_PATH` pointed at `target/debug/deps`, which contains
+Cargo's downloaded `libduckdb.dylib`. Every invocation ran under the
+checkpoint's 110-second external cap and exited 1 at the same intentional next
+compiler boundary:
+`DuckDB rule @uf_path_compress must contain exactly one Set action, found 4
+actions`. No case failed during the common table prefix.
+
+| Workload | Wall time |
+|---|---:|
+| Math | 0.388s |
+| Eggcc | 0.418s |
+| Pointer | 0.465s |
+| Hardboiled | 0.467s |
+| Luminal | 0.408s |

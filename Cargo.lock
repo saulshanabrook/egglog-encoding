@@ -1196,6 +1196,7 @@ dependencies = [
  "egglog-bridge",
  "egglog-core-relations",
  "egglog-numeric-id",
+ "num",
  "ordered-float",
 ]
 

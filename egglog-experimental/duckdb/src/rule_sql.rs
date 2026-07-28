@@ -17,7 +17,8 @@ use egglog_backend_trait::{
 use egglog_numeric_id::NumericId;
 
 use crate::storage::{
-    InputMerge, ScalarSqlType, Storage, TableInfo, qualified_columns, sql_table, visible_columns,
+    ScalarSqlType, Storage, TableInfo, WriteCapability, assert_eq_conflict_sql, qualified_columns,
+    sql_table, visible_columns,
 };
 
 #[derive(Clone, Debug)]
@@ -33,6 +34,7 @@ pub(crate) struct CompiledRule {
     target: FunctionId,
     target_arity: usize,
     target_n_keys: usize,
+    target_write_capability: WriteCapability,
     select_expressions: Vec<String>,
     from: Vec<String>,
     predicates: Vec<String>,
@@ -121,6 +123,11 @@ impl CompiledRule {
             visible_columns(self.target_arity),
             qualified_columns("ranked", self.target_arity),
         )
+    }
+
+    pub(crate) fn conflict_sql(&self, stage: &str) -> Option<String> {
+        (self.target_write_capability == WriteCapability::AssertEq)
+            .then(|| assert_eq_conflict_sql(self.target, self.target_n_keys, stage))
     }
 }
 
@@ -224,7 +231,7 @@ pub(crate) fn compile_rule(
                 GenericAtomTerm::Literal(_, literal) => {
                     validate_literal(&rule.name, literal, expected)?;
                     let encoded = ScalarSqlType::from_column(base_values, expected)?
-                        .sql_literal(base_values, literal.value);
+                        .sql_literal(base_values, literal.value)?;
                     predicates.push(format!(
                         "{column_expression} IS NOT DISTINCT FROM {encoded}"
                     ));
@@ -276,6 +283,7 @@ pub(crate) fn compile_rule(
         target: *target,
         target_arity: target_info.arity(),
         target_n_keys: target_info.n_keys,
+        target_write_capability: target_info.write_capability,
         select_expressions,
         from,
         predicates,
@@ -297,9 +305,9 @@ fn validate_target(
             target.n_keys
         );
     }
-    if target.input_merge != InputMerge::KeepOld {
+    if target.write_capability == WriteCapability::Deferred {
         bail!(
-            "DuckDB rule `{rule_name}` target `{}` does not use the supported one-output MergeFn::Old policy",
+            "DuckDB rule `{rule_name}` target `{}` has a registered but deferred merge capability",
             target.name
         );
     }
@@ -355,8 +363,8 @@ fn head_expression(
         }
         GenericAtomTerm::Literal(_, literal) => {
             validate_literal(rule_name, literal, expected)?;
-            Ok(ScalarSqlType::from_column(base_values, expected)?
-                .sql_literal(base_values, literal.value))
+            ScalarSqlType::from_column(base_values, expected)?
+                .sql_literal(base_values, literal.value)
         }
         GenericAtomTerm::Global(..) => bail!(
             "DuckDB rule `{rule_name}` contains a global head term; globals must be desugared"

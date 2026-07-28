@@ -15,7 +15,7 @@ use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
 use ordered_float::OrderedFloat;
 
-use crate::{EGraph, storage::sql_table};
+use crate::EGraph;
 
 type RuleTerm = GenericAtomTerm<RuleVar, RuleValue>;
 type PointerTranscript = Vec<(bool, Vec<(String, u32)>)>;
@@ -40,12 +40,21 @@ fn register_scalar_types<B: Backend>(backend: &mut B) -> ScalarTypes {
 }
 
 fn table<B: Backend>(backend: &mut B, name: &str, schema: Vec<ColumnTy>) -> FunctionId {
+    table_with_merge(backend, name, schema, MergeFn::Old)
+}
+
+fn table_with_merge<B: Backend>(
+    backend: &mut B,
+    name: &str,
+    schema: Vec<ColumnTy>,
+    merge: MergeFn,
+) -> FunctionId {
     backend.add_table(FunctionConfig {
         schema,
         n_vals: 1,
         n_identity_vals: None,
         default: DefaultVal::Fail,
-        merge: MergeFn::Old,
+        merge,
         name: name.to_string(),
         can_subsume: false,
     })
@@ -447,6 +456,167 @@ fn all_rule_matches_use_a_stable_pre_wave_snapshot() -> Result<()> {
 }
 
 #[test]
+fn assert_eq_rule_checks_stage_conflicts_before_ranking_and_recovers() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    register_scalar_types(&mut backend);
+    backend
+        .base_values_mut()
+        .register_type::<Boxed<OrderedFloat<f64>>>();
+    backend.base_values_mut().register_type::<bool>();
+    let source = table(
+        &mut backend,
+        "assert-source",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let target = table_with_merge(
+        &mut backend,
+        "assert-target",
+        vec![ColumnTy::Id, ColumnTy::Id],
+        MergeFn::AssertEq,
+    );
+    backend.add_values(vec![
+        (source, vec![Value::new(1), Value::new(10)]),
+        (source, vec![Value::new(2), Value::new(20)]),
+    ])?;
+    let source_key = var(0, "source-key", ColumnTy::Id);
+    let output = var(1, "output", ColumnTy::Id);
+    let rule = backend.add_rule(set_rule(
+        "assert-eq-stage-conflict",
+        true,
+        vec![atom(source, vec![source_key, output.clone()])],
+        target,
+        vec![literal(Value::new(7), ColumnTy::Id)],
+        vec![output],
+    ))?;
+    let generation_before = backend.storage.generation()?;
+
+    let error = backend
+        .run_rules(RuleSetRun {
+            name: Some("assert-stage-conflict"),
+            rules: &[rule],
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("MergeFn::AssertEq"));
+    assert_eq!(backend.table_size(target), 0);
+    assert_eq!(backend.storage.generation()?, generation_before);
+    assert_eq!(
+        backend.rules[rule.rep() as usize]
+            .as_ref()
+            .unwrap()
+            .watermark,
+        0
+    );
+    backend.storage.with_connection(|connection| {
+        let stages = connection.query_row(
+            "SELECT count(*) FROM duckdb_tables() WHERE table_name LIKE 'egglog_rule_stage_%'",
+            [],
+            |row| row.get::<_, u64>(0),
+        )?;
+        assert_eq!(stages, 0);
+        Ok(())
+    })?;
+
+    backend.clear_table(source);
+    backend.add_values(vec![
+        (source, vec![Value::new(1), Value::new(10)]),
+        (source, vec![Value::new(2), Value::new(10)]),
+    ])?;
+    assert!(run(&mut backend, &[rule])?);
+    assert_eq!(backend.table_size(target), 1);
+    assert_eq!(backend.last_rule_insert_counts(), &[1]);
+    assert!(!run(&mut backend, &[rule])?);
+    assert_eq!(backend.last_rule_insert_counts(), &[0]);
+    assert!(
+        backend
+            .storage
+            .latest_rule_sql()
+            .iter()
+            .all(|statement| !statement.contains('?'))
+    );
+    Ok(())
+}
+
+#[test]
+fn later_assert_eq_rule_observes_earlier_scheduled_insert_atomically() -> Result<()> {
+    let mut backend = EGraph::new()?;
+    register_scalar_types(&mut backend);
+    backend
+        .base_values_mut()
+        .register_type::<Boxed<OrderedFloat<f64>>>();
+    backend.base_values_mut().register_type::<bool>();
+    let first_source = table(
+        &mut backend,
+        "first-assert-source",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let second_source = table(
+        &mut backend,
+        "second-assert-source",
+        vec![ColumnTy::Id, ColumnTy::Id],
+    );
+    let target = table_with_merge(
+        &mut backend,
+        "scheduled-assert-target",
+        vec![ColumnTy::Id, ColumnTy::Id],
+        MergeFn::AssertEq,
+    );
+    backend.add_values(vec![
+        (first_source, vec![Value::new(1), Value::new(10)]),
+        (second_source, vec![Value::new(2), Value::new(20)]),
+    ])?;
+    let key = var(0, "source-key", ColumnTy::Id);
+    let output = var(1, "output", ColumnTy::Id);
+    let first = backend.add_rule(set_rule(
+        "first-assert-rule",
+        true,
+        vec![atom(first_source, vec![key.clone(), output.clone()])],
+        target,
+        vec![literal(Value::new(7), ColumnTy::Id)],
+        vec![output.clone()],
+    ))?;
+    let second = backend.add_rule(set_rule(
+        "second-assert-rule",
+        true,
+        vec![atom(second_source, vec![key, output.clone()])],
+        target,
+        vec![literal(Value::new(7), ColumnTy::Id)],
+        vec![output],
+    ))?;
+    let generation_before = backend.storage.generation()?;
+
+    let error = backend
+        .run_rules(RuleSetRun {
+            name: Some("scheduled-conflict"),
+            rules: &[first, second],
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("AssertEq"));
+    assert_eq!(backend.table_size(target), 0);
+    assert_eq!(backend.storage.generation()?, generation_before);
+    for rule in [first, second] {
+        assert_eq!(
+            backend.rules[rule.rep() as usize]
+                .as_ref()
+                .unwrap()
+                .watermark,
+            0
+        );
+    }
+
+    backend.clear_table(second_source);
+    backend.add_values(vec![(second_source, vec![Value::new(2), Value::new(10)])])?;
+    assert!(run(&mut backend, &[first, second])?);
+    assert_eq!(backend.last_rule_insert_counts(), &[1, 0]);
+    assert_eq!(
+        backend.lookup_row(target, &[Value::new(7)]),
+        Some(vec![Value::new(7), Value::new(10)])
+    );
+    assert!(!run(&mut backend, &[first, second])?);
+    assert_eq!(backend.last_rule_insert_counts(), &[0, 0]);
+    Ok(())
+}
+
+#[test]
 fn generated_rule_sql_is_literal_only_numeric_named_and_index_free() -> Result<()> {
     let mut backend = EGraph::new()?;
     let types = register_scalar_types(&mut backend);
@@ -719,6 +889,27 @@ fn unsupported_rule_ir_fails_closed_before_allocating_an_id() -> Result<()> {
             .contains("global")
     );
 
+    let deferred_target = table_with_merge(
+        &mut backend,
+        "deferred-rule-target",
+        vec![ColumnTy::Id, ColumnTy::Id],
+        MergeFn::New,
+    );
+    let mut deferred = valid.clone();
+    deferred.name = "deferred-target".to_string();
+    if let GenericCoreAction::Set(_, RuleActionCall::Table { id, .. }, _, _) =
+        &mut deferred.core.head.0[0]
+    {
+        *id = deferred_target;
+    }
+    assert!(
+        backend
+            .add_rule(deferred)
+            .unwrap_err()
+            .to_string()
+            .contains("registered but deferred")
+    );
+
     let id = backend.add_rule(valid)?;
     assert_eq!(id, next, "failed admissions must not consume rule ids");
     backend.free_rule(id);
@@ -743,29 +934,19 @@ fn later_target_failure_rolls_back_effects_generation_stages_and_watermarks() ->
     let first_source = table(&mut backend, "first-source", vec![ColumnTy::Id, integer]);
     let second_source = table(&mut backend, "second-source", vec![ColumnTy::Id, integer]);
     let first_target = table(&mut backend, "first-target", vec![ColumnTy::Id, integer]);
-    let second_target = table(&mut backend, "second-target", vec![ColumnTy::Id, integer]);
+    let second_target = table_with_merge(
+        &mut backend,
+        "second-target",
+        vec![ColumnTy::Id, integer],
+        MergeFn::AssertEq,
+    );
     let positive = i64_value(&backend, 10);
     let negative = i64_value(&backend, -1);
     backend.add_values(vec![
         (first_source, vec![Value::new(1), positive]),
         (second_source, vec![Value::new(2), negative]),
+        (second_target, vec![Value::new(2), positive]),
     ])?;
-    backend.storage.with_connection(|connection| {
-        connection.execute(&format!("DROP TABLE {}", sql_table(second_target)), [])?;
-        connection.execute(
-            &format!(
-                "CREATE TABLE {} (
-                    c0 UBIGINT NOT NULL,
-                    c1 BIGINT NOT NULL CHECK (c1 >= 0),
-                    __generation UBIGINT NOT NULL,
-                    __subsumed BOOLEAN NOT NULL
-                )",
-                sql_table(second_target)
-            ),
-            [],
-        )?;
-        Ok(())
-    })?;
     let key = var(0, "key", ColumnTy::Id);
     let value = var(1, "value", integer);
     let first_rule = backend.add_rule(set_rule(
@@ -791,14 +972,13 @@ fn later_target_failure_rolls_back_effects_generation_stages_and_watermarks() ->
             rules: &[first_rule, second_rule],
         })
         .unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .to_lowercase()
-            .contains("check constraint")
-    );
+    assert!(error.to_string().contains("MergeFn::AssertEq"));
     assert_eq!(backend.table_size(first_target), 0);
-    assert_eq!(backend.table_size(second_target), 0);
+    assert_eq!(backend.table_size(second_target), 1);
+    assert_eq!(
+        backend.lookup_row(second_target, &[Value::new(2)]),
+        Some(vec![Value::new(2), positive])
+    );
     assert_eq!(backend.storage.generation()?, generation_before);
     assert_eq!(
         backend.rules[first_rule.rep() as usize]
@@ -821,21 +1001,9 @@ fn later_target_failure_rolls_back_effects_generation_stages_and_watermarks() ->
             |row| row.get::<_, u64>(0),
         )?;
         assert_eq!(stages, 0);
-        connection.execute(&format!("DROP TABLE {}", sql_table(second_target)), [])?;
-        connection.execute(
-            &format!(
-                "CREATE TABLE {} (
-                    c0 UBIGINT NOT NULL,
-                    c1 BIGINT NOT NULL,
-                    __generation UBIGINT NOT NULL,
-                    __subsumed BOOLEAN NOT NULL
-                )",
-                sql_table(second_target)
-            ),
-            [],
-        )?;
         Ok(())
     })?;
+    backend.clear_table(second_target);
     assert!(run(&mut backend, &[first_rule, second_rule])?);
     assert_eq!(backend.table_size(first_target), 1);
     assert_eq!(backend.table_size(second_target), 1);
