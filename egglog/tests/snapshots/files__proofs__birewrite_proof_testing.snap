@@ -10,7 +10,7 @@ expression: proof_snapshot
     (= t1 t0)
     (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))=>")
     (premises (Fiat (= t0 t0)))
-    (substitution (z (Lit 3)) (y (Lit 2)) (x (Lit 1)) (@rewrite_var__ t0))))
+    (substitution (z (Lit 3)) (__rewrite_root t0) (y (Lit 2)) (x (Lit 1)))))
 (let t0 (Add (Lit 4) (Add (Lit 5) (Lit 6))))
 (let t1 (Add (Add (Lit 4) (Lit 5)) (Lit 6)))
 (Sym
@@ -19,4 +19,4 @@ expression: proof_snapshot
     (= t1 t0)
     (name "(birewrite (Add (Add x y) z) (Add x (Add y z)))<=")
     (premises (Fiat (= t0 t0)))
-    (substitution (z (Lit 6)) (y (Lit 5)) (@rewrite_var__1 t0) (x (Lit 4)))))
+    (substitution (z (Lit 6)) (__rewrite_root t0) (y (Lit 5)) (x (Lit 4)))))

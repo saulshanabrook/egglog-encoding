@@ -394,7 +394,7 @@ expression: proof_snapshot
                       (@n6 (I 0))
                       (x (V "y"))
                       (v1 (I 10)))))
-                (substitution (@rewrite_var__14 t26) (x 10) (y 0)))))
+                (substitution (__rewrite_root t26) (x 10) (y 0)))))
           (substitution
             (x1 (V "x"))
             (x2 (V "zero"))

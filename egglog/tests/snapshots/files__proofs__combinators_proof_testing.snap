@@ -61,9 +61,9 @@ expression: proof_snapshot
 (let t26
   (substitution
                                         (v "x")
+                                        (__rewrite_root t19)
                                         (y (Comb (N 2)))
-                                        (x t12)
-                                        (@rewrite_var__9 t19)))
+                                        (x t12)))
 (let t27
   (premises
                                 (Congr
@@ -100,10 +100,10 @@ expression: proof_snapshot
                                   0)))
 (let t28
   (substitution
-                                (cz (CFConst))
+                                (__rewrite_root t9)
                                 (cx t13)
-                                (@rewrite_var__16 t9)
-                                (cy t15)))
+                                (cy t15)
+                                (cz (CFConst))))
 (let t29 (CApp (KConst) (Comb (N 2))))
 (let t30 (CApp (KConst) (CN 2)))
 (let prf0
@@ -134,9 +134,9 @@ expression: proof_snapshot
 (let t36
   (substitution
                                         (v "x")
+                                        (__rewrite_root t13)
                                         (y t4)
-                                        (x (CAddConst))
-                                        (@rewrite_var__9 t13)))
+                                        (x (CAddConst))))
 (let t37
   (premises
                                 (Congr
@@ -158,10 +158,10 @@ expression: proof_snapshot
                                   0)))
 (let t38
   (substitution
-                                (cz (CFConst))
+                                (__rewrite_root t14)
                                 (cx (CAbs "x" (CAddConst)))
-                                (@rewrite_var__16 t14)
-                                (cy t5)))
+                                (cy t5)
+                                (cz (CFConst))))
 (let t39
   (premises
                       (Congr
@@ -208,16 +208,13 @@ expression: proof_snapshot
                                           prf1
                                           1))
                                       (substitution
-                                        (@rewrite_var__4 t15)
                                         (v "x")
+                                        (__rewrite_root t15)
                                         (n 2))))
                                   prf0
                                   1)
                                 0))
-                            (substitution
-                              (@rewrite_var__15 t16)
-                              t31
-                              (cy (CFConst))))
+                            (substitution (__rewrite_root t16) t31 (cy (CFConst))))
                           1)
                         (Congr
                           (= t14 t11)
@@ -264,10 +261,10 @@ expression: proof_snapshot
                                         t36))
                                     (substitution
                                       (v "x")
-                                      (@rewrite_var__8 (CAbs "x" (CAddConst))))))
+                                      (__rewrite_root (CAbs "x" (CAddConst))))))
                                 0))
                             (substitution
-                              (@rewrite_var__15 t32)
+                              (__rewrite_root t32)
                               (cx (CAddConst))
                               (cy (CFConst))))
                           0)
@@ -316,9 +313,9 @@ expression: proof_snapshot
 (let t57
   (substitution
                                             (v "x")
+                                            (__rewrite_root t5)
                                             (y (Comb (N 1)))
-                                            (x t48)
-                                            (@rewrite_var__9 t5)))
+                                            (x t48)))
 (let t58
   (premises
                                     (Congr
@@ -340,10 +337,10 @@ expression: proof_snapshot
                                       0)))
 (let t59
   (substitution
-                                    (cz (CFConst))
+                                    (__rewrite_root t6)
                                     (cx t49)
-                                    (@rewrite_var__16 t6)
-                                    (cy t51)))
+                                    (cy t51)
+                                    (cz (CFConst))))
 (let t60 (CApp (KConst) (Comb (N 1))))
 (let t61 (CApp (KConst) (CN 1)))
 (let prf2
@@ -375,9 +372,9 @@ expression: proof_snapshot
 (let t70
   (substitution
                                               (v "x")
+                                              (__rewrite_root t49)
                                               (y (Comb (N 0)))
-                                              (x t47)
-                                              (@rewrite_var__9 t49)))
+                                              (x t47)))
 (let t71
   (premises
                                       (Congr
@@ -399,10 +396,10 @@ expression: proof_snapshot
                                         0)))
 (let t72
   (substitution
-                                      (cz (CFConst))
+                                      (__rewrite_root t50)
                                       (cx t63)
-                                      (@rewrite_var__16 t50)
-                                      (cy t65)))
+                                      (cy t65)
+                                      (cz (CFConst))))
 (let t73 (CApp (KConst) (Comb (N 0))))
 (let t74 (CApp (KConst) (CN 0)))
 (let prf4
@@ -438,9 +435,9 @@ expression: proof_snapshot
 (let t82
   (substitution
                                                 (v "x")
+                                                (__rewrite_root t63)
                                                 (y (Comb (Var "x")))
-                                                (x (CIfConst))
-                                                (@rewrite_var__9 t63)))
+                                                (x (CIfConst))))
 (let t83
   (premises
                                         (Congr
@@ -462,10 +459,10 @@ expression: proof_snapshot
                                           0)))
 (let t84
   (substitution
-                                        (cz (CFConst))
+                                        (__rewrite_root t64)
                                         (cx (CAbs "x" (CIfConst)))
-                                        (@rewrite_var__16 t64)
-                                        (cy t77)))
+                                        (cy t77)
+                                        (cz (CFConst))))
 (Sym
   (= t3 (N 3))
   (Rule
@@ -490,7 +487,7 @@ expression: proof_snapshot
          )")
                   t39
                   t40))
-              (substitution (@rewrite_var__1 t10) t21)))
+              (substitution (__rewrite_root t10) t21)))
           (Congr
             (= t10 t8)
             (Sym
@@ -575,14 +572,14 @@ expression: proof_snapshot
                                             prf3
                                             1))
                                         (substitution
-                                          (@rewrite_var__4 t51)
                                           (v "x")
+                                          (__rewrite_root t51)
                                           (n 1))))
                                     prf2
                                     1)
                                   0))
                               (substitution
-                                (@rewrite_var__15 t52)
+                                (__rewrite_root t52)
                                 t62
                                 (cy (CFConst))))
                             1)
@@ -630,14 +627,14 @@ expression: proof_snapshot
                                               prf5
                                               1))
                                           (substitution
-                                            (@rewrite_var__4 t65)
                                             (v "x")
+                                            (__rewrite_root t65)
                                             (n 0))))
                                       prf4
                                       1)
                                     0))
                                 (substitution
-                                  (@rewrite_var__15 t66)
+                                  (__rewrite_root t66)
                                   t75
                                   (cy (CFConst))))
                               1)
@@ -692,11 +689,11 @@ expression: proof_snapshot
                                                   (x (Var "x")))))
                                             1))
                                         (substitution
-                                          (@rewrite_var__2 t77)
-                                          (v "x")))
+                                          (v "x")
+                                          (__rewrite_root t77)))
                                       0))
                                   (substitution
-                                    (@rewrite_var__14 t78)
+                                    (__rewrite_root t78)
                                     (cx (CFConst))))
                                 1)
                               (Rule
@@ -735,12 +732,11 @@ expression: proof_snapshot
                                             t81
                                             t82))
                                         (substitution
-                                          (@rewrite_var__7
-                                            (CAbs "x" (CIfConst)))
-                                          (v "x"))))
+                                          (v "x")
+                                          (__rewrite_root (CAbs "x" (CIfConst))))))
                                     0))
                                 (substitution
-                                  (@rewrite_var__15 t76)
+                                  (__rewrite_root t76)
                                   (cx (CIfConst))
                                   (cy (CFConst))))
                               0)
@@ -778,6 +774,6 @@ expression: proof_snapshot
                 (premises (Fiat (= (CFConst) (CFConst))))
                 (substitution (cx (CFConst))))
               0))
-          (substitution (@rewrite_var__12 t7) (t (N 0)) (f (N 1))))
+          (substitution (__rewrite_root t7) (t (N 0)) (f (N 1))))
         0))
-    (substitution (@rewrite_var__13 t3) (m 2) (n 1))))
+    (substitution (m 2) (__rewrite_root t3) (n 1))))

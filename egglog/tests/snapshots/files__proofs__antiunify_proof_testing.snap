@@ -16,7 +16,7 @@ expression: proof_snapshot
                   (= (Num 3) t0)
                   (name "(rewrite (Add (Num x) (Num y)) (Num (+ x y)))")
                   (premises (Fiat (= t0 t0)))
-                  (substitution (@rewrite_var__1 t0) (x 1) (y 2))))
+                  (substitution (__rewrite_root t0) (x 1) (y 2))))
 (let t9
   (premises
             (Congr
@@ -30,15 +30,15 @@ expression: proof_snapshot
                     (= t7 t1)
                     (name "(rewrite (Add x y) (Add y x))")
                     (premises (Fiat (= t1 t1)))
-                    (substitution (y t0) (x (Var "x")) (@rewrite_var__ t1))))
+                    (substitution (__rewrite_root t1) (x (Var "x")) (y t0))))
                 0)
               (Congr (= t2 t8) (Fiat (= t2 t2)) prf0 0)
               1)))
 (let t10
   (substitution
-            (@rewrite_var__3 t3)
-            (a t0)
+            (__rewrite_root t3)
             (d (Var "y"))
+            (a t0)
             (b (Var "x"))
             (c t0)))
 (Congr
@@ -61,7 +61,7 @@ expression: proof_snapshot
           (name "(rewrite (AU (Add a b) (Add c d)) (Add (AU a c) (AU b d)))")
           t9
           t10))
-      (substitution (@rewrite_var__2 t5) (x t0)))
+      (substitution (__rewrite_root t5) (x t0)))
     0)
   (Sym (= t0 (Num 3)) prf0)
   0)

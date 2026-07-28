@@ -5,7 +5,7 @@ expression: proof_snapshot
 (let t0 (Add (Fib 6) (Fib 5)))
 (let prf0 (Fiat (= () ())))
 (let t1 (premises (Fiat (= (Fib 7) (Fib 7))) prf0))
-(let t2 (substitution (@rewrite_var__1 (Fib 7)) (x 7)))
+(let t2 (substitution (__rewrite_root (Fib 7)) (x 7)))
 (let t3 (Add (Fib 5) (Fib 4)))
 (let t4 (Add (Fib 4) (Fib 3)))
 (let t5
@@ -17,7 +17,7 @@ expression: proof_snapshot
                                         t1
                                         t2)
                                       prf0))
-(let t6 (substitution (@rewrite_var__1 (Fib 5)) (x 5)))
+(let t6 (substitution (__rewrite_root (Fib 5)) (x 5)))
 (let t7 (Add (Fib 3) (Fib 2)))
 (let t8 (Add (Fib 2) (Fib 1)))
 (let t9
@@ -31,7 +31,7 @@ expression: proof_snapshot
                                                             prf0))
 (let t10
   (substitution
-                                                            (@rewrite_var__1
+                                                            (__rewrite_root
                                                               (Fib 3))
                                                             (x 3)))
 (let prf1
@@ -50,7 +50,7 @@ expression: proof_snapshot
                                                                 t10)
                                                               prf0)
                                                             (substitution
-                                                              (@rewrite_var__2
+                                                              (__rewrite_root
                                                                 (Fib 1))
                                                               (x 1))))
 (let prf2
@@ -74,7 +74,7 @@ expression: proof_snapshot
                                                                       prf0))
 (let t13
   (substitution
-                                                                      (@rewrite_var__1
+                                                                      (__rewrite_root
                                                                         (Fib 2))
                                                                       (x 2)))
 (let prf3
@@ -128,15 +128,15 @@ expression: proof_snapshot
                                                                       t13)
                                                                     prf0)
                                                                   (substitution
-                                                                    (@rewrite_var__2
+                                                                    (__rewrite_root
                                                                       (Fib 0))
                                                                     (x 0))))
                                                               1))
                                                           (substitution
                                                             (a 1)
-                                                            (b 0)
-                                                            (@rewrite_var__
-                                                              (Fib 2)))))
+                                                            (__rewrite_root
+                                                              (Fib 2))
+                                                            (b 0))))
 (let prop0 (= (Fib 2) (Num 1)))
 (let prf4
   (Trans
@@ -185,8 +185,8 @@ expression: proof_snapshot
                                                   1))
                                               (substitution
                                                 (a 1)
-                                                (b 1)
-                                                (@rewrite_var__ (Fib 3))))))
+                                                (__rewrite_root (Fib 3))
+                                                (b 1)))))
 (let prf6
   (Sym
                                   (= (Fib 4) (Num 3))
@@ -214,7 +214,7 @@ expression: proof_snapshot
                                                   t6)
                                                 prf0)
                                               (substitution
-                                                (@rewrite_var__1 (Fib 4))
+                                                (__rewrite_root (Fib 4))
                                                 (x 4))))
                                           prf5
                                           0)
@@ -222,8 +222,8 @@ expression: proof_snapshot
                                         1))
                                     (substitution
                                       (a 2)
-                                      (b 1)
-                                      (@rewrite_var__ (Fib 4))))))
+                                      (__rewrite_root (Fib 4))
+                                      (b 1)))))
 (let prf7
   (Sym
                         (= (Fib 5) (Num 5))
@@ -247,7 +247,7 @@ expression: proof_snapshot
                                 0)
                               prf5
                               1))
-                          (substitution (a 3) (b 2) (@rewrite_var__ (Fib 5))))))
+                          (substitution (a 3) (__rewrite_root (Fib 5)) (b 2)))))
 (Sym
   (= (Fib 7) (Num 13))
   (Rule
@@ -290,13 +290,13 @@ expression: proof_snapshot
                             t1
                             t2)
                           prf0)
-                        (substitution (@rewrite_var__1 (Fib 6)) (x 6))))
+                        (substitution (__rewrite_root (Fib 6)) (x 6))))
                     prf7
                     0)
                   prf6
                   1))
-              (substitution (a 5) (b 3) (@rewrite_var__ (Fib 6)))))
+              (substitution (a 5) (__rewrite_root (Fib 6)) (b 3))))
           0)
         prf7
         1))
-    (substitution (a 8) (b 5) (@rewrite_var__ (Fib 7)))))
+    (substitution (a 8) (__rewrite_root (Fib 7)) (b 5))))

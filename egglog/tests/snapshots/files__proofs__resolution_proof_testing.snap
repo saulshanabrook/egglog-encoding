@@ -9,7 +9,7 @@ expression: proof_snapshot
             (= t0 (negate (p 0)))
             (name "(rewrite (myor a $False) a)")
             (premises (Fiat (= t0 t0)))
-            (substitution (a (negate (p 0))) (@rewrite_var__5 t0))))
+            (substitution (a (negate (p 0))) (__rewrite_root t0))))
 (let t1 (myor (p 2) t0))
 (let t2 (myor (negate (p 2)) (FalseConst)))
 (let prop0 (= (TrueConst) t2))
@@ -62,7 +62,7 @@ expression: proof_snapshot
                   (= t3 (TrueConst))
                   (name "(rewrite (myor a $False) a)")
                   (premises prf2)
-                  (substitution (a (TrueConst)) (@rewrite_var__5 t3))))
+                  (substitution (a (TrueConst)) (__rewrite_root t3))))
               prf2)
             (Trans
               (= (TrueConst) (negate (p 2)))
@@ -77,12 +77,12 @@ expression: proof_snapshot
                       (Sym (= (TrueConst) t4) (Fiat (= t4 (TrueConst))))
                       prf1
                       0))
-                  (substitution (@rewrite_var__4 (TrueConst)) (a t2))))
+                  (substitution (a t2) (__rewrite_root (TrueConst)))))
               (Rule
                 (= t2 (negate (p 2)))
                 (name "(rewrite (myor a $False) a)")
                 (premises (Fiat (= t2 t2)))
-                (substitution (a (negate (p 2))) (@rewrite_var__5 t2))))
+                (substitution (a (negate (p 2))) (__rewrite_root t2))))
             0))
         (substitution (bs (FalseConst)) (a (p 2)) (as (negate (p 0)))))))
   (substitution (p (p 0))))
@@ -103,7 +103,7 @@ expression: proof_snapshot
           (= t0 (negate (p 2)))
           (name "(rewrite (myor a $False) a)")
           (premises (Fiat (= t0 t0)))
-          (substitution (a (negate (p 2))) (@rewrite_var__5 t0))))
+          (substitution (a (negate (p 2))) (__rewrite_root t0))))
       (Rule
         (= t0 (TrueConst))
         (name "(rewrite (myor $False a) a)")
@@ -113,5 +113,5 @@ expression: proof_snapshot
             (Sym (= (TrueConst) t1) (Fiat (= t1 (TrueConst))))
             (Fiat (= (p 1) (FalseConst)))
             0))
-        (substitution (@rewrite_var__4 (TrueConst)) (a t0)))))
+        (substitution (a t0) (__rewrite_root (TrueConst))))))
   (substitution (p (p 2))))

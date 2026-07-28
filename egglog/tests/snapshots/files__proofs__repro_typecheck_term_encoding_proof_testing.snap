@@ -8,9 +8,9 @@ expression: proof_snapshot
 (let t3 (premises (Fiat (= t0 t0))))
 (let t4
   (substitution
+          (__rewrite_root t0)
           (e (Var "x"))
           (ctx (NilConst))
-          (@rewrite_var__3 t0)
           (x "x")
           (t1 (TUnitConst))))
 (Congr
@@ -33,9 +33,5 @@ expression: proof_snapshot
           "(rewrite (typeof ctx (Lam x t1 e)) (TArr t1 (typeof (Cons x t1 ctx) e)))")
         t3
         t4))
-    (substitution
-      (t (TUnitConst))
-      (ctx (NilConst))
-      (@rewrite_var__1 t1)
-      (x "x")))
+    (substitution (__rewrite_root t1) (t (TUnitConst)) (ctx (NilConst)) (x "x")))
   1)

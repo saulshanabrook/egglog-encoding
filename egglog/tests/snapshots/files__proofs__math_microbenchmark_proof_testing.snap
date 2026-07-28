@@ -1,6 +1,5 @@
 ---
 source: egglog/tests/files.rs
-assertion_line: 279
 expression: proof_snapshot
 ---
 (let t0 (Integral (Mul (Cos (Var "x")) (Var "x")) (Var "x")))
@@ -53,7 +52,7 @@ expression: proof_snapshot
 (let t44 (premises (Fiat (= t0 t0))))
 (let t45
   (substitution
-          (@rewrite_var__23 t0)
+          (__rewrite_root t0)
           (a (Cos (Var "x")))
           (b (Var "x"))
           (x (Var "x"))))
@@ -67,7 +66,7 @@ expression: proof_snapshot
                 "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
               t44
               t45)))
-(let t49 (substitution (@rewrite_var__23 t42) (a t3) (b t1) (x (Var "x"))))
+(let t49 (substitution (__rewrite_root t42) (a t3) (b t1) (x (Var "x"))))
 (let t50 (Integral (Mul t9 t7) (Var "x")))
 (let t51 (Sub t8 t50))
 (let t52
@@ -78,7 +77,7 @@ expression: proof_snapshot
                   "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
                 t48
                 t49)))
-(let t53 (substitution (@rewrite_var__23 t46) (a t6) (b t4) (x (Var "x"))))
+(let t53 (substitution (__rewrite_root t46) (a t6) (b t4) (x (Var "x"))))
 (let t54 (Integral (Mul t12 t10) (Var "x")))
 (let t55 (Sub t11 t54))
 (let t56
@@ -89,7 +88,7 @@ expression: proof_snapshot
                     "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
                   t52
                   t53)))
-(let t57 (substitution (@rewrite_var__23 t50) (a t9) (b t7) (x (Var "x"))))
+(let t57 (substitution (__rewrite_root t50) (a t9) (b t7) (x (Var "x"))))
 (let t58 (Integral (Mul t15 t13) (Var "x")))
 (let t59 (Sub t14 t58))
 (let t60
@@ -100,12 +99,7 @@ expression: proof_snapshot
                       "(rewrite (Integral (Mul a b) x) (Sub (Mul a (Integral b x)) (Integral (Mul (Diff x a) (Integral b x)) x)))")
                     t56
                     t57)))
-(let t61
-  (substitution
-                  (@rewrite_var__23 t54)
-                  (a t12)
-                  (b t10)
-                  (x (Var "x"))))
+(let t61 (substitution (__rewrite_root t54) (a t12) (b t10) (x (Var "x"))))
 (let t62 (Integral (Mul t18 t16) (Var "x")))
 (let t63 (Sub t17 t62))
 (let t64
@@ -118,7 +112,7 @@ expression: proof_snapshot
                       t61)))
 (let t65
   (substitution
-                    (@rewrite_var__23 t58)
+                    (__rewrite_root t58)
                     (a t15)
                     (b t13)
                     (x (Var "x"))))
@@ -134,7 +128,7 @@ expression: proof_snapshot
                         t65)))
 (let t69
   (substitution
-                      (@rewrite_var__23 t62)
+                      (__rewrite_root t62)
                       (a t18)
                       (b t16)
                       (x (Var "x"))))
@@ -150,7 +144,7 @@ expression: proof_snapshot
                           t69)))
 (let t73
   (substitution
-                        (@rewrite_var__23 t66)
+                        (__rewrite_root t66)
                         (a t21)
                         (b t19)
                         (x (Var "x"))))
@@ -166,7 +160,7 @@ expression: proof_snapshot
                             t73)))
 (let t77
   (substitution
-                          (@rewrite_var__23 t70)
+                          (__rewrite_root t70)
                           (a t24)
                           (b t22)
                           (x (Var "x"))))
@@ -182,7 +176,7 @@ expression: proof_snapshot
                               t77)))
 (let t81
   (substitution
-                            (@rewrite_var__23 t74)
+                            (__rewrite_root t74)
                             (a t27)
                             (b t25)
                             (x (Var "x"))))
@@ -300,7 +294,7 @@ expression: proof_snapshot
                             t80
                             t81))
                         (substitution
-                          (@rewrite_var__23 t78)
+                          (__rewrite_root t78)
                           (a t30)
                           (b t28)
                           (x (Var "x")))))
