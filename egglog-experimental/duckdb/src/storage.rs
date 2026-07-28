@@ -9,10 +9,12 @@ use egglog_core_relations::Boxed;
 use egglog_numeric_id::NumericId;
 use ordered_float::OrderedFloat;
 
+use crate::rule_sql::{CompiledRule, RuleExecutionStats};
+
 const COUNTERS_TABLE: &str = "egglog_backend_counters";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScalarSqlType {
+pub(crate) enum ScalarSqlType {
     Id,
     Unit,
     Bool,
@@ -31,7 +33,7 @@ pub(crate) enum InputMerge {
 }
 
 impl ScalarSqlType {
-    fn from_column(base_values: &BaseValues, ty: ColumnTy) -> Result<Self> {
+    pub(crate) fn from_column(base_values: &BaseValues, ty: ColumnTy) -> Result<Self> {
         let ColumnTy::Base(base) = ty else {
             return Ok(Self::Id);
         };
@@ -73,7 +75,7 @@ impl ScalarSqlType {
     /// Every user-controlled byte passes through this single encoder. Numeric
     /// spellings contain only formatter-produced digits/signs, while strings
     /// are UTF-8 hex and therefore cannot terminate or extend the SQL literal.
-    fn sql_literal(self, base_values: &BaseValues, value: Value) -> String {
+    pub(crate) fn sql_literal(self, base_values: &BaseValues, value: Value) -> String {
         match self {
             Self::Id => format!("CAST('{}' AS UBIGINT)", value.rep()),
             Self::Unit => {
@@ -172,16 +174,17 @@ fn encode_hex(bytes: &[u8]) -> String {
 }
 
 #[derive(Clone, Debug)]
-struct TableInfo {
-    name: String,
-    columns: Vec<ScalarSqlType>,
-    n_keys: usize,
-    can_subsume: bool,
-    input_merge: InputMerge,
+pub(crate) struct TableInfo {
+    pub(crate) name: String,
+    pub(crate) schema: Vec<ColumnTy>,
+    pub(crate) columns: Vec<ScalarSqlType>,
+    pub(crate) n_keys: usize,
+    pub(crate) can_subsume: bool,
+    pub(crate) input_merge: InputMerge,
 }
 
 impl TableInfo {
-    fn arity(&self) -> usize {
+    pub(crate) fn arity(&self) -> usize {
         self.columns.len()
     }
 }
@@ -207,8 +210,11 @@ pub(crate) struct InsertStats {
 struct State {
     connection: Connection,
     tables: Vec<TableInfo>,
+    next_rule_run: u64,
     #[cfg(test)]
     latest_input_sql: Vec<String>,
+    #[cfg(test)]
+    latest_rule_sql: Vec<String>,
 }
 
 /// Authoritative DuckDB storage. Rust retains schemas and catalog ids, but no
@@ -236,8 +242,11 @@ impl Storage {
             state: Mutex::new(State {
                 connection,
                 tables: Vec::new(),
+                next_rule_run: 0,
                 #[cfg(test)]
                 latest_input_sql: Vec::new(),
+                #[cfg(test)]
+                latest_rule_sql: Vec::new(),
             }),
         })
     }
@@ -284,6 +293,7 @@ impl Storage {
             id,
             &TableInfo {
                 name: name.clone(),
+                schema: schema.to_vec(),
                 columns: columns.clone(),
                 n_keys,
                 can_subsume,
@@ -292,6 +302,7 @@ impl Storage {
         )?;
         state.tables.push(TableInfo {
             name,
+            schema: schema.to_vec(),
             columns,
             n_keys,
             can_subsume,
@@ -402,6 +413,118 @@ impl Storage {
         usize::try_from(count).context("DuckDB row count exceeds usize")
     }
 
+    pub(crate) fn table_info(&self, id: FunctionId) -> Result<TableInfo> {
+        let state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        table_info(&state, id).cloned()
+    }
+
+    pub(crate) fn execute_rules(
+        &self,
+        scheduled: &[(&CompiledRule, u64)],
+    ) -> Result<RuleExecutionStats> {
+        if scheduled.is_empty() {
+            return Ok(RuleExecutionStats::default());
+        }
+
+        let mut state = self.state.lock().expect("DuckDB storage mutex poisoned");
+        let run = state.next_rule_run;
+        state.next_rule_run = state
+            .next_rule_run
+            .checked_add(1)
+            .context("DuckDB rule-stage identifier overflow")?;
+        let transaction = state.connection.transaction()?;
+        #[cfg(test)]
+        let mut sql_log = Vec::new();
+        let mut stage_names = Vec::with_capacity(scheduled.len());
+        let mut matched_rows = Vec::with_capacity(scheduled.len());
+        let mut inserted_rows = Vec::with_capacity(scheduled.len());
+        let mut statement_count = 0;
+
+        let execute = (|| -> Result<(u64, bool)> {
+            let generation = transaction.query_row(
+                &format!("SELECT value FROM {COUNTERS_TABLE} WHERE name = 'generation'"),
+                [],
+                |row| row.get::<_, u64>(0),
+            )?;
+            statement_count += 1;
+
+            // Materialize every match relation before applying any target
+            // effect. These session-local tables are dropped before commit;
+            // their contents are never mirrored or enumerated in Rust.
+            for (schedule_index, (rule, watermark)) in scheduled.iter().enumerate() {
+                let stage = format!("egglog_rule_stage_{run}_{schedule_index}");
+                let create = rule.materialize_sql(&stage, *watermark);
+                transaction.execute(&create, [])?;
+                #[cfg(test)]
+                sql_log.push(create);
+                statement_count += 1;
+
+                let count_sql = format!("SELECT count(*) FROM {stage}");
+                let count = transaction.query_row(&count_sql, [], |row| row.get::<_, u64>(0))?;
+                matched_rows
+                    .push(usize::try_from(count).context("DuckDB rule match count exceeds usize")?);
+                #[cfg(test)]
+                sql_log.push(count_sql);
+                statement_count += 1;
+                stage_names.push(stage);
+            }
+
+            let mut changed = false;
+            for ((rule, _), stage) in scheduled.iter().zip(&stage_names) {
+                let insert = rule.insert_sql(stage, generation);
+                let inserted = transaction.execute(&insert, [])?;
+                changed |= inserted != 0;
+                inserted_rows.push(inserted);
+                #[cfg(test)]
+                sql_log.push(insert);
+                statement_count += 1;
+            }
+
+            if changed {
+                let update = format!(
+                    "UPDATE {COUNTERS_TABLE} SET value = value + 1 WHERE name = 'generation'"
+                );
+                transaction.execute(&update, [])?;
+                #[cfg(test)]
+                sql_log.push(update);
+                statement_count += 1;
+            }
+
+            for stage in &stage_names {
+                let drop = format!("DROP TABLE {stage}");
+                transaction.execute(&drop, [])?;
+                #[cfg(test)]
+                sql_log.push(drop);
+                statement_count += 1;
+            }
+            Ok((generation, changed))
+        })();
+
+        let (watermark, changed) = match execute {
+            Ok(result) => result,
+            Err(error) => {
+                if let Err(rollback) = transaction.rollback() {
+                    return Err(anyhow!(
+                        "DuckDB rule transaction failed: {error:#}; rollback also failed: {rollback}"
+                    ));
+                }
+                return Err(error);
+            }
+        };
+        transaction.commit()?;
+        #[cfg(test)]
+        {
+            state.latest_rule_sql = sql_log;
+        }
+        Ok(RuleExecutionStats {
+            changed,
+            watermark,
+            matched_rows,
+            inserted_rows,
+            statement_count,
+        })
+    }
+
     pub(crate) fn clear(&self, id: FunctionId) -> Result<()> {
         let state = self.state.lock().expect("DuckDB storage mutex poisoned");
         table_info(&state, id)?;
@@ -471,7 +594,7 @@ impl Storage {
     }
 
     #[cfg(test)]
-    fn generation(&self) -> Result<u64> {
+    pub(crate) fn generation(&self) -> Result<u64> {
         let state = self.state.lock().expect("DuckDB storage mutex poisoned");
         state
             .connection
@@ -484,7 +607,7 @@ impl Storage {
     }
 
     #[cfg(test)]
-    fn with_connection<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
+    pub(crate) fn with_connection<R>(&self, f: impl FnOnce(&Connection) -> Result<R>) -> Result<R> {
         let state = self.state.lock().expect("DuckDB storage mutex poisoned");
         f(&state.connection)
     }
@@ -495,6 +618,15 @@ impl Storage {
             .lock()
             .expect("DuckDB storage mutex poisoned")
             .latest_input_sql
+            .clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn latest_rule_sql(&self) -> Vec<String> {
+        self.state
+            .lock()
+            .expect("DuckDB storage mutex poisoned")
+            .latest_rule_sql
             .clone()
     }
 }
@@ -604,18 +736,18 @@ fn table_info(state: &State, id: FunctionId) -> Result<&TableInfo> {
         .ok_or_else(|| anyhow!("unregistered DuckDB function {}", id.rep()))
 }
 
-fn sql_table(id: FunctionId) -> String {
+pub(crate) fn sql_table(id: FunctionId) -> String {
     format!("egglog_function_{}", id.rep())
 }
 
-fn visible_columns(arity: usize) -> String {
+pub(crate) fn visible_columns(arity: usize) -> String {
     (0..arity)
         .map(|column| format!("c{column}"))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn qualified_columns(alias: &str, arity: usize) -> String {
+pub(crate) fn qualified_columns(alias: &str, arity: usize) -> String {
     (0..arity)
         .map(|column| format!("{alias}.c{column}"))
         .collect::<Vec<_>>()

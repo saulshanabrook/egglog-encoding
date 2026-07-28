@@ -85,18 +85,22 @@ preserve these current SPI semantics:
 
 ## Steering frame
 
-- **Current frontier:** checkpoint 0 is accepted and locally ready to commit.
-  The workspace has a current-main DuckDB-authoritative typed storage/input
-  scaffold, safe nonbundled runtime path, primary-surface census, and a truthful
-  fallible native-input SPI. Checkpoint 0.5 remains open: the next slice is a
-  table-only, Set-only production `RuleSpec` SQL compiler with source-driven
-  main differentials for the selective Pointer and broad Math kernels.
-- **Scoreboard:** current-main pinned; proof baseline and pre-acceptance proof
-  gate green (212/212); safe prebuilt runtime is DuckDB v1.5.4; DuckDB backend
-  tests 12/12, bridge 26/26, proof-mode regression 12/12, DD 38/38, and
-  feature-enabled CLI 4/4 passed. Independent final review is `PASS`.
-  Checkpoint 0.5 remains open because its two current SQL kernels are
-  feasibility probes rather than production main differentials.
+- **Current frontier:** checkpoints 0 and 0.5 are implemented on current main.
+  The workspace has DuckDB-authoritative typed scalar storage/input, a safe
+  nonbundled runtime path, a truthful fallible native-input SPI, and a narrow
+  production `RuleSpec` compiler. Live table bodies with typed
+  variables/literals and one Set into a one-output `MergeFn::Old` target execute
+  through generated SQL with stable pre-wave staging and transactional effects.
+  The next frontier is a read-only first-failure census through the public
+  proof-mode path for all five frozen workloads; it will select the smallest
+  real checkpoint-1 breadth slice before another writer is seated.
+- **Scoreboard:** current-main pinned; proof gate green (212/212); safe prebuilt
+  runtime is DuckDB v1.5.4; DuckDB backend tests 19/19, bridge 26/26,
+  proof-mode regression 12/12, DD 38/38, and feature-enabled CLI 4/4 passed.
+  Reduced Pointer five-way and Math Add-swap production differentials agree
+  with main across initial, fresh-delta, and no-delta transcripts. Independent
+  checkpoint-0.5 implementation review found no code or semantic defect and
+  requested only this stale-ledger reconciliation.
 - **Progress signal:** a reviewable production slice plus exact capped command
   evidence that advances one checkpoint gate.
 - **No movement:** no reviewable patch, no new reproducible evidence, and no
@@ -104,17 +108,18 @@ preserve these current SPI semantics:
 - **Two-cycle trigger:** after two consecutive same-domain no-movement cycles,
   freeze implementation, preserve evidence, and run one bounded
   Understand/Explore/Decide reassessment before resuming.
-- **Active risks:** current-main API drift from donor; typed nested value
-  boundary limitations in safe `duckdb-rs`; reference native input now clones
-  a quiescent bridge state per batch for rollback correctness; DuckDB
-  `clone_boxed` still requires a deep database snapshot; scheduler rollback
-  currently downcasts to the reference backend; proof-instrumented primitive
-  breadth; order-sensitive merge semantics; slow bounded proof workloads.
-- **Next decision:** implement the checkpoint 0.5 production RuleSpec slice:
-  Live table atoms, typed variables/literals, exactly one table Set head, and
-  one-column `MergeFn::Old`, with stable pre-wave staging and per-rule
-  generation watermarks. Pass source-driven main differentials for the frozen
-  Pointer five-way join and Math Add swap before expanding the supported IR.
+- **Active risks:** typed nested value boundary limitations in safe public
+  `duckdb-rs`; reference native input clones a quiescent bridge state per batch
+  for rollback correctness; DuckDB `clone_boxed` still requires a deep database
+  snapshot; scheduler rollback currently downcasts to the reference backend;
+  proof-instrumented primitive breadth; order-sensitive merge semantics; the
+  benchmark harness does not yet advertise the DuckDB endpoint; slow bounded
+  proof workloads.
+- **Next decision:** use exact public-path failures from the five frozen
+  proof-mode workloads to choose one bounded checkpoint-1 writer contract.
+  Preserve UnstableFn as schema-only deferred unless a frozen workload actually
+  constructs or applies it. Do not infer complete-program support from the two
+  reduced checkpoint-0.5 differentials.
 
 ## Roster
 
@@ -122,6 +127,8 @@ preserve these current SPI semantics:
 |---|---|---|---|---|---|
 | `/root` | coordinator | preserve mission, integrate checkpoints, own broad/final commands and user communication | shared ledger, diff review, final gates, narrow recorded integration repairs only after worker is seated | accepted checkpoint and next bounded slice | goal completes, evidence rejects architecture, or user decision is required |
 | `/root/fallible_input_worker` | checkpoint 0 implementation | deliver the reassessment-authorized fallible native-input boundary | explicitly authorized bridge/backend-trait/frontend/DD/DuckDB files; targeted commands only | accepted fallible-input patch and exact command evidence | completed with independent PASS |
+| `/root/rule_sql_worker` | checkpoint 0.5 implementation | deliver the smallest production SQL-native rule compiler plus real main differentials | DuckDB crate and focused tests only; no shared SPI/frontend edits without a stop-and-review | table-only/Set-only compiler, Pointer/Math transcripts, exact gate evidence | completed; both differentials and canaries pass |
+| `/root/primary_lowering_frontier` | checkpoint 1 read-only diagnosis | locate the first unsupported production surface for each frozen proof-mode workload | no writes; public paths, static/desugar evidence, and focused capped probes only | exact failure matrix and one bounded next writer contract | one evidence-backed frontier or an architectural blocker |
 | `/root/checkpoint_reviewer` | independent read-only review | evaluate checkpoint artifacts against scope, safety, semantics, and evidence rubric | no writes; raw diff and raw artifacts only | `PASS`, `REVISE`, or `REASSESS` with live issues separated from stale feedback | one evidence-backed verdict and one bounded re-review if needed |
 
 No overlapping writing worker may be added. Read-only specialist circles may
@@ -164,7 +171,7 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | Checkpoint | Blocking gate | Status | Evidence |
 |---|---|---|---|
 | 0 provenance/integration/census | exact refs and primary surface census; plausible safe-native lowering for every reached primary surface | **passed** | worktree/base and frozen corpus pinned; census complete; safe crates.io client and loaded v1.5.4 runtime verified; typed literal/no-ART/transaction/input/CLI surfaces passed focused gates; final independent review PASS |
-| 0.5 API/literal/kernel spike | typed input/API probes and two real kernels agree with main on reduced data | not passed | 12/12 DuckDB focused tests pass against loaded DuckDB v1.5.4 through the crate-supported prebuilt path, but the kernels are handwritten feasibility probes rather than production main differentials; bundled source builds are timeout-censored |
+| 0.5 API/literal/kernel spike | typed input/API probes and two real kernels agree with main on reduced data | **passed** | 19/19 DuckDB tests pass against loaded DuckDB v1.5.4; reduced source-pinned Pointer and Math fixtures use production `add_rule`/`run_rules` on independently constructed main and DuckDB state and agree across initial/fresh/no-delta transcripts; independent implementation review found no live defect |
 | 1 typed IR/storage/input | primary schemas and input commands install; deterministic SQL manifest | pending | |
 | 2 SQL matching/transcripts | bounded primary proxies match main without Rust match enumeration | pending | |
 | 3 primitives/containers | all five statically compile with deny fallback and run bounded first iteration | pending | |
@@ -195,6 +202,10 @@ be seated only for disjoint evidence questions with explicit stop terms.
 | 2026-07-28 | reassessment implementation worker | fallible `Backend::add_values`; atomic bridge `try_add_values`; DD/DuckDB direct errors; exact term-only `Fail([Input])`; separate DuckDB deferred-rule-panic channel | PASS: bridge 26/26, proof-mode regression 12/12, DD 38/38, DuckDB 12/12, feature CLI 4/4, trait tests/docs, scoped clippy, fmt, and diff checks; no bundled command | input failures now propagate before success logging and all three backends remain usable after rejected input |
 | 2026-07-28 | independent final review | frozen fallible-input artifact, including quiescent bridge checkpoint and staged-notification canary | `PASS`: preexisting staged work commits before checkpoint, failed input rows/counters/timestamps roll back, shared panic channel is cleared safely, later flush is sound, exact fail admission cannot mask siblings, and full proofs still reject | checkpoint 0 accepted; checkpoint 0.5 remains explicitly open |
 | 2026-07-28 | coordinator | `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s make proof-tests` on the final accepted patch | PASS: core 204/204 plus experimental 8/8; 212 total, zero failures, completed under cap | final checkpoint-0 proof gate confirmed after bridge rollback correction |
+| 2026-07-28 | checkpoint-0.5 implementation worker | production Live-table/one-Set/one-output-Old `RuleSpec` compiler; stable pre-wave stages; one transaction; per-rule watermarks; typed relational consolidation | PASS: DuckDB 19/19, Pointer and Math main differentials 2/2, scoped clippy with warnings denied, formatting and diff checks; no bundled command | handwritten probes are no longer the production-kernel gate; complete workload lowering remains unsupported and unclaimed |
+| 2026-07-28 | checkpoint-0.5 bounded measurements | one warm-up plus three execution-only samples per reduced fixture | Pointer 1.695-2.243 ms; Math 0.829-1.021 ms; explicit statement count is `1 + 4N + (changed ? 1 : 0)` excluding transaction begin/commit | descriptive evidence recorded with no threshold or tuning loop |
+| 2026-07-28 | coordinator | fresh nonbundled DuckDB gate plus `/opt/homebrew/bin/timeout --signal=TERM --kill-after=5s 110s make proof-tests` | PASS: DuckDB 19/19 in 0.08s test time; core 204/204 plus experimental 8/8 in 22.5s wall; clippy, fmt, and diff checks pass | checkpoint-wide regression evidence refreshed under the command cap |
+| 2026-07-28 | independent checkpoint-0.5 review | frozen implementation, compiler admission, transaction/watermark semantics, differential scope, and exact documentation follow-up | initial `REVISE` only for stale ledger text; no implementation defect found; fresh reviewer timings Pointer 1.59-1.91 ms and Math 0.68-1.08 ms; documentation-only re-review `PASS` | checkpoint 0.5 accepted; complete-program lowering remains the next frontier |
 
 ## Review rubric
 
@@ -257,9 +268,65 @@ frontier to reassessment rather than another micro-variant.
   continued usability, DD/reference compilation, and `(fail ...)` propagation
   at the frontend boundary. No bundled build is authorized.
 
+## Worker contract: checkpoint 0.5 production RuleSpec slice
+
+- **Hypothesis:** current `RuleSpec` and safe public DuckDB APIs can execute a
+  useful production subset entirely through generated SQL: one or more Live
+  table atoms with typed variables/literals and exactly one table Set head into
+  a one-output `MergeFn::Old` target. No shared SPI change is required.
+- **Target artifact:** `duckdb/src/rule_sql.rs` plus the smallest storage/runtime
+  additions and focused differential tests. `add_rule` validates and compiles;
+  `run_rules` materializes every scheduled rule's matches before applying any
+  effect, applies stages in scheduled rule order inside one transaction, and
+  updates per-rule generation watermarks only after commit.
+- **Required semantics:** stable pre-wave reads; Live filtering; repeated
+  variables and literals lowered with typed `IS NOT DISTINCT FROM`; ordinary
+  identifiers remain numeric/compiler-owned; literals use the existing central
+  encoder; no SQL placeholders; no ordinary indexes; first existing/incoming
+  row wins under KeepOld; second no-delta run reports unchanged; fresh rows in
+  any body relation can join older rows in the others; rollback leaves target
+  rows, generation, stages, and watermarks unchanged.
+- **Supported IR only:** nonempty table-call bodies, variables/literals, Live
+  read mode, one table Set action, all head variables bound, exact arity/types,
+  and one-output `MergeFn::Old`. Fail closed on primitives, globals, lets,
+  changes, unions, panics, non-Live reads, empty bodies, multiple heads,
+  unbound variables, freed IDs, and every other merge/action form.
+- **Differential gate:** build logically identical, backend-local typed
+  `RuleSpec`s for main and DuckDB; never replay backend-local IDs or Values.
+  Source-pin the Pointer five-way rule at
+  `benchmarks/pointer-analysis-small.egg` and the Math Add commutativity rule at
+  `egglog/tests/math-microbenchmark.egg`. Compare sorted typed witness rows and
+  changed/no-change transcripts across initial, fresh-delta, and no-delta runs.
+  Handwritten SQL probes remain feasibility-only until these pass.
+- **Canaries:** a two-rule seed-to-middle-to-output schedule proves writes from
+  one rule are not body inputs to another until the next bounded call; an
+  unsupported-IR matrix proves fail-closed admission; a test-only later-target
+  failure proves transaction and watermark rollback; generated SQL contains no
+  `?` and no user-derived identifiers; catalog remains free of ordinary ART
+  indexes/key constraints.
+- **Owned write set:** `egglog-experimental/duckdb/Cargo.toml`, new
+  `egglog-experimental/duckdb/src/rule_sql.rs`, existing DuckDB `lib.rs` and
+  `storage.rs`, and focused DuckDB tests such as
+  `tests/rule_differential.rs`. Dev-only dependencies are allowed. Stop before
+  editing the shared backend trait, frontend, bridge, DD backend, fixtures, or
+  benchmark harness.
+- **Bounded performance evidence:** after correctness, one fixed-size Pointer
+  and one fixed-size Math probe, at most one warm-up plus three measurements,
+  with setup and bounded rule execution separated. No speed threshold and no
+  tuning loop; a timeout is censored evidence.
+- **Owned commands:** targeted DuckDB differential/unit tests, formatting, and
+  scoped clippy under a 110-second external watchdog through the nonbundled
+  `DUCKDB_DOWNLOAD_LIB=1` path. No bundled command or broad benchmark matrix.
+- **Stop:** both production differentials and semantic canaries pass; two
+  materially different SQL formulations disagree with main; safe public APIs
+  cannot provide atomic staging; Rust would need to enumerate matches/retain
+  rows; a shared-SPI expansion becomes necessary; or the two-cycle trigger
+  fires.
+
 ## Next action
 
-Commit the accepted checkpoint 0 locally without pushing. Then seat one bounded
-implementation worker for the checkpoint 0.5 table-only/Set-only production
-RuleSpec compiler and source-driven main differentials. Do not claim checkpoint
-0.5 until both production differentials pass.
+Keep the checkpoint-0.5 implementation frozen except for the requested durable
+state/census reconciliation, obtain an exact documentation-only re-review, and
+commit the accepted slice locally without pushing. Use the read-only primary
+lowering frontier to define the smallest checkpoint-1 implementation contract;
+do not start from speculative all-container or all-primitive breadth.

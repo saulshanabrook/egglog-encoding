@@ -47,9 +47,9 @@ globals lower to `() -> Stmt` functions. Luminal's 1,634 globals lower to
   include, unstable-function surface, or active primitives beyond literals.
 - The file has no `(check ...)`, so it requests no proof target itself.
 - **Kernel inference:** `Add(a,b) -> Add(b,a)` at `:19` is the cleanest broad
-  table-scan kernel. The safe-API SQL feasibility probe is source-pinned to
-  that rule; production `RuleSpec` lowering and a main-backend differential
-  remain pending.
+  table-scan kernel. A reduced, backend-local fixture for that exact rule now
+  passes a production `RuleSpec` main-versus-DuckDB differential. This does not
+  imply that the complete Math source program lowers yet.
 
 ### Eggcc
 
@@ -91,9 +91,10 @@ globals lower to `() -> Stmt` functions. Luminal's 1,634 globals lower to
   arity throughout. All numeric fields parse as integers; observed ranges are
   `0..7`, `0..6`, and `0..6`.
 - **Kernel inference:** the five-way call/parameter join at `:168-176` is the
-  cleanest genuinely selective bounded kernel. The safe-API SQL feasibility
-  probe is source-pinned to both sides of this rule and includes non-matching
-  decoys; production lowering and a main-backend differential remain pending.
+  cleanest genuinely selective bounded kernel. A reduced fixture source-pinned
+  to that rule, including non-matching decoys and a fresh-row/old-row join,
+  now passes a production `RuleSpec` main-versus-DuckDB differential. This does
+  not imply that the complete Pointer source program lowers yet.
 
 ### Hardboiled
 
@@ -154,17 +155,19 @@ relations.
 ## Checkpoint decision
 
 The five workloads' typed schemas and rule shapes are representable at the
-current backend SPI. This is not a claim that checkpoint 0.5 executes them:
-production `RuleSpec` lowering fails closed, and table registration currently
-accepts only the one-output `MergeFn::Old` policy whose duplicate-key behavior
-is implemented natively with ordinal-ranked `VALUES` plus a full typed-key
-`NOT EXISTS` anti-join. Ordinary function tables have no primary/unique
-constraints, singleton column, or ART indexes. Every other merge policy is
-rejected before a table is advertised. The static census does not reveal
-reached dynamic `UnstableFn` construction/application, so checkpoint 0 may
-defer it as schema-only. The next blocking breadth is ordinary merge and effect
-semantics, primitives/containers, and main-backend differential kernels, not
-proof-specific storage.
+current backend SPI. This is not a claim that checkpoint 0.5 executes the full
+programs: production `RuleSpec` lowering now admits only nonempty Live table
+bodies with typed variables/literals and exactly one Set into a one-output
+`MergeFn::Old` target. That reduced subset passes the Math and Pointer
+differentials described above. Table registration still accepts only that
+one-output merge policy, whose duplicate-key behavior is implemented natively
+with ordinal-ranked `VALUES` plus a full typed-key `NOT EXISTS` anti-join.
+Ordinary function tables have no primary/unique constraints, singleton column,
+or ART indexes. Every other merge policy is rejected before a table is
+advertised. The static census does not reveal reached dynamic `UnstableFn`
+construction/application, so it remains schema-only deferred. The next
+blocking breadth is ordinary merge/effect semantics, primitives/containers,
+and complete-program lowering, not proof-specific storage.
 
 The reached scalar storage set is `Id`, `Unit`, `bool`, `i64`, `f64`, and
 `String`. None of the five sources reaches `BigInt`, `BigRat`, or experimental
@@ -175,19 +178,15 @@ bytes use UTF-8 hex plus DuckDB `from_hex`/`decode`, so input ingestion requires
 no bound parameters and cannot interpolate user text.
 
 One current `(input ...)` command becomes one heterogeneous `add_values` batch
-containing several encoded function IDs. Typed vertical tables therefore need
+containing several encoded function IDs. Typed vertical tables therefore use
 one transaction with one generated `INSERT ... SELECT FROM (VALUES ...)`
-statement per physical target, unless the frontend/API later supplies a tagged
-heterogeneous SQL effect relation. The scaffold records that boundary rather
-than using a host effect dispatcher. Because `Backend::add_values` returns
-`()` rather than `Result`, an input failure is latched: the next infallible
-table read or flush panics, while the next fallible `run_rules` returns and
-drains the error. Ordinary term/proof-encoded source input is followed by a
-maintenance schedule and therefore reaches that fallible boundary even in an
-input-only source program. A hand-constructed internal replay ending directly
-at input and making no later backend call cannot observe the void method's
-error; closing that residual SPI limitation requires a frontend or trait change
-outside this scaffold.
+statement per physical target. The scaffold records that boundary rather than
+using a host effect dispatcher. `Backend::add_values` is fallible on this
+branch: DuckDB returns the transaction result directly, DD returns its native
+apply error, and the reference bridge applies each supplied batch atomically
+after quiescing pre-existing staged work. The frontend propagates an input
+failure before logging success. This supersedes the checkpoint-0 void-method
+limitation recorded by the original census.
 
 ## Command evidence
 

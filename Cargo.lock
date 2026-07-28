@@ -1191,7 +1191,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "duckdb",
+ "egglog-ast",
  "egglog-backend-trait",
+ "egglog-bridge",
  "egglog-core-relations",
  "egglog-numeric-id",
  "ordered-float",

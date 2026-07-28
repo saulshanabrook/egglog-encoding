@@ -2,11 +2,9 @@
 //! Checkpoint 0/0.5 of a DuckDB-authoritative egglog backend.
 //!
 //! Function rows live only in typed DuckDB tables. This storage scaffold
-//! deliberately stops before general [`RuleSpec`] lowering: focused executable
-//! probes establish the safe SQL, transaction, input, and query-kernel boundary
-//! before the rule compiler is committed to an IR shape. Those probes are SQL
-//! feasibility checks, not a checkpoint-pass claim or a differential test of
-//! production `RuleSpec` lowering against the main backend.
+//! implements a deliberately narrow first production [`RuleSpec`] subset:
+//! Live table atoms with typed variables/literals and one table Set into a
+//! one-output `MergeFn::Old` target. Unsupported IR fails closed at admission.
 
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -20,9 +18,18 @@ use egglog_backend_trait::{
 use egglog_core_relations::Database;
 use egglog_numeric_id::NumericId;
 
+mod rule_sql;
+#[cfg(test)]
+mod rule_sql_tests;
 mod storage;
 
+use rule_sql::{CompiledRule, RuleExecutionStats, compile_rule};
 use storage::{InputMerge, InsertStats, Storage, for_each_scan_entry};
+
+struct RegisteredRule {
+    plan: CompiledRule,
+    watermark: u64,
+}
 
 /// A DuckDB-authoritative backend skeleton on the current backend SPI.
 ///
@@ -35,7 +42,9 @@ pub struct EGraph {
     registries: Database,
     id_counter: CounterId,
     deferred_panic: Arc<Mutex<Option<String>>>,
+    rules: Vec<Option<RegisteredRule>>,
     last_insert: InsertStats,
+    last_rule: RuleExecutionStats,
     report_level: ReportLevel,
 }
 
@@ -49,7 +58,9 @@ impl EGraph {
             registries,
             id_counter,
             deferred_panic: Arc::new(Mutex::new(None)),
+            rules: Vec::new(),
             last_insert: InsertStats::default(),
+            last_rule: RuleExecutionStats::default(),
             report_level: ReportLevel::default(),
         })
     }
@@ -75,6 +86,22 @@ impl EGraph {
     /// DuckDB applied the supported KeepOld conflict policy.
     pub fn last_input_inserted_rows(&self) -> usize {
         self.last_insert.inserted_rows
+    }
+
+    /// Number of DuckDB statements issued for the most recent bounded rule
+    /// execution, including scalar count/counter statements and stage cleanup.
+    pub fn last_rule_statement_count(&self) -> usize {
+        self.last_rule.statement_count
+    }
+
+    /// Match cardinalities for scheduled rules in the most recent bounded run.
+    pub fn last_rule_match_counts(&self) -> &[usize] {
+        &self.last_rule.matched_rows
+    }
+
+    /// Rows installed per scheduled rule in the most recent bounded run.
+    pub fn last_rule_insert_counts(&self) -> &[usize] {
+        &self.last_rule.inserted_rows
     }
 
     fn pending_panic_message(&self) -> Option<String> {
@@ -267,23 +294,49 @@ impl Backend for EGraph {
     }
 
     fn add_rule(&mut self, rule: RuleSpec) -> Result<RuleId> {
-        Err(anyhow!(
-            "DuckDB checkpoint 0.5 does not yet lower production rule `{}`; selective and broad source shapes currently have safe-API SQL feasibility probes only",
-            rule.name
-        ))
+        let plan = compile_rule(&self.storage, self.registries.base_values(), rule)?;
+        let id = RuleId::new(self.rules.len() as u32);
+        self.rules.push(Some(RegisteredRule { plan, watermark: 0 }));
+        Ok(id)
     }
 
-    fn free_rule(&mut self, _id: RuleId) {}
+    fn free_rule(&mut self, id: RuleId) {
+        if let Some(slot) = self.rules.get_mut(id.rep() as usize) {
+            *slot = None;
+        }
+    }
 
     fn run_rules(&mut self, run: RuleSetRun<'_>) -> Result<IterationReport> {
         self.take_deferred_panic()?;
         if run.rules.is_empty() {
-            Ok(IterationReport::default())
-        } else {
-            Err(anyhow!(
-                "DuckDB checkpoint 0.5 cannot execute a production RuleSpec yet"
-            ))
+            self.last_rule = RuleExecutionStats::default();
+            return Ok(IterationReport::default());
         }
+
+        let scheduled = run
+            .rules
+            .iter()
+            .map(|id| {
+                self.rules
+                    .get(id.rep() as usize)
+                    .and_then(Option::as_ref)
+                    .map(|registered| (&registered.plan, registered.watermark))
+                    .ok_or_else(|| anyhow!("DuckDB cannot run freed or unknown rule {}", id.rep()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let stats = self.storage.execute_rules(&scheduled)?;
+        drop(scheduled);
+
+        for id in run.rules {
+            let registered = self.rules[id.rep() as usize]
+                .as_mut()
+                .expect("validated rule disappeared during synchronous execution");
+            registered.watermark = stats.watermark;
+        }
+        let mut report = IterationReport::default();
+        report.rule_set_report.changed = stats.changed;
+        self.last_rule = stats;
+        Ok(report)
     }
 
     fn flush_updates(&mut self) -> bool {
@@ -315,9 +368,10 @@ impl Backend for EGraph {
 
     fn dump_debug_info(&self) {
         eprintln!(
-            "DuckDB backend checkpoint 0.5: runtime={:?}, next_table={}, deferred_panic={:?}",
+            "DuckDB backend checkpoint 0.5: runtime={:?}, next_table={}, rules={}, deferred_panic={:?}",
             self.runtime_version(),
             self.peek_next_function_id().rep(),
+            self.rules.iter().flatten().count(),
             self.pending_panic_message()
         );
     }
@@ -492,11 +546,10 @@ mod tests {
     }
 
     #[test]
-    fn production_rule_boundary_fails_closed() -> Result<()> {
+    fn unknown_rule_boundary_fails_closed() -> Result<()> {
         let mut backend = EGraph::new()?;
-        // The rule compiler owns construction of RuleSpec. Exercise both the
-        // empty scheduling no-op and the explicit nonempty rejection without
-        // fabricating a stale donor RuleSpec here.
+        // Exercise both the empty scheduling no-op and strict rejection of an
+        // id that was never admitted by the production rule compiler.
         assert!(
             !backend
                 .run_rules(RuleSetRun {
@@ -512,11 +565,7 @@ mod tests {
                 rules: &[RuleId::new(0)],
             })
             .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("cannot execute a production RuleSpec")
-        );
+        assert!(error.to_string().contains("freed or unknown rule"));
         Ok(())
     }
 }
