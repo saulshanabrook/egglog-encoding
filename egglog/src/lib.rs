@@ -516,7 +516,6 @@ enum CatalogRuleSurface {
 #[derive(Clone, Debug)]
 struct RuleCatalogEntry {
     ruleset: String,
-    native_name: String,
     replay_name: String,
     variables: Box<[RuleCatalogVariable]>,
     command: usize,
@@ -937,7 +936,6 @@ impl CaptureCatalog {
         rule.name.clone_from(&replay_name);
         self.rule_catalog.push(RuleCatalogEntry {
             ruleset: ruleset.to_owned(),
-            native_name: name.to_owned(),
             replay_name,
             variables,
             command,
@@ -6853,7 +6851,6 @@ mod tests {
                 );
                 let cataloged_rule = &egraph.capture_catalog.as_ref().unwrap().rule_catalog[0];
                 assert_eq!(cataloged_rule.ruleset, "");
-                assert_eq!(cataloged_rule.native_name, "derive");
                 assert_eq!(cataloged_rule.replay_name, "derive");
                 assert_eq!(
                     cataloged_rule

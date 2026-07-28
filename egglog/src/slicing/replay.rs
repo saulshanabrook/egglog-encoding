@@ -102,7 +102,6 @@ pub(crate) enum ReplaySourceKind {
     Command(Box<Command>),
     InputRow {
         function: String,
-        line: u64,
         literals: Box<[Literal]>,
     },
 }
@@ -145,10 +144,8 @@ pub(crate) struct ReplayWave {
 
 #[derive(Clone, Debug)]
 pub(crate) struct ReplayCheck {
-    pub(crate) check: u32,
     pub(crate) after_wave: u64,
     pub(crate) catalog_ordinal: usize,
-    pub(crate) position: u64,
     pub(crate) command: Command,
 }
 
@@ -728,7 +725,6 @@ fn selected_input_rows(
                 source: OwnedSourceRef::InputRow { command, line },
                 kind: ReplaySourceKind::InputRow {
                     function: entry.function.clone(),
-                    line,
                     literals: parsed.literals.into_boxed_slice(),
                 },
             });
@@ -1361,9 +1357,11 @@ fn build_owned(
     let mut checks = slice.checks.iter().copied().collect::<Vec<_>>();
     checks.sort_unstable();
     for check in checks {
-        let position = slice.check_positions.get(&check).ok_or_else(|| {
-            ReplayError::Invalid(format!("selected check {check} has no history position"))
-        })?;
+        if !slice.check_positions.contains_key(&check) {
+            return Err(ReplayError::Invalid(format!(
+                "selected check {check} has no history position"
+            )));
+        }
         let root = view
             .check_root(check)
             .map_err(|error| ReplayError::Trace(error.to_string()))?;
@@ -1392,10 +1390,8 @@ fn build_owned(
             )));
         }
         events.push(ReplayEvent::Check(Box::new(ReplayCheck {
-            check,
             after_wave: root.wave.get(),
             catalog_ordinal: surface_command,
-            position: position.get(),
             command,
         })));
     }
@@ -1751,7 +1747,8 @@ mod tests {
         assert_eq!(ir.stats.input_rows, 1);
         let selected = ir.events.iter().find_map(|event| match event {
             ReplayEvent::Source(ReplaySource {
-                kind: ReplaySourceKind::InputRow { line, literals, .. },
+                source: OwnedSourceRef::InputRow { line, .. },
+                kind: ReplaySourceKind::InputRow { literals, .. },
                 ..
             }) => Some((*line, literals.as_ref())),
             _ => None,
